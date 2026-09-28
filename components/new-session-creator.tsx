@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Box, GitBranch, Github } from "lucide-react";
+import { Box, GitBranch } from "lucide-react";
 import { useState, useTransition } from "react";
 
+import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
-import { Button } from "@/components/ui/button";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
@@ -107,22 +107,19 @@ export function NewSessionCreator({
           outrunner
         </p>
 
-        {/* First run gets its own screen. Dropping a brand-new user straight at
-            the composer means their first act is discovering they cannot send
-            yet; naming the one thing to do first is clearer than a disabled
-            placeholder. Once anything is connected, the repository select
-            reaches every repo, so this never comes back. */}
+        {/* First run gets its own screen, so a brand-new user is not dropped at a
+            composer they cannot send from. One button, no second authorization:
+            signing in already granted `repo`, so there is nothing left to
+            connect — just pull the list in. Once anything is synced the
+            repository select handles the rest and this never returns. */}
         {projects.length === 0 ? (
           <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed py-12 text-center">
-            <p className="text-sm font-medium">No repositories connected</p>
+            <p className="text-sm font-medium">No repositories synchronized</p>
             <p className="text-muted-foreground max-w-xs text-xs">
-              Choose which of your GitHub repositories to work in.
+              Pull in the repositories your GitHub account can access to start a
+              session.
             </p>
-            <Button asChild>
-              <Link href="/connect">
-                <Github className="mr-1 size-4" /> Connect GitHub repositories
-              </Link>
-            </Button>
+            <ProjectsSyncButton align="center" />
           </div>
         ) : (
           <>
