@@ -170,6 +170,22 @@ type WorkspaceSnapshotRow = {
   updated_at: string;
 };
 
+// Multi-user — each user's own GitHub and Anthropic credentials, sealed with
+// AES-256-GCM (lib/crypto/secret-box.ts). Service-role only: the table has RLS
+// enabled with NO policy, so anon/authenticated match nothing. Reach it through
+// lib/db/credentials.ts, never directly.
+type UserCredentialsRow = {
+  user_id: string;
+  github_token_ciphertext: string | null;
+  github_token_login: string | null;
+  github_token_updated_at: string | null;
+  anthropic_key_ciphertext: string | null;
+  anthropic_key_hint: string | null;
+  anthropic_key_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 /** Columns the client may supply on insert (defaults fill the rest). */
 type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
   Partial<Omit<Row, Required | "created_at" | "updated_at">>;
@@ -268,6 +284,12 @@ export type Database = {
             referencedColumns: ["owner_id", "id"];
           },
         ];
+      };
+      user_credentials: {
+        Row: UserCredentialsRow;
+        Insert: Insert<UserCredentialsRow, "user_id">;
+        Update: Partial<UserCredentialsRow>;
+        Relationships: [];
       };
     };
     Views: Record<never, never>;
