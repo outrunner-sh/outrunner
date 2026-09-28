@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { upsertProjects } from "@/lib/db/repositories";
+import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { optionalEnv } from "@/lib/env";
 import {
   GitHubSyncError,
@@ -69,7 +69,9 @@ export async function POST(request: Request) {
       ? all.filter((r) => selection.has(r.githubRepoId))
       : all;
     const synced = await upsertProjects(owner.id, repositories);
-    return NextResponse.json({ synced, discovered: all.length });
+    // Return the projects too: the composer connects a repository and needs its
+    // project id in the same round trip to start a session on it.
+    return NextResponse.json({ synced, discovered: all.length, projects: await listProjects() });
   } catch (error) {
     if (error instanceof MissingGithubTokenError) {
       return NextResponse.json({ error: error.message }, { status: 409 });

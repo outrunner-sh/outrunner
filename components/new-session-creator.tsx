@@ -2,20 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Box, ChevronDown, GitBranch, Github, Plus } from "lucide-react";
+import { Box, GitBranch, Github } from "lucide-react";
 import { useState, useTransition } from "react";
 
-import { ProjectAvatar } from "@/components/project-avatar";
+import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
 import { Button } from "@/components/ui/button";
 import { WorkspaceCreating } from "@/components/workspace-creating";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
@@ -114,56 +107,20 @@ export function NewSessionCreator({
           neevai
         </p>
 
-        {projects.length === 0 ? (
-          <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed py-12 text-center">
-            <p className="text-sm font-medium">No repositories connected</p>
-            <p className="text-muted-foreground max-w-xs text-xs">
-              Choose which of your GitHub repositories to work in.
-            </p>
-            <Button asChild>
-              <Link href="/connect">
-                <Github className="mr-1 size-4" /> Connect GitHub repositories
-              </Link>
-            </Button>
-          </div>
-        ) : (
-          <>
-            <SessionComposer onSend={create} canSend={!isCreating} />
+        <>
+            <SessionComposer
+              onSend={create}
+              canSend={!isCreating && selected != null}
+              disabledPlaceholder="Pick a repository below to start…"
+            />
 
             <div className="mt-5 flex items-center justify-center gap-2.5 text-[15px]">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex items-center gap-2 rounded-md px-1.5 py-1 text-foreground transition-colors hover:bg-accent"
-                  >
-                    <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
-                    {selected?.name ?? "Select a repository"}
-                    <ChevronDown className="size-4 text-muted-foreground" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="center" className="max-h-72 w-64 overflow-y-auto">
-                  {projects.map((project) => (
-                    <DropdownMenuItem
-                      key={project.id}
-                      onSelect={() => setProjectId(project.id)}
-                    >
-                      <ProjectAvatar name={project.name} className="size-5" />
-                      <span className="truncate">{project.fullName}</span>
-                    </DropdownMenuItem>
-                  ))}
-                  {/* The list only holds what is already connected, so without
-                      this the picker is a dead end once you are past the empty
-                      state — the only route to /connect was having no projects. */}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem asChild>
-                    <Link href="/connect">
-                      <Plus className="size-5" />
-                      <span>Connect a repository…</span>
-                    </Link>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <RepositorySelect
+                projects={projects}
+                selectedProjectId={projectId}
+                onSelect={setProjectId}
+                disabled={isCreating}
+              />
 
               <span className="text-muted-foreground">/</span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -198,8 +155,7 @@ export function NewSessionCreator({
                 )}
               </div>
             )}
-          </>
-        )}
+        </>
         </div>
       </div>
     </>
