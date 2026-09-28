@@ -10,7 +10,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -44,7 +43,6 @@ export function HomeUserMenu({
         <DropdownMenuItem disabled>
           <Settings />
           Settings
-          <DropdownMenuShortcut>⌘.</DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
           <Info />
