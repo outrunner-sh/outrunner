@@ -1,0 +1,29 @@
+# Build context for the Cloudflare Containers control-plane image (context is
+# this outrunner/ directory). Keep it lean AND keep secrets/.env* out.
+# NOTE: runtime-agent/ is intentionally KEPT — the Dockerfile compiles the agent
+# binary from it (the binary itself is gitignored, not committed).
+
+node_modules
+**/node_modules
+.next
+out
+
+# Secrets / local config — env is injected by the platform, never baked in
+.env
+.env.*
+!.env.example
+
+# Not needed to build the Next app or the Go agent
+.context
+.hoplite
+test
+supabase
+docs
+
+# VCS / misc
+.git
+.gitignore
+*.log
+npm-debug.log*
+.DS_Store
+cloudflare
