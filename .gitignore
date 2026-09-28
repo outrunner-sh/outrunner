@@ -51,6 +51,3 @@ next-env.d.ts
 /runtime-agent/runtime-agent
 bun.lock
 
-
-# Cross-compiled agent binary — build with scripts/build-agent.sh, not committed.
-bin/runtime-agent-linux-amd64
