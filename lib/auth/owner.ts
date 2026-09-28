@@ -1,5 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 
+import { parseAllowlist } from "@/lib/auth/allowlist";
 import { optionalEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -11,18 +12,20 @@ export type Owner = {
 };
 
 /**
- * Runtime is single-user by design. Identity comes from GitHub OAuth, and
- * `RUNTIME_OWNER_GITHUB_LOGIN` is the allowlist: exactly one account may use
- * this deployment. This is the entire authorization model — no roles, no teams.
+ * Whether this user may use the deployment. Identity comes from GitHub OAuth,
+ * and `RUNTIME_OWNER_GITHUB_LOGIN` is the allowlist of the accounts permitted
+ * (one, or a small shared team). This is the entire authorization model — no
+ * roles, and every allowed member shares the same projects and workspaces.
  *
- * The login is read from the GitHub OAuth identity (see {@link githubLogin}),
- * so this only ever returns true for a user who actually signed in with the
+ * The login is read from the GitHub OAuth identity (see {@link githubLogin}), so
+ * this only ever returns true for a user who actually signed in with an
  * allowlisted GitHub account.
  */
 export function isOwner(user: User): boolean {
-  const allowed = optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN");
-  if (!allowed) return false;
-  return githubLogin(user)?.toLowerCase() === allowed.toLowerCase();
+  const allowed = parseAllowlist(optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN"));
+  if (allowed.size === 0) return false;
+  const login = githubLogin(user)?.toLowerCase();
+  return login != null && allowed.has(login);
 }
 
 /**

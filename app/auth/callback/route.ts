@@ -34,8 +34,9 @@ export async function GET(request: Request) {
     return signInError(base, error?.message ?? "exchange_failed");
   }
 
-  // Single-user by design: anyone who is not the configured owner is signed
-  // straight back out. This is the whole authorization model.
+  // Access is allowlisted: anyone whose GitHub login isn't in
+  // RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out. This is the whole
+  // authorization model.
   if (!isOwner(data.user)) {
     await supabase.auth.signOut();
     return signInError(base, "not_owner");
