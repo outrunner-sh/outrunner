@@ -13,6 +13,9 @@ type EnvKey =
   | "NEXT_PUBLIC_SUPABASE_URL"
   | "NEXT_PUBLIC_SUPABASE_ANON_KEY"
   | "SUPABASE_SERVICE_ROLE_KEY"
+  // Multi-user: AES-256-GCM key sealing per-user credentials at rest
+  // (lib/crypto/secret-box.ts). 32 bytes, base64 or hex — `openssl rand -base64 32`.
+  | "CREDENTIALS_ENCRYPTION_KEY"
   // Single-user guard
   | "RUNTIME_OWNER_GITHUB_LOGIN"
   // GitHub (git + API operations performed inside workspaces)
