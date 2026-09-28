@@ -14,7 +14,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
+import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import { optionalGithubToken } from "@/lib/github/token";
@@ -73,6 +73,16 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
   const githubToken = await optionalGithubToken(owner.id);
+  const sessionEnv = await runtimeSessionEnvironment(owner.id);
+  if (!sessionEnv.ANTHROPIC_API_KEY) {
+    return NextResponse.json(
+      {
+        error:
+          "Add your Anthropic API key in Settings before creating a workspace.",
+      },
+      { status: 409 },
+    );
+  }
   if (project.private && !githubToken) {
     return NextResponse.json(
       {
@@ -156,7 +166,7 @@ export async function POST(request: Request, context: RouteContext) {
         projectId: project.id,
         repoFullName: project.fullName,
         githubToken,
-        sessionEnv: runtimeSessionEnvironment(),
+        sessionEnv,
       });
       const computer = ensured.computer;
       if (!computer.daytonaSandboxId) {

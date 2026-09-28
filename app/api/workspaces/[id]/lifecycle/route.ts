@@ -17,7 +17,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
+import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
@@ -282,11 +282,17 @@ async function restoreDaytonaWorkspace(
 
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
+    const sessionEnv = await runtimeSessionEnvironment(userId);
+    if (!sessionEnv.ANTHROPIC_API_KEY) {
+      throw new Error(
+        "Add your Anthropic API key in Settings before restoring a workspace.",
+      );
+    }
     const ensured = await ensureProjectRuntimeComputer(provider, {
       projectId: project.id,
       repoFullName: project.fullName,
       githubToken,
-      sessionEnv: runtimeSessionEnvironment(),
+      sessionEnv,
     });
     const computer = ensured.computer;
     if (!computer.daytonaSandboxId) {
