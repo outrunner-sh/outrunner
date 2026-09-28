@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, Info, KeyRound, Palette, User } from "lucide-react";
+import { ChevronLeft, Info, KeyRound, Palette, Sparkles, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,10 @@ const sections = [
   // workspaces run on — without a nav entry the page has no route from the UI,
   // and a failed workspace create points straight at it.
   { href: "/settings/credentials", label: "Credentials", icon: KeyRound },
+  // PR #18's desktop-only Claude connect flow. Kept alongside Credentials
+  // rather than replacing it: that page also holds the GitHub token and
+  // accepts an API key, neither of which this one can take.
+  { href: "/settings/claude", label: "Claude", icon: Sparkles },
 ];
 
 /** The settings-nav column: a Back link home, then the section links with the

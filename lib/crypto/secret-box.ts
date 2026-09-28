@@ -96,3 +96,12 @@ export function sameSecret(a: string, b: string): boolean {
   const bufB = Buffer.from(b, "utf8");
   return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
 }
+
+/**
+ * Aliases for the names PR #18's credential code imports. Same primitive, same
+ * key: a second AES implementation reading a second env var would mean two
+ * ciphertext formats in one database and a silent decrypt failure whenever a
+ * row was written by the other half.
+ */
+export const encryptSecret = seal;
+export const decryptSecret = open;
