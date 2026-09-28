@@ -1,13 +1,18 @@
 /**
  * Central environment access.
  *
- * Runtime is a single-user system, so configuration is intentionally flat:
- * everything is read from process.env and validated lazily at the call site
- * rather than at import time (so `next build` works without secrets).
+ * Configuration is intentionally flat: everything is read from process.env and
+ * validated lazily at the call site rather than at import time (so `next build`
+ * works without secrets).
  */
 
 import type { ProviderName } from "@/lib/runtime/types";
 
+// Per-user credentials (each user's GitHub token and Claude key) are NOT here:
+// they live encrypted in the database, not in the deployment's environment. A
+// shared GITHUB_PAT / ANTHROPIC_API_KEY / CODEX_API_KEY would land in a box
+// where Claude runs with --permission-mode bypassPermissions, readable by
+// whoever holds that box. See lib/db/credentials.ts.
 type EnvKey =
   // Supabase
   | "NEXT_PUBLIC_SUPABASE_URL"
@@ -18,11 +23,6 @@ type EnvKey =
   | "CREDENTIALS_ENCRYPTION_KEY"
   // Single-user guard
   | "RUNTIME_OWNER_GITHUB_LOGIN"
-  // GitHub (git + API operations performed inside workspaces)
-  | "GITHUB_PAT"
-  // Linear
-  | "LINEAR_CLIENT_ID"
-  | "LINEAR_CLIENT_SECRET"
   // Modal
   | "MODAL_TOKEN_ID"
   | "MODAL_TOKEN_SECRET"
@@ -34,11 +34,6 @@ type EnvKey =
   | "DAYTONA_SNAPSHOT"
   // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
   | "RUNTIME_AGENT_BINARY_PATH"
-  // Claude Code
-  | "ANTHROPIC_API_KEY"
-  | "CLAUDE_CODE_OAUTH_TOKEN"
-  // Codex
-  | "CODEX_API_KEY"
   // Provider selection
   | "RUNTIME_PROVIDER"
   | "RUNTIME_BASE_URL"
