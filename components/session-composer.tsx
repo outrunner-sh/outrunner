@@ -14,6 +14,7 @@ import { useAttachments } from "@/hooks/use-attachments";
  * rather than on send, so the wait happens while the user is still typing, and
  * `onSend` receives their ids to attach server-side.
  */
+
 /** Trim Claude's model id to a stable label — drop a trailing -YYYYMMDD date so
  *  "claude-opus-4-5-20250115" reads as "claude-opus-4-5". */
 function formatModel(model: string): string {

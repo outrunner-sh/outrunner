@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, Info, Palette, User } from "lucide-react";
+import { ChevronLeft, Info, KeyRound, Palette, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -10,6 +10,10 @@ const sections = [
   { href: "/settings/general", label: "General", icon: Info },
   { href: "/settings/appearance", label: "Appearance", icon: Palette },
   { href: "/settings/account", label: "Account", icon: User },
+  // Where a user supplies the GitHub and Claude credentials their own
+  // workspaces run on — without a nav entry the page has no route from the UI,
+  // and a failed workspace create points straight at it.
+  { href: "/settings/credentials", label: "Credentials", icon: KeyRound },
 ];
 
 /** The settings-nav column: a Back link home, then the section links with the
