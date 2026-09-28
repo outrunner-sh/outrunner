@@ -41,7 +41,7 @@ export function WorkspaceStudio({
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
       <aside className="studio-sidebar">
-        <div className="studio-brand"><Terminal /> neevai</div>
+        <div className="studio-brand"><Terminal /> outrunner</div>
         <div className="studio-sidebar-top">
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
           <Link href="/new" className="studio-back" title="New session"><Plus /> New</Link>

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Neev AI",
+  title: "Outrunner",
   description: "Personal cloud environment for running Claude Code.",
 };
 
