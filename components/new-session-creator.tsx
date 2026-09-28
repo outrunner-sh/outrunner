@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Box, ChevronDown, GitBranch, Github } from "lucide-react";
+import { Box, ChevronDown, GitBranch, Github, Plus } from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
@@ -13,6 +13,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Project } from "@/lib/runtime/types";
@@ -151,6 +152,16 @@ export function NewSessionCreator({
                       <span className="truncate">{project.fullName}</span>
                     </DropdownMenuItem>
                   ))}
+                  {/* The list only holds what is already connected, so without
+                      this the picker is a dead end once you are past the empty
+                      state — the only route to /connect was having no projects. */}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/connect">
+                      <Plus className="size-5" />
+                      <span>Connect a repository…</span>
+                    </Link>
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
 
