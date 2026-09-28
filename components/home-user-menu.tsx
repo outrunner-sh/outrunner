@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { Info, LogOut, MessageSquare, Settings } from "lucide-react";
 
 import { signOut } from "@/app/auth/actions";
@@ -16,9 +17,9 @@ import {
 /**
  * The bottom-of-sidebar user pill. Secondary actions (Settings, System info,
  * Feedback, Log out) live inside the popover it opens rather than as standalone
- * sidebar rows, keeping the rail to just the primary flow. Settings / System
- * info / Feedback are placeholders until their destinations exist; Log out runs
- * the sign-out server action.
+ * sidebar rows, keeping the rail to just the primary flow. Settings opens the
+ * settings page and Log out runs the sign-out server action; System info /
+ * Feedback stay placeholders until their destinations exist.
  */
 export function HomeUserMenu({
   ownerLogin,
@@ -40,9 +41,11 @@ export function HomeUserMenu({
           <span className="truncate">{label}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem disabled>
-          <Settings />
-          Settings
+        <DropdownMenuItem asChild>
+          <Link href="/settings/general">
+            <Settings />
+            Settings
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuItem disabled>
           <Info />
