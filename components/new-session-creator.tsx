@@ -49,7 +49,7 @@ export function NewSessionCreator({
 
   const selected = projects.find((project) => project.id === projectId);
 
-  function create(prompt: string) {
+  function create(prompt: string, attachmentIds: string[] = []) {
     if (!selected) return;
     startCreating(async () => {
       setMessage(null);
@@ -59,6 +59,8 @@ export function NewSessionCreator({
         response = await fetch(`/api/projects/${selected.id}/workspaces`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          // Attachments are not sent here: the workspace has no box yet. They
+          // ride the redirect and are delivered with the first prompt.
           body: JSON.stringify({ branch: "" }),
         });
       } catch {
@@ -73,9 +75,10 @@ export function NewSessionCreator({
         if (response.status === 409) setMessageHref("/settings/credentials");
         return;
       }
-      const query = prompt.trim()
-        ? `?prompt=${encodeURIComponent(prompt.trim())}`
-        : "";
+      const params = new URLSearchParams();
+      if (prompt.trim()) params.set("prompt", prompt.trim());
+      for (const id of attachmentIds) params.append("attachment", id);
+      const query = params.size > 0 ? `?${params}` : "";
       router.push(`/workspaces/${result.workspace.id}${query}`);
       router.refresh();
     });

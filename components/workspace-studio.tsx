@@ -24,6 +24,7 @@ export function WorkspaceStudio({
   allProjects,
   allWorkspaces,
   initialPrompt,
+  initialAttachmentIds,
 }: {
   workspace: Workspace;
   allProjects: Project[];
@@ -32,6 +33,8 @@ export function WorkspaceStudio({
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
   initialPrompt?: string;
+  /** Attachment ids staged on the home composer, sent with the first prompt. */
+  initialAttachmentIds?: string[];
 }) {
   const [rightOpen, setRightOpen] = useState(true);
   const [showTerminal] = useState(false);
@@ -74,6 +77,7 @@ export function WorkspaceStudio({
               workspaceId={workspace.id}
               showTerminal={showTerminal}
               initialPrompt={initialPrompt}
+              initialAttachmentIds={initialAttachmentIds}
             />
           ) : (
             <div className="studio-offline">
