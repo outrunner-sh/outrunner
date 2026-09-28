@@ -14,6 +14,7 @@ function setFetch(handler: (method: string) => Response): void {
 }
 
 const PR_INPUT = {
+  token: "gh-test-token",
   repoFullName: "owner/repo",
   headBranch: "runtime/x",
   baseBranch: "main",

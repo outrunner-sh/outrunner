@@ -1,4 +1,3 @@
-import { requireEnv } from "@/lib/env";
 
 /** A GitHub repository normalized to the fields Runtime persists. */
 export type GitHubRepository = {
@@ -83,9 +82,9 @@ async function githubRequest(
 }
 
 /**
- * The GitHub login that owns the configured token, read from `/user`. Shared
- * by repository sync and the M9 publish path so both enforce the same
- * "token belongs to the Runtime owner" invariant.
+ * The GitHub login that owns `token`, read from `/user`. Used by the publish
+ * path to confirm a stored per-user token still belongs to the account that
+ * granted it.
  */
 async function fetchTokenLogin(token: string): Promise<string> {
   const identity = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
@@ -137,23 +136,17 @@ function normalizeRepository(repo: GitHubApiRepository): GitHubRepository {
 }
 
 /**
- * Retrieves repositories visible to the configured personal access token.
+ * Retrieves the repositories visible to `token` — the signed-in user's own
+ * GitHub credential, captured from their OAuth sign-in.
  *
- * GitHub OAuth in Supabase establishes who may use Runtime. The PAT remains
- * server-only and authorizes repository access, clone, push, and PR actions.
+ * The caller supplies the token rather than this module reading one from the
+ * environment: every user syncs their own repositories under their own
+ * identity, so there is no server-wide credential to fall back on.
  */
 export async function listGitHubRepositories(
-  expectedOwnerLogin: string,
+  token: string,
 ): Promise<GitHubRepository[]> {
-  const token = requireEnv("GITHUB_PAT");
   const repositories: GitHubRepository[] = [];
-
-  const tokenLogin = await fetchTokenLogin(token);
-  if (tokenLogin.toLowerCase() !== expectedOwnerLogin.toLowerCase()) {
-    throw new GitHubSyncError(
-      "The configured GitHub token belongs to a different account.",
-    );
-  }
 
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const url = new URL("/user/repos", GITHUB_API_URL);
@@ -198,7 +191,7 @@ export async function listGitHubRepositories(
   }
 
   throw new GitHubSyncError(
-    "Repository sync stopped after 10,000 repositories. Narrow the GitHub token's access and try again.",
+    "Repository sync stopped after 10,000 repositories. Narrow your GitHub app's repository access and try again.",
   );
 }
 
@@ -209,15 +202,22 @@ export async function listGitHubRepositories(
 export type WorkspacePullRequestRef = { number: number; url: string };
 
 /**
- * Re-confirm that the configured PAT still belongs to the signed-in Runtime
- * owner, immediately before it is used to push a branch and open a PR.
+ * Re-confirm the user's stored GitHub token still belongs to them, immediately
+ * before it is used to push a branch and open a PR.
+ *
+ * Still worth doing now that tokens are per-user: a stored provider_token can
+ * be revoked from GitHub's side, or go stale against an account rename. Failing
+ * here produces "reconnect your GitHub account" instead of a confusing 401 from
+ * the middle of a push.
  */
-export async function verifyTokenOwner(expectedOwnerLogin: string): Promise<void> {
-  const token = requireEnv("GITHUB_PAT");
+export async function verifyTokenOwner(
+  token: string,
+  expectedOwnerLogin: string,
+): Promise<void> {
   const tokenLogin = await fetchTokenLogin(token);
   if (tokenLogin.toLowerCase() !== expectedOwnerLogin.toLowerCase()) {
     throw new GitHubSyncError(
-      "The configured GitHub token belongs to a different account.",
+      "Your GitHub connection is out of date. Sign out and back in to reconnect.",
     );
   }
 }
@@ -228,13 +228,14 @@ export async function verifyTokenOwner(expectedOwnerLogin: string): Promise<void
  * already-existing PR) lets the publish route retry safely.
  */
 export async function findOrCreatePullRequest(input: {
+  token: string;
   repoFullName: string;
   headBranch: string;
   baseBranch: string;
   title: string;
   body: string;
 }): Promise<WorkspacePullRequestRef> {
-  const token = requireEnv("GITHUB_PAT");
+  const { token } = input;
   const [owner] = input.repoFullName.split("/");
 
   const existing = await findOpenPullRequest(input, owner, token);

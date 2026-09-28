@@ -7,6 +7,7 @@ import {
   GitHubSyncError,
   listGitHubRepositories,
 } from "@/lib/github/client";
+import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
 
 export const dynamic = "force-dynamic";
 
@@ -39,10 +40,13 @@ export async function POST(request: Request) {
   }
 
   try {
-    const repositories = await listGitHubRepositories(owner.githubLogin);
+    const repositories = await listGitHubRepositories(await requireGithubToken(owner.id));
     const synced = await upsertProjects(owner.id, repositories);
     return NextResponse.json({ synced, discovered: repositories.length });
   } catch (error) {
+    if (error instanceof MissingGithubTokenError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     if (error instanceof GitHubSyncError) {
       return NextResponse.json({ error: error.message }, { status: 502 });
     }

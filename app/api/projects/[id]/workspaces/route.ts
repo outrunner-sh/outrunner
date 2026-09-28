@@ -10,7 +10,6 @@ import {
   markRuntimeComputerStoppedIfReady,
   updateWorkspace,
 } from "@/lib/db/repositories";
-import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
@@ -18,6 +17,7 @@ import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/ensure-runtime-computer";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
+import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
@@ -72,13 +72,14 @@ export async function POST(request: Request, context: RouteContext) {
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
-  if (project.private && !optionalEnv("GITHUB_PAT")) {
+  const githubToken = await optionalGithubToken(owner.id);
+  if (project.private && !githubToken) {
     return NextResponse.json(
       {
         error:
-          "GITHUB_PAT with Contents read access is required to clone a private repository.",
+          "Connect your GitHub account to clone a private repository: sign out and back in to grant repository access.",
       },
-      { status: 422 },
+      { status: 409 },
     );
   }
 
@@ -135,8 +136,6 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     if (provider instanceof DaytonaRuntimeProvider) {
-      const githubToken = optionalEnv("GITHUB_PAT");
-
       // A Runtime Computer is intentionally long-lived, but it can still be
       // removed outside Runtime (or become unavailable after a provider
       // incident). Only transition the exact ready row we checked so parallel
@@ -210,7 +209,7 @@ export async function POST(request: Request, context: RouteContext) {
       repoFullName: project.fullName,
       baseBranch: project.defaultBranch,
       branch: workspace.branch,
-      env: workspaceCloneEnvironment(),
+      env: workspaceCloneEnvironment(githubToken),
       onPhase: setPhase,
     });
 

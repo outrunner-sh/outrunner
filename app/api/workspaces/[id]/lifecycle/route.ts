@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { optionalGithubToken } from "@/lib/github/token";
 import {
   createWorkspaceSnapshot,
   deleteWorkspaceSnapshots,
@@ -13,7 +14,6 @@ import {
   transitionWorkspace,
   updateWorkspace,
 } from "@/lib/db/repositories";
-import { optionalEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
@@ -246,7 +246,7 @@ async function restoreDaytonaWorkspace(
   try {
     const project = await getProject(workspace.projectId);
     if (!project) throw new Error("Project not found for restore.");
-    const githubToken = optionalEnv("GITHUB_PAT");
+    const githubToken = await optionalGithubToken(userId);
 
     // Manifest pointers -> signed download URLs for exactly what the agent needs.
     const storage = supabaseSnapshotStorage();
