@@ -283,9 +283,9 @@ async function restoreDaytonaWorkspace(
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
     const sessionEnv = await runtimeSessionEnvironment(userId);
-    if (!sessionEnv.ANTHROPIC_API_KEY) {
+    if (Object.keys(sessionEnv).length === 0) {
       throw new Error(
-        "Add your Anthropic API key in Settings before restoring a workspace.",
+        "Connect Claude in Settings before restoring a workspace.",
       );
     }
     const ensured = await ensureProjectRuntimeComputer(provider, {

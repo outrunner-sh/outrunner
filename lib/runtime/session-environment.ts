@@ -26,6 +26,24 @@ import { getAnthropicKey } from "@/lib/db/credentials";
 export async function runtimeSessionEnvironment(
   userId: string,
 ): Promise<Record<string, string>> {
-  const apiKey = await getAnthropicKey(userId);
-  return apiKey ? { ANTHROPIC_API_KEY: apiKey } : {};
+  const credential = await getAnthropicKey(userId);
+  if (!credential) return {};
+  return { [anthropicEnvVar(credential)]: credential };
+}
+
+/**
+ * Which variable Claude Code reads a given credential from.
+ *
+ * The two kinds are not interchangeable. An API key (`sk-ant-api…`) bills API
+ * credits and belongs in ANTHROPIC_API_KEY; a Claude Code OAuth token
+ * (`sk-ant-oat…`, from `claude setup-token`) draws on the user's Pro/Max
+ * subscription and belongs in CLAUDE_CODE_OAUTH_TOKEN. Put a token in the
+ * key's variable and Claude fails to authenticate with nothing in the UI to
+ * explain why — so the prefix decides, rather than assuming everyone pastes
+ * an API key.
+ */
+export function anthropicEnvVar(credential: string): string {
+  return credential.startsWith("sk-ant-oat")
+    ? "CLAUDE_CODE_OAUTH_TOKEN"
+    : "ANTHROPIC_API_KEY";
 }

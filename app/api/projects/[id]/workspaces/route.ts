@@ -74,11 +74,12 @@ export async function POST(request: Request, context: RouteContext) {
   }
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  if (!sessionEnv.ANTHROPIC_API_KEY) {
+  // Either credential kind is fine; an empty env means none was set.
+  if (Object.keys(sessionEnv).length === 0) {
     return NextResponse.json(
       {
         error:
-          "Add your Anthropic API key in Settings before creating a workspace.",
+          "Connect Claude in Settings before creating a workspace.",
       },
       { status: 409 },
     );

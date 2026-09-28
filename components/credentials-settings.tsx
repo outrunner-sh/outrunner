@@ -65,25 +65,37 @@ export function CredentialsSettings({ initial }: { initial: CredentialStatusView
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">Anthropic API key</h2>
+        <h2 className="text-sm font-medium">Claude</h2>
         <p className="text-sm text-muted-foreground">
-          Your workspaces run Claude on this key, and it is only ever sent to your own
-          machines. Create one at{" "}
-          <a
-            className="underline"
-            href="https://console.anthropic.com/settings/keys"
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            console.anthropic.com
-          </a>
-          .
+          Your workspaces run Claude on your own credential, and it is only ever sent to
+          your own machines. Use either:
         </p>
+        <ul className="text-muted-foreground space-y-2 text-sm">
+          <li>
+            <span className="text-foreground font-medium">Claude subscription</span> — run{" "}
+            <code className="font-mono text-xs">claude setup-token</code> in your terminal
+            and paste the <code className="font-mono text-xs">sk-ant-oat…</code> token.
+            Uses your Pro/Max plan.
+          </li>
+          <li>
+            <span className="text-foreground font-medium">API key</span> — create one at{" "}
+            <a
+              className="underline"
+              href="https://console.anthropic.com/settings/keys"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              console.anthropic.com
+            </a>
+            . Billed as API usage.
+          </li>
+        </ul>
 
         {status.anthropic.connected && (
           <p className="text-sm text-muted-foreground">
             <KeyRound className="mr-1 inline size-4 align-text-bottom" />
-            Key ending <code className="font-mono">…{status.anthropic.hint}</code> is saved.
+            Credential ending <code className="font-mono">…{status.anthropic.hint}</code> is
+            saved.
           </p>
         )}
 
@@ -98,10 +110,10 @@ export function CredentialsSettings({ initial }: { initial: CredentialStatusView
             type="password"
             value={key}
             onChange={(event) => setKey(event.target.value)}
-            placeholder={status.anthropic.connected ? "Replace key…" : "sk-ant-…"}
+            placeholder={status.anthropic.connected ? "Replace credential…" : "sk-ant-…"}
             autoComplete="off"
             spellCheck={false}
-            aria-label="Anthropic API key"
+            aria-label="Anthropic API key or Claude Code token"
           />
           <Button type="submit" disabled={key.trim() === "" || busy !== null}>
             {busy === "save" && <Loader2 className="mr-1 size-4 animate-spin" />}

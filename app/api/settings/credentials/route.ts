@@ -29,7 +29,12 @@ export async function GET() {
   return NextResponse.json(await credentialStatus(owner.id));
 }
 
-/** Anthropic keys are `sk-ant-…`; anything else is a paste mistake. */
+/**
+ * Both accepted credentials share this prefix: an API key (`sk-ant-api…`) and a
+ * Claude Code OAuth token (`sk-ant-oat…`). Which one the user pasted decides
+ * the environment variable Claude reads it from — see
+ * lib/runtime/session-environment.ts.
+ */
 const ANTHROPIC_KEY_PREFIX = "sk-ant-";
 const MAX_KEY_LENGTH = 512;
 
@@ -60,7 +65,9 @@ export async function PUT(request: Request) {
   // placeholder) before they become a confusing provisioning failure later.
   if (!key.startsWith(ANTHROPIC_KEY_PREFIX)) {
     return NextResponse.json(
-      { error: `An Anthropic API key starts with "${ANTHROPIC_KEY_PREFIX}".` },
+      {
+        error: `Both an API key and a Claude Code token start with "${ANTHROPIC_KEY_PREFIX}". Check what you pasted.`,
+      },
       { status: 400 },
     );
   }
