@@ -48,6 +48,9 @@ export function NewSessionCreator({
       : (projects[0]?.id ?? ""),
   );
   const [message, setMessage] = useState<string | null>(null);
+  // Set when the failure is something the user fixes in settings, so the error
+  // can offer the way out instead of just naming the problem.
+  const [messageHref, setMessageHref] = useState<string | null>(null);
   const [isCreating, startCreating] = useTransition();
 
   const selected = projects.find((project) => project.id === projectId);
@@ -56,6 +59,7 @@ export function NewSessionCreator({
     if (!selected) return;
     startCreating(async () => {
       setMessage(null);
+      setMessageHref(null);
       let response: Response;
       try {
         response = await fetch(`/api/projects/${selected.id}/workspaces`, {
@@ -70,6 +74,9 @@ export function NewSessionCreator({
       const result = (await response.json().catch(() => ({}))) as CreateResponse;
       if (!response.ok || !result.workspace) {
         setMessage(result.error ?? "Could not start the session. Please try again.");
+        // 409 is the precondition family: a missing Anthropic key or GitHub
+        // connection. Both are fixed in the same place.
+        if (response.status === 409) setMessageHref("/settings/credentials");
         return;
       }
       const query = prompt.trim()
@@ -165,9 +172,20 @@ export function NewSessionCreator({
             </div>
 
             {message && (
-              <p aria-live="polite" className="text-destructive mt-4 text-center text-xs">
-                {message}
-              </p>
+              <div
+                aria-live="polite"
+                className="border-destructive/30 bg-destructive/10 mx-auto mt-5 max-w-md rounded-lg border px-4 py-3 text-center"
+              >
+                <p className="text-destructive text-sm">{message}</p>
+                {messageHref && (
+                  <Link
+                    href={messageHref}
+                    className="mt-2 inline-block text-sm font-medium underline underline-offset-4"
+                  >
+                    Open settings
+                  </Link>
+                )}
+              </div>
             )}
           </>
         )}
