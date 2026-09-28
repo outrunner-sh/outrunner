@@ -107,7 +107,25 @@ export function NewSessionCreator({
           outrunner
         </p>
 
-        <>
+        {/* First run gets its own screen. Dropping a brand-new user straight at
+            the composer means their first act is discovering they cannot send
+            yet; naming the one thing to do first is clearer than a disabled
+            placeholder. Once anything is connected, the repository select
+            reaches every repo, so this never comes back. */}
+        {projects.length === 0 ? (
+          <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed py-12 text-center">
+            <p className="text-sm font-medium">No repositories connected</p>
+            <p className="text-muted-foreground max-w-xs text-xs">
+              Choose which of your GitHub repositories to work in.
+            </p>
+            <Button asChild>
+              <Link href="/connect">
+                <Github className="mr-1 size-4" /> Connect GitHub repositories
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <>
             <SessionComposer
               onSend={create}
               canSend={!isCreating && selected != null}
@@ -155,7 +173,8 @@ export function NewSessionCreator({
                 )}
               </div>
             )}
-        </>
+          </>
+        )}
         </div>
       </div>
     </>
