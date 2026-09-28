@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Box, ChevronDown, GitBranch } from "lucide-react";
+import { Box, ChevronDown, GitBranch, Github } from "lucide-react";
 import { useState, useTransition } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
-import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { SessionComposer } from "@/components/session-composer";
+import { Button } from "@/components/ui/button";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import {
   DropdownMenu,
@@ -107,12 +108,15 @@ export function NewSessionCreator({
 
         {projects.length === 0 ? (
           <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed py-12 text-center">
-            <p className="text-sm font-medium">No repositories synchronized</p>
+            <p className="text-sm font-medium">No repositories connected</p>
             <p className="text-muted-foreground max-w-xs text-xs">
-              Pull in the repositories your GitHub token can access to start a
-              session.
+              Choose which of your GitHub repositories to work in.
             </p>
-            <ProjectsSyncButton align="center" />
+            <Button asChild>
+              <Link href="/connect">
+                <Github className="mr-1 size-4" /> Connect GitHub repositories
+              </Link>
+            </Button>
           </div>
         ) : (
           <>
