@@ -186,6 +186,21 @@ type UserCredentialsRow = {
   updated_at: string;
 };
 
+// Composer attachments: a file uploaded with a prompt. workspace_id is null
+// until the attachment is sent, because the home composer creates its workspace
+// by sending — the file exists before any workspace does.
+type AttachmentRow = {
+  id: string;
+  owner_id: string;
+  workspace_id: string | null;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  storage_path: string;
+  materialized_at: string | null;
+  created_at: string;
+};
+
 /** Columns the client may supply on insert (defaults fill the rest). */
 type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
   Partial<Omit<Row, Required | "created_at" | "updated_at">>;
@@ -284,6 +299,15 @@ export type Database = {
             referencedColumns: ["owner_id", "id"];
           },
         ];
+      };
+      attachments: {
+        Row: AttachmentRow;
+        Insert: Insert<
+          AttachmentRow,
+          "owner_id" | "filename" | "content_type" | "size_bytes" | "storage_path"
+        >;
+        Update: Partial<AttachmentRow>;
+        Relationships: [];
       };
       user_credentials: {
         Row: UserCredentialsRow;

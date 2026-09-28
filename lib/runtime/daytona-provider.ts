@@ -7,6 +7,7 @@ import { Daytona, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
+import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
 import {
   AGENT_PORT,
   type BoxIO,
@@ -455,6 +456,30 @@ export class DaytonaRuntimeProvider implements RuntimeProvider {
   ): Promise<CommitWorkspaceResult> {
     const sandbox = await this.daytona().get(sandboxId);
     return commitAll(this.gitExec(sandbox), { worktree: worktreePath, ...input });
+  }
+
+  /**
+   * Write composer attachments into a worktree's `.attachments/` directory.
+   *
+   * Claude's working directory is the worktree, so the prompt can then refer to
+   * them by relative path and Claude opens them with its own tools. Names are
+   * already sanitized and de-duplicated by lib/runtime/attachments.ts — this
+   * method must not be handed a raw user filename.
+   */
+  async writeWorkspaceAttachments(
+    sandboxId: string,
+    worktreePath: string,
+    files: Array<{ filename: string; bytes: Buffer }>,
+  ): Promise<void> {
+    if (files.length === 0) return;
+    const sandbox = await this.daytona().get(sandboxId);
+    const dir = `${worktreePath}/${ATTACHMENT_DIR}`;
+    // mkdir -p first: uploadFile does not create intermediate directories, and
+    // a fresh worktree has no .attachments/.
+    await sandbox.process.executeCommand(`mkdir -p ${shellQuote(dir)}`);
+    await Promise.all(
+      files.map((file) => sandbox.fs.uploadFile(file.bytes, `${dir}/${file.filename}`)),
+    );
   }
 
   /** Push an interactive worktree's persisted branch with a request-scoped token. */
