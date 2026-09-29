@@ -83,12 +83,27 @@ fn claude_binary() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    // Last resort: whatever PATH we did inherit.
-    std::env::var_os("PATH").and_then(|path| {
+    // Whatever PATH we did inherit (thin, but free to check).
+    if let Some(found) = std::env::var_os("PATH").and_then(|path| {
         std::env::split_paths(&path)
             .map(|dir| dir.join("claude"))
             .find(|candidate| candidate.is_file())
-    })
+    }) {
+        return Some(found);
+    }
+
+    // Ask the user's own login shell. The fixed paths above miss every version
+    // manager — nvm, volta, mise, asdf, fnm each put `claude` somewhere
+    // different, and an npm -g install lands wherever that node lives. A login
+    // shell sources the user's profile, so it resolves all of them at once
+    // without us enumerating each layout.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let out = std::process::Command::new(shell)
+        .args(["-lic", "command -v claude"])
+        .output()
+        .ok()?;
+    let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
+    path.is_file().then_some(path)
 }
 
 /// Strip ANSI escape sequences and the OSC-8 hyperlink wrappers Claude Code
@@ -199,7 +214,36 @@ pub async fn connect_claude_start(
     let login = ClaudeLogin { writer, transcript, rx, _child: child };
     *state.0.lock().unwrap() = Some(login);
 
-    url.ok_or_else(|| "no-authorize-url".to_string())
+    match url {
+        Some(url) => Ok(url),
+        None => {
+            // Hand back what the CLI actually printed, redacted. Without this a
+            // failure is just "no sign-in link" and every machine has to be
+            // debugged by hand — which is exactly what happened the first time
+            // this hit a machine other than the developer's.
+            let text = strip_ansi(&state.0.lock().unwrap().as_ref().map_or_else(
+                String::new,
+                |l| l.transcript.lock().unwrap().clone(),
+            ));
+            let re = regex::Regex::new(r"sk-ant-[A-Za-z0-9_-]{10,}").unwrap();
+            let tail: String = re
+                .replace_all(&text, "<redacted token>")
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .rev()
+                .take(6)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join(" | ");
+            Err(if tail.is_empty() {
+                "no-authorize-url".to_string()
+            } else {
+                format!("no-authorize-url: {tail}")
+            })
+        }
+    }
 }
 
 /// Hand the code from the browser to the waiting child and return the token.
