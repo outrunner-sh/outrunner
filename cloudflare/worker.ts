@@ -21,11 +21,16 @@ interface Env {
   NEXT_PUBLIC_SUPABASE_URL: string;
   NEXT_PUBLIC_SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  GITHUB_PAT: string;
   DAYTONA_API_KEY: string;
-  RUNTIME_OWNER_GITHUB_LOGIN: string;
-  CLAUDE_CODE_OAUTH_TOKEN?: string;
-  ANTHROPIC_API_KEY?: string;
+  /**
+   * Seals every user's GitHub and Claude credential at rest. REQUIRED: without
+   * it nothing can be stored, so each user's Connect Claude fails on save and
+   * every workspace create is refused — while the app otherwise looks healthy.
+   * 32 bytes, base64 or hex (`openssl rand -base64 32`).
+   */
+  CREDENTIALS_ENCRYPTION_KEY: string;
+  /** Optional allowlist. BLANK MEANS OPEN — note the polarity. */
+  RUNTIME_OWNER_GITHUB_LOGIN?: string;
 }
 
 export class OutrunnerControlPlane extends Container<Env> {
@@ -37,7 +42,10 @@ export class OutrunnerControlPlane extends Container<Env> {
   // cold on every hit after idle. Trade cost vs first-hit latency here.
   sleepAfter = "20m";
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  // Mirror the base class's own ctx type rather than naming DurableObjectState
+  // directly: the bare global resolves to DurableObjectState<unknown>, which is
+  // not assignable to what Container's constructor takes.
+  constructor(ctx: ConstructorParameters<typeof Container<Env>>[0], env: Env) {
     super(ctx, env);
 
     // Env passed to the container process. Non-secret config is inline; secrets
@@ -51,19 +59,21 @@ export class OutrunnerControlPlane extends Container<Env> {
       RUNTIME_BASE_URL: "https://outrunner.neev.ai",
       RUNTIME_AGENT_BINARY_PATH: "bin/runtime-agent-linux-amd64",
       DAYTONA_SNAPSHOT: "runtime-computer-v1",
-      RUNTIME_OWNER_GITHUB_LOGIN: env.RUNTIME_OWNER_GITHUB_LOGIN,
       NEXT_PUBLIC_SUPABASE_URL: env.NEXT_PUBLIC_SUPABASE_URL,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
-      GITHUB_PAT: env.GITHUB_PAT,
       DAYTONA_API_KEY: env.DAYTONA_API_KEY,
-      ...(env.CLAUDE_CODE_OAUTH_TOKEN
-        ? { CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN }
-        : {}),
-      ...(env.ANTHROPIC_API_KEY
-        ? { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY }
+      CREDENTIALS_ENCRYPTION_KEY: env.CREDENTIALS_ENCRYPTION_KEY,
+      // Blank/unset admits everyone, which is the intent for open sign-up.
+      ...(env.RUNTIME_OWNER_GITHUB_LOGIN
+        ? { RUNTIME_OWNER_GITHUB_LOGIN: env.RUNTIME_OWNER_GITHUB_LOGIN }
         : {}),
     };
+    // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
+    // app stopped reading them when it went multi-user. Each user's own
+    // credentials are sealed in the database and injected per sandbox, because
+    // a shared one lands in a box where Claude runs with
+    // --permission-mode bypassPermissions and is readable by whoever holds it.
   }
 }
 

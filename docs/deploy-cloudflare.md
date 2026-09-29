@@ -60,14 +60,28 @@ for s in \
   NEXT_PUBLIC_SUPABASE_URL \
   NEXT_PUBLIC_SUPABASE_ANON_KEY \
   SUPABASE_SERVICE_ROLE_KEY \
-  GITHUB_PAT \
   DAYTONA_API_KEY \
-  RUNTIME_OWNER_GITHUB_LOGIN \
-  CLAUDE_CODE_OAUTH_TOKEN ; do
+  CREDENTIALS_ENCRYPTION_KEY ; do
   pnpm dlx wrangler secret put "$s"
 done
-# Use ANTHROPIC_API_KEY instead of CLAUDE_CODE_OAUTH_TOKEN if that's your auth.
 ```
+
+`CREDENTIALS_ENCRYPTION_KEY` is required and easy to miss. It seals every
+user's GitHub and Claude credential at rest (`openssl rand -base64 32`).
+Without it the site loads, sign-in works, and then **every** Connect Claude
+fails on save and every workspace create is refused — so check
+`/api/health` reports `credentialEncryption: true` before telling anyone the
+deploy is up. Losing or rotating it makes stored credentials undecryptable;
+users are asked to reconnect rather than seeing an error.
+
+There is deliberately **no** `GITHUB_PAT`, `ANTHROPIC_API_KEY` or
+`CLAUDE_CODE_OAUTH_TOKEN`. The app stopped reading them when it went
+multi-user: each user's own credentials are sealed in the database and
+injected per sandbox. A shared one would land in a box where Claude runs with
+`--permission-mode bypassPermissions`, readable by whoever holds that box.
+
+`RUNTIME_OWNER_GITHUB_LOGIN` is optional and **blank means open sign-up** —
+note the polarity. Set it only to restrict access to named GitHub logins.
 
 `RUNTIME_BASE_URL=https://outrunner.neev.ai` is set in `worker.ts` and gates the
 app's same-origin CSRF checks, so it must equal the live domain.
