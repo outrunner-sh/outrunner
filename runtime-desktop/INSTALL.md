@@ -14,13 +14,22 @@ the sign-in listener).
 ## Install
 
 1. Open the DMG and drag **Outrunner** to Applications.
-2. Launch it. macOS will refuse, because the build is not signed with an Apple
-   Developer ID (see below).
-3. Open **System Settings → Privacy & Security**, scroll to the bottom, and
-   click **Open Anyway** next to the Outrunner message. Confirm.
+2. Run this once, then launch normally:
 
-On some macOS versions right-click → **Open** is enough; on recent ones only
-the Privacy & Security route works. Both are the same approval.
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Outrunner.app
+   ```
+
+Without it macOS refuses to open the app. Slack (or your browser) stamps
+downloaded files with a `com.apple.quarantine` attribute, and because this
+build is ad-hoc signed with no team identifier, Gatekeeper cannot attribute
+it to a known developer. The command clears that attribute for this one app.
+
+If you would rather not run a command: launch it, let it fail, then approve it
+under **System Settings → Privacy & Security → Open Anyway**. Same result.
+
+Do NOT disable Gatekeeper globally (`spctl --master-disable`) — that turns the
+check off for everything you ever download, not just this.
 
 ### Why macOS blocks it
 
