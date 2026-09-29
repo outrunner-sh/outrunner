@@ -17,7 +17,7 @@
     {
       "class_name": "OutrunnerControlPlane",
       "image": "../Dockerfile",
-      "instance_type": "standard",
+      "instance_type": "standard-1",
       "max_instances": 3
     }
   ],
