@@ -1,11 +1,24 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
+  "description": "Main window: shell basics plus the native Claude connect commands.",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://localhost:3000",
+      "https://outrunner.neev.ai"
+    ]
+  },
   "permissions": [
     "core:default",
     "opener:default",
-    "deep-link:default"
+    "deep-link:default",
+    "allow-connect-claude-start",
+    "allow-connect-claude-poll",
+    "allow-connect-claude-submit",
+    "allow-connect-claude-cancel",
+    "allow-connect-claude-debug"
   ]
 }

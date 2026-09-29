@@ -24,6 +24,13 @@ function GitHubMark() {
  * OAuth is used for identity only — repository access uses a separate PAT —
  * so the requested scopes are the minimum needed to read the account login.
  */
+/**
+ * Where the desktop shell listens for the OAuth redirect. Must match
+ * `OAUTH_PORT` in runtime-desktop/src-tauri/src/lib.rs, and be listed in the
+ * Supabase redirect allowlist.
+ */
+const DESKTOP_OAUTH_REDIRECT = "http://127.0.0.1:47823";
+
 export function SignInButton({ next = "/" }: { next?: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,11 +44,17 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
       // Desktop shell: GitHub blocks/renders poorly in the embedded webview, so
       // authorize in the system browser. `skipBrowserRedirect` keeps the PKCE
-      // verifier here in the webview; the OAuth code returns via the
-      // `runtime://auth/callback` deep link, which the shell feeds back to this
-      // app's `/auth/callback` so the exchange (and session cookie) happen here.
+      // verifier here in the webview; the code returns to the shell's loopback
+      // listener, which feeds it to this app's `/auth/callback` so the exchange
+      // (and the session cookie) happen here rather than in the browser.
       if (isDesktopApp()) {
-        const redirectTo = `runtime://auth/callback?next=${encodeURIComponent(next)}`;
+        // Loopback, not the `runtime://` scheme: RFC 8252 recommends it for
+        // native apps, it needs no OS-level scheme registration (which on macOS
+        // only happens for a registered .app bundle), and the provider
+        // allowlist takes an ordinary http entry. The desktop shell listens on
+        // this fixed port and hands the code to this webview, so the PKCE
+        // verifier and the session cookie both stay here.
+        const redirectTo = `${DESKTOP_OAUTH_REDIRECT}?next=${encodeURIComponent(next)}`;
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: "github",
           options: { redirectTo, scopes: "read:user user:email repo", skipBrowserRedirect: true },

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connect-claude-start"
+description = "Enables the connect_claude_start command without any pre-configured scope."
+commands.allow = ["connect_claude_start"]
+
+[[permission]]
+identifier = "deny-connect-claude-start"
+description = "Denies the connect_claude_start command without any pre-configured scope."
+commands.deny = ["connect_claude_start"]

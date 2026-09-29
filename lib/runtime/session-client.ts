@@ -148,9 +148,13 @@ export type EventSubscription = {
 export type EventSubscribeOptions = {
   /** Cursor to resume from; if set, appended as `?lastEventId=<id>`. */
   lastEventId?: string | null;
-  /** Called on browser-detected connection loss; hook triggers URL refresh. */
+  /** Called on browser-detected connection loss (close OR transport error); the
+   *  hook debounces these into one URL refresh + re-subscribe. */
   onClose?: () => void;
-  /** Schema-mismatch or transport error, not lifecycle. */
+  /** An actionable failure — a frame that isn't valid JSON / doesn't match the
+   *  AgentEvent schema, OR a socket that never opened (handshake failure: bad
+   *  token, wrong endpoint, refused). NOT a post-open transport drop (that is
+   *  `onClose`), so an idle socket reap never surfaces here. */
   onError?: (error: Error) => void;
 };
 
@@ -179,7 +183,12 @@ export function subscribeEventsWs(
 
   const ws = new WebSocket(url);
   let disposed = false;
+  let opened = false;
   let lastId: string | null = options.lastEventId ?? null;
+
+  ws.addEventListener("open", () => {
+    opened = true;
+  });
 
   ws.addEventListener("message", (raw) => {
     let frame: { id?: unknown; data?: unknown };
@@ -210,18 +219,29 @@ export function subscribeEventsWs(
     onEvent(parsed.data, id);
   });
 
-  // A WS close is always a real loss (unlike EventSource, which silently
-  // auto-reconnects on transient blips): surface it so the hook re-subscribes
-  // with the preserved cursor.
-  ws.addEventListener("close", () => {
+  // A close OR a transport error is a lifecycle loss. The browser fires 'error'
+  // then 'close', so one shared handler — made idempotent by `disposed` — never
+  // double-counts the pair.
+  //
+  // A socket that dropped AFTER opening is an idle reap or a network blip: the
+  // hook re-subscribes silently with the preserved cursor, so a self-healing
+  // idle drop never flashes a red banner (the "Events WebSocket error" noise).
+  //
+  // A socket that NEVER opened is a handshake failure — an invalid Runtime token
+  // (401), a wrong endpoint (404), or a refused connection. That is immediately
+  // actionable, so surface it via onError as well as reconnecting: a genuine
+  // misconfiguration shows up now instead of hiding behind a silent retry loop.
+  // (A fresh /session token on the next attempt still recovers an expired one.)
+  // onError otherwise stays reserved for protocol failures on a live socket (a
+  // frame that fails the schema).
+  const handleLoss = () => {
     if (disposed) return;
     dispose();
+    if (!opened) options.onError?.(new Error("Events WebSocket connection failed"));
     options.onClose?.();
-  });
-
-  ws.addEventListener("error", () => {
-    options.onError?.(new Error("Events WebSocket error"));
-  });
+  };
+  ws.addEventListener("close", handleLoss);
+  ws.addEventListener("error", handleLoss);
 
   function dispose(): void {
     if (disposed) return;

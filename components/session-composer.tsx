@@ -14,15 +14,26 @@ import { useAttachments } from "@/hooks/use-attachments";
  * rather than on send, so the wait happens while the user is still typing, and
  * `onSend` receives their ids to attach server-side.
  */
+
+/** Trim Claude's model id to a stable label — drop a trailing -YYYYMMDD date so
+ *  "claude-opus-4-5-20250115" reads as "claude-opus-4-5". */
+function formatModel(model: string): string {
+  return model.replace(/-\d{8}$/, "");
+}
+
 export function SessionComposer({
   onSend,
   canSend,
   disabledPlaceholder = "Read-only — another viewer has the keyboard",
+  model,
 }: {
   onSend: (text: string, attachmentIds: string[]) => void;
   canSend: boolean;
   /** Placeholder shown when input is disabled (offline, reader, connecting…). */
   disabledPlaceholder?: string;
+  /** The Claude model in use, shown in the footer. Omitted before any assistant
+   *  turn has arrived (and on the new-session form, which has no session yet). */
+  model?: string;
 }) {
   const [value, setValue] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -163,7 +174,9 @@ export function SessionComposer({
             Build
             <ChevronDown style={{ width: 11, marginLeft: 2, display: "inline" }} />
           </span>
-          <span className="studio-composer-model">claude opus 4.5</span>
+          {model && (
+            <span className="studio-composer-model">{formatModel(model)}</span>
+          )}
         </span>
         <button
           type="submit"

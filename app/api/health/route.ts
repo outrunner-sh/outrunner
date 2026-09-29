@@ -10,27 +10,29 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * Configuration and connectivity report. Deliberately exposes only booleans
- * about which secrets are present, never their values.
+ * Configuration and connectivity report for the DEPLOYMENT. Exposes only
+ * booleans about which settings are present, never their values, and nothing
+ * about any individual user's credentials.
  */
 export async function GET() {
+  // Deployment configuration only. GitHub and Claude credentials are per-user
+  // and live encrypted in the database, so there is nothing here to report
+  // about them — a deployment-wide boolean would say nothing true.
   const configured = {
     supabase:
       Boolean(optionalEnv("NEXT_PUBLIC_SUPABASE_URL")) &&
       Boolean(optionalEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY")),
     supabaseServiceRole: Boolean(optionalEnv("SUPABASE_SERVICE_ROLE_KEY")),
-    ownerLogin: Boolean(optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN")),
-    githubPat: Boolean(optionalEnv("GITHUB_PAT")),
-    linear:
-      Boolean(optionalEnv("LINEAR_CLIENT_ID")) &&
-      Boolean(optionalEnv("LINEAR_CLIENT_SECRET")),
+    // Without this no credential can be stored or read, so a deployment that
+    // otherwise looks healthy cannot actually run a workspace.
+    credentialEncryption: Boolean(optionalEnv("CREDENTIALS_ENCRYPTION_KEY")),
+    daytona: Boolean(optionalEnv("DAYTONA_API_KEY")),
     modal:
       Boolean(optionalEnv("MODAL_TOKEN_ID")) &&
       Boolean(optionalEnv("MODAL_TOKEN_SECRET")),
-    claude:
-      Boolean(optionalEnv("ANTHROPIC_API_KEY")) ||
-      Boolean(optionalEnv("CLAUDE_CODE_OAUTH_TOKEN")),
-    codex: Boolean(optionalEnv("CODEX_API_KEY")),
+    // Blank means open sign-up, which is a valid state — this reports whether
+    // access is restricted, not whether something is missing.
+    accessRestricted: Boolean(optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN")),
   };
 
   /**
@@ -60,14 +62,16 @@ export async function GET() {
     database.ok = database.migrated;
   }
 
-  const ok = configured.supabase && database.ok;
+  const ok = configured.supabase && configured.credentialEncryption && database.ok;
 
   // Point operators at the actual blocker: credentials come before migrations.
   const nextStep = !configured.supabase
     ? "Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local, then reload."
-    : !database.migrated
-      ? "Run supabase/migrations/*.sql in the Supabase SQL editor, then reload."
-      : null;
+    : !configured.credentialEncryption
+      ? "Set CREDENTIALS_ENCRYPTION_KEY in .env.local (openssl rand -base64 32), then reload."
+      : !database.migrated
+        ? "Run supabase/migrations/*.sql in the Supabase SQL editor, then reload."
+        : null;
 
   return NextResponse.json(
     {
