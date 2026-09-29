@@ -14,6 +14,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // The embedded native desktop shell is its own project (its own repo).
     "runtime-desktop/**",
+    // wrangler writes a bundled worker here on every deploy. Linting a build
+    // artifact produced six warnings that read like real findings.
+    "cloudflare/.wrangler/**",
   ]),
 ]);
 

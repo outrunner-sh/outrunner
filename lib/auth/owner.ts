@@ -1,4 +1,3 @@
-import type { User } from "@supabase/supabase-js";
 
 import { githubLogin, isOwner } from "@/lib/auth/allowlist";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
