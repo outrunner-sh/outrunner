@@ -45,6 +45,17 @@ export function parseSetupToken(raw: unknown): string | null {
 
 /** Human-readable message for a native-side error code. */
 export function messageForError(code: string): string {
+  // `no-authorize-url` arrives with the CLI's own last lines appended, so that a
+  // failure on someone else's machine says what Claude Code actually did rather
+  // than only that it didn't work. Common cause: Claude Code has never been run
+  // interactively there, so its first-run onboarding is on screen instead.
+  if (code.startsWith("no-authorize-url:")) {
+    const detail = code.slice("no-authorize-url:".length).trim();
+    return (
+      "Claude Code didn't return a sign-in link. Try running `claude` once in " +
+      `your terminal to clear any first-run setup, then reconnect. It said: ${detail}`
+    );
+  }
   switch (code) {
     case "claude-cli-not-found":
       return "Claude Code isn't installed on this machine. Install it, then try again.";

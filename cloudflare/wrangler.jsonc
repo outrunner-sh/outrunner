@@ -17,6 +17,15 @@
     {
       "class_name": "OutrunnerControlPlane",
       "image": "../Dockerfile",
+      // Build-time only. NEXT_PUBLIC_* is inlined into the client bundle by
+      // `next build`, so the Worker's runtime env never reaches the browser —
+      // without these the page loads and the client Supabase constructor throws.
+      // Both are shipped to every visitor by design, so they are not secrets;
+      // the service-role key and CREDENTIALS_ENCRYPTION_KEY stay Worker secrets.
+      "image_vars": {
+        "NEXT_PUBLIC_SUPABASE_URL": "https://butbnitdpiehgwqggowr.supabase.co",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_PzZINFybWQAKwQlBqs2qsg_4SNlVTMj"
+      },
       "instance_type": "standard-1",
       "max_instances": 3
     }

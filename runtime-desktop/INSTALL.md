@@ -1,23 +1,35 @@
 # Installing Outrunner (team build)
 
-`Outrunner_0.1.0_aarch64.dmg` — Apple Silicon only, ad-hoc signed.
+`Outrunner_0.1.0_universal.dmg` — universal (Intel + Apple Silicon), ad-hoc signed.
 
 ## Before you start
 
-The app is a thin shell around **https://outrunner.neev.ai**. If that site is
-not deployed and reachable, the window opens blank — the app has no local
-fallback. Check the site in a browser first.
+The app is a thin shell around **https://outrunner.neev.ai**, which is live.
+It has no local fallback, so if that site is ever down the window opens blank.
+
+Because it is a shell, web changes reach you on next launch with no reinstall —
+a new DMG is only needed for native changes (the Claude connect flow, the tray,
+the sign-in listener).
 
 ## Install
 
 1. Open the DMG and drag **Outrunner** to Applications.
-2. Launch it. macOS will refuse, because the build is not signed with an Apple
-   Developer ID (see below).
-3. Open **System Settings → Privacy & Security**, scroll to the bottom, and
-   click **Open Anyway** next to the Outrunner message. Confirm.
+2. Run this once, then launch normally:
 
-On some macOS versions right-click → **Open** is enough; on recent ones only
-the Privacy & Security route works. Both are the same approval.
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Outrunner.app
+   ```
+
+Without it macOS refuses to open the app. Slack (or your browser) stamps
+downloaded files with a `com.apple.quarantine` attribute, and because this
+build is ad-hoc signed with no team identifier, Gatekeeper cannot attribute
+it to a known developer. The command clears that attribute for this one app.
+
+If you would rather not run a command: launch it, let it fail, then approve it
+under **System Settings → Privacy & Security → Open Anyway**. Same result.
+
+Do NOT disable Gatekeeper globally (`spctl --master-disable`) — that turns the
+check off for everything you ever download, not just this.
 
 ### Why macOS blocks it
 
@@ -51,8 +63,7 @@ relaunch — the app looks for `claude` in the usual Homebrew, `~/.local/bin` an
 
 ## Known limits
 
-- **Apple Silicon only.** An Intel Mac cannot run this build; it needs a
-  universal binary (`--target universal-apple-darwin`).
-- **Unsigned**, as above.
+- **Unsigned** (ad-hoc), as above — the Privacy & Security step is required
+  once per install.
 - Closing the window keeps the app in the menu bar. Use **Quit Outrunner** from
   the tray menu to exit.

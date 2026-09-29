@@ -26,6 +26,21 @@ FROM base AS build
 COPY . .
 RUN pnpm install --frozen-lockfile
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# NEXT_PUBLIC_* is inlined into the client bundle at BUILD time — Next does not
+# read it at runtime. The container's runtime env (set by the Worker) therefore
+# never reaches the browser, and the client Supabase constructor throws
+# "Your project's URL and API key are required to create a Supabase client!"
+# while the server half stays perfectly healthy, because IT does read process.env.
+#
+# These two are published to every visitor's browser by design, so passing them
+# as build args costs nothing. Supplied by cloudflare/wrangler.jsonc image_vars.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+RUN test -n "$NEXT_PUBLIC_SUPABASE_URL" -a -n "$NEXT_PUBLIC_SUPABASE_ANON_KEY" \
+  || (echo "ERROR: NEXT_PUBLIC_SUPABASE_* build args are empty; the client bundle would ship without them" && exit 1)
 RUN pnpm build
 
 # ---- runtime: `next start` + the built agent binary --------------------------
