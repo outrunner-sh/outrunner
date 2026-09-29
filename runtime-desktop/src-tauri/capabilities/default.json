@@ -12,6 +12,9 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "deep-link:default"
+    "deep-link:default",
+    "allow-connect-claude-start",
+    "allow-connect-claude-submit",
+    "allow-connect-claude-cancel"
   ]
 }
