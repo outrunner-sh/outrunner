@@ -50,7 +50,12 @@ pub struct ClaudeLogin {
 }
 
 #[derive(Default)]
-pub struct ClaudeLoginState(pub Mutex<Option<ClaudeLogin>>);
+pub struct ClaudeLoginState(
+    pub Mutex<Option<ClaudeLogin>>,
+    /// The last attempt's output, kept after the child is dropped so a failure
+    /// can be diagnosed from what the CLI actually printed.
+    pub Mutex<String>,
+);
 
 /// Locate the `claude` binary.
 ///
@@ -255,15 +260,36 @@ pub async fn connect_claude_poll(
             let text = transcript.lock().unwrap();
             if let Some(token) = find_token(&strip_ansi(&text)) {
                 // Done with this attempt: drop the child so a retry is clean.
+                *state.1.lock().unwrap() = text.clone();
                 *state.0.lock().unwrap() = None;
                 return Ok(Some(token));
             }
+            *state.1.lock().unwrap() = text.clone();
         }
         if Instant::now() >= deadline {
             return Ok(None);
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+/// The last attempt's output, with any token redacted.
+///
+/// Diagnostics only. Tokens are replaced with their length so a transcript can
+/// be read without the credential in it — nothing here should ever hand back a
+/// secret, and a debug path is exactly where one leaks.
+#[tauri::command]
+pub async fn connect_claude_debug(
+    state: tauri::State<'_, ClaudeLoginState>,
+) -> Result<String, String> {
+    let raw = state.1.lock().unwrap().clone();
+    let text = strip_ansi(&raw);
+    let re = regex::Regex::new(r"sk-ant-[A-Za-z0-9_-]{10,}").unwrap();
+    Ok(re
+        .replace_all(&text, |c: &regex::Captures| {
+            format!("<REDACTED token, {} chars>", c[0].len())
+        })
+        .to_string())
 }
 
 /// Abandon a login in progress (the user closed the dialog).

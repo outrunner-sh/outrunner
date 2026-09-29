@@ -93,9 +93,13 @@ export function ClaudeConnection() {
         let token: string | null = null;
         try {
           token = await pollClaudeLogin();
-        } catch {
-          // The login was cancelled or replaced; stop watching.
-          return;
+        } catch (e) {
+          // Don't swallow this. A silent catch here hid a missing ACL grant:
+          // every poll was rejected, the loop gave up on the first tick, and the
+          // UI sat on the code field while the token was already in hand.
+          const reason = e instanceof Error ? e.message : String(e);
+          if (reason.includes("no-login-in-progress")) return;
+          throw e;
         }
         if (token) {
           await save(token);

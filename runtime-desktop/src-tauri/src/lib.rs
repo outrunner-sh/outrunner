@@ -150,6 +150,7 @@ pub fn run() {
             claude_login::connect_claude_start,
             claude_login::connect_claude_submit,
             claude_login::connect_claude_poll,
+            claude_login::connect_claude_debug,
             claude_login::connect_claude_cancel,
         ])
         // Must be registered first: focus the existing window instead of

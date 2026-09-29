@@ -15,6 +15,7 @@ fn main() {
                 "connect_claude_start",
                 "connect_claude_submit",
                 "connect_claude_poll",
+                "connect_claude_debug",
                 "connect_claude_cancel",
             ]),
         ),

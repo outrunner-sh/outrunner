@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connect-claude-debug"
+description = "Enables the connect_claude_debug command without any pre-configured scope."
+commands.allow = ["connect_claude_debug"]
+
+[[permission]]
+identifier = "deny-connect-claude-debug"
+description = "Denies the connect_claude_debug command without any pre-configured scope."
+commands.deny = ["connect_claude_debug"]
