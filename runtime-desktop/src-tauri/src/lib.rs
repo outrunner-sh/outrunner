@@ -20,6 +20,8 @@
 // `tauri dev`, and any app may claim the same scheme. Loopback needs no OS
 // registration and takes an ordinary http entry in the provider's allowlist.
 
+mod claude_login;
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -143,6 +145,12 @@ fn show_main(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(claude_login::ClaudeLoginState::default())
+        .invoke_handler(tauri::generate_handler![
+            claude_login::connect_claude_start,
+            claude_login::connect_claude_submit,
+            claude_login::connect_claude_cancel,
+        ])
         // Must be registered first: focus the existing window instead of
         // spawning a second instance (and forward any deep link it carried).
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {

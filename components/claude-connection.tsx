@@ -4,7 +4,11 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Check, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { connectClaudeViaDesktop } from "@/lib/desktop/connect-claude";
+import {
+  cancelClaudeLogin,
+  startClaudeLogin,
+  submitClaudeCode,
+} from "@/lib/desktop/connect-claude";
 import { isDesktopApp } from "@/lib/is-desktop";
 
 type Meta = { connected: boolean; last4: string | null };
@@ -47,11 +51,34 @@ export function ClaudeConnection() {
     };
   }, []);
 
+  // The CLI blocks on a browser round-trip, so connecting is two phases: open
+  // the authorize URL, then hand back the code it produces. `pending` holds the
+  // URL while we wait for the user to return with it.
+  const [pending, setPending] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+
   const connect = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      const token = await connectClaudeViaDesktop();
+      const url = await startClaudeLogin();
+      setPending(url);
+      // The shell bounces off-site navigations to the system browser, which is
+      // where this has to happen: Claude blocks embedded webviews, and the URL
+      // bar is the user's anti-phishing signal.
+      window.open(url, "_blank");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const finish = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const token = await submitClaudeCode(code);
       const res = await fetch("/api/settings/claude", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -62,11 +89,20 @@ export function ClaudeConnection() {
         throw new Error(body?.error ?? "Could not save the token.");
       }
       setMeta((await res.json()) as Meta);
+      setPending(null);
+      setCode("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connecting Claude failed.");
     } finally {
       setBusy(false);
     }
+  }, [code]);
+
+  const abandon = useCallback(() => {
+    void cancelClaudeLogin();
+    setPending(null);
+    setCode("");
+    setError(null);
   }, []);
 
   const disconnect = useCallback(async () => {
@@ -128,6 +164,43 @@ export function ClaudeConnection() {
             <p className="text-xs text-muted-foreground">
               Applies to workspaces created or restored after connecting.
             </p>
+          </div>
+        ) : desktop && pending ? (
+          <div className="space-y-3">
+            <p className="text-sm text-foreground">
+              Authorize in your browser, then paste the code it gives you.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Didn&apos;t open?{" "}
+              <a
+                href={pending}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-4"
+              >
+                Open the sign-in page
+              </a>
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && code.trim()) void finish();
+                }}
+                placeholder="Paste the code…"
+                aria-label="Authorization code"
+                autoFocus
+                spellCheck={false}
+                className="border-border bg-background/60 h-9 flex-1 rounded-md border px-3 text-sm"
+              />
+              <Button size="sm" disabled={busy || !code.trim()} onClick={finish}>
+                {busy ? <Loader2 className="size-4 animate-spin" /> : "Connect"}
+              </Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={abandon}>
+                Cancel
+              </Button>
+            </div>
           </div>
         ) : desktop ? (
           <div className="flex items-center justify-between gap-4">

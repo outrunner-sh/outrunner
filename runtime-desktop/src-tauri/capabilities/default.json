@@ -1,8 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Main window: shell basics plus the native Claude connect commands.",
   "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://localhost:3000",
+      "https://runtime.zerotrail.ai"
+    ]
+  },
   "permissions": [
     "core:default",
     "opener:default",

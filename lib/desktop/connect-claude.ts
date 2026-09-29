@@ -3,12 +3,15 @@ import { isDesktopApp } from "@/lib/is-desktop";
 /**
  * Desktop-only "Connect Claude" bridge.
  *
- * The hosted web UI runs inside the Tauri shell, which exposes the native
- * `connect_claude` command over IPC (enabled for this origin in the shell's
- * capabilities). That command runs `claude setup-token` on the user's machine —
- * opening the browser to log in if needed — and returns the minted token. The
- * web app never sees the local CLI; it only receives the resulting token and
- * hands it to the server for encrypted storage.
+ * The shell runs `claude setup-token` on the user's machine under a PTY and
+ * hands back the minted token; the web app never sees the local CLI and the
+ * user never opens a terminal.
+ *
+ * Two steps rather than one, because the CLI's flow has a browser round-trip in
+ * the middle: it prints an authorize URL, then blocks waiting for the code that
+ * URL produces. The code cannot be intercepted — `setup-token`'s redirect_uri is
+ * fixed to platform.claude.com — so a human carries it back. `start` returns the
+ * URL to open; `submit` feeds the code in and returns the token.
  */
 
 /** The slice of the injected Tauri global we rely on (withGlobalTauri: true). */
@@ -38,23 +41,26 @@ export function parseSetupToken(raw: unknown): string | null {
 }
 
 /** Human-readable message for a native-side error code. */
-function messageForError(code: string): string {
+export function messageForError(code: string): string {
   switch (code) {
     case "claude-cli-not-found":
       return "Claude Code isn't installed on this machine. Install it, then try again.";
-    case "claude-setup-token-failed":
+    case "no-authorize-url":
+      return "Claude Code didn't return a sign-in link. Check that `claude setup-token` runs in your terminal.";
+    case "no-login-in-progress":
+      return "That sign-in expired. Start again.";
+    case "empty-code":
+      return "Paste the code from the browser first.";
     case "no-token-in-output":
+      return "That code wasn't accepted. Check you copied all of it, then start again.";
+    case "claude-setup-token-failed":
       return "Couldn't get a token from Claude. Make sure you can run `claude setup-token`.";
     default:
       return code || "Connecting to Claude failed.";
   }
 }
 
-/**
- * Run the native connect flow and return the minted token. Throws with a
- * user-facing message on any failure (not desktop, bridge missing, CLI error).
- */
-export async function connectClaudeViaDesktop(): Promise<string> {
+function invoker(): (cmd: string, args?: unknown) => Promise<unknown> {
   if (!isDesktopApp()) {
     throw new Error("Connecting Claude is only available in the desktop app.");
   }
@@ -63,19 +69,53 @@ export async function connectClaudeViaDesktop(): Promise<string> {
   if (!invoke) {
     throw new Error("The desktop bridge is unavailable. Restart the app and try again.");
   }
+  return invoke;
+}
 
+/** Errors from `invoke` arrive as the bare string the Rust side returned. */
+function toMessage(error: unknown): string {
+  const code = error instanceof Error ? error.message : String(error);
+  return messageForError(code);
+}
+
+/**
+ * Start the native login. Returns the URL the user must open to authorize; the
+ * CLI stays running, blocked on its code prompt, until `submitClaudeCode`.
+ */
+export async function startClaudeLogin(): Promise<string> {
+  const invoke = invoker();
+  try {
+    const url = await invoke("connect_claude_start");
+    if (typeof url !== "string" || !url.startsWith("https://")) {
+      throw new Error("no-authorize-url");
+    }
+    return url;
+  } catch (error) {
+    throw new Error(toMessage(error));
+  }
+}
+
+/** Hand the browser's code to the waiting CLI and return the minted token. */
+export async function submitClaudeCode(code: string): Promise<string> {
+  const invoke = invoker();
   let raw: unknown;
   try {
-    raw = await invoke("connect_claude");
+    raw = await invoke("connect_claude_submit", { code });
   } catch (error) {
-    throw new Error(messageForError(error instanceof Error ? error.message : String(error)));
+    throw new Error(toMessage(error));
   }
-
   const token = parseSetupToken(raw);
   if (!token) {
-    throw new Error(
-      "Didn't receive a Claude token. Make sure Claude Code is installed and you're logged in.",
-    );
+    throw new Error(messageForError("no-token-in-output"));
   }
   return token;
+}
+
+/** Abandon a login in progress, so a retry starts from a clean CLI. */
+export async function cancelClaudeLogin(): Promise<void> {
+  try {
+    await invoker()("connect_claude_cancel");
+  } catch {
+    // Best effort: the shell drops the child on the next start anyway.
+  }
 }

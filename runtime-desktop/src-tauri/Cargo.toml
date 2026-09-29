@@ -26,4 +26,8 @@ tauri-plugin-oauth = "2"
 open = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `claude setup-token` drives an interactive terminal UI: with no PTY it
+# produces no output and never exits, so a plain Command::output() hangs.
+portable-pty = "0.8"
+regex = "1"
 
