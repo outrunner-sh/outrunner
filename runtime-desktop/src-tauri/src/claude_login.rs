@@ -9,13 +9,18 @@
 //
 //   1. prints "Opening browser to sign in…" and opens the system browser at
 //      https://claude.com/cai/oauth/authorize?...&code_challenge=...
-//   2. BLOCKS on the terminal waiting for an authorization code to be pasted
+//   2. waits while the user authorizes there
 //   3. prints the resulting sk-ant-oat… token
 //
-// Step 2 cannot be automated away: the authorize URL's redirect_uri is fixed to
-// platform.claude.com, so the code lands in the browser and a human has to carry
-// it back. That is why this is two commands rather than one — `start` gets the
-// URL, `submit` hands over the code — and why the UI shows a code field.
+// Step 2 normally completes hands-free: the browser lands on
+// platform.claude.com showing "You're all set up for Claude Code", the CLI
+// finishes on its own, and nothing is pasted anywhere. So the happy path is one
+// click, and `connect_claude_poll` watches for the token.
+//
+// The CLI can still fall back to prompting for a code on the terminal, so
+// `connect_claude_submit` remains for that case and the UI keeps a code field.
+// Do not assume the prompt: an earlier version waited for it unconditionally and
+// left the user hunting for a code that was never issued.
 //
 // The token is returned to the webview, which posts it to the app's own
 // credential endpoint. It is never written to disk here.
@@ -221,6 +226,44 @@ pub async fn connect_claude_submit(
     *guard = None;
 
     token.ok_or_else(|| "no-token-in-output".to_string())
+}
+
+/// Wait briefly for the CLI to print a token on its own, without a code.
+///
+/// The observed flow completes hands-free: authorizing in the browser lands on
+/// platform.claude.com, which reports "You're all set up for Claude Code", and
+/// the CLI finishes and prints the token with nothing pasted. The code prompt
+/// only appears when that automatic path does not fire, so the UI polls this
+/// and keeps the code field as a fallback rather than demanding a paste.
+///
+/// Returns None if no token has arrived yet — the caller polls again. Takes the
+/// state lock only long enough to clone the transcript handle, so a poll in
+/// flight never blocks cancel or submit.
+#[tauri::command]
+pub async fn connect_claude_poll(
+    state: tauri::State<'_, ClaudeLoginState>,
+) -> Result<Option<String>, String> {
+    let transcript = {
+        let guard = state.0.lock().unwrap();
+        let login = guard.as_ref().ok_or("no-login-in-progress")?;
+        Arc::clone(&login.transcript)
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        {
+            let text = transcript.lock().unwrap();
+            if let Some(token) = find_token(&strip_ansi(&text)) {
+                // Done with this attempt: drop the child so a retry is clean.
+                *state.0.lock().unwrap() = None;
+                return Ok(Some(token));
+            }
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 
 /// Abandon a login in progress (the user closed the dialog).

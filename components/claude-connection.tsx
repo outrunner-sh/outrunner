@@ -6,6 +6,7 @@ import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   cancelClaudeLogin,
+  pollClaudeLogin,
   startClaudeLogin,
   submitClaudeCode,
 } from "@/lib/desktop/connect-claude";
@@ -57,6 +58,22 @@ export function ClaudeConnection() {
   const [pending, setPending] = useState<string | null>(null);
   const [code, setCode] = useState("");
 
+  /** Store a freshly minted token and clear the in-progress state. */
+  const save = useCallback(async (token: string) => {
+    const res = await fetch("/api/settings/claude", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? "Could not save the token.");
+    }
+    setMeta((await res.json()) as Meta);
+    setPending(null);
+    setCode("");
+  }, []);
+
   const connect = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -67,36 +84,42 @@ export function ClaudeConnection() {
       // where this has to happen: Claude blocks embedded webviews, and the URL
       // bar is the user's anti-phishing signal.
       window.open(url, "_blank");
+
+      // Authorizing usually completes the login outright, so watch for the
+      // token rather than asking for a code that will never be issued. The code
+      // field stays on screen meanwhile, for the CLI's fallback prompt.
+      const deadline = Date.now() + 5 * 60 * 1000;
+      while (Date.now() < deadline) {
+        let token: string | null = null;
+        try {
+          token = await pollClaudeLogin();
+        } catch {
+          // The login was cancelled or replaced; stop watching.
+          return;
+        }
+        if (token) {
+          await save(token);
+          return;
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connecting Claude failed.");
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [save]);
 
   const finish = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      const token = await submitClaudeCode(code);
-      const res = await fetch("/api/settings/claude", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "Could not save the token.");
-      }
-      setMeta((await res.json()) as Meta);
-      setPending(null);
-      setCode("");
+      await save(await submitClaudeCode(code));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Connecting Claude failed.");
     } finally {
       setBusy(false);
     }
-  }, [code]);
+  }, [code, save]);
 
   const abandon = useCallback(() => {
     void cancelClaudeLogin();
@@ -168,7 +191,13 @@ export function ClaudeConnection() {
         ) : desktop && pending ? (
           <div className="space-y-3">
             <p className="text-sm text-foreground">
-              Authorize in your browser, then paste the code it gives you.
+              {busy
+                ? "Waiting for you to authorize in the browser…"
+                : "Authorize in your browser to finish."}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This finishes on its own once you approve. Only paste a code below
+              if Claude asks you for one.
             </p>
             <p className="text-xs text-muted-foreground">
               Didn&apos;t open?{" "}

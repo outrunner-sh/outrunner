@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connect-claude-poll"
+description = "Enables the connect_claude_poll command without any pre-configured scope."
+commands.allow = ["connect_claude_poll"]
+
+[[permission]]
+identifier = "deny-connect-claude-poll"
+description = "Denies the connect_claude_poll command without any pre-configured scope."
+commands.deny = ["connect_claude_poll"]

@@ -14,6 +14,7 @@ fn main() {
             tauri_build::AppManifest::new().commands(&[
                 "connect_claude_start",
                 "connect_claude_submit",
+                "connect_claude_poll",
                 "connect_claude_cancel",
             ]),
         ),

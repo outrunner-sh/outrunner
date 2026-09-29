@@ -7,11 +7,14 @@ import { isDesktopApp } from "@/lib/is-desktop";
  * hands back the minted token; the web app never sees the local CLI and the
  * user never opens a terminal.
  *
- * Two steps rather than one, because the CLI's flow has a browser round-trip in
- * the middle: it prints an authorize URL, then blocks waiting for the code that
- * URL produces. The code cannot be intercepted — `setup-token`'s redirect_uri is
- * fixed to platform.claude.com — so a human carries it back. `start` returns the
- * URL to open; `submit` feeds the code in and returns the token.
+ * The flow has a browser round-trip in the middle: `start` returns an authorize
+ * URL to open, and authorizing there normally finishes the login by itself — the
+ * CLI prints the token with nothing pasted, which `pollClaudeLogin` picks up. So
+ * the happy path is genuinely one click.
+ *
+ * `submitClaudeCode` covers the case where the CLI falls back to asking for a
+ * code on its terminal. Keep it: assuming the prompt always appears is what made
+ * the first version demand a code that was never issued.
  */
 
 /** The slice of the injected Tauri global we rely on (withGlobalTauri: true). */
@@ -80,7 +83,8 @@ function toMessage(error: unknown): string {
 
 /**
  * Start the native login. Returns the URL the user must open to authorize; the
- * CLI stays running, blocked on its code prompt, until `submitClaudeCode`.
+ * CLI stays running until it completes on its own (see `pollClaudeLogin`) or
+ * asks for a code (`submitClaudeCode`).
  */
 export async function startClaudeLogin(): Promise<string> {
   const invoke = invoker();
@@ -109,6 +113,20 @@ export async function submitClaudeCode(code: string): Promise<string> {
     throw new Error(messageForError("no-token-in-output"));
   }
   return token;
+}
+
+/**
+ * Ask whether the CLI has finished on its own yet.
+ *
+ * The normal flow needs no code at all: authorizing in the browser completes
+ * the login and the CLI prints the token unprompted. Resolves null when nothing
+ * has arrived yet — the caller polls again — so the code field is only ever a
+ * fallback for the case where the CLI does prompt.
+ */
+export async function pollClaudeLogin(): Promise<string | null> {
+  const raw = await invoker()("connect_claude_poll");
+  if (raw == null) return null;
+  return parseSetupToken(raw);
 }
 
 /** Abandon a login in progress, so a retry starts from a clean CLI. */
