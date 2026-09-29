@@ -52,7 +52,7 @@ export function HomeView({
         </div>
 
         <div className="space-y-0.5">
-          <RailItem icon={<Settings className="size-4" />} label="Settings" />
+          <RailItem icon={<Settings className="size-4" />} label="Settings" href="/settings/credentials" />
           <RailItem icon={<HelpCircle className="size-4" />} label="Help" />
         </div>
       </aside>
@@ -96,11 +96,33 @@ export function HomeView({
   );
 }
 
-function RailItem({ icon, label }: { icon: React.ReactNode; label: string }) {
+/**
+ * A rail entry. With `href` it navigates; without one it is an inert label for
+ * a destination that does not exist yet.
+ */
+function RailItem({
+  icon,
+  label,
+  href,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  href?: string;
+}) {
+  const className =
+    "flex items-center gap-2.5 rounded-md px-1 py-1.5 text-[15px] text-muted-foreground";
+  if (!href) {
+    return (
+      <div className={className}>
+        {icon}
+        {label}
+      </div>
+    );
+  }
   return (
-    <div className="flex items-center gap-2.5 px-1 py-1.5 text-[15px] text-muted-foreground">
+    <Link href={href} className={`${className} hover:bg-accent hover:text-foreground transition-colors`}>
       {icon}
       {label}
-    </div>
+    </Link>
   );
 }

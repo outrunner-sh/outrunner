@@ -1,7 +1,9 @@
+import type { Session, User } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
-import { isOwner } from "@/lib/auth/owner";
+import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
+import { setGithubToken } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -34,14 +36,48 @@ export async function GET(request: Request) {
     return signInError(base, error?.message ?? "exchange_failed");
   }
 
-  // Single-user by design: anyone who is not the configured owner is signed
-  // straight back out. This is the whole authorization model.
+  // Access is allowlisted: anyone whose GitHub login isn't in
+  // RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out. This is the whole
+  // authorization model.
   if (!isOwner(data.user)) {
     await supabase.auth.signOut();
     return signInError(base, "not_owner");
   }
 
+  await captureGithubToken(data);
+
   return NextResponse.redirect(`${base}${next}`);
+}
+
+/**
+ * Persist the GitHub access token this sign-in produced.
+ *
+ * THIS IS THE ONLY PLACE IT IS AVAILABLE. Supabase surfaces `provider_token`
+ * on the session returned by the code exchange and never stores or refreshes
+ * it — `getSession()` later in the app returns nothing for it. Miss it here and
+ * the user has to re-authenticate to get another one.
+ *
+ * Best-effort by design: a storage failure must not strand a user who has
+ * otherwise signed in successfully. They land in the app with no GitHub
+ * connection, which the UI already has to handle anyway (a first sign-in before
+ * the `repo` scope was granted looks identical), and the next sign-in retries.
+ */
+async function captureGithubToken(
+  data: { user: User | null; session: Session | null },
+): Promise<void> {
+  const token = data.session?.provider_token;
+  const login = data.user ? githubLogin(data.user) : null;
+  if (!token || !data.user || !login) return;
+
+  try {
+    await setGithubToken(data.user.id, token, login);
+  } catch (err) {
+    console.error(
+      `Could not store the GitHub token for ${data.user.id}; ` +
+        `sign-in continues without a GitHub connection.`,
+      err,
+    );
+  }
 }
 
 /**

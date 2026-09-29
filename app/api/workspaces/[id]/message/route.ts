@@ -9,6 +9,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
@@ -34,9 +35,16 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in as the Runtime owner." }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as { content?: string } | null;
-  const content = body?.content?.trim();
-  if (!content) {
+  const body = (await request.json().catch(() => null)) as
+    | { content?: string; attachmentIds?: unknown }
+    | null;
+  const content = body?.content?.trim() ?? "";
+  const attachmentIds = Array.isArray(body?.attachmentIds)
+    ? body.attachmentIds.filter((id): id is string => typeof id === "string")
+    : [];
+  // A prompt of only attachments is legitimate — "here's a screenshot" — so
+  // require text only when nothing else is being sent.
+  if (!content && attachmentIds.length === 0) {
     return NextResponse.json({ error: "A non-empty content is required." }, { status: 400 });
   }
 
@@ -87,8 +95,26 @@ export async function POST(request: Request, context: RouteContext) {
     userId: owner.id,
   };
 
+  let prompt = content;
   try {
-    await new AgentClient(target).sendMessage(identity, content);
+    prompt = await materializeAttachments({
+      provider,
+      sandboxId: computer.daytonaSandboxId,
+      worktreePath: workspace.worktreePath ?? "",
+      workspaceId: workspace.id,
+      attachmentIds,
+      prompt: content,
+    });
+  } catch (error) {
+    console.error(`Message: attachments failed for ${workspace.id}`, error);
+    return NextResponse.json(
+      { error: "Could not attach those files. Please try again." },
+      { status: 502 },
+    );
+  }
+
+  try {
+    await new AgentClient(target).sendMessage(identity, prompt);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
     return NextResponse.json(

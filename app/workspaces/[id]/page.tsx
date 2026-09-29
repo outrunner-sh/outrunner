@@ -18,12 +18,16 @@ export default async function WorkspacePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ prompt?: string }>;
+  searchParams: Promise<{ prompt?: string; attachment?: string | string[] }>;
 }) {
   if (!(await getOwnerSafe())) redirect("/signin");
 
   const { id } = await params;
-  const { prompt } = await searchParams;
+  const { prompt, attachment } = await searchParams;
+  // Repeated ?attachment= params arrive as a string when there is one and an
+  // array when there are several.
+  const initialAttachmentIds =
+    attachment === undefined ? [] : Array.isArray(attachment) ? attachment : [attachment];
   const workspace = await getWorkspace(id);
   if (!workspace) notFound();
   const project = await getProject(workspace.projectId);
@@ -55,6 +59,7 @@ export default async function WorkspacePage({
         allWorkspaces={allWorkspaces}
         pullRequest={pullRequest}
         initialPrompt={prompt}
+        initialAttachmentIds={initialAttachmentIds}
       />
     </AppShell>
   );

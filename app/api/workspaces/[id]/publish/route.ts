@@ -8,12 +8,12 @@ import {
   getWorkspace,
   getWorkspacePullRequest,
 } from "@/lib/db/repositories";
-import { optionalEnv, requireEnv } from "@/lib/env";
 import {
   findOrCreatePullRequest,
   GitHubSyncError,
   verifyTokenOwner,
 } from "@/lib/github/client";
+import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
@@ -62,13 +62,14 @@ export async function POST(request: Request, context: RouteContext) {
     `Runtime: ${workspace.branch}`;
   const prBody = typeof body.body === "string" ? body.body.slice(0, MAX_BODY) : "";
 
-  if (!optionalEnv("GITHUB_PAT")) {
+  const githubToken = await optionalGithubToken(owner.id);
+  if (!githubToken) {
     return NextResponse.json(
       {
         error:
-          "GITHUB_PAT with Contents and Pull requests write access is required to publish.",
+          "Connect your GitHub account to publish: sign out and back in to grant repository access.",
       },
-      { status: 422 },
+      { status: 409 },
     );
   }
 
@@ -89,9 +90,10 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ pullRequest: existing, alreadyPublished: true });
   }
 
-  // Confirm the PAT still belongs to the signed-in owner before using it.
+  // Confirm the stored token still belongs to the signed-in user before use:
+  // a provider_token can be revoked on GitHub's side at any time.
   try {
-    await verifyTokenOwner(owner.githubLogin);
+    await verifyTokenOwner(githubToken, owner.githubLogin);
   } catch (error) {
     console.error(`Workspace ${id} publish token check failed`, error);
     return NextResponse.json(
@@ -137,7 +139,7 @@ export async function POST(request: Request, context: RouteContext) {
         {
           repoFullName: project.fullName,
           branch: workspace.branch,
-          githubToken: requireEnv("GITHUB_PAT"),
+          githubToken,
         },
       );
     } else {
@@ -161,7 +163,7 @@ export async function POST(request: Request, context: RouteContext) {
         sandboxId: workspace.sandboxId!,
         repoFullName: project.fullName,
         branch: workspace.branch,
-        githubToken: requireEnv("GITHUB_PAT"),
+        githubToken,
       });
     }
   } catch (error) {
@@ -175,6 +177,7 @@ export async function POST(request: Request, context: RouteContext) {
   let pr;
   try {
     pr = await findOrCreatePullRequest({
+      token: githubToken,
       repoFullName: project.fullName,
       headBranch: workspace.branch,
       baseBranch: workspace.baseBranch,

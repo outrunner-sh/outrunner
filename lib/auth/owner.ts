@@ -1,5 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 
+import { parseAllowlist } from "@/lib/auth/allowlist";
 import { optionalEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -11,18 +12,29 @@ export type Owner = {
 };
 
 /**
- * Runtime is single-user by design. Identity comes from GitHub OAuth, and
- * `RUNTIME_OWNER_GITHUB_LOGIN` is the allowlist: exactly one account may use
- * this deployment. This is the entire authorization model — no roles, no teams.
+ * Whether this user may use the deployment.
  *
- * The login is read from the GitHub OAuth identity (see {@link githubLogin}),
- * so this only ever returns true for a user who actually signed in with the
- * allowlisted GitHub account.
+ * Sign-up is open: anyone who authenticates with GitHub gets in. What keeps
+ * users apart is not this check but the data model — every row carries
+ * `owner_id` and RLS restricts it to `auth.uid()`, so each account sees only
+ * its own projects and workspaces, and each runs on credentials it supplied
+ * itself (see lib/db/credentials.ts).
+ *
+ * Requiring a GitHub identity is still meaningful. {@link githubLogin} reads
+ * `identities[]`, so this returns true only for a session that actually came
+ * from GitHub — not one minted through some other provider that happens to be
+ * enabled on the Supabase project.
+ *
+ * `RUNTIME_OWNER_GITHUB_LOGIN` narrows access back to a named allowlist when
+ * set. Leave it unset for open sign-up; set it to keep a deployment private.
+ * Note the polarity: unset means OPEN here, where it used to mean CLOSED.
  */
 export function isOwner(user: User): boolean {
-  const allowed = optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN");
-  if (!allowed) return false;
-  return githubLogin(user)?.toLowerCase() === allowed.toLowerCase();
+  const login = githubLogin(user)?.toLowerCase();
+  if (login == null) return false;
+
+  const allowed = parseAllowlist(optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN"));
+  return allowed.size === 0 || allowed.has(login);
 }
 
 /**

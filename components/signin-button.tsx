@@ -44,7 +44,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
         const redirectTo = `runtime://auth/callback?next=${encodeURIComponent(next)}`;
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: "github",
-          options: { redirectTo, scopes: "read:user user:email", skipBrowserRedirect: true },
+          options: { redirectTo, scopes: "read:user user:email repo", skipBrowserRedirect: true },
         });
         if (error) throw error;
         // Navigating to the provider URL is intercepted by the shell, which
@@ -58,7 +58,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "github",
-        options: { redirectTo, scopes: "read:user user:email" },
+        options: { redirectTo, scopes: "read:user user:email repo" },
       });
 
       // On success the browser navigates away, so we only reach here on failure.

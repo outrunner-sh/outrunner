@@ -16,12 +16,15 @@ export function WorkspaceSession({
   workspaceId,
   showTerminal,
   initialPrompt,
+  initialAttachmentIds,
 }: {
   workspaceId: string;
   /** Whether the collapsible live terminal is revealed (owned by the studio). */
   showTerminal: boolean;
   /** First prompt to send once the session accepts input (from /new). */
   initialPrompt?: string;
+  /** Attachment ids from the home composer, delivered with the first prompt. */
+  initialAttachmentIds?: string[];
 }) {
   const terminalContainer = useRef<HTMLDivElement>(null);
   const attachment = useSessionAttachment(workspaceId);
@@ -47,7 +50,7 @@ export function WorkspaceSession({
   // confuse the match.
   const [pending, setPending] = useState<{ id: string; text: string; expect: number }[]>([]);
 
-  const send = (text: string) => {
+  const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
     if (trimmed) {
       setPending((prev) => {
@@ -63,7 +66,7 @@ export function WorkspaceSession({
     return fetch(`/api/workspaces/${workspaceId}/message`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: text }),
+      body: JSON.stringify({ content: text, attachmentIds }),
     });
   };
 
@@ -86,12 +89,12 @@ export function WorkspaceSession({
   const sentInitial = useRef(false);
   useEffect(() => {
     if (sentInitial.current) return;
-    if (!initialPrompt || !canSend) return;
+    if ((!initialPrompt && !initialAttachmentIds?.length) || !canSend) return;
     sentInitial.current = true;
     // send() queues an optimistic bubble (setState); this is a one-time guarded
     // fire on ready, not a render cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void send(initialPrompt)
+    void send(initialPrompt ?? "", initialAttachmentIds ?? [])
       .then((res) => {
         // Strip only after the POST is accepted, so a failed delivery leaves
         // ?prompt= in place for a refresh to retry. Remove just the prompt param
@@ -106,7 +109,7 @@ export function WorkspaceSession({
       });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSend, initialPrompt]);
+  }, [canSend, initialPrompt, initialAttachmentIds]);
 
   return (
     <div className="studio-live-session" data-testid="workspace-session">

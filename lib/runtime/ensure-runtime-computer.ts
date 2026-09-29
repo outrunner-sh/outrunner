@@ -131,14 +131,3 @@ async function waitForReadyComputer(
     await deps.sleep(POLL_INTERVAL_MS);
   }
 }
-
-/** Server-only secrets that Claude needs after the agent is booted. */
-export function runtimeSessionEnvironment(): Record<string, string> {
-  const keys = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CODEX_API_KEY"] as const;
-  return Object.fromEntries(
-    keys.flatMap((key) => {
-      const value = process.env[key];
-      return value ? [[key, value]] : [];
-    }),
-  );
-}
