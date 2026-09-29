@@ -48,7 +48,7 @@ fn site() -> String {
     if cfg!(debug_assertions) {
         "http://localhost:3000".to_string()
     } else {
-        "https://runtime.zerotrail.ai".to_string()
+        "https://outrunner.neev.ai".to_string()
     }
 }
 

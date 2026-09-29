@@ -1,6 +1,6 @@
 # Runtime Desktop
 
-A lightweight native macOS shell for [Runtime](https://runtime.zerotrail.ai),
+A lightweight native macOS shell for [Outrunner](https://outrunner.neev.ai),
 built with [Tauri v2](https://tauri.app). Conductor-style: a real app window
 plus a menu-bar (tray) presence, wrapping the hosted Runtime web UI.
 
@@ -10,7 +10,7 @@ OS niceties — no duplicated frontend, always up to date with the deploy.
 
 ## What it does today
 
-- **Main window** loads `https://runtime.zerotrail.ai` (system WebView — no
+- **Main window** loads `https://outrunner.neev.ai` (system WebView — no
   bundled Chromium, so the app is a few MB).
 - **Tray icon + menu**: Show Runtime · New Workspace · Reload · Quit.
 - **Left-click the tray** toggles the window.
