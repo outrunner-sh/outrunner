@@ -1,0 +1,65 @@
+name: CI
+
+# Typecheck, lint and test the Outrunner app, its Go agent, and the Cloudflare
+# worker. The worker is deliberately outside the app's pnpm workspace and
+# excluded from the app's tsconfig, so this job is the only thing that checks it.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: App (typecheck, lint, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm lint
+      - run: pnpm test
+
+  agent:
+    name: Go agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: runtime-agent/go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  worker:
+    name: Cloudflare worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Deliberately outside the app's pnpm workspace, and excluded from the
+      # app's tsconfig — so this is the only thing that typechecks it.
+      - run: pnpm install --ignore-workspace --frozen-lockfile
+      - run: pnpm check

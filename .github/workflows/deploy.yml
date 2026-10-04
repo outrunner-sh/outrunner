@@ -1,0 +1,73 @@
+name: Deploy to Cloudflare Containers
+
+# Builds the control-plane container image and deploys it to
+# https://outrunner.neev.ai.
+#
+# Why this exists rather than deploying from a laptop: Cloudflare Containers has
+# no server-side build. `wrangler deploy` builds the image with a LOCAL Docker
+# and pushes it to registry.cloudflare.com, so without this the deploy depends
+# on whoever's machine has a working Docker daemon that day.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN   - Workers Scripts:Edit, Durable Objects:Edit,
+#                            Containers:Edit, and neev.ai Zone:DNS:Edit
+#   CLOUDFLARE_ACCOUNT_ID  - the Neevcloud account id
+#
+# Runtime secrets (Supabase, Daytona, CREDENTIALS_ENCRYPTION_KEY) are NOT set
+# here. They live as Worker secrets, set once with `wrangler secret put`, and
+# survive deploys — so they never pass through CI.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deploy tooling
+        working-directory: cloudflare
+        # --ignore-workspace: this package is deliberately outside the app's
+        # pnpm workspace, so a plain install resolves nothing.
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      - name: Typecheck the worker
+        working-directory: cloudflare
+        # Cheap, and it has caught a real error: the app's tsconfig excludes
+        # cloudflare/, so nothing else looks at this file.
+        run: pnpm check
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare
+          wranglerVersion: "4"
+          command: deploy
+
+      - name: Verify the deployment is actually usable
+        # A deploy that returns 200 can still be broken: without
+        # CREDENTIALS_ENCRYPTION_KEY the site loads, sign-in works, and every
+        # credential write fails. Fail the job rather than report success.
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS https://outrunner.neev.ai/api/health); then break; fi
+            sleep 10
+          done
+          : "${body:?/api/health never responded}"
+          echo "$body"
+          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else print('health OK:',c)" <<< "$body"
