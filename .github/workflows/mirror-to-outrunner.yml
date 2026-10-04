@@ -1,7 +1,7 @@
-# Keep immadsahin/runtime an exact git mirror of this repo.
+# Keep immadsahin/outrunner an exact git mirror of this repo.
 # On every branch/tag push or delete, force-sync all heads and tags downstream.
-# Requires repo secret MIRROR_PAT: a token with Contents:write on immadsahin/runtime.
-name: Mirror to runtime
+# Requires repo secret MIRROR_PAT: a token with Contents:write on immadsahin/outrunner.
+name: Mirror to immadsahin/outrunner
 
 on:
   push:
@@ -11,16 +11,16 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: mirror-to-runtime
+  group: mirror-to-outrunner
   cancel-in-progress: false
 
 jobs:
   mirror:
-    # Guard so the mirrored copy in immadsahin/runtime never runs this itself.
+    # Guard so a mirrored copy never runs this against itself.
     if: github.repository == 'neevai-labs/outrunner'
     runs-on: ubuntu-latest
     steps:
-      - name: Mirror outrunner -> immadsahin/runtime
+      - name: Mirror outrunner -> immadsahin/outrunner
         env:
           GH_TOKEN: ${{ github.token }}
           MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
@@ -29,5 +29,5 @@ jobs:
           git clone --mirror "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
           cd src
           git push --force --prune \
-            "https://x-access-token:${MIRROR_PAT}@github.com/immadsahin/runtime.git" \
+            "https://x-access-token:${MIRROR_PAT}@github.com/immadsahin/outrunner.git" \
             'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
