@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "agent": "bash ../scripts/build-agent-desktop.sh",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

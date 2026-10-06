@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "ai.zerotrail.runtime",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun run agent && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun run agent && bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -32,6 +32,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/runtime-agent"
     ]
   }
 }

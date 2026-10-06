@@ -56,3 +56,6 @@ bun.lock
 bin/runtime-agent-linux-amd64
 # Default build-agent.sh output dir (scripts/build-agent.sh calls it gitignored).
 /.context/
+
+# macOS agent sidecars — build with scripts/build-agent-desktop.sh, not committed.
+/runtime-desktop/src-tauri/binaries/
