@@ -380,22 +380,25 @@ pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LocalRepo {
-    /// The repository's top level, even if a subfolder was chosen.
+pub struct LocalFolder {
+    /// The repository's top level for a git folder (even if a subfolder was
+    /// chosen), else the folder as chosen.
     path: String,
-    /// Whether any remote points at the project's GitHub repository.
-    matches: bool,
-    /// `owner/name` of every remote, to say what was picked when it is wrong.
-    remotes: Vec<String>,
+    name: String,
+    /// A repository with a commit to branch from: sessions get a worktree.
+    /// Otherwise Claude works in the folder itself.
+    git: bool,
+    /// The checked-out branch, when there is one.
+    branch: Option<String>,
 }
 
-/// Ask the user for their clone of a project. `None` means they cancelled.
+/// Ask the user for a folder to work in. `None` means they cancelled.
 #[tauri::command]
-pub async fn local_pick_repo(app: AppHandle, repo_full_name: String) -> Result<Option<LocalRepo>, String> {
+pub async fn local_pick_folder(app: AppHandle) -> Result<Option<LocalFolder>, String> {
     let (picked, folder) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .set_title(format!("Choose your clone of {repo_full_name}"))
+        .set_title("Choose a folder to work in")
         .pick_folder(move |choice| {
             let _ = picked.send(choice);
         });
@@ -403,32 +406,64 @@ pub async fn local_pick_repo(app: AppHandle, repo_full_name: String) -> Result<O
         return Ok(None);
     };
     let path = folder.into_path().map_err(|error| error.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || inspect_repo(&path, &repo_full_name))
+    tauri::async_runtime::spawn_blocking(move || inspect_folder(&path))
         .await
         .map_err(|error| error.to_string())?
         .map(Some)
 }
 
-/// Re-check a remembered clone: it may have moved, or been re-pointed.
+/// Re-check a remembered folder: it may have moved or gone.
 #[tauri::command]
-pub async fn local_check_repo(path: String, repo_full_name: String) -> Result<LocalRepo, String> {
-    tauri::async_runtime::spawn_blocking(move || inspect_repo(Path::new(&path), &repo_full_name))
+pub async fn local_check_folder(path: String) -> Result<LocalFolder, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_folder(Path::new(&path)))
         .await
         .map_err(|error| error.to_string())?
 }
 
-fn inspect_repo(path: &Path, repo_full_name: &str) -> Result<LocalRepo, String> {
-    let top = git_output(path, &["rev-parse", "--show-toplevel"]).ok_or("not-a-repo")?;
-    let mut remotes: Vec<String> = git_output(Path::new(&top), &["remote", "-v"])
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| line.split_whitespace().nth(1))
-        .filter_map(repo_slug)
-        .collect();
-    remotes.sort();
-    remotes.dedup();
-    let matches = remotes.iter().any(|remote| remote.eq_ignore_ascii_case(repo_full_name));
-    Ok(LocalRepo { path: top, matches, remotes })
+/// The sessions the agent on this Mac knows, newest first. Local sessions live
+/// only here, not in the shared database.
+#[tauri::command]
+pub async fn local_list_sessions(
+    app: AppHandle,
+    state: State<'_, LocalRuntime>,
+) -> Result<serde_json::Value, String> {
+    let agent = state.agent().await?;
+    // Listing is not about one workspace; the agent only checks the signature.
+    let token = mint_token(&agent.secret, "registry", "local", &device_id(&app)?);
+    let response = http_client()
+        .get(format!("http://{}/workspaces", agent.addr))
+        .bearer_auth(token)
+        .timeout(REQUEST_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| format!("agent-unreachable: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("agent: listing sessions failed ({})", response.status()));
+    }
+    let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    Ok(body.get("workspaces").cloned().unwrap_or_else(|| serde_json::json!([])))
+}
+
+/// Mirrors the agent's own check (internal/workspace inspectFolder), so the
+/// page can say up front whether a session will get a worktree.
+fn inspect_folder(path: &Path) -> Result<LocalFolder, String> {
+    if !path.is_dir() {
+        return Err("folder-missing".into());
+    }
+    let as_given = path.to_string_lossy().into_owned();
+    let name_of = |p: &str| {
+        Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string())
+    };
+    let git = git_output(path, &["rev-parse", "--show-toplevel"])
+        .filter(|top| git_output(Path::new(top), &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).is_some());
+    Ok(match git {
+        Some(top) => {
+            let branch = git_output(Path::new(&top), &["rev-parse", "--abbrev-ref", "HEAD"])
+                .filter(|branch| branch != "HEAD" && !branch.is_empty());
+            LocalFolder { name: name_of(&top), path: top, git: true, branch }
+        }
+        None => LocalFolder { name: name_of(&as_given), path: as_given, git: false, branch: None },
+    })
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
@@ -444,21 +479,6 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// `owner/name` from a remote URL, scp-style (`git@github.com:o/n.git`) or not
-/// (`https://github.com/o/n`, `ssh://git@github.com/o/n.git`).
-fn repo_slug(url: &str) -> Option<String> {
-    let trimmed = url.trim().trim_end_matches('/');
-    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
-    let path = match trimmed.split_once("://") {
-        Some((_, rest)) => rest.split_once('/')?.1,
-        None => trimmed.split_once(':')?.1,
-    };
-    let mut parts = path.rsplit('/');
-    let name = parts.next()?;
-    let owner = parts.next()?;
-    (!owner.is_empty() && !name.is_empty()).then(|| format!("{owner}/{name}"))
 }
 
 /// The agent routes the page may call, each bound to the workspace its token is
@@ -683,16 +703,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repo_slug_reads_every_remote_form() {
-        for (url, want) in [
-            ("git@github.com:neevai-labs/outrunner.git", "neevai-labs/outrunner"),
-            ("https://github.com/neevai-labs/outrunner", "neevai-labs/outrunner"),
-            ("https://github.com/neevai-labs/outrunner.git/", "neevai-labs/outrunner"),
-            ("ssh://git@github.com/neevai-labs/outrunner.git", "neevai-labs/outrunner"),
-        ] {
-            assert_eq!(repo_slug(url).as_deref(), Some(want), "{url}");
-        }
-        assert_eq!(repo_slug("not a url"), None);
+    fn folders_report_whether_sessions_get_a_worktree() {
+        let dir = std::env::temp_dir().join(format!("outrunner-folder-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = inspect_folder(&dir).unwrap();
+        assert!(!plain.git, "a plain folder is worked on in place");
+        assert_eq!(plain.branch, None);
+
+        let git = |args: &[&str]| {
+            Command::new("git").arg("-C").arg(&dir)
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
+                .args(args).output().unwrap()
+        };
+        git(&["init", "-q", "-b", "trunk"]);
+        assert!(!inspect_folder(&dir).unwrap().git, "a repository with no commit has nothing to branch");
+        std::fs::write(dir.join("a"), "a").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "a"]);
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let repo = inspect_folder(&sub).unwrap();
+        assert!(repo.git);
+        assert_eq!(repo.branch.as_deref(), Some("trunk"));
+        assert!(!repo.path.ends_with("/sub"), "a subfolder resolves to the repository's top level");
+
+        assert_eq!(inspect_folder(&dir.join("missing")).err().as_deref(), Some("folder-missing"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
