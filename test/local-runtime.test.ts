@@ -37,7 +37,7 @@ test("missing tools are named in install order", () => {
 });
 
 test("app error codes become sentences; agent messages pass through", () => {
-  assert.match(messageForLocalError("not-a-repo"), /isn't a git repository/);
+  assert.match(messageForLocalError("folder-missing"), /isn.t there any more/);
   assert.match(messageForLocalError(new Error("agent-did-not-start")), /agent\.log/);
   assert.equal(messageForLocalError("agent: worktree add: branch exists"), "worktree add: branch exists");
 });

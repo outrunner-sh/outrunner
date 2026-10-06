@@ -2,24 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import type { LocalCreate } from "@/hooks/use-create-session";
 import { useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
 import {
-  checkLocalRepo,
-  pickLocalRepo,
-  rememberedRepo,
-  rememberRepo,
+  checkLocalFolder,
+  pickLocalFolder,
+  rememberedFolder,
+  rememberFolder,
+  type LocalFolder,
 } from "@/lib/desktop/local-runtime";
-import type { Project } from "@/lib/runtime/types";
 
 export type SessionLocation = "cloud" | "local";
 
-/** The clone a local session would branch from, for the selected project. */
-export type LocalClone =
+/** The folder a local session would work in. */
+export type FolderChoice =
   | { state: "none" }
   | { state: "checking" }
-  | { state: "ok"; path: string }
-  | { state: "mismatch"; path: string; remotes: string[] }
+  | { state: "ok"; folder: LocalFolder }
   | { state: "error"; message: string };
 
 const LOCATION_KEY = "outrunner:session-location";
@@ -33,24 +31,21 @@ function savedLocation(): SessionLocation {
 }
 
 /**
- * Where a new session runs — a cloud box or this Mac — and, for this Mac, the
- * user's clone of the selected project. Owns the choice, the remembered clone
- * (re-checked whenever the project changes, since it may have moved), and the
- * one reason, if any, a local session cannot start yet.
+ * Where a new session runs — a cloud box on a GitHub repository, or this Mac on
+ * any folder — and, for this Mac, which folder. Owns the choice, the folder the
+ * last local session used (re-checked, since it may have moved), and the one
+ * reason, if any, a local session cannot start yet.
  */
-export function useSessionLocation(project: Project | undefined) {
+export function useSessionLocation() {
   const runtime = useLocalRuntime();
   // The last choice sticks. It only takes effect where local is possible, so
   // the server render and the first client render agree (both say cloud).
   const [chosen, setChosen] = useState<SessionLocation>(savedLocation);
-  // The latest answer about a clone: one the user just picked, or the result of
-  // re-checking the remembered one.
-  const [found, setFound] = useState<{
-    projectId: string;
-    path: string;
-    picked: boolean;
-    clone: LocalClone;
-  } | null>(null);
+  // The latest answer about a folder: one just picked, or the remembered one
+  // re-checked.
+  const [found, setFound] = useState<{ path: string; picked: boolean; choice: FolderChoice } | null>(
+    null,
+  );
 
   const location: SessionLocation = runtime.state === "ready" ? chosen : "cloud";
 
@@ -63,104 +58,79 @@ export function useSessionLocation(project: Project | undefined) {
     }
   }, []);
 
-  // Re-check the remembered clone for the selected project: it may have moved.
+  // Re-check the remembered folder once local is chosen: it may have moved.
   useEffect(() => {
-    if (location !== "local" || !project) return;
-    const path = rememberedRepo(project.id);
+    if (location !== "local") return;
+    const path = rememberedFolder();
     if (!path) return;
     let cancelled = false;
-    checkLocalRepo(path, project.fullName)
-      .then((repo) => {
-        if (cancelled) return;
-        setFound({
-          projectId: project.id,
-          path,
-          picked: false,
-          clone: repo.matches
-            ? { state: "ok", path: repo.path }
-            : { state: "mismatch", path: repo.path, remotes: repo.remotes },
-        });
+    checkLocalFolder(path)
+      .then((folder) => {
+        if (!cancelled) setFound({ path, picked: false, choice: { state: "ok", folder } });
       })
       .catch(() => {
         if (cancelled) return;
-        // Moved or deleted: forget it and ask again.
-        rememberRepo(project.id, null);
-        setFound({ projectId: project.id, path, picked: false, clone: { state: "none" } });
+        rememberFolder(null); // gone: ask again
+        setFound({ path, picked: false, choice: { state: "none" } });
       });
     return () => {
       cancelled = true;
     };
-  }, [location, project]);
+  }, [location]);
 
-  const chooseClone = useCallback(async () => {
-    if (!project) return;
+  const chooseFolder = useCallback(async () => {
     try {
-      const repo = await pickLocalRepo(project.fullName);
-      if (!repo) return; // cancelled
-      if (repo.matches) rememberRepo(project.id, repo.path);
-      setFound({
-        projectId: project.id,
-        path: repo.path,
-        picked: true,
-        clone: repo.matches
-          ? { state: "ok", path: repo.path }
-          : { state: "mismatch", path: repo.path, remotes: repo.remotes },
-      });
+      const folder = await pickLocalFolder();
+      if (!folder) return; // cancelled
+      rememberFolder(folder.path);
+      setFound({ path: folder.path, picked: true, choice: { state: "ok", folder } });
     } catch (error) {
       setFound({
-        projectId: project.id,
         path: "",
         picked: true,
-        clone: { state: "error", message: error instanceof Error ? error.message : String(error) },
+        choice: { state: "error", message: error instanceof Error ? error.message : String(error) },
       });
     }
-  }, [project]);
+  }, []);
 
-  const remembered = project && location === "local" ? rememberedRepo(project.id) : null;
-  const current: LocalClone =
-    found && project && found.projectId === project.id && (found.picked || found.path === remembered)
-      ? found.clone
+  const remembered = location === "local" ? rememberedFolder() : null;
+  const folder: FolderChoice =
+    found && (found.picked || found.path === remembered)
+      ? found.choice
       : remembered
         ? { state: "checking" }
         : { state: "none" };
-  const blocker = location === "local" ? localBlocker(runtime, current, project) : null;
+  const blocker = location === "local" ? localBlocker(runtime, folder) : null;
 
   return {
     location,
     setLocation,
     runtime,
-    clone: current,
-    chooseClone,
+    folder,
+    chooseFolder,
     /** Why a local session cannot start yet; null when it can (or for cloud). */
     blocker,
-    /** What `create` needs for a session on this Mac; null for cloud, or while blocked. */
-    localCreate:
-      location === "local" && !blocker && runtime.state === "ready" && current.state === "ok"
-        ? ({ deviceId: runtime.status.deviceId, repoPath: current.path } satisfies LocalCreate)
-        : null,
+    /** The folder a local session would use; null for cloud, or while blocked. */
+    localFolder: location === "local" && !blocker && folder.state === "ok" ? folder.folder : null,
   };
 }
 
 export type SessionLocationState = ReturnType<typeof useSessionLocation>;
 
-function localBlocker(runtime: LocalRuntime, clone: LocalClone, project: Project | undefined): string | null {
+function localBlocker(runtime: LocalRuntime, folder: FolderChoice): string | null {
   if (runtime.state === "error") return runtime.message;
   if (runtime.state !== "ready") return "Local sessions run in the Outrunner Mac app.";
   if (runtime.missing.length > 0) {
     const tmux = runtime.missing.includes("tmux") ? " (brew install tmux)" : "";
     return `Install ${runtime.missing.join(", ")}${tmux} to run sessions on this Mac.`;
   }
-  switch (clone.state) {
+  switch (folder.state) {
     case "none":
-      return `Choose your clone of ${project?.fullName ?? "this repository"}.`;
+      return "Choose a folder to work in.";
     case "checking":
-      return "Checking your clone…";
-    case "mismatch":
-      return clone.remotes.length > 0
-        ? `That folder is a clone of ${clone.remotes.join(", ")}, not ${project?.fullName}.`
-        : `That folder has no remote pointing at ${project?.fullName}.`;
+      return "Checking the folder…";
     case "error":
-      return clone.message;
+      return folder.message;
     case "ok":
       return null;
   }

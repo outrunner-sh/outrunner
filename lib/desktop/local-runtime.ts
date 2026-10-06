@@ -18,6 +18,16 @@ type TauriCore = {
 /** Which workspace a relayed call is for; the app mints a token per call. */
 export type LocalTarget = { workspaceId: string; projectId: string };
 
+/**
+ * Local sessions belong to a folder, not a GitHub project; the agent's tokens
+ * still carry a project claim, so they all carry this one.
+ */
+export const LOCAL_PROJECT = "local";
+
+export function localTarget(workspaceId: string): LocalTarget {
+  return { workspaceId, projectId: LOCAL_PROJECT };
+}
+
 export type LocalStatus = {
   deviceId: string;
   /** Where the agent keeps worktrees, e.g. /Users/ada/.outrunner. */
@@ -28,13 +38,32 @@ export type LocalStatus = {
   claude: string | null;
 };
 
-export type LocalRepo = {
-  /** The clone's top level, even if a subfolder was chosen. */
+export type LocalFolder = {
+  /** A repository's top level (even if a subfolder was chosen), else the folder. */
   path: string;
-  /** Whether one of its remotes is the project's GitHub repository. */
-  matches: boolean;
-  /** `owner/name` of every remote, to say what was picked when it is wrong. */
-  remotes: string[];
+  name: string;
+  /** A repository with a commit: each session gets its own worktree. Otherwise
+   *  Claude works in the folder itself. */
+  git: boolean;
+  /** The checked-out branch, when there is one. */
+  branch: string | null;
+};
+
+/** One session the agent on this Mac knows (GET /workspaces on the agent). */
+export type LocalSession = {
+  workspaceId: string;
+  /** The folder's name. */
+  name: string;
+  /** What the user first asked for. */
+  title: string;
+  folder: string;
+  /** Where Claude works: a worktree, or the folder itself when `inPlace`. */
+  worktree: string;
+  branch: string;
+  baseBranch: string;
+  inPlace: boolean;
+  createdAt: string;
+  running: boolean;
 };
 
 export function tauriCore(): TauriCore | null {
@@ -73,14 +102,20 @@ export function missingTools(status: LocalStatus): string[] {
   return missing;
 }
 
-/** Ask for the user's clone of a project; null when they cancel. */
-export function pickLocalRepo(repoFullName: string): Promise<LocalRepo | null> {
-  return call<LocalRepo | null>("local_pick_repo", { repoFullName });
+/** Ask for a folder to work in; null when the user cancels. */
+export function pickLocalFolder(): Promise<LocalFolder | null> {
+  return call<LocalFolder | null>("local_pick_folder");
 }
 
-/** Re-check a remembered clone: it may have moved, or been re-pointed. */
-export function checkLocalRepo(path: string, repoFullName: string): Promise<LocalRepo> {
-  return call<LocalRepo>("local_check_repo", { path, repoFullName });
+/** Re-check a remembered folder: it may have moved or gone. */
+export function checkLocalFolder(path: string): Promise<LocalFolder> {
+  return call<LocalFolder>("local_check_folder", { path });
+}
+
+/** This Mac's local sessions, newest first. They live only on this Mac. */
+export async function listLocalSessions(): Promise<LocalSession[]> {
+  if (!tauriCore()) return [];
+  return call<LocalSession[]>("local_list_sessions");
 }
 
 /** One control call to the local agent, through the app. */
@@ -100,25 +135,24 @@ export function localAgentRequest<T = unknown>(
 }
 
 // ---------------------------------------------------------------------------
-// The clone a project's local sessions branch from, remembered per Mac. Device
-// paths have no place on the shared server record, and a stale entry is
-// harmless: it is re-checked before each use.
+// The folder the last local session used, remembered on this Mac so the next
+// one starts there. A stale entry is harmless: it is re-checked before use.
 // ---------------------------------------------------------------------------
 
-const REPO_KEY = (projectId: string) => `outrunner:local-repo:${projectId}`;
+const FOLDER_KEY = "outrunner:local-folder";
 
-export function rememberedRepo(projectId: string): string | null {
+export function rememberedFolder(): string | null {
   try {
-    return window.localStorage.getItem(REPO_KEY(projectId));
+    return window.localStorage.getItem(FOLDER_KEY);
   } catch {
     return null;
   }
 }
 
-export function rememberRepo(projectId: string, path: string | null): void {
+export function rememberFolder(path: string | null): void {
   try {
-    if (path) window.localStorage.setItem(REPO_KEY(projectId), path);
-    else window.localStorage.removeItem(REPO_KEY(projectId));
+    if (path) window.localStorage.setItem(FOLDER_KEY, path);
+    else window.localStorage.removeItem(FOLDER_KEY);
   } catch {
     // Private mode or blocked storage: the user just picks the folder again.
   }
@@ -136,8 +170,8 @@ export function messageForLocalError(error: unknown): string {
       return "The local agent didn't start. Its log is ~/.outrunner/agent.log.";
     case "agent-unreachable":
       return "Lost contact with the local agent. Try again.";
-    case "not-a-repo":
-      return "That folder isn't a git repository. Choose your clone of this project.";
+    case "folder-missing":
+      return "That folder isn't there any more. Choose another.";
     case "agent":
       // The agent's own message, e.g. a worktree that could not be created.
       return raw.slice("agent:".length).trim() || "The local agent reported an error.";

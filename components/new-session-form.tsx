@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
-import { SessionLocationPicker } from "@/components/session-location-picker";
+import { LocalFolderButton, SessionLocationToggle } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
@@ -26,12 +26,13 @@ export function NewSessionForm({
   /** Repo to preselect (the last-used project). Falls back to the first. */
   initialProjectId?: string;
 }) {
-  const { projectId, setProjectId, selected, isCreating, message, messageHref, create } =
+  const { projectId, setProjectId, selected, isCreating, message, messageHref, create, createLocal } =
     useCreateSession(projects, initialProjectId);
-  const where = useSessionLocation(selected);
+  const where = useSessionLocation();
   const local = where.location === "local";
 
-  if (projects.length === 0) {
+  // No repositories only blocks the cloud; a local session needs none.
+  if (!local && projects.length === 0) {
     return (
       <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed py-12 text-center">
         <p className="text-sm font-medium">No repositories synchronized</p>
@@ -39,39 +40,55 @@ export function NewSessionForm({
           Pull in the repositories your GitHub token can access to start a session.
         </p>
         <ProjectsSyncButton align="center" />
+        {where.runtime.state === "ready" && (
+          <button
+            type="button"
+            onClick={() => where.setLocation("local")}
+            className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-4"
+          >
+            Or work in a folder on this Mac
+          </button>
+        )}
       </div>
     );
   }
 
   return (
     <>
-      {isCreating && selected && (
+      {/* A local session opens in about a second, so it gets no progress screen. */}
+      {isCreating && !local && selected && (
         <WorkspaceCreating
           projectName={selected.fullName}
           branch={selected.defaultBranch}
-          local={local}
         />
       )}
 
       <SessionComposer
-        onSend={(text, attachmentIds) => create(text, attachmentIds, where.localCreate ?? undefined)}
-        canSend={!isCreating && selected != null && !(local && !where.localCreate)}
+        onSend={(text, attachmentIds) =>
+          where.localFolder ? createLocal(text, where.localFolder) : create(text, attachmentIds)
+        }
+        canSend={!isCreating && (local ? where.localFolder !== null : selected != null)}
         disabledPlaceholder={
           local && where.blocker ? where.blocker : "Pick a repository below to start…"
         }
         allowAttachments={!local}
       />
 
+      {/* What to work on: a repository for the cloud, a folder for this Mac. */}
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[15px]">
-        <RepositorySelect
-          projects={projects}
-          selectedProjectId={projectId}
-          onSelect={setProjectId}
-          disabled={isCreating}
-        />
+        {local ? (
+          <LocalFolderButton state={where} disabled={isCreating} />
+        ) : (
+          <RepositorySelect
+            projects={projects}
+            selectedProjectId={projectId}
+            onSelect={setProjectId}
+            disabled={isCreating}
+          />
+        )}
       </div>
       <div className="mt-3 flex flex-col items-center gap-2">
-        <SessionLocationPicker state={where} disabled={isCreating} className="justify-center" />
+        <SessionLocationToggle state={where} disabled={isCreating} />
         {where.blocker && (
           <p aria-live="polite" className="text-muted-foreground text-xs">
             {where.blocker}

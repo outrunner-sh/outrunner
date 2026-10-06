@@ -23,16 +23,6 @@ const STAGES = [
 
 const ESTIMATE_SECONDS = 45;
 
-/** A local session: no box to boot, just a fetch, a worktree and Claude. */
-const LOCAL_STAGES = [
-  { label: "Preparing", at: 0 },
-  { label: "Fetching the base branch", at: 1 },
-  { label: "Creating the worktree", at: 2 },
-  { label: "Starting Claude on this Mac", at: 3 },
-] as const;
-
-const LOCAL_ESTIMATE_SECONDS = 6;
-
 function clock(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -42,15 +32,10 @@ function clock(seconds: number): string {
 export function WorkspaceCreating({
   projectName,
   branch,
-  local = false,
 }: {
   projectName: string;
   branch: string;
-  /** A local session on this Mac, which has its own (much shorter) stages. */
-  local?: boolean;
 }) {
-  const stages = local ? LOCAL_STAGES : STAGES;
-  const estimate = local ? LOCAL_ESTIMATE_SECONDS : ESTIMATE_SECONDS;
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -65,8 +50,8 @@ export function WorkspaceCreating({
   // The active stage is the last one whose threshold we've passed, capped at the
   // final stage so we hold there until provisioning actually completes.
   let active = 0;
-  for (let i = 0; i < stages.length; i += 1) {
-    if (elapsed >= stages[i].at) active = i;
+  for (let i = 0; i < STAGES.length; i += 1) {
+    if (elapsed >= STAGES[i].at) active = i;
   }
 
   return (
@@ -85,7 +70,7 @@ export function WorkspaceCreating({
         </div>
 
         <ul className="space-y-2.5">
-          {stages.map((stage, i) => {
+          {STAGES.map((stage, i) => {
             const done = i < active;
             const current = i === active;
             return (
@@ -119,7 +104,7 @@ export function WorkspaceCreating({
 
         <div className="text-muted-foreground flex items-center justify-between font-mono text-xs">
           <span>{clock(elapsed)}</span>
-          <span>~{estimate}s typical</span>
+          <span>~{ESTIMATE_SECONDS}s typical</span>
         </div>
       </div>
     </div>
