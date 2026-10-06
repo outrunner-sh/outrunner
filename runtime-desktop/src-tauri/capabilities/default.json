@@ -15,6 +15,7 @@
     "core:default",
     "opener:default",
     "deep-link:default",
+    "updater:default",
     "allow-connect-claude-start",
     "allow-connect-claude-poll",
     "allow-connect-claude-submit",

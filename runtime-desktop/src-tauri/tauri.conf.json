@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "ai.zerotrail.runtime",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -21,6 +21,12 @@
       "desktop": {
         "schemes": ["runtime"]
       }
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/neevai-labs/outrunner/releases/latest/download/latest.json"
+      ],
+      "pubkey": "PASTE_TAURI_UPDATER_PUBLIC_KEY_HERE"
     }
   },
   "bundle": {
@@ -32,6 +38,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    },
+    "createUpdaterArtifacts": true
   }
 }

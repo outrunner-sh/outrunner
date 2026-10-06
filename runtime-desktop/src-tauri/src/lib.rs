@@ -142,6 +142,42 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+/// Check GitHub Releases for a newer signed build, download+install it, and
+/// relaunch. Runs once at startup, in the background, and stays silent unless an
+/// update is actually found — the user has done nothing yet, so a relaunch here
+/// is cheap and invisible. Any failure (offline, bad signature, Apple hiccup) is
+/// logged and swallowed: a missed auto-update must never cost the user the app.
+///
+/// Debug builds skip it: the updater's public key only verifies release signing,
+/// and a local dev build has no release to update to.
+#[cfg(not(debug_assertions))]
+fn spawn_update_check(app: &tauri::AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let updater = match handle.updater() {
+            Ok(updater) => updater,
+            Err(error) => {
+                eprintln!("updater unavailable: {error}");
+                return;
+            }
+        };
+        match updater.check().await {
+            Ok(Some(update)) => {
+                // No progress UI: the download runs before the window is in use.
+                if let Err(error) = update.download_and_install(|_, _| {}, || {}).await {
+                    eprintln!("update download/install failed: {error}");
+                    return;
+                }
+                handle.restart();
+            }
+            Ok(None) => {} // already current
+            Err(error) => eprintln!("update check failed: {error}"),
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -161,7 +197,12 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_oauth::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            // Self-update from GitHub Releases, in the background, release-only.
+            #[cfg(not(debug_assertions))]
+            spawn_update_check(app.handle());
+
             // Main window → hosted Runtime UI, flagged as the desktop shell, with
             // off-site navigations (OAuth) bounced to the system browser.
             let site = site();
