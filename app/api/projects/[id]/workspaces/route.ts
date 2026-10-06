@@ -18,6 +18,7 @@ import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import { optionalGithubToken } from "@/lib/github/token";
+import { localSandboxId, parseCreateLocation } from "@/lib/runtime/local-workspace";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 
 export const dynamic = "force-dynamic";
@@ -53,7 +54,11 @@ function safeErrorMessage(error: unknown): string {
   return "Could not create the workspace. Check Runtime setup and try again.";
 }
 
-/** Create one local worktree from a Runtime project. */
+/**
+ * Create one workspace from a Runtime project: in the cloud (provisioned here),
+ * or local — on the user's Mac, where the Outrunner app does the agent work and
+ * reports back through /api/workspaces/[id]/local.
+ */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
@@ -72,6 +77,66 @@ export async function POST(request: Request, context: RouteContext) {
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
+  let body: { branch?: unknown; location?: unknown; deviceId?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";
+  if (requestedBranch && !isValidBranchName(requestedBranch)) {
+    return NextResponse.json(
+      { error: "Use a valid Git branch name (letters, numbers, ., _, /, and -)." },
+      { status: 400 },
+    );
+  }
+
+  const location = parseCreateLocation(body);
+  if ("error" in location) {
+    return NextResponse.json({ error: location.error }, { status: 400 });
+  }
+  // A local session needs neither gate below: Claude runs under the user's own
+  // `claude` login, and git uses the credentials already in their clone.
+  if (location.location === "local") {
+    let workspace;
+    try {
+      workspace = await createWorkspaceRow({
+        ownerId: owner.id,
+        projectId: project.id,
+        branch: requestedBranch || generatedBranch(),
+        baseBranch: project.defaultBranch,
+        provider: "desktop",
+      });
+      await updateWorkspace(workspace.id, {
+        status: "provisioning",
+        phase: "worktree",
+        sandboxId: localSandboxId(location.deviceId),
+        tmuxSession: `ws-${workspace.id}`,
+        agentWorkspaceId: workspace.id,
+      });
+    } catch (error) {
+      const message = safeErrorMessage(error);
+      return NextResponse.json(
+        { error: message },
+        { status: message.startsWith("A live") ? 409 : 500 },
+      );
+    }
+    // What the app needs to create the worktree on the user's Mac.
+    return NextResponse.json(
+      {
+        workspace: {
+          id: workspace.id,
+          projectId: project.id,
+          repoFullName: project.fullName,
+          branch: workspace.branch,
+          baseBranch: workspace.baseBranch,
+        },
+      },
+      { status: 201 },
+    );
+  }
+
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
   // Either credential kind is fine; an empty env means none was set.
@@ -91,21 +156,6 @@ export async function POST(request: Request, context: RouteContext) {
           "Connect your GitHub account to clone a private repository: sign out and back in to grant repository access.",
       },
       { status: 409 },
-    );
-  }
-
-  let body: { branch?: unknown };
-  try {
-    body = (await request.json()) as { branch?: unknown };
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-  }
-
-  const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";
-  if (requestedBranch && !isValidBranchName(requestedBranch)) {
-    return NextResponse.json(
-      { error: "Use a valid Git branch name (letters, numbers, ., _, /, and -)." },
-      { status: 400 },
     );
   }
 

@@ -4,7 +4,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import type {
   Job,
   Project,
-  ProviderName,
+  WorkspaceProvider,
   ProvisionTimings,
   RuntimeComputer,
   Workspace,
@@ -13,12 +13,12 @@ import type {
 
 type Tables = Database["public"]["Tables"];
 
-const PROVIDERS: readonly ProviderName[] = ["local", "modal", "daytona"];
+const PROVIDERS: readonly WorkspaceProvider[] = ["local", "modal", "daytona", "desktop"];
 
 /** Narrow the free-text `provider` column to a known backend (defaults local). */
-function toProviderName(value: string): ProviderName {
+function toProviderName(value: string): WorkspaceProvider {
   return (PROVIDERS as readonly string[]).includes(value)
-    ? (value as ProviderName)
+    ? (value as WorkspaceProvider)
     : "local";
 }
 
