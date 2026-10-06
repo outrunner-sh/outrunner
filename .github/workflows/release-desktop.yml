@@ -1,0 +1,136 @@
+name: Release desktop app
+
+# Build, Developer ID-sign, notarize, and publish the Outrunner Tauri app to a
+# GitHub Release — including the updater manifest (latest.json) that installed
+# apps poll to self-update.
+#
+# Trigger: push a tag like `desktop-v0.1.0`. The tag is the source of truth for
+# the version, and the job fails fast if it disagrees with the version in
+# runtime-desktop/src-tauri/tauri.conf.json — so a forgotten version bump can
+# never ship a mislabelled DMG.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   Signing (Developer ID Application cert, exported as .p12):
+#     APPLE_CERTIFICATE            - base64 of the .p12
+#     APPLE_CERTIFICATE_PASSWORD   - the .p12 export password
+#     APPLE_SIGNING_IDENTITY       - e.g. "Developer ID Application: Acme (TEAMID)"
+#   Notarization (App Store Connect API key — team-owned, doesn't rot):
+#     APPLE_API_ISSUER             - Issuer ID (UUID)
+#     APPLE_API_KEY_ID             - Key ID (10 chars)
+#     APPLE_API_KEY_P8             - base64 of the AuthKey_XXXXXXXXXX.p8
+#   Updater signing (Tauri minisign key; public half lives in tauri.conf.json):
+#     TAURI_SIGNING_PRIVATE_KEY            - the generated private key
+#     TAURI_SIGNING_PRIVATE_KEY_PASSWORD   - its password ("" if none)
+#
+# The pipeline is inert until these exist: without them the signing step fails
+# and nothing is published.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+jobs:
+  release:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: runtime-desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tag (desktop-vX.Y.Z) must match tauri.conf.json "version". Catches the
+      # forgotten bump before we spend ~minutes building and a notarization call.
+      - name: Check tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag_version="${GITHUB_REF_NAME#desktop-v}"
+          conf_version="$(jq -r .version src-tauri/tauri.conf.json)"
+          if [ "$tag_version" != "$conf_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME implies version '$tag_version' but tauri.conf.json is '$conf_version'"
+            exit 1
+          fi
+          echo "Releasing version $conf_version"
+
+      - name: Rust toolchain (both macOS targets for universal build)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime-desktop/src-tauri
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Standalone pnpm project (outside the app workspace), like cloudflare/.
+      - name: Install frontend deps
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      # notarytool needs the key as a file on disk; the secret is base64'd.
+      - name: Materialize App Store Connect API key
+        run: |
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+
+      - name: Build, sign, notarize, release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Developer ID signing. tauri-action imports the cert into a throwaway
+          # keychain when APPLE_CERTIFICATE is present.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization via API key. Tauri reads APPLE_API_KEY as the Key ID.
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+          # Signs the updater artifacts; verified by the pubkey in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: runtime-desktop
+          args: --target universal-apple-darwin
+          tagName: ${{ github.ref_name }}
+          releaseName: "Outrunner ${{ github.ref_name }}"
+          releaseBody: "See the asset below. Installs with no Gatekeeper warning; installed apps self-update."
+          releaseDraft: false
+          prerelease: false
+
+      # Verification gate: prove the artifact is really signed, notarized and
+      # stapled before anyone downloads it. A successful notarization with an
+      # UNSTAPLED dmg still fails offline, and a mis-set identity slips past
+      # notarytool — both are invisible until a user hits them, so we fail here.
+      - name: Verify signature, notarization and stapling
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/universal-apple-darwin/release/bundle"
+          app="$(find "$bundle_dir/macos" -maxdepth 1 -name '*.app' | head -n1)"
+          dmg="$(find "$bundle_dir/dmg"   -maxdepth 1 -name '*.dmg' | head -n1)"
+          echo "app: $app"
+          echo "dmg: $dmg"
+          test -n "$app" && test -n "$dmg"
+
+          echo "== codesign --verify =="
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          echo "== Gatekeeper assessment (must be: accepted, source=Notarized Developer ID) =="
+          spctl -a -vvv -t exec "$app"
+
+          echo "== stapler validate (ticket stapled => works offline) =="
+          xcrun stapler validate "$app"
+          xcrun stapler validate "$dmg"
+
+      - name: Verify updater manifest (latest.json)
+        run: |
+          set -euo pipefail
+          manifest="$(find src-tauri/target/universal-apple-darwin/release/bundle -name 'latest.json' | head -n1)"
+          test -n "$manifest"
+          echo "latest.json: $manifest"
+          jq -e '.version and (.platforms | length > 0) and (.platforms[].signature | length > 0) and (.platforms[].url | length > 0)' "$manifest"
