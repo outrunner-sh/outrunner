@@ -6,11 +6,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
+	"runtime-agent/internal/claude"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/server"
 	"runtime-agent/internal/workspace"
@@ -23,8 +27,22 @@ func main() {
 	}
 	root := envOr("RUNTIME_AGENT_ROOT", "/home/runtime")
 	port := envOr("PORT", "8080")
+	// A Runtime Computer listens on every interface (the Daytona preview proxy
+	// reaches it from outside). The desktop shell passes 127.0.0.1: on someone's
+	// own Mac nothing but the shell itself should be able to connect.
+	host := os.Getenv("HOST")
 
 	svc := workspace.NewService(root)
+	if raw := os.Getenv("RUNTIME_DEFAULT_PERMISSION_MODE"); raw != "" {
+		mode, err := claude.ParsePermissionMode(raw)
+		if err != nil {
+			log.Fatalf("RUNTIME_DEFAULT_PERMISSION_MODE: %v", err)
+		}
+		svc.DefaultPermissionMode = mode
+	}
+	if os.Getenv("RUNTIME_AGENT_EXIT_WITH_PARENT") == "1" {
+		go exitWithParent()
+	}
 
 	// RUNTIME_ENGINE=jcode drives workspaces through a jcode api-bridge instead
 	// of Claude-in-tmux. The bridge is expected to be running on the box; we
@@ -40,9 +58,31 @@ func main() {
 	}
 
 	srv := server.New(secret, svc)
-	log.Printf("runtime-agent listening on :%s (root=%s)", port, root)
-	if err := http.ListenAndServe(":"+port, srv.Handler()); err != nil {
+	// PORT=0 asks the OS for a free port, so two desktop apps (or a stale agent)
+	// can never collide. The bound address is announced on stdout, which is how
+	// the shell learns where to connect.
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
+	if err != nil {
 		log.Fatal(err)
+	}
+	fmt.Printf("RUNTIME_AGENT_ADDR=%s\n", listener.Addr())
+	log.Printf("runtime-agent listening on %s (root=%s)", listener.Addr(), root)
+	if err := http.Serve(listener, srv.Handler()); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// exitWithParent ends the agent once the process that launched it is gone. The
+// desktop shell stops it on quit, but a crashed shell cannot, and an orphaned
+// agent would keep listening with a secret nobody holds. On macOS an orphan is
+// re-parented to launchd (pid 1).
+func exitWithParent() {
+	parent := os.Getppid()
+	for range time.Tick(2 * time.Second) {
+		if current := os.Getppid(); current != parent || current == 1 {
+			log.Printf("runtime-agent: parent %d exited; shutting down", parent)
+			os.Exit(0)
+		}
 	}
 }
 
