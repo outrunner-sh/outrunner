@@ -68,19 +68,11 @@ export type ProvisionPhase =
  */
 export type ProviderName = "local" | "modal" | "daytona";
 
-/**
- * Where a workspace's compute lives: a deployment's provider, or `desktop` — a
- * local session on the user's own Mac, run by the Outrunner app. The server
- * cannot reach that machine, so it only keeps the record; the app does every
- * agent call (see lib/runtime/local-workspace.ts).
- */
-export type WorkspaceProvider = ProviderName | "desktop";
-
 export type Workspace = {
   id: string;
   projectId: string;
   /** Backend that owns this workspace's compute and durable storage. */
-  provider: WorkspaceProvider;
+  provider: ProviderName;
   status: WorkspaceStatus;
   phase: ProvisionPhase | null;
   /** Branch checked out in the git worktree. */

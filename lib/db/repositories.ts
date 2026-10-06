@@ -17,7 +17,7 @@ import type {
   JobAgent,
   JobStatus,
   Project,
-  WorkspaceProvider,
+  ProviderName,
   ProvisionPhase,
   ProvisionTimings,
   RuntimeComputer,
@@ -136,7 +136,7 @@ export async function createWorkspaceRow(input: {
   projectId: string;
   branch: string;
   baseBranch: string;
-  provider: WorkspaceProvider;
+  provider: ProviderName;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase

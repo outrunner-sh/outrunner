@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
-import type { WorkspaceProvider, WorkspaceStatus } from "@/lib/runtime/types";
+import type { ProviderName, WorkspaceStatus } from "@/lib/runtime/types";
 
 type LifecycleAction = "resume" | "suspend" | "destroy" | "archive" | "restore";
 
@@ -33,7 +33,7 @@ export function WorkspaceLifecycleControls({
 }: {
   workspaceId: string;
   status: WorkspaceStatus;
-  provider: WorkspaceProvider;
+  provider: ProviderName;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState<string | null>(null);
