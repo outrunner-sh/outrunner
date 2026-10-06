@@ -18,7 +18,7 @@ import { ProjectWorkspaceNav } from "@/components/project-workspace-nav";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { SessionComposer } from "@/components/session-composer";
 import { WorkspaceSession } from "@/components/workspace-session";
-import { localSessionLabel } from "@/hooks/use-local-sessions";
+import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";

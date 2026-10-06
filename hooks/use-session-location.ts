@@ -117,6 +117,17 @@ export function useSessionLocation() {
 
 export type SessionLocationState = ReturnType<typeof useSessionLocation>;
 
+/** Make the next new session start on this Mac, in `folder` — what a folder's
+ *  "+" in the sidebar does before opening the new-session page. */
+export function startNextSessionIn(folder: string): void {
+  rememberFolder(folder);
+  try {
+    window.localStorage.setItem(LOCATION_KEY, "local");
+  } catch {
+    // Blocked storage: the new-session page opens on its defaults instead.
+  }
+}
+
 function localBlocker(runtime: LocalRuntime, folder: FolderChoice): string | null {
   if (runtime.state === "error") return runtime.message;
   if (runtime.state !== "ready") return "Local sessions run in the Outrunner Mac app.";
