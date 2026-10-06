@@ -28,9 +28,15 @@ func (s *Service) LocalSessions(ctx context.Context) []protocol.LocalSession {
 		if !ok || f.RepoPath == "" {
 			continue // not a local session (or unreadable)
 		}
+		// Facts written before sessions were named carry no name; the folder's
+		// own name is what it would have been.
+		name := f.Name
+		if name == "" {
+			name = filepath.Base(f.RepoPath)
+		}
 		sessions = append(sessions, protocol.LocalSession{
 			WorkspaceID: id,
-			Name:        f.Name,
+			Name:        name,
 			Title:       f.Title,
 			Folder:      f.RepoPath,
 			Worktree:    s.worktreePath(id),

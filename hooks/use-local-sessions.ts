@@ -48,5 +48,5 @@ export function useLocalSessions(): LocalSessions & { refresh: () => void } {
 
 /** How a local session is labelled: what was asked, else the folder. */
 export function localSessionLabel(session: LocalSession): string {
-  return session.title || session.name;
+  return session.title || session.name || session.branch;
 }

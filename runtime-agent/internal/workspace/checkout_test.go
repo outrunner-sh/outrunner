@@ -222,10 +222,15 @@ func TestLocalSessionsListsWhatThisMacRuns(t *testing.T) {
 	}
 	// A Runtime Computer workspace (no folder) is not a local session.
 	s.setFacts("ws-cloud", workspaceFacts{Branch: "b", BaseBranch: "main"})
+	// One recorded before sessions were named still gets its folder's name.
+	s.setFacts("ws-unnamed", workspaceFacts{Branch: "b", RepoPath: "/Users/ada/no -video "})
 
 	got := NewService(root).LocalSessions(context.Background())
-	if len(got) != 2 || got[0].WorkspaceID != "ws-new" || got[1].WorkspaceID != "ws-old" {
+	if len(got) != 3 || got[0].WorkspaceID != "ws-new" || got[1].WorkspaceID != "ws-old" {
 		t.Fatalf("LocalSessions = %+v", got)
+	}
+	if got[2].WorkspaceID != "ws-unnamed" || got[2].Name != "no -video " {
+		t.Errorf("unnamed session = %+v", got[2])
 	}
 	// git reports the repository's real path (/var is /private/var on macOS).
 	realRepo, _ := filepath.EvalSymlinks(repo)
