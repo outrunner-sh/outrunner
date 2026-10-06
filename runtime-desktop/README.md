@@ -24,20 +24,43 @@ OS niceties — no duplicated frontend, always up to date with the deploy.
   polled from the control-plane API.
 - **Native notifications** on session state changes.
 - **Global hotkey** to summon the window / start a New Workspace.
-- Launch-at-login, auto-update.
+- Launch-at-login.
+
+## Shipped
+
+- **Auto-update.** Release builds check the latest GitHub Release on launch and
+  self-update from a Developer ID-signed, notarized DMG. See
+  [INSTALL.md](./INSTALL.md) and `.github/workflows/release-desktop.yml`.
 
 ## Develop
 
 ```bash
-bun install
-bun run tauri dev      # launches the app against the hosted site
+pnpm install
+pnpm tauri dev         # launches the app against the hosted site
 ```
 
 ## Build a distributable .app / .dmg
 
 ```bash
-bun run tauri build    # outputs to src-tauri/target/release/bundle/
+pnpm tauri build       # outputs to src-tauri/target/release/bundle/
 ```
+
+Signed, notarized, auto-updating builds are produced only by CI, triggered by
+pushing a `desktop-v*` tag (see the release workflow). Because the bundle emits
+updater artifacts (`createUpdaterArtifacts`), a local `pnpm tauri build` needs
+`TAURI_SIGNING_PRIVATE_KEY` (and its password) in the environment; for day-to-day
+work use `pnpm tauri dev`, which skips bundling entirely.
+
+## Releasing
+
+First-time signing/notarization setup (needs Apple Developer access) is a
+one-time checklist in [RELEASE_SETUP.md](./RELEASE_SETUP.md). After that:
+
+1. Bump `version` in `src-tauri/tauri.conf.json`.
+2. Commit, then tag: `git tag desktop-v<version> && git push --tags`.
+   The tag must match the config version or CI fails fast.
+3. CI builds the universal binary, signs + notarizes it, verifies the result,
+   and publishes the DMG + `latest.json` to a GitHub Release.
 
 ## Point at a different environment
 

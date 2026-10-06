@@ -1,49 +1,27 @@
-# Installing Outrunner (team build)
+# Installing Outrunner
 
-`Outrunner_0.1.0_universal.dmg` — universal (Intel + Apple Silicon), ad-hoc signed.
+`Outrunner_<version>_universal.dmg` — universal (Intel + Apple Silicon),
+Developer ID-signed and Apple-notarized. Download it from the latest
+[GitHub Release](https://github.com/neevai-labs/outrunner/releases).
 
 ## Before you start
 
 The app is a thin shell around **https://outrunner.neev.ai**, which is live.
 It has no local fallback, so if that site is ever down the window opens blank.
 
-Because it is a shell, web changes reach you on next launch with no reinstall —
-a new DMG is only needed for native changes (the Claude connect flow, the tray,
-the sign-in listener).
+Because it is a shell, web changes reach you on next launch with no reinstall.
+Native changes (the Claude connect flow, the tray, the sign-in listener) ship as
+a new release — and because the app is set up for **auto-update**, an installed
+copy downloads and applies those on its own at next launch.
 
 ## Install
 
 1. Open the DMG and drag **Outrunner** to Applications.
-2. Run this once, then launch normally:
+2. Launch it normally.
 
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Outrunner.app
-   ```
-
-Without it macOS refuses to open the app. Slack (or your browser) stamps
-downloaded files with a `com.apple.quarantine` attribute, and because this
-build is ad-hoc signed with no team identifier, Gatekeeper cannot attribute
-it to a known developer. The command clears that attribute for this one app.
-
-If you would rather not run a command: launch it, let it fail, then approve it
-under **System Settings → Privacy & Security → Open Anyway**. Same result.
-
-Do NOT disable Gatekeeper globally (`spctl --master-disable`) — that turns the
-check off for everything you ever download, not just this.
-
-### Why macOS blocks it
-
-The build carries an ad-hoc signature with no team identifier, so Gatekeeper
-cannot attribute it to a known developer:
-
-```
-Signature=adhoc
-TeamIdentifier=not set
-```
-
-This is a property of how it was built, not of what it does. Signing and
-notarizing it properly needs an Apple Developer ID Application certificate,
-after which it installs with no warning at all.
+That's it — no `xattr`, no "Open Anyway" step. The build is signed with an Apple
+Developer ID certificate and notarized by Apple, so Gatekeeper opens it without a
+warning.
 
 ## First run
 
@@ -61,9 +39,28 @@ If Connect Claude reports that Claude Code isn't installed, install it and
 relaunch — the app looks for `claude` in the usual Homebrew, `~/.local/bin` and
 `~/.claude/local` locations, since a GUI app does not inherit your shell PATH.
 
+## Updates
+
+Installed apps check the latest GitHub Release on launch and, if a newer signed
+build exists, download and apply it in the background, then relaunch. No manual
+re-download.
+
 ## Known limits
 
-- **Unsigned** (ad-hoc), as above — the Privacy & Security step is required
-  once per install.
 - Closing the window keeps the app in the menu bar. Use **Quit Outrunner** from
   the tray menu to exit.
+
+---
+
+## Release smoke checklist (maintainers)
+
+CI already fails a release unless the artifact is signed, notarized and stapled
+(see `.github/workflows/release-desktop.yml`). Two things a headless runner
+cannot honestly prove, so verify them by hand once per release:
+
+1. **Clean-Mac download opens with no prompt.** On a Mac that has never seen the
+   app, download the DMG *through a browser or Slack* (so it gets the
+   `com.apple.quarantine` attribute a real user's download gets), install, and
+   confirm it launches with **no** Gatekeeper warning and **no** `xattr` step.
+2. **One real update hop.** With version N installed, publish N+1, relaunch N,
+   and confirm it self-updates to N+1.
