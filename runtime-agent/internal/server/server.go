@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -80,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
+	mux.HandleFunc("GET /workspaces/{id}/changes", s.authed(s.workspaceChanges))
 	return mux
 }
 
@@ -220,6 +222,36 @@ func (s *Server) queryClaims(r *http.Request) (*protocol.RuntimeTokenClaims, err
 		return nil, auth.ErrMalformed
 	}
 	return claims, nil
+}
+
+// workspaceChanges serves the Changes panel for a session whose control plane
+// cannot reach the worktree itself (a local one): the changed files, or with
+// ?path= one file's bounded diff — the shapes /api/workspaces/[id]/changes uses.
+func (s *Server) workspaceChanges(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	if path := r.URL.Query().Get("path"); path != "" {
+		diff, err := s.ws.FileDiff(r.Context(), id, path)
+		switch {
+		case errors.Is(err, workspace.ErrInvalidPath):
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		case errors.Is(err, workspace.ErrNotChanged):
+			writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		default:
+			writeJSON(w, http.StatusOK, map[string]string{"diff": diff})
+		}
+		return
+	}
+	files, err := s.ws.Changes(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
 }
 
 // requireWorkspace binds a verified Runtime token to the exact workspace a

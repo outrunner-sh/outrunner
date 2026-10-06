@@ -197,3 +197,12 @@ type WorkspaceStateChanged struct {
 	WorkspaceID string `json:"workspaceId"`
 	State       string `json:"state"`
 }
+
+// ChangedFile is one entry of a workspace's change set, mirroring ChangedFile in
+// lib/runtime/types.ts (the shape /api/workspaces/[id]/changes returns).
+type ChangedFile struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}

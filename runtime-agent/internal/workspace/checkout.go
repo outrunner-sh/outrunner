@@ -82,11 +82,19 @@ func (s *Service) worktreeRepo(ctx context.Context, worktree string) string {
 // agent control secrets. Git never prompts: there is no terminal to answer it,
 // so a credential request fails fast instead of hanging the request.
 func (s *Service) git(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := s.gitRaw(ctx, dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// gitRaw is git without trimming, for output whose leading spaces carry meaning
+// (`status --porcelain` codes).
+func (s *Service) gitRaw(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(append([]string(nil), s.env...), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(string(out)))
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(stderr.String()+stdout.String()))
 	}
-	return strings.TrimSpace(string(out)), nil
+	return stdout.String(), nil
 }
