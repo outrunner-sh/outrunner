@@ -21,8 +21,8 @@ deploy. Local sessions are the one exception, below.
 
 ## Local sessions
 
-A session can run on this Mac instead of a Daytona box, in a git worktree of
-the user's own clone. The app bundles a macOS build of the runtime-agent as a
+A session can run on this Mac instead of a Daytona box, in any folder the user
+picks — no GitHub repository involved. The app bundles a macOS build of the runtime-agent as a
 sidecar and starts it on first use, on `127.0.0.1` and a free port, with a
 secret only the app holds (`src-tauri/src/local_runtime.rs`).
 
@@ -31,8 +31,13 @@ to loopback from an https page as mixed content. So the app mints the agent's
 tokens and relays every call — HTTP over `local_agent_request`, the PTY and
 conversation WebSockets over `local_socket_*` with a Channel per socket.
 
-- Worktrees live in `~/.outrunner/workspaces/<id>`; the branch stays in the
-  user's clone after a workspace is destroyed, in case it holds unpushed work.
+- A git folder gets a worktree per session, in `~/.outrunner/workspaces/<id>`,
+  on a new branch off the folder's current commit; the branch stays in the
+  folder's repository after the session is destroyed, in case it holds unpushed
+  work. Any other folder is edited in place, and destroying only forgets it.
+- Local sessions are not in the shared database. The agent's records
+  (`~/.outrunner/facts/`) are the list, which the app reads with
+  `local_list_sessions`; the session page is `/local/<id>`.
 - Sessions run on a private tmux server (`tmux -L outrunner`, no user config),
   so they survive quitting the app and never mix with the user's own tmux.
 - Claude uses the user's own `claude` login and starts with

@@ -64,9 +64,11 @@ relaunch — the app looks for `claude` in the usual Homebrew, `~/.local/bin` an
 ## Local sessions
 
 When you start a session, **This Mac** runs Claude Code on your machine instead
-of a cloud box: in a git worktree (under `~/.outrunner/workspaces`) of your own
-clone, which you choose once per repository. It uses your own `claude` login, so
-it needs no Claude connection in Settings.
+of a cloud box, in any folder you choose — it doesn't have to be on GitHub. A git
+folder gets its own worktree per session (under `~/.outrunner/workspaces`), so
+your files are untouched until you merge; any other folder is edited directly.
+It uses your own `claude` login, so it needs no Claude connection in Settings.
+Your local sessions are listed under **This Mac** in the sidebar.
 
 It needs `git`, `claude` and **tmux** on your shell's PATH:
 
