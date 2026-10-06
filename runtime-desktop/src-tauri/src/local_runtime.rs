@@ -111,8 +111,12 @@ impl LocalRuntime {
 // Agent process
 // ---------------------------------------------------------------------------
 
-/// Where the agent keeps worktrees, casts and workspace facts.
+/// Where the agent keeps worktrees, casts and workspace facts:
+/// `~/.outrunner`, or `OUTRUNNER_ROOT` (development, and the relay's own test).
 fn root_dir() -> Result<PathBuf, String> {
+    if let Some(root) = std::env::var_os("OUTRUNNER_ROOT").filter(|r| !r.is_empty()) {
+        return Ok(PathBuf::from(root));
+    }
     let home = std::env::var_os("HOME").ok_or("no-home")?;
     Ok(PathBuf::from(home).join(".outrunner"))
 }
@@ -495,9 +499,23 @@ pub async fn local_agent_request(
     project_id: String,
 ) -> Result<serde_json::Value, String> {
     check_ids(&workspace_id, &project_id)?;
-    let method = allowed_route(&method, &path, &workspace_id)?;
     let agent = state.agent().await?;
-    let token = mint_token(&agent.secret, &workspace_id, &project_id, &device_id(&app)?);
+    let device = device_id(&app)?;
+    agent_call(&agent, &device, &method, &path, body, &workspace_id, &project_id).await
+}
+
+/// One allowlisted control call to the agent, with a token for one workspace.
+async fn agent_call(
+    agent: &AgentHandle,
+    device_id: &str,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+    workspace_id: &str,
+    project_id: &str,
+) -> Result<serde_json::Value, String> {
+    let method = allowed_route(method, path, workspace_id)?;
+    let token = mint_token(&agent.secret, workspace_id, project_id, device_id);
 
     let mut request = http_client()
         .request(method, format!("http://{}{}", agent.addr, path))
@@ -698,6 +716,131 @@ mod tests {
         assert!(valid_id("0f6c1c0e-4a43-4a8e-9f4e-2a8d1c3b5e77"));
         for bad in ["", "../x", "a/b", "a b", "ws:1"] {
             assert!(!valid_id(bad), "{bad}");
+        }
+    }
+
+    /// The relay end to end against the real agent, tmux and Claude Code: the
+    /// agent verifies our tokens, a worktree is made off a throwaway clone,
+    /// one prompt goes through, and the PTY and conversation streams come back
+    /// over Channels. Spends a few tokens of the signed-in Claude account.
+    ///
+    ///   scripts/build-agent-desktop.sh
+    ///   OUTRUNNER_AGENT_BINARY=$PWD/binaries/runtime-agent-aarch64-apple-darwin \
+    ///     cargo test relays_a_real_local_session -- --ignored --nocapture
+    #[test]
+    #[ignore = "drives the real agent, tmux and claude"]
+    fn relays_a_real_local_session() {
+        use std::sync::{Arc, Mutex};
+        use tauri::ipc::{Channel, InvokeResponseBody};
+
+        let work = std::env::temp_dir().join(format!("outrunner-relay-{}", random_hex(4)));
+        let repo = work.join("app");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::env::set_var("OUTRUNNER_ROOT", work.join("root"));
+        let git = |args: &[&str]| {
+            let ok = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("README.md"), "relay\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "first"]);
+
+        let mut agent = spawn_agent().expect("the agent starts and announces its address");
+        let handle = AgentHandle { addr: agent.addr.clone(), secret: agent.secret.clone() };
+        let ws = format!("relay-{}", random_hex(6));
+        let (project, device) = ("p-relay", "dev-relay");
+
+        // Collect what a page would receive on each stream.
+        let collect = || {
+            let seen = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+            let sink = seen.clone();
+            let channel = Channel::<SocketEvent>::new(move |body| {
+                if let InvokeResponseBody::Json(json) = body {
+                    sink.lock().unwrap().push(serde_json::from_str(&json).unwrap());
+                }
+                Ok(())
+            });
+            (seen, channel)
+        };
+        let wait_for = |seen: &Arc<Mutex<Vec<serde_json::Value>>>, what: &str, pred: &dyn Fn(&serde_json::Value) -> bool, secs: u64| {
+            let deadline = Instant::now() + Duration::from_secs(secs);
+            while Instant::now() < deadline {
+                if seen.lock().unwrap().iter().any(pred) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            panic!("timed out waiting for {what}: {:?}", seen.lock().unwrap());
+        };
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tauri::async_runtime::block_on(async {
+                let created = agent_call(&handle, device, "POST", "/workspaces", Some(serde_json::json!({
+                    "workspaceId": ws, "repoFullName": "acme/app", "branch": format!("runtime/{ws}"),
+                    "baseBranch": "main", "repoPath": repo.to_string_lossy(),
+                })), &ws, project).await.expect("create");
+                let worktree = created["worktree"].as_str().unwrap().to_string();
+                agent_call(&handle, device, "POST", &format!("/workspaces/{ws}/start"), None, &ws, project)
+                    .await
+                    .expect("start");
+                // The relay defaulted the mode; the agent recorded it.
+                let facts = std::fs::read_to_string(work.join("root/facts").join(format!("{ws}.json"))).unwrap();
+                assert!(facts.contains("acceptEdits"), "{facts}");
+
+                let (events, events_channel) = collect();
+                let (_events_tx, events_rx) = mpsc::unbounded_channel::<Outbound>();
+                let token = mint_token(&handle.secret, &ws, project, device);
+                tauri::async_runtime::spawn(relay(format!("ws://{}/events-ws?token={token}", handle.addr), events_rx, events_channel));
+                let (pty, pty_channel) = collect();
+                let (pty_tx, pty_rx) = mpsc::unbounded_channel();
+                let token = mint_token(&handle.secret, &ws, project, device);
+                tauri::async_runtime::spawn(relay(format!("ws://{}/pty?token={token}", handle.addr), pty_rx, pty_channel));
+                pty_tx.send(Outbound::Text(r#"{"t":"resize","cols":100,"rows":30}"#.into())).unwrap();
+
+                let is = |kind: &'static str| move |e: &serde_json::Value| e["type"] == kind;
+                wait_for(&events, "events open", &is("open"), 10);
+                wait_for(&pty, "pty open", &is("open"), 10);
+
+                agent_call(&handle, device, "POST", &format!("/workspaces/{ws}/message"),
+                    Some(serde_json::json!({ "content": "Reply with exactly RELAY-OK and nothing else." })),
+                    &ws, project).await.expect("message delivered");
+
+                let assistant_said = |e: &serde_json::Value| {
+                    e["type"] == "message"
+                        && e["data"].as_str().and_then(|d| serde_json::from_str::<serde_json::Value>(d).ok())
+                            .is_some_and(|frame| frame["data"]["role"] == "assistant" && frame["data"]["content"].to_string().contains("RELAY-OK"))
+                };
+                wait_for(&events, "the assistant's reply", &assistant_said, 120);
+                let pty_frame = |t: &'static str| move |e: &serde_json::Value| {
+                    e["type"] == "message" && e["data"].as_str().is_some_and(|d| d.contains(&format!(r#""t":"{t}""#)))
+                };
+                wait_for(&pty, "the writer role", &pty_frame("role"), 5);
+                wait_for(&pty, "terminal output", &pty_frame("output"), 5);
+
+                pty_tx.send(Outbound::Close).unwrap();
+                wait_for(&pty, "pty close", &is("close"), 5);
+                agent_call(&handle, device, "POST", &format!("/workspaces/{ws}/destroy"), None, &ws, project)
+                    .await
+                    .expect("destroy");
+                assert!(!Path::new(&worktree).exists(), "worktree removed");
+            });
+        }));
+
+        let _ = Command::new("tmux").args(["-L", TMUX_SOCKET, "kill-session", "-t", &format!("ws-{ws}")])
+            .env("PATH", session_path()).output();
+        let _ = agent.child.kill();
+        let _ = agent.child.wait();
+        let _ = std::fs::remove_dir_all(&work);
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
         }
     }
 
