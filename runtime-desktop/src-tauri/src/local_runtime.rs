@@ -458,17 +458,27 @@ fn repo_slug(url: &str) -> Option<String> {
 }
 
 /// The agent routes the page may call, each bound to the workspace its token is
-/// for. Archive/restore are absent: local workspaces have no snapshots.
+/// for. Archive/restore are absent: local workspaces have no snapshots. Only the
+/// change set takes a query (`?path=` for one file's diff).
 fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest::Method, String> {
-    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    match (method, segments.as_slice()) {
-        ("POST", ["workspaces"]) => Ok(reqwest::Method::POST),
-        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message"])
+    let (route, query) = match path.split_once('?') {
+        Some((route, query)) => (route, Some(query)),
+        None => (path, None),
+    };
+    let segments: Vec<&str> = route.trim_start_matches('/').split('/').collect();
+    match (method, segments.as_slice(), query) {
+        ("POST", ["workspaces"], None) => Ok(reqwest::Method::POST),
+        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message"], None)
             if *id == workspace_id =>
         {
             Ok(reqwest::Method::POST)
         }
-        ("GET", ["workspaces", id, "summary"]) if *id == workspace_id => Ok(reqwest::Method::GET),
+        ("GET", ["workspaces", id, "summary"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
+        ("GET", ["workspaces", id, "changes"], query)
+            if *id == workspace_id && query.is_none_or(|q| q.starts_with("path=")) =>
+        {
+            Ok(reqwest::Method::GET)
+        }
         _ => Err(format!("route-not-allowed: {method} {path}")),
     }
 }
@@ -672,6 +682,10 @@ mod tests {
         assert!(allowed_route("POST", "/workspaces", "ws-1").is_ok());
         assert!(allowed_route("POST", "/workspaces/ws-1/start", "ws-1").is_ok());
         assert!(allowed_route("GET", "/workspaces/ws-1/summary", "ws-1").is_ok());
+        assert!(allowed_route("GET", "/workspaces/ws-1/changes", "ws-1").is_ok());
+        assert!(allowed_route("GET", "/workspaces/ws-1/changes?path=src%2Fa.ts", "ws-1").is_ok());
+        assert!(allowed_route("GET", "/workspaces/ws-1/changes?other=1", "ws-1").is_err());
+        assert!(allowed_route("POST", "/workspaces/ws-1/start?x=1", "ws-1").is_err());
         // Another workspace's route, an unrelayed action, or a wrong method.
         assert!(allowed_route("POST", "/workspaces/ws-2/stop", "ws-1").is_err());
         assert!(allowed_route("POST", "/workspaces/ws-1/archive", "ws-1").is_err());
