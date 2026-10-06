@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-check-repo"
+description = "Enables the local_check_repo command without any pre-configured scope."
+commands.allow = ["local_check_repo"]
+
+[[permission]]
+identifier = "deny-local-check-repo"
+description = "Denies the local_check_repo command without any pre-configured scope."
+commands.deny = ["local_check_repo"]

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: shell basics plus the native Claude connect commands.",
+  "description": "Main window: shell basics, the native Claude connect commands, and the local-session relay.",
   "windows": [
     "main"
   ],
@@ -19,6 +19,13 @@
     "allow-connect-claude-poll",
     "allow-connect-claude-submit",
     "allow-connect-claude-cancel",
-    "allow-connect-claude-debug"
+    "allow-connect-claude-debug",
+    "allow-local-status",
+    "allow-local-pick-repo",
+    "allow-local-check-repo",
+    "allow-local-agent-request",
+    "allow-local-socket-open",
+    "allow-local-socket-send",
+    "allow-local-socket-close"
   ]
 }

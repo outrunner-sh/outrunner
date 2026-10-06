@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-socket-send"
+description = "Enables the local_socket_send command without any pre-configured scope."
+commands.allow = ["local_socket_send"]
+
+[[permission]]
+identifier = "deny-local-socket-send"
+description = "Denies the local_socket_send command without any pre-configured scope."
+commands.deny = ["local_socket_send"]

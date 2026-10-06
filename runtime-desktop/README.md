@@ -4,9 +4,10 @@ A lightweight native macOS shell for [Outrunner](https://outrunner.neev.ai),
 built with [Tauri v2](https://tauri.app). Conductor-style: a real app window
 plus a menu-bar (tray) presence, wrapping the hosted Runtime web UI.
 
-It stays thin on purpose. The web UI already opens the terminal WebSocket
-**directly to the Daytona box**, so the native layer only provides the shell and
-OS niceties — no duplicated frontend, always up to date with the deploy.
+It stays thin on purpose. For cloud sessions the web UI opens the terminal
+WebSocket **directly to the Daytona box**, so the native layer only provides the
+shell and OS niceties — no duplicated frontend, always up to date with the
+deploy. Local sessions are the one exception, below.
 
 ## What it does today
 
@@ -17,6 +18,29 @@ OS niceties — no duplicated frontend, always up to date with the deploy.
 - **Hide-to-tray**: closing the window keeps the app (and your session)
   running in the tray; use *Quit Runtime* to actually exit.
 - **Single instance**: launching again focuses the existing window.
+
+## Local sessions
+
+A session can run on this Mac instead of a Daytona box, in a git worktree of
+the user's own clone. The app bundles a macOS build of the runtime-agent as a
+sidecar and starts it on first use, on `127.0.0.1` and a free port, with a
+secret only the app holds (`src-tauri/src/local_runtime.rs`).
+
+The page cannot reach that agent itself: WKWebView blocks `http://` and `ws://`
+to loopback from an https page as mixed content. So the app mints the agent's
+tokens and relays every call — HTTP over `local_agent_request`, the PTY and
+conversation WebSockets over `local_socket_*` with a Channel per socket.
+
+- Worktrees live in `~/.outrunner/workspaces/<id>`; the branch stays in the
+  user's clone after a workspace is destroyed, in case it holds unpushed work.
+- Sessions run on a private tmux server (`tmux -L outrunner`, no user config),
+  so they survive quitting the app and never mix with the user's own tmux.
+- Claude uses the user's own `claude` login and starts with
+  `--permission-mode acceptEdits`: edits go through, shell commands wait for
+  approval in the Terminal panel. Cloud boxes keep `bypassPermissions`.
+- Needs `git`, `tmux` (`brew install tmux`) and `claude` on the login shell's
+  PATH; the app checks and names whatever is missing.
+- The agent's log is `~/.outrunner/agent.log`.
 
 ## Planned next (needs a small web API + a webview→Rust bridge)
 
@@ -32,6 +56,10 @@ OS niceties — no duplicated frontend, always up to date with the deploy.
 bun install
 bun run tauri dev      # launches the app against the hosted site
 ```
+
+Both `tauri dev` and `tauri build` first run `bun run agent`, which builds the
+sidecar with `scripts/build-agent-desktop.sh` (needs Go ≥ 1.22). Run it by hand
+before a bare `cargo build` or `cargo test`, which fail without the sidecar.
 
 ## Build a distributable .app / .dmg
 

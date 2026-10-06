@@ -30,4 +30,15 @@ serde_json = "1"
 # produces no output and never exits, so a plain Command::output() hangs.
 portable-pty = "0.8"
 regex = "1"
+# Local sessions (src/local_runtime.rs): pick the clone, mint the agent's
+# HS256 tokens, and relay its HTTP calls and WebSockets for the webview.
+tauri-plugin-dialog = "2"
+tokio = { version = "1", features = ["sync", "macros"] }
+tokio-tungstenite = "0.28"
+futures-util = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
 
