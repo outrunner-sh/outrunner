@@ -7,25 +7,31 @@ import { Laptop, MessageSquare, Plus } from "lucide-react";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { startNextSessionIn } from "@/hooks/use-session-location";
+import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessions";
 import { cn } from "@/lib/utils";
 
 /**
- * "This Mac": the local sessions the agent on this Mac knows, grouped by the
- * folder they work in — the way cloud workspaces sit under their repository —
- * for the studio's sidebar. Renders nothing outside the Mac app or when there
- * are none.
+ * "This Mac": this Mac's local sessions, grouped by the folder they work in —
+ * the way cloud workspaces sit under their repository — for the studio's
+ * sidebar. The studio reads the sessions (useLocalSessions) so it can also
+ * label the cloud section below; renders nothing when there are none.
  */
-export function LocalSessionsNav({ activeWorkspaceId }: { activeWorkspaceId?: string }) {
-  const local = useLocalSessions();
+export function LocalSessionsNav({
+  sessions,
+  activeWorkspaceId,
+}: {
+  sessions: LocalSession[];
+  activeWorkspaceId?: string;
+}) {
   const router = useRouter();
-  if (local.sessions.length === 0) return null;
+  if (sessions.length === 0) return null;
   return (
-    <nav className="studio-nav" aria-label="Sessions on this Mac" style={{ flex: "none" }}>
+    <nav className="studio-nav is-local" aria-label="Sessions on this Mac">
       <div className="studio-nav-section">
         <Laptop /> This Mac
       </div>
-      {groupLocalSessions(local.sessions).map((group) => (
+      {groupLocalSessions(sessions).map((group) => (
         <div key={group.folder} className="studio-nav-group">
           <div className="studio-nav-project" title={group.folder}>
             <ProjectAvatar name={group.label} className="size-4" />
