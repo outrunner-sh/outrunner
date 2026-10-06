@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { SessionUrls } from "@/lib/runtime/agent-protocol";
+import {
+  localAgentRequest,
+  localSocketUrl,
+  type LocalTarget,
+} from "@/lib/desktop/local-runtime";
+import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
 
 /**
  * Owner of the Workspace Session's URL lifecycle: fetches
@@ -34,7 +39,36 @@ export type SessionAttachment = {
   reconnect: () => void;
 };
 
-export function useSessionAttachment(workspaceId: string): SessionAttachment {
+/**
+ * A local session's URLs, from the Outrunner app rather than the server. Start
+ * is called first and is idempotent: it leaves a live session alone and
+ * continues the conversation of one that is gone (the Mac restarted).
+ */
+async function localSessionUrls(target: LocalTarget): Promise<SessionUrls> {
+  await localAgentRequest(target, "POST", `/workspaces/${target.workspaceId}/start`);
+  let summary: WorkspaceSummary | undefined;
+  try {
+    summary = WorkspaceSummary.parse(
+      await localAgentRequest(target, "GET", `/workspaces/${target.workspaceId}/summary`),
+    );
+  } catch {
+    // Optional on first paint, as for a cloud session.
+  }
+  return {
+    ptyUrl: localSocketUrl("pty", target),
+    eventsUrl: localSocketUrl("events", target),
+    ...(summary && { summary }),
+  };
+}
+
+/**
+ * `localProjectId` marks a local session (run by the Outrunner app on this Mac);
+ * omitted, the URLs come from the server as for any cloud session.
+ */
+export function useSessionAttachment(
+  workspaceId: string,
+  localProjectId?: string,
+): SessionAttachment {
   const [urls, setUrls] = useState<SessionUrls | null>(null);
   const [status, setStatus] = useState<SessionAttachmentStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +90,14 @@ export function useSessionAttachment(workspaceId: string): SessionAttachment {
 
     (async () => {
       try {
+        if (localProjectId) {
+          const local = await localSessionUrls({ workspaceId, projectId: localProjectId });
+          if (controller.signal.aborted) return;
+          setUrls(local);
+          setAttachId((n) => n + 1);
+          setStatus("attached");
+          return;
+        }
         const res = await fetch(`/api/workspaces/${workspaceId}/session`, {
           method: "POST",
           signal: controller.signal,
@@ -82,7 +124,7 @@ export function useSessionAttachment(workspaceId: string): SessionAttachment {
         inflight.current = null;
       }
     })();
-  }, [workspaceId]);
+  }, [workspaceId, localProjectId]);
 
   const reconnect = useCallback(() => {
     // Both browser projections can notice the same network close. The
