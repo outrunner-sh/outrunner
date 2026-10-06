@@ -33,16 +33,21 @@ func mintToken(claims protocol.RuntimeTokenClaims, secret string) string {
 	return signing + "." + sig
 }
 
-// slugFor mirrors workspace.claudeSlug (unexported). If either drifts the test
-// fails clearly, which is the correct signal — the slug format is contract.
+// slugFor mirrors workspace.claudeProjectDir's slug (unexported). If either
+// drifts the test fails clearly, which is the correct signal — the slug format
+// is contract. Symlinks are resolved like Claude does: t.TempDir() is under
+// /var on macOS, which is really /private/var.
 func slugFor(path string) string {
-	b := make([]byte, 0, len(path))
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	b := make([]byte, len(path))
 	for i := 0; i < len(path); i++ {
 		c := path[i]
-		if c == '/' || c == '.' {
-			b = append(b, '-')
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			b[i] = c
 		} else {
-			b = append(b, c)
+			b[i] = '-'
 		}
 	}
 	return string(b)

@@ -434,16 +434,15 @@ const (
 )
 
 // claudeConvDir is where Claude writes this workspace's conversation JSONL:
-// $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + claudeSlug — the same
-// derivation as SessionLog and conversationDest — rather than s.Root and a
-// slash-only replace, so it stays correct when HOME and Root differ or the path
-// contains a '.' (claudeSlug replaces both '/' and '.').
+// $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + claudeProjectDir —
+// the same derivation as SessionLog and conversationDest — rather than s.Root,
+// so it stays correct when HOME and Root differ.
 func (s *Service) claudeConvDir(workspaceID string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = s.Root // best-effort fallback if HOME is unavailable
 	}
-	return filepath.Join(home, ".claude", "projects", claudeSlug(s.worktreePath(workspaceID)))
+	return claudeProjectDir(home, s.worktreePath(workspaceID))
 }
 
 // userTurnCount totals the user messages Claude has recorded across the *.jsonl
@@ -580,7 +579,7 @@ func (s *Service) conversationDest(worktree, sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".claude", "projects", claudeSlug(worktree), sessionID+".jsonl"), nil
+	return filepath.Join(claudeProjectDir(home, worktree), sessionID+".jsonl"), nil
 }
 
 // sessionID returns the Claude session id for `claude --continue` on Restore —
@@ -675,12 +674,11 @@ func (s *Service) SessionLog(workspaceID string) string {
 	if s.jcode != nil {
 		return s.jcode.ConversationLog(workspaceID)
 	}
-	slug := claudeSlug(s.worktreePath(workspaceID))
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	dir := filepath.Join(home, ".claude", "projects", slug)
+	dir := claudeProjectDir(home, s.worktreePath(workspaceID))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
@@ -703,17 +701,31 @@ func (s *Service) SessionLog(workspaceID string) string {
 	return newest
 }
 
+// claudeProjectDir is the directory Claude Code keeps a working directory's
+// conversation logs in. Claude names it after its real working directory, so
+// symlinks are resolved first: on macOS /var and /tmp live under /private, and
+// a symlinked checkout or home is common. A path that does not exist yet is
+// used as given.
+func claudeProjectDir(home, worktree string) string {
+	if resolved, err := filepath.EvalSymlinks(worktree); err == nil {
+		worktree = resolved
+	}
+	return filepath.Join(home, ".claude", "projects", claudeSlug(worktree))
+}
+
 // claudeSlug encodes a filesystem path the way Claude Code does when building
-// its per-project JSONL directory. Every '/' and '.' becomes '-'; nothing else
-// changes. Empirically established in Spike 3/4.
+// its per-project JSONL directory: every byte that is not an ASCII letter or
+// digit becomes '-'. Spike 3/4 established '/' and '.', which is all a Runtime
+// Computer path contains; a Mac checkout adds spaces and punctuation
+// ("Desktop - MacBook Air (3)" is stored as "Desktop---MacBook-Air--3-").
 func claudeSlug(path string) string {
-	b := make([]byte, 0, len(path))
+	b := make([]byte, len(path))
 	for i := 0; i < len(path); i++ {
 		c := path[i]
-		if c == '/' || c == '.' {
-			b = append(b, '-')
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			b[i] = c
 		} else {
-			b = append(b, c)
+			b[i] = '-'
 		}
 	}
 	return string(b)

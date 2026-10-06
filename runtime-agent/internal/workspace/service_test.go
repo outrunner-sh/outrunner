@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -157,12 +159,43 @@ func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
 	t.Setenv("HOME", "/home/daytona")
 	s := NewService("/home/daytona")
 	// Claude derives the conversation dir under $HOME from the session cwd (the
-	// worktree) via claudeSlug ('/' and '.' -> '-'). This must match what Claude
+	// worktree) via claudeSlug (non-alphanumerics -> '-'). This must match what Claude
 	// writes on disk, since SendMessage polls it to confirm a prompt landed.
 	got := s.claudeConvDir("abc123")
 	want := "/home/daytona/.claude/projects/-home-daytona-workspaces-abc123"
 	if got != want {
 		t.Errorf("claudeConvDir = %q, want %q", got, want)
+	}
+}
+
+func TestClaudeSlugMatchesClaudeCode(t *testing.T) {
+	// Real directory names Claude Code created on a Mac.
+	for path, want := range map[string]string{
+		"/home/daytona/workspaces/abc-123":        "-home-daytona-workspaces-abc-123",
+		"/Users/ada/.outrunner/workspaces/x":      "-Users-ada--outrunner-workspaces-x",
+		"/Users/ada/Desktop/personal/new project": "-Users-ada-Desktop-personal-new-project",
+		"/Users/ada/Desktop - MacBook Air (3)/m":  "-Users-ada-Desktop---MacBook-Air--3--m",
+	} {
+		if got := claudeSlug(path); got != want {
+			t.Errorf("claudeSlug(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestClaudeProjectDirResolvesSymlinks(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Claude runs in the real directory, so the log lives under its name.
+	want := filepath.Join("/h", ".claude", "projects", claudeSlug(resolved))
+	if got := claudeProjectDir("/h", link); got != want {
+		t.Errorf("claudeProjectDir(link) = %q, want %q", got, want)
 	}
 }
 
