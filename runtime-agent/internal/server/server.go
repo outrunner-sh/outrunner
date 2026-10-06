@@ -208,14 +208,43 @@ func (s *Server) workspaceSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
+// queryClaims verifies the Runtime token a WebSocket or SSE client carries in
+// its URL (browsers cannot set headers on those) and that the workspace it
+// names is a well-formed id, since streams use it as a session and path name.
+func (s *Server) queryClaims(r *http.Request) (*protocol.RuntimeTokenClaims, error) {
+	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	if err != nil {
+		return nil, err
+	}
+	if !validWorkspaceID(claims.WorkspaceID) {
+		return nil, auth.ErrMalformed
+	}
+	return claims, nil
+}
+
 // requireWorkspace binds a verified Runtime token to the exact workspace a
 // control request addresses. A token for one workspace must never be usable to
 // stop, archive, destroy, or inspect another workspace on the same computer.
 func (s *Server) requireWorkspace(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
 	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
-	if claims == nil || workspaceID == "" || claims.WorkspaceID != workspaceID {
+	if claims == nil || !validWorkspaceID(workspaceID) || claims.WorkspaceID != workspaceID {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize this workspace")
 		return false
+	}
+	return true
+}
+
+// validWorkspaceID admits the ids the control plane mints (UUIDs) and the short
+// ones tests use. The id becomes a path segment under the agent root, so
+// anything that could climb out of it is refused before it reaches a handler.
+func validWorkspaceID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !(c == '-' || c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+			return false
+		}
 	}
 	return true
 }
@@ -244,7 +273,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 // receives PTY output (tmux fans it out), but only the current writer's
 // keystrokes reach the PTY — the broker enforces one-writer per workspace.
 func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
-	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	claims, err := s.queryClaims(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 		return
@@ -373,7 +402,7 @@ func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send
 // skipped between disconnect and reconnect. This is the entire correctness
 // contract of the stream.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	claims, err := s.queryClaims(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 		return
@@ -515,7 +544,7 @@ type eventsWSFrame struct {
 // clients whose SSE is buffered (WKWebView) still get real-time updates. The
 // keepalive is a WS ping (browsers pong automatically).
 func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
-	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	claims, err := s.queryClaims(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 		return
