@@ -60,6 +60,13 @@ type CreateWorkspaceRequest struct {
 	RepoFullName string `json:"repoFullName"`
 	Branch       string `json:"branch"`
 	BaseBranch   string `json:"baseBranch"`
+	// RepoPath, when set, is an existing checkout on this machine to branch the
+	// worktree from instead of the computer's bare mirror. Only the desktop
+	// shell sends it: a local session works in the user's own clone.
+	RepoPath string `json:"repoPath,omitempty"`
+	// PermissionMode is Claude's --permission-mode; empty keeps the Runtime
+	// Computer default (bypassPermissions).
+	PermissionMode string `json:"permissionMode,omitempty"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).

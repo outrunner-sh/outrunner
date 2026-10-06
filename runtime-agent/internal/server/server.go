@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"runtime-agent/internal/auth"
+	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
@@ -107,7 +108,18 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	worktree, err := s.ws.Create(r.Context(), req.WorkspaceID, req.Branch, "origin/"+req.BaseBranch)
+	mode, err := claude.ParsePermissionMode(req.PermissionMode)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
+		WorkspaceID:    req.WorkspaceID,
+		Branch:         req.Branch,
+		BaseBranch:     req.BaseBranch,
+		RepoPath:       req.RepoPath,
+		PermissionMode: mode,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return

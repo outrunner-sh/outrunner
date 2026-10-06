@@ -8,23 +8,50 @@ import (
 	"strings"
 )
 
+// PermissionMode is the `--permission-mode` a session launches with.
+type PermissionMode string
+
+const (
+	// Bypass is the Runtime Computer default. The box is disposable and holds
+	// nothing of the user's, so an autonomous session ("work while the laptop is
+	// closed") is the point. Claude refuses it as root (surfaced in Spike 4),
+	// which is why runtime-computer-v1 runs as the `runtime` user.
+	Bypass PermissionMode = "bypassPermissions"
+	// AcceptEdits auto-approves file edits and asks before shell commands. The
+	// desktop shell launches local sessions with it: there the machine is the
+	// user's own, with their keys and credentials on it.
+	AcceptEdits PermissionMode = "acceptEdits"
+	// Default asks before every edit and command.
+	Default PermissionMode = "default"
+	// Plan lets Claude read and plan but not change anything.
+	Plan PermissionMode = "plan"
+)
+
+// ParsePermissionMode validates a requested mode. Empty selects Bypass, the
+// Runtime Computer default, so existing callers keep their behaviour.
+func ParsePermissionMode(raw string) (PermissionMode, error) {
+	switch mode := PermissionMode(raw); mode {
+	case "":
+		return Bypass, nil
+	case Bypass, AcceptEdits, Default, Plan:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unknown permission mode %q", raw)
+	}
+}
+
 // Command returns the argv for launching an interactive Claude Code session.
-//
-// bypassPermissions makes the session autonomous (no approval prompts blocking
-// "work while the laptop is closed"). This requires a non-root user — Claude
-// refuses it as root (surfaced in Spike 4), which is why runtime-computer-v1
-// runs as the `runtime` user.
 //
 // orientation, when non-empty, is injected via --append-system-prompt so Claude
 // knows it's running inside a Runtime Workspace (see Orientation).
-func Command(orientation string) []string {
-	return withOrientation([]string{"claude", "--permission-mode", "bypassPermissions"}, orientation)
+func Command(mode PermissionMode, orientation string) []string {
+	return withOrientation([]string{"claude", "--permission-mode", string(mode)}, orientation)
 }
 
 // ContinueCommand resumes the most recent session in the workspace, used on
 // resume after the process exited or the box restarted.
-func ContinueCommand(orientation string) []string {
-	return withOrientation([]string{"claude", "--continue", "--permission-mode", "bypassPermissions"}, orientation)
+func ContinueCommand(mode PermissionMode, orientation string) []string {
+	return withOrientation([]string{"claude", "--continue", "--permission-mode", string(mode)}, orientation)
 }
 
 // withOrientation appends --append-system-prompt when there's an orientation to

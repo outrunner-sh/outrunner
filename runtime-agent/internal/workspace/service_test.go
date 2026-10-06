@@ -4,11 +4,13 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"runtime-agent/internal/claude"
 )
 
 func TestOrientationUsesRecordedFacts(t *testing.T) {
 	s := NewService(t.TempDir())
-	s.setFacts("ws1", "feature/login", "main")
+	s.setFacts("ws1", workspaceFacts{Branch: "feature/login", BaseBranch: "main"})
 
 	got := s.orientation("ws1", "/work/ws1")
 	if !strings.Contains(got, "in the /work/ws1 directory") {
@@ -34,17 +36,88 @@ func TestOrientationOmitsBaseWhenFactsMissing(t *testing.T) {
 	}
 }
 
-func TestCreateStripsRemotePrefixFromBase(t *testing.T) {
+func TestCreateRecordsFacts(t *testing.T) {
 	s := NewService(t.TempDir())
 	// Create's git worktree step fails (no mirror), but facts are recorded first.
-	_, _ = s.Create(context.Background(), "ws2", "feature/x", "origin/develop")
+	_, _ = s.Create(context.Background(), CreateInput{
+		WorkspaceID:    "ws2",
+		Branch:         "feature/x",
+		BaseBranch:     "develop",
+		PermissionMode: claude.AcceptEdits,
+	})
 
 	f, ok := s.getFacts("ws2")
 	if !ok {
 		t.Fatal("Create did not record facts")
 	}
-	if f.branch != "feature/x" || f.baseBranch != "develop" {
-		t.Errorf("facts = %+v, want {feature/x develop}", f)
+	if f.Branch != "feature/x" || f.BaseBranch != "develop" || f.PermissionMode != claude.AcceptEdits {
+		t.Errorf("facts = %+v, want {feature/x develop acceptEdits}", f)
+	}
+}
+
+func TestFactsSurviveAgentRestart(t *testing.T) {
+	root := t.TempDir()
+	first := NewService(root)
+	first.setFacts("ws3", workspaceFacts{Branch: "b", BaseBranch: "main", PermissionMode: claude.AcceptEdits, RepoPath: "/src/app"})
+
+	// A local agent restarts with the desktop app while tmux keeps the session
+	// alive, so a fresh Service on the same root must still know the mode.
+	restarted := NewService(root)
+	f, ok := restarted.getFacts("ws3")
+	if !ok || f.PermissionMode != claude.AcceptEdits || f.RepoPath != "/src/app" {
+		t.Fatalf("facts after restart = %+v, %v", f, ok)
+	}
+	if got := restarted.permissionMode("ws3"); got != claude.AcceptEdits {
+		t.Errorf("permissionMode after restart = %q, want acceptEdits", got)
+	}
+
+	restarted.forgetWorkspace("ws3")
+	if _, ok := NewService(root).getFacts("ws3"); ok {
+		t.Error("forgetWorkspace left the facts file behind")
+	}
+}
+
+func TestPermissionModeFallsBackToServiceDefault(t *testing.T) {
+	s := NewService(t.TempDir())
+	if got := s.permissionMode("unknown"); got != claude.Bypass {
+		t.Errorf("Runtime Computer default = %q, want bypassPermissions", got)
+	}
+	// The desktop shell sets this, so a local session whose facts are missing
+	// never falls back to bypass on the user's machine.
+	s.DefaultPermissionMode = claude.AcceptEdits
+	if got := s.permissionMode("unknown"); got != claude.AcceptEdits {
+		t.Errorf("desktop default = %q, want acceptEdits", got)
+	}
+}
+
+func TestCreateRejectsOptionLikeBranches(t *testing.T) {
+	s := NewService(t.TempDir())
+	for _, in := range []CreateInput{
+		{WorkspaceID: "ws4", Branch: "--upload-pack=x", BaseBranch: "main"},
+		{WorkspaceID: "ws4", Branch: "ok", BaseBranch: "-c"},
+	} {
+		if _, err := s.Create(context.Background(), in); err == nil {
+			t.Errorf("Create(%+v) accepted an option-like branch", in)
+		}
+	}
+}
+
+func TestIsTrustDialog(t *testing.T) {
+	// Captured from Claude Code opening a fresh folder in tmux (2026-10).
+	pane := ` Accessing workspace:
+ /private/tmp/outrunner-probe.obXI
+ Quick safety check: Is this a project you created or one you trust?
+ Claude Code'll be able to read, edit, and execute files here.
+ ❯ 1. Yes, I trust this folder
+   2. No, exit`
+	if !isTrustDialog(pane) {
+		t.Error("current trust dialog not recognised")
+	}
+	if !isTrustDialog("Do you trust the files in this folder?") {
+		t.Error("earlier trust dialog wording not recognised")
+	}
+	if isTrustDialog("╭───╮\n│ ❯ │\n╰───╯") {
+		t.Error("the composer was mistaken for the trust dialog")
 	}
 }
 

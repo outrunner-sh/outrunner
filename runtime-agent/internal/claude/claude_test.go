@@ -99,8 +99,9 @@ func TestCommandInjectsOrientation(t *testing.T) {
 		argv []string
 		head []string
 	}{
-		{"Command", Command(orientation), []string{"claude", "--permission-mode", "bypassPermissions"}},
-		{"ContinueCommand", ContinueCommand(orientation), []string{"claude", "--continue", "--permission-mode", "bypassPermissions"}},
+		{"Command", Command(Bypass, orientation), []string{"claude", "--permission-mode", "bypassPermissions"}},
+		{"ContinueCommand", ContinueCommand(Bypass, orientation), []string{"claude", "--continue", "--permission-mode", "bypassPermissions"}},
+		{"local Command", Command(AcceptEdits, orientation), []string{"claude", "--permission-mode", "acceptEdits"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !slices.Equal(tc.argv[:len(tc.head)], tc.head) {
@@ -118,11 +119,33 @@ func TestCommandInjectsOrientation(t *testing.T) {
 }
 
 func TestCommandOmitsFlagWhenNoOrientation(t *testing.T) {
-	if slices.Contains(Command(""), "--append-system-prompt") {
-		t.Errorf("empty orientation must not add the flag: %v", Command(""))
+	if slices.Contains(Command(Bypass, ""), "--append-system-prompt") {
+		t.Errorf("empty orientation must not add the flag: %v", Command(Bypass, ""))
 	}
-	if slices.Contains(ContinueCommand(""), "--append-system-prompt") {
-		t.Errorf("empty orientation must not add the flag: %v", ContinueCommand(""))
+	if slices.Contains(ContinueCommand(Bypass, ""), "--append-system-prompt") {
+		t.Errorf("empty orientation must not add the flag: %v", ContinueCommand(Bypass, ""))
+	}
+}
+
+func TestParsePermissionMode(t *testing.T) {
+	for raw, want := range map[string]PermissionMode{
+		"":                  Bypass,
+		"bypassPermissions": Bypass,
+		"acceptEdits":       AcceptEdits,
+		"default":           Default,
+		"plan":              Plan,
+	} {
+		got, err := ParsePermissionMode(raw)
+		if err != nil || got != want {
+			t.Errorf("ParsePermissionMode(%q) = %q, %v; want %q", raw, got, err, want)
+		}
+	}
+	// Anything else would reach Claude's argv, so it is refused rather than
+	// passed through.
+	for _, raw := range []string{"dangerouslySkip", "BYPASS", "acceptEdits --x"} {
+		if _, err := ParsePermissionMode(raw); err == nil {
+			t.Errorf("ParsePermissionMode(%q) accepted an unknown mode", raw)
+		}
 	}
 }
 

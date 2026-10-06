@@ -55,6 +55,12 @@ type Service struct {
 	// of Claude-in-tmux. nil means the default Claude Code engine. Start, Stop,
 	// SessionLog, SessionAlive, and SendMessage branch on it.
 	jcode *jcodeEngine
+
+	// DefaultPermissionMode applies when a workspace's recorded facts carry no
+	// mode — one created before modes existed, or whose facts file is gone. The
+	// desktop shell sets it so that gap can never widen a local session to
+	// bypassPermissions on the user's own machine.
+	DefaultPermissionMode claude.PermissionMode
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -65,14 +71,29 @@ func (s *Service) UseJcode(client *jcode.Client) {
 }
 
 // workspaceFacts are the per-workspace details Create learns and Start/Resume
-// need to build Claude's orientation prompt. Held in memory only: on a box
-// restart they are re-supplied by the control plane's next Create call, and
-// Start degrades gracefully (branch read from the worktree, base omitted) when
-// they're absent. Durable persistence is deferred until the Resume-after-restart
-// path is actually wired.
+// need: the orientation prompt's branches and Claude's permission mode. They are
+// kept in memory and in a file under Root, because a local agent restarts every
+// time the desktop app does, while its tmux sessions — and the user's work —
+// carry on. Start degrades gracefully (base omitted from the orientation) when
+// neither copy exists.
 type workspaceFacts struct {
-	branch     string
-	baseBranch string
+	Branch         string                `json:"branch"`
+	BaseBranch     string                `json:"baseBranch"`
+	PermissionMode claude.PermissionMode `json:"permissionMode,omitempty"`
+	// RepoPath is the user's checkout a local worktree branches from; empty on
+	// a Runtime Computer, where worktrees come from the bare mirror.
+	RepoPath string `json:"repoPath,omitempty"`
+}
+
+// CreateInput is what Create needs to provision one workspace.
+type CreateInput struct {
+	WorkspaceID string
+	Branch      string
+	// BaseBranch is the branch to fork from, without a remote prefix ("main").
+	BaseBranch string
+	// RepoPath is an existing checkout to branch from; empty uses the mirror.
+	RepoPath       string
+	PermissionMode claude.PermissionMode
 }
 
 func NewService(root string) *Service {
@@ -123,6 +144,9 @@ func (s *Service) RedactionSecrets() []string {
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
 
 func (s *Service) mirrorPath() string { return filepath.Join(s.Root, "repo.git") }
+func (s *Service) factsPath(id string) string {
+	return filepath.Join(s.Root, "facts", id+".json")
+}
 func (s *Service) worktreePath(id string) string {
 	return filepath.Join(s.Root, "workspaces", id)
 }
@@ -136,28 +160,59 @@ func (s *Service) castPath(id string) string {
 	return filepath.Join(s.castDir(id), cast.DefaultCastName)
 }
 
-// Create adds a git worktree for the workspace from the shared bare mirror.
+// Create adds a git worktree for the workspace: from the shared bare mirror on
+// a Runtime Computer, or from the user's own checkout when RepoPath is set.
 // The mirror itself (clone/fetch) is provisioned separately; this is the
 // per-workspace step. Claude is not started until Start.
-func (s *Service) Create(ctx context.Context, workspaceID, branch, baseRef string) (string, error) {
-	// Record the facts Start/Resume need for the orientation prompt, even on the
-	// idempotent path below so a re-Create after a restart repopulates them.
-	// baseRef arrives as a remote ref (e.g. "origin/main"); strip it for display.
-	s.setFacts(workspaceID, branch, strings.TrimPrefix(baseRef, "origin/"))
+func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
+	if strings.HasPrefix(in.Branch, "-") || strings.HasPrefix(in.BaseBranch, "-") {
+		return "", fmt.Errorf("invalid branch name")
+	}
+	// Record the facts Start/Resume need, even on the idempotent path below so a
+	// re-Create after a restart repopulates them.
+	s.setFacts(in.WorkspaceID, workspaceFacts{
+		Branch:         in.Branch,
+		BaseBranch:     in.BaseBranch,
+		PermissionMode: in.PermissionMode,
+		RepoPath:       in.RepoPath,
+	})
 
-	worktree := s.worktreePath(workspaceID)
+	worktree := s.worktreePath(in.WorkspaceID)
 	if _, err := os.Stat(worktree); err == nil {
 		return worktree, nil // idempotent
 	}
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 		return "", err
 	}
+	if in.RepoPath != "" {
+		if err := s.addCheckoutWorktree(ctx, in.RepoPath, worktree, in.Branch, in.BaseBranch); err != nil {
+			return "", err
+		}
+		return worktree, nil
+	}
 	out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
-		"worktree", "add", "-b", branch, worktree, baseRef).CombinedOutput()
+		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return worktree, nil
+}
+
+// permissionMode is the mode a workspace's Claude launches with.
+func (s *Service) permissionMode(workspaceID string) claude.PermissionMode {
+	if f, ok := s.getFacts(workspaceID); ok && f.PermissionMode != "" {
+		return f.PermissionMode
+	}
+	if s.DefaultPermissionMode != "" {
+		return s.DefaultPermissionMode
+	}
+	return claude.Bypass
+}
+
+// local reports whether a workspace branches from the user's own checkout.
+func (s *Service) local(workspaceID string) bool {
+	f, _ := s.getFacts(workspaceID)
+	return f.RepoPath != ""
 }
 
 // Start launches an interactive Claude session inside a fresh tmux session
@@ -176,14 +231,14 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	}
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := claude.Command(s.orientation(workspaceID, worktree))
+	cmd := claude.Command(s.permissionMode(workspaceID), s.orientation(workspaceID, worktree))
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
 	s.startRecorder(ctx, workspaceID)
-	s.waitClaudeReady(ctx, name)
+	s.waitClaudeReady(ctx, name, s.local(workspaceID))
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
 }
@@ -194,16 +249,31 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 // and enforces a short floor (the measured input-ready point after launch),
 // capped so a slow or unexpected launch can never wedge Start. Returns early if
 // ctx is cancelled (the start request disconnected or shutdown began).
-func (s *Service) waitClaudeReady(ctx context.Context, name string) {
+//
+// acceptTrust answers Claude's folder-trust dialog. Every local worktree is a
+// directory Claude has never seen, so without this the first prompt would be
+// typed into the dialog. Choosing the checkout in Outrunner is the user's trust
+// decision; a Runtime Computer never shows the dialog (deploy pre-seeds it).
+func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust bool) {
 	const minWait = 2 * time.Second
 	const maxWait = 15 * time.Second
 	launched := time.Now()
+	var lastAnswer time.Time
 	for {
 		if ctx.Err() != nil || time.Since(launched) >= maxWait {
 			return
 		}
 		pane, err := s.tmux.CapturePane(ctx, name)
-		if err == nil && strings.Contains(pane, "❯") && time.Since(launched) >= minWait {
+		// The dialog is checked first: its "❯ 1. Yes, I trust this folder" line
+		// also contains the composer glyph.
+		if err == nil && isTrustDialog(pane) {
+			// "Yes" is preselected, so Enter accepts. Re-press only after a beat:
+			// a just-launched TUI can drop the first key.
+			if acceptTrust && time.Since(lastAnswer) >= time.Second {
+				_ = s.tmux.SubmitEnter(ctx, name)
+				lastAnswer = time.Now()
+			}
+		} else if err == nil && strings.Contains(pane, "❯") && time.Since(launched) >= minWait {
 			return
 		}
 		select {
@@ -212,6 +282,13 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string) {
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+// isTrustDialog reports whether a pane shows Claude Code's folder-trust prompt,
+// in either of the wordings it has shipped with.
+func isTrustDialog(pane string) bool {
+	return strings.Contains(pane, "trust this folder") ||
+		strings.Contains(pane, "trust the files in this folder")
 }
 
 // Resume re-launches Claude with --continue after an exit or box restart.
@@ -235,12 +312,12 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := claude.ContinueCommand(s.orientation(workspaceID, worktree))
+	cmd := claude.ContinueCommand(s.permissionMode(workspaceID), s.orientation(workspaceID, worktree))
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
 	s.startRecorder(ctx, workspaceID)
-	s.waitClaudeReady(ctx, name)
+	s.waitClaudeReady(ctx, name, s.local(workspaceID))
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
 }
@@ -252,20 +329,43 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 // useful prompt (see claude.Orientation).
 func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
-	return claude.Orientation(worktree, f.baseBranch)
+	return claude.Orientation(worktree, f.BaseBranch)
 }
 
-func (s *Service) setFacts(workspaceID, branch, baseBranch string) {
+// setFacts records a workspace's facts in memory and on disk. The file write is
+// best-effort: losing it costs a degraded orientation after a restart, and the
+// permission mode still falls back to DefaultPermissionMode.
+func (s *Service) setFacts(workspaceID string, f workspaceFacts) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.facts[workspaceID] = workspaceFacts{branch: branch, baseBranch: baseBranch}
+	s.facts[workspaceID] = f
+	s.mu.Unlock()
+	data, err := json.Marshal(f)
+	if err != nil {
+		return
+	}
+	path := s.factsPath(workspaceID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(path, data, 0o600)
 }
 
 func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, ok := s.facts[workspaceID]
-	return f, ok
+	if f, ok := s.facts[workspaceID]; ok {
+		return f, true
+	}
+	data, err := os.ReadFile(s.factsPath(workspaceID))
+	if err != nil {
+		return workspaceFacts{}, false
+	}
+	var f workspaceFacts
+	if json.Unmarshal(data, &f) != nil {
+		return workspaceFacts{}, false
+	}
+	s.facts[workspaceID] = f
+	return f, true
 }
 
 // Stop ends the Claude session and stops the Summary collector, marking the
@@ -457,7 +557,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	}
 	// Verified — safe to boot Claude. Record the facts the orientation prompt
 	// needs, then relaunch with --continue against the restored session.
-	s.setFacts(workspaceID, req.Branch, req.BaseBranch)
+	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch})
 	return s.Resume(ctx, workspaceID, "")
 }
 
@@ -533,11 +633,12 @@ func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
 	return s.tmux.HasSession(ctx, sessionName(workspaceID))
 }
 
-// Destroy stops the Claude session and removes its worktree from the shared
-// bare mirror. Unlike Archive, this is terminal: the persisted Workspace row
+// Destroy stops the Claude session and removes its worktree from the repository
+// it belongs to. Unlike Archive, this is terminal: the persisted Workspace row
 // is marked destroyed by the control plane and a future workspace receives a
 // new branch/worktree. The operation is idempotent for a worktree already
-// removed by an earlier request.
+// removed by an earlier request. The branch itself is kept: in a local checkout
+// it may hold commits that were never pushed.
 func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 	_ = s.Stop(ctx, workspaceID)
 	worktree := s.worktreePath(workspaceID)
@@ -545,18 +646,8 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 		s.forgetWorkspace(workspaceID)
 		return nil
 	}
-	out, err := exec.CommandContext(
-		ctx,
-		"git",
-		"-C",
-		s.mirrorPath(),
-		"worktree",
-		"remove",
-		"--force",
-		worktree,
-	).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("worktree remove: %v: %s", err, strings.TrimSpace(string(out)))
+	if _, err := s.git(ctx, s.worktreeRepo(ctx, worktree), "worktree", "remove", "--force", worktree); err != nil {
+		return fmt.Errorf("worktree remove: %w", err)
 	}
 	s.forgetWorkspace(workspaceID)
 	return nil
@@ -566,6 +657,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.mu.Lock()
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
+	_ = os.Remove(s.factsPath(workspaceID))
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()

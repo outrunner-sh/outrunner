@@ -46,6 +46,14 @@
       "repoFullName": "acme/app",
       "branch": "feat/x",
       "baseBranch": "main"
+    },
+    {
+      "workspaceId": "ws-2",
+      "repoFullName": "acme/app",
+      "branch": "feat/y",
+      "baseBranch": "main",
+      "repoPath": "/Users/ada/code/app",
+      "permissionMode": "acceptEdits"
     }
   ],
   "WorkspaceActionRequest": [
