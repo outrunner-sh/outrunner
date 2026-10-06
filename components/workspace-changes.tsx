@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { localAgentRequest } from "@/lib/desktop/local-runtime";
+import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { ChangedFile } from "@/lib/runtime/types";
 
 const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "outline" | "destructive"> = {
@@ -25,14 +25,14 @@ const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "ou
  */
 export function WorkspaceChanges({
   workspaceId,
-  localProjectId,
+  local = false,
   active,
   baseBranch,
 }: {
   workspaceId: string;
-  /** Set for a local session: the agent on this Mac serves the change set,
-   *  through the Outrunner app, since the server cannot reach the worktree. */
-  localProjectId?: string;
+  /** A local session: the agent on this Mac serves the change set, through the
+   *  Outrunner app, since the server cannot reach the worktree. */
+  local?: boolean;
   active: boolean;
   baseBranch?: string;
 }) {
@@ -66,10 +66,10 @@ export function WorkspaceChanges({
   // shapes /api/workspaces/[id]/changes uses.
   const readLocal = useCallback(
     async (query: string): Promise<{ ok: boolean; result: Record<string, unknown> }> => {
-      if (!localProjectId) throw new Error("not a local workspace");
+      if (!local) throw new Error("not a local workspace");
       try {
         const result = await localAgentRequest<Record<string, unknown>>(
-          { workspaceId, projectId: localProjectId },
+          localTarget(workspaceId),
           "GET",
           `/workspaces/${workspaceId}/changes${query}`,
         );
@@ -78,12 +78,12 @@ export function WorkspaceChanges({
         return { ok: false, result: { error: error instanceof Error ? error.message : String(error) } };
       }
     },
-    [workspaceId, localProjectId],
+    [workspaceId, local],
   );
 
   const fetchChanges = useCallback(
     async (signal?: AbortSignal): Promise<{ files: ChangedFile[] } | { error: string }> => {
-      if (localProjectId) {
+      if (local) {
         const { ok, result } = await readLocal("");
         const files = result.files as ChangedFile[] | undefined;
         if (!ok || !files) return { error: (result.error as string) ?? "Could not load changes." };
@@ -97,7 +97,7 @@ export function WorkspaceChanges({
       if (!response.ok || !result.files) return { error: result.error ?? "Could not load changes." };
       return { files: result.files };
     },
-    [workspaceId, localProjectId, readLocal],
+    [workspaceId, local, readLocal],
   );
 
   const loadDiff = useCallback(
@@ -106,7 +106,7 @@ export function WorkspaceChanges({
       setLoadingPaths((s) => new Set(s).add(path));
       try {
         const query = `?path=${encodeURIComponent(path)}`;
-        const { ok, result } = localProjectId
+        const { ok, result } = local
           ? ((await readLocal(query)) as { ok: boolean; result: { diff?: string; error?: string } })
           : await fetch(`/api/workspaces/${workspaceId}/changes${query}`).then(async (response) => ({
               ok: response.ok,
@@ -137,7 +137,7 @@ export function WorkspaceChanges({
         });
       }
     },
-    [workspaceId, localProjectId, readLocal],
+    [workspaceId, local, readLocal],
   );
 
   const applyResult = useCallback(

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   localAgentRequest,
   localSocketUrl,
+  localTarget,
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
 import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
@@ -62,13 +63,10 @@ async function localSessionUrls(target: LocalTarget): Promise<SessionUrls> {
 }
 
 /**
- * `localProjectId` marks a local session (run by the Outrunner app on this Mac);
- * omitted, the URLs come from the server as for any cloud session.
+ * `local` marks a session run by the Outrunner app on this Mac; otherwise the
+ * URLs come from the server as for any cloud session.
  */
-export function useSessionAttachment(
-  workspaceId: string,
-  localProjectId?: string,
-): SessionAttachment {
+export function useSessionAttachment(workspaceId: string, local = false): SessionAttachment {
   const [urls, setUrls] = useState<SessionUrls | null>(null);
   const [status, setStatus] = useState<SessionAttachmentStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -90,10 +88,10 @@ export function useSessionAttachment(
 
     (async () => {
       try {
-        if (localProjectId) {
-          const local = await localSessionUrls({ workspaceId, projectId: localProjectId });
+        if (local) {
+          const urls = await localSessionUrls(localTarget(workspaceId));
           if (controller.signal.aborted) return;
-          setUrls(local);
+          setUrls(urls);
           setAttachId((n) => n + 1);
           setStatus("attached");
           return;
@@ -124,7 +122,7 @@ export function useSessionAttachment(
         inflight.current = null;
       }
     })();
-  }, [workspaceId, localProjectId]);
+  }, [workspaceId, local]);
 
   const reconnect = useCallback(() => {
     // Both browser projections can notice the same network close. The

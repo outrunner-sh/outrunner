@@ -13,23 +13,28 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { LocalSessionsNav } from "@/components/local-sessions-nav";
 import { ProjectWorkspaceNav } from "@/components/project-workspace-nav";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { SessionComposer } from "@/components/session-composer";
 import { WorkspaceSession } from "@/components/workspace-session";
-import { useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
-import { localDeviceOf } from "@/lib/runtime/local-workspace";
+import { localSessionLabel } from "@/hooks/use-local-sessions";
+import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 export function WorkspaceStudio({
   workspace,
+  local,
   allProjects,
   allWorkspaces,
   initialPrompt,
   initialAttachmentIds,
 }: {
   workspace: Workspace;
+  /** Set for a local session, which runs on this Mac and is driven through the
+   *  Outrunner app rather than the server. */
+  local?: LocalSession;
   allProjects: Project[];
   allWorkspaces: Workspace[];
   /** Kept for the page contract; the Publish panel was removed from the studio. */
@@ -43,18 +48,10 @@ export function WorkspaceStudio({
   // The live terminal is tucked away by default; it is where Claude's own
   // prompts are answered — in a local session, every shell-command approval.
   const [showTerminal, setShowTerminal] = useState(false);
+  const isLocal = local !== undefined;
   const isReady = workspace.status === "ready" || workspace.status === "idle";
-  // A local session runs on one particular Mac, reachable only from the
-  // Outrunner app on it.
-  const isLocal = workspace.provider === "desktop";
-  const localRuntime = useLocalRuntime();
-  const onThisMac =
-    isLocal &&
-    localRuntime.state === "ready" &&
-    localRuntime.status.deviceId === localDeviceOf(workspace);
-  const localProjectId = onThisMac ? workspace.projectId : undefined;
-  const hasLiveSession = isReady && (workspace.provider === "daytona" || onThisMac);
-  const offline = offlineCopy({ workspace, isReady, isLocal, localRuntime });
+  const hasLiveSession = isReady && (workspace.provider === "daytona" || isLocal);
+  const offline = offlineCopy({ workspace, isReady });
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
@@ -64,6 +61,7 @@ export function WorkspaceStudio({
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
           <Link href="/new" className="studio-back" title="New session"><Plus /> New</Link>
         </div>
+        <LocalSessionsNav activeWorkspaceId={workspace.id} />
         <ProjectWorkspaceNav
           projects={allProjects}
           workspaces={allWorkspaces}
@@ -76,11 +74,11 @@ export function WorkspaceStudio({
           <div className="studio-title">
             <span className={cn("studio-status", `is-${workspace.status}`)} />
             <div>
-              <h2>{workspace.branch}</h2>
+              <h2>{local ? localSessionLabel(local) : workspace.branch}</h2>
               <p title={workspace.worktreePath || undefined}>
-                {isLocal ? `local worktree${onThisMac ? " on this Mac" : ""}` : `${workspace.provider} worktree`}
-                {" · "}
-                {workspace.status}
+                {local
+                  ? `${local.name} · ${local.inPlace ? "in place" : local.branch} · this Mac`
+                  : `${workspace.provider} worktree · ${workspace.status}`}
               </p>
             </div>
           </div>
@@ -104,7 +102,7 @@ export function WorkspaceStudio({
           {hasLiveSession ? (
             <WorkspaceSession
               workspaceId={workspace.id}
-              localProjectId={localProjectId}
+              local={isLocal}
               showTerminal={showTerminal}
               initialPrompt={initialPrompt}
               initialAttachmentIds={initialAttachmentIds}
@@ -130,8 +128,8 @@ export function WorkspaceStudio({
           <div className="studio-inspector-content is-diff">
             <WorkspaceChanges
               workspaceId={workspace.id}
-              localProjectId={localProjectId}
-              active={isReady && (!isLocal || onThisMac)}
+              local={isLocal}
+              active={isReady}
               baseBranch={workspace.baseBranch}
             />
           </div>
@@ -145,40 +143,15 @@ export function WorkspaceStudio({
 function offlineCopy({
   workspace,
   isReady,
-  isLocal,
-  localRuntime,
 }: {
   workspace: Workspace;
   isReady: boolean;
-  isLocal: boolean;
-  localRuntime: LocalRuntime;
 }): { title: string; detail: string; placeholder: string } {
   if (workspace.status === "failed") {
     return {
       title: "This workspace didn't start",
       detail: workspace.errorMessage ?? "Provisioning failed. Start a new session to try again.",
       placeholder: "Start a new session to try again",
-    };
-  }
-  if (isLocal && localRuntime.state === "checking") {
-    return {
-      title: "Connecting to this Mac",
-      detail: "Looking for the local session.",
-      placeholder: "Connecting to the local session",
-    };
-  }
-  if (isLocal && localRuntime.state !== "ready") {
-    return {
-      title: "Runs on a Mac",
-      detail: "This session runs locally on a Mac. Open it in the Outrunner app on that Mac.",
-      placeholder: "Open this session in the Outrunner Mac app",
-    };
-  }
-  if (isLocal && isReady) {
-    return {
-      title: "Runs on another Mac",
-      detail: "This session runs locally on a different Mac. Open it in the Outrunner app there.",
-      placeholder: "This session runs on another Mac",
     };
   }
   if (isReady) {

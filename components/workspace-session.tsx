@@ -8,22 +8,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { SessionComposer } from "@/components/session-composer";
-import { localAgentRequest } from "@/lib/desktop/local-runtime";
+import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 
 export function WorkspaceSession({
   workspaceId,
-  localProjectId,
+  local = false,
   showTerminal,
   initialPrompt,
   initialAttachmentIds,
 }: {
   workspaceId: string;
-  /** Set for a local session: everything then goes through the Outrunner app
-   *  to the agent on this Mac, instead of through the server. */
-  localProjectId?: string;
+  /** A local session: everything then goes through the Outrunner app to the
+   *  agent on this Mac, instead of through the server. */
+  local?: boolean;
   /** Whether the collapsible live terminal is revealed (owned by the studio). */
   showTerminal: boolean;
   /** First prompt to send once the session accepts input (from /new). */
@@ -32,7 +32,7 @@ export function WorkspaceSession({
   initialAttachmentIds?: string[];
 }) {
   const terminalContainer = useRef<HTMLDivElement>(null);
-  const attachment = useSessionAttachment(workspaceId, localProjectId);
+  const attachment = useSessionAttachment(workspaceId, local);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
   const conversation = useConversationStream(attachment);
 
@@ -73,9 +73,9 @@ export function WorkspaceSession({
       });
     }
     setSendError(null);
-    if (localProjectId) {
+    if (local) {
       return localAgentRequest(
-        { workspaceId, projectId: localProjectId },
+        localTarget(workspaceId),
         "POST",
         `/workspaces/${workspaceId}/message`,
         { content: text },
@@ -195,7 +195,7 @@ export function WorkspaceSession({
         onSend={send}
         canSend={canSend}
         model={activeModel}
-        allowAttachments={!localProjectId}
+        allowAttachments={!local}
       />
     </div>
   );
