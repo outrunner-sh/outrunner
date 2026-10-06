@@ -67,6 +67,27 @@ type CreateWorkspaceRequest struct {
 	// PermissionMode is Claude's --permission-mode; empty keeps the Runtime
 	// Computer default (bypassPermissions).
 	PermissionMode string `json:"permissionMode,omitempty"`
+	// Title labels a local session in the desktop's list (the first prompt).
+	Title string `json:"title,omitempty"`
+}
+
+// LocalSession is one local session the agent on a user's Mac knows about, as
+// the desktop app lists them. Local sessions are not in the shared database:
+// they exist only on the Mac that runs them.
+type LocalSession struct {
+	WorkspaceID string `json:"workspaceId"`
+	// Name is the folder's name; Folder its path; Worktree where Claude works
+	// (the folder itself when InPlace).
+	Name       string `json:"name"`
+	Title      string `json:"title"`
+	Folder     string `json:"folder"`
+	Worktree   string `json:"worktree"`
+	Branch     string `json:"branch"`
+	BaseBranch string `json:"baseBranch"`
+	InPlace    bool   `json:"inPlace"`
+	CreatedAt  string `json:"createdAt"`
+	// Running is whether Claude's session is live right now.
+	Running bool `json:"running"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).

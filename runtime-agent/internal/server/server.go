@@ -70,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("POST /workspaces", s.authed(s.createWorkspace))
+	mux.HandleFunc("GET /workspaces", s.authed(s.listWorkspaces))
 	mux.HandleFunc("POST /workspaces/{id}/start", s.authed(s.startWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/stop", s.authed(s.stopWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/resume", s.authed(s.resumeWorkspace))
@@ -121,6 +122,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:     req.BaseBranch,
 		RepoPath:       req.RepoPath,
 		PermissionMode: mode,
+		Title:          req.Title,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
@@ -222,6 +224,13 @@ func (s *Server) queryClaims(r *http.Request) (*protocol.RuntimeTokenClaims, err
 		return nil, auth.ErrMalformed
 	}
 	return claims, nil
+}
+
+// listWorkspaces lists the local sessions this agent knows — the desktop's
+// session list, since local sessions are not in the shared database. Any valid
+// token may list: only the desktop app on this machine holds the secret.
+func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"workspaces": s.ws.LocalSessions(r.Context())})
 }
 
 // workspaceChanges serves the Changes panel for a session whose control plane

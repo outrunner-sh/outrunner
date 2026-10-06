@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -19,15 +20,44 @@ import (
 // hold up the session.
 const fetchTimeout = 30 * time.Second
 
+// localFolder is what Create learns about the folder a local session works on.
+type localFolder struct {
+	// path is the repository's top level for a git folder, else as given.
+	path string
+	// git is true for a repository with at least one commit to branch from.
+	git bool
+	// branch is the checked-out branch, empty when detached or not git.
+	branch string
+}
+
+// inspectFolder checks the folder a local session was pointed at. Any folder
+// will do: one that is not a repository — or is one with no commit yet, which
+// has nothing to branch — is worked on in place.
+func (s *Service) inspectFolder(ctx context.Context, path string) (localFolder, error) {
+	if !filepath.IsAbs(path) {
+		return localFolder{}, fmt.Errorf("folder path must be absolute, got %q", path)
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		return localFolder{}, fmt.Errorf("%s is not a folder", path)
+	}
+	top, err := s.git(ctx, path, "rev-parse", "--show-toplevel")
+	if err != nil || top == "" {
+		return localFolder{path: path}, nil
+	}
+	if _, err := s.git(ctx, top, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+		return localFolder{path: path}, nil
+	}
+	branch, _ := s.git(ctx, top, "rev-parse", "--abbrev-ref", "HEAD")
+	if branch == "HEAD" {
+		branch = ""
+	}
+	return localFolder{path: top, git: true, branch: branch}, nil
+}
+
 // addCheckoutWorktree creates the workspace's worktree on a new branch in the
-// checkout at repoPath, forked from the freshest base it can find.
+// checkout at repoPath: forked from the freshest copy of baseBranch when one is
+// named, else from the checkout's current commit — as Claude Code does.
 func (s *Service) addCheckoutWorktree(ctx context.Context, repoPath, worktree, branch, baseBranch string) error {
-	if !filepath.IsAbs(repoPath) {
-		return fmt.Errorf("repository path must be absolute, got %q", repoPath)
-	}
-	if _, err := s.git(ctx, repoPath, "rev-parse", "--git-dir"); err != nil {
-		return fmt.Errorf("%s is not a git repository", repoPath)
-	}
 	s.refreshBase(ctx, repoPath, baseBranch)
 	base, err := s.resolveBase(ctx, repoPath, baseBranch)
 	if err != nil {

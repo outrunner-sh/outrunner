@@ -80,9 +80,18 @@ type workspaceFacts struct {
 	Branch         string                `json:"branch"`
 	BaseBranch     string                `json:"baseBranch"`
 	PermissionMode claude.PermissionMode `json:"permissionMode,omitempty"`
-	// RepoPath is the user's checkout a local worktree branches from; empty on
-	// a Runtime Computer, where worktrees come from the bare mirror.
+	// RepoPath is the folder on the user's Mac a local session works on; empty
+	// on a Runtime Computer, where worktrees come from the bare mirror.
 	RepoPath string `json:"repoPath,omitempty"`
+	// InPlace marks a local folder that is not a git repository (or has no
+	// commit yet): there is nothing to branch, so Claude works in the folder
+	// itself rather than a worktree, and Destroy must never remove it.
+	InPlace bool `json:"inPlace,omitempty"`
+	// Name and Title label the session in the desktop's list: the folder's name,
+	// and what the user asked for first.
+	Name      string `json:"name,omitempty"`
+	Title     string `json:"title,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
 }
 
 // CreateInput is what Create needs to provision one workspace.
@@ -91,9 +100,12 @@ type CreateInput struct {
 	Branch      string
 	// BaseBranch is the branch to fork from, without a remote prefix ("main").
 	BaseBranch string
-	// RepoPath is an existing checkout to branch from; empty uses the mirror.
+	// RepoPath is a folder on this machine to work on; empty uses the mirror.
+	// A git folder gets a worktree off it; any other folder is used in place.
 	RepoPath       string
 	PermissionMode claude.PermissionMode
+	// Title labels a local session in the desktop's list.
+	Title string
 }
 
 func NewService(root string) *Service {
@@ -147,7 +159,12 @@ func (s *Service) mirrorPath() string { return filepath.Join(s.Root, "repo.git")
 func (s *Service) factsPath(id string) string {
 	return filepath.Join(s.Root, "facts", id+".json")
 }
+// worktreePath is where a workspace's Claude works: its worktree under Root, or
+// for an in-place local session, the user's folder itself.
 func (s *Service) worktreePath(id string) string {
+	if f, ok := s.getFacts(id); ok && f.InPlace && f.RepoPath != "" {
+		return f.RepoPath
+	}
 	return filepath.Join(s.Root, "workspaces", id)
 }
 
@@ -160,32 +177,53 @@ func (s *Service) castPath(id string) string {
 	return filepath.Join(s.castDir(id), cast.DefaultCastName)
 }
 
-// Create adds a git worktree for the workspace: from the shared bare mirror on
-// a Runtime Computer, or from the user's own checkout when RepoPath is set.
-// The mirror itself (clone/fetch) is provisioned separately; this is the
-// per-workspace step. Claude is not started until Start.
+// Create provisions the workspace's working directory and records its facts.
+// On a Runtime Computer that is a git worktree off the shared bare mirror (the
+// mirror itself is provisioned separately). With RepoPath — a folder on the
+// user's Mac — a git folder gets a worktree on a new branch off its current
+// commit (or the base branch, when one is named), and any other folder is used
+// in place. Claude is not started until Start.
 func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if strings.HasPrefix(in.Branch, "-") || strings.HasPrefix(in.BaseBranch, "-") {
 		return "", fmt.Errorf("invalid branch name")
 	}
-	// Record the facts Start/Resume need, even on the idempotent path below so a
-	// re-Create after a restart repopulates them.
-	s.setFacts(in.WorkspaceID, workspaceFacts{
+	facts := workspaceFacts{
 		Branch:         in.Branch,
 		BaseBranch:     in.BaseBranch,
 		PermissionMode: in.PermissionMode,
-		RepoPath:       in.RepoPath,
-	})
+		Title:          in.Title,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}
+	// A repeated Create (after a restart) keeps the session's original age.
+	if prior, ok := s.getFacts(in.WorkspaceID); ok && prior.CreatedAt != "" {
+		facts.CreatedAt = prior.CreatedAt
+	}
+	if in.RepoPath != "" {
+		folder, err := s.inspectFolder(ctx, in.RepoPath)
+		if err != nil {
+			return "", err
+		}
+		facts.RepoPath, facts.InPlace, facts.Name = folder.path, !folder.git, filepath.Base(folder.path)
+		if facts.BaseBranch == "" {
+			facts.BaseBranch = folder.branch // the orientation's target branch
+		}
+	}
+	// Record the facts Start/Resume need, even on the idempotent path below so a
+	// re-Create after a restart repopulates them.
+	s.setFacts(in.WorkspaceID, facts)
 
 	worktree := s.worktreePath(in.WorkspaceID)
+	if facts.InPlace {
+		return worktree, nil // the user's own folder
+	}
 	if _, err := os.Stat(worktree); err == nil {
 		return worktree, nil // idempotent
 	}
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 		return "", err
 	}
-	if in.RepoPath != "" {
-		if err := s.addCheckoutWorktree(ctx, in.RepoPath, worktree, in.Branch, in.BaseBranch); err != nil {
+	if facts.RepoPath != "" {
+		if err := s.addCheckoutWorktree(ctx, facts.RepoPath, worktree, in.Branch, in.BaseBranch); err != nil {
 			return "", err
 		}
 		return worktree, nil
@@ -651,6 +689,12 @@ func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
 // it may hold commits that were never pushed.
 func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 	_ = s.Stop(ctx, workspaceID)
+	// An in-place session's directory is the user's own folder: forget the
+	// session, never touch the files.
+	if f, ok := s.getFacts(workspaceID); ok && f.InPlace {
+		s.forgetWorkspace(workspaceID)
+		return nil
+	}
 	worktree := s.worktreePath(workspaceID)
 	if _, err := os.Stat(worktree); os.IsNotExist(err) {
 		s.forgetWorkspace(workspaceID)

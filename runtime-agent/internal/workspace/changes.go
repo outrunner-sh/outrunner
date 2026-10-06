@@ -29,6 +29,10 @@ var (
 
 // Changes lists the worktree's changed files, untracked included.
 func (s *Service) Changes(ctx context.Context, workspaceID string) ([]protocol.ChangedFile, error) {
+	// A folder that is not a repository has no change set to show.
+	if f, ok := s.getFacts(workspaceID); ok && f.InPlace {
+		return []protocol.ChangedFile{}, nil
+	}
 	out, err := s.gitRaw(ctx, s.worktreePath(workspaceID),
 		"status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {

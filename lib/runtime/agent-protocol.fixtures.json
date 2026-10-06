@@ -53,7 +53,8 @@
       "branch": "feat/y",
       "baseBranch": "main",
       "repoPath": "/Users/ada/code/app",
-      "permissionMode": "acceptEdits"
+      "permissionMode": "acceptEdits",
+      "title": "Fix the login redirect"
     }
   ],
   "WorkspaceActionRequest": [

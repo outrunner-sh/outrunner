@@ -109,16 +109,128 @@ func TestCreateFromCheckoutForksFromTheRemoteBase(t *testing.T) {
 	}
 }
 
-func TestCreateFromCheckoutRejectsANonRepository(t *testing.T) {
+func TestCreateFromCheckoutForksFromTheCurrentBranchWhenNoBaseIsNamed(t *testing.T) {
 	isolateGit(t)
+	// A folder picked on the Mac names no base: fork from where the user is.
+	repo := newCheckout(t)
+	run(t, repo, "checkout", "--quiet", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("f\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, repo, "add", ".")
+	run(t, repo, "commit", "--quiet", "-m", "feature work")
+	want := run(t, repo, "rev-parse", "HEAD")
+
 	s := NewService(t.TempDir())
-	for _, path := range []string{t.TempDir(), "relative/path"} {
-		_, err := s.Create(context.Background(), CreateInput{
-			WorkspaceID: "ws-bad", Branch: "runtime/x", BaseBranch: "main", RepoPath: path,
-		})
-		if err == nil {
-			t.Errorf("Create accepted %q as a repository", path)
+	worktree, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-here", Branch: "runtime/here", RepoPath: filepath.Join(repo, "."), Title: "Tidy up",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := run(t, worktree, "rev-parse", "HEAD"); got != want {
+		t.Errorf("worktree forked from %s, want the feature tip %s", got, want)
+	}
+	f, _ := s.getFacts("ws-here")
+	if f.BaseBranch != "feature" || f.Name != "app" || f.Title != "Tidy up" || f.InPlace || f.CreatedAt == "" {
+		t.Errorf("facts = %+v", f)
+	}
+}
+
+func TestCreateInAFolderThatIsNotARepositoryWorksInPlace(t *testing.T) {
+	isolateGit(t)
+	folder := filepath.Join(t.TempDir(), "notes")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "todo.md"), []byte("- x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewService(t.TempDir())
+	worktree, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-notes", Branch: "runtime/notes", RepoPath: folder,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if worktree != folder {
+		t.Errorf("worktree = %q, want the folder itself %q", worktree, folder)
+	}
+	if files, err := s.Changes(context.Background(), "ws-notes"); err != nil || len(files) != 0 {
+		t.Errorf("Changes = %v, %v; want an empty change set", files, err)
+	}
+
+	// Destroying the session must leave the user's folder exactly as it was.
+	if err := NewService(s.Root).Destroy(context.Background(), "ws-notes"); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(folder, "todo.md")); err != nil || string(data) != "- x\n" {
+		t.Fatalf("destroy touched the user's folder: %q, %v", data, err)
+	}
+	if _, ok := NewService(s.Root).getFacts("ws-notes"); ok {
+		t.Error("destroyed session is still recorded")
+	}
+}
+
+func TestCreateInARepositoryWithNoCommitWorksInPlace(t *testing.T) {
+	isolateGit(t)
+	folder := filepath.Join(t.TempDir(), "fresh")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(t, folder, "init", "--quiet", "-b", "main")
+	s := NewService(t.TempDir())
+	worktree, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-fresh-repo", Branch: "runtime/x", RepoPath: folder,
+	})
+	if err != nil || worktree != folder {
+		t.Fatalf("Create = %q, %v; want the folder in place", worktree, err)
+	}
+}
+
+func TestCreateRejectsWhatIsNotAFolder(t *testing.T) {
+	isolateGit(t)
+	file := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := NewService(t.TempDir())
+	for _, path := range []string{"relative/path", file, filepath.Join(t.TempDir(), "missing")} {
+		if _, err := s.Create(context.Background(), CreateInput{
+			WorkspaceID: "ws-bad", Branch: "runtime/x", RepoPath: path,
+		}); err == nil {
+			t.Errorf("Create accepted %q", path)
 		}
+	}
+}
+
+func TestLocalSessionsListsWhatThisMacRuns(t *testing.T) {
+	isolateGit(t)
+	repo := newCheckout(t)
+	root := t.TempDir()
+	s := NewService(root)
+	for i, id := range []string{"ws-old", "ws-new"} {
+		if _, err := s.Create(context.Background(), CreateInput{
+			WorkspaceID: id, Branch: "runtime/" + id, RepoPath: repo, Title: id,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// Distinct creation times, oldest first.
+		f, _ := s.getFacts(id)
+		f.CreatedAt = []string{"2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"}[i]
+		s.setFacts(id, f)
+	}
+	// A Runtime Computer workspace (no folder) is not a local session.
+	s.setFacts("ws-cloud", workspaceFacts{Branch: "b", BaseBranch: "main"})
+
+	got := NewService(root).LocalSessions(context.Background())
+	if len(got) != 2 || got[0].WorkspaceID != "ws-new" || got[1].WorkspaceID != "ws-old" {
+		t.Fatalf("LocalSessions = %+v", got)
+	}
+	// git reports the repository's real path (/var is /private/var on macOS).
+	realRepo, _ := filepath.EvalSymlinks(repo)
+	if got[0].Name != "app" || got[0].Folder != realRepo || got[0].Worktree != s.worktreePath("ws-new") || got[0].Running {
+		t.Errorf("session = %+v", got[0])
 	}
 }
 

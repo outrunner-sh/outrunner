@@ -71,6 +71,8 @@ export const CreateWorkspaceRequest = z.object({
   repoPath: z.string().min(1).optional(),
   /** Claude's --permission-mode; omitted keeps the box default, bypass. */
   permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions"]).optional(),
+  /** Labels a local session in the desktop's list (the first prompt). */
+  title: z.string().optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
