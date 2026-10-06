@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 
 import { ProjectAvatar } from "@/components/project-avatar";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
+import { SessionLocationPicker } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import {
   Dialog,
@@ -20,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCreateSession } from "@/hooks/use-create-session";
+import { useSessionLocation } from "@/hooks/use-session-location";
 import type { Project } from "@/lib/runtime/types";
 
 /**
@@ -64,13 +66,16 @@ function NewSessionModalBody({
     projects,
     initialProjectId,
   );
+  const where = useSessionLocation(selected);
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const local = where.location === "local";
+  const blocked = local && !where.localCreate;
 
   const submit = () => {
     const text = value.trim();
-    if (text === "" || isCreating) return;
-    create(text);
+    if (text === "" || isCreating || blocked) return;
+    create(text, [], where.localCreate ?? undefined);
   };
 
   if (projects.length === 0) {
@@ -99,6 +104,7 @@ function NewSessionModalBody({
               <WorkspaceCreating
                 projectName={selected.fullName}
                 branch={selected.defaultBranch}
+                local={local}
               />
             </div>,
             document.body,
@@ -156,12 +162,13 @@ function NewSessionModalBody({
         }}
       />
 
-      {/* Footer — Create. */}
-      <div className="flex items-center justify-end px-4 pb-4">
+      {/* Footer — where it runs, and Create. */}
+      <div className="flex items-center justify-between gap-3 px-4 pb-4">
+        <SessionLocationPicker state={where} disabled={isCreating} />
         <button
           type="button"
           onClick={submit}
-          disabled={isCreating || value.trim() === ""}
+          disabled={isCreating || value.trim() === "" || blocked}
           className="flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           Create
@@ -169,6 +176,11 @@ function NewSessionModalBody({
         </button>
       </div>
 
+      {where.blocker && !message && (
+        <p aria-live="polite" className="px-4 pb-4 text-xs text-muted-foreground">
+          {where.blocker}
+        </p>
+      )}
       {message && (
         <p aria-live="polite" className="px-4 pb-4 text-center text-xs text-destructive">
           {message}

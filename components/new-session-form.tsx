@@ -5,8 +5,10 @@ import Link from "next/link";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
+import { SessionLocationPicker } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
+import { useSessionLocation } from "@/hooks/use-session-location";
 import type { Project } from "@/lib/runtime/types";
 
 /**
@@ -26,6 +28,8 @@ export function NewSessionForm({
 }) {
   const { projectId, setProjectId, selected, isCreating, message, messageHref, create } =
     useCreateSession(projects, initialProjectId);
+  const where = useSessionLocation(selected);
+  const local = where.location === "local";
 
   if (projects.length === 0) {
     return (
@@ -45,13 +49,17 @@ export function NewSessionForm({
         <WorkspaceCreating
           projectName={selected.fullName}
           branch={selected.defaultBranch}
+          local={local}
         />
       )}
 
       <SessionComposer
-        onSend={create}
-        canSend={!isCreating && selected != null}
-        disabledPlaceholder="Pick a repository below to start…"
+        onSend={(text, attachmentIds) => create(text, attachmentIds, where.localCreate ?? undefined)}
+        canSend={!isCreating && selected != null && !(local && !where.localCreate)}
+        disabledPlaceholder={
+          local && where.blocker ? where.blocker : "Pick a repository below to start…"
+        }
+        allowAttachments={!local}
       />
 
       <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-[15px]">
@@ -61,6 +69,14 @@ export function NewSessionForm({
           onSelect={setProjectId}
           disabled={isCreating}
         />
+      </div>
+      <div className="mt-3 flex flex-col items-center gap-2">
+        <SessionLocationPicker state={where} disabled={isCreating} className="justify-center" />
+        {where.blocker && (
+          <p aria-live="polite" className="text-muted-foreground text-xs">
+            {where.blocker}
+          </p>
+        )}
       </div>
 
       {message && (
