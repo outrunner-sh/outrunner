@@ -215,8 +215,14 @@ func (s *Service) local(workspaceID string) bool {
 	return f.RepoPath != ""
 }
 
-// Start launches an interactive Claude session inside a fresh tmux session
-// and launches the Workspace Summary collector for this workspace.
+// Start makes sure the workspace's Claude session is running, inside a tmux
+// session, with the Workspace Summary collector attached. It is idempotent, so
+// a client may call it every time it attaches:
+//   - a live session is left alone (only the collector is re-armed, which an
+//     agent restart loses while tmux keeps Claude running);
+//   - a workspace whose conversation exists but whose session is gone (the
+//     Mac restarted, or Claude exited) continues that conversation;
+//   - otherwise a fresh session starts.
 func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	name := sessionName(workspaceID)
 	if s.jcode != nil {
@@ -226,12 +232,17 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		s.beginSummary(workspaceID, s.worktreePath(workspaceID))
 		return name, nil
 	}
+	worktree := s.worktreePath(workspaceID)
 	if s.tmux.HasSession(ctx, name) {
+		s.beginSummary(workspaceID, worktree)
 		return name, nil // already running
 	}
-	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := claude.Command(s.permissionMode(workspaceID), s.orientation(workspaceID, worktree))
+	launch := claude.Command
+	if s.SessionLog(workspaceID) != "" {
+		launch = claude.ContinueCommand
+	}
+	cmd := launch(s.permissionMode(workspaceID), s.orientation(workspaceID, worktree))
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
