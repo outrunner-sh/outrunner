@@ -8,6 +8,7 @@ import {
   PanelRightClose,
   Plus,
   Terminal,
+  TerminalSquare,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -39,7 +40,9 @@ export function WorkspaceStudio({
   initialAttachmentIds?: string[];
 }) {
   const [rightOpen, setRightOpen] = useState(true);
-  const [showTerminal] = useState(false);
+  // The live terminal is tucked away by default; it is where Claude's own
+  // prompts are answered — in a local session, every shell-command approval.
+  const [showTerminal, setShowTerminal] = useState(false);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   // A local session runs on one particular Mac, reachable only from the
   // Outrunner app on it.
@@ -82,6 +85,16 @@ export function WorkspaceStudio({
             </div>
           </div>
           <div className="studio-header-actions">
+            {hasLiveSession && (
+              <button
+                className={cn("studio-icon-button", showTerminal && "is-active")}
+                onClick={() => setShowTerminal((open) => !open)}
+                title={showTerminal ? "Hide terminal" : "Show terminal"}
+                aria-pressed={showTerminal}
+              >
+                <TerminalSquare />
+              </button>
+            )}
             <button className="studio-icon-button" onClick={() => setRightOpen((open) => !open)} title="Toggle changes">
               {rightOpen ? <PanelRightClose /> : <FileDiff />}
             </button>
