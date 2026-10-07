@@ -339,7 +339,18 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
 		return
 	}
-	err := s.ws.SetModel(r.Context(), r.PathValue("id"), req.Model, "")
+	gateway, err := claude.ParseGateway(req.Gateway)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if (gateway == claude.NoGateway) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a gateway needs its key, and only a gateway takes one")
+		return
+	}
+	err = s.ws.SetModel(r.Context(), r.PathValue("id"), workspace.ModelChoice{
+		Model: req.Model, Gateway: gateway, Token: req.Token,
+	}, "")
 	if errors.Is(err, workspace.ErrUnknownWorkspace) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 		return

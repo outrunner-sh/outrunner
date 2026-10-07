@@ -104,8 +104,11 @@ type workspaceFacts struct {
 	// Claude Code's — and "the newest log" could be any of them. The session is
 	// launched with this id and found by it instead.
 	ClaudeSessionID string `json:"claudeSessionId,omitempty"`
-	// Model is the --model the session runs; empty is Claude's own default.
+	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
+	// Gateway, when set, runs the session through it on a key of its own (in
+	// the session's gateway file) instead of the user's Claude credential.
+	Gateway claude.Gateway `json:"gateway,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -173,7 +176,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
-	return append([]string(nil), s.secrets...)
+	return append(append([]string(nil), s.secrets...), s.gatewayTokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -426,20 +429,38 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 // ErrUnknownWorkspace is a workspace this agent has no record of.
 var ErrUnknownWorkspace = errors.New("unknown workspace")
 
-// SetModel switches a session to another model. It is recorded first, so every
-// later launch and resume uses it; a running session is then relaunched on it,
-// continuing its conversation (Claude reads the model only at launch). A turn
-// in progress is cut off, so callers offer the switch only between turns.
-func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicToken string) error {
+// ModelChoice is what a session runs: a model, and optionally the gateway and
+// key it runs through. Callers validate each part.
+type ModelChoice struct {
+	Model   string
+	Gateway claude.Gateway
+	Token   string
+}
+
+// SetModel switches a session to another model, or to or from a gateway. It is
+// recorded first, so every later launch and resume uses it; a running session
+// is then relaunched on it, continuing its conversation (Claude reads all of it
+// only at launch). A turn in progress is cut off, so callers offer the switch
+// only between turns.
+func (s *Service) SetModel(ctx context.Context, workspaceID string, choice ModelChoice, anthropicToken string) error {
 	defer s.lockLifecycle(workspaceID)()
 	f, ok := s.getFacts(workspaceID)
 	if !ok {
 		return ErrUnknownWorkspace // never write facts for a workspace never created
 	}
-	if f.Model == model {
+	env := ""
+	if choice.Gateway != claude.NoGateway {
+		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
+	}
+	if f.Model == choice.Model && f.Gateway == choice.Gateway && s.readGatewayEnv(workspaceID) == env {
 		return nil
 	}
-	f.Model = model
+	if env == "" {
+		_ = os.Remove(s.gatewayEnvPath(workspaceID))
+	} else if err := s.writeGatewayEnv(workspaceID, env); err != nil {
+		return err
+	}
+	f.Model, f.Gateway = choice.Model, choice.Gateway
 	s.setFacts(workspaceID, f)
 	if s.jcode != nil || !s.tmux.HasSession(ctx, sessionName(workspaceID)) {
 		return nil // the next Start launches on it
@@ -500,6 +521,10 @@ func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []str
 		argv = claude.ContinueCommand(mode, orientation)
 	default:
 		argv = claude.Command(mode, orientation)
+	}
+	if f.Gateway != claude.NoGateway {
+		// The model rides in the gateway file: --model refuses a gateway's names.
+		return claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
 	}
 	return claude.WithModel(argv, f.Model)
 }
@@ -942,6 +967,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
+	_ = os.Remove(s.gatewayEnvPath(workspaceID))
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()

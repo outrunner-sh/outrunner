@@ -75,9 +75,13 @@ type CreateWorkspaceRequest struct {
 	Model string `json:"model,omitempty"`
 }
 
-// SetModelRequest switches a workspace's session to another model.
+// SetModelRequest switches a workspace's session to another model. With a
+// gateway ("openrouter") the session runs through it on Token instead of the
+// user's Claude credential, and Model is the gateway's name for the model.
 type SetModelRequest struct {
-	Model string `json:"model"`
+	Model   string `json:"model"`
+	Gateway string `json:"gateway,omitempty"`
+	Token   string `json:"token,omitempty"`
 }
 
 // ListingWorkspaceID is the workspace claim of the only token that may list an
@@ -103,8 +107,11 @@ type LocalSession struct {
 	CreatedAt  string `json:"createdAt"`
 	// Running is whether Claude's session is live right now.
 	Running bool `json:"running"`
-	// Model is the session's --model; empty when it runs Claude's default.
+	// Model is the session's model; empty when it runs Claude's default.
 	Model string `json:"model,omitempty"`
+	// Gateway is what it runs through ("openrouter"); empty for the user's
+	// own Claude. The key is never listed.
+	Gateway string `json:"gateway,omitempty"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).
