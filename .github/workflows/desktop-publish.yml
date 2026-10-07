@@ -174,19 +174,46 @@ jobs:
           fi
           [ -n "$LIVE" ] && echo "latest: $LIVE -> $VERSION"
 
-          # Short cache so a new release (or a rollback) reaches the site in
-          # minutes. The download keeps its versioned name on the user's Mac.
-          put "$DMG" "s3://$BUCKET/$PREFIX/Outrunner.dmg" \
-            --content-type application/x-apple-diskimage \
-            --content-disposition "attachment; filename=\"$NAME\"" \
-            --cache-control "public, max-age=300"
-
           jq -n --arg version "$VERSION" --arg url "$BASE_URL/$PREFIX/$NAME" \
                 --arg sha256 "$SHA256" --arg publishedAt "$PUBLISHED_AT" \
                 '{version: $version, url: $url, sha256: $sha256, publishedAt: $publishedAt}' > latest.json
-          put latest.json "s3://$BUCKET/$PREFIX/latest.json" \
-            --content-type application/json \
-            --cache-control "public, max-age=300"
+
+          # Outrunner.dmg as the latest of $1 (a local file or an s3:// object
+          # already in the bucket). Short cache so a new release or a rollback
+          # reaches the site in minutes; it saves under its versioned name.
+          put_latest_dmg() {
+            # An in-bucket copy keeps the source's headers unless told to replace them.
+            local copy=()
+            if [[ "$1" == s3://* ]]; then copy=(--metadata-directive REPLACE); fi
+            put "$1" "s3://$BUCKET/$PREFIX/Outrunner.dmg" ${copy[@]+"${copy[@]}"} \
+              --content-type application/x-apple-diskimage \
+              --content-disposition "attachment; filename=\"$2\"" \
+              --cache-control "public, max-age=300"
+          }
+
+          # The two latest objects cannot be written atomically. The DMG goes
+          # first, so latest.json never names a version whose download is not
+          # up yet. If latest.json then fails, put the previous DMG back (it is
+          # still in the bucket under its versioned name) so the two agree.
+          put_latest_dmg "$DMG" "$NAME"
+          if ! put latest.json "s3://$BUCKET/$PREFIX/latest.json" \
+                 --content-type application/json \
+                 --cache-control "public, max-age=300"; then
+            if [ -n "$LIVE" ]; then
+              PREV="Outrunner_${LIVE}_universal.dmg"
+              if put_latest_dmg "s3://$BUCKET/$PREFIX/$PREV" "$PREV"; then
+                echo "::error::uploading latest.json failed; Outrunner.dmg was restored to $LIVE, so nothing changed. Re-run this workflow."
+              else
+                echo "::error::uploading latest.json failed AND restoring Outrunner.dmg failed: it now serves $VERSION while latest.json says $LIVE. Re-run this workflow to finish the publish."
+              fi
+            else
+              # First publish: there was no Outrunner.dmg before.
+              aws s3 rm --endpoint-url "$ENDPOINT" "s3://$BUCKET/$PREFIX/Outrunner.dmg" ||
+                echo "::warning::could not remove the half-published Outrunner.dmg"
+              echo "::error::uploading latest.json failed on the first publish. Re-run this workflow."
+            fi
+            exit 1
+          fi
 
       # Through the public domain, as a visitor would fetch it. The versioned
       # file is new, so no cache stands between us and what we just wrote.
