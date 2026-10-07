@@ -86,7 +86,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           repoFullName: folder.name,
           branch: localBranch(workspaceId),
           repoPath: folder.path,
-          title: prompt.trim().slice(0, 120),
+          // By character, so the cut never splits an emoji's surrogate pair.
+          title: Array.from(prompt.trim()).slice(0, 120).join(""),
         });
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Could not start the local session.");

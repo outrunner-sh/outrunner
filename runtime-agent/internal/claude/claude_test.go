@@ -102,6 +102,10 @@ func TestCommandInjectsOrientation(t *testing.T) {
 		{"Command", Command(Bypass, orientation), []string{"claude", "--permission-mode", "bypassPermissions"}},
 		{"ContinueCommand", ContinueCommand(Bypass, orientation), []string{"claude", "--continue", "--permission-mode", "bypassPermissions"}},
 		{"local Command", Command(AcceptEdits, orientation), []string{"claude", "--permission-mode", "acceptEdits"}},
+		{"SessionCommand", SessionCommand(AcceptEdits, "id-1", orientation),
+			[]string{"claude", "--session-id", "id-1", "--permission-mode", "acceptEdits"}},
+		{"ResumeCommand", ResumeCommand(AcceptEdits, "id-1", orientation),
+			[]string{"claude", "--resume", "id-1", "--permission-mode", "acceptEdits"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if !slices.Equal(tc.argv[:len(tc.head)], tc.head) {

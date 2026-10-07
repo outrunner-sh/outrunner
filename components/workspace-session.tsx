@@ -61,6 +61,7 @@ export function WorkspaceSession({
 
   const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
+    const pendingId = crypto.randomUUID();
     if (trimmed) {
       setPending((prev) => {
         const base = userPromptCount(conversation.events);
@@ -69,7 +70,7 @@ export function WorkspaceSession({
         // the list bounded without a setState-in-effect cascade.
         const live = prev.filter((p) => base < p.expect);
         const expect = Math.max(base + 1, live.length ? live[live.length - 1].expect + 1 : 0);
-        return [...live, { id: crypto.randomUUID(), text: trimmed, expect }];
+        return [...live, { id: pendingId, text: trimmed, expect }];
       });
     }
     setSendError(null);
@@ -82,6 +83,9 @@ export function WorkspaceSession({
       ).then(
         () => true,
         (error: unknown) => {
+          // The error says it didn't go; a bubble left waiting would stay on
+          // screen for good once a resend of the same text lands in its place.
+          setPending((prev) => prev.filter((p) => p.id !== pendingId));
           setSendError(error instanceof Error ? error.message : "Could not send that message.");
           return false;
         },
