@@ -4,6 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { neevAiKey } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
     const key = await neevAiKey(owner.id);
     return NextResponse.json({ key }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
-    if (error instanceof NeevAiUnavailableError) {
+    if (error instanceof NeevAiUnavailableError || error instanceof StoredKeyUnreadableError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
     // OpenRouter's and the driver's messages stay in the log.

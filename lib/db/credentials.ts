@@ -23,6 +23,7 @@ import {
   NeevAiUnavailableError,
   sharedApiKey,
 } from "@/lib/openrouter/keys";
+import { ensureUserKey } from "@/lib/openrouter/user-key";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** What the settings UI may safely see: presence, not values. */
@@ -173,7 +174,7 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic" | "neev",
+  which: "github" | "anthropic",
 ): string | null {
   if (!ciphertext) return null;
   try {
@@ -190,18 +191,13 @@ function openOrNull(
 /**
  * The OpenRouter key this user's sessions run Outrunner's models on: the shared
  * API key when the server has only that, otherwise the user's own key, capped
- * by OpenRouter at the monthly allowance. Created the first time they pick one
- * of the models, then kept: OpenRouter tracks the allowance per key, so a fresh key each time would
- * hand out a fresh $5.
+ * by OpenRouter at the monthly allowance, created the first time they pick one
+ * of the models and then kept (OpenRouter tracks the allowance per key, so a
+ * fresh key each time would hand out a fresh $5). The races and failures are
+ * handled in {@link ensureUserKey}.
  *
  * It is returned in plaintext because a local session runs on the user's Mac,
- * where only the page can hand it to the agent. That is safe to the degree the
- * key is the user's own, and spends at most their own allowance.
- *
- * Two first picks at once (two tabs) would each create a key. A new key is
- * stored only if the slot still holds what was read, so one wins and the other
- * is disabled; so is a stored key that could no longer be decrypted and was
- * replaced. Either would otherwise stay live with its own allowance.
+ * where only the page can hand it to the agent.
  */
 export async function neevAiKey(userId: string): Promise<string> {
   const source = keySource();
@@ -209,54 +205,45 @@ export async function neevAiKey(userId: string): Promise<string> {
   if (source === "shared") return sharedApiKey() as string; // see lib/openrouter/keys.ts
 
   const supabase = createSupabaseAdminClient();
-  // The conditional claim below needs a row to match.
+  // The conditional claim needs a row to match.
   const { error: rowError } = await supabase
     .from("user_credentials")
     .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
   if (rowError) throw rowError;
 
-  const { data, error } = await supabase
-    .from("user_credentials")
-    .select("neev_key_ciphertext, neev_key_hash")
-    .eq("user_id", userId)
-    .single();
-  if (error) throw error;
-  const existing = openOrNull(data.neev_key_ciphertext, userId, "neev");
-  if (existing) return existing;
-
-  // Labelled by user id only: the OpenRouter dashboard needs no personal data.
-  const created = await createUserKey(`outrunner user ${userId}`);
-  const claim = supabase
-    .from("user_credentials")
-    .update({
-      neev_key_ciphertext: seal(created.key),
-      neev_key_hash: created.hash,
-      neev_key_created_at: new Date().toISOString(),
-    })
-    .eq("user_id", userId);
-  const { data: claimed, error: claimError } = await (
-    data.neev_key_ciphertext
-      ? claim.eq("neev_key_ciphertext", data.neev_key_ciphertext)
-      : claim.is("neev_key_ciphertext", null)
-  ).select("user_id");
-  if (claimError) {
-    await disableKeyQuietly(created.hash, userId);
-    throw claimError;
-  }
-  if (claimed.length === 0) {
-    // Another request stored its key first: use that one, retire ours.
-    await disableKeyQuietly(created.hash, userId);
-    return neevAiKey(userId);
-  }
-  if (data.neev_key_hash) await disableKeyQuietly(data.neev_key_hash, userId);
-  return created.key;
-}
-
-/** Best effort: a key that stays live is logged by its id, to disable by hand. */
-async function disableKeyQuietly(hash: string, userId: string): Promise<void> {
-  try {
-    await disableUserKey(hash);
-  } catch (error) {
-    console.error(`Could not disable Neev AI key ${hash} for ${userId}`, error);
-  }
+  return ensureUserKey(
+    {
+      async read() {
+        const { data, error } = await supabase
+          .from("user_credentials")
+          .select("neev_key_ciphertext, neev_key_hash")
+          .eq("user_id", userId)
+          .single();
+        if (error) throw error;
+        return { ciphertext: data.neev_key_ciphertext, hash: data.neev_key_hash };
+      },
+      async claim(key) {
+        const { data, error } = await supabase
+          .from("user_credentials")
+          .update({
+            neev_key_ciphertext: key.ciphertext,
+            neev_key_hash: key.hash,
+            neev_key_created_at: key.createdAt,
+          })
+          .eq("user_id", userId)
+          .is("neev_key_ciphertext", null)
+          .select("user_id");
+        if (error) throw error;
+        return data.length > 0;
+      },
+    },
+    {
+      open,
+      seal,
+      // Labelled by user id only: the OpenRouter dashboard needs no personal data.
+      create: () => createUserKey(`outrunner user ${userId}`),
+      disable: disableUserKey,
+      log: (message, error) => console.error(`${message} (user ${userId})`, error),
+    },
+  );
 }
