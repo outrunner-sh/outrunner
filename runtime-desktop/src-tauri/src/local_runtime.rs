@@ -36,6 +36,9 @@ const TMUX_SOCKET: &str = "outrunner";
 /// default (bypassPermissions) would hand Claude this machine's keys and
 /// credentials with no prompt at all.
 const PERMISSION_MODE: &str = "acceptEdits";
+/// The workspace claim of the token that lists sessions (the agent's
+/// protocol.ListingWorkspaceID).
+const LISTING_WORKSPACE_ID: &str = "*";
 /// Lifetime of a minted agent token, matching the control plane's.
 const TOKEN_TTL_SECONDS: u64 = 300;
 /// Covers the slowest relayed call: create (a base-branch fetch, capped at 30s
@@ -428,8 +431,9 @@ pub async fn local_list_sessions(
     state: State<'_, LocalRuntime>,
 ) -> Result<serde_json::Value, String> {
     let agent = state.agent().await?;
-    // Listing is not about one workspace; the agent only checks the signature.
-    let token = mint_token(&agent.secret, "registry", "local", &device_id(&app)?);
+    // The agent lists only for its listing workspace id, which no real
+    // workspace can have (valid_id refuses it), so the page cannot get one.
+    let token = mint_token(&agent.secret, LISTING_WORKSPACE_ID, "local", &device_id(&app)?);
     let response = http_client()
         .get(format!("http://{}/workspaces", agent.addr))
         .bearer_auth(token)
@@ -750,7 +754,8 @@ mod tests {
     #[test]
     fn ids_must_be_plain() {
         assert!(valid_id("0f6c1c0e-4a43-4a8e-9f4e-2a8d1c3b5e77"));
-        for bad in ["", "../x", "a/b", "a b", "ws:1"] {
+        // The listing id among them: the page must never get a listing token.
+        for bad in ["", "../x", "a/b", "a b", "ws:1", LISTING_WORKSPACE_ID] {
             assert!(!valid_id(bad), "{bad}");
         }
     }

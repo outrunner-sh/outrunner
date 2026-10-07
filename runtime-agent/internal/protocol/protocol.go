@@ -72,6 +72,12 @@ type CreateWorkspaceRequest struct {
 	Title string `json:"title,omitempty"`
 }
 
+// ListingWorkspaceID is the workspace claim of the only token that may list an
+// agent's sessions (GET /workspaces). No real workspace can have it — the id
+// checks on both sides refuse '*' — so a token issued for one workspace, like
+// those in /pty URLs, can never enumerate the others.
+const ListingWorkspaceID = "*"
+
 // LocalSession is one local session the agent on a user's Mac knows about, as
 // the desktop app lists them. Local sessions are not in the shared database:
 // they exist only on the Mac that runs them.
