@@ -63,8 +63,10 @@ func (s *Service) FileDiff(ctx context.Context, workspaceID, path string) (strin
 	if file.Status == "untracked" {
 		return "This untracked file has no Git diff yet.", nil
 	}
+	// Against HEAD, so a change Claude has staged (`git add`) shows too; a plain
+	// `git diff` covers only the unstaged part and shows an added file as empty.
 	diff, err := s.gitRaw(ctx, s.worktreePath(workspaceID),
-		"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--", path)
+		"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--", path)
 	if err != nil {
 		return "", err
 	}

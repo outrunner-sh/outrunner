@@ -87,4 +87,13 @@ func TestChangesAndDiffOfALocalWorktree(t *testing.T) {
 	if _, err := s.FileDiff(context.Background(), "ws-diff", "unchanged.txt"); !errors.Is(err, ErrNotChanged) {
 		t.Errorf("unchanged file: err = %v, want ErrNotChanged", err)
 	}
+
+	// Claude often stages its work: a staged file's diff must not come back empty.
+	run(t, worktree, "add", "notes.txt", "README.md")
+	if diff, _ := s.FileDiff(context.Background(), "ws-diff", "notes.txt"); !strings.Contains(diff, "+n") {
+		t.Errorf("staged new file diff = %q, want its content", diff)
+	}
+	if diff, _ := s.FileDiff(context.Background(), "ws-diff", "README.md"); !strings.Contains(diff, "+world") {
+		t.Errorf("staged edit diff = %q, want the change", diff)
+	}
 }
