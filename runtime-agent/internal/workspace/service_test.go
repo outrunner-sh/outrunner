@@ -460,3 +460,25 @@ func TestARepeatedCreateLeavesAClaudeSessionsModel(t *testing.T) {
 		t.Errorf("re-Create switched the model to %q; only SetModel, which relaunches, may", f.Model)
 	}
 }
+
+func TestASwitchWaitsForAPromptBeingSent(t *testing.T) {
+	s := NewService(t.TempDir())
+	ctx := context.Background()
+	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-l", Branch: "b", BaseBranch: "main"})
+	// A send in flight holds the send lock; the switch's busy check must come
+	// after it, or the prompt could land between the check and the kill.
+	lock := s.sendLock("ws-l")
+	lock.Lock()
+	done := make(chan error, 1)
+	go func() { done <- s.SetModel(ctx, "ws-l", ModelChoice{Model: "opus"}, "") }()
+	select {
+	case err := <-done:
+		lock.Unlock()
+		t.Fatalf("SetModel returned (%v) while a prompt was being sent", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	lock.Unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("SetModel after the send = %v", err)
+	}
+}
