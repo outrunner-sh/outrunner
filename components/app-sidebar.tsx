@@ -19,7 +19,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
-import { startNextSessionIn } from "@/hooks/use-session-location";
+import { useNow } from "@/hooks/use-now";
+import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
 import {
   activeSessionId,
   buildSidebarGroups,
@@ -56,6 +57,8 @@ export function AppSidebar({
   const { refresh: refreshLocal } = local;
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  // Ages the rows' "5m"/"2h" labels while the sidebar stays mounted.
+  const now = useNow(60_000);
 
   // The sidebar outlives page changes, so re-read this Mac's sessions on each
   // one: a session just made or deleted elsewhere shows up without a focus.
@@ -121,7 +124,9 @@ export function AppSidebar({
               {query ? "No matching sessions" : "No sessions yet"}
             </p>
           ) : (
-            shown.map((group) => <WorkspaceGroup key={group.key} group={group} active={active} />)
+            shown.map((group) => (
+              <WorkspaceGroup key={group.key} group={group} active={active} now={now} />
+            ))
           )}
         </div>
       </div>
@@ -143,15 +148,29 @@ export function AppSidebar({
   );
 }
 
-/** A workspace and its sessions. The `+` starts a new session in it. */
-function WorkspaceGroup({ group, active }: { group: SidebarGroup; active?: string }) {
+/** A workspace and its sessions. The `+` starts a new session in it, where
+ *  there is a repository (or folder) to start one in. */
+function WorkspaceGroup({
+  group,
+  active,
+  now,
+}: {
+  group: SidebarGroup;
+  active?: string;
+  now: number;
+}) {
   const router = useRouter();
+  const { start } = group;
+  // Both set the form's cloud/Mac choice, then open /new with a query that
+  // names the target, so a form already open re-initialises for it.
   const startHere = () => {
-    if (group.start.kind === "local") {
-      startNextSessionIn(group.start.folder);
-      router.push("/new");
+    if (!start) return;
+    if (start.kind === "local") {
+      startNextSessionIn(start.folder);
+      router.push(`/new?folder=${encodeURIComponent(start.folder)}`);
     } else {
-      router.push(`/new?project=${group.start.projectId}`);
+      startNextSessionInCloud();
+      router.push(`/new?project=${encodeURIComponent(start.projectId)}`);
     }
   };
   const Icon = group.local ? Laptop : Folder;
@@ -162,15 +181,17 @@ function WorkspaceGroup({ group, active }: { group: SidebarGroup; active?: strin
         <span className="min-w-0 flex-1 truncate" title={group.local ? `${group.detail} · this Mac` : group.detail}>
           {group.label}
         </span>
-        <button
-          type="button"
-          onClick={startHere}
-          aria-label={`New session in ${group.label}`}
-          title={`New session in ${group.label}`}
-          className="-mr-1 rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/ws:opacity-100"
-        >
-          <Plus className="size-3.5" />
-        </button>
+        {start && (
+          <button
+            type="button"
+            onClick={startHere}
+            aria-label={`New session in ${group.label}`}
+            title={`New session in ${group.label}`}
+            className="-mr-1 rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/ws:opacity-100"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        )}
       </div>
       {group.sessions.map((session) => {
         const isActive = session.id === active;
@@ -188,8 +209,14 @@ function WorkspaceGroup({ group, active }: { group: SidebarGroup; active?: strin
             )}
           >
             <span className="min-w-0 flex-1 truncate">{session.title}</span>
-            <time dateTime={session.at} className="shrink-0 text-xs text-muted-foreground">
-              {relativeTime(session.at)}
+            {/* The server's clock and the browser's differ by the render
+                delay, which can tip "59m" into "1h": not a real mismatch. */}
+            <time
+              dateTime={session.at}
+              suppressHydrationWarning
+              className="shrink-0 text-xs text-muted-foreground"
+            >
+              {relativeTime(session.at, now)}
             </time>
           </Link>
         );

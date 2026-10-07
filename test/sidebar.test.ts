@@ -36,7 +36,13 @@ function workspace(id: string, projectId: string, at: string, title: string | nu
   };
 }
 
-function local(id: string, folder: string, createdAt: string, title = `task ${id}`): LocalSession {
+function local(
+  id: string,
+  folder: string,
+  createdAt: string,
+  title = `task ${id}`,
+  lastActiveAt?: string,
+): LocalSession {
   return {
     workspaceId: id,
     name: folder.split("/").at(-1)!,
@@ -47,6 +53,7 @@ function local(id: string, folder: string, createdAt: string, title = `task ${id
     baseBranch: "main",
     inPlace: false,
     createdAt,
+    lastActiveAt,
     running: false,
   };
 }
@@ -128,6 +135,62 @@ test("group keys stay distinct between a repository and a folder of the same nam
   );
   const keys = groups.map((g) => g.key);
   assert.equal(new Set(keys).size, keys.length);
+});
+
+test("a Mac session ranks by its last use, not by when it was made", () => {
+  const groups = buildSidebarGroups(
+    [project("p1", "outrunner")],
+    [workspace("w1", "p1", "2026-10-05T00:00:00Z")],
+    [
+      // Made weeks ago, used today: above the cloud session from two days ago.
+      local("l1", "/Users/ada/notes", "2026-09-01T00:00:00Z", "Notes", "2026-10-07T09:00:00Z"),
+    ],
+  );
+  assert.deepEqual(groups.map((g) => g.label), ["notes", "outrunner"]);
+  assert.equal(groups[0].sessions[0].at, "2026-10-07T09:00:00Z");
+});
+
+test("a Mac session from an agent without lastActiveAt falls back to when it was made", () => {
+  const [group] = buildSidebarGroups([], [], [local("l1", "/x/app", "2026-09-01T00:00:00Z")]);
+  assert.equal(group.sessions[0].at, "2026-09-01T00:00:00Z");
+});
+
+test("times are compared as instants, not as text", () => {
+  // As text, "12:00:00Z" sorts after "12:00:00.001Z", and Postgres writes
+  // "+00:00" where the agent writes "Z". Newest by instant must still win.
+  const groups = buildSidebarGroups(
+    [project("p1", "cloud-newer"), project("p2", "cloud-older")],
+    [
+      workspace("w1", "p1", "2026-10-07T12:00:00.001+00:00"),
+      workspace("w2", "p2", "2026-10-07T11:59:59.999+00:00"),
+    ],
+    [local("l1", "/x/mac", "2026-10-07T12:00:00Z")],
+  );
+  assert.deepEqual(groups.map((g) => g.label), ["cloud-newer", "mac", "cloud-older"]);
+});
+
+test("a session's own group lists its newest first even across time formats", () => {
+  const [group] = buildSidebarGroups(
+    [project("p1")],
+    [
+      workspace("a", "p1", "2026-10-07T12:00:00+00:00"),
+      workspace("b", "p1", "2026-10-07T12:00:00.5+00:00"),
+    ],
+    [],
+  );
+  assert.deepEqual(group.sessions.map((s) => s.id), ["b", "a"]);
+});
+
+test("only a group with a real repository behind it can start a session", () => {
+  const groups = buildSidebarGroups(
+    [project("p1", "outrunner")],
+    [workspace("w1", "p1", "2026-10-02T00:00:00Z"), workspace("w2", "gone", "2026-10-01T00:00:00Z")],
+    [],
+  );
+  assert.deepEqual(groups.map((g) => [g.label, g.start]), [
+    ["outrunner", { kind: "cloud", projectId: "p1" }],
+    ["Repository", null],
+  ]);
 });
 
 const sample = () =>

@@ -11,14 +11,14 @@
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessions";
 import { workspaceLabel } from "@/lib/nav/session-title";
-import { buildNavGroups, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
+import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
 
 export type SidebarSession = {
   id: string;
   href: string;
   title: string;
-  /** When it was last active (local: created), for ordering and the time label. */
+  /** When it was last active, for ordering and the time label. */
   at: string;
 };
 
@@ -30,8 +30,9 @@ export type SidebarGroup = {
   detail: string;
   /** Lives on this Mac rather than in the cloud. */
   local: boolean;
-  /** Where "new session in this workspace" starts. */
-  start: { kind: "cloud"; projectId: string } | { kind: "local"; folder: string };
+  /** Where "new session in this workspace" starts; null when its repository
+   *  could not be loaded, so there is nothing to start one in. */
+  start: { kind: "cloud"; projectId: string } | { kind: "local"; folder: string } | null;
   /** Newest first. */
   sessions: SidebarSession[];
 };
@@ -41,12 +42,15 @@ export function buildSidebarGroups(
   workspaces: Workspace[],
   localSessions: LocalSession[],
 ): SidebarGroup[] {
+  const known = new Set(projects.map((p) => p.id));
   const cloud: SidebarGroup[] = buildNavGroups(projects, workspaces).map(({ project, items }) => ({
     key: `cloud:${project.id}`,
     label: project.name,
     detail: project.fullName,
     local: false,
-    start: { kind: "cloud", projectId: project.id },
+    // A placeholder group (buildNavGroups' fallbackProject) has no repository
+    // behind it to create a session in.
+    start: known.has(project.id) ? { kind: "cloud", projectId: project.id } : null,
     sessions: items.map((w) => ({
       id: w.id,
       href: `/workspaces/${w.id}`,
@@ -65,17 +69,14 @@ export function buildSidebarGroups(
         id: s.workspaceId,
         href: `/local/${s.workspaceId}`,
         title: localSessionLabel(s),
-        at: s.createdAt,
+        // Last use, not creation: comparable with a cloud session's activity.
+        at: s.lastActiveAt || s.createdAt,
       }))
-      .sort(newestFirst),
+      .sort((a, b) => newestFirst(a.at, b.at)),
   }));
-  // Both lists are already newest-first inside; interleave the groups by their
-  // newest session. A stable sort keeps each kind's own order on a tie.
-  return [...cloud, ...local].sort((a, b) => newestFirst(a.sessions[0], b.sessions[0]));
-}
-
-function newestFirst(a?: { at: string }, b?: { at: string }): number {
-  return (b?.at ?? "").localeCompare(a?.at ?? "");
+  // Both lists are newest-first inside; interleave the groups by their newest
+  // session. A stable sort keeps each kind's own order on a tie.
+  return [...cloud, ...local].sort((a, b) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at));
 }
 
 /**
