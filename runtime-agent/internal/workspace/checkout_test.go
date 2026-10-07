@@ -271,3 +271,25 @@ func TestDestroyRemovesTheWorktreeButKeepsTheBranch(t *testing.T) {
 		t.Errorf("session branch lost its commit, got %q", got)
 	}
 }
+
+func TestConcurrentCreatesOfOneWorkspaceAllSucceed(t *testing.T) {
+	isolateGit(t)
+	repo := newCheckout(t)
+	s := NewService(t.TempDir())
+	// Two tabs attaching at once, or a double-submitted create: the second
+	// call must find the first's worktree, not race it to `worktree add`.
+	errs := make(chan error, 4)
+	for range 4 {
+		go func() {
+			_, err := s.Create(context.Background(), CreateInput{
+				WorkspaceID: "ws-twice", Branch: "runtime/twice", RepoPath: repo,
+			})
+			errs <- err
+		}()
+	}
+	for range 4 {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Create: %v", err)
+		}
+	}
+}

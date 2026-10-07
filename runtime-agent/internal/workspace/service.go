@@ -46,6 +46,13 @@ type Service struct {
 	sendMu    sync.Mutex
 	sendLocks map[string]*sendState
 
+	// lifeLocks serializes Create, Start, Resume and Destroy per workspace, so
+	// two clients attaching at once get the idempotent answer instead of racing
+	// each other to `git worktree add` or `tmux new-session` (lifeMu guards the
+	// map). Taken before a send lock, never after.
+	lifeMu    sync.Mutex
+	lifeLocks map[string]*sync.Mutex
+
 	summariesMu sync.Mutex
 	summaries   map[string]*Summary
 
@@ -120,6 +127,7 @@ func NewService(root string) *Service {
 		secrets:   secrets,
 		facts:     map[string]workspaceFacts{},
 		sendLocks: map[string]*sendState{},
+		lifeLocks: map[string]*sync.Mutex{},
 		summaries: map[string]*Summary{},
 		recorders: map[string]*cast.Recorder{},
 	}
@@ -194,6 +202,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if in.RepoPath != "" && in.PermissionMode == claude.Bypass {
 		return "", ErrBypassInFolder
 	}
+	defer s.lockLifecycle(in.WorkspaceID)()
 	facts := workspaceFacts{
 		Branch:         in.Branch,
 		BaseBranch:     in.BaseBranch,
@@ -281,6 +290,7 @@ func (s *Service) local(workspaceID string) bool {
 //     Mac restarted, or Claude exited) continues that conversation;
 //   - otherwise a fresh session starts.
 func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
+	defer s.lockLifecycle(workspaceID)()
 	name := sessionName(workspaceID)
 	if s.jcode != nil {
 		if err := s.jcode.StartSession(ctx, workspaceID, s.worktreePath(workspaceID)); err != nil {
@@ -363,6 +373,7 @@ func isTrustDialog(pane string) bool {
 // Resume re-launches Claude with --continue after an exit or box restart.
 // The Summary collector is (re)started so post-restart activity is folded in.
 func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
+	defer s.lockLifecycle(workspaceID)()
 	// Hold the send lock across the kill+recreate so an in-flight SendMessage
 	// retry loop can't press Enter into the freshly recreated session.
 	lock := s.sendLock(workspaceID)
@@ -607,6 +618,20 @@ func userTurnCount(dir string) int {
 	return count
 }
 
+// lockLifecycle takes the workspace's lifecycle lock and returns its release,
+// for `defer s.lockLifecycle(id)()`.
+func (s *Service) lockLifecycle(workspaceID string) (unlock func()) {
+	s.lifeMu.Lock()
+	lock, ok := s.lifeLocks[workspaceID]
+	if !ok {
+		lock = &sync.Mutex{}
+		s.lifeLocks[workspaceID] = lock
+	}
+	s.lifeMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
 // sendLock returns the per-workspace send state, whose mutex serializes
 // SendMessage, creating it on first use.
 func (s *Service) sendLock(workspaceID string) *sendState {
@@ -766,6 +791,7 @@ func (s *Service) SessionAlive(ctx context.Context, workspaceID string) bool {
 // removed by an earlier request. The branch itself is kept: in a local checkout
 // it may hold commits that were never pushed.
 func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
+	defer s.lockLifecycle(workspaceID)()
 	_ = s.Stop(ctx, workspaceID)
 	// An in-place session's directory is the user's own folder: forget the
 	// session, never touch the files.
