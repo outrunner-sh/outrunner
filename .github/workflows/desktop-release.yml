@@ -194,7 +194,17 @@ jobs:
             exit 1
           }
           rm -f "$CERT_PATH"
-          security import "$G2_PATH" -k "$KEYCHAIN" >/dev/null
+          # A .p12 exported with its chain already carries the intermediate,
+          # and importing it twice is an error. That case is fine; others aren't.
+          if ! G2_OUT=$(security import "$G2_PATH" -k "$KEYCHAIN" 2>&1); then
+            if grep -q "already exists" <<< "$G2_OUT"; then
+              echo "Developer ID G2 intermediate: already in APPLE_CERTIFICATE"
+            else
+              echo "$G2_OUT"
+              echo "::error::could not import Apple's Developer ID G2 intermediate"
+              exit 1
+            fi
+          fi
           # Lets codesign use the key without a UI prompt, which would hang CI.
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           # Add to the search list (keeping login.keychain) so Tauri's codesign
