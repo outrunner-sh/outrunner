@@ -30,8 +30,15 @@ func TestSessionExistsTellsGoneFromFailed(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	defer func(socket, config string) { socketName, configFile = socket, config }(socketName, configFile)
-	socketName, configFile = "sessionexists-"+strconv.Itoa(os.Getpid()), "/dev/null"
+	// Cleanups run last-first: the PATH (set last) is restored, then this
+	// test's own server is stopped by its explicit socket, then the package
+	// settings are put back. Never a bare kill-server, which after the restore
+	// would stop whatever server the settings name.
+	prevSocket, prevConfig := socketName, configFile
+	t.Cleanup(func() { socketName, configFile = prevSocket, prevConfig })
+	socket := "sessionexists-" + strconv.Itoa(os.Getpid())
+	socketName, configFile = socket, "/dev/null"
+	t.Cleanup(func() { _ = exec.Command("tmux", "-L", socket, "kill-server").Run() })
 	m, ctx := New(), context.Background()
 
 	// No server at all: gone, not a failure.
@@ -41,7 +48,6 @@ func TestSessionExistsTellsGoneFromFailed(t *testing.T) {
 	if err := Command(ctx, "new-session", "-d", "-s", "ws-live", "sleep 30").Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
-	defer Command(ctx, "kill-server").Run()
 	if ok, err := m.SessionExists(ctx, "ws-live"); !ok || err != nil {
 		t.Errorf("live session: SessionExists = %v, %v; want true, nil", ok, err)
 	}

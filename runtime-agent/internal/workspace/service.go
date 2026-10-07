@@ -437,10 +437,15 @@ var (
 	ErrSessionUnchecked = errors.New("couldn't check the session; try the switch again")
 )
 
-// switchTimeout bounds a model switch once it is past the point where a
-// dropped request may stop it: a hung tmux must not hold the workspace's
-// locks forever. It covers a relaunch's readiness wait with room to spare.
-const switchTimeout = 60 * time.Second
+// Past the point where a dropped request may stop it, a model switch runs on
+// deadlines of its own, so a hung tmux can't hold the workspace's locks
+// forever: a short one for checking the session, and a separate, full one for
+// the relaunch, so slow checks never eat into it and leave the kill without
+// its replacement.
+const (
+	switchCheckTimeout    = 10 * time.Second
+	switchRelaunchTimeout = 60 * time.Second // covers the readiness wait with room to spare
+)
 
 // SetModel switches a session to another model. It is recorded first, so every
 // later launch and resume uses it; a running session is then relaunched on it,
@@ -469,8 +474,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	// From here the switch runs to the end even if the request drops (a check
 	// on a cancelled context would misread a running session as gone, and the
 	// relaunch must not stop between its kill and its new session), but within
-	// a deadline of its own.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), switchTimeout)
+	// deadlines of its own.
+	base := context.WithoutCancel(ctx)
+	ctx, cancel := context.WithTimeout(base, switchCheckTimeout)
 	defer cancel()
 	name := sessionName(workspaceID)
 	running, err := s.tmux.SessionExists(ctx, name)
@@ -499,7 +505,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	}
 	// Continue only a conversation that exists: before the first prompt there
 	// is none, and --continue with nothing to continue exits.
-	if _, err := s.relaunchHeld(ctx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "", lock); err != nil {
+	relaunchCtx, cancelRelaunch := context.WithTimeout(base, switchRelaunchTimeout)
+	defer cancelRelaunch()
+	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "", lock); err != nil {
 		// Not applied, so not recorded: a retry of the same model tries again
 		// rather than finding it already set, and the next Start uses the old.
 		s.setFacts(workspaceID, prior)
