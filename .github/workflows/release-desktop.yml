@@ -34,6 +34,8 @@ on:
 jobs:
   release:
     runs-on: macos-latest
+    permissions:
+      contents: write # create the GitHub Release; the repo default token is read-only
     defaults:
       run:
         working-directory: runtime-desktop
