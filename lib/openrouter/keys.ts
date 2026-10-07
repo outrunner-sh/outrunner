@@ -60,6 +60,13 @@ export async function createUserKey(name: string): Promise<CreatedKey> {
       limit_reset: NEEV_AI_LIMIT_RESET,
     }),
   });
+  // OpenRouter refusing the management key itself (a revoked one, or an
+  // ordinary API key in its place) is this server's setup, not a hiccup a retry
+  // would fix.
+  if (response.status === 401 || response.status === 403) {
+    console.error(`OpenRouter refused OPENROUTER_MANAGEMENT_KEY (HTTP ${response.status}); is it a management key?`);
+    throw new NeevAiUnavailableError();
+  }
   if (!response.ok) {
     throw new Error(`OpenRouter would not create a key (HTTP ${response.status}).`);
   }

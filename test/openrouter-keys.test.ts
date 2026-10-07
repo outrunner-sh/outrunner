@@ -66,10 +66,17 @@ test("without a management key Neev AI is unavailable, and nothing is sent", asy
   assert.equal(seen.length, 0);
 });
 
+test("a refused management key means Outrunner's models are not set up", async () => {
+  for (const status of [401, 403]) {
+    stubFetch(new Response("{}", { status }));
+    await assert.rejects(createUserKey("x"), NeevAiUnavailableError);
+  }
+});
+
 test("an OpenRouter error reports its status, never its body", async () => {
-  stubFetch(new Response('{"error":"echo of mgmt-test-key"}', { status: 401 }));
+  stubFetch(new Response('{"error":"echo of mgmt-test-key"}', { status: 500 }));
   await assert.rejects(createUserKey("x"), (error: Error) => {
-    assert.match(error.message, /HTTP 401/);
+    assert.match(error.message, /HTTP 500/);
     assert.doesNotMatch(error.message, /mgmt-test-key/);
     return true;
   });
