@@ -16,7 +16,13 @@
  */
 
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
-import { createUserKey, disableUserKey } from "@/lib/openrouter/keys";
+import {
+  createUserKey,
+  disableUserKey,
+  keySource,
+  NeevAiUnavailableError,
+  sharedApiKey,
+} from "@/lib/openrouter/keys";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** What the settings UI may safely see: presence, not values. */
@@ -182,9 +188,10 @@ function openOrNull(
 }
 
 /**
- * The user's Neev AI key: their own OpenRouter key, capped by OpenRouter at the
- * monthly allowance. Created the first time they pick a Neev AI model, then
- * kept: OpenRouter tracks the allowance per key, so a fresh key each time would
+ * The OpenRouter key this user's sessions run Outrunner's models on: the shared
+ * API key when the server has only that, otherwise the user's own key, capped
+ * by OpenRouter at the monthly allowance. Created the first time they pick one
+ * of the models, then kept: OpenRouter tracks the allowance per key, so a fresh key each time would
  * hand out a fresh $5.
  *
  * It is returned in plaintext because a local session runs on the user's Mac,
@@ -197,6 +204,10 @@ function openOrNull(
  * replaced. Either would otherwise stay live with its own allowance.
  */
 export async function neevAiKey(userId: string): Promise<string> {
+  const source = keySource();
+  if (source === null) throw new NeevAiUnavailableError();
+  if (source === "shared") return sharedApiKey() as string; // see lib/openrouter/keys.ts
+
   const supabase = createSupabaseAdminClient();
   // The conditional claim below needs a row to match.
   const { error: rowError } = await supabase

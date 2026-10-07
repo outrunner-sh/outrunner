@@ -4,6 +4,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import {
   createUserKey,
   disableUserKey,
+  keySource,
   managementKey,
   NEEV_AI_LIMIT_RESET,
   NEEV_AI_LIMIT_USD,
@@ -12,6 +13,7 @@ import {
 
 const realFetch = globalThis.fetch;
 const realManagementKey = process.env.OPENROUTER_MANAGEMENT_KEY;
+const realApiKey = process.env.OPENROUTER_API_KEY;
 
 type Seen = { url: string; init: RequestInit };
 function stubFetch(response: Response): Seen[] {
@@ -30,6 +32,8 @@ afterEach(() => {
   globalThis.fetch = realFetch;
   if (realManagementKey === undefined) delete process.env.OPENROUTER_MANAGEMENT_KEY;
   else process.env.OPENROUTER_MANAGEMENT_KEY = realManagementKey;
+  if (realApiKey === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = realApiKey;
 });
 
 test("a user's key is created capped at the monthly allowance", async () => {
@@ -107,4 +111,21 @@ test("a failed disable is an error with the status only", async () => {
     assert.doesNotMatch(error.message, /mgmt-test-key/);
     return true;
   });
+});
+
+test("a management key means per-user keys, even beside a shared one", () => {
+  process.env.OPENROUTER_API_KEY = "sk-or-v1-shared";
+  assert.equal(keySource(), "per-user");
+});
+
+test("an API key alone is shared by every session", () => {
+  delete process.env.OPENROUTER_MANAGEMENT_KEY;
+  process.env.OPENROUTER_API_KEY = " sk-or-v1-shared ";
+  assert.equal(keySource(), "shared");
+});
+
+test("with neither key Outrunner's models are off", () => {
+  delete process.env.OPENROUTER_MANAGEMENT_KEY;
+  delete process.env.OPENROUTER_API_KEY;
+  assert.equal(keySource(), null);
 });

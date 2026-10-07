@@ -1,11 +1,15 @@
 /**
- * Per-user OpenRouter keys for Neev AI, through OpenRouter's management API.
+ * The OpenRouter key Outrunner's own models (Neev AI, in code) run on.
  *
- * Neev pays for Neev AI, so the key a user's box runs on must not be Neev's
- * own: Claude runs there with bypassPermissions and could read any key out of
- * its environment. Each user gets a key of their own instead, capped by
- * OpenRouter itself — a leaked key can spend that user's allowance and nothing
- * more, and it can be disabled without touching anyone else's.
+ * Two setups, chosen by what the server is given:
+ *   - OPENROUTER_MANAGEMENT_KEY: each user gets a key of their own, created
+ *     through OpenRouter's management API and capped by OpenRouter itself. A
+ *     leaked key spends that user's allowance and nothing more, and can be
+ *     disabled without touching anyone else's. Preferred whenever it is set.
+ *   - OPENROUTER_API_KEY alone: every session runs on that one key. Claude can
+ *     read its own environment, so any user's session can copy the key and
+ *     spend up to whatever limit it has on OpenRouter; there is no per-user
+ *     cap. Chosen deliberately, for now, as the simpler setup.
  *
  * No imports from Next or the database, so it unit-tests with a stubbed fetch.
  */
@@ -17,7 +21,8 @@ export const NEEV_AI_LIMIT_USD = 5;
 /** The allowance renews at midnight UTC on the 1st of each month. */
 export const NEEV_AI_LIMIT_RESET = "monthly";
 
-/** The management key is not configured, so Neev AI is unavailable. */
+/** Neither key is configured (or OpenRouter refused the management key), so
+ *  Outrunner's models are unavailable. */
 export class NeevAiUnavailableError extends Error {
   constructor() {
     super("Outrunner's models are not set up on this server.");
@@ -25,9 +30,22 @@ export class NeevAiUnavailableError extends Error {
   }
 }
 
-/** The server's OpenRouter management key, or null when Neev AI is off. */
+/** The server's OpenRouter management key, or null without one. */
 export function managementKey(): string | null {
   return process.env.OPENROUTER_MANAGEMENT_KEY?.trim() || null;
+}
+
+/** The one key every session shares when there is no management key. */
+export function sharedApiKey(): string | null {
+  return process.env.OPENROUTER_API_KEY?.trim() || null;
+}
+
+/** How a user's key is found: their own (created on first use), the shared
+ *  one, or none at all. A management key wins: it is the capped setup. */
+export function keySource(): "per-user" | "shared" | null {
+  if (managementKey()) return "per-user";
+  if (sharedApiKey()) return "shared";
+  return null;
 }
 
 export type CreatedKey = {
