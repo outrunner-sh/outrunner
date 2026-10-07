@@ -61,18 +61,14 @@ local Postgres:
 This applies every migration and asserts the constraints and RLS policies. It
 exits non-zero if a guarantee regresses.
 
-With no local Postgres, run it in a container. Files are copied in, because
-Docker Desktop may not share the folder the repo is in:
+With no local Postgres but Docker, run it in a throwaway container:
 
 ```bash
-docker rm -f mig-verify 2>/dev/null   # a container left by an interrupted run
-docker run -d --name mig-verify -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17
-for i in $(seq 30); do docker exec mig-verify pg_isready -U postgres -q && break; sleep 1; done
-docker exec mig-verify pg_isready -U postgres -q || { docker logs mig-verify; echo "Postgres did not start" >&2; }
-docker exec mig-verify mkdir /work && docker cp scripts mig-verify:/work/ && docker cp supabase mig-verify:/work/
-docker exec -u postgres -e PG_BIN=/usr/lib/postgresql/17/bin mig-verify bash /work/scripts/verify-migrations.sh
-docker rm -f mig-verify
+./scripts/verify-migrations-docker.sh
 ```
+
+It exits non-zero if Postgres doesn't start or any migration or assertion fails,
+and always removes its container.
 
 ## Auth configuration (dashboard, one-time)
 
