@@ -38,6 +38,7 @@ test("missing tools are named in install order", () => {
 
 test("app error codes become sentences; agent messages pass through", () => {
   assert.match(messageForLocalError("folder-missing"), /isn.t there any more/);
+  assert.match(messageForLocalError("folder-not-chosen"), /Choose the folder/);
   assert.match(messageForLocalError(new Error("agent-did-not-start")), /agent\.log/);
   assert.equal(messageForLocalError("agent: worktree add: branch exists"), "worktree add: branch exists");
 });
