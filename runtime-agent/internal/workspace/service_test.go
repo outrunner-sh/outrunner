@@ -374,3 +374,22 @@ func TestASwitchWaitsForAPromptBeingSent(t *testing.T) {
 		t.Fatalf("SetModel after the send = %v", err)
 	}
 }
+
+func TestASwitchCancelledWhileWaitingRecordsNothing(t *testing.T) {
+	s := NewService(t.TempDir())
+	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-x", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	lock := s.sendLock("ws-x")
+	lock.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.SetModel(ctx, "ws-x", "opus", "") }()
+	time.Sleep(50 * time.Millisecond)
+	cancel() // the client gives up while a prompt is still being sent
+	lock.Unlock()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("SetModel = %v, want context.Canceled", err)
+	}
+	if f, _ := s.getFacts("ws-x"); f.Model != "sonnet" {
+		t.Errorf("a cancelled switch recorded %q", f.Model)
+	}
+}
