@@ -431,7 +431,16 @@ var (
 	// ErrSessionBusy is a switch asked for while Claude is mid-turn: the
 	// relaunch would cut the turn off.
 	ErrSessionBusy = errors.New("Claude is mid-turn; switch models once it has finished")
+	// ErrSessionUnchecked is a switch refused because tmux couldn't say whether
+	// the session is running: guessing either way could record a model the
+	// session isn't using, or cut a turn off.
+	ErrSessionUnchecked = errors.New("couldn't check the session; try the switch again")
 )
+
+// switchTimeout bounds a model switch once it is past the point where a
+// dropped request may stop it: a hung tmux must not hold the workspace's
+// locks forever. It covers a relaunch's readiness wait with room to spare.
+const switchTimeout = 60 * time.Second
 
 // SetModel switches a session to another model. It is recorded first, so every
 // later launch and resume uses it; a running session is then relaunched on it,
@@ -457,23 +466,28 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	if err := ctx.Err(); err != nil {
 		return err // the request gave up while a prompt was sent: nothing recorded
 	}
-	// From here the switch runs to the end even if the request drops: a check
+	// From here the switch runs to the end even if the request drops (a check
 	// on a cancelled context would misread a running session as gone, and the
-	// relaunch must not stop between its kill and its new session.
-	ctx = context.WithoutCancel(ctx)
+	// relaunch must not stop between its kill and its new session), but within
+	// a deadline of its own.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), switchTimeout)
+	defer cancel()
 	name := sessionName(workspaceID)
-	running := s.tmux.HasSession(ctx, name)
+	running, err := s.tmux.SessionExists(ctx, name)
+	if err != nil {
+		return fmt.Errorf("%w (%v)", ErrSessionUnchecked, err)
+	}
 	if running {
 		pane, err := s.tmux.CapturePane(ctx, name)
-		switch {
-		case err != nil && !s.tmux.HasSession(ctx, name):
-			// Claude exited in between: nothing to cut off, so the switch is
-			// just recorded for the next launch.
+		if err != nil {
+			// Unread is not idle. Only a session tmux says is gone (Claude
+			// exited in between) is safe to switch without a relaunch.
+			still, checkErr := s.tmux.SessionExists(ctx, name)
+			if checkErr != nil || still {
+				return fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionUnchecked, err)
+			}
 			running = false
-		case err != nil:
-			// Unread is not idle: refuse rather than risk cutting a turn off.
-			return fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionBusy, err)
-		case claudeIsBusy(pane):
+		} else if claudeIsBusy(pane) {
 			return ErrSessionBusy
 		}
 	}

@@ -343,7 +343,8 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrModelUnsupported):
+	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrSessionUnchecked),
+		errors.Is(err, workspace.ErrModelUnsupported):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 	default:
 		respond(w, req.Model, err)
