@@ -10,7 +10,7 @@
 // Nothing else can drive it: the agent listens on 127.0.0.1 only and refuses
 // any request without a token signed by that secret.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -45,12 +45,16 @@ const TOKEN_TTL_SECONDS: u64 = 300;
 /// by the agent) and start (Claude's TUI, capped at 15s).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// Managed state: the agent process and the open relayed sockets.
+/// Managed state: the agent process, the open relayed sockets, and the folders
+/// the user picked in this run.
 #[derive(Default)]
 pub struct LocalRuntime {
     agent: tokio::sync::Mutex<Option<Agent>>,
     sockets: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<Outbound>>>>,
     next_socket: AtomicU32,
+    /// Canonical paths chosen in the folder dialog. With the folders existing
+    /// sessions work in, these are the only ones the page may name.
+    picked: Mutex<HashSet<PathBuf>>,
 }
 
 struct Agent {
@@ -397,7 +401,10 @@ pub struct LocalFolder {
 
 /// Ask the user for a folder to work in. `None` means they cancelled.
 #[tauri::command]
-pub async fn local_pick_folder(app: AppHandle) -> Result<Option<LocalFolder>, String> {
+pub async fn local_pick_folder(
+    app: AppHandle,
+    state: State<'_, LocalRuntime>,
+) -> Result<Option<LocalFolder>, String> {
     let (picked, folder) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -409,18 +416,54 @@ pub async fn local_pick_folder(app: AppHandle) -> Result<Option<LocalFolder>, St
         return Ok(None);
     };
     let path = folder.into_path().map_err(|error| error.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || inspect_folder(&path))
+    let folder = tauri::async_runtime::spawn_blocking(move || inspect_folder(&path))
         .await
-        .map_err(|error| error.to_string())?
-        .map(Some)
+        .map_err(|error| error.to_string())??;
+    // The folder sessions use: the repository's top level for a git folder.
+    if let Ok(real) = std::fs::canonicalize(&folder.path) {
+        state.picked.lock().unwrap().insert(real);
+    }
+    Ok(Some(folder))
 }
 
 /// Re-check a remembered folder: it may have moved or gone.
 #[tauri::command]
-pub async fn local_check_folder(path: String) -> Result<LocalFolder, String> {
+pub async fn local_check_folder(
+    app: AppHandle,
+    state: State<'_, LocalRuntime>,
+    path: String,
+) -> Result<LocalFolder, String> {
+    check_chosen(&app, &state, &path).await?;
     tauri::async_runtime::spawn_blocking(move || inspect_folder(Path::new(&path)))
         .await
         .map_err(|error| error.to_string())?
+}
+
+/// Refuse a folder the user did not choose. The page names folders, but running
+/// git in one (or a session) on the page's word alone would let a page probe
+/// the disk, or run git in a directory whose config it does not trust. Allowed:
+/// a folder picked in the dialog in this run, or one an existing session works
+/// in — picked in an earlier run, and how the sidebar starts another there.
+async fn check_chosen(app: &AppHandle, state: &LocalRuntime, path: &str) -> Result<(), String> {
+    let real = std::fs::canonicalize(path).map_err(|_| "folder-missing".to_string())?;
+    if state.picked.lock().unwrap().contains(&real) {
+        return Ok(());
+    }
+    if session_works_in(&list_sessions(app, state).await?, &real) {
+        return Ok(());
+    }
+    Err("folder-not-chosen".into())
+}
+
+/// Whether one of the agent's sessions works in the folder at `real`.
+fn session_works_in(sessions: &serde_json::Value, real: &Path) -> bool {
+    sessions
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|session| session.get("folder")?.as_str())
+        .filter_map(|folder| std::fs::canonicalize(folder).ok())
+        .any(|folder| folder == real)
 }
 
 /// The sessions the agent on this Mac knows, newest first. Local sessions live
@@ -430,10 +473,14 @@ pub async fn local_list_sessions(
     app: AppHandle,
     state: State<'_, LocalRuntime>,
 ) -> Result<serde_json::Value, String> {
+    list_sessions(&app, &state).await
+}
+
+async fn list_sessions(app: &AppHandle, state: &LocalRuntime) -> Result<serde_json::Value, String> {
     let agent = state.agent().await?;
     // The agent lists only for its listing workspace id, which no real
     // workspace can have (valid_id refuses it), so the page cannot get one.
-    let token = mint_token(&agent.secret, LISTING_WORKSPACE_ID, "local", &device_id(&app)?);
+    let token = mint_token(&agent.secret, LISTING_WORKSPACE_ID, "local", &device_id(app)?);
     let response = http_client()
         .get(format!("http://{}/workspaces", agent.addr))
         .bearer_auth(token)
@@ -542,6 +589,14 @@ pub async fn local_agent_request(
     project_id: String,
 ) -> Result<serde_json::Value, String> {
     check_ids(&workspace_id, &project_id)?;
+    if method == "POST" && path == "/workspaces" {
+        // A session is Claude working in that folder: only in one the user chose.
+        let folder = body
+            .as_ref()
+            .and_then(|body| body.get("repoPath")?.as_str())
+            .ok_or("folder-required")?;
+        check_chosen(&app, &state, folder).await?;
+    }
     let agent = state.agent().await?;
     let device = device_id(&app)?;
     agent_call(&agent, &device, &method, &path, body, &workspace_id, &project_id).await
@@ -780,6 +835,22 @@ mod tests {
         assert!(allowed_route("POST", "/workspaces/ws-1/archive", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/destroy", "ws-1").is_err());
         assert!(allowed_route("GET", "/health/../workspaces", "ws-1").is_err());
+    }
+
+    #[test]
+    fn a_sessions_folder_counts_as_chosen_through_symlinks() {
+        let base = std::env::temp_dir().join(format!("outrunner-chosen-{}", random_hex(4)));
+        let (real, other, link) = (base.join("app"), base.join("other"), base.join("link"));
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        // The agent reports a session's folder as git resolved it; the page may
+        // name it through a symlink (/var is /private/var on macOS).
+        let sessions = serde_json::json!([{ "folder": link }, { "title": "no folder" }]);
+        assert!(session_works_in(&sessions, &std::fs::canonicalize(&real).unwrap()));
+        assert!(!session_works_in(&sessions, &std::fs::canonicalize(&other).unwrap()));
+        assert!(!session_works_in(&serde_json::json!(null), &real));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

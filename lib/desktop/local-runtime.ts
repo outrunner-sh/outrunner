@@ -172,6 +172,10 @@ export function messageForLocalError(error: unknown): string {
       return "Lost contact with the local agent. Try again.";
     case "folder-missing":
       return "That folder isn't there any more. Choose another.";
+    case "folder-not-chosen":
+    case "folder-required":
+      // The app only works in folders picked in its own dialog.
+      return "Choose the folder to work in again.";
     case "agent":
       // The agent's own message, e.g. a worktree that could not be created.
       return raw.slice("agent:".length).trim() || "The local agent reported an error.";
