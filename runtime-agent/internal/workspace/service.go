@@ -487,11 +487,15 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	running := s.tmux.HasSession(ctx, name)
 	if running {
 		pane, err := s.tmux.CapturePane(ctx, name)
-		if err != nil {
+		switch {
+		case err != nil && !s.tmux.HasSession(ctx, name):
+			// Claude exited in between: nothing to cut off, so the switch is
+			// just recorded for the next launch.
+			running = false
+		case err != nil:
 			// Unread is not idle: refuse rather than risk cutting a turn off.
 			return fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionBusy, err)
-		}
-		if claudeIsBusy(pane) {
+		case claudeIsBusy(pane):
 			return ErrSessionBusy
 		}
 	}
