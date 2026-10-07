@@ -244,8 +244,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
 	}
-	if facts.Model == "" {
-		facts.Model = prior.Model // a re-Create that names none keeps the switch
+	if facts.Model == "" || facts.Model == prior.Model {
+		// A re-Create that names no other model keeps the switch, gateway and
+		// all: its key file is still there, and dropping the gateway would run
+		// the gateway's model name on the user's own Claude.
+		facts.Model, facts.Gateway = prior.Model, prior.Gateway
+	} else {
+		_ = os.Remove(s.gatewayEnvPath(in.WorkspaceID)) // a different model, on Claude
 	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
@@ -938,7 +943,8 @@ func (s *Service) sessionID(workspaceID string) *string {
 // after Claude exited without a Stop) so its goroutine + FIFO don't leak.
 func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.stopRecorder(ctx, workspaceID)
-	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{})
+	// Masked like the browser's terminal: a cast is archived and uploaded.
+	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{Secrets: s.RedactionSecrets()})
 	s.recordersMu.Lock()
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()

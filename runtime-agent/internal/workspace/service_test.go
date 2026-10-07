@@ -421,3 +421,30 @@ func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
 		t.Error("a refused switch was recorded")
 	}
 }
+
+func TestARepeatedCreateKeepsTheGateway(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	ctx := context.Background()
+	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-r", Branch: "b", BaseBranch: "main"})
+	_ = s.SetModel(ctx, "ws-r", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-r"}, "")
+
+	// The control plane re-creates after an agent restart, naming no model.
+	restarted := NewService(root)
+	_, _ = restarted.Create(ctx, CreateInput{WorkspaceID: "ws-r", Branch: "b", BaseBranch: "main"})
+	if f, _ := restarted.getFacts("ws-r"); f.Gateway != claude.OpenRouter || f.Model != "z-ai/glm-5.3" {
+		t.Fatalf("re-Create facts = %+v, want the gateway and its model kept", f)
+	}
+	if argv := restarted.launchCommand("ws-r", restarted.worktreePath("ws-r"), true); argv[0] != "sh" {
+		t.Errorf("launch after re-Create = %q, want it through the gateway file", argv)
+	}
+
+	// Naming a different model is a choice of Claude: the gateway goes with it.
+	_, _ = restarted.Create(ctx, CreateInput{WorkspaceID: "ws-r", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	if f, _ := restarted.getFacts("ws-r"); f.Gateway != claude.NoGateway || f.Model != "sonnet" {
+		t.Errorf("re-Create with another model = %+v, want sonnet on Claude", f)
+	}
+	if _, err := os.Stat(restarted.gatewayEnvPath("ws-r")); !os.IsNotExist(err) {
+		t.Errorf("the gateway key file outlived the switch to Claude: %v", err)
+	}
+}
