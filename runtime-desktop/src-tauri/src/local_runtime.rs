@@ -503,11 +503,30 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
         }
         ("GET", ["workspaces", id, "summary"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
         ("GET", ["workspaces", id, "changes"], query)
-            if *id == workspace_id && query.is_none_or(|q| q.starts_with("path=")) =>
+            if *id == workspace_id && query.is_none_or(valid_changes_query) =>
         {
             Ok(reqwest::Method::GET)
         }
         _ => Err(format!("route-not-allowed: {method} {path}")),
+    }
+}
+
+/// One file's diff: exactly `path=<a relative path>`. The agent checks the path
+/// again, but the relay is the boundary the page talks to, so it refuses an
+/// absolute path, a `..` step or a NUL without relying on that.
+fn valid_changes_query(query: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(&format!("http://agent/?{query}")) else {
+        return false;
+    };
+    let pairs: Vec<_> = url.query_pairs().collect();
+    match pairs.as_slice() {
+        [(key, path)] if key == "path" => {
+            !path.is_empty()
+                && !path.starts_with('/')
+                && !path.contains('\0')
+                && path.split('/').all(|step| step != "..")
+        }
+        _ => false,
     }
 }
 
@@ -743,6 +762,18 @@ mod tests {
         assert!(allowed_route("GET", "/workspaces/ws-1/changes", "ws-1").is_ok());
         assert!(allowed_route("GET", "/workspaces/ws-1/changes?path=src%2Fa.ts", "ws-1").is_ok());
         assert!(allowed_route("GET", "/workspaces/ws-1/changes?other=1", "ws-1").is_err());
+        // A diff's path stays inside the worktree, whatever the agent does.
+        for bad in [
+            "path=",
+            "path=%2Fetc%2Fpasswd",
+            "path=..%2Fx",
+            "path=a%2F..%2F..%2Fx",
+            "path=a&path=b",
+            "path=a%00b",
+        ] {
+            let route = format!("/workspaces/ws-1/changes?{bad}");
+            assert!(allowed_route("GET", &route, "ws-1").is_err(), "{bad}");
+        }
         assert!(allowed_route("POST", "/workspaces/ws-1/start?x=1", "ws-1").is_err());
         // Another workspace's route, an unrelayed action, or a wrong method.
         assert!(allowed_route("POST", "/workspaces/ws-2/stop", "ws-1").is_err());
