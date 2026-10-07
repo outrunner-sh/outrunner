@@ -14,7 +14,10 @@ export function LocalSessionsNav({ activeWorkspaceId }: { activeWorkspaceId?: st
   const local = useLocalSessions();
   if (local.sessions.length === 0) return null;
   return (
-    <nav className="studio-nav" aria-label="Sessions on this Mac" style={{ flex: "none" }}>
+    // Sized to its sessions, up to a cap past which it scrolls on its own, so a
+    // long list never pushes the repositories below out of reach. (vh: WebKit
+    // leaves a % max-height here unresolved.)
+    <nav className="studio-nav" aria-label="Sessions on this Mac" style={{ flex: "none", maxHeight: "45vh" }}>
       <div className="studio-nav-group">
         <div className="studio-nav-project">
           <Laptop className="size-4" />
