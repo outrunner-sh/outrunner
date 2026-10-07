@@ -3,9 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+import { localAgentRequest, localTarget, type LocalFolder } from "@/lib/desktop/local-runtime";
 import type { Project } from "@/lib/runtime/types";
 
 type CreateResponse = { workspace?: { id: string }; error?: string };
+
+/** Same shape as the server's generated branches (runtime/<time>-<id>). */
+function localBranch(workspaceId: string): string {
+  return `runtime/${Date.now().toString(36)}-${workspaceId.slice(0, 8)}`;
+}
 
 /**
  * The new-session creation logic, shared by the full-page creator and the home
@@ -62,5 +68,35 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     });
   }
 
-  return { projectId, setProjectId, selected, isCreating, message, messageHref, create };
+  /**
+   * Start a session on this Mac, in `folder`. Nothing goes to the server: the
+   * app asks the agent here for the session's worktree (or the folder itself,
+   * when it is not a repository) — about a second — and opens it. Claude starts
+   * there, as the session page attaches, so there is nothing else to wait for.
+   */
+  function createLocal(prompt: string, folder: LocalFolder) {
+    startCreating(async () => {
+      setMessage(null);
+      setMessageHref(null);
+      const workspaceId = crypto.randomUUID();
+      const target = localTarget(workspaceId);
+      try {
+        await localAgentRequest(target, "POST", "/workspaces", {
+          workspaceId,
+          repoFullName: folder.name,
+          branch: localBranch(workspaceId),
+          repoPath: folder.path,
+          // By character, so the cut never splits an emoji's surrogate pair.
+          title: Array.from(prompt.trim()).slice(0, 120).join(""),
+        });
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "Could not start the local session.");
+        return;
+      }
+      const query = prompt.trim() ? `?${new URLSearchParams({ prompt: prompt.trim() })}` : "";
+      router.push(`/local/${workspaceId}${query}`);
+    });
+  }
+
+  return { projectId, setProjectId, selected, isCreating, message, messageHref, create, createLocal };
 }

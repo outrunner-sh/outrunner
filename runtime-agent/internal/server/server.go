@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"runtime-agent/internal/auth"
+	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
@@ -68,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("POST /workspaces", s.authed(s.createWorkspace))
+	mux.HandleFunc("GET /workspaces", s.authed(s.listWorkspaces))
 	mux.HandleFunc("POST /workspaces/{id}/start", s.authed(s.startWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/stop", s.authed(s.stopWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/resume", s.authed(s.resumeWorkspace))
@@ -79,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
+	mux.HandleFunc("GET /workspaces/{id}/changes", s.authed(s.workspaceChanges))
 	return mux
 }
 
@@ -107,8 +111,24 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, req.WorkspaceID) {
 		return
 	}
-	worktree, err := s.ws.Create(r.Context(), req.WorkspaceID, req.Branch, "origin/"+req.BaseBranch)
+	mode, err := claude.ParsePermissionMode(req.PermissionMode)
 	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
+		WorkspaceID:    req.WorkspaceID,
+		Branch:         req.Branch,
+		BaseBranch:     req.BaseBranch,
+		RepoPath:       req.RepoPath,
+		PermissionMode: mode,
+		Title:          req.Title,
+	})
+	switch {
+	case errors.Is(err, workspace.ErrBypassInFolder):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
 	}
@@ -196,14 +216,85 @@ func (s *Server) workspaceSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
+// queryClaims verifies the Runtime token a WebSocket or SSE client carries in
+// its URL (browsers cannot set headers on those) and that the workspace it
+// names is a well-formed id, since streams use it as a session and path name.
+func (s *Server) queryClaims(r *http.Request) (*protocol.RuntimeTokenClaims, error) {
+	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	if err != nil {
+		return nil, err
+	}
+	if !validWorkspaceID(claims.WorkspaceID) {
+		return nil, auth.ErrMalformed
+	}
+	return claims, nil
+}
+
+// listWorkspaces lists the local sessions this agent knows — the desktop's
+// session list, since local sessions are not in the shared database. It takes
+// the listing token only: a workspace's own token covers that workspace alone.
+func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
+	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
+	if claims == nil || claims.WorkspaceID != protocol.ListingWorkspaceID {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize listing workspaces")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"workspaces": s.ws.LocalSessions(r.Context())})
+}
+
+// workspaceChanges serves the Changes panel for a session whose control plane
+// cannot reach the worktree itself (a local one): the changed files, or with
+// ?path= one file's bounded diff — the shapes /api/workspaces/[id]/changes uses.
+func (s *Server) workspaceChanges(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	if path := r.URL.Query().Get("path"); path != "" {
+		diff, err := s.ws.FileDiff(r.Context(), id, path)
+		switch {
+		case errors.Is(err, workspace.ErrInvalidPath):
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		case errors.Is(err, workspace.ErrNotChanged):
+			writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		default:
+			writeJSON(w, http.StatusOK, map[string]string{"diff": diff})
+		}
+		return
+	}
+	files, err := s.ws.Changes(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
 // requireWorkspace binds a verified Runtime token to the exact workspace a
 // control request addresses. A token for one workspace must never be usable to
 // stop, archive, destroy, or inspect another workspace on the same computer.
 func (s *Server) requireWorkspace(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
 	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
-	if claims == nil || workspaceID == "" || claims.WorkspaceID != workspaceID {
+	if claims == nil || !validWorkspaceID(workspaceID) || claims.WorkspaceID != workspaceID {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize this workspace")
 		return false
+	}
+	return true
+}
+
+// validWorkspaceID admits the ids the control plane mints (UUIDs) and the short
+// ones tests use. The id becomes a path segment under the agent root, so
+// anything that could climb out of it is refused before it reaches a handler.
+func validWorkspaceID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !(c == '-' || c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+			return false
+		}
 	}
 	return true
 }
@@ -232,7 +323,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 // receives PTY output (tmux fans it out), but only the current writer's
 // keystrokes reach the PTY — the broker enforces one-writer per workspace.
 func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
-	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	claims, err := s.queryClaims(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 		return
@@ -361,7 +452,7 @@ func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send
 // skipped between disconnect and reconnect. This is the entire correctness
 // contract of the stream.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	claims, err := s.queryClaims(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 		return
@@ -503,7 +594,7 @@ type eventsWSFrame struct {
 // clients whose SSE is buffered (WKWebView) still get real-time updates. The
 // keepalive is a WS ping (browsers pong automatically).
 func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
-	claims, err := auth.Verify(r.URL.Query().Get("token"), s.secret)
+	claims, err := s.queryClaims(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 		return

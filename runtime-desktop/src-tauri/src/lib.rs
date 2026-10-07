@@ -21,11 +21,13 @@
 // registration and takes an ordinary http entry in the provider's allowlist.
 
 mod claude_login;
+mod local_runtime;
 
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WebviewUrl, WebviewWindowBuilder,
+    webview::PageLoadEvent,
+    Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -146,12 +148,21 @@ fn show_main(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .manage(claude_login::ClaudeLoginState::default())
+        .manage(local_runtime::LocalRuntime::default())
         .invoke_handler(tauri::generate_handler![
             claude_login::connect_claude_start,
             claude_login::connect_claude_submit,
             claude_login::connect_claude_poll,
             claude_login::connect_claude_debug,
             claude_login::connect_claude_cancel,
+            local_runtime::local_status,
+            local_runtime::local_pick_folder,
+            local_runtime::local_check_folder,
+            local_runtime::local_list_sessions,
+            local_runtime::local_agent_request,
+            local_runtime::local_socket_open,
+            local_runtime::local_socket_send,
+            local_runtime::local_socket_close,
         ])
         // Must be registered first: focus the existing window instead of
         // spawning a second instance (and forward any deep link it carried).
@@ -161,6 +172,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_oauth::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Main window → hosted Runtime UI, flagged as the desktop shell, with
             // off-site navigations (OAuth) bounced to the system browser.
@@ -171,6 +183,13 @@ pub fn run() {
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
                 .initialization_script(INIT_JS)
+                // A reload drops the page's ends of any relayed local-session
+                // sockets; close ours so none keeps the terminal's writer slot.
+                .on_page_load(|window, payload| {
+                    if payload.event() == PageLoadEvent::Started {
+                        window.state::<local_runtime::LocalRuntime>().close_all_sockets();
+                    }
+                })
                 .on_navigation(move |url| {
                     let scheme = url.scheme();
                     let same_site = url.host_str() == Some(site_host.as_str());
@@ -287,6 +306,13 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Outrunner");
+        .build(tauri::generate_context!())
+        .expect("error while building Outrunner")
+        .run(|app, event| {
+            // Stop the local agent on quit. tmux keeps its Claude sessions
+            // running, and the next launch's agent reattaches to them.
+            if let RunEvent::Exit = event {
+                app.state::<local_runtime::LocalRuntime>().shutdown();
+            }
+        });
 }

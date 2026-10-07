@@ -14,6 +14,10 @@ workflow, but the session lives in the cloud, not on your machine.
 - A Go **runtime-agent** on the box exposes the live PTY over WebSocket and
   streams the conversation; a Next.js + Supabase control plane handles auth,
   GitHub, and lifecycle.
+- Or a **local session**: in the Outrunner Mac app, choose *This Mac*, pick any
+  folder, and the same agent runs Claude Code on your machine with your own
+  `claude` login — no GitHub repository needed. See
+  [`runtime-desktop/README.md`](runtime-desktop/README.md#local-sessions).
 
 ## Status
 

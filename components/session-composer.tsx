@@ -26,6 +26,7 @@ export function SessionComposer({
   canSend,
   disabledPlaceholder = "Read-only — another viewer has the keyboard",
   model,
+  allowAttachments = true,
 }: {
   onSend: (text: string, attachmentIds: string[]) => void;
   canSend: boolean;
@@ -34,6 +35,9 @@ export function SessionComposer({
   /** The Claude model in use, shown in the footer. Omitted before any assistant
    *  turn has arrived (and on the new-session form, which has no session yet). */
   model?: string;
+  /** False hides attaching. Attachments are delivered by the server, which
+   *  cannot reach a local session's worktree on the user's Mac. */
+  allowAttachments?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -61,15 +65,19 @@ export function SessionComposer({
         submit();
       }}
       onDragOver={(event) => {
-        if (!canSend) return;
+        // A file dropped where it cannot be attached must still be caught:
+        // left to the browser, the drop navigates the page to the file and
+        // away from the session. Text drags are left alone.
+        if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
-        setDragging(true);
+        if (canSend && allowAttachments) setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={(event) => {
-        if (!canSend) return;
+        if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
         setDragging(false);
+        if (!canSend || !allowAttachments) return;
         void attachments.add(Array.from(event.dataTransfer.files));
       }}
       style={dragging ? { outline: "1px dashed currentColor", outlineOffset: 4 } : undefined}
@@ -135,7 +143,7 @@ export function SessionComposer({
           // Pasted screenshots arrive as files on the clipboard. Only intercept
           // when there are some, so ordinary text paste is untouched.
           const files = Array.from(event.clipboardData.files);
-          if (files.length > 0) {
+          if (files.length > 0 && allowAttachments) {
             event.preventDefault();
             void attachments.add(files);
           }
@@ -160,15 +168,17 @@ export function SessionComposer({
               event.target.value = "";
             }}
           />
-          <button
-            type="button"
-            aria-label="Attach files"
-            title="Attach files"
-            disabled={!canSend}
-            onClick={() => fileRef.current?.click()}
-          >
-            <Plus />
-          </button>
+          {allowAttachments && (
+            <button
+              type="button"
+              aria-label="Attach files"
+              title="Attach files"
+              disabled={!canSend}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Plus />
+            </button>
+          )}
           <span className="studio-composer-tag">
             <Hammer style={{ width: 12, marginRight: 4, display: "inline" }} />
             Build

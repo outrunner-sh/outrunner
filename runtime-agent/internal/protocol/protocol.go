@@ -60,6 +60,41 @@ type CreateWorkspaceRequest struct {
 	RepoFullName string `json:"repoFullName"`
 	Branch       string `json:"branch"`
 	BaseBranch   string `json:"baseBranch"`
+	// RepoPath, when set, is an existing checkout on this machine to branch the
+	// worktree from instead of the computer's bare mirror. Only the desktop
+	// shell sends it: a local session works in the user's own clone.
+	RepoPath string `json:"repoPath,omitempty"`
+	// PermissionMode is Claude's --permission-mode. Empty takes the agent's
+	// default: bypassPermissions on a Runtime Computer, never for a RepoPath
+	// session (which refuses bypassPermissions outright).
+	PermissionMode string `json:"permissionMode,omitempty"`
+	// Title labels a local session in the desktop's list (the first prompt).
+	Title string `json:"title,omitempty"`
+}
+
+// ListingWorkspaceID is the workspace claim of the only token that may list an
+// agent's sessions (GET /workspaces). No real workspace can have it — the id
+// checks on both sides refuse '*' — so a token issued for one workspace, like
+// those in /pty URLs, can never enumerate the others.
+const ListingWorkspaceID = "*"
+
+// LocalSession is one local session the agent on a user's Mac knows about, as
+// the desktop app lists them. Local sessions are not in the shared database:
+// they exist only on the Mac that runs them.
+type LocalSession struct {
+	WorkspaceID string `json:"workspaceId"`
+	// Name is the folder's name; Folder its path; Worktree where Claude works
+	// (the folder itself when InPlace).
+	Name       string `json:"name"`
+	Title      string `json:"title"`
+	Folder     string `json:"folder"`
+	Worktree   string `json:"worktree"`
+	Branch     string `json:"branch"`
+	BaseBranch string `json:"baseBranch"`
+	InPlace    bool   `json:"inPlace"`
+	CreatedAt  string `json:"createdAt"`
+	// Running is whether Claude's session is live right now.
+	Running bool `json:"running"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).
@@ -189,4 +224,13 @@ type WorkspaceStateChanged struct {
 	T           string `json:"t"` // "state"
 	WorkspaceID string `json:"workspaceId"`
 	State       string `json:"state"`
+}
+
+// ChangedFile is one entry of a workspace's change set, mirroring ChangedFile in
+// lib/runtime/types.ts (the shape /api/workspaces/[id]/changes returns).
+type ChangedFile struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
 }

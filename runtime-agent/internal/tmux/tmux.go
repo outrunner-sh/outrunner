@@ -6,9 +6,40 @@ package tmux
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
+
+// The server Runtime talks to. On a Runtime Computer the box is ours, so the
+// default server is fine. On someone's own Mac it is not: their tmux sessions
+// would mix with ours and their ~/.tmux.conf would restyle Claude's pane. The
+// desktop shell sets both to give the agent a private server.
+var (
+	// socketName selects a named server socket (`tmux -L`).
+	socketName = os.Getenv("RUNTIME_TMUX_SOCKET")
+	// configFile replaces ~/.tmux.conf when the server starts (`tmux -f`).
+	configFile = os.Getenv("RUNTIME_TMUX_CONFIG")
+)
+
+// Args prefixes a tmux argv with the server-selection flags. Every tmux
+// invocation in the agent goes through it, or one of them would talk to a
+// different server than the rest.
+func Args(args ...string) []string {
+	base := make([]string, 0, 4+len(args))
+	if socketName != "" {
+		base = append(base, "-L", socketName)
+	}
+	if configFile != "" {
+		base = append(base, "-f", configFile)
+	}
+	return append(base, args...)
+}
+
+// Command builds a tmux invocation against Runtime's server.
+func Command(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "tmux", Args(args...)...)
+}
 
 // Manager runs tmux commands via the local binary.
 type Manager struct{}
@@ -21,7 +52,7 @@ func New() *Manager { return &Manager{} }
 func (m *Manager) NewSession(ctx context.Context, name, workdir string, command []string, env []string) error {
 	args := []string{"new-session", "-d", "-s", name, "-c", workdir}
 	args = append(args, command...)
-	cmd := exec.CommandContext(ctx, "tmux", args...)
+	cmd := Command(ctx, args...)
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux new-session %s: %v: %s", name, err, out)
@@ -31,7 +62,7 @@ func (m *Manager) NewSession(ctx context.Context, name, workdir string, command 
 
 // HasSession reports whether a session with the given name exists.
 func (m *Manager) HasSession(ctx context.Context, name string) bool {
-	return exec.CommandContext(ctx, "tmux", "has-session", "-t", name).Run() == nil
+	return Command(ctx, "has-session", "-t", name).Run() == nil
 }
 
 // KillSession terminates a session (and the process inside it). A missing
@@ -40,7 +71,7 @@ func (m *Manager) KillSession(ctx context.Context, name string) error {
 	if !m.HasSession(ctx, name) {
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, "tmux", "kill-session", "-t", name).CombinedOutput(); err != nil {
+	if out, err := Command(ctx, "kill-session", "-t", name).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux kill-session %s: %v: %s", name, err, out)
 	}
 	return nil
@@ -62,14 +93,14 @@ func (m *Manager) Paste(ctx context.Context, name, text string) error {
 		return fmt.Errorf("tmux paste: no session %s", name)
 	}
 	buf := "runtime-send-" + name
-	load := exec.CommandContext(ctx, "tmux", "load-buffer", "-b", buf, "-")
+	load := Command(ctx, "load-buffer", "-b", buf, "-")
 	load.Stdin = strings.NewReader(text)
 	if out, err := load.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux load-buffer %s: %v: %s", name, err, out)
 	}
 	// -p: bracketed paste (newlines land as input, not submits). -d: delete the
 	// buffer afterward so buffers don't accumulate across sends.
-	if out, err := exec.CommandContext(ctx, "tmux", "paste-buffer", "-t", name, "-b", buf, "-d", "-p").CombinedOutput(); err != nil {
+	if out, err := Command(ctx, "paste-buffer", "-t", name, "-b", buf, "-d", "-p").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux paste-buffer %s: %v: %s", name, err, out)
 	}
 	return nil
@@ -78,7 +109,7 @@ func (m *Manager) Paste(ctx context.Context, name, text string) error {
 // SubmitEnter presses Enter in the session's active pane, submitting whatever is
 // currently staged in Claude's composer.
 func (m *Manager) SubmitEnter(ctx context.Context, name string) error {
-	if out, err := exec.CommandContext(ctx, "tmux", "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
+	if out, err := Command(ctx, "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux send-keys Enter %s: %v: %s", name, err, out)
 	}
 	return nil
@@ -88,7 +119,7 @@ func (m *Manager) SubmitEnter(ctx context.Context, name string) error {
 // pane. Used to detect when Claude's TUI has finished mounting and is ready to
 // accept a submitted prompt.
 func (m *Manager) CapturePane(ctx context.Context, name string) (string, error) {
-	out, err := exec.CommandContext(ctx, "tmux", "capture-pane", "-t", name, "-p").Output()
+	out, err := Command(ctx, "capture-pane", "-t", name, "-p").Output()
 	if err != nil {
 		return "", fmt.Errorf("tmux capture-pane %s: %w", name, err)
 	}
@@ -97,7 +128,7 @@ func (m *Manager) CapturePane(ctx context.Context, name string) (string, error) 
 
 // ListSessions returns the names of all live sessions.
 func (m *Manager) ListSessions(ctx context.Context) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}").Output()
+	out, err := Command(ctx, "list-sessions", "-F", "#{session_name}").Output()
 	if err != nil {
 		// tmux exits non-zero when there is no server/sessions; treat as empty.
 		return nil, nil

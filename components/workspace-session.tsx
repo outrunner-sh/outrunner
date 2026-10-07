@@ -8,17 +8,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { SessionComposer } from "@/components/session-composer";
+import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 
 export function WorkspaceSession({
   workspaceId,
+  local = false,
   showTerminal,
   initialPrompt,
   initialAttachmentIds,
 }: {
   workspaceId: string;
+  /** A local session: everything then goes through the Outrunner app to the
+   *  agent on this Mac, instead of through the server. */
+  local?: boolean;
   /** Whether the collapsible live terminal is revealed (owned by the studio). */
   showTerminal: boolean;
   /** First prompt to send once the session accepts input (from /new). */
@@ -27,7 +32,7 @@ export function WorkspaceSession({
   initialAttachmentIds?: string[];
 }) {
   const terminalContainer = useRef<HTMLDivElement>(null);
-  const attachment = useSessionAttachment(workspaceId);
+  const attachment = useSessionAttachment(workspaceId, local);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
   const conversation = useConversationStream(attachment);
 
@@ -35,8 +40,12 @@ export function WorkspaceSession({
   // streams back on the Conversation SSE. So input readiness and errors come
   // from the session attachment + conversation stream, not the terminal (which
   // stays available only as an optional shell panel).
-  const error = conversation.error ?? attachment.error;
-  const refresh = () => attachment.refresh();
+  const [sendError, setSendError] = useState<string | null>(null);
+  const error = conversation.error ?? attachment.error ?? sendError;
+  const refresh = () => {
+    setSendError(null);
+    attachment.refresh();
+  };
   const canSend = attachment.status === "attached";
 
   // Optimistic echo: the prompt only reaches the timeline after Claude logs it
@@ -52,6 +61,7 @@ export function WorkspaceSession({
 
   const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
+    const pendingId = crypto.randomUUID();
     if (trimmed) {
       setPending((prev) => {
         const base = userPromptCount(conversation.events);
@@ -60,14 +70,32 @@ export function WorkspaceSession({
         // the list bounded without a setState-in-effect cascade.
         const live = prev.filter((p) => base < p.expect);
         const expect = Math.max(base + 1, live.length ? live[live.length - 1].expect + 1 : 0);
-        return [...live, { id: crypto.randomUUID(), text: trimmed, expect }];
+        return [...live, { id: pendingId, text: trimmed, expect }];
       });
+    }
+    setSendError(null);
+    if (local) {
+      return localAgentRequest(
+        localTarget(workspaceId),
+        "POST",
+        `/workspaces/${workspaceId}/message`,
+        { content: text },
+      ).then(
+        () => true,
+        (error: unknown) => {
+          // The error says it didn't go; a bubble left waiting would stay on
+          // screen for good once a resend of the same text lands in its place.
+          setPending((prev) => prev.filter((p) => p.id !== pendingId));
+          setSendError(error instanceof Error ? error.message : "Could not send that message.");
+          return false;
+        },
+      );
     }
     return fetch(`/api/workspaces/${workspaceId}/message`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: text, attachmentIds }),
-    });
+    }).then((res) => res.ok);
   };
 
   // The model of the most recent assistant turn — shown in the composer so it
@@ -107,11 +135,11 @@ export function WorkspaceSession({
     // fire on ready, not a render cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void send(initialPrompt ?? "", initialAttachmentIds ?? [])
-      .then((res) => {
+      .then((delivered) => {
         // Strip only after the POST is accepted, so a failed delivery leaves
         // ?prompt= in place for a refresh to retry. Remove just the prompt param
         // (preserving any history state), not the whole query string.
-        if (!res.ok) return;
+        if (!delivered) return;
         const url = new URL(window.location.href);
         url.searchParams.delete("prompt");
         window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
@@ -167,7 +195,12 @@ export function WorkspaceSession({
         )}
       </section>
 
-      <SessionComposer onSend={send} canSend={canSend} model={activeModel} />
+      <SessionComposer
+        onSend={send}
+        canSend={canSend}
+        model={activeModel}
+        allowAttachments={!local}
+      />
     </div>
   );
 }

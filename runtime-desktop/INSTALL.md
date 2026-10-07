@@ -61,6 +61,25 @@ If Connect Claude reports that Claude Code isn't installed, install it and
 relaunch — the app looks for `claude` in the usual Homebrew, `~/.local/bin` and
 `~/.claude/local` locations, since a GUI app does not inherit your shell PATH.
 
+## Local sessions
+
+When you start a session, **This Mac** runs Claude Code on your machine instead
+of a cloud box, in any folder you choose — it doesn't have to be on GitHub. A git
+folder gets its own worktree per session (under `~/.outrunner/workspaces`), so
+your files are untouched until you merge; any other folder is edited directly.
+It uses your own `claude` login, so it needs no Claude connection in Settings.
+Your local sessions are listed under **This Mac** in the sidebar.
+
+It needs `git`, `claude` and **tmux** on your shell's PATH:
+
+```bash
+brew install tmux
+```
+
+Local sessions start in *accept edits* mode: Claude edits files freely but asks
+before running shell commands. Answer those in the session's Terminal panel.
+Quitting the app leaves Claude running; reopening the workspace reattaches.
+
 ## Known limits
 
 - **Unsigned** (ad-hoc), as above — the Privacy & Security step is required

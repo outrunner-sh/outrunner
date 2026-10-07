@@ -5,6 +5,7 @@ import { FolderPlus, PanelLeft, PanelLeftOpen, SquarePen, Terminal } from "lucid
 import { useEffect, useState } from "react";
 
 import { HomeUserMenu } from "@/components/home-user-menu";
+import { HomeLocalSessions } from "@/components/local-sessions-nav";
 import { NewSessionDialog } from "@/components/new-session-dialog";
 import { ProjectAvatar } from "@/components/project-avatar";
 import type { Project } from "@/lib/runtime/types";
@@ -139,6 +140,7 @@ export function HomeView({
                 ))
               )}
             </div>
+            <HomeLocalSessions />
           </div>
 
           <HomeUserMenu ownerLogin={ownerLogin} ownerAvatarUrl={ownerAvatarUrl} />

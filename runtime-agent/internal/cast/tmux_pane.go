@@ -3,9 +3,10 @@ package cast
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
+
+	"runtime-agent/internal/tmux"
 )
 
 // tmuxPane taps a tmux session's active pane via `tmux pipe-pane`. This is the
@@ -13,7 +14,7 @@ import (
 type tmuxPane struct{ session string }
 
 func (p *tmuxPane) size(ctx context.Context) (cols, rows int, err error) {
-	out, err := exec.CommandContext(ctx, "tmux",
+	out, err := tmux.Command(ctx,
 		"display-message", "-p", "-t", p.session, "#{pane_width} #{pane_height}",
 	).Output()
 	if err != nil {
@@ -38,7 +39,7 @@ func (p *tmuxPane) size(ctx context.Context) (cols, rows int, err error) {
 // the shell-command via /bin/sh, so the FIFO path is single-quoted.
 func (p *tmuxPane) arm(ctx context.Context, fifoPath string) error {
 	cmd := fmt.Sprintf("cat >> '%s'", strings.ReplaceAll(fifoPath, "'", `'\''`))
-	if out, err := exec.CommandContext(ctx, "tmux",
+	if out, err := tmux.Command(ctx,
 		"pipe-pane", "-O", "-t", p.session, cmd,
 	).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux pipe-pane arm: %v: %s", err, out)
@@ -48,7 +49,7 @@ func (p *tmuxPane) arm(ctx context.Context, fifoPath string) error {
 
 // disarm closes the pane's pipe (pipe-pane with no command).
 func (p *tmuxPane) disarm(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "tmux",
+	if out, err := tmux.Command(ctx,
 		"pipe-pane", "-t", p.session,
 	).CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux pipe-pane disarm: %v: %s", err, out)

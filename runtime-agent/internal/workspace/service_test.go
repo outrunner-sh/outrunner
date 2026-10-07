@@ -2,13 +2,19 @@ package workspace
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"runtime-agent/internal/claude"
 )
 
 func TestOrientationUsesRecordedFacts(t *testing.T) {
 	s := NewService(t.TempDir())
-	s.setFacts("ws1", "feature/login", "main")
+	s.setFacts("ws1", workspaceFacts{Branch: "feature/login", BaseBranch: "main"})
 
 	got := s.orientation("ws1", "/work/ws1")
 	if !strings.Contains(got, "in the /work/ws1 directory") {
@@ -34,17 +40,112 @@ func TestOrientationOmitsBaseWhenFactsMissing(t *testing.T) {
 	}
 }
 
-func TestCreateStripsRemotePrefixFromBase(t *testing.T) {
+func TestCreateRecordsFacts(t *testing.T) {
 	s := NewService(t.TempDir())
 	// Create's git worktree step fails (no mirror), but facts are recorded first.
-	_, _ = s.Create(context.Background(), "ws2", "feature/x", "origin/develop")
+	_, _ = s.Create(context.Background(), CreateInput{
+		WorkspaceID:    "ws2",
+		Branch:         "feature/x",
+		BaseBranch:     "develop",
+		PermissionMode: claude.AcceptEdits,
+	})
 
 	f, ok := s.getFacts("ws2")
 	if !ok {
 		t.Fatal("Create did not record facts")
 	}
-	if f.branch != "feature/x" || f.baseBranch != "develop" {
-		t.Errorf("facts = %+v, want {feature/x develop}", f)
+	if f.Branch != "feature/x" || f.BaseBranch != "develop" || f.PermissionMode != claude.AcceptEdits {
+		t.Errorf("facts = %+v, want {feature/x develop acceptEdits}", f)
+	}
+}
+
+func TestFactsSurviveAgentRestart(t *testing.T) {
+	root := t.TempDir()
+	first := NewService(root)
+	first.setFacts("ws3", workspaceFacts{Branch: "b", BaseBranch: "main", PermissionMode: claude.AcceptEdits, RepoPath: "/src/app"})
+
+	// A local agent restarts with the desktop app while tmux keeps the session
+	// alive, so a fresh Service on the same root must still know the mode.
+	restarted := NewService(root)
+	f, ok := restarted.getFacts("ws3")
+	if !ok || f.PermissionMode != claude.AcceptEdits || f.RepoPath != "/src/app" {
+		t.Fatalf("facts after restart = %+v, %v", f, ok)
+	}
+	if got := restarted.permissionMode("ws3"); got != claude.AcceptEdits {
+		t.Errorf("permissionMode after restart = %q, want acceptEdits", got)
+	}
+
+	restarted.forgetWorkspace("ws3")
+	if _, ok := NewService(root).getFacts("ws3"); ok {
+		t.Error("forgetWorkspace left the facts file behind")
+	}
+}
+
+func TestPermissionModeFallsBackToServiceDefault(t *testing.T) {
+	s := NewService(t.TempDir())
+	if got := s.permissionMode("unknown"); got != claude.Bypass {
+		t.Errorf("Runtime Computer default = %q, want bypassPermissions", got)
+	}
+	// The desktop shell sets this, so a local session whose facts are missing
+	// never falls back to bypass on the user's machine.
+	s.DefaultPermissionMode = claude.AcceptEdits
+	if got := s.permissionMode("unknown"); got != claude.AcceptEdits {
+		t.Errorf("desktop default = %q, want acceptEdits", got)
+	}
+}
+
+func TestSessionsInAFolderNeverBypassPermissions(t *testing.T) {
+	isolateGit(t)
+	folder := t.TempDir()
+	s := NewService(t.TempDir())
+	// Asked for outright, it is refused before anything is created.
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-bypass", Branch: "runtime/x", RepoPath: folder, PermissionMode: claude.Bypass,
+	}); !errors.Is(err, ErrBypassInFolder) {
+		t.Fatalf("Create with bypassPermissions = %v, want ErrBypassInFolder", err)
+	}
+	if _, ok := s.getFacts("ws-bypass"); ok {
+		t.Error("a refused create recorded facts")
+	}
+	// Not asked for, and with no agent default either, it is acceptEdits.
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-unset", Branch: "runtime/y", RepoPath: folder,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := s.permissionMode("ws-unset"); got != claude.AcceptEdits {
+		t.Errorf("unset mode in a folder = %q, want acceptEdits", got)
+	}
+}
+
+func TestCreateRejectsOptionLikeBranches(t *testing.T) {
+	s := NewService(t.TempDir())
+	for _, in := range []CreateInput{
+		{WorkspaceID: "ws4", Branch: "--upload-pack=x", BaseBranch: "main"},
+		{WorkspaceID: "ws4", Branch: "ok", BaseBranch: "-c"},
+	} {
+		if _, err := s.Create(context.Background(), in); err == nil {
+			t.Errorf("Create(%+v) accepted an option-like branch", in)
+		}
+	}
+}
+
+func TestIsTrustDialog(t *testing.T) {
+	// Captured from Claude Code opening a fresh folder in tmux (2026-10).
+	pane := ` Accessing workspace:
+ /private/tmp/outrunner-probe.obXI
+ Quick safety check: Is this a project you created or one you trust?
+ Claude Code'll be able to read, edit, and execute files here.
+ ❯ 1. Yes, I trust this folder
+   2. No, exit`
+	if !isTrustDialog(pane) {
+		t.Error("current trust dialog not recognised")
+	}
+	if !isTrustDialog("Do you trust the files in this folder?") {
+		t.Error("earlier trust dialog wording not recognised")
+	}
+	if isTrustDialog("╭───╮\n│ ❯ │\n╰───╯") {
+		t.Error("the composer was mistaken for the trust dialog")
 	}
 }
 
@@ -84,7 +185,7 @@ func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
 	t.Setenv("HOME", "/home/daytona")
 	s := NewService("/home/daytona")
 	// Claude derives the conversation dir under $HOME from the session cwd (the
-	// worktree) via claudeSlug ('/' and '.' -> '-'). This must match what Claude
+	// worktree) via claudeSlug (non-alphanumerics -> '-'). This must match what Claude
 	// writes on disk, since SendMessage polls it to confirm a prompt landed.
 	got := s.claudeConvDir("abc123")
 	want := "/home/daytona/.claude/projects/-home-daytona-workspaces-abc123"
@@ -93,8 +194,89 @@ func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
 	}
 }
 
+func TestClaudeSlugMatchesClaudeCode(t *testing.T) {
+	// Real directory names Claude Code created on a Mac.
+	for path, want := range map[string]string{
+		"/home/daytona/workspaces/abc-123":        "-home-daytona-workspaces-abc-123",
+		"/Users/ada/.outrunner/workspaces/x":      "-Users-ada--outrunner-workspaces-x",
+		"/Users/ada/Desktop/personal/new project": "-Users-ada-Desktop-personal-new-project",
+		"/Users/ada/Desktop - MacBook Air (3)/m":  "-Users-ada-Desktop---MacBook-Air--3--m",
+		// Computed with the slug function from Claude Code 2.1.228's bundle: one
+		// '-' per UTF-16 code unit, so "é" and each CJK character give one and an
+		// emoji (a surrogate pair) two.
+		"/Users/ada/café":    "-Users-ada-caf-",
+		"/Users/ada/日本語/app": "-Users-ada-----app",
+		"/Users/ada/😀 x":     "-Users-ada----x",
+		// Over 200 characters: cut, then a hash of the whole path.
+		"/Users/ada/" + strings.Repeat("projects/", 22) + "café 😀": "-Users-ada-" +
+			strings.Repeat("projects-", 21) + "-22n29x",
+	} {
+		if got := claudeSlug(path); got != want {
+			t.Errorf("claudeSlug(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestClaudeProjectDirResolvesSymlinks(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Claude runs in the real directory, so the log lives under its name.
+	want := filepath.Join("/h", ".claude", "projects", claudeSlug(resolved))
+	if got := claudeProjectDir("/h", link); got != want {
+		t.Errorf("claudeProjectDir(link) = %q, want %q", got, want)
+	}
+}
+
 func TestUserTurnCountMissingDirIsZero(t *testing.T) {
 	if got := userTurnCount(t.TempDir() + "/does-not-exist"); got != 0 {
 		t.Errorf("userTurnCount(missing) = %d, want 0", got)
+	}
+}
+
+func TestOnlyTheSameTextSoonAfterRetriesAStagedPrompt(t *testing.T) {
+	now := time.Now()
+	stage := func() *sendState {
+		return &sendState{staged: &stagedPrompt{content: "fix it", baseline: 3, at: now}}
+	}
+	if baseline, retry := stage().takeStaged("fix it", now.Add(time.Minute)); !retry || baseline != 3 {
+		t.Errorf("same text = %d, %v; want a retry from 3", baseline, retry)
+	}
+	if _, retry := stage().takeStaged("something else", now); retry {
+		t.Error("different text was taken for a retry")
+	}
+	if _, retry := stage().takeStaged("fix it", now.Add(stagedRetryWindow+time.Second)); retry {
+		t.Error("the same text long after was taken for a retry")
+	}
+	st := stage()
+	st.takeStaged("something else", now)
+	if st.staged != nil {
+		t.Error("takeStaged kept the staged prompt")
+	}
+}
+
+func TestRetryingAPromptThatLandedLateDoesNotSendItAgain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := NewService(t.TempDir())
+	// The first send gave up with the text staged and no user turn recorded;
+	// Claude has recorded it since.
+	s.sendLock("ws-late").staged = &stagedPrompt{content: "fix it", baseline: 0, at: time.Now()}
+	dir := s.claudeConvDir("ws-late")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "c.jsonl"), []byte(`{"type":"user"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// There is no tmux session: any paste or Enter would fail the send.
+	if err := s.SendMessage("ws-late", "fix it"); err != nil {
+		t.Fatalf("retry of a landed prompt = %v, want success without sending", err)
 	}
 }

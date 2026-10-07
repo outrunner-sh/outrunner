@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 
 import { ProjectAvatar } from "@/components/project-avatar";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
+import { LocalFolderButton, SessionLocationToggle } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import {
   Dialog,
@@ -20,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useCreateSession } from "@/hooks/use-create-session";
+import { useSessionLocation } from "@/hooks/use-session-location";
 import type { Project } from "@/lib/runtime/types";
 
 /**
@@ -60,20 +62,26 @@ function NewSessionModalBody({
   projects: Project[];
   initialProjectId?: string;
 }) {
-  const { setProjectId, selected, isCreating, message, create } = useCreateSession(
+  const { setProjectId, selected, isCreating, message, create, createLocal } = useCreateSession(
     projects,
     initialProjectId,
   );
+  const where = useSessionLocation();
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const local = where.location === "local";
+  // Cloud sessions need a repository; a local one only a folder.
+  const ready = local ? where.localFolder !== null : selected !== undefined;
 
   const submit = () => {
     const text = value.trim();
-    if (text === "" || isCreating) return;
-    create(text);
+    if (text === "" || isCreating || !ready) return;
+    if (where.localFolder) createLocal(text, where.localFolder);
+    else create(text);
   };
 
-  if (projects.length === 0) {
+  // No repositories only blocks the cloud; a local session needs none.
+  if (!local && projects.length === 0) {
     return (
       <div className="flex flex-col items-center gap-4 p-10 text-center">
         <p className="text-sm font-medium">No repositories synchronized</p>
@@ -81,6 +89,15 @@ function NewSessionModalBody({
           Pull in the repositories your GitHub token can access to start a session.
         </p>
         <ProjectsSyncButton align="center" />
+        {where.runtime.state === "ready" && (
+          <button
+            type="button"
+            onClick={() => where.setLocation("local")}
+            className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            Or work in a folder on this Mac
+          </button>
+        )}
       </div>
     );
   }
@@ -93,7 +110,8 @@ function NewSessionModalBody({
           progress to document.body (an opaque layer above the dialog). The modal
           stays mounted underneath, so a failed create returns to the composer
           with the typed prompt intact. */}
-      {isCreating && selected && typeof document !== "undefined"
+      {/* A local session opens in about a second, so it gets no progress screen. */}
+      {isCreating && !local && selected && typeof document !== "undefined"
         ? createPortal(
             <div className="fixed inset-0 z-[60] bg-background">
               <WorkspaceCreating
@@ -105,31 +123,36 @@ function NewSessionModalBody({
           )
         : null}
 
-      {/* Header — repository picker, top-left (Conductor-style). */}
+      {/* Header — what to work on, top-left (Conductor-style): a repository
+          for the cloud, a folder for this Mac. */}
       <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3 pr-12">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-            >
-              <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
-              {selected?.name ?? "Select a repository"}
-              <ChevronDown className="size-4 text-muted-foreground" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-72 w-64 overflow-y-auto">
-            {projects.map((project) => (
-              <DropdownMenuItem
-                key={project.id}
-                onSelect={() => setProjectId(project.id)}
+        {local ? (
+          <LocalFolderButton state={where} disabled={isCreating} />
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm font-medium text-foreground transition-colors hover:bg-accent"
               >
-                <ProjectAvatar name={project.name} className="size-5" />
-                <span className="truncate">{project.fullName}</span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
+                {selected?.name ?? "Select a repository"}
+                <ChevronDown className="size-4 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-72 w-64 overflow-y-auto">
+              {projects.map((project) => (
+                <DropdownMenuItem
+                  key={project.id}
+                  onSelect={() => setProjectId(project.id)}
+                >
+                  <ProjectAvatar name={project.name} className="size-5" />
+                  <span className="truncate">{project.fullName}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {/* Prompt — the composer body. */}
@@ -156,19 +179,25 @@ function NewSessionModalBody({
         }}
       />
 
-      {/* Footer — Create. */}
-      <div className="flex items-center justify-end px-4 pb-4">
+      {/* Footer — where it runs, and Create. */}
+      <div className="flex items-center justify-between gap-3 px-4 pb-4">
+        <SessionLocationToggle state={where} disabled={isCreating} />
         <button
           type="button"
           onClick={submit}
-          disabled={isCreating || value.trim() === ""}
+          disabled={isCreating || value.trim() === "" || !ready}
           className="flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40"
         >
-          Create
+          {isCreating && local ? "Starting…" : "Create"}
           <ArrowUp className="size-3.5" />
         </button>
       </div>
 
+      {where.blocker && !message && (
+        <p aria-live="polite" className="px-4 pb-4 text-xs text-muted-foreground">
+          {where.blocker}
+        </p>
+      )}
       {message && (
         <p aria-live="polite" className="px-4 pb-4 text-center text-xs text-destructive">
           {message}

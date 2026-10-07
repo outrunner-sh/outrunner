@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { ChangedFile } from "@/lib/runtime/types";
 
 const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "outline" | "destructive"> = {
@@ -24,10 +25,14 @@ const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "ou
  */
 export function WorkspaceChanges({
   workspaceId,
+  local = false,
   active,
   baseBranch,
 }: {
   workspaceId: string;
+  /** A local session: the agent on this Mac serves the change set, through the
+   *  Outrunner app, since the server cannot reach the worktree. */
+  local?: boolean;
   active: boolean;
   baseBranch?: string;
 }) {
@@ -57,8 +62,33 @@ export function WorkspaceChanges({
     openRef.current = openPaths;
   }, [openPaths]);
 
+  // The same two reads, from the server or (local) the app; both answer in the
+  // shapes /api/workspaces/[id]/changes uses.
+  const readLocal = useCallback(
+    async (query: string): Promise<{ ok: boolean; result: Record<string, unknown> }> => {
+      if (!local) throw new Error("not a local workspace");
+      try {
+        const result = await localAgentRequest<Record<string, unknown>>(
+          localTarget(workspaceId),
+          "GET",
+          `/workspaces/${workspaceId}/changes${query}`,
+        );
+        return { ok: true, result };
+      } catch (error) {
+        return { ok: false, result: { error: error instanceof Error ? error.message : String(error) } };
+      }
+    },
+    [workspaceId, local],
+  );
+
   const fetchChanges = useCallback(
     async (signal?: AbortSignal): Promise<{ files: ChangedFile[] } | { error: string }> => {
+      if (local) {
+        const { ok, result } = await readLocal("");
+        const files = result.files as ChangedFile[] | undefined;
+        if (!ok || !files) return { error: (result.error as string) ?? "Could not load changes." };
+        return { files };
+      }
       const response = await fetch(`/api/workspaces/${workspaceId}/changes`, { signal });
       const result = (await response.json().catch(() => ({}))) as {
         files?: ChangedFile[];
@@ -67,7 +97,7 @@ export function WorkspaceChanges({
       if (!response.ok || !result.files) return { error: result.error ?? "Could not load changes." };
       return { files: result.files };
     },
-    [workspaceId],
+    [workspaceId, local, readLocal],
   );
 
   const loadDiff = useCallback(
@@ -75,12 +105,15 @@ export function WorkspaceChanges({
       const gen = loadGen.current;
       setLoadingPaths((s) => new Set(s).add(path));
       try {
-        const response = await fetch(
-          `/api/workspaces/${workspaceId}/changes?path=${encodeURIComponent(path)}`,
-        );
-        const result = (await response.json().catch(() => ({}))) as { diff?: string; error?: string };
+        const query = `?path=${encodeURIComponent(path)}`;
+        const { ok, result } = local
+          ? ((await readLocal(query)) as { ok: boolean; result: { diff?: string; error?: string } })
+          : await fetch(`/api/workspaces/${workspaceId}/changes${query}`).then(async (response) => ({
+              ok: response.ok,
+              result: (await response.json().catch(() => ({}))) as { diff?: string; error?: string },
+            }));
         if (loadGen.current !== gen) return; // superseded by a reload — discard
-        if (response.ok && typeof result.diff === "string") {
+        if (ok && typeof result.diff === "string") {
           const diff = result.diff;
           setDiffs((d) => new Map(d).set(path, diff));
           setDiffErrors((e) => {
@@ -104,7 +137,7 @@ export function WorkspaceChanges({
         });
       }
     },
-    [workspaceId],
+    [workspaceId, local, readLocal],
   );
 
   const applyResult = useCallback(

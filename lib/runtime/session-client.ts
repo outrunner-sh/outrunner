@@ -1,6 +1,9 @@
 /**
  * Browser-safe client for one Workspace Session.
  *
+ * Streams open through openSocket(): a real WebSocket for a cloud session, the
+ * Outrunner app's relay for a local one (its URLs use `outrunner-local:`).
+ *
  * This module NEVER imports server-only code (runtime-token, env, secrets). It
  * only knows how to speak the frozen wire protocol given a URL that was minted
  * server-side by /api/workspaces/[id]/session.
@@ -14,6 +17,7 @@
 
 import type { Terminal } from "@xterm/xterm";
 
+import { openSocket } from "@/lib/desktop/local-runtime";
 import {
   AgentEvent,
   PtyServerMessage,
@@ -50,7 +54,7 @@ export function openTerminal(
   terminal: Terminal,
   options: TerminalAttachOptions = {},
 ): TerminalAttachment {
-  const ws = new WebSocket(ptyUrl);
+  const ws = openSocket(ptyUrl);
   ws.binaryType = "arraybuffer";
 
   let disposed = false;
@@ -181,7 +185,7 @@ export function subscribeEventsWs(
       ? appendQuery(eventsUrl, "lastEventId", options.lastEventId)
       : eventsUrl;
 
-  const ws = new WebSocket(url);
+  const ws = openSocket(url);
   let disposed = false;
   let opened = false;
   let lastId: string | null = options.lastEventId ?? null;

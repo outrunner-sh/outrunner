@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-agent-request"
+description = "Enables the local_agent_request command without any pre-configured scope."
+commands.allow = ["local_agent_request"]
+
+[[permission]]
+identifier = "deny-local-agent-request"
+description = "Denies the local_agent_request command without any pre-configured scope."
+commands.deny = ["local_agent_request"]

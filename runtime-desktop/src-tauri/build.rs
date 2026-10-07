@@ -1,5 +1,6 @@
 fn main() {
-    // The Claude connect commands need ACL permissions generated for them.
+    // The app's own commands (Claude connect, local sessions) need ACL permissions
+    // generated for them.
     //
     // App-defined commands are implicitly allowed for local content, but this
     // window shows a REMOTE origin (the hosted web UI), and every IPC call from
@@ -17,6 +18,14 @@ fn main() {
                 "connect_claude_poll",
                 "connect_claude_debug",
                 "connect_claude_cancel",
+                "local_status",
+                "local_pick_folder",
+                "local_check_folder",
+                "local_list_sessions",
+                "local_agent_request",
+                "local_socket_open",
+                "local_socket_send",
+                "local_socket_close",
             ]),
         ),
     )

@@ -66,6 +66,14 @@ export const CreateWorkspaceRequest = z.object({
   repoFullName: z.string().min(1),
   branch: z.string().min(1),
   baseBranch: z.string().min(1),
+  /** Existing checkout on the user's Mac to branch from (local sessions only);
+   *  omitted, the worktree comes from the computer's bare mirror. */
+  repoPath: z.string().min(1).optional(),
+  /** Claude's --permission-mode; omitted takes the agent's default (bypass on a
+   *  Runtime Computer). A repoPath session refuses bypassPermissions. */
+  permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions"]).optional(),
+  /** Labels a local session in the desktop's list (the first prompt). */
+  title: z.string().optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
