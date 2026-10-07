@@ -172,6 +172,10 @@ export function messageForLocalError(error: unknown): string {
       return "Lost contact with the local agent. Try again.";
     case "folder-missing":
       return "That folder isn't there any more. Choose another.";
+    case "folder-not-chosen":
+    case "folder-required":
+      // The app only works in folders picked in its own dialog.
+      return "Choose the folder to work in again.";
     case "agent":
       // The agent's own message, e.g. a worktree that could not be created.
       return raw.slice("agent:".length).trim() || "The local agent reported an error.";
@@ -291,6 +295,10 @@ export class LocalSocket extends EventTarget {
   }
 
   private receive(event: SocketEvent): void {
+    // A closed WebSocket fires nothing more; neither does this, whatever the
+    // channel still delivers. (The relay ends every error with a close, so an
+    // error alone never strands the socket open.)
+    if (this.readyState === WebSocket.CLOSED) return;
     switch (event.type) {
       case "open":
         if (this.readyState !== WebSocket.CONNECTING) return;

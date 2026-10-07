@@ -27,13 +27,12 @@ const (
 	Plan PermissionMode = "plan"
 )
 
-// ParsePermissionMode validates a requested mode. Empty selects Bypass, the
-// Runtime Computer default, so existing callers keep their behaviour.
+// ParsePermissionMode validates a requested mode. Empty stays empty — no mode
+// was asked for — and the workspace service picks one when Claude launches, so
+// the default is decided in one place (workspace.Service.permissionMode).
 func ParsePermissionMode(raw string) (PermissionMode, error) {
 	switch mode := PermissionMode(raw); mode {
-	case "":
-		return Bypass, nil
-	case Bypass, AcceptEdits, Default, Plan:
+	case "", Bypass, AcceptEdits, Default, Plan:
 		return mode, nil
 	default:
 		return "", fmt.Errorf("unknown permission mode %q", raw)

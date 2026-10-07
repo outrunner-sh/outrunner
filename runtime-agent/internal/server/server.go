@@ -124,7 +124,11 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		PermissionMode: mode,
 		Title:          req.Title,
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, workspace.ErrBypassInFolder):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
 	}
@@ -227,9 +231,14 @@ func (s *Server) queryClaims(r *http.Request) (*protocol.RuntimeTokenClaims, err
 }
 
 // listWorkspaces lists the local sessions this agent knows — the desktop's
-// session list, since local sessions are not in the shared database. Any valid
-// token may list: only the desktop app on this machine holds the secret.
+// session list, since local sessions are not in the shared database. It takes
+// the listing token only: a workspace's own token covers that workspace alone.
 func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
+	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
+	if claims == nil || claims.WorkspaceID != protocol.ListingWorkspaceID {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize listing workspaces")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"workspaces": s.ws.LocalSessions(r.Context())})
 }
 

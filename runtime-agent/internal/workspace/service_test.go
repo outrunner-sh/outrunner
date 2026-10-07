@@ -2,10 +2,12 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"runtime-agent/internal/claude"
 )
@@ -92,6 +94,30 @@ func TestPermissionModeFallsBackToServiceDefault(t *testing.T) {
 	}
 }
 
+func TestSessionsInAFolderNeverBypassPermissions(t *testing.T) {
+	isolateGit(t)
+	folder := t.TempDir()
+	s := NewService(t.TempDir())
+	// Asked for outright, it is refused before anything is created.
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-bypass", Branch: "runtime/x", RepoPath: folder, PermissionMode: claude.Bypass,
+	}); !errors.Is(err, ErrBypassInFolder) {
+		t.Fatalf("Create with bypassPermissions = %v, want ErrBypassInFolder", err)
+	}
+	if _, ok := s.getFacts("ws-bypass"); ok {
+		t.Error("a refused create recorded facts")
+	}
+	// Not asked for, and with no agent default either, it is acceptEdits.
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-unset", Branch: "runtime/y", RepoPath: folder,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := s.permissionMode("ws-unset"); got != claude.AcceptEdits {
+		t.Errorf("unset mode in a folder = %q, want acceptEdits", got)
+	}
+}
+
 func TestCreateRejectsOptionLikeBranches(t *testing.T) {
 	s := NewService(t.TempDir())
 	for _, in := range []CreateInput{
@@ -175,6 +201,15 @@ func TestClaudeSlugMatchesClaudeCode(t *testing.T) {
 		"/Users/ada/.outrunner/workspaces/x":      "-Users-ada--outrunner-workspaces-x",
 		"/Users/ada/Desktop/personal/new project": "-Users-ada-Desktop-personal-new-project",
 		"/Users/ada/Desktop - MacBook Air (3)/m":  "-Users-ada-Desktop---MacBook-Air--3--m",
+		// Computed with the slug function from Claude Code 2.1.228's bundle: one
+		// '-' per UTF-16 code unit, so "é" and each CJK character give one and an
+		// emoji (a surrogate pair) two.
+		"/Users/ada/café":    "-Users-ada-caf-",
+		"/Users/ada/日本語/app": "-Users-ada-----app",
+		"/Users/ada/😀 x":     "-Users-ada----x",
+		// Over 200 characters: cut, then a hash of the whole path.
+		"/Users/ada/" + strings.Repeat("projects/", 22) + "café 😀": "-Users-ada-" +
+			strings.Repeat("projects-", 21) + "-22n29x",
 	} {
 		if got := claudeSlug(path); got != want {
 			t.Errorf("claudeSlug(%q) = %q, want %q", path, got, want)
@@ -202,5 +237,46 @@ func TestClaudeProjectDirResolvesSymlinks(t *testing.T) {
 func TestUserTurnCountMissingDirIsZero(t *testing.T) {
 	if got := userTurnCount(t.TempDir() + "/does-not-exist"); got != 0 {
 		t.Errorf("userTurnCount(missing) = %d, want 0", got)
+	}
+}
+
+func TestOnlyTheSameTextSoonAfterRetriesAStagedPrompt(t *testing.T) {
+	now := time.Now()
+	stage := func() *sendState {
+		return &sendState{staged: &stagedPrompt{content: "fix it", baseline: 3, at: now}}
+	}
+	if baseline, retry := stage().takeStaged("fix it", now.Add(time.Minute)); !retry || baseline != 3 {
+		t.Errorf("same text = %d, %v; want a retry from 3", baseline, retry)
+	}
+	if _, retry := stage().takeStaged("something else", now); retry {
+		t.Error("different text was taken for a retry")
+	}
+	if _, retry := stage().takeStaged("fix it", now.Add(stagedRetryWindow+time.Second)); retry {
+		t.Error("the same text long after was taken for a retry")
+	}
+	st := stage()
+	st.takeStaged("something else", now)
+	if st.staged != nil {
+		t.Error("takeStaged kept the staged prompt")
+	}
+}
+
+func TestRetryingAPromptThatLandedLateDoesNotSendItAgain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := NewService(t.TempDir())
+	// The first send gave up with the text staged and no user turn recorded;
+	// Claude has recorded it since.
+	s.sendLock("ws-late").staged = &stagedPrompt{content: "fix it", baseline: 0, at: time.Now()}
+	dir := s.claudeConvDir("ws-late")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "c.jsonl"), []byte(`{"type":"user"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// There is no tmux session: any paste or Enter would fail the send.
+	if err := s.SendMessage("ws-late", "fix it"); err != nil {
+		t.Fatalf("retry of a landed prompt = %v, want success without sending", err)
 	}
 }

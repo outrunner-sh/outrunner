@@ -129,7 +129,7 @@ func TestCommandOmitsFlagWhenNoOrientation(t *testing.T) {
 
 func TestParsePermissionMode(t *testing.T) {
 	for raw, want := range map[string]PermissionMode{
-		"":                  Bypass,
+		"":                  "", // unset: the workspace service picks
 		"bypassPermissions": Bypass,
 		"acceptEdits":       AcceptEdits,
 		"default":           Default,
