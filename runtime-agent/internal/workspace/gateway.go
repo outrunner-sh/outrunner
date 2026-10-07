@@ -53,6 +53,17 @@ func (s *Service) writeGatewayEnv(workspaceID, content string) error {
 	return nil
 }
 
+// putGatewayEnv stores the session's gateway file, or removes it for none.
+func (s *Service) putGatewayEnv(workspaceID, content string) error {
+	if content == "" {
+		if err := os.Remove(s.gatewayEnvPath(workspaceID)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return s.writeGatewayEnv(workspaceID, content)
+}
+
 func (s *Service) readGatewayEnv(workspaceID string) string {
 	data, _ := os.ReadFile(s.gatewayEnvPath(workspaceID))
 	return string(data)

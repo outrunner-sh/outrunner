@@ -242,9 +242,9 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
         {choice.models.map((m) => (
           <DropdownMenuItem
             key={m.id}
-            onSelect={() => {
-              if (m.id !== current?.id) choice.onChange(m.id);
-            }}
+            // Always sent, even for the ticked family: the session may run an
+            // older model of it, and the agent ignores a switch to what it has.
+            onSelect={() => choice.onChange(m.id)}
           >
             <Check className={m.id === current?.id ? "opacity-100" : "opacity-0"} />
             {m.label}

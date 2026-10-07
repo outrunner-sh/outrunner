@@ -398,3 +398,26 @@ func TestForgettingASessionRemovesItsGatewayKey(t *testing.T) {
 		t.Errorf("gateway file outlived its session: %v", err)
 	}
 }
+
+func TestClaudeIsBusyOnlyMidTurn(t *testing.T) {
+	// Captured from Claude Code 2.1 in tmux (2026-10): idle, then mid-turn.
+	idle := "❯ Try \"edit <filepath> to...\"\n  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents"
+	working := "✶ Combobulating…\n  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← for agents"
+	if claudeIsBusy(idle) {
+		t.Error("an idle Claude read as busy")
+	}
+	if !claudeIsBusy(working) {
+		t.Error("a Claude mid-turn read as idle")
+	}
+}
+
+func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.jcode = &jcodeEngine{}
+	if err := s.SetModel(context.Background(), "ws-j", ModelChoice{Model: "opus"}, ""); !errors.Is(err, ErrModelUnsupported) {
+		t.Fatalf("SetModel on jcode = %v, want ErrModelUnsupported", err)
+	}
+	if _, ok := s.getFacts("ws-j"); ok {
+		t.Error("a refused switch was recorded")
+	}
+}

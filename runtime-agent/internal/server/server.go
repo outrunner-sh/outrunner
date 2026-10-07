@@ -351,11 +351,14 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 	err = s.ws.SetModel(r.Context(), r.PathValue("id"), workspace.ModelChoice{
 		Model: req.Model, Gateway: gateway, Token: req.Token,
 	}, "")
-	if errors.Is(err, workspace.ErrUnknownWorkspace) {
+	switch {
+	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-		return
+	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrModelUnsupported):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	default:
+		respond(w, req.Model, err)
 	}
-	respond(w, req.Model, err)
 }
 
 // pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach

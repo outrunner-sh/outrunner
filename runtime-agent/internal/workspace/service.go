@@ -426,8 +426,15 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	return s.relaunch(ctx, workspaceID, anthropicToken, true)
 }
 
-// ErrUnknownWorkspace is a workspace this agent has no record of.
-var ErrUnknownWorkspace = errors.New("unknown workspace")
+var (
+	// ErrUnknownWorkspace is a workspace this agent has no record of.
+	ErrUnknownWorkspace = errors.New("unknown workspace")
+	// ErrModelUnsupported is a model switch on an engine that has none (jcode).
+	ErrModelUnsupported = errors.New("this engine cannot switch models")
+	// ErrSessionBusy is a switch asked for while Claude is mid-turn: the
+	// relaunch would cut the turn off.
+	ErrSessionBusy = errors.New("Claude is mid-turn; switch models once it has finished")
+)
 
 // ModelChoice is what a session runs: a model, and optionally the gateway and
 // key it runs through. Callers validate each part.
@@ -440,9 +447,12 @@ type ModelChoice struct {
 // SetModel switches a session to another model, or to or from a gateway. It is
 // recorded first, so every later launch and resume uses it; a running session
 // is then relaunched on it, continuing its conversation (Claude reads all of it
-// only at launch). A turn in progress is cut off, so callers offer the switch
-// only between turns.
+// only at launch). It is refused while Claude is mid-turn, which the relaunch
+// would cut off.
 func (s *Service) SetModel(ctx context.Context, workspaceID string, choice ModelChoice, anthropicToken string) error {
+	if s.jcode != nil {
+		return ErrModelUnsupported // jcode's bridge launches its own sessions
+	}
 	defer s.lockLifecycle(workspaceID)()
 	f, ok := s.getFacts(workspaceID)
 	if !ok {
@@ -452,23 +462,45 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if choice.Gateway != claude.NoGateway {
 		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
 	}
-	if f.Model == choice.Model && f.Gateway == choice.Gateway && s.readGatewayEnv(workspaceID) == env {
+	priorEnv := s.readGatewayEnv(workspaceID)
+	if f.Model == choice.Model && f.Gateway == choice.Gateway && priorEnv == env {
 		return nil
 	}
-	if env == "" {
-		_ = os.Remove(s.gatewayEnvPath(workspaceID))
-	} else if err := s.writeGatewayEnv(workspaceID, env); err != nil {
+	name := sessionName(workspaceID)
+	running := s.tmux.HasSession(ctx, name)
+	if running {
+		if pane, err := s.tmux.CapturePane(ctx, name); err == nil && claudeIsBusy(pane) {
+			return ErrSessionBusy
+		}
+	}
+	if err := s.putGatewayEnv(workspaceID, env); err != nil {
 		return err
 	}
+	prior := f
 	f.Model, f.Gateway = choice.Model, choice.Gateway
 	s.setFacts(workspaceID, f)
-	if s.jcode != nil || !s.tmux.HasSession(ctx, sessionName(workspaceID)) {
+	if !running {
 		return nil // the next Start launches on it
 	}
+	// A dropped request must not stop the relaunch between its kill and its
+	// new session.
+	ctx = context.WithoutCancel(ctx)
 	// Continue only a conversation that exists: before the first prompt there
 	// is none, and --continue with nothing to continue exits.
-	_, err := s.relaunch(ctx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "")
-	return err
+	if _, err := s.relaunch(ctx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != ""); err != nil {
+		// Not applied, so not recorded: a retry of the same choice tries again
+		// rather than finding it already set, and the next Start uses the old.
+		_ = s.putGatewayEnv(workspaceID, priorEnv)
+		s.setFacts(workspaceID, prior)
+		return err
+	}
+	return nil
+}
+
+// claudeIsBusy reports whether Claude's screen shows a turn in progress: its
+// footer offers "esc to interrupt" only then.
+func claudeIsBusy(pane string) bool {
+	return strings.Contains(pane, "esc to interrupt")
 }
 
 // relaunch replaces a workspace's Claude session. Callers hold its lifecycle

@@ -122,13 +122,17 @@ export function WorkspaceSession({
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
   const shownModel = picked && !repliedSincePick ? picked.model : activeModel;
-  const working = claudeIsWorking(conversation.events);
+  // A prompt the stream hasn't recorded yet is a turn starting. The agent
+  // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
+  const delivered = userPromptCount(conversation.events);
+  const working =
+    claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice | undefined = local
     ? {
         models: CLAUDE_MODELS,
         switching,
         disabledReason: !canSend
-          ? "Only the viewer at the keyboard can switch models"
+          ? "Waiting for the session to connect"
           : working
             ? "Switch models once Claude has finished this turn"
             : null,
