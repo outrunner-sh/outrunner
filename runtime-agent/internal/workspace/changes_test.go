@@ -96,4 +96,14 @@ func TestChangesAndDiffOfALocalWorktree(t *testing.T) {
 	if diff, _ := s.FileDiff(context.Background(), "ws-diff", "README.md"); !strings.Contains(diff, "+world") {
 		t.Errorf("staged edit diff = %q, want the change", diff)
 	}
+
+	// The staged edit stays, but the working copy goes back to HEAD: still
+	// listed as changed, so its diff must not be empty.
+	if err := os.WriteFile(filepath.Join(worktree, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diff, err = s.FileDiff(context.Background(), "ws-diff", "README.md")
+	if err != nil || !strings.Contains(diff, "+world") || !strings.Contains(diff, "-world") {
+		t.Errorf("staged-then-reverted diff = %q, %v; want the staged edit and its undoing", diff, err)
+	}
 }
