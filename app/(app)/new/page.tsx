@@ -10,13 +10,13 @@ export const dynamic = "force-dynamic";
 export default async function NewSessionPage({
   searchParams,
 }: {
-  // `folder` is set by a Mac folder's "+" in the sidebar (which also stores
-  // the folder for the form); here it only keys the form, below.
-  searchParams: Promise<{ project?: string; folder?: string }>;
+  // A sidebar "+" adds `folder` (a Mac folder's; the sidebar also stores it for
+  // the form) and `start` (unique per click); both only key the form, below.
+  searchParams: Promise<{ project?: string; folder?: string; start?: string }>;
 }) {
   if (!(await getOwnerSafe())) redirect("/signin?next=/new");
 
-  const { project, folder } = await searchParams;
+  const { project, folder, start } = await searchParams;
   let projects: Project[] = [];
   try {
     projects = await listProjectsOnce();
@@ -33,9 +33,9 @@ export default async function NewSessionPage({
 
   return (
     <NewSessionCreator
-      // A new form per request: arriving from another workspace's "+" while
-      // already on /new must not keep the previous repository or folder.
-      key={`${project ?? ""}\n${folder ?? ""}`}
+      // A new form per "+": arriving while already on /new must not keep the
+      // repository, folder or cloud/Mac choice the open form was switched to.
+      key={`${project ?? ""}\n${folder ?? ""}\n${start ?? ""}`}
       projects={projects}
       initialProjectId={project}
       showBack

@@ -25,6 +25,7 @@ import {
   activeSessionId,
   buildSidebarGroups,
   filterSidebarGroups,
+  newSessionHref,
   relativeTime,
   type SidebarGroup,
 } from "@/lib/nav/sidebar";
@@ -161,17 +162,13 @@ function WorkspaceGroup({
 }) {
   const router = useRouter();
   const { start } = group;
-  // Both set the form's cloud/Mac choice, then open /new with a query that
-  // names the target, so a form already open re-initialises for it.
+  // Set the form's cloud/Mac choice, then open a fresh form for this target
+  // (newSessionHref: a new key each click, even for the URL already open).
   const startHere = () => {
     if (!start) return;
-    if (start.kind === "local") {
-      startNextSessionIn(start.folder);
-      router.push(`/new?folder=${encodeURIComponent(start.folder)}`);
-    } else {
-      startNextSessionInCloud();
-      router.push(`/new?project=${encodeURIComponent(start.projectId)}`);
-    }
+    if (start.kind === "local") startNextSessionIn(start.folder);
+    else startNextSessionInCloud();
+    router.push(newSessionHref(start, Date.now().toString(36)));
   };
   const Icon = group.local ? Laptop : Folder;
   return (

@@ -6,6 +6,7 @@ import {
   activeSessionId,
   buildSidebarGroups,
   filterSidebarGroups,
+  newSessionHref,
   relativeTime,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
@@ -268,4 +269,16 @@ test("a missing, unparseable or future time is handled", () => {
   assert.equal(relativeTime("", now), "");
   assert.equal(relativeTime("not a date", now), "");
   assert.equal(relativeTime("2026-10-07T12:05:00Z", now), "now");
+});
+
+test("a workspace's + opens /new on that repository or folder, unique per click", () => {
+  assert.equal(newSessionHref({ kind: "cloud", projectId: "p1" }, "a1"), "/new?project=p1&start=a1");
+  // A folder path is encoded, spaces and all.
+  assert.equal(
+    newSessionHref({ kind: "local", folder: "/Users/ada/my app" }, "a2"),
+    "/new?folder=%2FUsers%2Fada%2Fmy+app&start=a2",
+  );
+  // Two clicks on the same + differ, so the form is rebuilt even on the same target.
+  const start = { kind: "cloud", projectId: "p1" } as const;
+  assert.notEqual(newSessionHref(start, "x"), newSessionHref(start, "y"));
 });
