@@ -9,7 +9,7 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { localAgentRequest, localTarget, messageForLocalError } from "@/lib/desktop/local-runtime";
-import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
+import { MODEL_GROUPS, type SessionModel } from "@/lib/runtime/session-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
@@ -129,7 +129,7 @@ export function WorkspaceSession({
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice | undefined = local
     ? {
-        models: CLAUDE_MODELS,
+        groups: MODEL_GROUPS,
         switching,
         disabledReason: !canSend
           ? "Waiting for the session to connect"
@@ -139,8 +139,8 @@ export function WorkspaceSession({
         onChange: (model) => {
           setSwitching(true);
           setSendError(null);
-          localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, { model })
-            .then(() => setPicked({ model, events: conversation.events.length }))
+          switchLocalModel(workspaceId, model)
+            .then(() => setPicked({ model: model.id, events: conversation.events.length }))
             .catch((error: unknown) => setSendError(messageForLocalError(error)))
             .finally(() => setSwitching(false));
         },
@@ -258,4 +258,18 @@ function messageText(event: AgentEvent): string {
  *  tool-result turns, which are logged as role:"user" but carry no prompt text. */
 function userPromptCount(events: AgentEvent[]): number {
   return events.filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "").length;
+}
+
+/** Switch a local session's model: a Neev AI model runs through OpenRouter on
+ *  the user's own capped key, which the server hands over (creating it the
+ *  first time); a Claude account model runs on the Mac's own Claude login. */
+async function switchLocalModel(workspaceId: string, model: SessionModel): Promise<void> {
+  let body: { model: string; gateway?: string; token?: string } = { model: model.id };
+  if (model.source === "neev") {
+    const res = await fetch("/api/neev-ai/key", { method: "POST" });
+    const data = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
+    if (!res.ok || !data.key) throw new Error(data.error ?? "Neev AI is unavailable right now.");
+    body = { model: model.id, gateway: "openrouter", token: data.key };
+  }
+  await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
 }
