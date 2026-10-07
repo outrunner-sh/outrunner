@@ -13,27 +13,48 @@
 // outcome, including "up to date" and errors, which the background check keeps
 // to the log.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
+use tokio::sync::{Mutex, MutexGuard};
 
 /// After launch, so the first check does not compete with the page loading.
 const FIRST_CHECK_AFTER: Duration = Duration::from_secs(10);
 /// The tray app may stay open for weeks; keep checking while it does.
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// One lock for the whole check: holding it means a check (and its download)
+/// is in flight, and its value is the version already installed on disk,
+/// waiting for a restart. Keeping both behind the same lock is what stops the
+/// background loop and the tray item installing one update twice: a check
+/// that finishes records its version before anyone else can get in.
 #[derive(Default)]
 pub struct UpdateState {
-    /// A check (and its download) is in flight. The background loop and the
-    /// tray item must not install the same update twice at once.
-    busy: AtomicBool,
-    /// Version already installed on disk, waiting for a restart. Once set there
-    /// is nothing more to fetch until the app restarts into it.
     installed: Mutex<Option<String>>,
+}
+
+/// What a check may do, decided under the lock.
+enum Gate<'a> {
+    /// Another check is running.
+    Busy,
+    /// An update is installed already; nothing more to fetch until a restart.
+    Installed(String),
+    /// Go ahead. Write the installed version into the guard before dropping it.
+    Run(MutexGuard<'a, Option<String>>),
+}
+
+impl UpdateState {
+    fn enter(&self) -> Gate<'_> {
+        match self.installed.try_lock() {
+            Err(_) => Gate::Busy,
+            Ok(guard) => match guard.clone() {
+                Some(version) => Gate::Installed(version),
+                None => Gate::Run(guard),
+            },
+        }
+    }
 }
 
 /// Start the background checks. Debug builds (`tauri dev`) never update
@@ -65,28 +86,30 @@ pub fn check_now(app: &AppHandle) {
 /// install is shown, and nothing at all for "no update" or a failure.
 async fn check(app: &AppHandle, interactive: bool) {
     let state = app.state::<UpdateState>();
-
-    if let Some(version) = state.installed.lock().unwrap().clone() {
-        if interactive {
-            ask_to_restart(app, &version);
+    let mut installed = match state.enter() {
+        Gate::Busy => {
+            if interactive {
+                inform(app, "Already checking", "Outrunner is already checking for an update.");
+            }
+            return;
         }
-        return;
-    }
-    if state.busy.swap(true, Ordering::SeqCst) {
-        if interactive {
-            inform(app, "Already checking", "Outrunner is already checking for an update.");
+        Gate::Installed(version) => {
+            if interactive {
+                ask_to_restart(app, &version);
+            }
+            return;
         }
-        return;
-    }
+        Gate::Run(guard) => guard,
+    };
 
     let result = find_and_install(app).await;
-    state.busy.store(false, Ordering::SeqCst);
+    if let Ok(Some(version)) = &result {
+        *installed = Some(version.clone());
+    }
+    drop(installed);
 
     match result {
-        Ok(Some(version)) => {
-            *state.installed.lock().unwrap() = Some(version.clone());
-            ask_to_restart(app, &version);
-        }
+        Ok(Some(version)) => ask_to_restart(app, &version),
         Ok(None) => {
             if interactive {
                 let current = app.package_info().version.to_string();
@@ -138,4 +161,36 @@ fn ask_to_restart(app: &AppHandle, version: &str) {
 
 fn inform(app: &AppHandle, title: &str, message: &str) {
     app.dialog().message(message).title(title).kind(MessageDialogKind::Info).show(|_| {});
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_check_in_flight_keeps_others_out() {
+        let state = UpdateState::default();
+        let Gate::Run(_held) = state.enter() else { panic!("first check should run") };
+        assert!(matches!(state.enter(), Gate::Busy));
+    }
+
+    #[test]
+    fn an_installed_update_is_never_fetched_again() {
+        let state = UpdateState::default();
+        let Gate::Run(mut guard) = state.enter() else { panic!("first check should run") };
+        // As check() does: record the version, then let go.
+        *guard = Some("0.2.1".into());
+        drop(guard);
+        // No window in which a second check sees neither "busy" nor "installed".
+        assert!(matches!(state.enter(), Gate::Installed(v) if v == "0.2.1"));
+        assert!(matches!(state.enter(), Gate::Installed(_)));
+    }
+
+    #[test]
+    fn a_check_that_found_nothing_lets_the_next_one_run() {
+        let state = UpdateState::default();
+        let Gate::Run(guard) = state.enter() else { panic!("first check should run") };
+        drop(guard);
+        assert!(matches!(state.enter(), Gate::Run(_)));
+    }
 }
