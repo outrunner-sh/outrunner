@@ -244,13 +244,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
 	}
-	if facts.Model == "" || facts.Model == prior.Model {
-		// A re-Create that names no other model keeps the switch, gateway and
-		// all: its key file is still there, and dropping the gateway would run
-		// the gateway's model name on the user's own Claude.
+	// A repeated Create (after an agent restart) never switches the model:
+	// that is SetModel's, which relaunches the session to match. A session on a
+	// gateway keeps it, key file and all — dropping it here would run the
+	// gateway's model name on the user's own Claude, and unmask the key of a
+	// session still running on it.
+	if prior.Model != "" || facts.Model == "" {
 		facts.Model, facts.Gateway = prior.Model, prior.Gateway
-	} else {
-		_ = os.Remove(s.gatewayEnvPath(in.WorkspaceID)) // a different model, on Claude
 	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
