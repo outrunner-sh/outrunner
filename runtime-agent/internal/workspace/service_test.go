@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"runtime-agent/internal/claude"
 )
@@ -236,5 +237,46 @@ func TestClaudeProjectDirResolvesSymlinks(t *testing.T) {
 func TestUserTurnCountMissingDirIsZero(t *testing.T) {
 	if got := userTurnCount(t.TempDir() + "/does-not-exist"); got != 0 {
 		t.Errorf("userTurnCount(missing) = %d, want 0", got)
+	}
+}
+
+func TestOnlyTheSameTextSoonAfterRetriesAStagedPrompt(t *testing.T) {
+	now := time.Now()
+	stage := func() *sendState {
+		return &sendState{staged: &stagedPrompt{content: "fix it", baseline: 3, at: now}}
+	}
+	if baseline, retry := stage().takeStaged("fix it", now.Add(time.Minute)); !retry || baseline != 3 {
+		t.Errorf("same text = %d, %v; want a retry from 3", baseline, retry)
+	}
+	if _, retry := stage().takeStaged("something else", now); retry {
+		t.Error("different text was taken for a retry")
+	}
+	if _, retry := stage().takeStaged("fix it", now.Add(stagedRetryWindow+time.Second)); retry {
+		t.Error("the same text long after was taken for a retry")
+	}
+	st := stage()
+	st.takeStaged("something else", now)
+	if st.staged != nil {
+		t.Error("takeStaged kept the staged prompt")
+	}
+}
+
+func TestRetryingAPromptThatLandedLateDoesNotSendItAgain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := NewService(t.TempDir())
+	// The first send gave up with the text staged and no user turn recorded;
+	// Claude has recorded it since.
+	s.sendLock("ws-late").staged = &stagedPrompt{content: "fix it", baseline: 0, at: time.Now()}
+	dir := s.claudeConvDir("ws-late")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "c.jsonl"), []byte(`{"type":"user"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// There is no tmux session: any paste or Enter would fail the send.
+	if err := s.SendMessage("ws-late", "fix it"); err != nil {
+		t.Fatalf("retry of a landed prompt = %v, want success without sending", err)
 	}
 }

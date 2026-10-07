@@ -44,7 +44,7 @@ type Service struct {
 	// could interleave into a single garbled prompt; each workspace gets its own
 	// lock (sendMu guards the map itself).
 	sendMu    sync.Mutex
-	sendLocks map[string]*sync.Mutex
+	sendLocks map[string]*sendState
 
 	summariesMu sync.Mutex
 	summaries   map[string]*Summary
@@ -119,7 +119,7 @@ func NewService(root string) *Service {
 		env:       env,
 		secrets:   secrets,
 		facts:     map[string]workspaceFacts{},
-		sendLocks: map[string]*sync.Mutex{},
+		sendLocks: map[string]*sendState{},
 		summaries: map[string]*Summary{},
 		recorders: map[string]*cast.Recorder{},
 	}
@@ -303,6 +303,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.forgetStagedPrompt(workspaceID) // the old composer went with the old session
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
 	s.startRecorder(ctx, workspaceID)
@@ -367,6 +368,7 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
 	defer lock.Unlock()
+	lock.staged = nil // the composer it was typed into is about to go
 	name := sessionName(workspaceID)
 	if s.jcode != nil {
 		// jcode sessions live on the bridge; StartSession is idempotent and
@@ -463,6 +465,11 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 // (never re-paste — that would duplicate the text) and then re-press Enter until
 // Claude records the turn in its conversation log on disk — the deterministic
 // "the prompt landed" signal, rather than scraping the terminal for it.
+//
+// "Once" holds across calls too. A send that gives up reports an error, and the
+// caller retries — but the text is already in the composer, or has landed since.
+// So a retry of the same text only presses Enter again, and succeeds at once if
+// the earlier copy was recorded in the meantime.
 func (s *Service) SendMessage(workspaceID, content string) error {
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
@@ -475,11 +482,17 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 	name := sessionName(workspaceID)
-	if err := s.tmux.Paste(ctx, name, content); err != nil {
-		return err
-	}
 	convDir := s.claudeConvDir(workspaceID)
-	before := userTurnCount(convDir)
+	before, retry := lock.takeStaged(content, time.Now())
+	switch {
+	case retry && userTurnCount(convDir) > before:
+		return nil // the earlier copy landed after that send gave up
+	case !retry:
+		before = userTurnCount(convDir)
+		if err := s.tmux.Paste(ctx, name, content); err != nil {
+			return err
+		}
+	}
 	var lastErr error
 	for attempt := 0; attempt < submitAttempts && ctx.Err() == nil; attempt++ {
 		if err := s.tmux.SubmitEnter(ctx, name); err != nil {
@@ -490,6 +503,8 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 			return nil // Claude recorded a new user turn: the prompt was accepted
 		}
 	}
+	// The text is in the composer, unconfirmed: a retry must not paste it again.
+	lock.staged = &stagedPrompt{content: content, baseline: before, at: time.Now()}
 	if lastErr != nil {
 		return lastErr
 	}
@@ -504,7 +519,46 @@ const (
 	submitPollInterval = 400 * time.Millisecond
 	// sendTimeout bounds one SendMessage: well past the ~8s of submit attempts.
 	sendTimeout = 30 * time.Second
+	// stagedRetryWindow is how long the same text counts as a retry of a send
+	// that gave up, rather than a new prompt that happens to match it.
+	stagedRetryWindow = 10 * time.Minute
 )
+
+// sendState is one workspace's prompt delivery: the lock that serializes it,
+// and the prompt the last send typed but never saw Claude record.
+type sendState struct {
+	sync.Mutex
+	staged *stagedPrompt
+}
+
+// stagedPrompt is text SendMessage pasted and submitted without seeing Claude
+// record it: still in the composer, or recorded after the send gave up.
+type stagedPrompt struct {
+	content  string
+	baseline int // user turns recorded before it was pasted
+	at       time.Time
+}
+
+// takeStaged reports whether content retries the staged prompt — the same text,
+// soon enough — and if so the user-turn count from before it was pasted. The
+// staged prompt is forgotten either way. Call with the lock held.
+func (st *sendState) takeStaged(content string, now time.Time) (baseline int, retry bool) {
+	p := st.staged
+	st.staged = nil
+	if p == nil || p.content != content || now.Sub(p.at) > stagedRetryWindow {
+		return 0, false
+	}
+	return p.baseline, true
+}
+
+// forgetStagedPrompt drops a staged prompt once its session is replaced: the
+// new Claude's composer is empty, so a retry has to paste again.
+func (s *Service) forgetStagedPrompt(workspaceID string) {
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	lock.staged = nil
+	lock.Unlock()
+}
 
 // claudeConvDir is where Claude writes this workspace's conversation JSONL:
 // $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + claudeProjectDir —
@@ -553,14 +607,14 @@ func userTurnCount(dir string) int {
 	return count
 }
 
-// sendLock returns the per-workspace mutex that serializes SendMessage, creating
-// it on first use.
-func (s *Service) sendLock(workspaceID string) *sync.Mutex {
+// sendLock returns the per-workspace send state, whose mutex serializes
+// SendMessage, creating it on first use.
+func (s *Service) sendLock(workspaceID string) *sendState {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
 	lock, ok := s.sendLocks[workspaceID]
 	if !ok {
-		lock = &sync.Mutex{}
+		lock = &sendState{}
 		s.sendLocks[workspaceID] = lock
 	}
 	return lock
