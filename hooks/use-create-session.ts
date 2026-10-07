@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 
 import { localAgentRequest, localTarget, type LocalFolder } from "@/lib/desktop/local-runtime";
 import type { Project } from "@/lib/runtime/types";
+import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
 type CreateResponse = { workspace?: { id: string }; error?: string };
 
@@ -20,11 +21,7 @@ function localBranch(workspaceId: string): string {
  */
 export function useCreateSession(projects: Project[], initialProjectId?: string) {
   const router = useRouter();
-  const [projectId, setProjectId] = useState(
-    initialProjectId && projects.some((p) => p.id === initialProjectId)
-      ? initialProjectId
-      : (projects[0]?.id ?? ""),
-  );
+  const [projectId, setProjectId] = useState(() => pickInitialProject(projects, initialProjectId));
   const [message, setMessage] = useState<string | null>(null);
   // Set when the failure is something the user fixes in settings, so the error
   // can offer the way out instead of only naming the problem.

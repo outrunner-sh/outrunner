@@ -135,8 +135,18 @@ export type SessionLocationState = ReturnType<typeof useSessionLocation>;
  *  "+" in the sidebar does before opening the new-session page. */
 export function startNextSessionIn(folder: string): void {
   rememberFolder(folder);
+  saveLocation("local");
+}
+
+/** Make the next new session start in the cloud — what a repository's "+" does,
+ *  so a form last used for this Mac does not ignore the repository chosen. */
+export function startNextSessionInCloud(): void {
+  saveLocation("cloud");
+}
+
+function saveLocation(location: SessionLocation): void {
   try {
-    window.localStorage.setItem(LOCATION_KEY, "local");
+    window.localStorage.setItem(LOCATION_KEY, location);
   } catch {
     // Blocked storage: the new-session page opens on its defaults instead.
   }
