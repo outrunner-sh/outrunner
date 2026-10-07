@@ -83,11 +83,19 @@ git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
 `.github/workflows/desktop-release.yml` builds a universal DMG, signs it with
 the Developer ID certificate, has Apple notarize it, and attaches it to a draft
 GitHub Release for that tag. Smoke-test the DMG, then publish the draft. The
-version comes from the tag (`MAJOR.MINOR.PATCH`), not `tauri.conf.json`.
+version comes from the tag (`MAJOR.MINOR.PATCH`), not `tauri.conf.json`. A
+release, once published, is never rebuilt over: fix forward with a new tag.
 
-To check signing without cutting a release, run the workflow by hand from the
-Actions tab: it does the same build and leaves the DMG as a workflow artifact.
-The signing secrets it needs are listed at the top of the workflow.
+Publishing the draft runs `.github/workflows/desktop-publish.yml`, which
+copies the DMG to the public download bucket. The link to share is
+`<DOWNLOADS_BASE_URL>/outrunner/Outrunner.dmg`, always the latest published
+version; `outrunner/latest.json` says which version that is. To roll back,
+run that workflow by hand with an older tag.
+
+To check signing without cutting a release, run the release workflow by hand
+from the Actions tab: it does the same build and leaves the DMG as a workflow
+artifact.
+The secrets and variables both workflows need are listed at the top of each.
 
 ## Point at a different environment
 
