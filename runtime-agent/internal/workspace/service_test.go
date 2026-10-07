@@ -200,6 +200,15 @@ func TestClaudeSlugMatchesClaudeCode(t *testing.T) {
 		"/Users/ada/.outrunner/workspaces/x":      "-Users-ada--outrunner-workspaces-x",
 		"/Users/ada/Desktop/personal/new project": "-Users-ada-Desktop-personal-new-project",
 		"/Users/ada/Desktop - MacBook Air (3)/m":  "-Users-ada-Desktop---MacBook-Air--3--m",
+		// Computed with the slug function from Claude Code 2.1.228's bundle: one
+		// '-' per UTF-16 code unit, so "é" and each CJK character give one and an
+		// emoji (a surrogate pair) two.
+		"/Users/ada/café":    "-Users-ada-caf-",
+		"/Users/ada/日本語/app": "-Users-ada-----app",
+		"/Users/ada/😀 x":     "-Users-ada----x",
+		// Over 200 characters: cut, then a hash of the whole path.
+		"/Users/ada/" + strings.Repeat("projects/", 22) + "café 😀": "-Users-ada-" +
+			strings.Repeat("projects-", 21) + "-22n29x",
 	} {
 		if got := claudeSlug(path); got != want {
 			t.Errorf("claudeSlug(%q) = %q, want %q", path, got, want)

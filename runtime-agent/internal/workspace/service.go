@@ -11,9 +11,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
@@ -160,6 +162,7 @@ func (s *Service) mirrorPath() string { return filepath.Join(s.Root, "repo.git")
 func (s *Service) factsPath(id string) string {
 	return filepath.Join(s.Root, "facts", id+".json")
 }
+
 // worktreePath is where a workspace's Claude works: its worktree under Root, or
 // for an in-place local session, the user's folder itself.
 func (s *Service) worktreePath(id string) string {
@@ -784,23 +787,36 @@ func claudeProjectDir(home, worktree string) string {
 	return filepath.Join(home, ".claude", "projects", claudeSlug(worktree))
 }
 
-// claudeSlug encodes a filesystem path the way Claude Code does when building
-// its per-project JSONL directory: every byte that is not an ASCII letter or
-// digit becomes '-'. Spike 3/4 established '/' and '.', which is all a Runtime
-// Computer path contains; a Mac checkout adds spaces and punctuation
-// ("Desktop - MacBook Air (3)" is stored as "Desktop---MacBook-Air--3-").
+// claudeSlug encodes a filesystem path the way Claude Code names its
+// per-project JSONL directory (read from Claude Code 2.1's bundle). It runs
+// `path.replace(/[^a-zA-Z0-9]/g, "-")` on a JavaScript string, so the unit is a
+// UTF-16 code unit, not a byte or a rune: "é" becomes one '-', an emoji two.
+// A slug over claudeSlugMax units is cut there and suffixed with '-' and the
+// base-36 absolute value of the path's 32-bit Java-style string hash.
 func claudeSlug(path string) string {
-	b := make([]byte, len(path))
-	for i := 0; i < len(path); i++ {
-		c := path[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
-			b[i] = c
+	units := utf16.Encode([]rune(path))
+	b := make([]byte, len(units))
+	var hash int32 // (h<<5)-h+c|0 in JavaScript: wraps exactly like int32
+	for i, u := range units {
+		hash = hash*31 + int32(u)
+		if u >= 'a' && u <= 'z' || u >= 'A' && u <= 'Z' || u >= '0' && u <= '9' {
+			b[i] = byte(u)
 		} else {
 			b[i] = '-'
 		}
 	}
-	return string(b)
+	if len(b) <= claudeSlugMax {
+		return string(b)
+	}
+	abs := int64(hash)
+	if abs < 0 {
+		abs = -abs
+	}
+	return string(b[:claudeSlugMax]) + "-" + strconv.FormatInt(abs, 36)
 }
+
+// claudeSlugMax is the longest slug Claude Code keeps whole.
+const claudeSlugMax = 200
 
 // beginSummary creates (or refreshes) the Workspace Summary collector for a
 // workspace. Called from Start and Resume. Safe to call twice — the collector
