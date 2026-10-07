@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   }
   const owner = await getOwner();
   if (!owner) {
-    return NextResponse.json({ error: "Sign in to use Neev AI." }, { status: 401 });
+    return NextResponse.json({ error: "Sign in to use Outrunner's models." }, { status: 401 });
   }
   try {
     const key = await neevAiKey(owner.id);
@@ -29,6 +29,6 @@ export async function POST(request: Request) {
     }
     // OpenRouter's and the driver's messages stay in the log.
     console.error(`Could not get a Neev AI key for ${owner.id}`, error);
-    return NextResponse.json({ error: "Neev AI is unavailable right now. Please try again." }, { status: 502 });
+    return NextResponse.json({ error: "Outrunner's models are unavailable right now. Please try again." }, { status: 502 });
   }
 }

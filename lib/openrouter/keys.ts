@@ -20,7 +20,7 @@ export const NEEV_AI_LIMIT_RESET = "monthly";
 /** The management key is not configured, so Neev AI is unavailable. */
 export class NeevAiUnavailableError extends Error {
   constructor() {
-    super("Neev AI is not set up on this server.");
+    super("Outrunner's models are not set up on this server.");
     this.name = "NeevAiUnavailableError";
   }
 }

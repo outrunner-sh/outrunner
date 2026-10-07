@@ -268,7 +268,7 @@ async function switchLocalModel(workspaceId: string, model: SessionModel): Promi
   if (model.source === "neev") {
     const res = await fetch("/api/neev-ai/key", { method: "POST" });
     const data = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
-    if (!res.ok || !data.key) throw new Error(data.error ?? "Neev AI is unavailable right now.");
+    if (!res.ok || !data.key) throw new Error(data.error ?? "Outrunner's models are unavailable right now.");
     body = { model: model.id, gateway: "openrouter", token: data.key };
   }
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);

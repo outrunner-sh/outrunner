@@ -22,8 +22,8 @@ test("a model outside the menu matches none", () => {
   assert.equal(matchModel(MODEL_GROUPS, undefined), undefined);
 });
 
-test("Neev AI comes first in the menu", () => {
-  assert.deepEqual(MODEL_GROUPS.map((g) => g.label), ["Neev AI", "Claude account"]);
+test("Outrunner's models come first in the menu", () => {
+  assert.deepEqual(MODEL_GROUPS.map((g) => g.label), ["Outrunner", "Claude account"]);
 });
 
 test("the label drops Claude's release date only", () => {

@@ -27,9 +27,11 @@ export const CLAUDE_MODELS: SessionModel[] = [
   { id: "haiku", label: "Haiku", source: "claude" },
 ];
 
-/** The menu: Neev AI first, offered by default; the user's Claude after. */
+/** The menu: Outrunner's own models first, offered by default (shown under the
+ *  product's name; "Neev AI" is the code's name for them), the user's Claude
+ *  after. */
 export const MODEL_GROUPS: ModelGroup[] = [
-  { label: "Neev AI", models: NEEV_AI_MODELS },
+  { label: "Outrunner", models: NEEV_AI_MODELS },
   { label: "Claude account", models: CLAUDE_MODELS },
 ];
 
