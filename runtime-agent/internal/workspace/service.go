@@ -231,7 +231,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	}
 	// A repeated Create (after a restart) keeps the session's original age, and
 	// its conversation.
-	prior, _ := s.getFacts(in.WorkspaceID)
+	prior, existed := s.getFacts(in.WorkspaceID)
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
 	}
@@ -262,14 +262,24 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if _, err := os.Stat(worktree); err == nil {
 		return worktree, nil // idempotent
 	}
-	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-		return "", err
-	}
 	if facts.RepoPath != "" {
-		if err := s.addCheckoutWorktree(ctx, facts.RepoPath, worktree, in.Branch, in.BaseBranch); err != nil {
+		// The facts are the desktop's list of sessions, so a new local session
+		// that could not be made must not stay in it. (A Runtime Computer keeps
+		// them for the control plane's retry.)
+		err := os.MkdirAll(filepath.Dir(worktree), 0o755)
+		if err == nil {
+			err = s.addCheckoutWorktree(ctx, facts.RepoPath, worktree, in.Branch, in.BaseBranch)
+		}
+		if err != nil {
+			if !existed {
+				s.forgetWorkspace(in.WorkspaceID)
+			}
 			return "", err
 		}
 		return worktree, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
+		return "", err
 	}
 	out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
 		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()

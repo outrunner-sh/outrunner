@@ -357,3 +357,19 @@ func TestSessionsSharingAFolderKeepTheirOwnConversations(t *testing.T) {
 		t.Errorf("re-Create changed the session id: %q, want %q", again.ClaudeSessionID, a.ClaudeSessionID)
 	}
 }
+
+func TestAFailedCreateLeavesNoSessionBehind(t *testing.T) {
+	isolateGit(t)
+	repo := newCheckout(t)
+	// The session's branch is already taken, so `git worktree add -b` fails.
+	run(t, repo, "branch", "runtime/taken")
+	s := NewService(t.TempDir())
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-taken", Branch: "runtime/taken", RepoPath: repo,
+	}); err == nil {
+		t.Fatal("Create succeeded with a taken branch")
+	}
+	if got := NewService(s.Root).LocalSessions(context.Background()); len(got) != 0 {
+		t.Errorf("a failed create is still listed: %+v", got)
+	}
+}
