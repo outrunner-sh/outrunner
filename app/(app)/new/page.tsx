@@ -1,9 +1,8 @@
 import { redirect } from "next/navigation";
 
-import { AppShell } from "@/components/app-shell";
 import { NewSessionCreator } from "@/components/new-session-creator";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { listProjects } from "@/lib/db/repositories";
+import { listProjectsOnce } from "@/lib/db/request-cache";
 import type { Project } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
@@ -18,14 +17,12 @@ export default async function NewSessionPage({
   const { project } = await searchParams;
   let projects: Project[] = [];
   try {
-    projects = await listProjects();
+    projects = await listProjectsOnce();
   } catch (error) {
     console.error("Could not load repositories", error);
   }
 
   return (
-    <AppShell immersive>
-      <NewSessionCreator projects={projects} initialProjectId={project} showBack />
-    </AppShell>
+    <NewSessionCreator projects={projects} initialProjectId={project} showBack />
   );
 }

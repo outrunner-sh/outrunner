@@ -15,9 +15,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 /**
- * The bottom-of-sidebar user pill. Secondary actions (Settings, System info,
- * Feedback, Log out) live inside the popover it opens rather than as standalone
- * sidebar rows, keeping the rail to just the primary flow. Settings opens the
+ * The bottom-of-sidebar user pill (the sidebar draws the divider above it).
+ * Secondary actions (Settings, System info, Feedback, Log out) live inside the
+ * popover it opens rather than as standalone sidebar rows, keeping the rail to
+ * just the primary flow. Settings opens the
  * settings page and Log out runs the sign-out server action; System info /
  * Feedback stay placeholders until their destinations exist.
  */
@@ -31,7 +32,7 @@ export function HomeUserMenu({
   const label = ownerLogin || "signed in";
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md border-t border-border/60 px-1 pt-3 text-left outline-none transition-colors hover:text-foreground">
+      <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left outline-none transition-colors hover:bg-accent">
         <Avatar url={ownerAvatarUrl} />
         <span className="truncate text-sm text-foreground">{label}</span>
       </DropdownMenuTrigger>

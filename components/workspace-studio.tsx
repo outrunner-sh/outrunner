@@ -1,34 +1,28 @@
 "use client";
 
-import Link from "next/link";
 import {
-  ArrowLeft,
   FileDiff,
   MessageSquarePlus,
   PanelRightClose,
-  Plus,
-  Terminal,
   TerminalSquare,
   X,
 } from "lucide-react";
 import { useState } from "react";
 
-import { LocalSessionsNav } from "@/components/local-sessions-nav";
-import { ProjectWorkspaceNav } from "@/components/project-workspace-nav";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { SessionComposer } from "@/components/session-composer";
 import { WorkspaceSession } from "@/components/workspace-session";
-import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
-import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import { workspaceLabel } from "@/lib/nav/session-title";
+import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
+/** The session itself: chat in the middle, changes on the right. The app
+ *  sidebar to its left belongs to the layout (app/(app)/layout.tsx). */
 export function WorkspaceStudio({
   workspace,
   local,
-  allProjects,
-  allWorkspaces,
   initialPrompt,
   initialAttachmentIds,
 }: {
@@ -36,8 +30,6 @@ export function WorkspaceStudio({
   /** Set for a local session, which runs on this Mac and is driven through the
    *  Outrunner app rather than the server. */
   local?: LocalSession;
-  allProjects: Project[];
-  allWorkspaces: Workspace[];
   /** Kept for the page contract; the Publish panel was removed from the studio. */
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
@@ -50,40 +42,22 @@ export function WorkspaceStudio({
   // prompts are answered — in a local session, every shell-command approval.
   const [showTerminal, setShowTerminal] = useState(false);
   const isLocal = local !== undefined;
-  // Read once here: the sidebar shows them, and labels the cloud section only
-  // when there is a local one above it to tell apart.
-  const localSessions = useLocalSessions().sessions;
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (workspace.provider === "daytona" || isLocal);
   const offline = offlineCopy({ workspace, isReady });
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
-      <aside className="studio-sidebar">
-        <div className="studio-brand"><Terminal /> outrunner</div>
-        <div className="studio-sidebar-top">
-          <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
-          <Link href="/new" className="studio-back" title="New session"><Plus /> New</Link>
-        </div>
-        <LocalSessionsNav sessions={localSessions} activeWorkspaceId={workspace.id} />
-        <ProjectWorkspaceNav
-          projects={allProjects}
-          workspaces={allWorkspaces}
-          activeWorkspaceId={workspace.id}
-          title={localSessions.length > 0 ? "Cloud" : undefined}
-        />
-      </aside>
-
       <section className="studio-chat">
         <header className="studio-chat-header">
           <div className="studio-title">
             <span className={cn("studio-status", `is-${workspace.status}`)} />
             <div>
-              <h2>{local ? localSessionLabel(local) : workspace.branch}</h2>
+              <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
               <p title={workspace.worktreePath || undefined}>
                 {local
                   ? `${local.name} · ${local.inPlace ? "in place" : local.branch} · this Mac`
-                  : `${workspace.provider} worktree · ${workspace.status}`}
+                  : `${workspace.title ? `${workspace.branch} · ` : ""}${workspace.provider} worktree · ${workspace.status}`}
               </p>
             </div>
           </div>
