@@ -127,6 +127,30 @@ jobs:
             echo "UPDATE=$PWD/$NAME.app.tar.gz"
           } >> "$GITHUB_ENV"
 
+      # The checksums prove these are the files the release built, not that
+      # the signature works. Installed apps reject an update whose signature
+      # does not verify against the key built into them, so check it the same
+      # way first, against that release's own key: tauri.conf.json at its tag.
+      # A bad signature published here would strand every installed copy.
+      - name: Verify the update signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq minisign >/dev/null 2>&1 ||
+            { sudo apt-get update -qq && sudo apt-get install -y -qq minisign; }
+          gh api "repos/$GITHUB_REPOSITORY/contents/runtime-desktop/src-tauri/tauri.conf.json?ref=$TAG" \
+            --jq .content | base64 -d | jq -r '.plugins.updater.pubkey // empty' > pubkey.b64
+          [ -s pubkey.b64 ] || { echo "::error::no plugins.updater.pubkey in tauri.conf.json at $TAG"; exit 1; }
+          # Tauri stores both as base64 of minisign's own file formats.
+          base64 -d < pubkey.b64 > updater.pub
+          base64 -d < "$UPDATE.sig" > update.minisig
+          minisign -V -p updater.pub -x update.minisig -m "$UPDATE" || {
+            echo "::error::$(basename "$UPDATE").sig does not verify against the app's updater key; installed apps would refuse this update"
+            exit 1
+          }
+
       - name: Upload to R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
