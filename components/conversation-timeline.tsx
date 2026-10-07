@@ -62,7 +62,7 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
  *  working while the latest turn is the user's (a fresh prompt or a tool result
  *  it must act on), or while its own latest turn ended on thinking or a tool_use
  *  (more is coming). A turn that ends in text is Claude done and idle. */
-function claudeIsWorking(events: AgentEvent[]): boolean {
+export function claudeIsWorking(events: AgentEvent[]): boolean {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (event.t === "state") {
