@@ -356,6 +356,16 @@ func TestSessionsSharingAFolderKeepTheirOwnConversations(t *testing.T) {
 	if again, _ := NewService(s.Root).getFacts("ws-a"); again.ClaudeSessionID != a.ClaudeSessionID {
 		t.Errorf("re-Create changed the session id: %q, want %q", again.ClaudeSessionID, a.ClaudeSessionID)
 	}
+
+	// A session recorded before ids existed keeps finding its conversation the
+	// old way after a re-Create: a fresh id would cut it off from its history.
+	s.setFacts("ws-old", workspaceFacts{Branch: "runtime/ws-old", RepoPath: folder, InPlace: true})
+	if _, err := NewService(s.Root).Create(context.Background(), CreateInput{WorkspaceID: "ws-old", Branch: "runtime/ws-old", RepoPath: folder}); err != nil {
+		t.Fatal(err)
+	}
+	if old, _ := NewService(s.Root).getFacts("ws-old"); old.ClaudeSessionID != "" {
+		t.Errorf("re-Create gave a pre-id session the id %q; want none", old.ClaudeSessionID)
+	}
 }
 
 func TestAFailedCreateLeavesNoSessionBehind(t *testing.T) {

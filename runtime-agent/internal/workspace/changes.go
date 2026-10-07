@@ -65,10 +65,28 @@ func (s *Service) FileDiff(ctx context.Context, workspaceID, path string) (strin
 	}
 	// Against HEAD, so a change Claude has staged (`git add`) shows too; a plain
 	// `git diff` covers only the unstaged part and shows an added file as empty.
-	diff, err := s.gitRaw(ctx, s.worktreePath(workspaceID),
-		"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--", path)
+	worktree := s.worktreePath(workspaceID)
+	diffOf := func(against ...string) (string, error) {
+		args := append([]string{"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv"}, against...)
+		return s.gitRaw(ctx, worktree, append(args, "--", path)...)
+	}
+	diff, err := diffOf("HEAD")
 	if err != nil {
 		return "", err
+	}
+	if diff == "" {
+		// Listed as changed yet identical to HEAD: a staged edit whose working
+		// copy was changed back. Show the two halves — what is staged, and what
+		// undoes it — rather than an empty patch.
+		staged, err := diffOf("--cached")
+		if err != nil {
+			return "", err
+		}
+		unstaged, err := diffOf()
+		if err != nil {
+			return "", err
+		}
+		diff = staged + unstaged
 	}
 	return limitText(diff, maxDiffBytes), nil
 }

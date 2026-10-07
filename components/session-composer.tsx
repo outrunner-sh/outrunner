@@ -65,15 +65,19 @@ export function SessionComposer({
         submit();
       }}
       onDragOver={(event) => {
-        if (!canSend || !allowAttachments) return;
+        // A file dropped where it cannot be attached must still be caught:
+        // left to the browser, the drop navigates the page to the file and
+        // away from the session. Text drags are left alone.
+        if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
-        setDragging(true);
+        if (canSend && allowAttachments) setDragging(true);
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={(event) => {
-        if (!canSend || !allowAttachments) return;
+        if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
         setDragging(false);
+        if (!canSend || !allowAttachments) return;
         void attachments.add(Array.from(event.dataTransfer.files));
       }}
       style={dragging ? { outline: "1px dashed currentColor", outlineOffset: 4 } : undefined}
