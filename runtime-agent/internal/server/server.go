@@ -124,7 +124,11 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		PermissionMode: mode,
 		Title:          req.Title,
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, workspace.ErrBypassInFolder):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	case err != nil:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
 	}

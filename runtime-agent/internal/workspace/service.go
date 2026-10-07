@@ -6,6 +6,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -187,6 +188,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if strings.HasPrefix(in.Branch, "-") || strings.HasPrefix(in.BaseBranch, "-") {
 		return "", fmt.Errorf("invalid branch name")
 	}
+	if in.RepoPath != "" && in.PermissionMode == claude.Bypass {
+		return "", ErrBypassInFolder
+	}
 	facts := workspaceFacts{
 		Branch:         in.Branch,
 		BaseBranch:     in.BaseBranch,
@@ -236,13 +240,25 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	return worktree, nil
 }
 
-// permissionMode is the mode a workspace's Claude launches with.
+// ErrBypassInFolder refuses bypassPermissions for a session in a folder on the
+// user's own machine, whoever asks for it: there Claude would run every command
+// against their real files, keys and credentials without a prompt.
+var ErrBypassInFolder = errors.New("bypassPermissions is not allowed for a session in a folder on this machine")
+
+// permissionMode is the mode a workspace's Claude launches with: the one its
+// create asked for, else the agent's default (the desktop shell sets one), else
+// bypassPermissions — but only on a Runtime Computer. A session in one of the
+// user's folders falls back to acceptEdits instead.
 func (s *Service) permissionMode(workspaceID string) claude.PermissionMode {
-	if f, ok := s.getFacts(workspaceID); ok && f.PermissionMode != "" {
+	f, _ := s.getFacts(workspaceID)
+	if f.PermissionMode != "" {
 		return f.PermissionMode
 	}
 	if s.DefaultPermissionMode != "" {
 		return s.DefaultPermissionMode
+	}
+	if f.RepoPath != "" {
+		return claude.AcceptEdits
 	}
 	return claude.Bypass
 }

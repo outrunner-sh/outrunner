@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,30 @@ func TestPermissionModeFallsBackToServiceDefault(t *testing.T) {
 	s.DefaultPermissionMode = claude.AcceptEdits
 	if got := s.permissionMode("unknown"); got != claude.AcceptEdits {
 		t.Errorf("desktop default = %q, want acceptEdits", got)
+	}
+}
+
+func TestSessionsInAFolderNeverBypassPermissions(t *testing.T) {
+	isolateGit(t)
+	folder := t.TempDir()
+	s := NewService(t.TempDir())
+	// Asked for outright, it is refused before anything is created.
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-bypass", Branch: "runtime/x", RepoPath: folder, PermissionMode: claude.Bypass,
+	}); !errors.Is(err, ErrBypassInFolder) {
+		t.Fatalf("Create with bypassPermissions = %v, want ErrBypassInFolder", err)
+	}
+	if _, ok := s.getFacts("ws-bypass"); ok {
+		t.Error("a refused create recorded facts")
+	}
+	// Not asked for, and with no agent default either, it is acceptEdits.
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-unset", Branch: "runtime/y", RepoPath: folder,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := s.permissionMode("ws-unset"); got != claude.AcceptEdits {
+		t.Errorf("unset mode in a folder = %q, want acceptEdits", got)
 	}
 }
 

@@ -64,8 +64,9 @@ type CreateWorkspaceRequest struct {
 	// worktree from instead of the computer's bare mirror. Only the desktop
 	// shell sends it: a local session works in the user's own clone.
 	RepoPath string `json:"repoPath,omitempty"`
-	// PermissionMode is Claude's --permission-mode; empty keeps the Runtime
-	// Computer default (bypassPermissions).
+	// PermissionMode is Claude's --permission-mode. Empty takes the agent's
+	// default: bypassPermissions on a Runtime Computer, never for a RepoPath
+	// session (which refuses bypassPermissions outright).
 	PermissionMode string `json:"permissionMode,omitempty"`
 	// Title labels a local session in the desktop's list (the first prompt).
 	Title string `json:"title,omitempty"`
