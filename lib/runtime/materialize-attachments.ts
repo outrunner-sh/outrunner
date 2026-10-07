@@ -8,7 +8,7 @@
 
 import { getAttachments, markMaterialized, readAttachmentBytes } from "@/lib/db/attachments";
 import { promptWithAttachments, uniqueFilenames } from "@/lib/runtime/attachments";
-import type { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 
 /**
  * Write the given attachments into the workspace, returning the prompt with
@@ -23,7 +23,7 @@ import type { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
  * silently dropped rather than trusted.
  */
 export async function materializeAttachments(input: {
-  provider: DaytonaRuntimeProvider;
+  provider: ComputerRuntimeProvider;
   sandboxId: string;
   worktreePath: string;
   workspaceId: string;

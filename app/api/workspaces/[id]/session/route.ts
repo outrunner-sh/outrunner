@@ -9,7 +9,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
@@ -51,9 +51,9 @@ export async function POST(request: Request, context: RouteContext) {
 
   // Session attach is Daytona-only — the local/modal providers have no
   // runtime-agent to speak the frozen PTY protocol.
-  if (!(provider instanceof DaytonaRuntimeProvider)) {
+  if (!isComputerProvider(provider)) {
     return NextResponse.json(
-      { error: "Live sessions require the Daytona runtime provider." },
+      { error: "Live sessions require a Runtime Computer provider." },
       { status: 409 },
     );
   }

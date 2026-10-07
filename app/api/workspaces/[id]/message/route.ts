@@ -8,7 +8,7 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
@@ -57,9 +57,9 @@ export async function POST(request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
-  if (!(provider instanceof DaytonaRuntimeProvider)) {
+  if (!isComputerProvider(provider)) {
     return NextResponse.json(
-      { error: "Messaging requires the Daytona runtime provider." },
+      { error: "Messaging requires a Runtime Computer provider." },
       { status: 409 },
     );
   }

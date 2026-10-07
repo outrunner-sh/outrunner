@@ -13,7 +13,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
@@ -146,7 +146,7 @@ export async function POST(request: Request, context: RouteContext) {
   };
 
   try {
-    if (provider instanceof DaytonaRuntimeProvider) {
+    if (isComputerProvider(provider)) {
       // A Runtime Computer is intentionally long-lived, but it can still be
       // removed outside Runtime (or become unavailable after a provider
       // incident). Only transition the exact ready row we checked so parallel
@@ -171,7 +171,7 @@ export async function POST(request: Request, context: RouteContext) {
       });
       const computer = ensured.computer;
       if (!computer.daytonaSandboxId) {
-        throw new Error("Ready Runtime Computer has no Daytona sandbox id.");
+        throw new Error("Ready Runtime Computer has no sandbox id.");
       }
 
       // Initial provisioning clones the mirror. Every later workspace refreshes

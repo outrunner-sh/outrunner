@@ -15,7 +15,7 @@ import {
 } from "@/lib/github/client";
 import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
@@ -76,8 +76,8 @@ export async function POST(request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
-  const isDaytona = provider instanceof DaytonaRuntimeProvider;
-  if (!isDaytona && !workspace.sandboxId) {
+  const onComputer = isComputerProvider(provider);
+  if (!onComputer && !workspace.sandboxId) {
     return NextResponse.json(
       { error: "The workspace must be ready before it can be published." },
       { status: 409 },
@@ -108,7 +108,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    if (isDaytona) {
+    if (onComputer) {
       const computer = await getRuntimeComputerByProject(workspace.projectId);
       if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
         return NextResponse.json(
