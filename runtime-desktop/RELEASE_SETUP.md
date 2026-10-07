@@ -54,28 +54,38 @@ app.
 - [ ] Keep the **private key** and the password you set — they become
       `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
-## Step 4 — GitHub repo secrets
+## Step 4 — GitHub environment secrets
 
-Base64-encode the two binary files first:
+Secrets live in two environments (**repo → Settings → Environments**):
+
+- **`desktop-prod`** signs public releases. Only `desktop-v*` tags can use it.
+- **`desktop-dev`** signs test builds: a manual run of the workflow on a branch,
+  or a PR that changes it. A test build is signed, notarized and verified like a
+  release, but it is uploaded as a workflow artifact, not published, and its
+  updater is off.
+
+Each environment has its own Developer ID certificate and API key (Steps 1–2).
+The updater key (Step 3) goes in `desktop-prod` only. With the `gh` CLI, a
+secret is read from stdin, so nothing lands in your shell history:
 
 ```bash
-base64 -i cert.p12                 # → APPLE_CERTIFICATE
-base64 -i AuthKey_XXXXXXXXXX.p8     # → APPLE_API_KEY_P8
+base64 -i cert.p12 | gh secret set APPLE_CERTIFICATE --env desktop-prod
+gh secret set APPLE_CERTIFICATE_PASSWORD --env desktop-prod   # prompts
 ```
 
-Then add all 8 under **repo → Settings → Secrets and variables → Actions**
-(names must match exactly):
+| Secret | Value | Environments |
+|---|---|---|
+| `APPLE_CERTIFICATE` | base64 of `cert.p12` | both |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password (Step 1) | both |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <Team> (TEAMID)` (Step 1) | both |
+| `APPLE_API_ISSUER` | Issuer ID (Step 2) | both |
+| `APPLE_API_KEY_ID` | Key ID (Step 2) | both |
+| `APPLE_API_KEY_P8` | base64 of the `.p8` (Step 2) | both |
+| `TAURI_SIGNING_PRIVATE_KEY` | updater private key (Step 3) | prod |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password, or `""` if none (Step 3) | prod |
 
-| Secret | Value |
-|---|---|
-| `APPLE_CERTIFICATE` | base64 of `cert.p12` |
-| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` export password (Step 1) |
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: <Team> (TEAMID)` (Step 1) |
-| `APPLE_API_ISSUER` | Issuer ID (Step 2) |
-| `APPLE_API_KEY_ID` | Key ID (Step 2) |
-| `APPLE_API_KEY_P8` | base64 of the `.p8` (Step 2) |
-| `TAURI_SIGNING_PRIVATE_KEY` | updater private key (Step 3) |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password, or `""` if none (Step 3) |
+To check the setup without releasing, run **Release desktop app** on a branch
+(Actions → Run workflow) and download the DMG from the run's artifacts.
 
 ## Step 5 — Cut the first release
 

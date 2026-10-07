@@ -9,7 +9,13 @@ name: Release desktop app
 # runtime-desktop/src-tauri/tauri.conf.json — so a forgotten version bump can
 # never ship a mislabelled DMG.
 #
-# Required repo secrets (Settings -> Secrets and variables -> Actions):
+# Anything else (a manual run on a branch, or a PR that changes this workflow)
+# is a test build: signed with the dev certificate, notarized and verified the
+# same way, but uploaded as a workflow artifact instead of a release, and with
+# the updater off so it never replaces itself with the published app.
+#
+# Secrets live in two environments (Settings -> Environments): desktop-prod,
+# which only `desktop-v*` tags can use, and desktop-dev. Each holds:
 #   Signing (Developer ID Application cert, exported as .p12):
 #     APPLE_CERTIFICATE            - base64 of the .p12
 #     APPLE_CERTIFICATE_PASSWORD   - the .p12 export password
@@ -18,7 +24,8 @@ name: Release desktop app
 #     APPLE_API_ISSUER             - Issuer ID (UUID)
 #     APPLE_API_KEY_ID             - Key ID (10 chars)
 #     APPLE_API_KEY_P8             - base64 of the AuthKey_XXXXXXXXXX.p8
-#   Updater signing (Tauri minisign key; public half lives in tauri.conf.json):
+#   Updater signing, desktop-prod only (Tauri minisign key; public half lives
+#   in tauri.conf.json):
 #     TAURI_SIGNING_PRIVATE_KEY            - the generated private key
 #     TAURI_SIGNING_PRIVATE_KEY_PASSWORD   - its password ("" if none)
 #
@@ -30,12 +37,18 @@ on:
   push:
     tags:
       - "desktop-v*"
+  pull_request:
+    paths:
+      - .github/workflows/release-desktop.yml
 
 jobs:
   release:
     runs-on: macos-latest
+    environment: ${{ startsWith(github.ref, 'refs/tags/desktop-v') && 'desktop-prod' || 'desktop-dev' }}
     permissions:
       contents: write # create the GitHub Release; the repo default token is read-only
+    env:
+      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/desktop-v') }}
     defaults:
       run:
         working-directory: runtime-desktop
@@ -82,6 +95,7 @@ jobs:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
 
       - name: Build, sign, notarize, release
+        if: env.PUBLISH == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           # Developer ID signing. tauri-action imports the cert into a throwaway
@@ -104,6 +118,22 @@ jobs:
           releaseBody: "See the asset below. Installs with no Gatekeeper warning; installed apps self-update."
           releaseDraft: false
           prerelease: false
+
+      # A test build: same signing and notarization, no release, no updater
+      # artifacts (desktop-dev has no updater key) and no update endpoint.
+      - name: Build, sign, notarize (test build)
+        if: env.PUBLISH != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+        with:
+          projectPath: runtime-desktop
+          args: --target universal-apple-darwin --config src-tauri/tauri.test-build.conf.json
 
       # Verification gate: prove the artifact is really signed, notarized and
       # stapled before anyone downloads it. A successful notarization with an
@@ -129,7 +159,17 @@ jobs:
           xcrun stapler validate "$app"
           xcrun stapler validate "$dmg"
 
+      - name: Upload test build
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outrunner-test-build-${{ github.sha }}
+          path: runtime-desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Verify updater manifest (latest.json)
+        if: env.PUBLISH == 'true'
         run: |
           set -euo pipefail
           manifest="$(find src-tauri/target/universal-apple-darwin/release/bundle -name 'latest.json' | head -n1)"
