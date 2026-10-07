@@ -5,8 +5,10 @@ import {
   getRuntimeComputerByProject,
   getWorkspace,
   readRuntimeComputerSecret,
+  setWorkspaceTitleIfUnset,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { sessionTitle } from "@/lib/nav/session-title";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
@@ -122,5 +124,25 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 502 },
     );
   }
-  return NextResponse.json({ result: "sent" });
+  return NextResponse.json({ result: "sent", titled: await titleFromFirstPrompt(workspace, content) });
+}
+
+/**
+ * The first delivered prompt names the session (see sessionTitle). Cosmetic, so
+ * a failure is logged and the send still succeeds. True when the title was set
+ * now, so the page can refresh the sidebar.
+ */
+async function titleFromFirstPrompt(
+  workspace: { id: string; title: string | null },
+  content: string,
+): Promise<boolean> {
+  if (workspace.title) return false;
+  const title = sessionTitle(content);
+  if (!title) return false;
+  try {
+    return await setWorkspaceTitleIfUnset(workspace.id, title);
+  } catch (error) {
+    console.error(`Message: could not title ${workspace.id}`, error);
+    return false;
+  }
 }

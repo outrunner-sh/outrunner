@@ -77,6 +77,9 @@ export type Workspace = {
   phase: ProvisionPhase | null;
   /** Branch checked out in the git worktree. */
   branch: string;
+  /** What the user first asked for (see sessionTitle); null until the first
+   *  prompt, and for sessions from before titles existed. */
+  title: string | null;
   baseBranch: string;
   /** Absolute path of the worktree inside the sandbox. */
   worktreePath: string;

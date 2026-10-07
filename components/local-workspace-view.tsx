@@ -76,6 +76,7 @@ function Centered({ children }: { children: React.ReactNode }) {
 function asWorkspace(session: LocalSession): Workspace {
   return {
     id: session.workspaceId,
+    title: session.title || null,
     projectId: LOCAL_PROJECT,
     provider: "local",
     // A local session is always openable: attaching starts (or continues) it.
