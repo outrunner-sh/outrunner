@@ -468,7 +468,10 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 
 // setFacts records a workspace's facts in memory and on disk. The file write is
 // best-effort: losing it costs a degraded orientation after a restart, and the
-// permission mode still falls back to DefaultPermissionMode.
+// permission mode still falls back to DefaultPermissionMode. It is atomic, so a
+// crash mid-write leaves the old facts rather than a torn file: for a local
+// session the file is the session (the desktop's list, and an in-place
+// session's folder and conversation).
 func (s *Service) setFacts(workspaceID string, f workspaceFacts) {
 	s.mu.Lock()
 	s.facts[workspaceID] = f
@@ -481,7 +484,11 @@ func (s *Service) setFacts(workspaceID string, f workspaceFacts) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return
 	}
-	_ = os.WriteFile(path, data, 0o600)
+	// The temporary name does not end in .json, so a listing never reads it.
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, data, 0o600) != nil || os.Rename(tmp, path) != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
