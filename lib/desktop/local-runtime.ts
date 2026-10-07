@@ -295,6 +295,10 @@ export class LocalSocket extends EventTarget {
   }
 
   private receive(event: SocketEvent): void {
+    // A closed WebSocket fires nothing more; neither does this, whatever the
+    // channel still delivers. (The relay ends every error with a close, so an
+    // error alone never strands the socket open.)
+    if (this.readyState === WebSocket.CLOSED) return;
     switch (event.type) {
       case "open":
         if (this.readyState !== WebSocket.CONNECTING) return;

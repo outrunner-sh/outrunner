@@ -120,7 +120,10 @@ test("messages and the close arrive as WebSocket events", async () => {
   desktop.emit({ type: "open" });
   desktop.emit({ type: "message", data: '{"id":"1"}' });
   desktop.emit({ type: "close", code: 1006, reason: "" });
-  desktop.emit({ type: "close", code: 1000, reason: "" }); // a second close is ignored
+  // Nothing after the close reaches the caller: not a second close, not a
+  // message the channel still had in flight.
+  desktop.emit({ type: "close", code: 1000, reason: "" });
+  desktop.emit({ type: "message", data: '{"id":"2"}' });
   assert.deepEqual(seen, ['{"id":"1"}', "close:1006"]);
   assert.equal(socket.readyState, WebSocket.CLOSED);
   // Sending after close is dropped, as on a WebSocket.
