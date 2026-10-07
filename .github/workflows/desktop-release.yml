@@ -6,7 +6,8 @@ name: Desktop release
 #
 #   Release:  git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
 #             -> builds Outrunner 0.2.0 and attaches the DMG to a DRAFT GitHub
-#                Release. Smoke-test it, then publish the draft by hand.
+#                Release. Smoke-test it, then publish the draft by hand;
+#                desktop-publish.yml then puts it on the public download link.
 #   Dry run:  Actions -> Desktop release -> Run workflow, with a version
 #             -> the same signed + notarized build, as a workflow artifact only.
 #
@@ -317,11 +318,17 @@ jobs:
           xcrun stapler validate "$DMG"
           spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
 
+          # Published next to the DMG. desktop-publish.yml checks it before
+          # copying the release to the public download bucket.
+          (cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+
       - name: Upload DMG artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Outrunner_${{ steps.version.outputs.version }}_universal
-          path: ${{ env.DMG }}
+          path: |
+            ${{ env.DMG }}
+            ${{ env.DMG }}.sha256
           if-no-files-found: error
 
       - name: Attach to a draft release
@@ -339,9 +346,9 @@ jobs:
               echo "::error::release $GITHUB_REF_NAME is already published; refusing to replace its DMG. Tag a new version instead."
               exit 1
             fi
-            gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$DMG" \
+            gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
               --draft --verify-tag \
               --title "Outrunner $VERSION" \
               --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag Outrunner to Applications."
