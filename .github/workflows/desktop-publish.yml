@@ -13,9 +13,13 @@ name: Desktop publish
 #              manual run is the only way the latest version goes down.
 #
 # What it writes, under outrunner/ in the bucket:
-#   Outrunner_<version>_universal.dmg   that version, kept forever, cached long
-#   Outrunner.dmg                       the latest; the link to share
-#   latest.json                         {"version", "url", "sha256", "publishedAt"}
+#   Outrunner_<version>_universal.dmg          that version, kept forever, cached long
+#   Outrunner_<version>_universal.app.tar.gz   its signed update bundle, likewise
+#   Outrunner.dmg                              the latest; the link to share
+#   latest.json                                the latest, described for the website
+#                                              ("version", "url", "sha256", "publishedAt")
+#                                              and for the installed apps' updater
+#                                              (Tauri's "version", "pub_date", "platforms")
 #
 # Required configuration (Settings -> Secrets and variables -> Actions):
 #   secret   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
@@ -99,22 +103,29 @@ jobs:
           # Without a trailing slash, so "$BASE_URL/$PREFIX/..." has no "//".
           echo "BASE_URL=${DOWNLOADS_BASE_URL%/}" >> "$GITHUB_ENV"
 
-      # The checksum was written by desktop-release.yml right after it verified
-      # the signature and notarization on macOS, so a match here means this is
-      # the file that passed those checks.
-      - name: Download and check the DMG
+      # SHA256SUMS was written by desktop-release.yml right after it verified
+      # the signature and notarization on macOS, so a match here means these
+      # are the files that passed those checks.
+      - name: Download and check the release files
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          DMG="Outrunner_${VERSION}_universal.dmg"
+          NAME="Outrunner_${VERSION}_universal"
           mkdir dl && cd dl
-          gh release download "$TAG" -R "$GITHUB_REPOSITORY" --pattern "$DMG" --pattern "$DMG.sha256"
-          sha256sum -c "$DMG.sha256"
-          echo "SHA256=$(cut -d' ' -f1 "$DMG.sha256")" >> "$GITHUB_ENV"
-          echo "DMG=$PWD/$DMG" >> "$GITHUB_ENV"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" \
+            --pattern "$NAME.dmg" --pattern "$NAME.app.tar.gz" \
+            --pattern "$NAME.app.tar.gz.sig" --pattern SHA256SUMS
+          sha256sum -c SHA256SUMS
+          test -s "$NAME.app.tar.gz.sig" || { echo "::error::$NAME.app.tar.gz.sig is empty"; exit 1; }
+          {
+            echo "SHA256=$(grep " $NAME.dmg\$" SHA256SUMS | cut -d' ' -f1)"
+            echo "UPDATE_SHA256=$(grep " $NAME.app.tar.gz\$" SHA256SUMS | cut -d' ' -f1)"
+            echo "DMG=$PWD/$NAME.dmg"
+            echo "UPDATE=$PWD/$NAME.app.tar.gz"
+          } >> "$GITHUB_ENV"
 
       - name: Upload to R2
         env:
@@ -134,10 +145,15 @@ jobs:
           NAME="Outrunner_${VERSION}_universal.dmg"
           put() { aws s3 cp --endpoint-url "$ENDPOINT" --no-progress "$@"; }
 
+          UPDATE_NAME="Outrunner_${VERSION}_universal.app.tar.gz"
+
           # Versioned first: the latest link must never point at something
           # that is not there yet.
           put "$DMG" "s3://$BUCKET/$PREFIX/$NAME" \
             --content-type application/x-apple-diskimage \
+            --cache-control "public, max-age=31536000, immutable"
+          put "$UPDATE" "s3://$BUCKET/$PREFIX/$UPDATE_NAME" \
+            --content-type application/gzip \
             --cache-control "public, max-age=31536000, immutable"
 
           if [ "$PRERELEASE" = "true" ]; then
@@ -174,9 +190,20 @@ jobs:
           fi
           [ -n "$LIVE" ] && echo "latest: $LIVE -> $VERSION"
 
+          # One file for both readers. The website uses url/sha256/publishedAt;
+          # the app's updater reads version/pub_date/platforms and ignores the
+          # rest. It looks up darwin-<arch> for the Mac it runs on, and the
+          # universal bundle serves both.
           jq -n --arg version "$VERSION" --arg url "$BASE_URL/$PREFIX/$NAME" \
                 --arg sha256 "$SHA256" --arg publishedAt "$PUBLISHED_AT" \
-                '{version: $version, url: $url, sha256: $sha256, publishedAt: $publishedAt}' > latest.json
+                --arg updateUrl "$BASE_URL/$PREFIX/$UPDATE_NAME" \
+                --rawfile signature "$UPDATE.sig" \
+                '{version: $version, url: $url, sha256: $sha256, publishedAt: $publishedAt,
+                  pub_date: $publishedAt,
+                  platforms: {
+                    "darwin-aarch64": {url: $updateUrl, signature: ($signature | rtrimstr("\n"))},
+                    "darwin-x86_64":  {url: $updateUrl, signature: ($signature | rtrimstr("\n"))}
+                  }}' > latest.json
 
           # Outrunner.dmg as the latest of $1 (a local file or an s3:// object
           # already in the bucket). Short cache so a new release or a rollback
@@ -215,17 +242,22 @@ jobs:
             exit 1
           fi
 
-      # Through the public domain, as a visitor would fetch it. The versioned
-      # file is new, so no cache stands between us and what we just wrote.
-      - name: Check the public download
+      # Through the public domain, as a visitor (or an updating app) would
+      # fetch them. The versioned files are new, so no cache stands between us
+      # and what we just wrote.
+      - name: Check the public downloads
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           set -euo pipefail
-          URL="$BASE_URL/$PREFIX/Outrunner_${VERSION}_universal.dmg"
-          GOT=$(curl -fsSL --retry 5 --retry-delay 5 "$URL" | sha256sum | cut -d' ' -f1) || {
-            echo "::error::$URL is not publicly downloadable. Is the bucket's custom domain set up?"
-            exit 1
+          check() {
+            local url="$BASE_URL/$PREFIX/$1" want="$2" got
+            got=$(curl -fsSL --retry 5 --retry-delay 5 "$url" | sha256sum | cut -d' ' -f1) || {
+              echo "::error::$url is not publicly downloadable. Is the bucket's custom domain set up?"
+              exit 1
+            }
+            [ "$got" = "$want" ] || { echo "::error::$url serves different bytes than the release"; exit 1; }
           }
-          [ "$GOT" = "$SHA256" ] || { echo "::error::$URL serves different bytes than the release"; exit 1; }
+          check "Outrunner_${VERSION}_universal.dmg" "$SHA256"
+          check "Outrunner_${VERSION}_universal.app.tar.gz" "$UPDATE_SHA256"
           echo "::notice::live: $BASE_URL/$PREFIX/Outrunner.dmg -> $VERSION"
