@@ -454,6 +454,13 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
 	defer lock.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err // the request gave up while a prompt was sent: nothing recorded
+	}
+	// From here the switch runs to the end even if the request drops: a check
+	// on a cancelled context would misread a running session as gone, and the
+	// relaunch must not stop between its kill and its new session.
+	ctx = context.WithoutCancel(ctx)
 	name := sessionName(workspaceID)
 	running := s.tmux.HasSession(ctx, name)
 	if running {
@@ -472,9 +479,6 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	if !running {
 		return nil // the next Start launches on it
 	}
-	// A dropped request must not stop the relaunch between its kill and its
-	// new session.
-	ctx = context.WithoutCancel(ctx)
 	// Continue only a conversation that exists: before the first prompt there
 	// is none, and --continue with nothing to continue exits.
 	if _, err := s.relaunchHeld(ctx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "", lock); err != nil {
