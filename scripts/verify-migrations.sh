@@ -64,10 +64,13 @@ run_psql -d "$DB" -c "
   create or replace function storage.foldername(path text) returns text[] language sql immutable as \$\$
     select string_to_array(path, '/')
   \$\$;
-  do \$\$ begin
-    if not exists (select 1 from pg_roles where rolname = 'authenticated') then
-      create role authenticated nologin;
-    end if;
+  -- Supabase's API roles: migrations grant to and revoke from them.
+  do \$\$ declare r text; begin
+    foreach r in array array['anon', 'authenticated', 'service_role'] loop
+      if not exists (select 1 from pg_roles where rolname = r) then
+        execute format('create role %I nologin', r);
+      end if;
+    end loop;
   end \$\$;"
 
 echo "==> applying migrations"
