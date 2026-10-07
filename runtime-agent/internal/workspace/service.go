@@ -449,10 +449,20 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	if f.Model == model {
 		return nil
 	}
+	// Held from the busy check through the relaunch, so no prompt can be sent
+	// after Claude looked idle and then be cut off by the kill.
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	defer lock.Unlock()
 	name := sessionName(workspaceID)
 	running := s.tmux.HasSession(ctx, name)
 	if running {
-		if pane, err := s.tmux.CapturePane(ctx, name); err == nil && claudeIsBusy(pane) {
+		pane, err := s.tmux.CapturePane(ctx, name)
+		if err != nil {
+			// Unread is not idle: refuse rather than risk cutting a turn off.
+			return fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionBusy, err)
+		}
+		if claudeIsBusy(pane) {
 			return ErrSessionBusy
 		}
 	}
@@ -467,7 +477,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	ctx = context.WithoutCancel(ctx)
 	// Continue only a conversation that exists: before the first prompt there
 	// is none, and --continue with nothing to continue exits.
-	if _, err := s.relaunch(ctx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != ""); err != nil {
+	if _, err := s.relaunchHeld(ctx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "", lock); err != nil {
 		// Not applied, so not recorded: a retry of the same model tries again
 		// rather than finding it already set, and the next Start uses the old.
 		s.setFacts(workspaceID, prior)
@@ -490,6 +500,11 @@ func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken stri
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
 	defer lock.Unlock()
+	return s.relaunchHeld(ctx, workspaceID, anthropicToken, resume, lock)
+}
+
+// relaunchHeld is relaunch for a caller already holding the send lock.
+func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken string, resume bool, lock *sendState) (string, error) {
 	lock.staged = nil // the composer it was typed into is about to go
 	name := sessionName(workspaceID)
 	if s.jcode != nil {
