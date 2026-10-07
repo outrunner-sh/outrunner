@@ -470,7 +470,10 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	if s.jcode != nil {
 		return s.jcode.SendMessage(workspaceID, content)
 	}
-	ctx := context.Background()
+	// The send lock is held throughout, so a hung tmux must not hold it forever:
+	// past the deadline its commands are killed and the next send can proceed.
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+	defer cancel()
 	name := sessionName(workspaceID)
 	if err := s.tmux.Paste(ctx, name, content); err != nil {
 		return err
@@ -478,7 +481,7 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	convDir := s.claudeConvDir(workspaceID)
 	before := userTurnCount(convDir)
 	var lastErr error
-	for attempt := 0; attempt < submitAttempts; attempt++ {
+	for attempt := 0; attempt < submitAttempts && ctx.Err() == nil; attempt++ {
 		if err := s.tmux.SubmitEnter(ctx, name); err != nil {
 			lastErr = err
 		}
@@ -499,6 +502,8 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 const (
 	submitAttempts     = 20
 	submitPollInterval = 400 * time.Millisecond
+	// sendTimeout bounds one SendMessage: well past the ~8s of submit attempts.
+	sendTimeout = 30 * time.Second
 )
 
 // claudeConvDir is where Claude writes this workspace's conversation JSONL:
