@@ -1,40 +1,67 @@
 "use client";
 
 import Link from "next/link";
-import { Laptop, MessageSquare } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Laptop, MessageSquare, Plus } from "lucide-react";
 
-import { localSessionLabel, useLocalSessions } from "@/hooks/use-local-sessions";
+import { ProjectAvatar } from "@/components/project-avatar";
+import { useLocalSessions } from "@/hooks/use-local-sessions";
+import { startNextSessionIn } from "@/hooks/use-session-location";
+import type { LocalSession } from "@/lib/desktop/local-runtime";
+import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessions";
 import { cn } from "@/lib/utils";
 
 /**
- * "This Mac": the local sessions the agent on this Mac knows, for the studio's
- * sidebar. Renders nothing outside the Mac app or when there are none.
+ * "This Mac": this Mac's local sessions, grouped by the folder they work in —
+ * the way cloud workspaces sit under their repository — for the studio's
+ * sidebar. The studio reads the sessions (useLocalSessions) so it can also
+ * label the cloud section below; renders nothing when there are none.
  */
-export function LocalSessionsNav({ activeWorkspaceId }: { activeWorkspaceId?: string }) {
-  const local = useLocalSessions();
-  if (local.sessions.length === 0) return null;
+export function LocalSessionsNav({
+  sessions,
+  activeWorkspaceId,
+}: {
+  sessions: LocalSession[];
+  activeWorkspaceId?: string;
+}) {
+  const router = useRouter();
+  if (sessions.length === 0) return null;
   return (
-    // Sized to its sessions, up to a cap past which it scrolls on its own, so a
-    // long list never pushes the repositories below out of reach. (vh: WebKit
-    // leaves a % max-height here unresolved.)
-    <nav className="studio-nav" aria-label="Sessions on this Mac" style={{ flex: "none", maxHeight: "45vh" }}>
-      <div className="studio-nav-group">
-        <div className="studio-nav-project">
-          <Laptop className="size-4" />
-          <span className="studio-nav-project-name">This Mac</span>
-        </div>
-        {local.sessions.map((session) => (
-          <Link
-            key={session.workspaceId}
-            href={`/local/${session.workspaceId}`}
-            className={cn("studio-nav-item", session.workspaceId === activeWorkspaceId && "is-active")}
-            title={`${session.name} · ${session.worktree}`}
-          >
-            <MessageSquare className="studio-nav-item-icon" />
-            <span className="studio-nav-item-label">{localSessionLabel(session)}</span>
-          </Link>
-        ))}
+    <nav className="studio-nav is-local" aria-label="Sessions on this Mac">
+      <div className="studio-nav-section">
+        <Laptop /> This Mac
       </div>
+      {groupLocalSessions(sessions).map((group) => (
+        <div key={group.folder} className="studio-nav-group">
+          <div className="studio-nav-project" title={group.folder}>
+            <ProjectAvatar name={group.label} className="size-4" />
+            <span className="studio-nav-project-name">{group.label}</span>
+            <button
+              type="button"
+              className="studio-nav-add"
+              title={`New session in ${group.label}`}
+              aria-label={`New session in ${group.label}`}
+              onClick={() => {
+                startNextSessionIn(group.folder);
+                router.push("/new");
+              }}
+            >
+              <Plus />
+            </button>
+          </div>
+          {group.sessions.map((session) => (
+            <Link
+              key={session.workspaceId}
+              href={`/local/${session.workspaceId}`}
+              className={cn("studio-nav-item", session.workspaceId === activeWorkspaceId && "is-active")}
+              title={session.worktree}
+            >
+              <MessageSquare className="studio-nav-item-icon" />
+              <span className="studio-nav-item-label">{localSessionLabel(session)}</span>
+            </Link>
+          ))}
+        </div>
+      ))}
     </nav>
   );
 }
@@ -48,17 +75,28 @@ export function HomeLocalSessions() {
       <h2 className="flex items-center gap-1.5 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         <Laptop className="size-3.5" /> This Mac
       </h2>
-      <div className="mt-2 space-y-0.5">
-        {local.sessions.map((session) => (
-          <Link
-            key={session.workspaceId}
-            href={`/local/${session.workspaceId}`}
-            title={`${session.name} · ${session.worktree}`}
-            className="flex w-full items-baseline gap-2 rounded-md px-1 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent"
-          >
-            <span className="min-w-0 truncate">{localSessionLabel(session)}</span>
-            <span className="shrink-0 font-mono text-xs text-muted-foreground">{session.name}</span>
-          </Link>
+      <div className="mt-2 space-y-2">
+        {groupLocalSessions(local.sessions).map((group) => (
+          <div key={group.folder}>
+            <p
+              title={group.folder}
+              className="flex items-center gap-2.5 px-1 py-1.5 text-sm text-foreground"
+            >
+              <ProjectAvatar name={group.label} />
+              <span className="truncate">{group.label}</span>
+            </p>
+            {group.sessions.map((session) => (
+              <Link
+                key={session.workspaceId}
+                href={`/local/${session.workspaceId}`}
+                title={session.worktree}
+                className="ml-3 flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <MessageSquare className="size-3.5 shrink-0" />
+                <span className="truncate">{localSessionLabel(session)}</span>
+              </Link>
+            ))}
+          </div>
         ))}
       </div>
     </div>

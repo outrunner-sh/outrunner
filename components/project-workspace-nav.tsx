@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { GitBranch, Plus } from "lucide-react";
+import { Cloud, GitBranch, Plus } from "lucide-react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
 import { buildNavGroups } from "@/lib/nav/workspace-nav-groups";
@@ -18,15 +18,23 @@ export function ProjectWorkspaceNav({
   projects,
   workspaces,
   activeWorkspaceId,
+  title,
 }: {
   projects: Project[];
   workspaces: Workspace[];
   activeWorkspaceId?: string;
+  /** A section heading, for when another section sits above (This Mac). */
+  title?: string;
 }) {
   const groups = buildNavGroups(projects, workspaces);
 
   return (
     <nav className="studio-nav" aria-label="Workspaces">
+      {title && groups.length > 0 && (
+        <div className="studio-nav-section">
+          <Cloud /> {title}
+        </div>
+      )}
       {groups.map(({ project, items }) => (
         <div key={project.id} className="studio-nav-group">
           <div className="studio-nav-project">

@@ -57,7 +57,16 @@ func (m *Manager) NewSession(ctx context.Context, name, workdir string, command 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux new-session %s: %v: %s", name, err, out)
 	}
+	m.HideStatus(ctx, name)
 	return nil
+}
+
+// HideStatus turns off tmux's status line for one session. Claude Code draws
+// its own footer, and the browser terminal shows a single pane, so tmux's bar
+// would only spend a row on the session name and a clock. Best-effort: a
+// session that keeps its bar works the same.
+func (m *Manager) HideStatus(ctx context.Context, name string) {
+	_ = Command(ctx, "set-option", "-t", name, "status", "off").Run()
 }
 
 // HasSession reports whether a session with the given name exists.

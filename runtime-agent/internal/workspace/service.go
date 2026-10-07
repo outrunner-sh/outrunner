@@ -342,6 +342,9 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	}
 	worktree := s.worktreePath(workspaceID)
 	if s.tmux.HasSession(ctx, name) {
+		// A session started before the status line was hidden loses it on its
+		// next attach rather than its next restart.
+		s.tmux.HideStatus(ctx, name)
 		s.beginSummary(workspaceID, worktree)
 		return name, nil // already running
 	}
