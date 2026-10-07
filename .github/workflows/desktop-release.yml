@@ -5,8 +5,8 @@ name: Desktop release
 # installs with no Gatekeeper warning and no `xattr` step.
 #
 #   Release:  git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
-#             -> builds Outrunner 0.2.0 and attaches the DMG to a DRAFT GitHub
-#                Release. Smoke-test it, then publish the draft by hand;
+#             -> builds Outrunner 0.2.0 and attaches the DMG and the signed
+#                update bundle to a DRAFT GitHub Release. Smoke-test it, then publish the draft by hand;
 #                desktop-publish.yml then puts it on the public download link.
 #   Dry run:  Actions -> Desktop release -> Run workflow, with a version
 #             -> the same signed + notarized build, as a workflow artifact only.
@@ -18,6 +18,11 @@ name: Desktop release
 #   APPLE_API_KEY_ID            that key's id (the XXXXXXXXXX in AuthKey_XXXXXXXXXX.p8)
 #   APPLE_API_ISSUER            issuer UUID: App Store Connect -> Users and Access
 #                               -> Integrations -> App Store Connect API
+#   TAURI_SIGNING_PRIVATE_KEY   the updater's private key (`tauri signer generate`);
+#                               its public half is plugins.updater.pubkey in
+#                               tauri.conf.json. Lose it and installed apps can
+#                               never update again, so keep a backup.
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  that key's password
 #
 # There is deliberately no unsigned fallback: a missing or wrong secret fails
 # the run. An ad-hoc signed DMG is what this workflow exists to stop shipping.
@@ -84,6 +89,10 @@ jobs:
           {
             echo "APP=$BUNDLE_DIR/macos/Outrunner.app"
             echo "DMG=$BUNDLE_DIR/dmg/Outrunner_${VERSION}_universal.dmg"
+            # The signed update bundle the installed app downloads (updater.rs).
+            echo "UPDATE=$BUNDLE_DIR/macos/Outrunner.app.tar.gz"
+            # Everything the release ships, under the names it ships them as.
+            echo "OUT=$RUNNER_TEMP/release"
           } >> "$GITHUB_ENV"
           echo "Outrunner $VERSION (release=$RELEASE)"
 
@@ -255,16 +264,26 @@ jobs:
 
       # Compiles both architectures, lipos them, signs every binary in the
       # bundle (the runtime-agent sidecar included) with the hardened runtime,
-      # notarizes and staples the .app, then builds and signs the DMG.
+      # notarizes and staples the .app, then builds and signs the DMG and the
+      # update bundle (.app.tar.gz + .sig, signed with the updater key).
+      #
+      # createUpdaterArtifacts is switched on here rather than in
+      # tauri.conf.json, so a local `tauri build` still works without the key.
       - name: Build, sign and notarize the app
         working-directory: runtime-desktop
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+          for name in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            [ -n "${!name:-}" ] || { echo "::error::missing repo secret $name"; exit 1; }
+          done
           pnpm tauri build \
             --target "$TARGET" \
             --bundles app,dmg \
-            --config "{\"version\":\"$VERSION\"}"
+            --config "{\"version\":\"$VERSION\",\"bundle\":{\"createUpdaterArtifacts\":true}}"
 
       # Tauri notarizes and staples the .app only; the DMG it then packs carries
       # a signature but no ticket of its own. Apple's guidance is to notarize
@@ -328,17 +347,38 @@ jobs:
           xcrun stapler validate "$DMG"
           spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
 
-          # Published next to the DMG. desktop-publish.yml checks it before
-          # copying the release to the public download bucket.
-          (cd "$(dirname "$DMG")" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+          # The update bundle replaces users' installed app, so it must hold
+          # this same notarized, stapled build, not one packed before
+          # notarization finished. The signature itself is checked by the app.
+          test -s "$UPDATE" && test -s "$UPDATE.sig" || fail "missing $UPDATE or its .sig"
+          UNPACKED=$(mktemp -d)
+          tar -xzf "$UPDATE" -C "$UNPACKED"
+          [ "$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$UNPACKED/Outrunner.app/Contents/Info.plist")" = "$VERSION" ] ||
+            fail "the update bundle is not version $VERSION"
+          xcrun stapler validate "$UNPACKED/Outrunner.app" || fail "the update bundle's app is not stapled"
+          spctl --assess --type exec --verbose=4 "$UNPACKED/Outrunner.app" || fail "Gatekeeper rejects the update bundle's app"
+          rm -rf "$UNPACKED"
 
-      - name: Upload DMG artifact
+      # The release's files, under their published names, with checksums
+      # desktop-publish.yml checks before copying them to the download bucket.
+      - name: Collect release files
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          NAME="Outrunner_${VERSION}_universal"
+          mkdir -p "$OUT"
+          cp "$DMG" "$OUT/$NAME.dmg"
+          cp "$UPDATE" "$OUT/$NAME.app.tar.gz"
+          cp "$UPDATE.sig" "$OUT/$NAME.app.tar.gz.sig"
+          (cd "$OUT" && shasum -a 256 "$NAME.dmg" "$NAME.app.tar.gz" > SHA256SUMS)
+          ls -la "$OUT"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Outrunner_${{ steps.version.outputs.version }}_universal
-          path: |
-            ${{ env.DMG }}
-            ${{ env.DMG }}.sha256
+          path: ${{ env.OUT }}
           if-no-files-found: error
 
       - name: Attach to a draft release
@@ -356,9 +396,9 @@ jobs:
               echo "::error::release $GITHUB_REF_NAME is already published; refusing to replace its DMG. Tag a new version instead."
               exit 1
             fi
-            gh release upload "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$OUT"/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
+            gh release create "$GITHUB_REF_NAME" "$OUT"/* \
               --draft --verify-tag \
               --title "Outrunner $VERSION" \
               --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag Outrunner to Applications."
