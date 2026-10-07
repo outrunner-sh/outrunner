@@ -245,8 +245,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 			facts.BaseBranch = folder.branch // the orientation's target branch
 		}
 		if facts.InPlace {
+			// Only a new session gets an id. One recorded before ids existed
+			// keeps finding its conversation as before (the newest log): an id
+			// with no transcript behind it would start it afresh, cut off from
+			// its history.
 			facts.ClaudeSessionID = prior.ClaudeSessionID
-			if facts.ClaudeSessionID == "" {
+			if !existed {
 				facts.ClaudeSessionID = newSessionID()
 			}
 		}
