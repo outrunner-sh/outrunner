@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"runtime-agent/internal/redact"
 )
 
 // pane is the tmux pane the recorder taps. Behind an interface so the recorder's
@@ -41,6 +43,7 @@ type Recorder struct {
 	fifo     *os.File
 	file     *os.File
 	cw       *Writer
+	redactor *redact.Redactor
 	wg       sync.WaitGroup
 	stopping atomic.Bool
 
@@ -105,6 +108,7 @@ func (r *Recorder) Start(ctx context.Context) error {
 	}
 
 	r.file, r.cw, r.fifo, r.fifoPath = file, cw, fifo, fifoPath
+	r.redactor = redact.New(opts.Secrets)
 	r.stopping.Store(false)
 	r.wg.Add(1)
 	go r.drain()
@@ -174,7 +178,8 @@ func (r *Recorder) consume(b []byte) {
 	if discarding {
 		return
 	}
-	if _, err := r.cw.Write(b); err != nil {
+	// Only the drain goroutine calls consume, so the redactor needs no lock.
+	if _, err := r.cw.Write([]byte(r.redactor.Redact(b))); err != nil {
 		r.mu.Lock()
 		r.discarding = true
 		r.recordErr = err
@@ -217,6 +222,10 @@ func (r *Recorder) stop(ctx context.Context) error {
 
 	var err error
 	if cw != nil {
+		// The redactor holds back what could still be the start of a secret.
+		if tail := r.redactor.Flush(); tail != "" && !r.discarding {
+			_, _ = cw.Write([]byte(tail))
+		}
 		err = cw.Close()
 	}
 	if file != nil {

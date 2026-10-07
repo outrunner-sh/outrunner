@@ -1,9 +1,10 @@
-package server
+// Package redact masks secrets in a byte stream that arrives in pieces.
+package redact
 
 import "strings"
 
-// Redactor removes process secrets from terminal output before it reaches a
-// browser. It retains a small suffix between calls so a secret split across
+// Redactor removes process secrets from terminal output: before it reaches a
+// browser, and before it is recorded. It retains a small suffix between calls so a secret split across
 // adjacent PTY reads cannot leak one half in an earlier WebSocket frame.
 type Redactor struct {
 	secrets []string
@@ -11,9 +12,9 @@ type Redactor struct {
 	pending string
 }
 
-// NewRedactor ignores empty and duplicate secrets. Sorting longest-first keeps
+// New ignores empty and duplicate secrets. Sorting longest-first keeps
 // a shorter secret that is contained in a longer one from leaving a fragment.
-func NewRedactor(secrets []string) *Redactor {
+func New(secrets []string) *Redactor {
 	seen := make(map[string]struct{})
 	active := make([]string, 0, len(secrets))
 	maxLen := 0

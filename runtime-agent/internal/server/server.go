@@ -22,6 +22,7 @@ import (
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
+	"runtime-agent/internal/redact"
 	"runtime-agent/internal/workspace"
 )
 
@@ -407,7 +408,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	// contract ("output is coalesced") and prevents one-keystroke-per-frame
 	// flooding. The redactor preserves a suffix between calls so no secret can
 	// leak when it crosses a PTY read boundary.
-	redactor := NewRedactor(append(s.ws.RedactionSecrets(), s.secret))
+	redactor := redact.New(append(s.ws.RedactionSecrets(), s.secret))
 	coalescer := ptyx.NewCoalescer(coalesceInterval, coalesceThreshold, func(seq int, data []byte) error {
 		output := redactor.Redact(data)
 		if output == "" {
