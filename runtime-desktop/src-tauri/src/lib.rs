@@ -2,8 +2,8 @@
 //
 // The window loads the hosted Runtime web UI directly (which itself opens the
 // terminal WebSocket straight to the Daytona box), so this native layer stays
-// thin: a tray-resident window, a tray menu, hide-to-tray on close, and
-// single-instance focus.
+// thin: a tray-resident window, a tray menu, hide-to-tray on close,
+// single-instance focus, and self-update for the native parts (updater.rs).
 //
 // Auth: GitHub OAuth is completed in the system browser, not the embedded
 // webview — providers block embedded webviews, and the browser's URL bar is the
@@ -22,6 +22,7 @@
 
 mod claude_login;
 mod local_runtime;
+mod updater;
 
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -149,6 +150,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(claude_login::ClaudeLoginState::default())
         .manage(local_runtime::LocalRuntime::default())
+        .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             claude_login::connect_claude_start,
             claude_login::connect_claude_submit,
@@ -173,6 +175,7 @@ pub fn run() {
         .plugin(tauri_plugin_oauth::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Main window → hosted Runtime UI, flagged as the desktop shell, with
             // off-site navigations (OAuth) bounced to the system browser.
@@ -250,8 +253,11 @@ pub fn run() {
             let new_i = MenuItem::with_id(app, "new", "New Workspace", true, None::<&str>)?;
             let reload_i = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
+            let update_i =
+                MenuItem::with_id(app, "check_updates", "Check for Updates…", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit Outrunner", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &new_i, &reload_i, &sep, &quit_i])?;
+            let menu =
+                Menu::with_items(app, &[&show_i, &new_i, &reload_i, &sep, &update_i, &quit_i])?;
 
             TrayIconBuilder::with_id("tray")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -273,6 +279,7 @@ pub fn run() {
                             let _ = window.eval("location.reload()");
                         }
                     }
+                    "check_updates" => updater::check_now(app),
                     "quit" => app.exit(0),
                     _ => {}
                 }})
@@ -295,6 +302,8 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            updater::start(app.handle());
 
             Ok(())
         })
