@@ -1,0 +1,335 @@
+name: Desktop release
+
+# Builds the macOS desktop app (runtime-desktop, Tauri) as a universal DMG,
+# signed with the Developer ID certificate and notarized by Apple, so it
+# installs with no Gatekeeper warning and no `xattr` step.
+#
+#   Release:  git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
+#             -> builds Outrunner 0.2.0 and attaches the DMG to a DRAFT GitHub
+#                Release. Smoke-test it, then publish the draft by hand.
+#   Dry run:  Actions -> Desktop release -> Run workflow, with a version
+#             -> the same signed + notarized build, as a workflow artifact only.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD  the .p12's export password
+#   APPLE_API_KEY_P8            App Store Connect API key, the .p8 file's contents
+#   APPLE_API_KEY_ID            that key's id (the XXXXXXXXXX in AuthKey_XXXXXXXXXX.p8)
+#   APPLE_API_ISSUER            issuer UUID: App Store Connect -> Users and Access
+#                               -> Integrations -> App Store Connect API
+#
+# There is deliberately no unsigned fallback: a missing or wrong secret fails
+# the run. An ad-hoc signed DMG is what this workflow exists to stop shipping.
+
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the app, e.g. 0.2.0 (no release is created)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: macOS (universal, signed + notarized)
+    # The mirror workflow pushes our tags to immadsahin/outrunner, which has
+    # none of the signing secrets. Never build there.
+    if: github.repository == 'neevai-labs/outrunner'
+    runs-on: macos-14
+    timeout-minutes: 75
+    permissions:
+      contents: write # create the draft release
+    env:
+      TARGET: universal-apple-darwin
+      BUNDLE_DIR: runtime-desktop/src-tauri/target/universal-apple-darwin/release/bundle
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#desktop-v}"
+            RELEASE=true
+          else
+            VERSION="$INPUT_VERSION"
+            RELEASE=false
+          fi
+          # CFBundleShortVersionString must be up to three dot-separated
+          # integers; macOS rejects or misorders anything else (0.2.0-beta, v0.2).
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$VERSION' is not MAJOR.MINOR.PATCH (tag must look like desktop-v0.2.0)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "Outrunner $VERSION (release=$RELEASE)"
+
+      # Done first, before ~15 minutes of universal Rust compile: a wrong
+      # password or a mis-pasted secret should fail in seconds.
+      #
+      # We import the certificate into our own keychain rather than handing
+      # APPLE_CERTIFICATE to Tauri, because `security import` is the exact
+      # password check, and the identity name is read back from the
+      # certificate instead of being hardcoded here (it changes on renewal).
+      - name: Import Developer ID certificate
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # Apple's published intermediate, pinned. Tauri does not install it
+          # and a .p12 exported from Keychain Access usually omits it; without
+          # it codesign cannot build the chain and reports no valid identity.
+          G2_URL: https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          G2_SHA256: f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a
+        run: |
+          set -euo pipefail
+
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            [ -n "${!name:-}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing repo secret(s):$missing"
+            exit 1
+          fi
+
+          # A newline that rode along with a pasted secret is the classic cause
+          # of a "wrong password". Strip it, and mask the stripped copy too:
+          # GitHub only masks the secret's exact value.
+          CERT_PASSWORD=$(printf '%s' "$APPLE_CERTIFICATE_PASSWORD" | tr -d '\r\n')
+          echo "::add-mask::$CERT_PASSWORD"
+          KEY_ID=$(printf '%s' "$APPLE_API_KEY_ID" | tr -d '\r\n ')
+          ISSUER=$(printf '%s' "$APPLE_API_ISSUER" | tr -d '\r\n ')
+
+          CERT_PATH="$RUNNER_TEMP/developer-id.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | tr -d '\r\n ' | base64 -D > "$CERT_PATH" 2>/dev/null || {
+            echo "::error::APPLE_CERTIFICATE is not valid base64. Set it from 'base64 -i developer-id.p12'."
+            exit 1
+          }
+          # PKCS#12 is DER, so byte 0 is a SEQUENCE tag (0x30). Anything else
+          # means the secret holds the wrong file (.cer, .pem) or was truncated.
+          if [ ! -s "$CERT_PATH" ] || [ "$(head -c1 "$CERT_PATH" | od -An -tx1 | tr -d ' ')" != "30" ]; then
+            echo "::error::APPLE_CERTIFICATE did not decode to a PKCS#12 (.p12) archive."
+            exit 1
+          fi
+
+          G2_PATH="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl -fsSL --retry 3 "$G2_URL" -o "$G2_PATH"
+          echo "$G2_SHA256  $G2_PATH" | shasum -a 256 -c - >/dev/null || {
+            echo "::error::Apple's Developer ID G2 intermediate changed (sha256 mismatch). Check $G2_URL and update G2_SHA256."
+            exit 1
+          }
+
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Stay unlocked for the whole job: notarization alone can take 30 min.
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -f pkcs12 -P "$CERT_PASSWORD" -T /usr/bin/codesign >/dev/null || {
+            echo "::error::could not import APPLE_CERTIFICATE: APPLE_CERTIFICATE_PASSWORD is most likely wrong."
+            exit 1
+          }
+          rm -f "$CERT_PATH"
+          security import "$G2_PATH" -k "$KEYCHAIN" >/dev/null
+          # Lets codesign use the key without a UI prompt, which would hang CI.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Add to the search list (keeping login.keychain) so Tauri's codesign
+          # calls, including the DMG's in bundle_dmg.sh, find the identity.
+          EXISTING=()
+          while IFS= read -r line; do
+            EXISTING+=("$(printf '%s' "$line" | sed -E 's/^[[:space:]]*"(.*)"[[:space:]]*$/\1/')")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN" ${EXISTING[@]+"${EXISTING[@]}"}
+
+          IDENTITIES=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep -o '"Developer ID Application: [^"]*"' | tr -d '"' || true)
+          COUNT=$(printf '%s' "$IDENTITIES" | grep -c . || true)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "::error::expected exactly one valid 'Developer ID Application' identity in APPLE_CERTIFICATE, found $COUNT. (An 'Apple Development' or 'Developer ID Installer' certificate will not do; an expired one is not valid.)"
+            security find-identity -v -p codesigning "$KEYCHAIN" || true
+            exit 1
+          fi
+          # "Developer ID Application: Name (TEAMID)"
+          TEAM_ID=$(printf '%s' "$IDENTITIES" | sed -E 's/.*\(([A-Z0-9]+)\)$/\1/')
+          echo "signing as: $IDENTITIES"
+
+          KEY_PATH="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
+          # Accept the .p8 verbatim (PEM) or base64-wrapped, since pasting a
+          # multi-line secret is easy to get wrong.
+          if printf '%s' "$APPLE_API_KEY_P8" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+          else
+            printf '%s' "$APPLE_API_KEY_P8" | tr -d '\r\n ' | base64 -D > "$KEY_PATH" 2>/dev/null || true
+          fi
+          chmod 600 "$KEY_PATH"
+          grep -q "BEGIN PRIVATE KEY" "$KEY_PATH" || {
+            echo "::error::APPLE_API_KEY_P8 is neither a .p8 file's contents nor base64 of one."
+            exit 1
+          }
+
+          # The names Tauri reads: APPLE_SIGNING_IDENTITY picks the identity
+          # from the keychain search list, and APPLE_API_KEY (the key ID) +
+          # APPLE_API_ISSUER + APPLE_API_KEY_PATH enable notarization. The key
+          # ID and issuer are identifiers, useless without the .p8.
+          {
+            echo "APPLE_SIGNING_IDENTITY=$IDENTITIES"
+            echo "APPLE_TEAM_ID=$TEAM_ID"
+            echo "APPLE_API_KEY=$KEY_ID"
+            echo "APPLE_API_ISSUER=$ISSUER"
+            echo "APPLE_API_KEY_PATH=$KEY_PATH"
+            echo "SIGNING_KEYCHAIN=$KEYCHAIN"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: runtime-agent/go.sum
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime-desktop/src-tauri -> target
+          key: ${{ env.TARGET }}
+
+      # No version pin: pnpm/action-setup reads it from the root package.json
+      # "packageManager" field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: runtime-desktop/pnpm-lock.yaml
+
+      # tauri.conf.json's beforeBuildCommand runs `bun run agent && bun run build`.
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install desktop dependencies
+        working-directory: runtime-desktop
+        # --ignore-workspace: runtime-desktop is not part of the root app's
+        # pnpm workspace, so a plain install would resolve the wrong lockfile.
+        run: pnpm install --ignore-workspace --frozen-lockfile
+
+      # Compiles both architectures, lipos them, signs every binary in the
+      # bundle (the runtime-agent sidecar included) with the hardened runtime,
+      # notarizes and staples the .app, then builds and signs the DMG.
+      - name: Build, sign and notarize the app
+        working-directory: runtime-desktop
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pnpm tauri build \
+            --target "$TARGET" \
+            --bundles app,dmg \
+            --config "{\"version\":\"$VERSION\"}"
+
+      # Tauri notarizes and staples the .app only; the DMG it then packs carries
+      # a signature but no ticket of its own. Apple's guidance is to notarize
+      # what you distribute, and the ticket stapled into the DMG is what lets
+      # it open on a Mac that is offline or behind a firewall.
+      - name: Notarize the DMG
+        timeout-minutes: 45
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="$BUNDLE_DIR/dmg/Outrunner_${VERSION}_universal.dmg"
+          test -f "$DMG" || { echo "::error::no DMG at $DMG"; ls -la "$BUNDLE_DIR/dmg" || true; exit 1; }
+          xcrun notarytool submit "$DMG" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait --timeout 30m
+          xcrun stapler staple "$DMG"
+
+      # Assert we ship what we think we ship. A signing problem can still
+      # produce a DMG, and without this the first to notice is a user whose
+      # Mac refuses to open it.
+      - name: Verify signature, notarization and bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          APP="$BUNDLE_DIR/macos/Outrunner.app"
+          DMG="$BUNDLE_DIR/dmg/Outrunner_${VERSION}_universal.dmg"
+          fail() { echo "::error::$*"; exit 1; }
+
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Contents/Info.plist"; }
+          [ "$(plist CFBundleIdentifier)" = "ai.neev.outrunner" ] || fail "bundle id is $(plist CFBundleIdentifier)"
+          [ "$(plist CFBundleShortVersionString)" = "$VERSION" ] || fail "app version is $(plist CFBundleShortVersionString), expected $VERSION"
+
+          codesign --verify --deep --strict --verbose=2 "$APP" || fail "Outrunner.app's signature does not verify"
+
+          # The app binary and the sidecar are checked one by one: both must be
+          # universal, Developer ID signed by our team, and hardened (notarization
+          # requires it, and a sidecar signed without it is rejected).
+          for BIN in "$APP/Contents/MacOS/runtime-desktop" "$APP/Contents/MacOS/runtime-agent"; do
+            test -f "$BIN" || fail "missing $BIN"
+            ARCHS=$(lipo -archs "$BIN")
+            [[ "$ARCHS" == *x86_64* && "$ARCHS" == *arm64* ]] || fail "$BIN is not universal: $ARCHS"
+            INFO=$(codesign -dvvv "$BIN" 2>&1)
+            grep -q "^Authority=Developer ID Application" <<< "$INFO" || { echo "$INFO"; fail "$BIN is not Developer ID signed"; }
+            grep -q "^TeamIdentifier=$APPLE_TEAM_ID$" <<< "$INFO" || { echo "$INFO"; fail "$BIN is not signed by team $APPLE_TEAM_ID"; }
+            grep -q "flags=.*runtime" <<< "$INFO" || { echo "$INFO"; fail "$BIN lacks the hardened runtime"; }
+            grep -q "^Timestamp=" <<< "$INFO" || { echo "$INFO"; fail "$BIN has no secure timestamp"; }
+          done
+
+          # The stapled tickets are what make both open offline; spctl is the
+          # verdict Gatekeeper on a user's Mac will reach.
+          xcrun stapler validate "$APP"
+          spctl --assess --type exec --verbose=4 "$APP"
+          codesign -dvvv "$DMG" 2>&1 | grep -q "^Authority=Developer ID Application" || fail "DMG is not Developer ID signed"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Outrunner_${{ steps.version.outputs.version }}_universal
+          path: ${{ env.BUNDLE_DIR }}/dmg/Outrunner_${{ steps.version.outputs.version }}_universal.dmg
+          if-no-files-found: error
+
+      - name: Attach to a draft release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="$BUNDLE_DIR/dmg/Outrunner_${VERSION}_universal.dmg"
+          # A re-run of the same tag replaces the asset rather than failing.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$DMG" \
+              --draft --verify-tag \
+              --title "Outrunner $VERSION" \
+              --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag Outrunner to Applications."
+          fi
+
+      # Hosted runners are discarded after the job, but don't leave the key
+      # material or a keychain on the search list if that ever changes.
+      - name: Clean up signing material
+        if: always()
+        run: |
+          [ -n "${SIGNING_KEYCHAIN:-}" ] && security delete-keychain "$SIGNING_KEYCHAIN" || true
+          [ -n "${APPLE_API_KEY_PATH:-}" ] && rm -f "$APPLE_API_KEY_PATH" || true
