@@ -10,6 +10,8 @@ pnpm db:migrate             # apply it (asks first)
 pnpm db:status              # what the database has recorded
 ```
 
+The password is handed to the CLI in `PGPASSWORD`, never on a command line.
+
 `db:migrate` runs `supabase db push`, which records each migration in
 `supabase_migrations.schema_migrations`. A migration runs once, and one already
 applied is skipped.
@@ -30,20 +32,22 @@ Notes:
 ### One-time: record migrations applied by hand
 
 Migrations pasted into the SQL editor aren't recorded, so `db push` would try to
-run them again and fail on objects that exist. Once, mark them as applied, but
-only those whose objects are really in the database:
+run them again and fail on objects that exist. Once, record them as applied,
+giving the newest one that is really in the database:
 
 ```bash
-pnpm exec supabase migration repair --status applied 20260731090000 20260803100000 … --db-url "$SUPABASE_DB_URL"
+pnpm db:repair --through 20260928160000
 ```
 
-Then `pnpm db:status` should show them on both sides, and `db:migrate` applies
-only what is new.
+It records every migration in `supabase/migrations/` up to that version, using
+`SUPABASE_DB_URL` from `.env.local`, and runs none of them. Then `pnpm db:status`
+shows them on both sides, and `db:migrate` applies only what is newer.
 
 ### Without the CLI
 
 Paste each pending file in `supabase/migrations/` into the SQL editor, oldest
-first. A migration applied this way also needs the repair step above.
+first. A migration applied this way also needs recording: `pnpm db:repair
+--through <its version>`.
 
 ## Verifying the schema
 
@@ -62,6 +66,7 @@ Docker Desktop may not share the folder the repo is in:
 
 ```bash
 docker run -d --name mig-verify -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17
+until docker exec mig-verify pg_isready -U postgres -q; do sleep 1; done
 docker exec mig-verify mkdir /work && docker cp scripts mig-verify:/work/ && docker cp supabase mig-verify:/work/
 docker exec -u postgres -e PG_BIN=/usr/lib/postgresql/17/bin mig-verify bash /work/scripts/verify-migrations.sh
 docker rm -f mig-verify
