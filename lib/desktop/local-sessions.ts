@@ -23,7 +23,7 @@ export function localSessionLabel(session: LocalSession): string {
 /**
  * Sessions grouped by folder, folders ordered by their newest session (the
  * agent lists sessions newest first). Two folders with the same name — two
- * clones called `app` — are told apart by their parent folder.
+ * clones called `app` — are told apart by as many parent folders as it takes.
  */
 export function groupLocalSessions(sessions: LocalSession[]): LocalFolderGroup[] {
   const byFolder = new Map<string, LocalSession[]>();
@@ -32,23 +32,26 @@ export function groupLocalSessions(sessions: LocalSession[]): LocalFolderGroup[]
     if (group) group.push(session);
     else byFolder.set(session.folder, [session]);
   }
-  const names = [...byFolder.keys()].map((folder) => lastSegment(folder));
-  return [...byFolder].map(([folder, group]) => {
-    const name = lastSegment(folder);
-    const shared = names.filter((other) => other === name).length > 1;
-    return {
-      folder,
-      label: shared ? `${lastSegment(parentOf(folder))}/${name}` : name,
-      sessions: group,
-    };
-  });
+  const folders = [...byFolder.keys()];
+  return [...byFolder].map(([folder, group]) => ({
+    folder,
+    label: distinctLabel(folder, folders),
+    sessions: group,
+  }));
 }
 
-function lastSegment(path: string): string {
-  const parts = path.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? path;
+/** The folder's name, with the fewest parent folders that set it apart from
+ *  every other listed folder (`work/project/app` beside `home/project/app`). */
+function distinctLabel(folder: string, folders: string[]): string {
+  const parts = segments(folder);
+  const tail = (path: string, depth: number) => segments(path).slice(-depth).join("/");
+  for (let depth = 1; depth <= parts.length; depth++) {
+    const label = tail(folder, depth);
+    if (!folders.some((other) => other !== folder && tail(other, depth) === label)) return label;
+  }
+  return folder; // a whole path that ends another one (`/app` beside `/x/app`)
 }
 
-function parentOf(path: string): string {
-  return path.split("/").filter(Boolean).slice(0, -1).join("/");
+function segments(path: string): string[] {
+  return path.split("/").filter(Boolean);
 }

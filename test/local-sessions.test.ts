@@ -47,6 +47,21 @@ test("two folders with the same name are told apart by their parent", () => {
   assert.deepEqual(groups.map((g) => g.label), ["work/app", "personal/app", "notes"]);
 });
 
+test("same-named parents are told apart by going further up", () => {
+  const groups = groupLocalSessions([
+    session("a", "/work/project/app"),
+    session("b", "/personal/project/app"),
+    session("c", "/personal/other/app"),
+    session("d", "/app"),
+  ]);
+  assert.deepEqual(groups.map((g) => g.label), [
+    "work/project/app",
+    "personal/project/app",
+    "other/app",
+    "/app",
+  ]);
+});
+
 test("a session is labelled by what was asked, else its branch", () => {
   assert.equal(localSessionLabel(session("a", "/x/app")), "task a");
   // Recorded before sessions had titles: the branch says more than repeating
