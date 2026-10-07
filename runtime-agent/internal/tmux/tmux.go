@@ -4,7 +4,9 @@
 package tmux
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -63,6 +65,35 @@ func (m *Manager) NewSession(ctx context.Context, name, workdir string, command 
 // HasSession reports whether a session with the given name exists.
 func (m *Manager) HasSession(ctx context.Context, name string) bool {
 	return Command(ctx, "has-session", "-t", name).Run() == nil
+}
+
+// SessionExists is HasSession for a caller that must not mistake a tmux that
+// couldn't be asked for a session that is gone: false with no error only when
+// tmux said so (no such session, or no server at all).
+func (m *Manager) SessionExists(ctx context.Context, name string) (bool, error) {
+	var stderr bytes.Buffer
+	cmd := Command(ctx, "has-session", "-t", name)
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if msg := stderr.String(); errors.As(err, new(*exec.ExitError)) && sessionGone(msg) {
+		return false, nil
+	}
+	return false, fmt.Errorf("tmux has-session %s: %v: %s", name, err, strings.TrimSpace(stderr.String()))
+}
+
+// sessionGone reads has-session's complaint as an answer: the session isn't
+// there, or no server is (a missing or dead socket).
+func sessionGone(stderr string) bool {
+	return strings.Contains(stderr, "can't find session") ||
+		strings.Contains(stderr, "no server running") ||
+		(strings.Contains(stderr, "error connecting to") &&
+			(strings.Contains(stderr, "No such file or directory") || strings.Contains(stderr, "Connection refused")))
 }
 
 // KillSession terminates a session (and the process inside it). A missing
