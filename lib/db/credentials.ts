@@ -9,11 +9,14 @@
  * scopes its query to it; callers must pass the id from the current session
  * (`getUser()`), never a value taken from a request body, path, or query.
  *
- * Nothing here returns a decrypted secret to a browser-facing payload. The UI
- * gets {@link credentialStatus}, which reports presence and a masked hint only.
+ * Nothing here returns a decrypted secret to a browser-facing payload, with one
+ * exception: {@link neevAiKey}, the user's own capped Neev AI key, which a local
+ * session's page hands to the agent on the user's Mac (see that function). The
+ * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
+import { createUserKey, disableUserKey } from "@/lib/openrouter/keys";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** What the settings UI may safely see: presence, not values. */
@@ -164,7 +167,7 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic",
+  which: "github" | "anthropic" | "neev",
 ): string | null {
   if (!ciphertext) return null;
   try {
@@ -175,5 +178,74 @@ function openOrNull(
         `treating as unset (rotated CREDENTIALS_ENCRYPTION_KEY?)`,
     );
     return null;
+  }
+}
+
+/**
+ * The user's Neev AI key: their own OpenRouter key, capped by OpenRouter at the
+ * monthly allowance. Created the first time they pick a Neev AI model, then
+ * kept: OpenRouter tracks the allowance per key, so a fresh key each time would
+ * hand out a fresh $5.
+ *
+ * It is returned in plaintext because a local session runs on the user's Mac,
+ * where only the page can hand it to the agent. That is safe to the degree the
+ * key is the user's own, and spends at most their own allowance.
+ *
+ * Two first picks at once (two tabs) would each create a key. A new key is
+ * stored only if the slot still holds what was read, so one wins and the other
+ * is disabled; so is a stored key that could no longer be decrypted and was
+ * replaced. Either would otherwise stay live with its own allowance.
+ */
+export async function neevAiKey(userId: string): Promise<string> {
+  const supabase = createSupabaseAdminClient();
+  // The conditional claim below needs a row to match.
+  const { error: rowError } = await supabase
+    .from("user_credentials")
+    .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
+  if (rowError) throw rowError;
+
+  const { data, error } = await supabase
+    .from("user_credentials")
+    .select("neev_key_ciphertext, neev_key_hash")
+    .eq("user_id", userId)
+    .single();
+  if (error) throw error;
+  const existing = openOrNull(data.neev_key_ciphertext, userId, "neev");
+  if (existing) return existing;
+
+  // Labelled by user id only: the OpenRouter dashboard needs no personal data.
+  const created = await createUserKey(`outrunner user ${userId}`);
+  const claim = supabase
+    .from("user_credentials")
+    .update({
+      neev_key_ciphertext: seal(created.key),
+      neev_key_hash: created.hash,
+      neev_key_created_at: new Date().toISOString(),
+    })
+    .eq("user_id", userId);
+  const { data: claimed, error: claimError } = await (
+    data.neev_key_ciphertext
+      ? claim.eq("neev_key_ciphertext", data.neev_key_ciphertext)
+      : claim.is("neev_key_ciphertext", null)
+  ).select("user_id");
+  if (claimError) {
+    await disableKeyQuietly(created.hash, userId);
+    throw claimError;
+  }
+  if (claimed.length === 0) {
+    // Another request stored its key first: use that one, retire ours.
+    await disableKeyQuietly(created.hash, userId);
+    return neevAiKey(userId);
+  }
+  if (data.neev_key_hash) await disableKeyQuietly(data.neev_key_hash, userId);
+  return created.key;
+}
+
+/** Best effort: a key that stays live is logged by its id, to disable by hand. */
+async function disableKeyQuietly(hash: string, userId: string): Promise<void> {
+  try {
+    await disableUserKey(hash);
+  } catch (error) {
+    console.error(`Could not disable Neev AI key ${hash} for ${userId}`, error);
   }
 }
