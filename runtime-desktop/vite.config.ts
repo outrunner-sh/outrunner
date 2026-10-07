@@ -10,6 +10,10 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // Plain CSS, no PostCSS plugins. An inline config also stops Vite searching
+  // parent directories, where it would find the Next app's postcss.config.mjs
+  // and fail without the root's Tailwind installed (as on the release runner).
+  css: { postcss: {} },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,

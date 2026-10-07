@@ -72,6 +72,33 @@ before a bare `cargo build` or `cargo test`, which fail without the sidecar.
 bun run tauri build    # outputs to src-tauri/target/release/bundle/
 ```
 
+A local build is unsigned. Builds for the team come from CI instead.
+
+## Release a signed .dmg
+
+```bash
+git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
+```
+
+`.github/workflows/desktop-release.yml` builds a universal DMG, signs it with
+the Developer ID certificate, has Apple notarize it, and attaches it to a draft
+GitHub Release for that tag. Smoke-test the DMG, then publish the draft. The
+version comes from the tag (`MAJOR.MINOR.PATCH`), not `tauri.conf.json`. A
+release, once published, is never rebuilt over: fix forward with a new tag.
+
+Publishing the draft runs `.github/workflows/desktop-publish.yml`, which
+copies the DMG to the public download bucket. The link to share is
+`<DOWNLOADS_BASE_URL>/outrunner/Outrunner.dmg`, always the latest published
+version; `outrunner/latest.json` says which version that is. Publishing only
+moves that link forward, so a stale draft published late never replaces a
+newer release. To roll back on purpose, run that workflow by hand with the
+older tag.
+
+To check signing without cutting a release, run the release workflow by hand
+from the Actions tab: it does the same build and leaves the DMG as a workflow
+artifact.
+The secrets and variables both workflows need are listed at the top of each.
+
 ## Point at a different environment
 
 The site URL lives in two places: the window `url` in

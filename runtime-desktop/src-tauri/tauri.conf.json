@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Outrunner",
   "version": "0.1.0",
-  "identifier": "ai.zerotrail.runtime",
+  "identifier": "ai.neev.outrunner",
   "build": {
     "beforeDevCommand": "bun run agent && bun run dev",
     "devUrl": "http://localhost:1420",

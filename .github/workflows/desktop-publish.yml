@@ -1,0 +1,231 @@
+name: Desktop publish
+
+# Copies a published desktop release to the public download bucket, so the
+# website's download link serves it. The repo is private, so the GitHub
+# Release itself is not downloadable by anyone outside it.
+#
+#   Automatic: publishing a desktop-v* release (the draft desktop-release.yml
+#              made) puts it live, usually within a minute. It only ever moves
+#              the latest link FORWARD: publishing an older draft after a newer
+#              release uploads its versioned file and leaves the latest alone.
+#   Rollback:  Actions -> Desktop publish -> Run workflow with an older tag
+#              (e.g. desktop-v0.2.0) points the latest link back at it. A
+#              manual run is the only way the latest version goes down.
+#
+# What it writes, under outrunner/ in the bucket:
+#   Outrunner_<version>_universal.dmg   that version, kept forever, cached long
+#   Outrunner.dmg                       the latest; the link to share
+#   latest.json                         {"version", "url", "sha256", "publishedAt"}
+#
+# Required configuration (Settings -> Secrets and variables -> Actions):
+#   secret   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+#            An R2 API token with Object Read & Write on the bucket only.
+#   secret   CLOUDFLARE_ACCOUNT_ID       (already set for deploy.yml)
+#   variable DOWNLOADS_BUCKET            the R2 bucket name
+#   variable DOWNLOADS_BASE_URL          the bucket's public custom domain,
+#                                        e.g. https://downloads.neev.ai
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release to make the latest download, e.g. desktop-v0.2.0"
+        required: true
+
+permissions:
+  contents: read # download the release's files
+
+# Two publishes must not interleave their writes to Outrunner.dmg and latest.json.
+concurrency:
+  group: desktop-publish
+  cancel-in-progress: false
+
+jobs:
+  r2:
+    name: Publish to downloads
+    if: >-
+      github.repository == 'neevai-labs/outrunner' &&
+      (github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'desktop-v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PREFIX: outrunner
+    steps:
+      - name: Resolve the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^desktop-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || {
+            echo "::error::'$TAG' is not a desktop release tag (desktop-v0.2.0)"
+            exit 1
+          }
+          VERSION="${BASH_REMATCH[1]}"
+          # Drafts have not been smoke-tested. A prerelease gets its versioned
+          # file but never becomes the latest download.
+          INFO=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,publishedAt) || {
+            echo "::error::no published release for $TAG"
+            exit 1
+          }
+          [ "$(jq -r .isDraft <<< "$INFO")" = "false" ] || { echo "::error::$TAG is still a draft; publish it first"; exit 1; }
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "prerelease=$(jq -r .isPrerelease <<< "$INFO")"
+            echo "published_at=$(jq -r .publishedAt <<< "$INFO")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check configuration
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DOWNLOADS_BUCKET: ${{ vars.DOWNLOADS_BUCKET }}
+          DOWNLOADS_BASE_URL: ${{ vars.DOWNLOADS_BASE_URL }}
+        run: |
+          missing=""
+          for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY CLOUDFLARE_ACCOUNT_ID DOWNLOADS_BUCKET DOWNLOADS_BASE_URL; do
+            [ -n "${!name:-}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing secret(s)/variable(s):$missing (see the top of desktop-publish.yml)"
+            exit 1
+          fi
+          [[ "$DOWNLOADS_BASE_URL" == https://* ]] || { echo "::error::DOWNLOADS_BASE_URL must start with https://"; exit 1; }
+          # Without a trailing slash, so "$BASE_URL/$PREFIX/..." has no "//".
+          echo "BASE_URL=${DOWNLOADS_BASE_URL%/}" >> "$GITHUB_ENV"
+
+      # The checksum was written by desktop-release.yml right after it verified
+      # the signature and notarization on macOS, so a match here means this is
+      # the file that passed those checks.
+      - name: Download and check the DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          DMG="Outrunner_${VERSION}_universal.dmg"
+          mkdir dl && cd dl
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" --pattern "$DMG" --pattern "$DMG.sha256"
+          sha256sum -c "$DMG.sha256"
+          echo "SHA256=$(cut -d' ' -f1 "$DMG.sha256")" >> "$GITHUB_ENV"
+          echo "DMG=$PWD/$DMG" >> "$GITHUB_ENV"
+
+      - name: Upload to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          # Newer AWS CLIs add checksum headers by default that R2 can reject.
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          ENDPOINT: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          BUCKET: ${{ vars.DOWNLOADS_BUCKET }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          PUBLISHED_AT: ${{ steps.release.outputs.published_at }}
+        run: |
+          set -euo pipefail
+          NAME="Outrunner_${VERSION}_universal.dmg"
+          put() { aws s3 cp --endpoint-url "$ENDPOINT" --no-progress "$@"; }
+
+          # Versioned first: the latest link must never point at something
+          # that is not there yet.
+          put "$DMG" "s3://$BUCKET/$PREFIX/$NAME" \
+            --content-type application/x-apple-diskimage \
+            --cache-control "public, max-age=31536000, immutable"
+
+          if [ "$PRERELEASE" = "true" ]; then
+            echo "::notice::prerelease: published $NAME only; the latest download is unchanged."
+            exit 0
+          fi
+
+          # What is live now, read from the bucket itself (not the cached
+          # public URL). Absent only before the very first publish; any other
+          # failure stops here rather than guessing.
+          LIVE=""
+          if aws s3api get-object --endpoint-url "$ENDPOINT" --bucket "$BUCKET" \
+               --key "$PREFIX/latest.json" live.json > /dev/null 2> get.err; then
+            LIVE=$(jq -r '.version // empty' live.json)
+            [[ "$LIVE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+              echo "::error::live latest.json has no usable version ('$LIVE'); fix or delete it in the bucket"
+              exit 1
+            }
+          elif grep -qE "NoSuchKey|Not Found|\(404\)" get.err; then
+            echo "no latest.json yet: first publish"
+          else
+            cat get.err
+            echo "::error::could not read the live latest.json"
+            exit 1
+          fi
+
+          # Only a manual run may move the latest link backwards (a rollback).
+          # An automatic one for an older version, e.g. a stale draft
+          # published late, must not replace a newer live release.
+          if [ -n "$LIVE" ] && [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] &&
+             [ "$(printf '%s\n%s\n' "$LIVE" "$VERSION" | sort -V | tail -n1)" != "$VERSION" ]; then
+            echo "::warning::$VERSION is older than the live $LIVE: published $NAME only; the latest download is unchanged. To roll back on purpose, run this workflow by hand with desktop-v$VERSION."
+            exit 0
+          fi
+          [ -n "$LIVE" ] && echo "latest: $LIVE -> $VERSION"
+
+          jq -n --arg version "$VERSION" --arg url "$BASE_URL/$PREFIX/$NAME" \
+                --arg sha256 "$SHA256" --arg publishedAt "$PUBLISHED_AT" \
+                '{version: $version, url: $url, sha256: $sha256, publishedAt: $publishedAt}' > latest.json
+
+          # Outrunner.dmg as the latest of $1 (a local file or an s3:// object
+          # already in the bucket). Short cache so a new release or a rollback
+          # reaches the site in minutes; it saves under its versioned name.
+          put_latest_dmg() {
+            # An in-bucket copy keeps the source's headers unless told to replace them.
+            local copy=()
+            if [[ "$1" == s3://* ]]; then copy=(--metadata-directive REPLACE); fi
+            put "$1" "s3://$BUCKET/$PREFIX/Outrunner.dmg" ${copy[@]+"${copy[@]}"} \
+              --content-type application/x-apple-diskimage \
+              --content-disposition "attachment; filename=\"$2\"" \
+              --cache-control "public, max-age=300"
+          }
+
+          # The two latest objects cannot be written atomically. The DMG goes
+          # first, so latest.json never names a version whose download is not
+          # up yet. If latest.json then fails, put the previous DMG back (it is
+          # still in the bucket under its versioned name) so the two agree.
+          put_latest_dmg "$DMG" "$NAME"
+          if ! put latest.json "s3://$BUCKET/$PREFIX/latest.json" \
+                 --content-type application/json \
+                 --cache-control "public, max-age=300"; then
+            if [ -n "$LIVE" ]; then
+              PREV="Outrunner_${LIVE}_universal.dmg"
+              if put_latest_dmg "s3://$BUCKET/$PREFIX/$PREV" "$PREV"; then
+                echo "::error::uploading latest.json failed; Outrunner.dmg was restored to $LIVE, so nothing changed. Re-run this workflow."
+              else
+                echo "::error::uploading latest.json failed AND restoring Outrunner.dmg failed: it now serves $VERSION while latest.json says $LIVE. Re-run this workflow to finish the publish."
+              fi
+            else
+              # First publish: there was no Outrunner.dmg before.
+              aws s3 rm --endpoint-url "$ENDPOINT" "s3://$BUCKET/$PREFIX/Outrunner.dmg" ||
+                echo "::warning::could not remove the half-published Outrunner.dmg"
+              echo "::error::uploading latest.json failed on the first publish. Re-run this workflow."
+            fi
+            exit 1
+          fi
+
+      # Through the public domain, as a visitor would fetch it. The versioned
+      # file is new, so no cache stands between us and what we just wrote.
+      - name: Check the public download
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          URL="$BASE_URL/$PREFIX/Outrunner_${VERSION}_universal.dmg"
+          GOT=$(curl -fsSL --retry 5 --retry-delay 5 "$URL" | sha256sum | cut -d' ' -f1) || {
+            echo "::error::$URL is not publicly downloadable. Is the bucket's custom domain set up?"
+            exit 1
+          }
+          [ "$GOT" = "$SHA256" ] || { echo "::error::$URL serves different bytes than the release"; exit 1; }
+          echo "::notice::live: $BASE_URL/$PREFIX/Outrunner.dmg -> $VERSION"
