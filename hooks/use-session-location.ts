@@ -64,14 +64,18 @@ export function useSessionLocation() {
     const path = rememberedFolder();
     if (!path) return;
     let cancelled = false;
+    // A folder picked while this check runs wins: its answer must not be
+    // overwritten by the stale one, nor its remembered path wiped.
+    const keepPicked = (next: NonNullable<typeof found>) => (prev: typeof found) =>
+      prev?.picked ? prev : next;
     checkLocalFolder(path)
       .then((folder) => {
-        if (!cancelled) setFound({ path, picked: false, choice: { state: "ok", folder } });
+        if (!cancelled) setFound(keepPicked({ path, picked: false, choice: { state: "ok", folder } }));
       })
       .catch(() => {
         if (cancelled) return;
-        rememberFolder(null); // gone: ask again
-        setFound({ path, picked: false, choice: { state: "none" } });
+        if (rememberedFolder() === path) rememberFolder(null); // gone: ask again
+        setFound(keepPicked({ path, picked: false, choice: { state: "none" } }));
       });
     return () => {
       cancelled = true;
