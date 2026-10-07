@@ -97,8 +97,6 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
       return {
         sandboxId: "daytona-1",
         agentBaseUrl: "https://agent.example.test",
-        daytonaPreviewToken: "preview-token",
-        signedWsBaseUrl: "https://signed.example.test",
         timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
       };
     },
@@ -141,8 +139,6 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
       return {
         sandboxId: "daytona-retry",
         agentBaseUrl: "https://agent.example.test",
-        daytonaPreviewToken: "preview-token",
-        signedWsBaseUrl: "https://signed.example.test",
         timings: { stages: [{ stage: "sandbox_create", ms: 10 }], totalMs: 10 },
       };
     },

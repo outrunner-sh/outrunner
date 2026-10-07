@@ -12,7 +12,7 @@ import {
   runCommit,
   type CommitIO,
 } from "@/lib/runtime/commit";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
@@ -73,7 +73,7 @@ export async function POST(request: Request, context: RouteContext) {
   // Build the commit-only IO from the provider (daytona: box + worktree path;
   // otherwise: the workspace sandbox). Neither branch exposes a push.
   let io: CommitIO;
-  if (provider instanceof DaytonaRuntimeProvider) {
+  if (isComputerProvider(provider)) {
     const computer = await getRuntimeComputerByProject(workspace.projectId);
     if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
       return NextResponse.json(

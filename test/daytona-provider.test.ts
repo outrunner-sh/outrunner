@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { toRuntimeComputer } from "@/lib/db/mappers";
-import {
-  DaytonaRuntimeProvider,
-  decodeBase64Credential,
-} from "@/lib/runtime/daytona-provider";
+import { decodeBase64Credential } from "@/lib/runtime/computer-provider";
+import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
@@ -51,7 +49,7 @@ test("decodeBase64Credential rejects a truncated credential paste", () => {
   );
 });
 
-const NOT_WIRED = /not on the Daytona provider/;
+const NOT_WIRED = /not on a Runtime Computer provider/;
 
 test("provider identifies as the daytona backend without credentials", () => {
   // Constructing must not read DAYTONA_* env (lazy client) so selection and
