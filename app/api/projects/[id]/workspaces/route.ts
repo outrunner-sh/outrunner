@@ -78,8 +78,9 @@ export async function POST(request: Request, context: RouteContext) {
   if (Object.keys(sessionEnv).length === 0) {
     return NextResponse.json(
       {
-        error:
-          "Connect Claude in Settings before creating a workspace.",
+        error: "Connect Claude in Settings before creating a workspace.",
+        // Where the page sends the user to fix it.
+        settingsHref: "/settings/claude",
       },
       { status: 409 },
     );
