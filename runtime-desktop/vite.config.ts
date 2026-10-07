@@ -10,6 +10,10 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // An inline PostCSS config stops Vite searching up into the repo root, whose
+  // config needs the web app's Tailwind plugin. CI installs only this package,
+  // so that plugin isn't there; these styles are plain CSS.
+  css: { postcss: {} },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
