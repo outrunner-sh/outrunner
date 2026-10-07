@@ -16,7 +16,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -83,6 +83,13 @@ impl LocalRuntime {
                 return Ok(AgentHandle { addr: agent.addr.clone(), secret: agent.secret.clone() });
             }
         }
+        // Exited, or its state could not be read: make sure the old process is
+        // gone and reaped before replacing it, so it cannot linger as a zombie or
+        // keep listening beside the new one.
+        if let Some(mut old) = guard.take() {
+            let _ = old.child.kill();
+            let _ = old.child.wait();
+        }
         let agent = tauri::async_runtime::spawn_blocking(spawn_agent)
             .await
             .map_err(|error| error.to_string())??;
@@ -107,7 +114,7 @@ impl LocalRuntime {
     /// JavaScript ends are gone, and a leaked PTY relay would keep holding the
     /// terminal's single writer slot, leaving the reloaded page read-only.
     pub fn close_all_sockets(&self) {
-        let mut sockets = self.sockets.lock().unwrap();
+        let mut sockets = self.sockets.lock().unwrap_or_else(PoisonError::into_inner);
         for (_, socket) in sockets.drain() {
             let _ = socket.send(Outbound::Close);
         }
@@ -421,7 +428,7 @@ pub async fn local_pick_folder(
         .map_err(|error| error.to_string())??;
     // The folder sessions use: the repository's top level for a git folder.
     if let Ok(real) = std::fs::canonicalize(&folder.path) {
-        state.picked.lock().unwrap().insert(real);
+        state.picked.lock().unwrap_or_else(PoisonError::into_inner).insert(real);
     }
     Ok(Some(folder))
 }
@@ -446,7 +453,7 @@ pub async fn local_check_folder(
 /// in — picked in an earlier run, and how the sidebar starts another there.
 async fn check_chosen(app: &AppHandle, state: &LocalRuntime, path: &str) -> Result<(), String> {
     let real = std::fs::canonicalize(path).map_err(|_| "folder-missing".to_string())?;
-    if state.picked.lock().unwrap().contains(&real) {
+    if state.picked.lock().unwrap_or_else(PoisonError::into_inner).contains(&real) {
         return Ok(());
     }
     if session_works_in(&list_sessions(app, state).await?, &real) {
@@ -691,25 +698,25 @@ pub async fn local_socket_open(
 
     let id = state.next_socket.fetch_add(1, Ordering::SeqCst) + 1;
     let (outbound, commands) = mpsc::unbounded_channel();
-    state.sockets.lock().unwrap().insert(id, outbound);
+    state.sockets.lock().unwrap_or_else(PoisonError::into_inner).insert(id, outbound);
     let sockets = state.sockets.clone();
     tauri::async_runtime::spawn(async move {
         relay(url, commands, on_event).await;
-        sockets.lock().unwrap().remove(&id);
+        sockets.lock().unwrap_or_else(PoisonError::into_inner).remove(&id);
     });
     Ok(id)
 }
 
 #[tauri::command]
 pub fn local_socket_send(state: State<'_, LocalRuntime>, id: u32, data: String) -> Result<(), String> {
-    let sockets = state.sockets.lock().unwrap();
+    let sockets = state.sockets.lock().unwrap_or_else(PoisonError::into_inner);
     let socket = sockets.get(&id).ok_or("socket-closed")?;
     socket.send(Outbound::Text(data)).map_err(|_| "socket-closed".to_string())
 }
 
 #[tauri::command]
 pub fn local_socket_close(state: State<'_, LocalRuntime>, id: u32) {
-    if let Some(socket) = state.sockets.lock().unwrap().remove(&id) {
+    if let Some(socket) = state.sockets.lock().unwrap_or_else(PoisonError::into_inner).remove(&id) {
         let _ = socket.send(Outbound::Close);
     }
 }
