@@ -1,6 +1,8 @@
 # Installing Outrunner (team build)
 
-`Outrunner_0.1.0_universal.dmg` — universal (Intel + Apple Silicon), ad-hoc signed.
+`Outrunner_<version>_universal.dmg` — universal (Intel + Apple Silicon), signed
+with our Developer ID and notarized by Apple. Download it from the repository's
+GitHub Releases.
 
 ## Before you start
 
@@ -13,37 +15,13 @@ the sign-in listener).
 
 ## Install
 
-1. Open the DMG and drag **Outrunner** to Applications.
-2. Run this once, then launch normally:
+Open the DMG and drag **Outrunner** to Applications, then launch it. macOS
+checks the notarization ticket and opens it with no warning or extra step.
 
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Outrunner.app
-   ```
-
-Without it macOS refuses to open the app. Slack (or your browser) stamps
-downloaded files with a `com.apple.quarantine` attribute, and because this
-build is ad-hoc signed with no team identifier, Gatekeeper cannot attribute
-it to a known developer. The command clears that attribute for this one app.
-
-If you would rather not run a command: launch it, let it fail, then approve it
-under **System Settings → Privacy & Security → Open Anyway**. Same result.
-
-Do NOT disable Gatekeeper globally (`spctl --master-disable`) — that turns the
-check off for everything you ever download, not just this.
-
-### Why macOS blocks it
-
-The build carries an ad-hoc signature with no team identifier, so Gatekeeper
-cannot attribute it to a known developer:
-
-```
-Signature=adhoc
-TeamIdentifier=not set
-```
-
-This is a property of how it was built, not of what it does. Signing and
-notarizing it properly needs an Apple Developer ID Application certificate,
-after which it installs with no warning at all.
+Builds before 0.2.0 were ad-hoc signed and needed
+`xattr -dr com.apple.quarantine /Applications/Outrunner.app`; that is no longer
+necessary. Replacing one of those builds signs you out once, because the app's
+identifier changed (`ai.zerotrail.runtime` → `ai.neev.outrunner`).
 
 ## First run
 
@@ -82,7 +60,5 @@ Quitting the app leaves Claude running; reopening the workspace reattaches.
 
 ## Known limits
 
-- **Unsigned** (ad-hoc), as above — the Privacy & Security step is required
-  once per install.
 - Closing the window keeps the app in the menu bar. Use **Quit Outrunner** from
   the tray menu to exit.
