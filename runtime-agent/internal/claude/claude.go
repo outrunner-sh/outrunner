@@ -53,6 +53,18 @@ func ContinueCommand(mode PermissionMode, orientation string) []string {
 	return withOrientation([]string{"claude", "--continue", "--permission-mode", string(mode)}, orientation)
 }
 
+// SessionCommand starts a conversation under a known id, so its transcript is
+// <id>.jsonl however many other conversations share the working directory.
+func SessionCommand(mode PermissionMode, sessionID, orientation string) []string {
+	return withOrientation([]string{"claude", "--session-id", sessionID, "--permission-mode", string(mode)}, orientation)
+}
+
+// ResumeCommand continues the conversation with that id (in the same
+// transcript: Claude forks a new id only when asked to).
+func ResumeCommand(mode PermissionMode, sessionID, orientation string) []string {
+	return withOrientation([]string{"claude", "--resume", sessionID, "--permission-mode", string(mode)}, orientation)
+}
+
 // withOrientation appends --append-system-prompt when there's an orientation to
 // inject. We *append* rather than replace so Claude's built-in defaults and the
 // repo's auto-loaded CLAUDE.md still apply — the orientation is the floor of the

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -291,5 +292,68 @@ func TestConcurrentCreatesOfOneWorkspaceAllSucceed(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Errorf("concurrent Create: %v", err)
 		}
+	}
+}
+
+func TestSessionsSharingAFolderKeepTheirOwnConversations(t *testing.T) {
+	isolateGit(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	folder := filepath.Join(t.TempDir(), "notes")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTurns := func(path string, turns int) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.Repeat(`{"type":"user"}`+"\n", turns)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The user has run Claude Code in this folder themselves.
+	projectDir := claudeProjectDir(home, folder)
+	writeTurns(filepath.Join(projectDir, "users-own.jsonl"), 3)
+
+	s := NewService(t.TempDir())
+	for _, id := range []string{"ws-a", "ws-b"} {
+		if _, err := s.Create(context.Background(), CreateInput{WorkspaceID: id, Branch: "runtime/" + id, RepoPath: folder}); err != nil {
+			t.Fatalf("Create %s: %v", id, err)
+		}
+	}
+	a, _ := s.getFacts("ws-a")
+	b, _ := s.getFacts("ws-b")
+	if len(a.ClaudeSessionID) != 36 || a.ClaudeSessionID == b.ClaudeSessionID {
+		t.Fatalf("session ids = %q, %q; want two distinct UUIDs", a.ClaudeSessionID, b.ClaudeSessionID)
+	}
+	// Neither session has said anything: the user's conversation is not theirs.
+	if got := s.SessionLog("ws-a"); got != "" {
+		t.Errorf("SessionLog before Claude wrote = %q, want none", got)
+	}
+	if got := s.launchCommand("ws-a", folder, true); !slices.Contains(got, "--session-id") || !slices.Contains(got, a.ClaudeSessionID) {
+		t.Errorf("first launch = %v, want a new conversation under its id", got)
+	}
+
+	writeTurns(filepath.Join(projectDir, a.ClaudeSessionID+".jsonl"), 1)
+	if got := s.SessionLog("ws-a"); filepath.Base(got) != a.ClaudeSessionID+".jsonl" {
+		t.Errorf("SessionLog(a) = %q, want its own transcript", got)
+	}
+	if got := s.SessionLog("ws-b"); got != "" {
+		t.Errorf("SessionLog(b) = %q, want none: a's transcript is not b's", got)
+	}
+	if got := s.launchCommand("ws-a", folder, false); !slices.Contains(got, "--resume") || !slices.Contains(got, a.ClaudeSessionID) {
+		t.Errorf("relaunch = %v, want its own conversation resumed", got)
+	}
+	if a, b := s.userTurns("ws-a"), s.userTurns("ws-b"); a != 1 || b != 0 {
+		t.Errorf("user turns = %d, %d; want 1, 0 (the user's own 3 counted for neither)", a, b)
+	}
+
+	// Re-creating after a restart keeps the conversation.
+	if _, err := NewService(s.Root).Create(context.Background(), CreateInput{WorkspaceID: "ws-a", Branch: "runtime/ws-a", RepoPath: folder}); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := NewService(s.Root).getFacts("ws-a"); again.ClaudeSessionID != a.ClaudeSessionID {
+		t.Errorf("re-Create changed the session id: %q, want %q", again.ClaudeSessionID, a.ClaudeSessionID)
 	}
 }

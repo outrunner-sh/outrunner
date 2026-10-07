@@ -5,6 +5,7 @@ package workspace
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -97,6 +98,12 @@ type workspaceFacts struct {
 	// commit yet): there is nothing to branch, so Claude works in the folder
 	// itself rather than a worktree, and Destroy must never remove it.
 	InPlace bool `json:"inPlace,omitempty"`
+	// ClaudeSessionID names an in-place session's conversation. Its working
+	// directory is the user's folder, not its own, so Claude's project directory
+	// for it may hold other sessions' conversations there — or the user's own
+	// Claude Code's — and "the newest log" could be any of them. The session is
+	// launched with this id and found by it instead.
+	ClaudeSessionID string `json:"claudeSessionId,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -166,6 +173,18 @@ func (s *Service) RedactionSecrets() []string {
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
 
+// newSessionID is a random (version 4) UUID, the form `claude --session-id`
+// requires.
+func newSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("workspace: the OS random source is unavailable: " + err.Error())
+	}
+	b[6] = b[6]&0x0f | 0x40 // version 4
+	b[8] = b[8]&0x3f | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
 func (s *Service) mirrorPath() string { return filepath.Join(s.Root, "repo.git") }
 func (s *Service) factsPath(id string) string {
 	return filepath.Join(s.Root, "facts", id+".json")
@@ -210,8 +229,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		Title:          in.Title,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
-	// A repeated Create (after a restart) keeps the session's original age.
-	if prior, ok := s.getFacts(in.WorkspaceID); ok && prior.CreatedAt != "" {
+	// A repeated Create (after a restart) keeps the session's original age, and
+	// its conversation.
+	prior, _ := s.getFacts(in.WorkspaceID)
+	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
 	}
 	if in.RepoPath != "" {
@@ -222,6 +243,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		facts.RepoPath, facts.InPlace, facts.Name = folder.path, !folder.git, filepath.Base(folder.path)
 		if facts.BaseBranch == "" {
 			facts.BaseBranch = folder.branch // the orientation's target branch
+		}
+		if facts.InPlace {
+			facts.ClaudeSessionID = prior.ClaudeSessionID
+			if facts.ClaudeSessionID == "" {
+				facts.ClaudeSessionID = newSessionID()
+			}
 		}
 	}
 	// Record the facts Start/Resume need, even on the idempotent path below so a
@@ -305,11 +332,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		return name, nil // already running
 	}
 	env := claude.SessionEnv(s.env, anthropicToken)
-	launch := claude.Command
-	if s.SessionLog(workspaceID) != "" {
-		launch = claude.ContinueCommand
-	}
-	cmd := launch(s.permissionMode(workspaceID), s.orientation(workspaceID, worktree))
+	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
@@ -393,7 +416,7 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := claude.ContinueCommand(s.permissionMode(workspaceID), s.orientation(workspaceID, worktree))
+	cmd := s.launchCommand(workspaceID, worktree, true)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
@@ -401,6 +424,26 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	s.waitClaudeReady(ctx, name, s.local(workspaceID))
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
+}
+
+// launchCommand is Claude's argv for (re)launching a workspace's session,
+// continuing its conversation when resume is set. An in-place session's
+// conversation is named by id: it starts under that id and is resumed by it,
+// once its transcript exists, whatever else shares the folder. Any other
+// session continues the newest conversation in its own worktree.
+func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []string {
+	mode, orientation := s.permissionMode(workspaceID), s.orientation(workspaceID, worktree)
+	f, _ := s.getFacts(workspaceID)
+	switch {
+	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
+		return claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
+	case f.ClaudeSessionID != "":
+		return claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
+	case resume:
+		return claude.ContinueCommand(mode, orientation)
+	default:
+		return claude.Command(mode, orientation)
+	}
 }
 
 // orientation builds Claude's orientation prompt for a workspace. It uses the
@@ -493,13 +536,12 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 	name := sessionName(workspaceID)
-	convDir := s.claudeConvDir(workspaceID)
 	before, retry := lock.takeStaged(content, time.Now())
 	switch {
-	case retry && userTurnCount(convDir) > before:
+	case retry && s.userTurns(workspaceID) > before:
 		return nil // the earlier copy landed after that send gave up
 	case !retry:
-		before = userTurnCount(convDir)
+		before = s.userTurns(workspaceID)
 		if err := s.tmux.Paste(ctx, name, content); err != nil {
 			return err
 		}
@@ -510,7 +552,7 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 			lastErr = err
 		}
 		time.Sleep(submitPollInterval)
-		if userTurnCount(convDir) > before {
+		if s.userTurns(workspaceID) > before {
 			return nil // Claude recorded a new user turn: the prompt was accepted
 		}
 	}
@@ -599,23 +641,42 @@ func userTurnCount(dir string) int {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
+		count += fileUserTurns(filepath.Join(dir, e.Name()))
+	}
+	return count
+}
+
+// fileUserTurns counts the user messages in one conversation file (0 if it
+// doesn't exist yet).
+func fileUserTurns(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			var rec struct {
-				Type string `json:"type"`
-			}
-			if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
-				count++
-			}
+		var rec struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
+			count++
 		}
 	}
 	return count
+}
+
+// userTurns counts the user messages in a workspace's conversation: its own
+// transcript when the conversation is named by id (an in-place session, whose
+// folder other conversations may share), else every transcript in its worktree's
+// project directory.
+func (s *Service) userTurns(workspaceID string) int {
+	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
+		return fileUserTurns(filepath.Join(s.claudeConvDir(workspaceID), f.ClaudeSessionID+".jsonl"))
+	}
+	return userTurnCount(s.claudeConvDir(workspaceID))
 }
 
 // lockLifecycle takes the workspace's lifecycle lock and returns its release,
@@ -826,9 +887,9 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 
 // SessionLog returns the current Claude JSONL path for a workspace, or "" if
 // Claude hasn't written anything yet. Claude Code stores per-project logs at
-// ~/.claude/projects/<slug>/<sessionId>.jsonl where <slug> is the working
-// directory with '/' and '.' replaced by '-'. When --continue reopens a prior
-// session it reuses that file, so "newest jsonl" == "current session."
+// ~/.claude/projects/<slug>/<sessionId>.jsonl (see claudeSlug). A worktree is
+// the session's own, and --continue reuses its file, so "newest jsonl" ==
+// "current session"; an in-place session's conversation is named by id.
 func (s *Service) SessionLog(workspaceID string) string {
 	if s.jcode != nil {
 		return s.jcode.ConversationLog(workspaceID)
@@ -838,6 +899,13 @@ func (s *Service) SessionLog(workspaceID string) string {
 		return ""
 	}
 	dir := claudeProjectDir(home, s.worktreePath(workspaceID))
+	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
+		path := filepath.Join(dir, f.ClaudeSessionID+".jsonl")
+		if _, err := os.Stat(path); err != nil {
+			return ""
+		}
+		return path
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
