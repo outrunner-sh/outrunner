@@ -288,6 +288,54 @@ func TestLocalSessionsReportWhenEachWasLastUsed(t *testing.T) {
 	}
 }
 
+func TestAnInPlaceSessionNeverTakesAnotherSessionsActivity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	folder := t.TempDir()
+	s := NewService(t.TempDir())
+	// Two in-place sessions in one folder, made before sessions had a Claude
+	// session id, plus one made after, with its own.
+	for _, id := range []string{"ws-legacy", "ws-other"} {
+		s.setFacts(id, workspaceFacts{
+			Branch: "b", RepoPath: folder, InPlace: true, CreatedAt: "2026-09-01T00:00:00Z",
+		})
+	}
+	s.setFacts("ws-named", workspaceFacts{
+		Branch: "b", RepoPath: folder, InPlace: true, CreatedAt: "2026-09-01T00:00:00Z",
+		ClaudeSessionID: "11111111-1111-4111-8111-111111111111",
+	})
+	// The folder's transcript directory: one log the legacy sessions cannot
+	// tell apart (whoever wrote it), and ws-named's own, written later.
+	dir := claudeProjectDir(home, folder)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, at time.Time) {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("someone-else.jsonl", time.Date(2026, 10, 7, 8, 0, 0, 0, time.UTC))
+	write("11111111-1111-4111-8111-111111111111.jsonl", time.Date(2026, 10, 6, 8, 0, 0, 0, time.UTC))
+
+	got := map[string]string{}
+	for _, session := range s.LocalSessions(context.Background()) {
+		got[session.WorkspaceID] = session.LastActiveAt
+	}
+	for _, id := range []string{"ws-legacy", "ws-other"} {
+		if got[id] != "2026-09-01T00:00:00Z" {
+			t.Errorf("%s lastActiveAt = %q, want its creation time, not the folder's newest log", id, got[id])
+		}
+	}
+	if got["ws-named"] != "2026-10-06T08:00:00Z" {
+		t.Errorf("ws-named lastActiveAt = %q, want its own transcript's time", got["ws-named"])
+	}
+}
+
 func TestDestroyRemovesTheWorktreeButKeepsTheBranch(t *testing.T) {
 	isolateGit(t)
 	repo := newCheckout(t)
