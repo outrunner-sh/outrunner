@@ -9,9 +9,12 @@ GitHub Releases.
 The app is a thin shell around **https://outrunner.neev.ai**, which is live.
 It has no local fallback, so if that site is ever down the window opens blank.
 
-Because it is a shell, web changes reach you on next launch with no reinstall —
-a new DMG is only needed for native changes (the Claude connect flow, the tray,
-the sign-in listener).
+Because it is a shell, web changes reach you on next launch with no reinstall.
+Native changes (the Claude connect flow, the tray, the sign-in listener) arrive
+as updates: the app checks shortly after launch and every few hours, installs
+a new version in the background, and asks you to **Restart**. Choosing
+**Later** is fine; the next launch runs the new version. To check by hand, use
+**Check for Updates…** in the tray menu.
 
 ## Install
 
