@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/restore", s.authed(s.restoreWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
+	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -116,6 +117,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	if req.Model != "" && !claude.ValidModel(req.Model) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
+		return
+	}
 	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
 		WorkspaceID:    req.WorkspaceID,
 		Branch:         req.Branch,
@@ -123,6 +128,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		RepoPath:       req.RepoPath,
 		PermissionMode: mode,
 		Title:          req.Title,
+		Model:          req.Model,
 	})
 	switch {
 	case errors.Is(err, workspace.ErrBypassInFolder):
@@ -317,6 +323,28 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, "sent", s.ws.SendMessage(r.PathValue("id"), req.Content))
+}
+
+// setModel switches the workspace's session to another model, relaunching a
+// running session on it (its conversation continues).
+func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.SetModelRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if !claude.ValidModel(req.Model) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
+		return
+	}
+	err := s.ws.SetModel(r.Context(), r.PathValue("id"), req.Model, "")
+	if errors.Is(err, workspace.ErrUnknownWorkspace) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		return
+	}
+	respond(w, req.Model, err)
 }
 
 // pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach

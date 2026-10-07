@@ -65,6 +65,35 @@ func ResumeCommand(mode PermissionMode, sessionID, orientation string) []string 
 	return withOrientation([]string{"claude", "--resume", sessionID, "--permission-mode", string(mode)}, orientation)
 }
 
+// WithModel adds --model, so the session runs that model without touching the
+// user's default: /model inside Claude saves its pick as the default for every
+// new session, which on a user's own Mac would change their Claude Code too.
+// An empty model keeps Claude's own choice.
+func WithModel(argv []string, model string) []string {
+	if model == "" {
+		return argv
+	}
+	return append(argv, "--model", model)
+}
+
+// ValidModel accepts a model as Claude's --model takes it: an alias ("opus"),
+// a full name ("claude-opus-4-5-20250101", "claude-opus-4-5[1m]"), or a
+// gateway's slug ("z-ai/glm-5.3"). Nothing that could read as another flag.
+func ValidModel(model string) bool {
+	if model == "" || len(model) > 100 || model[0] == '-' {
+		return false
+	}
+	for _, r := range model {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("-._:/[]~", r):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // withOrientation appends --append-system-prompt when there's an orientation to
 // inject. We *append* rather than replace so Claude's built-in defaults and the
 // repo's auto-loaded CLAUDE.md still apply — the orientation is the floor of the

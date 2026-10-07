@@ -104,6 +104,8 @@ type workspaceFacts struct {
 	// Claude Code's — and "the newest log" could be any of them. The session is
 	// launched with this id and found by it instead.
 	ClaudeSessionID string `json:"claudeSessionId,omitempty"`
+	// Model is the --model the session runs; empty is Claude's own default.
+	Model string `json:"model,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -123,6 +125,9 @@ type CreateInput struct {
 	PermissionMode claude.PermissionMode
 	// Title labels a local session in the desktop's list.
 	Title string
+	// Model is the session's --model; empty keeps Claude's default. Callers
+	// validate it (claude.ValidModel).
+	Model string
 }
 
 func NewService(root string) *Service {
@@ -227,6 +232,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		BaseBranch:     in.BaseBranch,
 		PermissionMode: in.PermissionMode,
 		Title:          in.Title,
+		Model:          in.Model,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
 	// A repeated Create (after a restart) keeps the session's original age, and
@@ -234,6 +240,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	prior, existed := s.getFacts(in.WorkspaceID)
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
+	}
+	if facts.Model == "" {
+		facts.Model = prior.Model // a re-Create that names none keeps the switch
 	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
@@ -411,6 +420,39 @@ func isTrustDialog(pane string) bool {
 // The Summary collector is (re)started so post-restart activity is folded in.
 func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	defer s.lockLifecycle(workspaceID)()
+	return s.relaunch(ctx, workspaceID, anthropicToken, true)
+}
+
+// ErrUnknownWorkspace is a workspace this agent has no record of.
+var ErrUnknownWorkspace = errors.New("unknown workspace")
+
+// SetModel switches a session to another model. It is recorded first, so every
+// later launch and resume uses it; a running session is then relaunched on it,
+// continuing its conversation (Claude reads the model only at launch). A turn
+// in progress is cut off, so callers offer the switch only between turns.
+func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicToken string) error {
+	defer s.lockLifecycle(workspaceID)()
+	f, ok := s.getFacts(workspaceID)
+	if !ok {
+		return ErrUnknownWorkspace // never write facts for a workspace never created
+	}
+	if f.Model == model {
+		return nil
+	}
+	f.Model = model
+	s.setFacts(workspaceID, f)
+	if s.jcode != nil || !s.tmux.HasSession(ctx, sessionName(workspaceID)) {
+		return nil // the next Start launches on it
+	}
+	// Continue only a conversation that exists: before the first prompt there
+	// is none, and --continue with nothing to continue exits.
+	_, err := s.relaunch(ctx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "")
+	return err
+}
+
+// relaunch replaces a workspace's Claude session. Callers hold its lifecycle
+// lock.
+func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken string, resume bool) (string, error) {
 	// Hold the send lock across the kill+recreate so an in-flight SendMessage
 	// retry loop can't press Enter into the freshly recreated session.
 	lock := s.sendLock(workspaceID)
@@ -430,7 +472,7 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := s.launchCommand(workspaceID, worktree, true)
+	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
@@ -448,16 +490,18 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []string {
 	mode, orientation := s.permissionMode(workspaceID), s.orientation(workspaceID, worktree)
 	f, _ := s.getFacts(workspaceID)
+	var argv []string
 	switch {
 	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
-		return claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
+		argv = claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
 	case f.ClaudeSessionID != "":
-		return claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
+		argv = claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
 	case resume:
-		return claude.ContinueCommand(mode, orientation)
+		argv = claude.ContinueCommand(mode, orientation)
 	default:
-		return claude.Command(mode, orientation)
+		argv = claude.Command(mode, orientation)
 	}
+	return claude.WithModel(argv, f.Model)
 }
 
 // orientation builds Claude's orientation prompt for a workspace. It uses the

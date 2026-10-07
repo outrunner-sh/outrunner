@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -278,5 +279,53 @@ func TestRetryingAPromptThatLandedLateDoesNotSendItAgain(t *testing.T) {
 	// There is no tmux session: any paste or Enter would fail the send.
 	if err := s.SendMessage("ws-late", "fix it"); err != nil {
 		t.Fatalf("retry of a landed prompt = %v, want success without sending", err)
+	}
+}
+
+func TestASessionsModelIsRecordedAndLaunchedWith(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-m", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	if got := s.launchCommand("ws-m", s.worktreePath("ws-m"), false); !slices.Contains(got, "--model") || got[len(got)-1] != "sonnet" {
+		t.Fatalf("launch = %q, want --model sonnet", got)
+	}
+	if got := s.launchCommand("ws-m", s.worktreePath("ws-m"), true); got[len(got)-1] != "sonnet" || !slices.Contains(got, "--continue") {
+		t.Fatalf("resume = %q, want --continue … --model sonnet", got)
+	}
+
+	// No session is running, so the switch is only recorded: the next launch
+	// uses it, and so does an agent that restarts.
+	if err := s.SetModel(context.Background(), "ws-m", "z-ai/glm-5.3", ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	restarted := NewService(root)
+	if got := restarted.launchCommand("ws-m", restarted.worktreePath("ws-m"), true); got[len(got)-1] != "z-ai/glm-5.3" {
+		t.Fatalf("after restart launch = %q, want the switched model", got)
+	}
+
+	// A re-Create that names no model (the control plane after a box restart)
+	// keeps the switch.
+	_, _ = restarted.Create(context.Background(), CreateInput{WorkspaceID: "ws-m", Branch: "b", BaseBranch: "main"})
+	if f, _ := restarted.getFacts("ws-m"); f.Model != "z-ai/glm-5.3" {
+		t.Errorf("re-Create dropped the model: %+v", f)
+	}
+}
+
+func TestNoModelLaunchesClaudesDefault(t *testing.T) {
+	s := NewService(t.TempDir())
+	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-d", Branch: "b", BaseBranch: "main"})
+	if got := s.launchCommand("ws-d", s.worktreePath("ws-d"), false); slices.Contains(got, "--model") {
+		t.Errorf("launch = %q, want no --model", got)
+	}
+}
+
+func TestSetModelOnAnUnknownWorkspaceWritesNothing(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	if err := s.SetModel(context.Background(), "ws-none", "opus", ""); !errors.Is(err, ErrUnknownWorkspace) {
+		t.Fatalf("SetModel = %v, want ErrUnknownWorkspace", err)
+	}
+	if _, err := os.Stat(s.factsPath("ws-none")); !os.IsNotExist(err) {
+		t.Errorf("a facts file was written for a workspace never created: %v", err)
 	}
 }

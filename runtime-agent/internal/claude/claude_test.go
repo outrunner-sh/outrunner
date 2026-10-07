@@ -185,3 +185,27 @@ func TestSessionEnvOmitsTokenWhenEmpty(t *testing.T) {
 		t.Errorf("startup flag missing when token empty: %v", env)
 	}
 }
+
+func TestWithModelAddsTheFlagOnlyWhenSet(t *testing.T) {
+	base := []string{"claude", "--resume", "id"}
+	if got := WithModel(base, ""); len(got) != 3 {
+		t.Errorf("empty model changed argv: %q", got)
+	}
+	got := WithModel(base, "z-ai/glm-5.3")
+	if n := len(got); n != 5 || got[n-2] != "--model" || got[n-1] != "z-ai/glm-5.3" {
+		t.Errorf("WithModel = %q", got)
+	}
+}
+
+func TestValidModel(t *testing.T) {
+	for _, ok := range []string{"opus", "claude-opus-4-5-20250101", "claude-opus-4-5[1m]", "z-ai/glm-5.3", "~anthropic/claude-opus-latest", "nvidia/nemotron:free"} {
+		if !ValidModel(ok) {
+			t.Errorf("%q rejected", ok)
+		}
+	}
+	for _, bad := range []string{"", "-p", "--dangerously-skip-permissions", "opus haiku", "a;b", "a\nb", "$(x)", strings.Repeat("a", 101)} {
+		if ValidModel(bad) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

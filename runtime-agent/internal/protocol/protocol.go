@@ -70,6 +70,14 @@ type CreateWorkspaceRequest struct {
 	PermissionMode string `json:"permissionMode,omitempty"`
 	// Title labels a local session in the desktop's list (the first prompt).
 	Title string `json:"title,omitempty"`
+	// Model is Claude's --model for the session: an alias, a full model name,
+	// or a gateway slug. Empty keeps Claude's default.
+	Model string `json:"model,omitempty"`
+}
+
+// SetModelRequest switches a workspace's session to another model.
+type SetModelRequest struct {
+	Model string `json:"model"`
 }
 
 // ListingWorkspaceID is the workspace claim of the only token that may list an
@@ -95,6 +103,8 @@ type LocalSession struct {
 	CreatedAt  string `json:"createdAt"`
 	// Running is whether Claude's session is live right now.
 	Running bool `json:"running"`
+	// Model is the session's --model; empty when it runs Claude's default.
+	Model string `json:"model,omitempty"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).
