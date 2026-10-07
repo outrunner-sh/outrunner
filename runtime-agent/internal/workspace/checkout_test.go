@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These run real git against throwaway repositories, because what matters is
@@ -237,6 +238,53 @@ func TestLocalSessionsListsWhatThisMacRuns(t *testing.T) {
 	realRepo, _ := filepath.EvalSymlinks(repo)
 	if got[0].Name != "app" || got[0].Folder != realRepo || got[0].Worktree != s.worktreePath("ws-new") || got[0].Running {
 		t.Errorf("session = %+v", got[0])
+	}
+}
+
+func TestLocalSessionsReportWhenEachWasLastUsed(t *testing.T) {
+	isolateGit(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := newCheckout(t)
+	s := NewService(t.TempDir())
+	for _, id := range []string{"ws-used", "ws-untouched"} {
+		if _, err := s.Create(context.Background(), CreateInput{
+			WorkspaceID: id, Branch: "runtime/" + id, RepoPath: repo, Title: id,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		f, _ := s.getFacts(id)
+		f.CreatedAt = "2026-09-01T00:00:00Z"
+		s.setFacts(id, f)
+	}
+	// Claude wrote to one session's transcript later than it was made.
+	f, _ := s.getFacts("ws-used")
+	name := "transcript.jsonl"
+	if f.ClaudeSessionID != "" {
+		name = f.ClaudeSessionID + ".jsonl"
+	}
+	dir := claudeProjectDir(home, s.worktreePath("ws-used"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, name)
+	if err := os.WriteFile(log, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	used := time.Date(2026, 10, 7, 9, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(log, used, used); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]string{}
+	for _, session := range s.LocalSessions(context.Background()) {
+		got[session.WorkspaceID] = session.LastActiveAt
+	}
+	if got["ws-used"] != "2026-10-07T09:30:00Z" {
+		t.Errorf("used session lastActiveAt = %q, want the transcript's time", got["ws-used"])
+	}
+	if got["ws-untouched"] != "2026-09-01T00:00:00Z" {
+		t.Errorf("untouched session lastActiveAt = %q, want its creation time", got["ws-untouched"])
 	}
 }
 

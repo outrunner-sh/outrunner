@@ -93,6 +93,10 @@ type LocalSession struct {
 	BaseBranch string `json:"baseBranch"`
 	InPlace    bool   `json:"inPlace"`
 	CreatedAt  string `json:"createdAt"`
+	// LastActiveAt is when Claude last wrote to the session's transcript, so a
+	// session made weeks ago but used today reads as today; CreatedAt when there
+	// is no transcript yet. Omitted by agents older than the field.
+	LastActiveAt string `json:"lastActiveAt,omitempty"`
 	// Running is whether Claude's session is live right now.
 	Running bool `json:"running"`
 }

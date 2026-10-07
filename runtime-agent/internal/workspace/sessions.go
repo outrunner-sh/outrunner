@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"runtime-agent/internal/protocol"
 )
@@ -35,18 +36,31 @@ func (s *Service) LocalSessions(ctx context.Context) []protocol.LocalSession {
 			name = filepath.Base(f.RepoPath)
 		}
 		sessions = append(sessions, protocol.LocalSession{
-			WorkspaceID: id,
-			Name:        name,
-			Title:       f.Title,
-			Folder:      f.RepoPath,
-			Worktree:    s.worktreePath(id),
-			Branch:      f.Branch,
-			BaseBranch:  f.BaseBranch,
-			InPlace:     f.InPlace,
-			CreatedAt:   f.CreatedAt,
-			Running:     s.SessionAlive(ctx, id),
+			WorkspaceID:  id,
+			Name:         name,
+			Title:        f.Title,
+			Folder:       f.RepoPath,
+			Worktree:     s.worktreePath(id),
+			Branch:       f.Branch,
+			BaseBranch:   f.BaseBranch,
+			InPlace:      f.InPlace,
+			CreatedAt:    f.CreatedAt,
+			LastActiveAt: s.lastActiveAt(id, f.CreatedAt),
+			Running:      s.SessionAlive(ctx, id),
 		})
 	}
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	return sessions
+}
+
+// lastActiveAt is when Claude last wrote this session's transcript (every turn
+// appends to it), else createdAt: a session not yet talked to was last active
+// when it was made.
+func (s *Service) lastActiveAt(workspaceID, createdAt string) string {
+	if log := s.SessionLog(workspaceID); log != "" {
+		if info, err := os.Stat(log); err == nil {
+			return info.ModTime().UTC().Format(time.RFC3339)
+		}
+	}
+	return createdAt
 }

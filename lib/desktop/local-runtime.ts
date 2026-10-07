@@ -63,6 +63,9 @@ export type LocalSession = {
   baseBranch: string;
   inPlace: boolean;
   createdAt: string;
+  /** When Claude last wrote to the session (its transcript's time), else
+   *  createdAt. Absent from agents bundled before it existed. */
+  lastActiveAt?: string;
   running: boolean;
 };
 
