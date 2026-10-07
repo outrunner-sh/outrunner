@@ -54,6 +54,9 @@ pub fn start(app: &AppHandle) {
 
 /// The tray's "Check for Updates…".
 pub fn check_now(app: &AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move { check(&app, true).await });
 }
