@@ -5,9 +5,12 @@ name: Desktop publish
 # Release itself is not downloadable by anyone outside it.
 #
 #   Automatic: publishing a desktop-v* release (the draft desktop-release.yml
-#              made) puts it live, usually within a minute.
+#              made) puts it live, usually within a minute. It only ever moves
+#              the latest link FORWARD: publishing an older draft after a newer
+#              release uploads its versioned file and leaves the latest alone.
 #   Rollback:  Actions -> Desktop publish -> Run workflow with an older tag
-#              (e.g. desktop-v0.2.0) points the latest link back at it.
+#              (e.g. desktop-v0.2.0) points the latest link back at it. A
+#              manual run is the only way the latest version goes down.
 #
 # What it writes, under outrunner/ in the bucket:
 #   Outrunner_<version>_universal.dmg   that version, kept forever, cached long
@@ -141,6 +144,35 @@ jobs:
             echo "::notice::prerelease: published $NAME only; the latest download is unchanged."
             exit 0
           fi
+
+          # What is live now, read from the bucket itself (not the cached
+          # public URL). Absent only before the very first publish; any other
+          # failure stops here rather than guessing.
+          LIVE=""
+          if aws s3api get-object --endpoint-url "$ENDPOINT" --bucket "$BUCKET" \
+               --key "$PREFIX/latest.json" live.json > /dev/null 2> get.err; then
+            LIVE=$(jq -r '.version // empty' live.json)
+            [[ "$LIVE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+              echo "::error::live latest.json has no usable version ('$LIVE'); fix or delete it in the bucket"
+              exit 1
+            }
+          elif grep -qE "NoSuchKey|Not Found|\(404\)" get.err; then
+            echo "no latest.json yet: first publish"
+          else
+            cat get.err
+            echo "::error::could not read the live latest.json"
+            exit 1
+          fi
+
+          # Only a manual run may move the latest link backwards (a rollback).
+          # An automatic one for an older version, e.g. a stale draft
+          # published late, must not replace a newer live release.
+          if [ -n "$LIVE" ] && [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] &&
+             [ "$(printf '%s\n%s\n' "$LIVE" "$VERSION" | sort -V | tail -n1)" != "$VERSION" ]; then
+            echo "::warning::$VERSION is older than the live $LIVE: published $NAME only; the latest download is unchanged. To roll back on purpose, run this workflow by hand with desktop-v$VERSION."
+            exit 0
+          fi
+          [ -n "$LIVE" ] && echo "latest: $LIVE -> $VERSION"
 
           # Short cache so a new release (or a rollback) reaches the site in
           # minutes. The download keeps its versioned name on the user's Mac.

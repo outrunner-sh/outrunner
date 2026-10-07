@@ -89,8 +89,10 @@ release, once published, is never rebuilt over: fix forward with a new tag.
 Publishing the draft runs `.github/workflows/desktop-publish.yml`, which
 copies the DMG to the public download bucket. The link to share is
 `<DOWNLOADS_BASE_URL>/outrunner/Outrunner.dmg`, always the latest published
-version; `outrunner/latest.json` says which version that is. To roll back,
-run that workflow by hand with an older tag.
+version; `outrunner/latest.json` says which version that is. Publishing only
+moves that link forward, so a stale draft published late never replaces a
+newer release. To roll back on purpose, run that workflow by hand with the
+older tag.
 
 To check signing without cutting a release, run the release workflow by hand
 from the Actions tab: it does the same build and leaves the DMG as a workflow
