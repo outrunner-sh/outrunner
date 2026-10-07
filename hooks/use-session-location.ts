@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
 import {
@@ -58,27 +58,35 @@ export function useSessionLocation() {
     }
   }, []);
 
-  // Re-check the remembered folder once local is chosen: it may have moved.
+  // Stops the re-check below. A folder picked while it runs wins, so the stale
+  // answer must not overwrite the pick, nor its failure wipe the new path.
+  const stopCheck = useRef(() => {});
+
+  // Re-check the remembered folder each time local is chosen: it may have moved
+  // or been removed since, even if it was picked earlier.
   useEffect(() => {
     if (location !== "local") return;
-    const path = rememberedFolder();
-    if (!path) return;
     let cancelled = false;
-    // A folder picked while this check runs wins: its answer must not be
-    // overwritten by the stale one, nor its remembered path wiped.
-    const keepPicked = (next: NonNullable<typeof found>) => (prev: typeof found) =>
-      prev?.picked ? prev : next;
-    checkLocalFolder(path)
-      .then((folder) => {
-        if (!cancelled) setFound(keepPicked({ path, picked: false, choice: { state: "ok", folder } }));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        if (rememberedFolder() === path) rememberFolder(null); // gone: ask again
-        setFound(keepPicked({ path, picked: false, choice: { state: "none" } }));
-      });
+    stopCheck.current = () => {
+      cancelled = true;
+    };
+    const path = rememberedFolder();
+    if (path) {
+      checkLocalFolder(path)
+        .then((folder) => {
+          if (!cancelled) setFound({ path, picked: false, choice: { state: "ok", folder } });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          rememberFolder(null); // gone: ask again
+          setFound({ path, picked: false, choice: { state: "none" } });
+        });
+    }
     return () => {
       cancelled = true;
+      // Leaving local drops the answer, so coming back shows the folder as
+      // being checked rather than an earlier pick that may be stale.
+      setFound(null);
     };
   }, [location]);
 
@@ -86,9 +94,11 @@ export function useSessionLocation() {
     try {
       const folder = await pickLocalFolder();
       if (!folder) return; // cancelled
+      stopCheck.current();
       rememberFolder(folder.path);
       setFound({ path: folder.path, picked: true, choice: { state: "ok", folder } });
     } catch (error) {
+      stopCheck.current();
       setFound({
         path: "",
         picked: true,
