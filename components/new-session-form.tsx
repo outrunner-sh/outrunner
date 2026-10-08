@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
-import { LocalFolderButton, SessionLocationToggle } from "@/components/session-location-picker";
+import { LocalBlocker, LocalFolderButton, SessionLocationToggle } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
@@ -89,11 +89,7 @@ export function NewSessionForm({
       </div>
       <div className="mt-3 flex flex-col items-center gap-2">
         <SessionLocationToggle state={where} disabled={isCreating} />
-        {where.blocker && (
-          <p aria-live="polite" className="text-muted-foreground text-xs">
-            {where.blocker}
-          </p>
-        )}
+        <LocalBlocker state={where} />
       </div>
 
       {message && (

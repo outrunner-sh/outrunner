@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 
 import { ProjectAvatar } from "@/components/project-avatar";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
-import { LocalFolderButton, SessionLocationToggle } from "@/components/session-location-picker";
+import { LocalBlocker, LocalFolderButton, SessionLocationToggle } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import {
   Dialog,
@@ -193,11 +193,7 @@ function NewSessionModalBody({
         </button>
       </div>
 
-      {where.blocker && !message && (
-        <p aria-live="polite" className="px-4 pb-4 text-xs text-muted-foreground">
-          {where.blocker}
-        </p>
-      )}
+      {!message && <LocalBlocker state={where} className="px-4 pb-4" />}
       {message && (
         <p aria-live="polite" className="px-4 pb-4 text-center text-xs text-destructive">
           {message}

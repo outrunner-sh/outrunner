@@ -6,6 +6,7 @@ import {
   localSocketUrl,
   messageForLocalError,
   missingTools,
+  needsClaudeLogin,
   openSocket,
   parseLocalSocketUrl,
 } from "@/lib/desktop/local-runtime";
@@ -34,6 +35,26 @@ test("other URLs are not local sockets", () => {
 test("missing tools are named in install order", () => {
   const status = { deviceId: "d", root: "/r", agentBundled: true, git: "/usr/bin/git", tmux: null, claude: null };
   assert.deepEqual(missingTools(status), ["tmux", "Claude Code"]);
+});
+
+test("only a clear no from the app asks for a Claude Code login", () => {
+  const status = { deviceId: "d", root: "/r", agentBundled: true, git: "/g", tmux: "/t", claude: "/c" };
+  assert.equal(needsClaudeLogin({ ...status, claudeLoggedIn: false }), true);
+  assert.equal(needsClaudeLogin({ ...status, claudeLoggedIn: true }), false);
+  // The app could not tell, or predates the check: leave it to the session.
+  assert.equal(needsClaudeLogin({ ...status, claudeLoggedIn: null }), false);
+  assert.equal(needsClaudeLogin(status), false);
+  // Not installed is a missing tool, not a login.
+  assert.equal(needsClaudeLogin({ ...status, claude: null, claudeLoggedIn: false }), false);
+});
+
+test("a failed login says what Claude Code said", () => {
+  assert.equal(
+    messageForLocalError("login-failed: OAuth error | Request failed"),
+    "Claude Code couldn't log in. It said: OAuth error | Request failed",
+  );
+  assert.match(messageForLocalError("login-failed: "), /type \/login/);
+  assert.match(messageForLocalError("login-timed-out"), /Try again/);
 });
 
 test("app error codes become sentences; agent messages pass through", () => {
