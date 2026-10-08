@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Check, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,9 @@ const noopSubscribe = () => () => {};
 export function ClaudeConnection() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [busy, setBusy] = useState(false);
+  // Watching for the CLI to finish after the browser opened. Kept apart from
+  // `busy` so Cancel and the code fallback stay usable for the whole wait.
+  const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Whether we're inside the Tauri shell — an unchanging client-only fact, so
@@ -74,65 +77,110 @@ export function ClaudeConnection() {
     setCode("");
   }, []);
 
+  // The login attempt the page is following. Cancel, Disconnect and a new
+  // Connect move it on, so an older loop stops polling, saving or touching the
+  // page: it can neither time out a newer login nor reconnect after Disconnect.
+  const attempt = useRef(0);
+  // The attempt whose token was taken, by the poll or by a pasted code. The two
+  // can race for it; the loser's "no login in progress" is not an error.
+  const claimed = useRef(0);
+
+  /** The one way a login finishes: save its token, once, if still wanted. */
+  const complete = useCallback(
+    async (mine: number, token: string) => {
+      if (attempt.current !== mine || claimed.current === mine) return;
+      claimed.current = mine;
+      await save(token);
+      // A pasted code may have lost the race and shown an error meanwhile.
+      setError(null);
+    },
+    [save],
+  );
+
   const connect = useCallback(async () => {
+    const mine = ++attempt.current;
+    const current = () => attempt.current === mine;
     setBusy(true);
     setError(null);
+    let url: string;
     try {
-      const url = await startClaudeLogin();
-      setPending(url);
-      // The shell bounces off-site navigations to the system browser, which is
-      // where this has to happen: Claude blocks embedded webviews, and the URL
-      // bar is the user's anti-phishing signal.
-      window.open(url, "_blank");
+      url = await startClaudeLogin();
+    } catch (e) {
+      if (current()) setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+      return;
+    } finally {
+      setBusy(false);
+    }
+    if (!current()) return;
+    setPending(url);
+    // The shell bounces off-site navigations to the system browser, which is
+    // where this has to happen: Claude blocks embedded webviews, and the URL
+    // bar is the user's anti-phishing signal.
+    window.open(url, "_blank");
 
-      // Authorizing usually completes the login outright, so watch for the
-      // token rather than asking for a code that will never be issued. The code
-      // field stays on screen meanwhile, for the CLI's fallback prompt.
+    // Authorizing usually completes the login outright, so watch for the
+    // token rather than asking for a code that will never be issued. The code
+    // field stays on screen meanwhile, for the CLI's fallback prompt.
+    setWaiting(true);
+    try {
       const deadline = Date.now() + 5 * 60 * 1000;
       while (Date.now() < deadline) {
-        let token: string | null = null;
-        try {
-          token = await pollClaudeLogin();
-        } catch (e) {
-          // Don't swallow this. A silent catch here hid a missing ACL grant:
-          // every poll was rejected, the loop gave up on the first tick, and the
-          // UI sat on the code field while the token was already in hand.
-          const reason = e instanceof Error ? e.message : String(e);
-          if (reason.includes("no-login-in-progress")) return;
-          throw e;
-        }
-        if (token) {
-          await save(token);
+        // Don't swallow a rejection here. A silent catch once hid a missing ACL
+        // grant: every poll was rejected, the loop gave up on the first tick,
+        // and the UI sat on the code field while the token was already in hand.
+        const poll = await pollClaudeLogin();
+        if (!current() || poll.state === "ended") return;
+        if (poll.state === "done") {
+          await complete(mine, poll.token);
           return;
         }
       }
+      void cancelClaudeLogin();
+      setPending(null);
+      setError("No answer from the browser after five minutes. Start again.");
     } catch (e) {
+      if (!current()) return;
+      setPending(null);
       setError(e instanceof Error ? e.message : "Connecting Claude failed.");
     } finally {
-      setBusy(false);
+      // A newer attempt owns `waiting` now.
+      if (current()) setWaiting(false);
     }
-  }, [save]);
+  }, [complete]);
 
   const finish = useCallback(async () => {
+    const mine = attempt.current;
     setBusy(true);
     setError(null);
     try {
-      await save(await submitClaudeCode(code));
+      await complete(mine, await submitClaudeCode(code));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+      // The poll may have taken this token first and saved it.
+      if (attempt.current === mine && claimed.current !== mine) {
+        setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+      }
     } finally {
       setBusy(false);
     }
-  }, [code, save]);
+  }, [code, complete]);
 
-  const abandon = useCallback(() => {
+  /** Stop following the login in progress, if any, and stop its CLI. */
+  const stopLogin = useCallback(() => {
+    attempt.current++;
     void cancelClaudeLogin();
     setPending(null);
+    setWaiting(false);
     setCode("");
-    setError(null);
   }, []);
 
+  const abandon = useCallback(() => {
+    stopLogin();
+    setError(null);
+  }, [stopLogin]);
+
   const disconnect = useCallback(async () => {
+    // A Reconnect still waiting must not save a token after this.
+    stopLogin();
     setBusy(true);
     setError(null);
     try {
@@ -144,7 +192,7 @@ export function ClaudeConnection() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [stopLogin]);
 
   const connected = meta?.connected ?? false;
 
@@ -176,11 +224,15 @@ export function ClaudeConnection() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={busy}
+                    disabled={busy || waiting}
                     onClick={connect}
                     aria-label="Reconnect"
                   >
-                    {busy ? <Loader2 className="size-4 animate-spin" /> : "Reconnect"}
+                    {busy || waiting ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      "Reconnect"
+                    )}
                   </Button>
                 ) : null}
                 <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
@@ -195,7 +247,7 @@ export function ClaudeConnection() {
         ) : desktop && pending ? (
           <div className="space-y-3">
             <p className="text-sm text-foreground">
-              {busy
+              {waiting
                 ? "Waiting for you to authorize in the browser…"
                 : "Authorize in your browser to finish."}
             </p>
@@ -219,7 +271,7 @@ export function ClaudeConnection() {
                 value={code}
                 onChange={(event) => setCode(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && code.trim()) void finish();
+                  if (event.key === "Enter" && code.trim() && !busy) void finish();
                 }}
                 placeholder="Paste the code…"
                 aria-label="Authorization code"
@@ -250,7 +302,7 @@ export function ClaudeConnection() {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Open Runtime in the desktop app to connect your Claude subscription.
+            Open Outrunner in the desktop app to connect your Claude subscription.
           </p>
         )}
 
