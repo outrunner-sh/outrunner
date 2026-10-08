@@ -18,7 +18,8 @@ import { ProjectWorkspaceNav } from "@/components/project-workspace-nav";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { SessionComposer } from "@/components/session-composer";
 import { WorkspaceSession } from "@/components/workspace-session";
-import { localSessionLabel } from "@/hooks/use-local-sessions";
+import { useLocalSessions } from "@/hooks/use-local-sessions";
+import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
@@ -49,6 +50,9 @@ export function WorkspaceStudio({
   // prompts are answered — in a local session, every shell-command approval.
   const [showTerminal, setShowTerminal] = useState(false);
   const isLocal = local !== undefined;
+  // Read once here: the sidebar shows them, and labels the cloud section only
+  // when there is a local one above it to tell apart.
+  const localSessions = useLocalSessions().sessions;
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (workspace.provider === "daytona" || isLocal);
   const offline = offlineCopy({ workspace, isReady });
@@ -61,11 +65,12 @@ export function WorkspaceStudio({
           <Link href="/" className="studio-back"><ArrowLeft /> Home</Link>
           <Link href="/new" className="studio-back" title="New session"><Plus /> New</Link>
         </div>
-        <LocalSessionsNav activeWorkspaceId={workspace.id} />
+        <LocalSessionsNav sessions={localSessions} activeWorkspaceId={workspace.id} />
         <ProjectWorkspaceNav
           projects={allProjects}
           workspaces={allWorkspaces}
           activeWorkspaceId={workspace.id}
+          title={localSessions.length > 0 ? "Cloud" : undefined}
         />
       </aside>
 

@@ -1,3 +1,4 @@
+import { BackButton } from "@/components/back-button";
 import { NewSessionForm } from "@/components/new-session-form";
 import type { Project } from "@/lib/runtime/types";
 
@@ -9,12 +10,21 @@ import type { Project } from "@/lib/runtime/types";
 export function NewSessionCreator({
   projects,
   initialProjectId,
+  showBack = false,
 }: {
   projects: Project[];
   initialProjectId?: string;
+  /** /new is reached from somewhere and needs a way back; the home page's
+   *  no-workspaces state is home already. */
+  showBack?: boolean;
 }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-6">
+    <div className="relative flex min-h-screen flex-col items-center justify-center px-6">
+      {showBack && (
+        <div className="absolute left-4 top-4">
+          <BackButton />
+        </div>
+      )}
       <div className="w-full max-w-2xl">
         <p
           aria-hidden
