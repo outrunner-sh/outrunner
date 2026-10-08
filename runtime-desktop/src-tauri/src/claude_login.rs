@@ -25,6 +25,7 @@
 // The token is returned to the webview, which posts it to the app's own
 // credential endpoint. It is never written to disk here.
 
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -68,9 +69,30 @@ pub struct ClaudeLoginState(
 /// Homebrew or version-manager install is invisible to a bare
 /// `Command::new("claude")`. The login shell is asked once, with a deadline and
 /// markers around the answer, so a slow profile cannot hang this and a profile
-/// that prints a banner cannot garble the path.
+/// that prints a banner cannot garble the path. If that shell fails or runs
+/// out of time, the PATH this app inherited is still searched: launched from a
+/// terminal, it may be the only one that names a version-manager install.
 fn claude_binary() -> Option<PathBuf> {
-    crate::local_runtime::which("claude").map(PathBuf::from)
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    find_in(OsStr::new(&child_path(&inherited)), "claude")
+}
+
+/// The PATH `claude` runs with: the login-shell PATH local sessions use, then
+/// whatever this app inherited, for the same reason as above.
+fn child_path(inherited: &OsStr) -> OsString {
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(crate::local_runtime::session_path()).collect();
+    for dir in std::env::split_paths(inherited) {
+        if !dir.as_os_str().is_empty() && !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or_default()
+}
+
+fn find_in(path: &OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Strip ANSI escape sequences and the OSC-8 hyperlink wrappers Claude Code
@@ -187,7 +209,7 @@ fn start_login(state: &ClaudeLoginState, binary: PathBuf) -> Result<String, Stri
     cmd.env("TERM", "xterm-256color");
     // An npm install's `claude` starts with `#!/usr/bin/env node`, and
     // launchd's PATH has no node in it.
-    cmd.env("PATH", crate::local_runtime::session_path());
+    cmd.env("PATH", child_path(&std::env::var_os("PATH").unwrap_or_default()));
 
     let child = pty.slave.spawn_command(cmd).map_err(|e| format!("spawn-failed: {e}"))?;
     let mut reader = pty.master.try_clone_reader().map_err(|e| format!("pty-read-failed: {e}"))?;
@@ -454,6 +476,21 @@ mod tests {
         *state.0.lock().unwrap() = None; // connect_claude_cancel
         assert_eq!(poll_login(&state), Err("no-login-in-progress".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn claude_is_found_on_the_inherited_path_when_the_login_shell_misses_it() {
+        let dir = std::env::temp_dir().join(format!("outrunner-inherited-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A name only this directory has, so a real install cannot answer first.
+        std::fs::write(dir.join("claude-only-here"), "").unwrap();
+        let path = child_path(dir.as_os_str());
+        // The login-shell PATH comes first; the inherited directory is kept after it.
+        assert!(path.to_string_lossy().ends_with(&*dir.to_string_lossy()), "{path:?}");
+        assert_eq!(find_in(&path, "claude-only-here"), Some(dir.join("claude-only-here")));
+        // Nothing is added twice.
+        assert_eq!(child_path(&path), path);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
