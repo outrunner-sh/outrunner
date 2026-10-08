@@ -36,6 +36,9 @@ export type LocalStatus = {
   git: string | null;
   tmux: string | null;
   claude: string | null;
+  /** Whether that Claude Code is logged in; null when the app cannot tell.
+   *  Absent from an app built before it checked. */
+  claudeLoggedIn?: boolean | null;
 };
 
 export type LocalFolder = {
@@ -100,6 +103,28 @@ export function missingTools(status: LocalStatus): string[] {
   if (!status.tmux) missing.push("tmux");
   if (!status.claude) missing.push("Claude Code");
   return missing;
+}
+
+/**
+ * Whether this Mac's Claude Code must be logged in before a local session can
+ * run. Only a clear no counts: an app that cannot tell, or predates the check,
+ * leaves it to Claude Code's own /login in the session.
+ */
+export function needsClaudeLogin(status: LocalStatus): boolean {
+  return status.claude !== null && status.claudeLoggedIn === false;
+}
+
+/**
+ * Log Claude Code in on this Mac. The app runs `claude auth login`, which opens
+ * the browser; this resolves once the user has approved there.
+ */
+export function logInToClaude(): Promise<void> {
+  return call<void>("local_claude_login");
+}
+
+/** Stop a `logInToClaude` in progress. */
+export function cancelClaudeLogin(): Promise<void> {
+  return call<void>("local_claude_login_cancel");
 }
 
 /** Ask for a folder to work in; null when the user cancels. */
@@ -176,6 +201,18 @@ export function messageForLocalError(error: unknown): string {
     case "folder-required":
       // The app only works in folders picked in its own dialog.
       return "Choose the folder to work in again.";
+    case "claude-missing":
+      return "Install Claude Code to run sessions on this Mac.";
+    case "login-cancelled":
+      return "The Claude Code login was stopped. Try again.";
+    case "login-timed-out":
+      return "No approval came from the browser. Try again.";
+    case "login-failed": {
+      const said = raw.slice("login-failed:".length).trim();
+      return said
+        ? `Claude Code couldn't log in. It said: ${said}`
+        : "Claude Code couldn't log in. Run `claude` in Terminal and type /login.";
+    }
     case "agent":
       // The agent's own message, e.g. a worktree that could not be created.
       return raw.slice("agent:".length).trim() || "The local agent reported an error.";

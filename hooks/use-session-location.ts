@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
+import { useClaudeLocalLogin, useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
 import {
   checkLocalFolder,
+  needsClaudeLogin,
   pickLocalFolder,
   rememberedFolder,
   rememberFolder,
@@ -37,7 +38,8 @@ function savedLocation(): SessionLocation {
  * reason, if any, a local session cannot start yet.
  */
 export function useSessionLocation() {
-  const runtime = useLocalRuntime();
+  const { runtime, recheck } = useLocalRuntime();
+  const claudeLogin = useClaudeLocalLogin(recheck);
   // The last choice sticks. It only takes effect where local is possible, so
   // the server render and the first client render agree (both say cloud).
   const [chosen, setChosen] = useState<SessionLocation>(savedLocation);
@@ -124,6 +126,9 @@ export function useSessionLocation() {
     chooseFolder,
     /** Why a local session cannot start yet; null when it can (or for cloud). */
     blocker,
+    /** The blocker is Claude Code needing a login, which the page can start. */
+    needsClaudeLogin: location === "local" && runtime.state === "ready" && needsClaudeLogin(runtime.status),
+    claudeLogin,
     /** The folder a local session would use; null for cloud, or while blocked. */
     localFolder: location === "local" && !blocker && folder.state === "ok" ? folder.folder : null,
   };
@@ -149,6 +154,7 @@ function localBlocker(runtime: LocalRuntime, folder: FolderChoice): string | nul
     const tmux = runtime.missing.includes("tmux") ? " (brew install tmux)" : "";
     return `Install ${runtime.missing.join(", ")}${tmux} to run sessions on this Mac.`;
   }
+  if (needsClaudeLogin(runtime.status)) return "Log in to Claude Code to run sessions on this Mac.";
   switch (folder.state) {
     case "none":
       return "Choose a folder to work in.";
