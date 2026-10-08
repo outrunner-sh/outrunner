@@ -18,6 +18,7 @@ type fakePane struct {
 
 	mu       sync.Mutex
 	armed    bool
+	arms     int
 	disarmed bool
 }
 
@@ -31,6 +32,8 @@ func (p *fakePane) size(context.Context) (int, int, error) {
 func (p *fakePane) arm(_ context.Context, fifoPath string) error {
 	p.mu.Lock()
 	p.armed = true
+	p.arms++
+	data := p.data
 	p.mu.Unlock()
 	go func() {
 		w, err := os.OpenFile(fifoPath, os.O_WRONLY, 0o600)
@@ -38,7 +41,7 @@ func (p *fakePane) arm(_ context.Context, fifoPath string) error {
 			return
 		}
 		defer w.Close()
-		w.Write(p.data)
+		w.Write(data)
 	}()
 	return nil
 }
@@ -88,6 +91,58 @@ func TestRecorderCapturesPaneOutput(t *testing.T) {
 	}
 	if r.Err() != nil {
 		t.Fatalf("unexpected record error: %v", r.Err())
+	}
+}
+
+func TestRearmKeepsOneCastAcrossARelaunch(t *testing.T) {
+	p := &fakePane{data: []byte("BEFORE_SWITCH ")}
+	r := newFakeRecorder(t, p)
+	ctx := context.Background()
+
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	// The session is replaced under the same name; its new pane says something else.
+	p.mu.Lock()
+	p.data = []byte("AFTER_SWITCH")
+	p.mu.Unlock()
+	if running, err := r.Rearm(ctx); !running || err != nil {
+		t.Fatalf("Rearm = %v, %v; want true, nil", running, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := r.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(r.castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(b, []byte(`"version"`)); n != 1 {
+		t.Fatalf("cast has %d headers, want 1", n)
+	}
+	_, frames := parseCast(t, b)
+	var out bytes.Buffer
+	for _, f := range frames {
+		out.WriteString(f[2].(string))
+	}
+	if !bytes.Contains(out.Bytes(), []byte("BEFORE_SWITCH")) || !bytes.Contains(out.Bytes(), []byte("AFTER_SWITCH")) {
+		t.Fatalf("cast = %q, want the output from before and after the relaunch", out.String())
+	}
+	if p.arms != 2 {
+		t.Fatalf("pane armed %d times, want 2", p.arms)
+	}
+}
+
+func TestRearmDoesNothingWhenNotRecording(t *testing.T) {
+	p := &fakePane{data: []byte("x")}
+	r := newFakeRecorder(t, p)
+	if running, err := r.Rearm(context.Background()); running || err != nil {
+		t.Fatalf("Rearm before Start = %v, %v; want false, nil", running, err)
+	}
+	if p.arms != 0 {
+		t.Fatal("Rearm armed a recorder that wasn't running")
 	}
 }
 

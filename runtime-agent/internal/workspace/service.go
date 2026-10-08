@@ -578,7 +578,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
-	s.startRecorder(ctx, workspaceID)
+	s.continueRecorder(ctx, workspaceID)
 	s.waitClaudeReady(ctx, name, s.local(workspaceID))
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
@@ -988,6 +988,22 @@ func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()
 	_ = rec.Start(ctx)
+}
+
+// continueRecorder keeps a workspace's cast going across a relaunch: a recorder
+// still running is pointed at the new session, so the cast holds everything
+// before the relaunch too. Starting afresh (which truncates the cast) is only
+// the fallback, for no recorder or one that can't be re-armed.
+func (s *Service) continueRecorder(ctx context.Context, workspaceID string) {
+	s.recordersMu.Lock()
+	rec := s.recorders[workspaceID]
+	s.recordersMu.Unlock()
+	if rec != nil {
+		if running, err := rec.Rearm(ctx); running && err == nil {
+			return
+		}
+	}
+	s.startRecorder(ctx, workspaceID)
 }
 
 // stopRecorder finalizes and drops the workspace's recorder. Idempotent.
