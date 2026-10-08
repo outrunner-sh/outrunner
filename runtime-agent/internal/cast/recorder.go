@@ -124,6 +124,20 @@ func (r *Recorder) Start(ctx context.Context) error {
 	return nil
 }
 
+// Rearm points a running recorder at its pane again, after the tmux session it
+// taps was replaced by one of the same name (a relaunch kills Claude's session
+// and starts a new one). The cast keeps its header, clock and frames, so it
+// covers the whole session instead of restarting at the relaunch. It reports
+// false, doing nothing, when the recorder isn't running.
+func (r *Recorder) Rearm(ctx context.Context) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.started {
+		return false, nil
+	}
+	return true, r.pane.arm(ctx, r.fifoPath)
+}
+
 // drain reads framed pane output from the non-blocking FIFO until Stop signals.
 // A non-blocking read + sleep-on-EAGAIN loop is used deliberately: macOS/BSD
 // support neither read deadlines on FIFOs nor reliable close-unblocks-read, so

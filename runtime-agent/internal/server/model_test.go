@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 )
 
 func TestASessionsModelIsSetAtCreateAndSwitched(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed") // the switch asks tmux whether the session runs
+	}
 	t.Setenv("HOME", t.TempDir())
 	const secret = "test-secret"
 	ts := httptest.NewServer(New(secret, workspace.NewService(t.TempDir())).Handler())

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +65,28 @@ func TestSessionExistsTellsGoneFromFailed(t *testing.T) {
 	t.Setenv("PATH", bin)
 	if ok, err := m.SessionExists(ctx, "ws-live"); ok || err == nil {
 		t.Errorf("failing tmux: SessionExists = %v, %v; want an error", ok, err)
+	}
+}
+
+func TestNewSessionHidesTheStatusLine(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	defer func(socket, config string) { socketName, configFile = socket, config }(socketName, configFile)
+	// A throwaway server, so nothing here touches a real one.
+	socketName, configFile = "runtime-test-"+strconv.Itoa(os.Getpid()), os.DevNull
+	ctx := context.Background()
+	defer func() { _ = Command(ctx, "kill-server").Run() }()
+
+	m := New()
+	if err := m.NewSession(ctx, "ws-status", t.TempDir(), []string{"sleep", "30"}, os.Environ()); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	out, err := Command(ctx, "show-options", "-t", "ws-status", "status").Output()
+	if err != nil {
+		t.Fatalf("show-options: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "status off" {
+		t.Errorf("session status option = %q, want %q", got, "status off")
 	}
 }

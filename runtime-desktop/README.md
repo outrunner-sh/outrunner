@@ -18,6 +18,9 @@ deploy. Local sessions are the one exception, below.
 - **Hide-to-tray**: closing the window keeps the app (and your session)
   running in the tray; use *Quit Runtime* to actually exit.
 - **Single instance**: launching again focuses the existing window.
+- **Self-update** (`src-tauri/src/updater.rs`): release builds check for a new
+  version shortly after launch and every 6 hours, install it in the background,
+  and offer to restart. The tray also has *Check for Updates…*.
 
 ## Local sessions
 
@@ -53,7 +56,7 @@ conversation WebSockets over `local_socket_*` with a Channel per socket.
   polled from the control-plane API.
 - **Native notifications** on session state changes.
 - **Global hotkey** to summon the window / start a New Workspace.
-- Launch-at-login, auto-update.
+- Launch-at-login.
 
 ## Develop
 
@@ -71,6 +74,42 @@ before a bare `cargo build` or `cargo test`, which fail without the sidecar.
 ```bash
 bun run tauri build    # outputs to src-tauri/target/release/bundle/
 ```
+
+A local build is unsigned. Builds for the team come from CI instead.
+
+## Release a signed .dmg
+
+```bash
+git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
+```
+
+`.github/workflows/desktop-release.yml` builds a universal DMG, signs it with
+the Developer ID certificate, has Apple notarize it, and attaches it to a draft
+GitHub Release for that tag. Smoke-test the DMG, then publish the draft. The
+version comes from the tag (`MAJOR.MINOR.PATCH`), not `tauri.conf.json`. A
+release, once published, is never rebuilt over: fix forward with a new tag.
+
+Publishing the draft runs `.github/workflows/desktop-publish.yml`, which
+copies the DMG to the public download bucket. The link to share is
+`<DOWNLOADS_BASE_URL>/outrunner/Outrunner.dmg`, always the latest published
+version; `outrunner/latest.json` says which version that is. Publishing only
+moves that link forward, so a stale draft published late never replaces a
+newer release. To roll back on purpose, run that workflow by hand with the
+older tag.
+
+Installed apps update themselves from that same `latest.json`. It doubles as
+the updater's manifest: the release also builds a signed update bundle
+(`Outrunner_<v>_universal.app.tar.gz`), and the app installs it only if its
+signature matches the public key in `tauri.conf.json` (`plugins.updater`). The
+private half is the `TAURI_SIGNING_PRIVATE_KEY` secret; keep a backup of it,
+because without it no installed copy can ever update again. Updates only move
+forward, so a rollback changes what new downloads get, not installed apps; to
+undo a bad release for everyone, release a newer fixed version.
+
+To check signing without cutting a release, run the release workflow by hand
+from the Actions tab: it does the same build and leaves the DMG as a workflow
+artifact.
+The secrets and variables both workflows need are listed at the top of each.
 
 ## Point at a different environment
 
