@@ -156,6 +156,13 @@
 .studio-sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 12px 8px; }
 .studio-nav { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px 14px; }
 .studio-nav-group { margin-bottom: 9px; }
+/* Section headings (This Mac / Cloud) over the project groups. The local
+   section sizes to its content, so the two sections share one gap — up to a
+   cap, past which it scrolls on its own and the cloud section stays in reach.
+   The cap is in vh: WebKit leaves a % max-height here unresolved (the sidebar's
+   height comes from grid stretch), and the shell is the viewport's height. */
+.studio-nav-section { display: flex; align-items: center; gap: 6px; padding: 6px 8px 5px; color: var(--studio-dim); font: 500 10px var(--font-geist-mono); letter-spacing: .06em; text-transform: uppercase; }.studio-nav-section svg { width: 12px; height: 12px; flex: 0 0 auto; }
+.studio-nav.is-local { flex: none; max-height: 45vh; padding-bottom: 6px; }
 .studio-nav-project { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; }
 .studio-nav-project:hover { background: var(--studio-hover); }
 .studio-nav-project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-text); font-size: 13px; font-weight: 500; }

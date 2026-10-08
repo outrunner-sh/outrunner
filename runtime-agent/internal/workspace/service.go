@@ -26,11 +26,24 @@ import (
 	"runtime-agent/internal/tmux"
 )
 
+// sessions is the part of tmux the service drives, behind an interface so tests
+// can stand in for a session that is running, busy or failing to start.
+type sessions interface {
+	NewSession(ctx context.Context, name, workdir string, command []string, env []string) error
+	HideStatus(ctx context.Context, name string)
+	HasSession(ctx context.Context, name string) bool
+	SessionExists(ctx context.Context, name string) (bool, error)
+	KillSession(ctx context.Context, name string) error
+	Paste(ctx context.Context, name, text string) error
+	SubmitEnter(ctx context.Context, name string) error
+	CapturePane(ctx context.Context, name string) (string, error)
+}
+
 // Service holds the on-box layout and the tmux manager. One instance per agent.
 type Service struct {
 	// Root is the Runtime Computer working area, e.g. /home/runtime.
 	Root string
-	tmux *tmux.Manager
+	tmux sessions
 	env  []string
 	// secrets are values that can legitimately appear in the Claude process
 	// environment. The HTTP server uses them to redact browser-visible PTY
@@ -351,6 +364,9 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	}
 	worktree := s.worktreePath(workspaceID)
 	if s.tmux.HasSession(ctx, name) {
+		// A session started before the status line was hidden loses it on its
+		// next attach rather than its next restart.
+		s.tmux.HideStatus(ctx, name)
 		s.beginSummary(workspaceID, worktree)
 		return name, nil // already running
 	}
@@ -505,12 +521,21 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	}
 	// Continue only a conversation that exists: before the first prompt there
 	// is none, and --continue with nothing to continue exits.
+	resume := s.SessionLog(workspaceID) != ""
 	relaunchCtx, cancelRelaunch := context.WithTimeout(base, switchRelaunchTimeout)
 	defer cancelRelaunch()
-	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "", lock); err != nil {
+	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, resume, lock); err != nil {
 		// Not applied, so not recorded: a retry of the same model tries again
 		// rather than finding it already set, and the next Start uses the old.
 		s.setFacts(workspaceID, prior)
+		// The old session was killed before the new one failed to start, so
+		// bring Claude back on the model it had: a failed switch must not end
+		// a session that was working.
+		restoreCtx, cancelRestore := context.WithTimeout(base, switchRelaunchTimeout)
+		defer cancelRestore()
+		if _, restoreErr := s.relaunchHeld(restoreCtx, workspaceID, anthropicToken, resume, lock); restoreErr != nil {
+			return fmt.Errorf("%w; restarting it on its previous model failed too: %v", err, restoreErr)
+		}
 		return err
 	}
 	return nil
@@ -553,7 +578,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
-	s.startRecorder(ctx, workspaceID)
+	s.continueRecorder(ctx, workspaceID)
 	s.waitClaudeReady(ctx, name, s.local(workspaceID))
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
@@ -963,6 +988,22 @@ func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()
 	_ = rec.Start(ctx)
+}
+
+// continueRecorder keeps a workspace's cast going across a relaunch: a recorder
+// still running is pointed at the new session, so the cast holds everything
+// before the relaunch too. Starting afresh (which truncates the cast) is only
+// the fallback, for no recorder or one that can't be re-armed.
+func (s *Service) continueRecorder(ctx context.Context, workspaceID string) {
+	s.recordersMu.Lock()
+	rec := s.recorders[workspaceID]
+	s.recordersMu.Unlock()
+	if rec != nil {
+		if running, err := rec.Rearm(ctx); running && err == nil {
+			return
+		}
+	}
+	s.startRecorder(ctx, workspaceID)
 }
 
 // stopRecorder finalizes and drops the workspace's recorder. Idempotent.

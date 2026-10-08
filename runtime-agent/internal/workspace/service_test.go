@@ -285,6 +285,7 @@ func TestRetryingAPromptThatLandedLateDoesNotSendItAgain(t *testing.T) {
 func TestASessionsModelIsRecordedAndLaunchedWith(t *testing.T) {
 	root := t.TempDir()
 	s := NewService(root)
+	s.tmux = newFakeSessions() // no session running
 	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-m", Branch: "b", BaseBranch: "main", Model: "sonnet"})
 	if got := s.launchCommand("ws-m", s.worktreePath("ws-m"), false); !slices.Contains(got, "--model") || got[len(got)-1] != "sonnet" {
 		t.Fatalf("launch = %q, want --model sonnet", got)
@@ -355,6 +356,7 @@ func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
 
 func TestASwitchWaitsForAPromptBeingSent(t *testing.T) {
 	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
 	ctx := context.Background()
 	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-l", Branch: "b", BaseBranch: "main"})
 	// A send in flight holds the send lock; the switch's busy check must come
