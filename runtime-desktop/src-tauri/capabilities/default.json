@@ -8,7 +8,6 @@
   "remote": {
     "urls": [
       "http://localhost:3000",
-      "http://localhost:3100",
       "https://outrunner.neev.ai"
     ]
   },
