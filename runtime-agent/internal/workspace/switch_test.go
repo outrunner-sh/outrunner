@@ -3,10 +3,13 @@ package workspace
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"runtime-agent/internal/claude"
 )
 
 // fakeSessions stands in for tmux: a session that is running, busy, unreadable
@@ -200,5 +203,33 @@ func TestAFailedSwitchSaysSoWhenTheOldModelWontStartEither(t *testing.T) {
 	}
 	if f, _ := s.getFacts(id); f.Model != "sonnet" {
 		t.Errorf("recorded %q, want the old model kept", f.Model)
+	}
+}
+
+func TestAFailedSwitchKeepsTheGatewayKeyItWasRunningOn(t *testing.T) {
+	t.Parallel()
+	s, fake, id := runningSession(t, "sonnet")
+	ctx := context.Background()
+	const oldKey = "sk-or-v1-old-0123456789abcdef"
+	const newKey = "sk-or-v1-new-0123456789abcdef"
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: oldKey}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	fake.newErrs = []error{errors.New("tmux new-session failed")}
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "anthropic/claude-sonnet-5", Gateway: claude.OpenRouter, Token: newKey}, ""); err == nil {
+		t.Fatal("SetModel succeeded, want the start error")
+	}
+	env, err := os.ReadFile(s.gatewayEnvPath(id))
+	if err != nil || !strings.Contains(string(env), oldKey) || strings.Contains(string(env), newKey) {
+		t.Fatalf("key file = %q, %v; want the old key back", env, err)
+	}
+	if f, _ := s.getFacts(id); f.Model != "z-ai/glm-5.3" || f.Gateway != claude.OpenRouter {
+		t.Errorf("facts = %+v, want the old gateway model", f)
+	}
+	if got := fake.lastLaunch(); len(got) == 0 || got[0] != "sh" || !slices.Contains(got, s.gatewayEnvPath(id)) {
+		t.Errorf("recovery launched %q, want it through the gateway file", got)
+	}
+	if !fake.HasSession(ctx, sessionName(id)) {
+		t.Error("a failed switch left no session running")
 	}
 }
