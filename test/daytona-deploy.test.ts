@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 
@@ -266,6 +270,30 @@ test("claudeConfigSeedScript jq-merges the onboarding-skip flags into ~/.claude.
   }
   // A merge (`. + {...}`), not an overwrite, so base-image config survives.
   assert.ok(s.includes(". +"), "merges rather than overwrites");
+});
+
+const hasJq = spawnSync("jq", ["--version"]).status === 0;
+
+test("claudeConfigSeedScript trusts the workspaces folder and keeps the existing config", { skip: !hasJq && "needs jq" }, () => {
+  const root = mkdtempSync(join(tmpdir(), "seed-"));
+  try {
+    const f = join(root, ".claude.json");
+    writeFileSync(f, JSON.stringify({ cachedFlags: 1, projects: { "/elsewhere": { allowedTools: ["x"] } } }));
+    const run = spawnSync("bash", ["-c", claudeConfigSeedScript(root)], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    const seeded = JSON.parse(readFileSync(f, "utf8"));
+    assert.equal(seeded.hasCompletedOnboarding, true);
+    assert.equal(seeded.cachedFlags, 1, "keeps the base image's config");
+    assert.deepEqual(seeded.projects["/elsewhere"], { allowedTools: ["x"] }, "keeps other folders' entries");
+    // Claude 2.1.293 asks per folder; an entry for a parent covers each worktree.
+    assert.equal(seeded.projects[`${root}/workspaces`].hasTrustDialogAccepted, true);
+
+    rmSync(f);
+    assert.equal(spawnSync("bash", ["-c", claudeConfigSeedScript(root)]).status, 0);
+    assert.equal(JSON.parse(readFileSync(f, "utf8")).projects[`${root}/workspaces`].hasTrustDialogAccepted, true, "seeds a fresh box too");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("deployClaude runs install → upload → prep → seed → launch → health in order", async () => {
