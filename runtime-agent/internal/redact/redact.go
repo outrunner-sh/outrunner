@@ -55,15 +55,22 @@ func (r *Redactor) Redact(data []byte) string {
 	}
 	// Do not cut through a partial secret. If the suffix just before cut is a
 	// prefix of any secret, retain it until the following read disambiguates it.
-	for _, secret := range r.secrets {
-		limit := len(secret) - 1
-		if limit > cut {
-			limit = cut
-		}
-		for n := limit; n > 0; n-- {
-			if all[cut-n:cut] == secret[:n] {
-				cut -= n
-				break
+	// Moving cut back can land it inside another secret that ended at the old
+	// cut (one secret ending with the start of another), which would then be
+	// emitted unmasked, so check every secret again until cut stays put.
+	for moved := true; moved; {
+		moved = false
+		for _, secret := range r.secrets {
+			limit := len(secret) - 1
+			if limit > cut {
+				limit = cut
+			}
+			for n := limit; n > 0; n-- {
+				if all[cut-n:cut] == secret[:n] {
+					cut -= n
+					moved = true
+					break
+				}
 			}
 		}
 	}

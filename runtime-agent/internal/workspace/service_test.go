@@ -285,6 +285,7 @@ func TestRetryingAPromptThatLandedLateDoesNotSendItAgain(t *testing.T) {
 func TestASessionsModelIsRecordedAndLaunchedWith(t *testing.T) {
 	root := t.TempDir()
 	s := NewService(root)
+	s.tmux = newFakeSessions() // no session running
 	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-m", Branch: "b", BaseBranch: "main", Model: "sonnet"})
 	if got := s.launchCommand("ws-m", s.worktreePath("ws-m"), false); !slices.Contains(got, "--model") || got[len(got)-1] != "sonnet" {
 		t.Fatalf("launch = %q, want --model sonnet", got)
@@ -333,9 +334,10 @@ func TestSetModelOnAnUnknownWorkspaceWritesNothing(t *testing.T) {
 func TestASessionOnAGatewayGetsItsKeyFromAPrivateFile(t *testing.T) {
 	root := t.TempDir()
 	s := NewService(root)
+	s.tmux = newFakeSessions() // no session running
 	ctx := context.Background()
 	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-g", Branch: "b", BaseBranch: "main", Model: "sonnet"})
-	const key = "sk-or-v1-session-key"
+	const key = "sk-or-v1-session-key-0123456789abcdef"
 	if err := s.SetModel(ctx, "ws-g", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: key}, ""); err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
@@ -390,9 +392,15 @@ func TestASessionOnAGatewayGetsItsKeyFromAPrivateFile(t *testing.T) {
 
 func TestForgettingASessionRemovesItsGatewayKey(t *testing.T) {
 	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
 	ctx := context.Background()
 	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-f", Branch: "b", BaseBranch: "main"})
-	_ = s.SetModel(ctx, "ws-f", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-x"}, "")
+	if err := s.SetModel(ctx, "ws-f", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-v1-forget-0123456789abcdef"}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if _, err := os.Stat(s.gatewayEnvPath("ws-f")); err != nil {
+		t.Fatalf("no gateway file to forget: %v", err)
+	}
 	s.forgetWorkspace("ws-f")
 	if _, err := os.Stat(s.gatewayEnvPath("ws-f")); !os.IsNotExist(err) {
 		t.Errorf("gateway file outlived its session: %v", err)
@@ -425,9 +433,12 @@ func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
 func TestARepeatedCreateKeepsTheGateway(t *testing.T) {
 	root := t.TempDir()
 	s := NewService(root)
+	s.tmux = newFakeSessions() // no session running
 	ctx := context.Background()
 	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-r", Branch: "b", BaseBranch: "main"})
-	_ = s.SetModel(ctx, "ws-r", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-r"}, "")
+	if err := s.SetModel(ctx, "ws-r", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-v1-recreate-0123456789abcdef"}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
 
 	// The control plane re-creates after an agent restart, naming no model.
 	restarted := NewService(root)
@@ -445,7 +456,7 @@ func TestARepeatedCreateKeepsTheGateway(t *testing.T) {
 	if f, _ := restarted.getFacts("ws-r"); f.Gateway != claude.OpenRouter || f.Model != "z-ai/glm-5.3" {
 		t.Errorf("re-Create with another model = %+v, want the gateway session unchanged", f)
 	}
-	if !slices.Contains(restarted.RedactionSecrets(), "sk-or-r") {
+	if !slices.Contains(restarted.RedactionSecrets(), "sk-or-v1-recreate-0123456789abcdef") {
 		t.Error("a re-Create unmasked the key of the session running on it")
 	}
 }
@@ -463,6 +474,7 @@ func TestARepeatedCreateLeavesAClaudeSessionsModel(t *testing.T) {
 
 func TestASwitchWaitsForAPromptBeingSent(t *testing.T) {
 	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
 	ctx := context.Background()
 	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-l", Branch: "b", BaseBranch: "main"})
 	// A send in flight holds the send lock; the switch's busy check must come

@@ -237,10 +237,12 @@ func TestGatewayInputs(t *testing.T) {
 	if _, err := ParseGateway("https://evil.example"); err == nil {
 		t.Error("a URL was accepted as a gateway")
 	}
-	if !ValidGatewayToken("sk-or-v1-abc123") {
+	key := "sk-or-v1-" + strings.Repeat("0123456789abcdef", 4)
+	if !ValidGatewayToken(key) {
 		t.Error("an OpenRouter key was rejected")
 	}
-	for _, bad := range []string{"", "a b", "a'b", `a\b`, "a\nb", "ключ", strings.Repeat("k", 401)} {
+	// Each bad token is long enough, so it is refused for what it holds.
+	for _, bad := range []string{"", "e", "sk-or-x", key + " b", key + "'b", key + `\b`, key + "\nb", key + "ключ", strings.Repeat("k", 401)} {
 		if ValidGatewayToken(bad) {
 			t.Errorf("token %q accepted", bad)
 		}

@@ -25,7 +25,7 @@ export default async function NewSessionPage({
 
   return (
     <AppShell immersive>
-      <NewSessionCreator projects={projects} initialProjectId={project} />
+      <NewSessionCreator projects={projects} initialProjectId={project} showBack />
     </AppShell>
   );
 }

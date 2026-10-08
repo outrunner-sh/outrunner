@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -12,7 +13,13 @@ import (
 	"runtime-agent/internal/workspace"
 )
 
+// testGatewayKey is shaped like an OpenRouter key.
+const testGatewayKey = "sk-or-v1-0123456789abcdef0123456789abcdef"
+
 func TestASessionsModelIsSetAtCreateAndSwitched(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed") // the switch asks tmux whether the session runs
+	}
 	t.Setenv("HOME", t.TempDir())
 	const secret = "test-secret"
 	ts := httptest.NewServer(New(secret, workspace.NewService(t.TempDir())).Handler())
@@ -78,16 +85,16 @@ func TestASessionsModelIsSetAtCreateAndSwitched(t *testing.T) {
 
 	for _, bad := range []map[string]string{
 		{"model": "z-ai/glm-5.3", "gateway": "openrouter"},                         // no key
-		{"model": "opus", "token": "sk-or-v1-k"},                                   // a key with no gateway
+		{"model": "opus", "token": testGatewayKey},                                 // a key with no gateway
 		{"model": "z-ai/glm-5.3", "gateway": "https://evil.example", "token": "k"}, // not a gateway
-		{"model": "z-ai/glm-5.3", "gateway": "openrouter", "token": "k'; rm -rf ~"},
+		{"model": "z-ai/glm-5.3", "gateway": "openrouter", "token": testGatewayKey + "'; rm -rf ~"},
 	} {
 		if code, _ := call("ws-m", "POST", "/workspaces/ws-m/model", bad); code != http.StatusBadRequest {
 			t.Errorf("%v = %d, want 400", bad, code)
 		}
 	}
 	if code, out := call("ws-m", "POST", "/workspaces/ws-m/model", map[string]string{
-		"model": "z-ai/glm-5.3", "gateway": "openrouter", "token": "sk-or-v1-k",
+		"model": "z-ai/glm-5.3", "gateway": "openrouter", "token": testGatewayKey,
 	}); code != http.StatusOK {
 		t.Fatalf("switch to OpenRouter = %d %v", code, out)
 	}
