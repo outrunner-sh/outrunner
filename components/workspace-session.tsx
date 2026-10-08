@@ -6,9 +6,10 @@ import { RefreshCw, TerminalSquare, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { ConversationTimeline } from "@/components/conversation-timeline";
-import { SessionComposer } from "@/components/session-composer";
-import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
+import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
+import { SessionComposer, type ModelChoice } from "@/components/session-composer";
+import { localAgentRequest, localTarget, messageForLocalError } from "@/lib/desktop/local-runtime";
+import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
@@ -110,6 +111,42 @@ export function WorkspaceSession({
     return undefined;
   }, [conversation.events]);
 
+  // A local session can switch models: the agent relaunches Claude on it with
+  // the conversation continued. The pick shows until a reply reports the model
+  // it actually ran.
+  const [switching, setSwitching] = useState(false);
+  const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
+  const repliedSincePick =
+    picked !== null &&
+    conversation.events
+      .slice(picked.events)
+      .some((event) => event.t === "message" && event.role === "assistant" && event.model);
+  const shownModel = picked && !repliedSincePick ? picked.model : activeModel;
+  // A prompt the stream hasn't recorded yet is a turn starting. The agent
+  // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
+  const delivered = userPromptCount(conversation.events);
+  const working =
+    claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
+  const modelChoice: ModelChoice | undefined = local
+    ? {
+        models: CLAUDE_MODELS,
+        switching,
+        disabledReason: !canSend
+          ? "Waiting for the session to connect"
+          : working
+            ? "Switch models once Claude has finished this turn"
+            : null,
+        onChange: (model) => {
+          setSwitching(true);
+          setSendError(null);
+          localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, { model })
+            .then(() => setPicked({ model, events: conversation.events.length }))
+            .catch((error: unknown) => setSendError(messageForLocalError(error)))
+            .finally(() => setSwitching(false));
+        },
+      }
+    : undefined;
+
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
     const optimistic = pending
@@ -198,7 +235,8 @@ export function WorkspaceSession({
       <SessionComposer
         onSend={send}
         canSend={canSend}
-        model={activeModel}
+        model={shownModel}
+        modelChoice={modelChoice}
         allowAttachments={!local}
       />
     </div>
