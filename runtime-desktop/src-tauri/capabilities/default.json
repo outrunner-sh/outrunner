@@ -21,6 +21,8 @@
     "allow-connect-claude-cancel",
     "allow-connect-claude-debug",
     "allow-local-status",
+    "allow-local-claude-login",
+    "allow-local-claude-login-cancel",
     "allow-local-pick-folder",
     "allow-local-check-folder",
     "allow-local-list-sessions",

@@ -7,7 +7,7 @@ import { localAgentRequest, localTarget, type LocalFolder } from "@/lib/desktop/
 import type { Project } from "@/lib/runtime/types";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
-type CreateResponse = { workspace?: { id: string }; error?: string };
+type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string };
 
 /** Same shape as the server's generated branches (runtime/<time>-<id>). */
 function localBranch(workspaceId: string): string {
@@ -51,9 +51,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       const result = (await response.json().catch(() => ({}))) as CreateResponse;
       if (!response.ok || !result.workspace) {
         setMessage(result.error ?? "Could not start the session. Please try again.");
-        // 409 is the precondition family: a missing Claude credential or GitHub
-        // connection. Both are fixed in the same place.
-        if (response.status === 409) setMessageHref("/settings/credentials");
+        // The server names the page that fixes it, when one does (a missing
+        // GitHub grant is fixed by signing in again, not in Settings).
+        if (result.settingsHref) setMessageHref(result.settingsHref);
         return;
       }
       const params = new URLSearchParams();

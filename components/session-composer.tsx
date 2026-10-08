@@ -1,9 +1,18 @@
 "use client";
 
-import { ArrowUp, ChevronDown, FileText, Hammer, Loader2, Plus, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, FileText, Hammer, Loader2, Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
 
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAttachments } from "@/hooks/use-attachments";
+import { matchModel, modelLabel, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
 
 /**
  * The prompt composer pinned at the bottom of the conversation column. Sending
@@ -15,17 +24,22 @@ import { useAttachments } from "@/hooks/use-attachments";
  * `onSend` receives their ids to attach server-side.
  */
 
-/** Trim Claude's model id to a stable label — drop a trailing -YYYYMMDD date so
- *  "claude-opus-4-5-20250115" reads as "claude-opus-4-5". */
-function formatModel(model: string): string {
-  return model.replace(/-\d{8}$/, "");
-}
+/** Switching the session's model from the footer, where the session allows it. */
+export type ModelChoice = {
+  groups: ModelGroup[];
+  onChange: (model: SessionModel) => void;
+  /** Why it can't switch right now (mid-turn, not at the keyboard); null when
+   *  it can. */
+  disabledReason: string | null;
+  switching: boolean;
+};
 
 export function SessionComposer({
   onSend,
   canSend,
   disabledPlaceholder = "Read-only — another viewer has the keyboard",
   model,
+  modelChoice,
   allowAttachments = true,
 }: {
   onSend: (text: string, attachmentIds: string[]) => void;
@@ -35,6 +49,8 @@ export function SessionComposer({
   /** The Claude model in use, shown in the footer. Omitted before any assistant
    *  turn has arrived (and on the new-session form, which has no session yet). */
   model?: string;
+  /** Offers the models to switch to; without it the model is a plain label. */
+  modelChoice?: ModelChoice;
   /** False hides attaching. Attachments are delivered by the server, which
    *  cannot reach a local session's worktree on the user's Mac. */
   allowAttachments?: boolean;
@@ -184,8 +200,10 @@ export function SessionComposer({
             Build
             <ChevronDown style={{ width: 11, marginLeft: 2, display: "inline" }} />
           </span>
-          {model && (
-            <span className="studio-composer-model">{formatModel(model)}</span>
+          {modelChoice ? (
+            <ModelPicker model={model} choice={modelChoice} />
+          ) : (
+            model && <span className="studio-composer-model">{modelLabel(model)}</span>
           )}
         </span>
         <button
@@ -198,5 +216,51 @@ export function SessionComposer({
         </button>
       </div>
     </form>
+  );
+}
+
+/** The footer's model, as a menu of the models the session can switch to. */
+function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
+  const current = matchModel(choice.groups, model);
+  const label = choice.switching
+    ? "Switching…"
+    : (current?.label ?? (model ? modelLabel(model) : "Model"));
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="studio-composer-model studio-composer-model-picker"
+          disabled={choice.switching || choice.disabledReason !== null}
+          title={choice.disabledReason ?? "Switch model"}
+          aria-label={`Model: ${label}. Switch model`}
+        >
+          {choice.switching && <Loader2 className="animate-spin" />}
+          {label}
+          <ChevronDown />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top" className="w-52">
+        {choice.groups.map((group, i) => (
+          <div key={group.label}>
+            {i > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              {group.label}
+            </DropdownMenuLabel>
+            {group.models.map((m) => (
+              <DropdownMenuItem
+                key={m.id}
+                // Always sent, even for the ticked family: the session may run an
+                // older model of it, and the agent ignores a switch to what it has.
+                onSelect={() => choice.onChange(m)}
+              >
+                <Check className={m.id === current?.id ? "opacity-100" : "opacity-0"} />
+                {m.label}
+              </DropdownMenuItem>
+            ))}
+          </div>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

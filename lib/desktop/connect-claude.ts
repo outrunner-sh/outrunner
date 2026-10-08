@@ -56,6 +56,17 @@ export function messageForError(code: string): string {
       `your terminal to clear any first-run setup, then reconnect. It said: ${detail}`
     );
   }
+  // `setup-token` only works for a Claude subscription, and exits without a
+  // token for an account that has none or when the browser approval is
+  // declined. Say so rather than keep waiting.
+  if (code === "setup-token-exited" || code.startsWith("setup-token-exited:")) {
+    const detail = code.slice("setup-token-exited".length).replace(/^:\s*/, "");
+    return (
+      "Claude Code stopped without issuing a token. Connecting needs a Claude Pro " +
+      "or Max subscription on the account you approve with." +
+      (detail ? ` It said: ${detail}` : "")
+    );
+  }
   switch (code) {
     case "claude-cli-not-found":
       return "Claude Code isn't installed on this machine. Install it, then try again.";
@@ -126,18 +137,33 @@ export async function submitClaudeCode(code: string): Promise<string> {
   return token;
 }
 
+export type ClaudeLoginPoll =
+  | { state: "waiting" }
+  | { state: "done"; token: string }
+  /** The attempt is over without a token here: cancelled, or a pasted code took it. */
+  | { state: "ended" };
+
 /**
  * Ask whether the CLI has finished on its own yet.
  *
  * The normal flow needs no code at all: authorizing in the browser completes
- * the login and the CLI prints the token unprompted. Resolves null when nothing
+ * the login and the CLI prints the token unprompted. "waiting" means nothing
  * has arrived yet — the caller polls again — so the code field is only ever a
- * fallback for the case where the CLI does prompt.
+ * fallback for the case where the CLI does prompt. Throws, with a message for
+ * the user, when the CLI exited without a token.
  */
-export async function pollClaudeLogin(): Promise<string | null> {
-  const raw = await invoker()("connect_claude_poll");
-  if (raw == null) return null;
-  return parseSetupToken(raw);
+export async function pollClaudeLogin(): Promise<ClaudeLoginPoll> {
+  let raw: unknown;
+  try {
+    raw = await invoker()("connect_claude_poll");
+  } catch (error) {
+    const code = error instanceof Error ? error.message : String(error);
+    if (code === "no-login-in-progress") return { state: "ended" };
+    throw new Error(messageForError(code));
+  }
+  if (raw == null) return { state: "waiting" };
+  const token = parseSetupToken(raw);
+  return token ? { state: "done", token } : { state: "waiting" };
 }
 
 /** Abandon a login in progress, so a retry starts from a clean CLI. */

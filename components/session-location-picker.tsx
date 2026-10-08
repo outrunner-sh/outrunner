@@ -94,6 +94,45 @@ export function LocalFolderButton({
   );
 }
 
+/**
+ * Why a local session cannot start yet. When the reason is Claude Code not
+ * being logged in on this Mac, it offers the login right there: the app opens
+ * the browser, and the note clears once the user approves.
+ */
+export function LocalBlocker({
+  state,
+  className,
+}: {
+  state: SessionLocationState;
+  className?: string;
+}) {
+  const { blocker, needsClaudeLogin, claudeLogin } = state;
+  if (!blocker) return null;
+  const { login, start, cancel } = claudeLogin;
+  const action = "font-medium text-foreground underline underline-offset-4 hover:opacity-80";
+  return (
+    <p aria-live="polite" className={cn("text-xs text-muted-foreground", className)}>
+      {needsClaudeLogin && login.state === "waiting" ? (
+        <>
+          Approve the login in your browser…{" "}
+          <button type="button" onClick={cancel} className={action}>
+            Cancel
+          </button>
+        </>
+      ) : needsClaudeLogin ? (
+        <>
+          {login.state === "error" ? login.message : blocker}{" "}
+          <button type="button" onClick={() => void start()} className={action}>
+            {login.state === "error" ? "Try again" : "Log in"}
+          </button>
+        </>
+      ) : (
+        blocker
+      )}
+    </p>
+  );
+}
+
 function LocationOption({
   selected,
   disabled,

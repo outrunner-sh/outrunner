@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AgentClient, type AgentTarget } from "@/lib/runtime/agent-client";
+import { AgentClient, AgentRequestError, type AgentTarget } from "@/lib/runtime/agent-client";
 import { verifyRuntimeToken } from "@/lib/runtime/runtime-token";
 
 const target: AgentTarget = {
@@ -196,4 +196,46 @@ test("ptyUrl builds a wss signed-preview URL carrying a Runtime token", () => {
     verifyRuntimeToken(url.searchParams.get("token")!, target.secret).workspaceId,
     "ws-1",
   );
+});
+
+test("setModel posts the switch to the workspace's model route", async () => {
+  let seenUrl = "";
+  let seenBody: unknown;
+  const fakeFetch = (async (url: string, init: RequestInit) => {
+    seenUrl = url;
+    seenBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ result: "z-ai/glm-5.3" }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  await new AgentClient(target, fakeFetch).setModel(identity, {
+    model: "z-ai/glm-5.3",
+    gateway: "openrouter",
+    token: "sk-or-v1-test-key-0123456789",
+  });
+  assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/model");
+  assert.deepEqual(seenBody, { model: "z-ai/glm-5.3", gateway: "openrouter", token: "sk-or-v1-test-key-0123456789" });
+});
+
+test("an agent refusal keeps its status and error envelope", async () => {
+  const fakeFetch = (async () =>
+    new Response(
+      JSON.stringify({ error: { code: "CONFLICT", message: "Claude is mid-turn; switch models once it has finished" } }),
+      { status: 409 },
+    )) as unknown as typeof fetch;
+
+  const error = await new AgentClient(target, fakeFetch).setModel(identity, { model: "opus" }).catch((e: unknown) => e);
+  assert.ok(error instanceof AgentRequestError);
+  assert.equal(error.status, 409);
+  assert.equal(error.error?.code, "CONFLICT");
+  assert.match(error.message, /agent CONFLICT: Claude is mid-turn/);
+});
+
+test("an answer that isn't the agent's envelope has a status and no envelope", async () => {
+  // Go's mux, for a route an older agent doesn't have.
+  const fakeFetch = (async () => new Response("404 page not found\n", { status: 404 })) as unknown as typeof fetch;
+
+  const error = await new AgentClient(target, fakeFetch).setModel(identity, { model: "opus" }).catch((e: unknown) => e);
+  assert.ok(error instanceof AgentRequestError);
+  assert.equal(error.status, 404);
+  assert.equal(error.error, undefined);
 });

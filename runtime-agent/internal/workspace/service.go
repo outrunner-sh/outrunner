@@ -26,11 +26,24 @@ import (
 	"runtime-agent/internal/tmux"
 )
 
+// sessions is the part of tmux the service drives, behind an interface so tests
+// can stand in for a session that is running, busy or failing to start.
+type sessions interface {
+	NewSession(ctx context.Context, name, workdir string, command []string, env []string) error
+	HideStatus(ctx context.Context, name string)
+	HasSession(ctx context.Context, name string) bool
+	SessionExists(ctx context.Context, name string) (bool, error)
+	KillSession(ctx context.Context, name string) error
+	Paste(ctx context.Context, name, text string) error
+	SubmitEnter(ctx context.Context, name string) error
+	CapturePane(ctx context.Context, name string) (string, error)
+}
+
 // Service holds the on-box layout and the tmux manager. One instance per agent.
 type Service struct {
 	// Root is the Runtime Computer working area, e.g. /home/runtime.
 	Root string
-	tmux *tmux.Manager
+	tmux sessions
 	env  []string
 	// secrets are values that can legitimately appear in the Claude process
 	// environment. The HTTP server uses them to redact browser-visible PTY
@@ -104,6 +117,11 @@ type workspaceFacts struct {
 	// Claude Code's — and "the newest log" could be any of them. The session is
 	// launched with this id and found by it instead.
 	ClaudeSessionID string `json:"claudeSessionId,omitempty"`
+	// Model is the model the session runs; empty is Claude's own default.
+	Model string `json:"model,omitempty"`
+	// Gateway, when set, runs the session through it on a key of its own (in
+	// the session's gateway file) instead of the user's Claude credential.
+	Gateway claude.Gateway `json:"gateway,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -123,6 +141,9 @@ type CreateInput struct {
 	PermissionMode claude.PermissionMode
 	// Title labels a local session in the desktop's list.
 	Title string
+	// Model is the session's --model; empty keeps Claude's default. Callers
+	// validate it (claude.ValidModel).
+	Model string
 }
 
 func NewService(root string) *Service {
@@ -168,7 +189,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
-	return append([]string(nil), s.secrets...)
+	return append(append([]string(nil), s.secrets...), s.gatewayTokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -227,6 +248,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		BaseBranch:     in.BaseBranch,
 		PermissionMode: in.PermissionMode,
 		Title:          in.Title,
+		Model:          in.Model,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
 	// A repeated Create (after a restart) keeps the session's original age, and
@@ -234,6 +256,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	prior, existed := s.getFacts(in.WorkspaceID)
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
+	}
+	// A repeated Create (after an agent restart) never switches the model:
+	// that is SetModel's, which relaunches the session to match. A session on a
+	// gateway keeps it, key file and all — dropping it here would run the
+	// gateway's model name on the user's own Claude, and unmask the key of a
+	// session still running on it.
+	if prior.Model != "" || facts.Model == "" {
+		facts.Model, facts.Gateway = prior.Model, prior.Gateway
 	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
@@ -414,11 +444,148 @@ func isTrustDialog(pane string) bool {
 // The Summary collector is (re)started so post-restart activity is folded in.
 func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	defer s.lockLifecycle(workspaceID)()
+	return s.relaunch(ctx, workspaceID, anthropicToken, true)
+}
+
+var (
+	// ErrUnknownWorkspace is a workspace this agent has no record of.
+	ErrUnknownWorkspace = errors.New("unknown workspace")
+	// ErrModelUnsupported is a model switch on an engine that has none (jcode).
+	ErrModelUnsupported = errors.New("this engine cannot switch models")
+	// ErrSessionBusy is a switch asked for while Claude is mid-turn: the
+	// relaunch would cut the turn off.
+	ErrSessionBusy = errors.New("Claude is mid-turn; switch models once it has finished")
+	// ErrSessionUnchecked is a switch refused because tmux couldn't say whether
+	// the session is running: guessing either way could record a model the
+	// session isn't using, or cut a turn off.
+	ErrSessionUnchecked = errors.New("couldn't check the session; try the switch again")
+)
+
+// Past the point where a dropped request may stop it, a model switch runs on
+// deadlines of its own, so a hung tmux can't hold the workspace's locks
+// forever: a short one for checking the session, and a separate, full one for
+// the relaunch, so slow checks never eat into it and leave the kill without
+// its replacement.
+const (
+	switchCheckTimeout    = 10 * time.Second
+	switchRelaunchTimeout = 60 * time.Second // covers the readiness wait with room to spare
+)
+
+// ModelChoice is what a session runs: a model, and optionally the gateway and
+// key it runs through. Callers validate each part.
+type ModelChoice struct {
+	Model   string
+	Gateway claude.Gateway
+	Token   string
+}
+
+// SetModel switches a session to another model, or to or from a gateway. It is
+// recorded first, so every later launch and resume uses it; a running session
+// is then relaunched on it, continuing its conversation (Claude reads all of it
+// only at launch). It is refused while Claude is mid-turn, which the relaunch
+// would cut off.
+func (s *Service) SetModel(ctx context.Context, workspaceID string, choice ModelChoice, anthropicToken string) error {
+	if s.jcode != nil {
+		return ErrModelUnsupported // jcode's bridge launches its own sessions
+	}
+	defer s.lockLifecycle(workspaceID)()
+	f, ok := s.getFacts(workspaceID)
+	if !ok {
+		return ErrUnknownWorkspace // never write facts for a workspace never created
+	}
+	env := ""
+	if choice.Gateway != claude.NoGateway {
+		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
+	}
+	priorEnv := s.readGatewayEnv(workspaceID)
+	if f.Model == choice.Model && f.Gateway == choice.Gateway && priorEnv == env {
+		return nil
+	}
+	// Held from the busy check through the relaunch, so no prompt can be sent
+	// after Claude looked idle and then be cut off by the kill.
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	defer lock.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err // the request gave up while a prompt was sent: nothing recorded
+	}
+	// From here the switch runs to the end even if the request drops (a check
+	// on a cancelled context would misread a running session as gone, and the
+	// relaunch must not stop between its kill and its new session), but within
+	// deadlines of its own.
+	base := context.WithoutCancel(ctx)
+	ctx, cancel := context.WithTimeout(base, switchCheckTimeout)
+	defer cancel()
+	name := sessionName(workspaceID)
+	running, err := s.tmux.SessionExists(ctx, name)
+	if err != nil {
+		return fmt.Errorf("%w (%v)", ErrSessionUnchecked, err)
+	}
+	if running {
+		pane, err := s.tmux.CapturePane(ctx, name)
+		if err != nil {
+			// Unread is not idle. Only a session tmux says is gone (Claude
+			// exited in between) is safe to switch without a relaunch.
+			still, checkErr := s.tmux.SessionExists(ctx, name)
+			if checkErr != nil || still {
+				return fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionUnchecked, err)
+			}
+			running = false
+		} else if claudeIsBusy(pane) {
+			return ErrSessionBusy
+		}
+	}
+	if err := s.putGatewayEnv(workspaceID, env); err != nil {
+		return err
+	}
+	prior := f
+	f.Model, f.Gateway = choice.Model, choice.Gateway
+	s.setFacts(workspaceID, f)
+	if !running {
+		return nil // the next Start launches on it
+	}
+	// Continue only a conversation that exists: before the first prompt there
+	// is none, and --continue with nothing to continue exits.
+	resume := s.SessionLog(workspaceID) != ""
+	relaunchCtx, cancelRelaunch := context.WithTimeout(base, switchRelaunchTimeout)
+	defer cancelRelaunch()
+	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, resume, lock); err != nil {
+		// Not applied, so not recorded: a retry of the same choice tries again
+		// rather than finding it already set, and the next Start uses the old.
+		_ = s.putGatewayEnv(workspaceID, priorEnv)
+		s.setFacts(workspaceID, prior)
+		// The old session was killed before the new one failed to start, so
+		// bring Claude back on the model it had: a failed switch must not end
+		// a session that was working.
+		restoreCtx, cancelRestore := context.WithTimeout(base, switchRelaunchTimeout)
+		defer cancelRestore()
+		if _, restoreErr := s.relaunchHeld(restoreCtx, workspaceID, anthropicToken, resume, lock); restoreErr != nil {
+			return fmt.Errorf("%w; restarting it on its previous model failed too: %v", err, restoreErr)
+		}
+		return err
+	}
+	return nil
+}
+
+// claudeIsBusy reports whether Claude's screen shows a turn in progress: its
+// footer offers "esc to interrupt" only then.
+func claudeIsBusy(pane string) bool {
+	return strings.Contains(pane, "esc to interrupt")
+}
+
+// relaunch replaces a workspace's Claude session. Callers hold its lifecycle
+// lock.
+func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken string, resume bool) (string, error) {
 	// Hold the send lock across the kill+recreate so an in-flight SendMessage
 	// retry loop can't press Enter into the freshly recreated session.
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
 	defer lock.Unlock()
+	return s.relaunchHeld(ctx, workspaceID, anthropicToken, resume, lock)
+}
+
+// relaunchHeld is relaunch for a caller already holding the send lock.
+func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken string, resume bool, lock *sendState) (string, error) {
 	lock.staged = nil // the composer it was typed into is about to go
 	name := sessionName(workspaceID)
 	if s.jcode != nil {
@@ -433,11 +600,11 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	env := claude.SessionEnv(s.env, anthropicToken)
-	cmd := s.launchCommand(workspaceID, worktree, true)
+	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
-	s.startRecorder(ctx, workspaceID)
+	s.continueRecorder(ctx, workspaceID)
 	s.waitClaudeReady(ctx, name, s.local(workspaceID))
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
@@ -451,16 +618,22 @@ func (s *Service) Resume(ctx context.Context, workspaceID, anthropicToken string
 func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []string {
 	mode, orientation := s.permissionMode(workspaceID), s.orientation(workspaceID, worktree)
 	f, _ := s.getFacts(workspaceID)
+	var argv []string
 	switch {
 	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
-		return claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
+		argv = claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
 	case f.ClaudeSessionID != "":
-		return claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
+		argv = claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
 	case resume:
-		return claude.ContinueCommand(mode, orientation)
+		argv = claude.ContinueCommand(mode, orientation)
 	default:
-		return claude.Command(mode, orientation)
+		argv = claude.Command(mode, orientation)
 	}
+	if f.Gateway != claude.NoGateway {
+		// The model rides in the gateway file: --model refuses a gateway's names.
+		return claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
+	}
+	return claude.WithModel(argv, f.Model)
 }
 
 // orientation builds Claude's orientation prompt for a workspace. It uses the
@@ -840,11 +1013,34 @@ func (s *Service) sessionID(workspaceID string) *string {
 // after Claude exited without a Stop) so its goroutine + FIFO don't leak.
 func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.stopRecorder(ctx, workspaceID)
-	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{})
+	// Masked like the browser's terminal: a cast is archived and uploaded.
+	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{Secrets: s.RedactionSecrets()})
 	s.recordersMu.Lock()
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()
 	_ = rec.Start(ctx)
+}
+
+// continueRecorder keeps a workspace's cast going across a relaunch: a recorder
+// still running is pointed at the new session, so the cast holds everything
+// before the relaunch too. A recorder is started afresh, which truncates the
+// cast, only when none is running.
+func (s *Service) continueRecorder(ctx context.Context, workspaceID string) {
+	s.recordersMu.Lock()
+	rec := s.recorders[workspaceID]
+	s.recordersMu.Unlock()
+	if rec != nil {
+		running, err := rec.Rearm(ctx)
+		if running && err != nil {
+			running, _ = rec.Rearm(ctx) // one more try: tmux can drop a command
+		}
+		if running {
+			// Even when tmux won't pipe the new pane, the cast keeps what it
+			// has: starting afresh would erase the session up to the switch.
+			return
+		}
+	}
+	s.startRecorder(ctx, workspaceID)
 }
 
 // stopRecorder finalizes and drops the workspace's recorder. Idempotent.
@@ -901,6 +1097,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
+	_ = os.Remove(s.gatewayEnvPath(workspaceID))
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()

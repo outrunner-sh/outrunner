@@ -16,6 +16,7 @@ import {
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
+import type { SetModelRequest } from "@/lib/runtime/session-models";
 import {
   parseManifest,
   type SnapshotManifest,
@@ -54,6 +55,26 @@ const AGENT_REQUEST_TIMEOUT_MS = 12_000;
  * valid long-running restore isn't aborted and reported as a failure.
  */
 const AGENT_LIFECYCLE_TIMEOUT_MS = 180_000;
+
+/**
+ * A model switch checks the session (up to 10s on the agent) and relaunches
+ * Claude on the new model (up to 60s), so it outlasts both.
+ */
+const AGENT_MODEL_SWITCH_TIMEOUT_MS = 90_000;
+
+/** A non-2xx agent answer. `error` is the agent's error envelope; absent when
+ *  the answer was not one (such as a route an older agent does not have). */
+export class AgentRequestError extends Error {
+  readonly status: number;
+  readonly error?: ErrorResponse["error"];
+
+  constructor(status: number, error?: ErrorResponse["error"]) {
+    super(error ? `agent ${error.code}: ${error.message}` : `agent request failed (${status})`);
+    this.name = "AgentRequestError";
+    this.status = status;
+    this.error = error;
+  }
+}
 
 export class AgentClient {
   private readonly target: AgentTarget;
@@ -94,6 +115,17 @@ export class AgentClient {
 
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
+  }
+
+  /** Switch the workspace's session to another model; the agent relaunches
+   *  Claude on it with the conversation continued. */
+  setModel(identity: WorkspaceIdentity, req: SetModelRequest): Promise<unknown> {
+    return this.post(
+      `/workspaces/${identity.workspaceId}/model`,
+      identity,
+      req,
+      AGENT_MODEL_SWITCH_TIMEOUT_MS,
+    );
   }
 
   /**
@@ -230,11 +262,7 @@ export class AgentClient {
     const text = await response.text();
     if (!response.ok) {
       const parsed = ErrorResponse.safeParse(safeJson(text));
-      throw new Error(
-        parsed.success
-          ? `agent ${parsed.data.error.code}: ${parsed.data.error.message}`
-          : `agent request failed (${response.status})`,
-      );
+      throw new AgentRequestError(response.status, parsed.success ? parsed.data.error : undefined);
     }
     return safeJson(text);
   }
