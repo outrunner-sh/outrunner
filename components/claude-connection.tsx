@@ -302,7 +302,7 @@ export function ClaudeConnection() {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Connecting runs Claude Code on your Mac, so it works in the Outrunner Mac app.
+            Open Outrunner in the desktop app to connect your Claude subscription.
           </p>
         )}
 
