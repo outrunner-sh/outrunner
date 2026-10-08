@@ -37,6 +37,9 @@ tokio = { version = "1", features = ["sync", "macros", "time"] }
 tokio-tungstenite = "0.28"
 futures-util = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
+# The updater turns on reqwest's rustls without a crypto provider, for every
+# client in the app: run() installs this one before any client is built.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
