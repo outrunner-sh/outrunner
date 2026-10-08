@@ -36,6 +36,9 @@ const noopSubscribe = () => () => {};
 export function ClaudeConnection() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [busy, setBusy] = useState(false);
+  // Watching for the CLI to finish after the browser opened. Kept apart from
+  // `busy` so Cancel and the code fallback stay usable for the whole wait.
+  const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Whether we're inside the Tauri shell — an unchanging client-only fact, so
@@ -77,39 +80,46 @@ export function ClaudeConnection() {
   const connect = useCallback(async () => {
     setBusy(true);
     setError(null);
+    let url: string;
     try {
-      const url = await startClaudeLogin();
-      setPending(url);
-      // The shell bounces off-site navigations to the system browser, which is
-      // where this has to happen: Claude blocks embedded webviews, and the URL
-      // bar is the user's anti-phishing signal.
-      window.open(url, "_blank");
+      url = await startClaudeLogin();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+      return;
+    } finally {
+      setBusy(false);
+    }
+    setPending(url);
+    // The shell bounces off-site navigations to the system browser, which is
+    // where this has to happen: Claude blocks embedded webviews, and the URL
+    // bar is the user's anti-phishing signal.
+    window.open(url, "_blank");
 
-      // Authorizing usually completes the login outright, so watch for the
-      // token rather than asking for a code that will never be issued. The code
-      // field stays on screen meanwhile, for the CLI's fallback prompt.
+    // Authorizing usually completes the login outright, so watch for the
+    // token rather than asking for a code that will never be issued. The code
+    // field stays on screen meanwhile, for the CLI's fallback prompt.
+    setWaiting(true);
+    try {
       const deadline = Date.now() + 5 * 60 * 1000;
       while (Date.now() < deadline) {
-        let token: string | null = null;
-        try {
-          token = await pollClaudeLogin();
-        } catch (e) {
-          // Don't swallow this. A silent catch here hid a missing ACL grant:
-          // every poll was rejected, the loop gave up on the first tick, and the
-          // UI sat on the code field while the token was already in hand.
-          const reason = e instanceof Error ? e.message : String(e);
-          if (reason.includes("no-login-in-progress")) return;
-          throw e;
-        }
-        if (token) {
-          await save(token);
+        // Don't swallow a rejection here. A silent catch once hid a missing ACL
+        // grant: every poll was rejected, the loop gave up on the first tick,
+        // and the UI sat on the code field while the token was already in hand.
+        const poll = await pollClaudeLogin();
+        if (poll.state === "ended") return;
+        if (poll.state === "done") {
+          await save(poll.token);
           return;
         }
       }
+      void cancelClaudeLogin();
+      setPending(null);
+      setError("No answer from the browser after five minutes. Start again.");
     } catch (e) {
+      setPending(null);
       setError(e instanceof Error ? e.message : "Connecting Claude failed.");
     } finally {
-      setBusy(false);
+      setWaiting(false);
     }
   }, [save]);
 
@@ -176,11 +186,15 @@ export function ClaudeConnection() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={busy}
+                    disabled={busy || waiting}
                     onClick={connect}
                     aria-label="Reconnect"
                   >
-                    {busy ? <Loader2 className="size-4 animate-spin" /> : "Reconnect"}
+                    {busy || waiting ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      "Reconnect"
+                    )}
                   </Button>
                 ) : null}
                 <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
@@ -195,7 +209,7 @@ export function ClaudeConnection() {
         ) : desktop && pending ? (
           <div className="space-y-3">
             <p className="text-sm text-foreground">
-              {busy
+              {waiting
                 ? "Waiting for you to authorize in the browser…"
                 : "Authorize in your browser to finish."}
             </p>
@@ -219,7 +233,7 @@ export function ClaudeConnection() {
                 value={code}
                 onChange={(event) => setCode(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && code.trim()) void finish();
+                  if (event.key === "Enter" && code.trim() && !busy) void finish();
                 }}
                 placeholder="Paste the code…"
                 aria-label="Authorization code"

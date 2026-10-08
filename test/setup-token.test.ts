@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { parseSetupToken } from "@/lib/desktop/connect-claude";
+import { messageForError, parseSetupToken } from "@/lib/desktop/connect-claude";
 
 test("returns a bare sk-ant token as-is", () => {
   const token = "sk-ant-oat01-AbCd_1234-EfGh";
@@ -33,4 +33,17 @@ test("rejects non-strings, blanks, and prose without a token", () => {
 
 test("rejects a too-short opaque value", () => {
   assert.equal(parseSetupToken("short-token"), null);
+});
+
+test("explains a CLI that exited without a token, with what it said", () => {
+  const message = messageForError("setup-token-exited: Opening browser | Login failed");
+  assert.match(message, /Claude Pro or Max subscription/);
+  assert.match(message, /Settings → Credentials/);
+  assert.match(message, /It said: Opening browser \| Login failed$/);
+});
+
+test("explains a CLI that exited without a token or any output", () => {
+  const message = messageForError("setup-token-exited");
+  assert.match(message, /stopped without issuing a token/);
+  assert.doesNotMatch(message, /It said/);
 });
