@@ -224,8 +224,9 @@ fn utf8_locale() -> String {
 /// The PATH local sessions run with. A macOS GUI app inherits launchd's minimal
 /// PATH, not the user's shell's, so git, tmux and claude from Homebrew or a
 /// version manager would all be invisible. Ask the login shell once, and keep
-/// the usual prefixes as a floor in case it answers nothing.
-fn session_path() -> &'static str {
+/// the usual prefixes as a floor in case it answers nothing. Connect Claude
+/// runs `claude setup-token` with it too.
+pub(crate) fn session_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
         let mut dirs: Vec<String> = login_shell_path()
@@ -235,6 +236,7 @@ fn session_path() -> &'static str {
         let floor = [
             format!("{home}/.local/bin"),
             format!("{home}/.claude/local"),
+            format!("{home}/.bun/bin"),
             "/opt/homebrew/bin".into(),
             "/usr/local/bin".into(),
             "/usr/bin".into(),
@@ -282,7 +284,7 @@ fn login_shell_path() -> Option<String> {
     Some(out[start..end].to_string())
 }
 
-fn which(tool: &str) -> Option<String> {
+pub(crate) fn which(tool: &str) -> Option<String> {
     session_path()
         .split(':')
         .map(|dir| Path::new(dir).join(tool))

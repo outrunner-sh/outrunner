@@ -27,6 +27,7 @@
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -46,6 +47,9 @@ pub struct ClaudeLogin {
     /// Signalled by the reader thread whenever new output lands, so the pollers
     /// below wake on output rather than on a timer.
     rx: Receiver<()>,
+    /// Set by the reader thread once the child's output has ended, after the
+    /// last of it is in `transcript`.
+    exited: Arc<AtomicBool>,
     _child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
@@ -57,53 +61,16 @@ pub struct ClaudeLoginState(
     pub Mutex<String>,
 );
 
-/// Locate the `claude` binary.
+/// Locate the `claude` binary the way local sessions do: on the user's
+/// login-shell PATH, then the usual install prefixes.
 ///
 /// A macOS GUI app inherits launchd's PATH, not the user's shell PATH, so a
-/// Homebrew or nvm install is invisible to a bare `Command::new("claude")`.
-/// Checking the usual prefixes directly is more predictable than spawning a
-/// login shell just to resolve a name.
+/// Homebrew or version-manager install is invisible to a bare
+/// `Command::new("claude")`. The login shell is asked once, with a deadline and
+/// markers around the answer, so a slow profile cannot hang this and a profile
+/// that prints a banner cannot garble the path.
 fn claude_binary() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
-        for rel in [".claude/local/claude", ".local/bin/claude", ".bun/bin/claude"] {
-            let candidate = home.join(rel);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    for prefix in [
-        "/opt/homebrew/bin/claude",
-        "/usr/local/bin/claude",
-        "/usr/bin/claude",
-    ] {
-        let candidate = PathBuf::from(prefix);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    // Whatever PATH we did inherit (thin, but free to check).
-    if let Some(found) = std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join("claude"))
-            .find(|candidate| candidate.is_file())
-    }) {
-        return Some(found);
-    }
-
-    // Ask the user's own login shell. The fixed paths above miss every version
-    // manager — nvm, volta, mise, asdf, fnm each put `claude` somewhere
-    // different, and an npm -g install lands wherever that node lives. A login
-    // shell sources the user's profile, so it resolves all of them at once
-    // without us enumerating each layout.
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let out = std::process::Command::new(shell)
-        .args(["-lic", "command -v claude"])
-        .output()
-        .ok()?;
-    let path = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
-    path.is_file().then_some(path)
+    crate::local_runtime::which("claude").map(PathBuf::from)
 }
 
 /// Strip ANSI escape sequences and the OSC-8 hyperlink wrappers Claude Code
@@ -132,6 +99,38 @@ fn find_authorize_url(text: &str) -> Option<String> {
 fn find_token(text: &str) -> Option<String> {
     let re = regex::Regex::new(r"sk-ant-[A-Za-z0-9_-]{20,}").unwrap();
     re.find(text).map(|m| m.as_str().to_string())
+}
+
+/// The last few lines the CLI printed, ANSI stripped and tokens redacted, for
+/// an error message. Without them a failure on someone else's machine says only
+/// that it didn't work, and has to be debugged by hand.
+fn transcript_tail(raw: &str) -> String {
+    let re = regex::Regex::new(r"sk-ant-[A-Za-z0-9_-]{10,}").unwrap();
+    let text = strip_ansi(raw);
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(6)..].join(" | ");
+    re.replace_all(&tail, "<redacted token>").into_owned()
+}
+
+/// What a poll reports: the token once printed, an error once the CLI has
+/// exited without one, and otherwise nothing yet.
+///
+/// The exit check matters. `setup-token` exits without a token when the account
+/// has no Claude subscription or the user declines in the browser, and before
+/// this the UI kept waiting for five minutes and then gave up without a word.
+fn poll_outcome(raw: &str, exited: bool) -> Result<Option<String>, String> {
+    if let Some(token) = find_token(&strip_ansi(raw)) {
+        return Ok(Some(token));
+    }
+    if !exited {
+        return Ok(None);
+    }
+    let tail = transcript_tail(raw);
+    Err(if tail.is_empty() {
+        "setup-token-exited".to_string()
+    } else {
+        format!("setup-token-exited: {tail}")
+    })
 }
 
 /// Block until `probe` finds something in the transcript, or `budget` elapses.
@@ -168,8 +167,12 @@ fn await_match<T>(
 pub async fn connect_claude_start(
     state: tauri::State<'_, ClaudeLoginState>,
 ) -> Result<String, String> {
-    let binary = claude_binary().ok_or("claude-cli-not-found")?;
+    start_login(&state, claude_binary().ok_or("claude-cli-not-found")?)
+}
 
+/// `connect_claude_start` with the binary given, so a test can stand in for
+/// the CLI.
+fn start_login(state: &ClaudeLoginState, binary: PathBuf) -> Result<String, String> {
     let pty = NativePtySystem::default()
         .openpty(PtySize { rows: 48, cols: 120, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| format!("pty-failed: {e}"))?;
@@ -182,15 +185,20 @@ pub async fn connect_claude_start(
     // Claude Code renders a spinner and redraws; a dumb terminal keeps the
     // transcript closer to plain text without changing the flow.
     cmd.env("TERM", "xterm-256color");
+    // An npm install's `claude` starts with `#!/usr/bin/env node`, and
+    // launchd's PATH has no node in it.
+    cmd.env("PATH", crate::local_runtime::session_path());
 
     let child = pty.slave.spawn_command(cmd).map_err(|e| format!("spawn-failed: {e}"))?;
     let mut reader = pty.master.try_clone_reader().map_err(|e| format!("pty-read-failed: {e}"))?;
     let writer = pty.master.take_writer().map_err(|e| format!("pty-write-failed: {e}"))?;
 
     let transcript = Arc::new(Mutex::new(String::new()));
+    let exited = Arc::new(AtomicBool::new(false));
     let (tx, rx) = channel();
     {
         let transcript = Arc::clone(&transcript);
+        let exited = Arc::clone(&exited);
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
@@ -206,37 +214,21 @@ pub async fn connect_claude_start(
                     }
                 }
             }
+            exited.store(true, Ordering::Release);
         });
     }
 
     let url = await_match(&transcript, &rx, URL_TIMEOUT, find_authorize_url);
 
-    let login = ClaudeLogin { writer, transcript, rx, _child: child };
+    let login = ClaudeLogin { writer, transcript, rx, exited, _child: child };
     *state.0.lock().unwrap() = Some(login);
 
     match url {
         Some(url) => Ok(url),
         None => {
-            // Hand back what the CLI actually printed, redacted. Without this a
-            // failure is just "no sign-in link" and every machine has to be
-            // debugged by hand — which is exactly what happened the first time
-            // this hit a machine other than the developer's.
-            let text = strip_ansi(&state.0.lock().unwrap().as_ref().map_or_else(
-                String::new,
-                |l| l.transcript.lock().unwrap().clone(),
-            ));
-            let re = regex::Regex::new(r"sk-ant-[A-Za-z0-9_-]{10,}").unwrap();
-            let tail: String = re
-                .replace_all(&text, "<redacted token>")
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .rev()
-                .take(6)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join(" | ");
+            let tail = state.0.lock().unwrap().as_ref().map_or_else(String::new, |l| {
+                transcript_tail(&l.transcript.lock().unwrap())
+            });
             Err(if tail.is_empty() {
                 "no-authorize-url".to_string()
             } else {
@@ -292,23 +284,35 @@ pub async fn connect_claude_submit(
 pub async fn connect_claude_poll(
     state: tauri::State<'_, ClaudeLoginState>,
 ) -> Result<Option<String>, String> {
-    let transcript = {
+    poll_login(&state)
+}
+
+fn poll_login(state: &ClaudeLoginState) -> Result<Option<String>, String> {
+    let (transcript, exited) = {
         let guard = state.0.lock().unwrap();
         let login = guard.as_ref().ok_or("no-login-in-progress")?;
-        Arc::clone(&login.transcript)
+        (Arc::clone(&login.transcript), Arc::clone(&login.exited))
     };
 
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
-        {
-            let text = transcript.lock().unwrap();
-            if let Some(token) = find_token(&strip_ansi(&text)) {
-                // Done with this attempt: drop the child so a retry is clean.
-                *state.1.lock().unwrap() = text.clone();
-                *state.0.lock().unwrap() = None;
-                return Ok(Some(token));
+        // Read the flag before the text: the reader sets it only after its last
+        // write, so an exit seen here means the transcript below is complete.
+        let gone = exited.load(Ordering::Acquire);
+        let text = transcript.lock().unwrap().clone();
+        *state.1.lock().unwrap() = text.clone();
+        let outcome = poll_outcome(&text, gone);
+        if !matches!(outcome, Ok(None)) {
+            let mut current = state.0.lock().unwrap();
+            // Cancel drops the child, which then exits; that exit, or a retry
+            // started since, is not this poll's to report or to clear.
+            if !current.as_ref().is_some_and(|l| Arc::ptr_eq(&l.transcript, &transcript)) {
+                return Err("no-login-in-progress".into());
             }
-            *state.1.lock().unwrap() = text.clone();
+            // Done with this attempt either way: drop the child so a retry is
+            // clean.
+            *current = None;
+            return outcome;
         }
         if Instant::now() >= deadline {
             return Ok(None);
@@ -368,6 +372,88 @@ mod tests {
     fn does_not_mistake_the_prompt_for_a_token() {
         assert_eq!(find_token("Paste code here:"), None);
         assert_eq!(find_token("sk-ant-short"), None);
+    }
+
+    #[test]
+    fn a_poll_reports_why_the_cli_exited_without_a_token() {
+        let raw = "\x1b[2GOpening browser to sign in\n\nSomething went wrong\n";
+        assert_eq!(poll_outcome(raw, false), Ok(None));
+        let err = poll_outcome(raw, true).unwrap_err();
+        assert!(err.starts_with("setup-token-exited: "), "{err}");
+        assert!(err.ends_with("Opening browser to sign in | Something went wrong"), "{err}");
+        assert_eq!(poll_outcome("", true), Err("setup-token-exited".to_string()));
+    }
+
+    #[test]
+    fn a_poll_returns_a_token_printed_just_before_exit() {
+        let raw = "Token created:\n  sk-ant-oat01-AbCd1234_efgh-5678ijkl\n";
+        assert_eq!(
+            poll_outcome(raw, true),
+            Ok(Some("sk-ant-oat01-AbCd1234_efgh-5678ijkl".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_tail_keeps_the_last_lines_and_redacts_tokens() {
+        let raw = (1..=8).map(|n| format!("line {n}\n\n")).collect::<String>()
+            + "sk-ant-oat01-AbCd1234_efgh\n";
+        assert_eq!(
+            transcript_tail(&raw),
+            "line 4 | line 5 | line 6 | line 7 | line 8 | <redacted token>"
+        );
+    }
+
+    /// A stand-in for `claude` that prints a sign-in link, then fails the way
+    /// `setup-token` does for an account without a subscription.
+    fn failing_cli(name: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("outrunner-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("claude");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\n\
+             echo 'Opening browser to sign in'\n\
+             echo 'https://claude.com/cai/oauth/authorize?code=true&state=abc'\n\
+             sleep 1\n\
+             echo 'Login failed: no subscription'\n\
+             exit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn a_cli_that_exits_without_a_token_ends_the_poll_with_its_output() {
+        let (dir, cli) = failing_cli("login-exit");
+        let state = ClaudeLoginState::default();
+        let url = start_login(&state, cli).expect("authorize url");
+        assert!(url.starts_with("https://claude.com/cai/oauth/authorize"), "{url}");
+
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let err = loop {
+            match poll_login(&state) {
+                Ok(None) if Instant::now() < deadline => continue,
+                Ok(other) => panic!("poll = {other:?}; want the CLI's failure"),
+                Err(err) => break err,
+            }
+        };
+        assert!(err.starts_with("setup-token-exited: "), "{err}");
+        assert!(err.contains("Login failed: no subscription"), "{err}");
+        // The attempt is over, so a retry starts clean.
+        assert_eq!(poll_login(&state), Err("no-login-in-progress".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cancelled_login_is_not_reported_as_a_failure() {
+        let (dir, cli) = failing_cli("login-cancel");
+        let state = ClaudeLoginState::default();
+        start_login(&state, cli).expect("authorize url");
+        *state.0.lock().unwrap() = None; // connect_claude_cancel
+        assert_eq!(poll_login(&state), Err("no-login-in-progress".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
