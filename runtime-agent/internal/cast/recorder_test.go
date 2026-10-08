@@ -18,6 +18,7 @@ type fakePane struct {
 
 	mu       sync.Mutex
 	armed    bool
+	arms     int
 	disarmed bool
 }
 
@@ -31,6 +32,8 @@ func (p *fakePane) size(context.Context) (int, int, error) {
 func (p *fakePane) arm(_ context.Context, fifoPath string) error {
 	p.mu.Lock()
 	p.armed = true
+	p.arms++
+	data := p.data
 	p.mu.Unlock()
 	go func() {
 		w, err := os.OpenFile(fifoPath, os.O_WRONLY, 0o600)
@@ -38,7 +41,7 @@ func (p *fakePane) arm(_ context.Context, fifoPath string) error {
 			return
 		}
 		defer w.Close()
-		w.Write(p.data)
+		w.Write(data)
 	}()
 	return nil
 }
@@ -91,6 +94,58 @@ func TestRecorderCapturesPaneOutput(t *testing.T) {
 	}
 }
 
+func TestRearmKeepsOneCastAcrossARelaunch(t *testing.T) {
+	p := &fakePane{data: []byte("BEFORE_SWITCH ")}
+	r := newFakeRecorder(t, p)
+	ctx := context.Background()
+
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	// The session is replaced under the same name; its new pane says something else.
+	p.mu.Lock()
+	p.data = []byte("AFTER_SWITCH")
+	p.mu.Unlock()
+	if running, err := r.Rearm(ctx); !running || err != nil {
+		t.Fatalf("Rearm = %v, %v; want true, nil", running, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := r.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(r.castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(b, []byte(`"version"`)); n != 1 {
+		t.Fatalf("cast has %d headers, want 1", n)
+	}
+	_, frames := parseCast(t, b)
+	var out bytes.Buffer
+	for _, f := range frames {
+		out.WriteString(f[2].(string))
+	}
+	if !bytes.Contains(out.Bytes(), []byte("BEFORE_SWITCH")) || !bytes.Contains(out.Bytes(), []byte("AFTER_SWITCH")) {
+		t.Fatalf("cast = %q, want the output from before and after the relaunch", out.String())
+	}
+	if p.arms != 2 {
+		t.Fatalf("pane armed %d times, want 2", p.arms)
+	}
+}
+
+func TestRearmDoesNothingWhenNotRecording(t *testing.T) {
+	p := &fakePane{data: []byte("x")}
+	r := newFakeRecorder(t, p)
+	if running, err := r.Rearm(context.Background()); running || err != nil {
+		t.Fatalf("Rearm before Start = %v, %v; want false, nil", running, err)
+	}
+	if p.arms != 0 {
+		t.Fatal("Rearm armed a recorder that wasn't running")
+	}
+}
+
 func TestRecorderStartStopIdempotent(t *testing.T) {
 	p := &fakePane{data: []byte("x")}
 	r := newFakeRecorder(t, p)
@@ -106,5 +161,36 @@ func TestRecorderStartStopIdempotent(t *testing.T) {
 	}
 	if err := r.Stop(context.Background()); err != nil { // second Stop is a no-op
 		t.Fatal(err)
+	}
+}
+
+func TestRecorderMasksSecretsBeforeRecording(t *testing.T) {
+	// The key printed as a session might (`env | grep TOKEN`), ending the
+	// output so the masking's held-back tail is flushed at Stop too.
+	p := &fakePane{data: []byte("ANTHROPIC_AUTH_TOKEN=sk-or-v1-recorded-key\r\nmore output sk-or-v1-recorded-key")}
+	r := newFakeRecorder(t, p)
+	r.opts.Secrets = []string{"sk-or-v1-recorded-key"}
+
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := r.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(r.castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte("sk-or-v1-recorded-key")) {
+		t.Fatalf("the cast holds the key:\n%s", b)
+	}
+	_, frames := parseCast(t, b)
+	var out bytes.Buffer
+	for _, f := range frames {
+		out.WriteString(f[2].(string))
+	}
+	if got := out.String(); got != "ANTHROPIC_AUTH_TOKEN=***\r\nmore output ***" {
+		t.Fatalf("recorded %q, want the output with the key masked and nothing else lost", got)
 	}
 }

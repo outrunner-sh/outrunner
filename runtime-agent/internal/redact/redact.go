@@ -1,9 +1,10 @@
-package server
+// Package redact masks secrets in a byte stream that arrives in pieces.
+package redact
 
 import "strings"
 
-// Redactor removes process secrets from terminal output before it reaches a
-// browser. It retains a small suffix between calls so a secret split across
+// Redactor removes process secrets from terminal output: before it reaches a
+// browser, and before it is recorded. It retains a small suffix between calls so a secret split across
 // adjacent PTY reads cannot leak one half in an earlier WebSocket frame.
 type Redactor struct {
 	secrets []string
@@ -11,9 +12,9 @@ type Redactor struct {
 	pending string
 }
 
-// NewRedactor ignores empty and duplicate secrets. Sorting longest-first keeps
+// New ignores empty and duplicate secrets. Sorting longest-first keeps
 // a shorter secret that is contained in a longer one from leaving a fragment.
-func NewRedactor(secrets []string) *Redactor {
+func New(secrets []string) *Redactor {
 	seen := make(map[string]struct{})
 	active := make([]string, 0, len(secrets))
 	maxLen := 0
@@ -54,15 +55,22 @@ func (r *Redactor) Redact(data []byte) string {
 	}
 	// Do not cut through a partial secret. If the suffix just before cut is a
 	// prefix of any secret, retain it until the following read disambiguates it.
-	for _, secret := range r.secrets {
-		limit := len(secret) - 1
-		if limit > cut {
-			limit = cut
-		}
-		for n := limit; n > 0; n-- {
-			if all[cut-n:cut] == secret[:n] {
-				cut -= n
-				break
+	// Moving cut back can land it inside another secret that ended at the old
+	// cut (one secret ending with the start of another), which would then be
+	// emitted unmasked, so check every secret again until cut stays put.
+	for moved := true; moved; {
+		moved = false
+		for _, secret := range r.secrets {
+			limit := len(secret) - 1
+			if limit > cut {
+				limit = cut
+			}
+			for n := limit; n > 0; n-- {
+				if all[cut-n:cut] == secret[:n] {
+					cut -= n
+					moved = true
+					break
+				}
 			}
 		}
 	}

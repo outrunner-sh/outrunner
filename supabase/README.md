@@ -1,35 +1,53 @@
 # Supabase
 
-Project ref: `lnefgozarjjuyztnmnkp`
+Project ref: `butbnitdpiehgwqggowr`
 
 ## Applying migrations
 
-The sandbox has no IPv6 egress and `db.<ref>.supabase.co` resolves to an
-IPv6-only address, so a direct `psql` connection from here fails with
-"Network is unreachable". Use one of these instead.
-
-### Option A — SQL editor (no local setup)
-
-Paste each file in `supabase/migrations/` into the Supabase SQL editor, oldest
-first, and run it.
-
-### Option B — Supabase CLI (from your laptop)
-
-The CLI is already a dev dependency, so use `pnpm supabase` rather than a
-global install:
-
 ```bash
-pnpm supabase login
-pnpm supabase link --project-ref lnefgozarjjuyztnmnkp
-pnpm supabase db push
+pnpm db:migrate --dry-run   # what is pending
+pnpm db:migrate             # apply it (asks first)
+pnpm db:status              # what the database has recorded
 ```
+
+The password is handed to the CLI in `PGPASSWORD`, never on a command line.
+
+`db:migrate` runs `supabase db push`, which records each migration in
+`supabase_migrations.schema_migrations`. A migration runs once, and one already
+applied is skipped.
+
+It needs `SUPABASE_DB_URL` in `.env.local`: Dashboard → **Connect** → **Session
+pooler** URI, with the database password filled in. The session pooler works
+over IPv4; the direct `db.<ref>.supabase.co` host is IPv6-only. The transaction
+pooler (port 6543) can't run migrations, and the script refuses it.
+
+Apply a migration before deploying code that reads what it adds.
 
 Notes:
 
-- Do **not** run `supabase init` — this repository already contains
+- Do **not** run `supabase init`. This repository already has
   `supabase/migrations`, and `init` would scaffold a competing config.
-- `db push` applies pending migrations. `supabase db reset` is destructive.
-- Connecting through the CLI uses the pooler, which works over IPv4.
+- `supabase db reset` is destructive. `db push` only applies what is pending.
+
+### One-time: record migrations applied by hand
+
+Migrations pasted into the SQL editor aren't recorded, so `db push` would try to
+run them again and fail on objects that exist. Once, record them as applied,
+giving the newest one that is really in the database:
+
+```bash
+pnpm db:repair --through 20260928160000
+```
+
+It records every migration in `supabase/migrations/` up to that version, using
+`SUPABASE_DB_URL` from `.env.local`, and runs none of them. Then `pnpm db:status`
+shows them on both sides, and `db:migrate` applies only what is newer.
+
+### Without the CLI
+
+Paste each pending file in `supabase/migrations/` into the SQL editor, oldest
+first. A migration applied this way also needs recording: `pnpm db:repair
+--through <its version>`.
 
 ## Verifying the schema
 
@@ -43,12 +61,21 @@ local Postgres:
 This applies every migration and asserts the constraints and RLS policies. It
 exits non-zero if a guarantee regresses.
 
+With no local Postgres but Docker, run it in a throwaway container:
+
+```bash
+./scripts/verify-migrations-docker.sh
+```
+
+It exits non-zero if Postgres doesn't start or any migration or assertion fails,
+and always removes its container.
+
 ## Auth configuration (dashboard, one-time)
 
 1. **Authentication → Providers → GitHub**: enable it and paste the GitHub
    OAuth app's client ID and secret.
 2. Set the GitHub OAuth app's callback URL to:
-   `https://lnefgozarjjuyztnmnkp.supabase.co/auth/v1/callback`
+   `https://butbnitdpiehgwqggowr.supabase.co/auth/v1/callback`
 3. **Authentication → URL Configuration**: add `<app-origin>/auth/callback`
    (for example `http://localhost:3000/auth/callback`) to the Redirect URLs
    allowlist.

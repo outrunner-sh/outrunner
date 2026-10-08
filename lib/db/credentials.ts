@@ -9,11 +9,21 @@
  * scopes its query to it; callers must pass the id from the current session
  * (`getUser()`), never a value taken from a request body, path, or query.
  *
- * Nothing here returns a decrypted secret to a browser-facing payload. The UI
- * gets {@link credentialStatus}, which reports presence and a masked hint only.
+ * Nothing here returns a decrypted secret to a browser-facing payload, with one
+ * exception: {@link neevAiKey}, the user's own capped Neev AI key, which a local
+ * session's page hands to the agent on the user's Mac (see that function). The
+ * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
+import {
+  createUserKey,
+  disableUserKey,
+  keySource,
+  NeevAiUnavailableError,
+  sharedApiKey,
+} from "@/lib/openrouter/keys";
+import { ensureUserKey } from "@/lib/openrouter/user-key";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** What the settings UI may safely see: presence, not values. */
@@ -176,4 +186,64 @@ function openOrNull(
     );
     return null;
   }
+}
+
+/**
+ * The OpenRouter key this user's sessions run Outrunner's models on: the shared
+ * API key when the server has only that, otherwise the user's own key, capped
+ * by OpenRouter at the monthly allowance, created the first time they pick one
+ * of the models and then kept (OpenRouter tracks the allowance per key, so a
+ * fresh key each time would hand out a fresh $5). The races and failures are
+ * handled in {@link ensureUserKey}.
+ *
+ * It is returned in plaintext because a local session runs on the user's Mac,
+ * where only the page can hand it to the agent.
+ */
+export async function neevAiKey(userId: string): Promise<string> {
+  const source = keySource();
+  if (source === null) throw new NeevAiUnavailableError();
+  if (source === "shared") return sharedApiKey() as string; // see lib/openrouter/keys.ts
+
+  const supabase = createSupabaseAdminClient();
+  // The conditional claim needs a row to match.
+  const { error: rowError } = await supabase
+    .from("user_credentials")
+    .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
+  if (rowError) throw rowError;
+
+  return ensureUserKey(
+    {
+      async read() {
+        const { data, error } = await supabase
+          .from("user_credentials")
+          .select("neev_key_ciphertext, neev_key_hash")
+          .eq("user_id", userId)
+          .single();
+        if (error) throw error;
+        return { ciphertext: data.neev_key_ciphertext, hash: data.neev_key_hash };
+      },
+      async claim(key) {
+        const { data, error } = await supabase
+          .from("user_credentials")
+          .update({
+            neev_key_ciphertext: key.ciphertext,
+            neev_key_hash: key.hash,
+            neev_key_created_at: key.createdAt,
+          })
+          .eq("user_id", userId)
+          .is("neev_key_ciphertext", null)
+          .select("user_id");
+        if (error) throw error;
+        return data.length > 0;
+      },
+    },
+    {
+      open,
+      seal,
+      // Labelled by user id only: the OpenRouter dashboard needs no personal data.
+      create: () => createUserKey(`outrunner user ${userId}`),
+      disable: disableUserKey,
+      log: (message, error) => console.error(`${message} (user ${userId})`, error),
+    },
+  );
 }
