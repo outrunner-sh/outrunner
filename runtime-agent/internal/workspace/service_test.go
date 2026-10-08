@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -278,5 +279,119 @@ func TestRetryingAPromptThatLandedLateDoesNotSendItAgain(t *testing.T) {
 	// There is no tmux session: any paste or Enter would fail the send.
 	if err := s.SendMessage("ws-late", "fix it"); err != nil {
 		t.Fatalf("retry of a landed prompt = %v, want success without sending", err)
+	}
+}
+
+func TestASessionsModelIsRecordedAndLaunchedWith(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	s.tmux = newFakeSessions() // no session running
+	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-m", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	if got := s.launchCommand("ws-m", s.worktreePath("ws-m"), false); !slices.Contains(got, "--model") || got[len(got)-1] != "sonnet" {
+		t.Fatalf("launch = %q, want --model sonnet", got)
+	}
+	if got := s.launchCommand("ws-m", s.worktreePath("ws-m"), true); got[len(got)-1] != "sonnet" || !slices.Contains(got, "--continue") {
+		t.Fatalf("resume = %q, want --continue … --model sonnet", got)
+	}
+
+	// No session is running, so the switch is only recorded: the next launch
+	// uses it, and so does an agent that restarts.
+	if err := s.SetModel(context.Background(), "ws-m", "z-ai/glm-5.3", ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	restarted := NewService(root)
+	if got := restarted.launchCommand("ws-m", restarted.worktreePath("ws-m"), true); got[len(got)-1] != "z-ai/glm-5.3" {
+		t.Fatalf("after restart launch = %q, want the switched model", got)
+	}
+
+	// A re-Create that names no model (the control plane after a box restart)
+	// keeps the switch.
+	_, _ = restarted.Create(context.Background(), CreateInput{WorkspaceID: "ws-m", Branch: "b", BaseBranch: "main"})
+	if f, _ := restarted.getFacts("ws-m"); f.Model != "z-ai/glm-5.3" {
+		t.Errorf("re-Create dropped the model: %+v", f)
+	}
+}
+
+func TestNoModelLaunchesClaudesDefault(t *testing.T) {
+	s := NewService(t.TempDir())
+	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-d", Branch: "b", BaseBranch: "main"})
+	if got := s.launchCommand("ws-d", s.worktreePath("ws-d"), false); slices.Contains(got, "--model") {
+		t.Errorf("launch = %q, want no --model", got)
+	}
+}
+
+func TestSetModelOnAnUnknownWorkspaceWritesNothing(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	if err := s.SetModel(context.Background(), "ws-none", "opus", ""); !errors.Is(err, ErrUnknownWorkspace) {
+		t.Fatalf("SetModel = %v, want ErrUnknownWorkspace", err)
+	}
+	if _, err := os.Stat(s.factsPath("ws-none")); !os.IsNotExist(err) {
+		t.Errorf("a facts file was written for a workspace never created: %v", err)
+	}
+}
+
+func TestClaudeIsBusyOnlyMidTurn(t *testing.T) {
+	// Captured from Claude Code 2.1 in tmux (2026-10): idle, then mid-turn.
+	idle := "❯ Try \"edit <filepath> to...\"\n  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents"
+	working := "✶ Combobulating…\n  ⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt · ← for agents"
+	if claudeIsBusy(idle) {
+		t.Error("an idle Claude read as busy")
+	}
+	if !claudeIsBusy(working) {
+		t.Error("a Claude mid-turn read as idle")
+	}
+}
+
+func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.jcode = &jcodeEngine{}
+	if err := s.SetModel(context.Background(), "ws-j", "opus", ""); !errors.Is(err, ErrModelUnsupported) {
+		t.Fatalf("SetModel on jcode = %v, want ErrModelUnsupported", err)
+	}
+	if _, ok := s.getFacts("ws-j"); ok {
+		t.Error("a refused switch was recorded")
+	}
+}
+
+func TestASwitchWaitsForAPromptBeingSent(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	ctx := context.Background()
+	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-l", Branch: "b", BaseBranch: "main"})
+	// A send in flight holds the send lock; the switch's busy check must come
+	// after it, or the prompt could land between the check and the kill.
+	lock := s.sendLock("ws-l")
+	lock.Lock()
+	done := make(chan error, 1)
+	go func() { done <- s.SetModel(ctx, "ws-l", "opus", "") }()
+	select {
+	case err := <-done:
+		lock.Unlock()
+		t.Fatalf("SetModel returned (%v) while a prompt was being sent", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	lock.Unlock()
+	if err := <-done; err != nil {
+		t.Fatalf("SetModel after the send = %v", err)
+	}
+}
+
+func TestASwitchCancelledWhileWaitingRecordsNothing(t *testing.T) {
+	s := NewService(t.TempDir())
+	_, _ = s.Create(context.Background(), CreateInput{WorkspaceID: "ws-x", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	lock := s.sendLock("ws-x")
+	lock.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.SetModel(ctx, "ws-x", "opus", "") }()
+	time.Sleep(50 * time.Millisecond)
+	cancel() // the client gives up while a prompt is still being sent
+	lock.Unlock()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("SetModel = %v, want context.Canceled", err)
+	}
+	if f, _ := s.getFacts("ws-x"); f.Model != "sonnet" {
+		t.Errorf("a cancelled switch recorded %q", f.Model)
 	}
 }
