@@ -1030,9 +1030,11 @@ func (s *Service) continueRecorder(ctx context.Context, workspaceID string) {
 	rec := s.recorders[workspaceID]
 	s.recordersMu.Unlock()
 	if rec != nil {
-		running, err := rec.Rearm(ctx)
+		// The relaunch may have put the session on a new gateway key.
+		secrets := s.RedactionSecrets()
+		running, err := rec.Rearm(ctx, secrets)
 		if running && err != nil {
-			running, _ = rec.Rearm(ctx) // one more try: tmux can drop a command
+			running, _ = rec.Rearm(ctx, secrets) // one more try: tmux can drop a command
 		}
 		if running {
 			// Even when tmux won't pipe the new pane, the cast keeps what it

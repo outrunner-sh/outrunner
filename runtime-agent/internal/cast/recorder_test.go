@@ -107,7 +107,7 @@ func TestRearmKeepsOneCastAcrossARelaunch(t *testing.T) {
 	p.mu.Lock()
 	p.data = []byte("AFTER_SWITCH")
 	p.mu.Unlock()
-	if running, err := r.Rearm(ctx); !running || err != nil {
+	if running, err := r.Rearm(ctx, nil); !running || err != nil {
 		t.Fatalf("Rearm = %v, %v; want true, nil", running, err)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -135,10 +135,49 @@ func TestRearmKeepsOneCastAcrossARelaunch(t *testing.T) {
 	}
 }
 
+func TestRearmMasksAKeyTheNewSessionRunsOn(t *testing.T) {
+	const oldKey = "sk-old-0123456789abcdef"
+	const newKey = "sk-or-v1-new-0123456789abcdef"
+	p := &fakePane{data: []byte("BEFORE " + oldKey + " ")}
+	r := &Recorder{pane: p, castPath: filepath.Join(t.TempDir(), DefaultCastName), opts: Options{Secrets: []string{oldKey}}}
+	ctx := context.Background()
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	// The session is relaunched on a gateway key; the old one no longer applies
+	// but its output can be drawn again.
+	p.mu.Lock()
+	p.data = []byte("AFTER " + newKey + " " + oldKey)
+	p.mu.Unlock()
+	if _, err := r.Rearm(ctx, []string{newKey}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := r.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(r.castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, frames := parseCast(t, b)
+	var out bytes.Buffer
+	for _, f := range frames {
+		out.WriteString(f[2].(string))
+	}
+	if bytes.Contains(out.Bytes(), []byte(newKey)) || bytes.Contains(out.Bytes(), []byte(oldKey)) {
+		t.Fatalf("a key reached the cast: %q", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("AFTER *** ***")) {
+		t.Fatalf("cast = %q, want both keys masked after the relaunch", out.String())
+	}
+}
+
 func TestRearmDoesNothingWhenNotRecording(t *testing.T) {
 	p := &fakePane{data: []byte("x")}
 	r := newFakeRecorder(t, p)
-	if running, err := r.Rearm(context.Background()); running || err != nil {
+	if running, err := r.Rearm(context.Background(), nil); running || err != nil {
 		t.Fatalf("Rearm before Start = %v, %v; want false, nil", running, err)
 	}
 	if p.arms != 0 {

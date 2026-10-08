@@ -44,6 +44,9 @@ type Recorder struct {
 	file     *os.File
 	cw       *Writer
 	redactor *redact.Redactor
+	// added are secrets Rearm passed in, waiting for the drain goroutine (the
+	// redactor's only user) to start masking them.
+	added    []string
 	wg       sync.WaitGroup
 	stopping atomic.Bool
 
@@ -127,14 +130,17 @@ func (r *Recorder) Start(ctx context.Context) error {
 // Rearm points a running recorder at its pane again, after the tmux session it
 // taps was replaced by one of the same name (a relaunch kills Claude's session
 // and starts a new one). The cast keeps its header, clock and frames, so it
-// covers the whole session instead of restarting at the relaunch. It reports
-// false, doing nothing, when the recorder isn't running.
-func (r *Recorder) Rearm(ctx context.Context) (bool, error) {
+// covers the whole session instead of restarting at the relaunch. secrets are
+// masked from here on as well as those already masked: the new session may run
+// on a key the old one didn't have. It reports false, doing nothing, when the
+// recorder isn't running.
+func (r *Recorder) Rearm(ctx context.Context, secrets []string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.started {
 		return false, nil
 	}
+	r.added = append(r.added, secrets...)
 	return true, r.pane.arm(ctx, r.fifoPath)
 }
 
@@ -188,11 +194,16 @@ func readNonblocking(conn syscall.RawConn, buf []byte) (n int, readErr error) {
 func (r *Recorder) consume(b []byte) {
 	r.mu.Lock()
 	discarding := r.discarding
+	added := r.added
+	r.added = nil
 	r.mu.Unlock()
 	if discarding {
 		return
 	}
 	// Only the drain goroutine calls consume, so the redactor needs no lock.
+	if len(added) > 0 {
+		r.redactor.AddSecrets(added)
+	}
 	if _, err := r.cw.Write([]byte(r.redactor.Redact(b))); err != nil {
 		r.mu.Lock()
 		r.discarding = true
@@ -228,6 +239,8 @@ func (r *Recorder) stop(ctx context.Context) error {
 	r.fifo, r.file, r.cw = nil, nil, nil
 	r.started = false
 	fifoPath := r.fifoPath
+	added := r.added
+	r.added = nil
 	r.mu.Unlock()
 
 	if fifo != nil {
@@ -237,6 +250,10 @@ func (r *Recorder) stop(ctx context.Context) error {
 	var err error
 	if cw != nil {
 		// The redactor holds back what could still be the start of a secret.
+		// The drain goroutine has exited, so nothing else uses the redactor.
+		if len(added) > 0 {
+			r.redactor.AddSecrets(added)
+		}
 		if tail := r.redactor.Flush(); tail != "" && !r.discarding {
 			_, _ = cw.Write([]byte(tail))
 		}
