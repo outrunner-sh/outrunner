@@ -117,8 +117,11 @@ type workspaceFacts struct {
 	// Claude Code's — and "the newest log" could be any of them. The session is
 	// launched with this id and found by it instead.
 	ClaudeSessionID string `json:"claudeSessionId,omitempty"`
-	// Model is the --model the session runs; empty is Claude's own default.
+	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
+	// Gateway, when set, runs the session through it on a key of its own (in
+	// the session's gateway file) instead of the user's Claude credential.
+	Gateway claude.Gateway `json:"gateway,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -186,7 +189,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
-	return append([]string(nil), s.secrets...)
+	return append(append([]string(nil), s.secrets...), s.gatewayTokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -254,8 +257,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
 	}
-	if facts.Model == "" {
-		facts.Model = prior.Model // a re-Create that names none keeps the switch
+	// A repeated Create (after an agent restart) never switches the model:
+	// that is SetModel's, which relaunches the session to match. A session on a
+	// gateway keeps it, key file and all — dropping it here would run the
+	// gateway's model name on the user's own Claude, and unmask the key of a
+	// session still running on it.
+	if prior.Model != "" || facts.Model == "" {
+		facts.Model, facts.Gateway = prior.Model, prior.Gateway
 	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
@@ -463,11 +471,20 @@ const (
 	switchRelaunchTimeout = 60 * time.Second // covers the readiness wait with room to spare
 )
 
-// SetModel switches a session to another model. It is recorded first, so every
-// later launch and resume uses it; a running session is then relaunched on it,
-// continuing its conversation (Claude reads the model only at launch). It is
-// refused while Claude is mid-turn, which the relaunch would cut off.
-func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicToken string) error {
+// ModelChoice is what a session runs: a model, and optionally the gateway and
+// key it runs through. Callers validate each part.
+type ModelChoice struct {
+	Model   string
+	Gateway claude.Gateway
+	Token   string
+}
+
+// SetModel switches a session to another model, or to or from a gateway. It is
+// recorded first, so every later launch and resume uses it; a running session
+// is then relaunched on it, continuing its conversation (Claude reads all of it
+// only at launch). It is refused while Claude is mid-turn, which the relaunch
+// would cut off.
+func (s *Service) SetModel(ctx context.Context, workspaceID string, choice ModelChoice, anthropicToken string) error {
 	if s.jcode != nil {
 		return ErrModelUnsupported // jcode's bridge launches its own sessions
 	}
@@ -476,7 +493,12 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	if !ok {
 		return ErrUnknownWorkspace // never write facts for a workspace never created
 	}
-	if f.Model == model {
+	env := ""
+	if choice.Gateway != claude.NoGateway {
+		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
+	}
+	priorEnv := s.readGatewayEnv(workspaceID)
+	if f.Model == choice.Model && f.Gateway == choice.Gateway && priorEnv == env {
 		return nil
 	}
 	// Held from the busy check through the relaunch, so no prompt can be sent
@@ -513,8 +535,11 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 			return ErrSessionBusy
 		}
 	}
+	if err := s.putGatewayEnv(workspaceID, env); err != nil {
+		return err
+	}
 	prior := f
-	f.Model = model
+	f.Model, f.Gateway = choice.Model, choice.Gateway
 	s.setFacts(workspaceID, f)
 	if !running {
 		return nil // the next Start launches on it
@@ -525,8 +550,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	relaunchCtx, cancelRelaunch := context.WithTimeout(base, switchRelaunchTimeout)
 	defer cancelRelaunch()
 	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, resume, lock); err != nil {
-		// Not applied, so not recorded: a retry of the same model tries again
+		// Not applied, so not recorded: a retry of the same choice tries again
 		// rather than finding it already set, and the next Start uses the old.
+		_ = s.putGatewayEnv(workspaceID, priorEnv)
 		s.setFacts(workspaceID, prior)
 		// The old session was killed before the new one failed to start, so
 		// bring Claude back on the model it had: a failed switch must not end
@@ -602,6 +628,10 @@ func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []str
 		argv = claude.ContinueCommand(mode, orientation)
 	default:
 		argv = claude.Command(mode, orientation)
+	}
+	if f.Gateway != claude.NoGateway {
+		// The model rides in the gateway file: --model refuses a gateway's names.
+		return claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
 	}
 	return claude.WithModel(argv, f.Model)
 }
@@ -983,7 +1013,8 @@ func (s *Service) sessionID(workspaceID string) *string {
 // after Claude exited without a Stop) so its goroutine + FIFO don't leak.
 func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.stopRecorder(ctx, workspaceID)
-	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{})
+	// Masked like the browser's terminal: a cast is archived and uploaded.
+	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{Secrets: s.RedactionSecrets()})
 	s.recordersMu.Lock()
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()
@@ -1066,6 +1097,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
+	_ = os.Remove(s.gatewayEnvPath(workspaceID))
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()

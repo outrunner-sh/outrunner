@@ -27,6 +27,9 @@ type Options struct {
 	Height int
 	Clock  Clock
 	Window time.Duration
+	// Secrets are masked before anything is recorded: a cast is archived and
+	// uploaded, so a key printed in the terminal must not land in it.
+	Secrets []string
 }
 
 // Writer frames terminal output as an asciinema v2 stream (a header object line

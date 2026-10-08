@@ -1,6 +1,9 @@
 package claude
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -207,5 +210,45 @@ func TestValidModel(t *testing.T) {
 		if ValidModel(bad) {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+func TestTheEnvFileWrapperRunsTheCommandWithItsVariables(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "s.env")
+	if err := os.WriteFile(file, []byte("unset DROP_ME\nexport GREETING="+ShellQuote("hi there")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argv := WithEnvFile([]string{"sh", "-c", `printf '%s|%s|%s' "$GREETING" "${DROP_ME-unset}" "$1"`, "x", "arg one"}, file)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "DROP_ME=leaked")
+	out, err := cmd.Output()
+	if err != nil || string(out) != "hi there|unset|arg one" {
+		t.Fatalf("wrapper ran %q, %v; want the file's variables, the unset honoured, args intact", out, err)
+	}
+}
+
+func TestGatewayInputs(t *testing.T) {
+	if g, err := ParseGateway("openrouter"); err != nil || g != OpenRouter {
+		t.Errorf("ParseGateway(openrouter) = %q, %v", g, err)
+	}
+	if g, err := ParseGateway(""); err != nil || g != NoGateway {
+		t.Errorf("ParseGateway(\"\") = %q, %v", g, err)
+	}
+	if _, err := ParseGateway("https://evil.example"); err == nil {
+		t.Error("a URL was accepted as a gateway")
+	}
+	key := "sk-or-v1-" + strings.Repeat("0123456789abcdef", 4)
+	if !ValidGatewayToken(key) {
+		t.Error("an OpenRouter key was rejected")
+	}
+	// Each bad token is long enough, so it is refused for what it holds.
+	for _, bad := range []string{"", "e", "sk-or-x", key + " b", key + "'b", key + `\b`, key + "\nb", key + "ключ", strings.Repeat("k", 401)} {
+		if ValidGatewayToken(bad) {
+			t.Errorf("token %q accepted", bad)
+		}
+	}
+	set, unset := GatewayEnv(OpenRouter, "tok", "z-ai/glm-5.3")
+	if set["ANTHROPIC_BASE_URL"] != "https://openrouter.ai/api" || set["ANTHROPIC_API_KEY"] != "" || set["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "z-ai/glm-5.3" || !slices.Contains(unset, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("GatewayEnv = %v, unset %v", set, unset)
 	}
 }

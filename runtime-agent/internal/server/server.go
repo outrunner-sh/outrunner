@@ -22,6 +22,7 @@ import (
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
+	"runtime-agent/internal/redact"
 	"runtime-agent/internal/workspace"
 )
 
@@ -339,7 +340,18 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
 		return
 	}
-	err := s.ws.SetModel(r.Context(), r.PathValue("id"), req.Model, "")
+	gateway, err := claude.ParseGateway(req.Gateway)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if (gateway == claude.NoGateway) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a gateway needs its key, and only a gateway takes one")
+		return
+	}
+	err = s.ws.SetModel(r.Context(), r.PathValue("id"), workspace.ModelChoice{
+		Model: req.Model, Gateway: gateway, Token: req.Token,
+	}, "")
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
@@ -397,7 +409,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	// contract ("output is coalesced") and prevents one-keystroke-per-frame
 	// flooding. The redactor preserves a suffix between calls so no secret can
 	// leak when it crosses a PTY read boundary.
-	redactor := NewRedactor(append(s.ws.RedactionSecrets(), s.secret))
+	redactor := redact.New(append(s.ws.RedactionSecrets(), s.secret))
 	coalescer := ptyx.NewCoalescer(coalesceInterval, coalesceThreshold, func(seq int, data []byte) error {
 		output := redactor.Redact(data)
 		if output == "" {

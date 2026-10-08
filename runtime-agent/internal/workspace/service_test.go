@@ -296,7 +296,7 @@ func TestASessionsModelIsRecordedAndLaunchedWith(t *testing.T) {
 
 	// No session is running, so the switch is only recorded: the next launch
 	// uses it, and so does an agent that restarts.
-	if err := s.SetModel(context.Background(), "ws-m", "z-ai/glm-5.3", ""); err != nil {
+	if err := s.SetModel(context.Background(), "ws-m", ModelChoice{Model: "z-ai/glm-5.3"}, ""); err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
 	restarted := NewService(root)
@@ -323,11 +323,87 @@ func TestNoModelLaunchesClaudesDefault(t *testing.T) {
 func TestSetModelOnAnUnknownWorkspaceWritesNothing(t *testing.T) {
 	root := t.TempDir()
 	s := NewService(root)
-	if err := s.SetModel(context.Background(), "ws-none", "opus", ""); !errors.Is(err, ErrUnknownWorkspace) {
+	if err := s.SetModel(context.Background(), "ws-none", ModelChoice{Model: "opus"}, ""); !errors.Is(err, ErrUnknownWorkspace) {
 		t.Fatalf("SetModel = %v, want ErrUnknownWorkspace", err)
 	}
 	if _, err := os.Stat(s.factsPath("ws-none")); !os.IsNotExist(err) {
 		t.Errorf("a facts file was written for a workspace never created: %v", err)
+	}
+}
+
+func TestASessionOnAGatewayGetsItsKeyFromAPrivateFile(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	s.tmux = newFakeSessions() // no session running
+	ctx := context.Background()
+	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-g", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	const key = "sk-or-v1-session-key-0123456789abcdef"
+	if err := s.SetModel(ctx, "ws-g", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: key}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	info, err := os.Stat(s.gatewayEnvPath("ws-g"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("gateway file = %v, %v; want it owner-only", info, err)
+	}
+	env := s.readGatewayEnv("ws-g")
+	for _, want := range []string{
+		"export ANTHROPIC_BASE_URL='https://openrouter.ai/api'",
+		"export ANTHROPIC_AUTH_TOKEN='" + key + "'",
+		"export ANTHROPIC_API_KEY=''",
+		"export ANTHROPIC_MODEL='z-ai/glm-5.3'",
+		"export ANTHROPIC_CUSTOM_MODEL_OPTION='z-ai/glm-5.3'",
+		"unset CLAUDE_CODE_OAUTH_TOKEN",
+	} {
+		if !strings.Contains(env, want) {
+			t.Errorf("gateway file lacks %q:\n%s", want, env)
+		}
+	}
+
+	argv := s.launchCommand("ws-g", s.worktreePath("ws-g"), true)
+	if argv[0] != "sh" || !slices.Contains(argv, s.gatewayEnvPath("ws-g")) || !slices.Contains(argv, "claude") {
+		t.Fatalf("launch = %q, want claude run after sourcing the gateway file", argv)
+	}
+	if slices.Contains(argv, "--model") || strings.Contains(strings.Join(argv, " "), key) {
+		t.Errorf("launch = %q, want no --model and never the key", argv)
+	}
+	if !slices.Contains(s.RedactionSecrets(), key) {
+		t.Error("the gateway key is not redacted from terminal output")
+	}
+	// A restarted agent still masks the key of a session tmux kept running.
+	if !slices.Contains(NewService(root).RedactionSecrets(), key) {
+		t.Error("after a restart the gateway key is not redacted")
+	}
+
+	// Back to the user's own Claude: the file goes, and --model returns.
+	if err := s.SetModel(ctx, "ws-g", ModelChoice{Model: "opus"}, ""); err != nil {
+		t.Fatalf("SetModel back: %v", err)
+	}
+	if _, err := os.Stat(s.gatewayEnvPath("ws-g")); !os.IsNotExist(err) {
+		t.Errorf("gateway file kept after switching back: %v", err)
+	}
+	if got := s.launchCommand("ws-g", s.worktreePath("ws-g"), true); got[0] != "claude" || got[len(got)-1] != "opus" {
+		t.Errorf("launch after switching back = %q", got)
+	}
+	if slices.Contains(s.RedactionSecrets(), key) {
+		t.Error("a key no session uses is still listed")
+	}
+}
+
+func TestForgettingASessionRemovesItsGatewayKey(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	ctx := context.Background()
+	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-f", Branch: "b", BaseBranch: "main"})
+	if err := s.SetModel(ctx, "ws-f", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-v1-forget-0123456789abcdef"}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if _, err := os.Stat(s.gatewayEnvPath("ws-f")); err != nil {
+		t.Fatalf("no gateway file to forget: %v", err)
+	}
+	s.forgetWorkspace("ws-f")
+	if _, err := os.Stat(s.gatewayEnvPath("ws-f")); !os.IsNotExist(err) {
+		t.Errorf("gateway file outlived its session: %v", err)
 	}
 }
 
@@ -346,11 +422,53 @@ func TestClaudeIsBusyOnlyMidTurn(t *testing.T) {
 func TestTheJcodeEngineRefusesAModelSwitch(t *testing.T) {
 	s := NewService(t.TempDir())
 	s.jcode = &jcodeEngine{}
-	if err := s.SetModel(context.Background(), "ws-j", "opus", ""); !errors.Is(err, ErrModelUnsupported) {
+	if err := s.SetModel(context.Background(), "ws-j", ModelChoice{Model: "opus"}, ""); !errors.Is(err, ErrModelUnsupported) {
 		t.Fatalf("SetModel on jcode = %v, want ErrModelUnsupported", err)
 	}
 	if _, ok := s.getFacts("ws-j"); ok {
 		t.Error("a refused switch was recorded")
+	}
+}
+
+func TestARepeatedCreateKeepsTheGateway(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	s.tmux = newFakeSessions() // no session running
+	ctx := context.Background()
+	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-r", Branch: "b", BaseBranch: "main"})
+	if err := s.SetModel(ctx, "ws-r", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-v1-recreate-0123456789abcdef"}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	// The control plane re-creates after an agent restart, naming no model.
+	restarted := NewService(root)
+	_, _ = restarted.Create(ctx, CreateInput{WorkspaceID: "ws-r", Branch: "b", BaseBranch: "main"})
+	if f, _ := restarted.getFacts("ws-r"); f.Gateway != claude.OpenRouter || f.Model != "z-ai/glm-5.3" {
+		t.Fatalf("re-Create facts = %+v, want the gateway and its model kept", f)
+	}
+	if argv := restarted.launchCommand("ws-r", restarted.worktreePath("ws-r"), true); argv[0] != "sh" {
+		t.Errorf("launch after re-Create = %q, want it through the gateway file", argv)
+	}
+
+	// Even naming another model, a re-Create leaves the switch to SetModel:
+	// the key stays, still masked, for the session that may be running on it.
+	_, _ = restarted.Create(ctx, CreateInput{WorkspaceID: "ws-r", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	if f, _ := restarted.getFacts("ws-r"); f.Gateway != claude.OpenRouter || f.Model != "z-ai/glm-5.3" {
+		t.Errorf("re-Create with another model = %+v, want the gateway session unchanged", f)
+	}
+	if !slices.Contains(restarted.RedactionSecrets(), "sk-or-v1-recreate-0123456789abcdef") {
+		t.Error("a re-Create unmasked the key of the session running on it")
+	}
+}
+
+func TestARepeatedCreateLeavesAClaudeSessionsModel(t *testing.T) {
+	root := t.TempDir()
+	s := NewService(root)
+	ctx := context.Background()
+	_, _ = s.Create(ctx, CreateInput{WorkspaceID: "ws-c", Branch: "b", BaseBranch: "main", Model: "opus"})
+	_, _ = NewService(root).Create(ctx, CreateInput{WorkspaceID: "ws-c", Branch: "b", BaseBranch: "main", Model: "sonnet"})
+	if f, _ := NewService(root).getFacts("ws-c"); f.Model != "opus" {
+		t.Errorf("re-Create switched the model to %q; only SetModel, which relaunches, may", f.Model)
 	}
 }
 
@@ -364,7 +482,7 @@ func TestASwitchWaitsForAPromptBeingSent(t *testing.T) {
 	lock := s.sendLock("ws-l")
 	lock.Lock()
 	done := make(chan error, 1)
-	go func() { done <- s.SetModel(ctx, "ws-l", "opus", "") }()
+	go func() { done <- s.SetModel(ctx, "ws-l", ModelChoice{Model: "opus"}, "") }()
 	select {
 	case err := <-done:
 		lock.Unlock()
@@ -384,7 +502,7 @@ func TestASwitchCancelledWhileWaitingRecordsNothing(t *testing.T) {
 	lock.Lock()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.SetModel(ctx, "ws-x", "opus", "") }()
+	go func() { done <- s.SetModel(ctx, "ws-x", ModelChoice{Model: "opus"}, "") }()
 	time.Sleep(50 * time.Millisecond)
 	cancel() // the client gives up while a prompt is still being sent
 	lock.Unlock()

@@ -3,10 +3,13 @@ package workspace
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+
+	"runtime-agent/internal/claude"
 )
 
 // fakeSessions stands in for tmux: a session that is running, busy, unreadable
@@ -110,7 +113,7 @@ func launchedOn(argv []string, model string) bool {
 func TestASwitchRelaunchesARunningSessionOnTheNewModel(t *testing.T) {
 	t.Parallel()
 	s, fake, id := runningSession(t, "sonnet")
-	if err := s.SetModel(context.Background(), id, "opus", ""); err != nil {
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, ""); err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
 	if got := fake.lastLaunch(); !launchedOn(got, "opus") {
@@ -128,7 +131,7 @@ func TestASwitchMidTurnIsRefusedAndRecordsNothing(t *testing.T) {
 	t.Parallel()
 	s, fake, id := runningSession(t, "sonnet")
 	fake.pane = "✶ Combobulating…\n  ⏵⏵ accept edits on · esc to interrupt"
-	if err := s.SetModel(context.Background(), id, "opus", ""); !errors.Is(err, ErrSessionBusy) {
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, ""); !errors.Is(err, ErrSessionBusy) {
 		t.Fatalf("SetModel = %v, want ErrSessionBusy", err)
 	}
 	if len(fake.launches) != 0 {
@@ -143,7 +146,7 @@ func TestASwitchThatCantReadTheScreenIsRefused(t *testing.T) {
 	t.Parallel()
 	s, fake, id := runningSession(t, "sonnet")
 	fake.captureErr = errors.New("capture-pane: server busy")
-	if err := s.SetModel(context.Background(), id, "opus", ""); !errors.Is(err, ErrSessionUnchecked) {
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, ""); !errors.Is(err, ErrSessionUnchecked) {
 		t.Fatalf("SetModel = %v, want ErrSessionUnchecked", err)
 	}
 	if f, _ := s.getFacts(id); f.Model != "sonnet" || len(fake.launches) != 0 {
@@ -155,7 +158,7 @@ func TestASwitchWhenTmuxCantAnswerIsRefused(t *testing.T) {
 	t.Parallel()
 	s, fake, id := runningSession(t, "sonnet")
 	fake.existsErr = errors.New("tmux: lost server")
-	if err := s.SetModel(context.Background(), id, "opus", ""); !errors.Is(err, ErrSessionUnchecked) {
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, ""); !errors.Is(err, ErrSessionUnchecked) {
 		t.Fatalf("SetModel = %v, want ErrSessionUnchecked", err)
 	}
 	if f, _ := s.getFacts(id); f.Model != "sonnet" {
@@ -168,7 +171,7 @@ func TestAFailedSwitchBringsClaudeBackOnItsOldModel(t *testing.T) {
 	s, fake, id := runningSession(t, "sonnet")
 	startErr := errors.New("tmux new-session: no space left")
 	fake.newErrs = []error{startErr}
-	err := s.SetModel(context.Background(), id, "opus", "")
+	err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, "")
 	if !errors.Is(err, startErr) {
 		t.Fatalf("SetModel = %v, want the start error", err)
 	}
@@ -182,7 +185,7 @@ func TestAFailedSwitchBringsClaudeBackOnItsOldModel(t *testing.T) {
 		t.Errorf("recorded %q, want the old model kept", f.Model)
 	}
 	// Not recorded, so a retry of the same model really tries again.
-	if err := s.SetModel(context.Background(), id, "opus", ""); err != nil {
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, ""); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	if got := fake.lastLaunch(); !launchedOn(got, "opus") {
@@ -194,11 +197,39 @@ func TestAFailedSwitchSaysSoWhenTheOldModelWontStartEither(t *testing.T) {
 	t.Parallel()
 	s, fake, id := runningSession(t, "sonnet")
 	fake.newErrs = []error{errors.New("first"), errors.New("second")}
-	err := s.SetModel(context.Background(), id, "opus", "")
+	err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, "")
 	if err == nil || !strings.Contains(err.Error(), "previous model failed too") || !strings.Contains(err.Error(), "second") {
 		t.Fatalf("SetModel = %v, want both failures reported", err)
 	}
 	if f, _ := s.getFacts(id); f.Model != "sonnet" {
 		t.Errorf("recorded %q, want the old model kept", f.Model)
+	}
+}
+
+func TestAFailedSwitchKeepsTheGatewayKeyItWasRunningOn(t *testing.T) {
+	t.Parallel()
+	s, fake, id := runningSession(t, "sonnet")
+	ctx := context.Background()
+	const oldKey = "sk-or-v1-old-0123456789abcdef"
+	const newKey = "sk-or-v1-new-0123456789abcdef"
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: oldKey}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	fake.newErrs = []error{errors.New("tmux new-session failed")}
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "anthropic/claude-sonnet-5", Gateway: claude.OpenRouter, Token: newKey}, ""); err == nil {
+		t.Fatal("SetModel succeeded, want the start error")
+	}
+	env, err := os.ReadFile(s.gatewayEnvPath(id))
+	if err != nil || !strings.Contains(string(env), oldKey) || strings.Contains(string(env), newKey) {
+		t.Fatalf("key file = %q, %v; want the old key back", env, err)
+	}
+	if f, _ := s.getFacts(id); f.Model != "z-ai/glm-5.3" || f.Gateway != claude.OpenRouter {
+		t.Errorf("facts = %+v, want the old gateway model", f)
+	}
+	if got := fake.lastLaunch(); len(got) == 0 || got[0] != "sh" || !slices.Contains(got, s.gatewayEnvPath(id)) {
+		t.Errorf("recovery launched %q, want it through the gateway file", got)
+	}
+	if !fake.HasSession(ctx, sessionName(id)) {
+		t.Error("a failed switch left no session running")
 	}
 }

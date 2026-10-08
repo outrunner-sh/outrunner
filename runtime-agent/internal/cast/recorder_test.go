@@ -163,3 +163,34 @@ func TestRecorderStartStopIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRecorderMasksSecretsBeforeRecording(t *testing.T) {
+	// The key printed as a session might (`env | grep TOKEN`), ending the
+	// output so the masking's held-back tail is flushed at Stop too.
+	p := &fakePane{data: []byte("ANTHROPIC_AUTH_TOKEN=sk-or-v1-recorded-key\r\nmore output sk-or-v1-recorded-key")}
+	r := newFakeRecorder(t, p)
+	r.opts.Secrets = []string{"sk-or-v1-recorded-key"}
+
+	if err := r.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := r.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(r.castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte("sk-or-v1-recorded-key")) {
+		t.Fatalf("the cast holds the key:\n%s", b)
+	}
+	_, frames := parseCast(t, b)
+	var out bytes.Buffer
+	for _, f := range frames {
+		out.WriteString(f[2].(string))
+	}
+	if got := out.String(); got != "ANTHROPIC_AUTH_TOKEN=***\r\nmore output ***" {
+		t.Fatalf("recorded %q, want the output with the key masked and nothing else lost", got)
+	}
+}
