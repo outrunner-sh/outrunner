@@ -66,7 +66,7 @@ export type ProvisionPhase =
  * sandbox model; `daytona` is Runtime's real model (Project → Runtime Computer →
  * Workspace) where many workspaces share one always-on box.
  */
-export type ProviderName = "local" | "modal" | "daytona";
+export type ProviderName = "local" | "modal" | "daytona" | "neev";
 
 export type Workspace = {
   id: string;
