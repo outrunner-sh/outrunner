@@ -52,3 +52,24 @@ export function matchModel(groups: ModelGroup[], reported: string | undefined): 
   const family = reported.toLowerCase().match(/^claude-(opus|sonnet|haiku)\b/)?.[1];
   return family ? all.find((m) => m.source === "claude" && m.id === family) : undefined;
 }
+
+/** The menu's model with exactly this id, if there is one. */
+export function offeredModel(modelId: unknown): SessionModel | undefined {
+  return MODEL_GROUPS.flatMap((g) => g.models).find((m) => m.id === modelId);
+}
+
+/** The agent's POST /workspaces/:id/model body. */
+export type SetModelRequest = { model: string; gateway?: "openrouter"; token?: string };
+
+/** The agent request that switches a session to one of the menu's models: a
+ *  Neev AI model runs through OpenRouter on the key `neevKey` gets, a Claude
+ *  account model on the session's own Claude login. Null for any other id. */
+export async function setModelRequest(
+  modelId: unknown,
+  neevKey: () => Promise<string>,
+): Promise<SetModelRequest | null> {
+  const model = offeredModel(modelId);
+  if (!model) return null;
+  if (model.source === "claude") return { model: model.id };
+  return { model: model.id, gateway: "openrouter", token: await neevKey() };
+}

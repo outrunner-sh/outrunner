@@ -9,7 +9,7 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { localAgentRequest, localTarget, messageForLocalError } from "@/lib/desktop/local-runtime";
-import { MODEL_GROUPS, type SessionModel } from "@/lib/runtime/session-models";
+import { MODEL_GROUPS, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
@@ -111,9 +111,9 @@ export function WorkspaceSession({
     return undefined;
   }, [conversation.events]);
 
-  // A local session can switch models: the agent relaunches Claude on it with
-  // the conversation continued. The pick shows until a reply reports the model
-  // it actually ran.
+  // A session can switch models: the agent relaunches Claude on it with the
+  // conversation continued. The pick shows until a reply reports the model it
+  // actually ran.
   const [switching, setSwitching] = useState(false);
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   const repliedSincePick =
@@ -127,25 +127,27 @@ export function WorkspaceSession({
   const delivered = userPromptCount(conversation.events);
   const working =
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
-  const modelChoice: ModelChoice | undefined = local
-    ? {
-        groups: MODEL_GROUPS,
-        switching,
-        disabledReason: !canSend
-          ? "Waiting for the session to connect"
-          : working
-            ? "Switch models once Claude has finished this turn"
-            : null,
-        onChange: (model) => {
-          setSwitching(true);
-          setSendError(null);
-          switchLocalModel(workspaceId, model)
-            .then(() => setPicked({ model: model.id, events: conversation.events.length }))
-            .catch((error: unknown) => setSendError(messageForLocalError(error)))
-            .finally(() => setSwitching(false));
-        },
-      }
-    : undefined;
+  const modelChoice: ModelChoice = {
+    groups: MODEL_GROUPS,
+    switching,
+    disabledReason: !canSend
+      ? "Waiting for the session to connect"
+      : working
+        ? "Switch models once Claude has finished this turn"
+        : null,
+    onChange: (model) => {
+      setSwitching(true);
+      setSendError(null);
+      (local ? switchLocalModel(workspaceId, model) : switchCloudModel(workspaceId, model))
+        .then(() => setPicked({ model: model.id, events: conversation.events.length }))
+        .catch((error: unknown) =>
+          setSendError(
+            local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't switch models.",
+          ),
+        )
+        .finally(() => setSwitching(false));
+    },
+  };
 
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
@@ -264,12 +266,25 @@ function userPromptCount(events: AgentEvent[]): number {
  *  the user's own capped key, which the server hands over (creating it the
  *  first time); a Claude account model runs on the Mac's own Claude login. */
 async function switchLocalModel(workspaceId: string, model: SessionModel): Promise<void> {
-  let body: { model: string; gateway?: string; token?: string } = { model: model.id };
-  if (model.source === "neev") {
+  const body = await setModelRequest(model.id, async () => {
     const res = await fetch("/api/neev-ai/key", { method: "POST" });
     const data = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
     if (!res.ok || !data.key) throw new Error(data.error ?? "Outrunner's models are unavailable right now.");
-    body = { model: model.id, gateway: "openrouter", token: data.key };
-  }
+    return data.key;
+  });
+  if (!body) throw new Error(`${model.label} isn't one of the offered models.`);
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+}
+
+/** Switch a cloud session's model. The server adds the key a Neev AI model
+ *  needs and calls the session's agent, so the key stays off the browser. */
+async function switchCloudModel(workspaceId: string, model: SessionModel): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: model.id }),
+  });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't switch models. Please try again.");
 }

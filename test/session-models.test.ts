@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { MODEL_GROUPS, matchModel, modelLabel } from "@/lib/runtime/session-models";
+import { MODEL_GROUPS, matchModel, modelLabel, setModelRequest } from "@/lib/runtime/session-models";
 
 test("a Claude account reply matches its family's alias", () => {
   assert.equal(matchModel(MODEL_GROUPS, "claude-opus-5")?.id, "opus");
@@ -29,4 +29,35 @@ test("Outrunner's models come first in the menu", () => {
 test("the label drops Claude's release date only", () => {
   assert.equal(modelLabel("claude-opus-4-5-20250115"), "claude-opus-4-5");
   assert.equal(modelLabel("z-ai/glm-5.3"), "z-ai/glm-5.3");
+});
+
+test("an Outrunner model switches through OpenRouter on the key it is handed", async () => {
+  const req = await setModelRequest("z-ai/glm-5.3", async () => "sk-or-v1-test-key-0123456789");
+  assert.deepEqual(req, { model: "z-ai/glm-5.3", gateway: "openrouter", token: "sk-or-v1-test-key-0123456789" });
+});
+
+test("a Claude account model switches on the session's own login, without asking for a key", async () => {
+  let asked = false;
+  const req = await setModelRequest("opus", async () => {
+    asked = true;
+    return "unused";
+  });
+  assert.deepEqual(req, { model: "opus" });
+  assert.equal(asked, false);
+});
+
+test("anything off the menu is refused before a key is fetched", async () => {
+  for (const id of ["claude-opus-5", "openai/gpt-5", "", undefined, 42, { id: "opus" }]) {
+    const req = await setModelRequest(id, async () => assert.fail(`fetched a key for ${String(id)}`));
+    assert.equal(req, null, `accepted ${JSON.stringify(id)}`);
+  }
+});
+
+test("a key that can't be had fails the switch", async () => {
+  await assert.rejects(
+    setModelRequest("z-ai/glm-5.3", async () => {
+      throw new Error("Outrunner's models aren't set up");
+    }),
+    /aren't set up/,
+  );
 });
