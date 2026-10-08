@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These run real git against throwaway repositories, because what matters is
@@ -237,6 +238,101 @@ func TestLocalSessionsListsWhatThisMacRuns(t *testing.T) {
 	realRepo, _ := filepath.EvalSymlinks(repo)
 	if got[0].Name != "app" || got[0].Folder != realRepo || got[0].Worktree != s.worktreePath("ws-new") || got[0].Running {
 		t.Errorf("session = %+v", got[0])
+	}
+}
+
+func TestLocalSessionsReportWhenEachWasLastUsed(t *testing.T) {
+	isolateGit(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := newCheckout(t)
+	s := NewService(t.TempDir())
+	for _, id := range []string{"ws-used", "ws-untouched"} {
+		if _, err := s.Create(context.Background(), CreateInput{
+			WorkspaceID: id, Branch: "runtime/" + id, RepoPath: repo, Title: id,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		f, _ := s.getFacts(id)
+		f.CreatedAt = "2026-09-01T00:00:00Z"
+		s.setFacts(id, f)
+	}
+	// Claude wrote to one session's transcript later than it was made.
+	f, _ := s.getFacts("ws-used")
+	name := "transcript.jsonl"
+	if f.ClaudeSessionID != "" {
+		name = f.ClaudeSessionID + ".jsonl"
+	}
+	dir := claudeProjectDir(home, s.worktreePath("ws-used"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, name)
+	if err := os.WriteFile(log, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	used := time.Date(2026, 10, 7, 9, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(log, used, used); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]string{}
+	for _, session := range s.LocalSessions(context.Background()) {
+		got[session.WorkspaceID] = session.LastActiveAt
+	}
+	if got["ws-used"] != "2026-10-07T09:30:00Z" {
+		t.Errorf("used session lastActiveAt = %q, want the transcript's time", got["ws-used"])
+	}
+	if got["ws-untouched"] != "2026-09-01T00:00:00Z" {
+		t.Errorf("untouched session lastActiveAt = %q, want its creation time", got["ws-untouched"])
+	}
+}
+
+func TestAnInPlaceSessionNeverTakesAnotherSessionsActivity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	folder := t.TempDir()
+	s := NewService(t.TempDir())
+	// Two in-place sessions in one folder, made before sessions had a Claude
+	// session id, plus one made after, with its own.
+	for _, id := range []string{"ws-legacy", "ws-other"} {
+		s.setFacts(id, workspaceFacts{
+			Branch: "b", RepoPath: folder, InPlace: true, CreatedAt: "2026-09-01T00:00:00Z",
+		})
+	}
+	s.setFacts("ws-named", workspaceFacts{
+		Branch: "b", RepoPath: folder, InPlace: true, CreatedAt: "2026-09-01T00:00:00Z",
+		ClaudeSessionID: "11111111-1111-4111-8111-111111111111",
+	})
+	// The folder's transcript directory: one log the legacy sessions cannot
+	// tell apart (whoever wrote it), and ws-named's own, written later.
+	dir := claudeProjectDir(home, folder)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, at time.Time) {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("someone-else.jsonl", time.Date(2026, 10, 7, 8, 0, 0, 0, time.UTC))
+	write("11111111-1111-4111-8111-111111111111.jsonl", time.Date(2026, 10, 6, 8, 0, 0, 0, time.UTC))
+
+	got := map[string]string{}
+	for _, session := range s.LocalSessions(context.Background()) {
+		got[session.WorkspaceID] = session.LastActiveAt
+	}
+	for _, id := range []string{"ws-legacy", "ws-other"} {
+		if got[id] != "2026-09-01T00:00:00Z" {
+			t.Errorf("%s lastActiveAt = %q, want its creation time, not the folder's newest log", id, got[id])
+		}
+	}
+	if got["ws-named"] != "2026-10-06T08:00:00Z" {
+		t.Errorf("ws-named lastActiveAt = %q, want its own transcript's time", got["ws-named"])
 	}
 }
 

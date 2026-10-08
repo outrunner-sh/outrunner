@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
-import { AppShell } from "@/components/app-shell";
 import { WorkspaceReplay } from "@/components/workspace-replay";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProject, getWorkspace, listWorkspaceSnapshots } from "@/lib/db/repositories";
@@ -28,21 +27,19 @@ export default async function WorkspaceReplayPage({
 
   const snapshots = await listWorkspaceSnapshots(workspace.id);
 
+  // Definite height (the app frame's content area) so the terminal/conversation
+  // panels' h-full / flex-1 chain resolves instead of collapsing to content height.
   return (
-    <AppShell immersive>
-      {/* Definite viewport height so the terminal/conversation panels' h-full /
-          flex-1 chain resolves instead of collapsing to content height. */}
-      <div className="flex h-dvh min-h-0 flex-col">
-        <div className="flex items-center gap-3 border-b px-4 py-2 text-sm">
-          <Link className="text-muted-foreground hover:underline" href={`/workspaces/${workspace.id}`}>
-            ← {project.fullName}
-          </Link>
-          <span className="font-medium">Replay · {workspace.branch}</span>
-        </div>
-        <div className="min-h-0 flex-1">
-          <WorkspaceReplay workspaceId={workspace.id} snapshots={snapshots} />
-        </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-3 border-b px-4 py-2 text-sm">
+        <Link className="text-muted-foreground hover:underline" href={`/workspaces/${workspace.id}`}>
+          ← {project.fullName}
+        </Link>
+        <span className="font-medium">Replay · {workspace.branch}</span>
       </div>
-    </AppShell>
+      <div className="min-h-0 flex-1">
+        <WorkspaceReplay workspaceId={workspace.id} snapshots={snapshots} />
+      </div>
+    </div>
   );
 }

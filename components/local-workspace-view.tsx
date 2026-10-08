@@ -6,7 +6,7 @@ import Link from "next/link";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { LOCAL_PROJECT, type LocalSession } from "@/lib/desktop/local-runtime";
-import type { Project, Workspace } from "@/lib/runtime/types";
+import type { Workspace } from "@/lib/runtime/types";
 
 /**
  * A local session's page. Its record is on this Mac, not the server, so it is
@@ -15,13 +15,9 @@ import type { Project, Workspace } from "@/lib/runtime/types";
  */
 export function LocalWorkspaceView({
   workspaceId,
-  allProjects,
-  allWorkspaces,
   initialPrompt,
 }: {
   workspaceId: string;
-  allProjects: Project[];
-  allWorkspaces: Workspace[];
   initialPrompt?: string;
 }) {
   const local = useLocalSessions();
@@ -32,8 +28,6 @@ export function LocalWorkspaceView({
       <WorkspaceStudio
         workspace={asWorkspace(session)}
         local={session}
-        allProjects={allProjects}
-        allWorkspaces={allWorkspaces}
         pullRequest={null}
         initialPrompt={initialPrompt}
       />
@@ -68,7 +62,7 @@ export function LocalWorkspaceView({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">{children}</div>
+    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">{children}</div>
   );
 }
 
@@ -82,6 +76,7 @@ function asWorkspace(session: LocalSession): Workspace {
     status: "ready",
     phase: "claude_ready",
     branch: session.branch,
+    title: session.title || null,
     baseBranch: session.baseBranch,
     worktreePath: session.worktree,
     sandboxId: null,

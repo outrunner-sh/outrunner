@@ -38,6 +38,7 @@ function workspace(
     status: "ready",
     phase: null,
     branch: `runtime/${id}`,
+    title: null,
     baseBranch: "main",
     worktreePath: `/home/runtime/ws/${id}`,
     sandboxId: null,

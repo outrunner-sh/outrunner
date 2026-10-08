@@ -156,6 +156,24 @@ export async function createWorkspaceRow(input: {
   return toWorkspace(data);
 }
 
+/**
+ * Give a workspace its title, unless it already has one: the first prompt
+ * names the session for good. Conditional in the database (`title is null`),
+ * so two first prompts racing cannot overwrite each other. True when this call
+ * set it.
+ */
+export async function setWorkspaceTitleIfUnset(id: string, title: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .update({ title })
+    .eq("id", id)
+    .is("title", null)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
 export async function updateWorkspace(
   id: string,
   patch: {

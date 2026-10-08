@@ -91,6 +91,8 @@ type WorkspaceRow = {
   status: WorkspaceStatusDb;
   phase: ProvisionPhaseDb | null;
   branch: string;
+  /** What the user first asked for; null until the first prompt. */
+  title: string | null;
   base_branch: string;
   worktree_path: string | null;
   sandbox_id: string | null;

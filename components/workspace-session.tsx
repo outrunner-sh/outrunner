@@ -3,6 +3,7 @@
 import "@xterm/xterm/css/xterm.css";
 
 import { RefreshCw, TerminalSquare, Users } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
@@ -32,6 +33,7 @@ export function WorkspaceSession({
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
 }) {
+  const router = useRouter();
   const terminalContainer = useRef<HTMLDivElement>(null);
   const attachment = useSessionAttachment(workspaceId, local);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
@@ -96,7 +98,13 @@ export function WorkspaceSession({
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: text, attachmentIds }),
-    }).then((res) => res.ok);
+    }).then(async (res) => {
+      if (!res.ok) return false;
+      // The first prompt just named this session: re-read the sidebar.
+      const body = (await res.json().catch(() => ({}))) as { titled?: boolean };
+      if (body.titled) router.refresh();
+      return true;
+    });
   };
 
   // The model of the most recent assistant turn — shown in the composer so it

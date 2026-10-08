@@ -16,6 +16,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     status: "ready",
     phase: null,
     branch: "runtime/x",
+    title: null,
     baseBranch: "main",
     worktreePath: "/runtime/worktrees/x",
     sandboxId: "sb-1",

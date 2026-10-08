@@ -50,6 +50,8 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     status: row.status,
     phase: row.phase,
     branch: row.branch,
+    // `?? null`: a deploy can run before the migration that adds the column.
+    title: row.title ?? null,
     baseBranch: row.base_branch,
     worktreePath: row.worktree_path ?? "",
     sandboxId: row.sandbox_id,

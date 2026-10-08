@@ -12,10 +12,25 @@ export function fallbackProject(id: string): NavProject {
 
 /** A workspace's recency key: its last-active time, or its creation time when it
  *  has never been touched (a still-provisioning workspace has a null
- *  lastActiveAt). ISO strings sort lexicographically, so plain string compare
- *  orders them. Exported so the home "Continue" target ranks by the same rule as
- *  the studio nav — a brand-new workspace must be considered most-recent. */
+ *  lastActiveAt). Exported so the home "Continue" target ranks by the same rule
+ *  as the sidebar: a brand-new workspace must be considered most-recent. */
 export const recency = (w?: Workspace) => w?.lastActiveAt ?? w?.createdAt ?? "";
+
+/**
+ * Comparator for timestamps, newest first. By instant, not by text: the times
+ * come from Postgres (`…00.123456+00:00`, fraction digits trimmed) and from the
+ * Mac's agent (`…00Z`), and as strings `12:00:00Z` sorts after
+ * `12:00:00.001Z`. A missing or unparseable time sorts last.
+ */
+export function newestFirst(a: string | null | undefined, b: string | null | undefined): number {
+  const [ta, tb] = [instant(a), instant(b)];
+  return ta === tb ? 0 : tb > ta ? 1 : -1;
+}
+
+function instant(iso: string | null | undefined): number {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(t) ? -Infinity : t;
+}
 
 /**
  * Group workspaces under their project for the studio nav, each group's items
@@ -40,7 +55,7 @@ export function buildNavGroups(
   return [...byProject.entries()]
     .map(([projectId, items]) => ({
       project: projectById.get(projectId) ?? fallbackProject(projectId),
-      items: items.slice().sort((a, b) => recency(b).localeCompare(recency(a))),
+      items: items.slice().sort((a, b) => newestFirst(recency(a), recency(b))),
     }))
-    .sort((a, b) => recency(b.items[0]).localeCompare(recency(a.items[0])));
+    .sort((a, b) => newestFirst(recency(a.items[0]), recency(b.items[0])));
 }
