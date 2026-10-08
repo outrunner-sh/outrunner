@@ -219,6 +219,23 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
   }
 });
 
+test("claudeInstallScript skips the install when the box already has the tools", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  // A PATH with tmux and jq present, and a sudo that records being called.
+  const bin = mkdtempSync(join(tmpdir(), "install-"));
+  const called = join(bin, "sudo-called");
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  execFileSync("/bin/sh", ["-c", claudeInstallScript()], { env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` } });
+  const { existsSync } = await import("node:fs");
+  assert.equal(existsSync(called), false, "sudo was not called");
+});
+
 test("claudeAgentLaunchScript roots the agent + Claude HOME at the box home", () => {
   const s = claudeAgentLaunchScript("/home/daytona", "s3cr3t", {
     CLAUDE_CODE_OAUTH_TOKEN: "tok en",
