@@ -521,12 +521,21 @@ func (s *Service) SetModel(ctx context.Context, workspaceID, model, anthropicTok
 	}
 	// Continue only a conversation that exists: before the first prompt there
 	// is none, and --continue with nothing to continue exits.
+	resume := s.SessionLog(workspaceID) != ""
 	relaunchCtx, cancelRelaunch := context.WithTimeout(base, switchRelaunchTimeout)
 	defer cancelRelaunch()
-	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, s.SessionLog(workspaceID) != "", lock); err != nil {
+	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, resume, lock); err != nil {
 		// Not applied, so not recorded: a retry of the same model tries again
 		// rather than finding it already set, and the next Start uses the old.
 		s.setFacts(workspaceID, prior)
+		// The old session was killed before the new one failed to start, so
+		// bring Claude back on the model it had: a failed switch must not end
+		// a session that was working.
+		restoreCtx, cancelRestore := context.WithTimeout(base, switchRelaunchTimeout)
+		defer cancelRestore()
+		if _, restoreErr := s.relaunchHeld(restoreCtx, workspaceID, anthropicToken, resume, lock); restoreErr != nil {
+			return fmt.Errorf("%w; restarting it on its previous model failed too: %v", err, restoreErr)
+		}
 		return err
 	}
 	return nil
