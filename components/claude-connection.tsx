@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Check, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -77,18 +77,41 @@ export function ClaudeConnection() {
     setCode("");
   }, []);
 
+  // The login attempt the page is following. Cancel, Disconnect and a new
+  // Connect move it on, so an older loop stops polling, saving or touching the
+  // page: it can neither time out a newer login nor reconnect after Disconnect.
+  const attempt = useRef(0);
+  // The attempt whose token was taken, by the poll or by a pasted code. The two
+  // can race for it; the loser's "no login in progress" is not an error.
+  const claimed = useRef(0);
+
+  /** The one way a login finishes: save its token, once, if still wanted. */
+  const complete = useCallback(
+    async (mine: number, token: string) => {
+      if (attempt.current !== mine || claimed.current === mine) return;
+      claimed.current = mine;
+      await save(token);
+      // A pasted code may have lost the race and shown an error meanwhile.
+      setError(null);
+    },
+    [save],
+  );
+
   const connect = useCallback(async () => {
+    const mine = ++attempt.current;
+    const current = () => attempt.current === mine;
     setBusy(true);
     setError(null);
     let url: string;
     try {
       url = await startClaudeLogin();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+      if (current()) setError(e instanceof Error ? e.message : "Connecting Claude failed.");
       return;
     } finally {
       setBusy(false);
     }
+    if (!current()) return;
     setPending(url);
     // The shell bounces off-site navigations to the system browser, which is
     // where this has to happen: Claude blocks embedded webviews, and the URL
@@ -106,9 +129,9 @@ export function ClaudeConnection() {
         // grant: every poll was rejected, the loop gave up on the first tick,
         // and the UI sat on the code field while the token was already in hand.
         const poll = await pollClaudeLogin();
-        if (poll.state === "ended") return;
+        if (!current() || poll.state === "ended") return;
         if (poll.state === "done") {
-          await save(poll.token);
+          await complete(mine, poll.token);
           return;
         }
       }
@@ -116,33 +139,48 @@ export function ClaudeConnection() {
       setPending(null);
       setError("No answer from the browser after five minutes. Start again.");
     } catch (e) {
+      if (!current()) return;
       setPending(null);
       setError(e instanceof Error ? e.message : "Connecting Claude failed.");
     } finally {
-      setWaiting(false);
+      // A newer attempt owns `waiting` now.
+      if (current()) setWaiting(false);
     }
-  }, [save]);
+  }, [complete]);
 
   const finish = useCallback(async () => {
+    const mine = attempt.current;
     setBusy(true);
     setError(null);
     try {
-      await save(await submitClaudeCode(code));
+      await complete(mine, await submitClaudeCode(code));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+      // The poll may have taken this token first and saved it.
+      if (attempt.current === mine && claimed.current !== mine) {
+        setError(e instanceof Error ? e.message : "Connecting Claude failed.");
+      }
     } finally {
       setBusy(false);
     }
-  }, [code, save]);
+  }, [code, complete]);
 
-  const abandon = useCallback(() => {
+  /** Stop following the login in progress, if any, and stop its CLI. */
+  const stopLogin = useCallback(() => {
+    attempt.current++;
     void cancelClaudeLogin();
     setPending(null);
+    setWaiting(false);
     setCode("");
-    setError(null);
   }, []);
 
+  const abandon = useCallback(() => {
+    stopLogin();
+    setError(null);
+  }, [stopLogin]);
+
   const disconnect = useCallback(async () => {
+    // A Reconnect still waiting must not save a token after this.
+    stopLogin();
     setBusy(true);
     setError(null);
     try {
@@ -154,7 +192,7 @@ export function ClaudeConnection() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [stopLogin]);
 
   const connected = meta?.connected ?? false;
 
