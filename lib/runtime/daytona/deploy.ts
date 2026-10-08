@@ -472,10 +472,14 @@ export function claudeConfigSeedScript(root: string): string {
     hasUsedBypassPermissions: true,
     hasTrustDialogAccepted: true,
   });
+  // Claude 2.1.293 ignores the global trust flag and asks per folder, with
+  // "No, exit" preselected; a folder's entry covers everything under it, and
+  // every worktree lives under workspaces/.
+  const trust = `.projects[${JSON.stringify(`${root}/workspaces`)}].hasTrustDialogAccepted = true`;
   const f = `${root}/.claude.json`;
   return (
     `[ -f ${f} ] || echo '{}' > ${f}; ` +
-    `tmp=$(mktemp) && jq ${shellQuote(`. + ${flags}`)} ${f} > "$tmp" && mv "$tmp" ${f}`
+    `tmp=$(mktemp) && jq ${shellQuote(`. + ${flags} | ${trust}`)} ${f} > "$tmp" && mv "$tmp" ${f}`
   );
 }
 
