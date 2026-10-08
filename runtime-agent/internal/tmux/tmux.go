@@ -118,8 +118,14 @@ func (m *Manager) Paste(ctx context.Context, name, text string) error {
 // SubmitEnter presses Enter in the session's active pane, submitting whatever is
 // currently staged in Claude's composer.
 func (m *Manager) SubmitEnter(ctx context.Context, name string) error {
-	if out, err := Command(ctx, "send-keys", "-t", name, "Enter").CombinedOutput(); err != nil {
-		return fmt.Errorf("tmux send-keys Enter %s: %v: %s", name, err, out)
+	return m.PressKey(ctx, name, "Enter")
+}
+
+// PressKey presses one key, by its tmux name (Enter, Down), in the session's
+// active pane.
+func (m *Manager) PressKey(ctx context.Context, name, key string) error {
+	if out, err := Command(ctx, "send-keys", "-t", name, key).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys %s %s: %v: %s", key, name, err, out)
 	}
 	return nil
 }

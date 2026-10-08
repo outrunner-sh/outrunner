@@ -149,6 +149,28 @@ func TestIsTrustDialog(t *testing.T) {
 	}
 }
 
+func TestTrustAnswerMovesToYesBeforeEnter(t *testing.T) {
+	// Captured from Claude Code 2.1.293 on a Neev box (2026-10-08): "No, exit"
+	// comes first and is selected, so Enter there quits Claude.
+	noFirst := ` Quick safety check: Is this a project you created or one you trust?
+ Claude Code'll be able to read, edit, and execute files here.
+ Security guide
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel`
+	if got := trustAnswer(noFirst); got != "Down" {
+		t.Errorf("with No selected, answered %q, want Down", got)
+	}
+	yesSelected := strings.Replace(strings.Replace(noFirst, " ❯ No", "   No", 1), "   Yes", " ❯ Yes", 1)
+	if got := trustAnswer(yesSelected); got != "Enter" {
+		t.Errorf("with Yes selected, answered %q, want Enter", got)
+	}
+	// 2.1.292 and earlier: "Yes" first and selected.
+	if got := trustAnswer(" ❯ 1. Yes, I trust this folder\n   2. No, exit"); got != "Enter" {
+		t.Errorf("with the numbered Yes selected, answered %q, want Enter", got)
+	}
+}
+
 func TestSessionEnvironmentExcludesAgentControlSecrets(t *testing.T) {
 	env, secrets := sessionEnvironment([]string{
 		"PATH=/usr/bin",

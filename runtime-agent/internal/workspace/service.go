@@ -386,10 +386,11 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust 
 		// The dialog is checked first: its "❯ 1. Yes, I trust this folder" line
 		// also contains the composer glyph.
 		if err == nil && isTrustDialog(pane) {
-			// "Yes" is preselected, so Enter accepts. Re-press only after a beat:
-			// a just-launched TUI can drop the first key.
+			// Enter only once "Yes" is selected: 2.1.293 preselects "No, exit",
+			// where Enter quits Claude. One key per beat, read back from the pane
+			// each time, as a just-launched TUI can drop the first key.
 			if acceptTrust && time.Since(lastAnswer) >= time.Second {
-				_ = s.tmux.SubmitEnter(ctx, name)
+				_ = s.tmux.PressKey(ctx, name, trustAnswer(pane))
 				lastAnswer = time.Now()
 			}
 		} else if err == nil && strings.Contains(pane, "❯") && time.Since(launched) >= minWait {
@@ -408,6 +409,20 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust 
 func isTrustDialog(pane string) bool {
 	return strings.Contains(pane, "trust this folder") ||
 		strings.Contains(pane, "trust the files in this folder")
+}
+
+// trustAnswer is the next key toward trusting the folder in the trust dialog:
+// Enter when the selected option (the ❯ line) is a "Yes", otherwise Down.
+func trustAnswer(pane string) string {
+	for _, line := range strings.Split(pane, "\n") {
+		if strings.Contains(line, "❯") {
+			if strings.Contains(line, "Yes") {
+				return "Enter"
+			}
+			break
+		}
+	}
+	return "Down"
 }
 
 // Resume re-launches Claude with --continue after an exit or box restart.
