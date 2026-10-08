@@ -34,11 +34,16 @@ func ParseGateway(raw string) (Gateway, error) {
 	return g, nil
 }
 
+// minGatewayTokenLen is shorter than any real key (OpenRouter's are 73
+// characters). Every key is masked in every session's output, so a short one
+// would mask that text wherever it appears on the machine.
+const minGatewayTokenLen = 20
+
 // ValidGatewayToken accepts a key as a gateway issues one: printable ASCII,
 // no spaces, bounded. It is written into a shell-sourced file, quoted, but
 // nothing that could need escaping is allowed in the first place.
 func ValidGatewayToken(token string) bool {
-	if token == "" || len(token) > 400 {
+	if len(token) < minGatewayTokenLen || len(token) > 400 {
 		return false
 	}
 	for _, r := range token {
