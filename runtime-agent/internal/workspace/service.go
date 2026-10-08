@@ -992,14 +992,20 @@ func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 
 // continueRecorder keeps a workspace's cast going across a relaunch: a recorder
 // still running is pointed at the new session, so the cast holds everything
-// before the relaunch too. Starting afresh (which truncates the cast) is only
-// the fallback, for no recorder or one that can't be re-armed.
+// before the relaunch too. A recorder is started afresh, which truncates the
+// cast, only when none is running.
 func (s *Service) continueRecorder(ctx context.Context, workspaceID string) {
 	s.recordersMu.Lock()
 	rec := s.recorders[workspaceID]
 	s.recordersMu.Unlock()
 	if rec != nil {
-		if running, err := rec.Rearm(ctx); running && err == nil {
+		running, err := rec.Rearm(ctx)
+		if running && err != nil {
+			running, _ = rec.Rearm(ctx) // one more try: tmux can drop a command
+		}
+		if running {
+			// Even when tmux won't pipe the new pane, the cast keeps what it
+			// has: starting afresh would erase the session up to the switch.
 			return
 		}
 	}
