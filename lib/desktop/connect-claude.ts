@@ -58,13 +58,12 @@ export function messageForError(code: string): string {
   }
   // `setup-token` only works for a Claude subscription, and exits without a
   // token for an account that has none or when the browser approval is
-  // declined. Say so, and name the alternative, rather than keep waiting.
+  // declined. Say so rather than keep waiting.
   if (code === "setup-token-exited" || code.startsWith("setup-token-exited:")) {
     const detail = code.slice("setup-token-exited".length).replace(/^:\s*/, "");
     return (
       "Claude Code stopped without issuing a token. Connecting needs a Claude Pro " +
-      "or Max subscription; without one, add an Anthropic API key under Settings → " +
-      "Credentials instead." +
+      "or Max subscription on the account you approve with." +
       (detail ? ` It said: ${detail}` : "")
     );
   }
