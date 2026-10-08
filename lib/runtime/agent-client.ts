@@ -48,6 +48,13 @@ const AGENT_REQUEST_TIMEOUT_MS = 12_000;
  */
 const AGENT_LIFECYCLE_TIMEOUT_MS = 180_000;
 
+/**
+ * Start and resume return once Claude's prompt is up, which the agent waits up
+ * to 15s for. Outlast that cap, so a slow launch the agent still reports as
+ * started isn't reported here as a failure.
+ */
+const AGENT_START_TIMEOUT_MS = 30_000;
+
 export class AgentClient {
   private readonly target: AgentTarget;
   private readonly fetchFn: FetchFn;
@@ -68,7 +75,12 @@ export class AgentClient {
   }
 
   startWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/start`, identity);
+    return this.post(
+      `/workspaces/${identity.workspaceId}/start`,
+      identity,
+      undefined,
+      AGENT_START_TIMEOUT_MS,
+    );
   }
 
   stopWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
@@ -86,7 +98,12 @@ export class AgentClient {
   }
 
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
+    return this.post(
+      `/workspaces/${identity.workspaceId}/resume`,
+      identity,
+      undefined,
+      AGENT_START_TIMEOUT_MS,
+    );
   }
 
   /**
