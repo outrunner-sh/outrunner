@@ -145,8 +145,20 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+/// Give rustls its crypto provider. The updater's rustls-tls feature switches
+/// every reqwest client in the app to rustls without one, and installs it only
+/// before its own update check: until then building any client panics, the
+/// local agent relay's included.
+fn install_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // Fails only if another thread installed one first, which is as good.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_crypto_provider();
     tauri::Builder::default()
         .manage(claude_login::ClaudeLoginState::default())
         .manage(local_runtime::LocalRuntime::default())
@@ -324,4 +336,14 @@ pub fn run() {
                 app.state::<local_runtime::LocalRuntime>().shutdown();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn http_clients_build_once_the_crypto_provider_is_installed() {
+        super::install_crypto_provider();
+        // Without it: "No rustls crypto provider is configured".
+        let _ = reqwest::Client::new();
+    }
 }
