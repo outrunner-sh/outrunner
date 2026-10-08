@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,6 +172,42 @@ func TestRearmMasksAKeyTheNewSessionRunsOn(t *testing.T) {
 	}
 	if !bytes.Contains(out.Bytes(), []byte("AFTER *** ***")) {
 		t.Fatalf("cast = %q, want both keys masked after the relaunch", out.String())
+	}
+}
+
+func TestStopMasksAKeyAddedWhileItWasHeldBack(t *testing.T) {
+	// A long known secret makes the redactor hold back everything shorter, so
+	// the new key is still in the held-back tail when the recording stops, and
+	// only the shutdown path can mask it.
+	known := strings.Repeat("k", 60)
+	const newKey = "sk-or-v1-tail-0123456789"
+	p := &fakePane{data: []byte("x " + newKey)}
+	r := &Recorder{pane: p, castPath: filepath.Join(t.TempDir(), DefaultCastName), opts: Options{Secrets: []string{known}}}
+	ctx := context.Background()
+	if err := r.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	p.mu.Lock()
+	p.data = nil // the new session prints nothing before the recording stops
+	p.mu.Unlock()
+	if _, err := r.Rearm(ctx, []string{newKey}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(r.castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, frames := parseCast(t, b)
+	var out bytes.Buffer
+	for _, f := range frames {
+		out.WriteString(f[2].(string))
+	}
+	if out.String() != "x ***" {
+		t.Fatalf("cast = %q, want the held-back key masked at stop", out.String())
 	}
 }
 
