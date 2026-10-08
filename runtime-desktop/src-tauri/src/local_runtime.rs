@@ -788,6 +788,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_relay_can_build_its_http_client() {
+        // reqwest panics building a client when TLS has no crypto provider.
+        crate::install_tls_provider();
+        let _ = http_client();
+    }
+
+    #[test]
     fn folders_report_whether_sessions_get_a_worktree() {
         let dir = std::env::temp_dir().join(format!("outrunner-folder-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();

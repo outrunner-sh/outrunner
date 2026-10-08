@@ -146,7 +146,19 @@ fn show_main(app: &tauri::AppHandle) {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Give rustls its crypto provider, once, before anything builds an HTTP client.
+///
+/// tauri-plugin-updater turns on reqwest's `rustls-no-provider`, and Cargo
+/// unifies features, so every reqwest client in the app, the local-session
+/// relay's included, panics on construction without one. That broke both local
+/// sessions and the update check in desktop-v0.2.0.
+pub(crate) fn install_tls_provider() {
+    // Err only means one is installed already.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 pub fn run() {
+    install_tls_provider();
     tauri::Builder::default()
         .manage(claude_login::ClaudeLoginState::default())
         .manage(local_runtime::LocalRuntime::default())
