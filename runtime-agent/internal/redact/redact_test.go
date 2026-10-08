@@ -64,3 +64,13 @@ func TestRedactorMasksOverlappingSecretsSplitAcrossReads(t *testing.T) {
 		t.Fatalf("redacted output = %q, want %q", got.String(), want)
 	}
 }
+
+func TestAddedSecretsAreMaskedAlongsideTheOldOnes(t *testing.T) {
+	r := New([]string{"old-secret-value"})
+	got := r.Redact([]byte("x old-sec")) // held back: it may be the old secret
+	r.AddSecrets([]string{"new-secret-value"})
+	got += r.Redact([]byte("ret-value new-secret-value old-secret-value y")) + r.Flush()
+	if got != "x *** *** *** y" {
+		t.Fatalf("redacted output = %q", got)
+	}
+}

@@ -41,6 +41,16 @@ func New(secrets []string) *Redactor {
 	return &Redactor{secrets: active, maxLen: maxLen}
 }
 
+// AddSecrets masks secrets from the next Redact on, as well as those it
+// already masks, keeping the tail it holds back. A stream whose process
+// switched to a new key keeps masking the old one too, since output from
+// before the switch can be drawn again.
+func (r *Redactor) AddSecrets(secrets []string) {
+	next := New(append(append([]string(nil), r.secrets...), secrets...))
+	next.pending = r.pending
+	*r = *next
+}
+
 // Redact emits only text that cannot be the beginning of a secret extending
 // into a later PTY read. Call Flush when the stream ends to emit the final
 // non-secret suffix.
