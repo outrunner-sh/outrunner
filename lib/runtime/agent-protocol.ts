@@ -162,6 +162,9 @@ export const ErrorCode = z.enum([
   "AGENT_UNREACHABLE",
   "INVALID_REQUEST",
   "INTERNAL",
+  // A model switch: an unknown session, or one that can't switch right now.
+  "NOT_FOUND",
+  "CONFLICT",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
