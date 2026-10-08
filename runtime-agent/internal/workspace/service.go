@@ -26,11 +26,24 @@ import (
 	"runtime-agent/internal/tmux"
 )
 
+// sessions is the part of tmux the service drives, behind an interface so tests
+// can stand in for a session that is running, busy or failing to start.
+type sessions interface {
+	NewSession(ctx context.Context, name, workdir string, command []string, env []string) error
+	HideStatus(ctx context.Context, name string)
+	HasSession(ctx context.Context, name string) bool
+	SessionExists(ctx context.Context, name string) (bool, error)
+	KillSession(ctx context.Context, name string) error
+	Paste(ctx context.Context, name, text string) error
+	SubmitEnter(ctx context.Context, name string) error
+	CapturePane(ctx context.Context, name string) (string, error)
+}
+
 // Service holds the on-box layout and the tmux manager. One instance per agent.
 type Service struct {
 	// Root is the Runtime Computer working area, e.g. /home/runtime.
 	Root string
-	tmux *tmux.Manager
+	tmux sessions
 	env  []string
 	// secrets are values that can legitimately appear in the Claude process
 	// environment. The HTTP server uses them to redact browser-visible PTY
