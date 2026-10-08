@@ -7,10 +7,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAttachments } from "@/hooks/use-attachments";
-import { matchModel, modelLabel, type SessionModel } from "@/lib/runtime/session-models";
+import { matchModel, modelLabel, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
 
 /**
  * The prompt composer pinned at the bottom of the conversation column. Sending
@@ -24,8 +26,8 @@ import { matchModel, modelLabel, type SessionModel } from "@/lib/runtime/session
 
 /** Switching the session's model from the footer, where the session allows it. */
 export type ModelChoice = {
-  models: SessionModel[];
-  onChange: (id: string) => void;
+  groups: ModelGroup[];
+  onChange: (model: SessionModel) => void;
   /** Why it can't switch right now (mid-turn, not at the keyboard); null when
    *  it can. */
   disabledReason: string | null;
@@ -219,7 +221,7 @@ export function SessionComposer({
 
 /** The footer's model, as a menu of the models the session can switch to. */
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
-  const current = matchModel(choice.models, model);
+  const current = matchModel(choice.groups, model);
   const label = choice.switching
     ? "Switching…"
     : (current?.label ?? (model ? modelLabel(model) : "Model"));
@@ -238,17 +240,25 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
           <ChevronDown />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="w-44">
-        {choice.models.map((m) => (
-          <DropdownMenuItem
-            key={m.id}
-            // Always sent, even for the ticked family: the session may run an
-            // older model of it, and the agent ignores a switch to what it has.
-            onSelect={() => choice.onChange(m.id)}
-          >
-            <Check className={m.id === current?.id ? "opacity-100" : "opacity-0"} />
-            {m.label}
-          </DropdownMenuItem>
+      <DropdownMenuContent align="start" side="top" className="w-52">
+        {choice.groups.map((group, i) => (
+          <div key={group.label}>
+            {i > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+              {group.label}
+            </DropdownMenuLabel>
+            {group.models.map((m) => (
+              <DropdownMenuItem
+                key={m.id}
+                // Always sent, even for the ticked family: the session may run an
+                // older model of it, and the agent ignores a switch to what it has.
+                onSelect={() => choice.onChange(m)}
+              >
+                <Check className={m.id === current?.id ? "opacity-100" : "opacity-0"} />
+                {m.label}
+              </DropdownMenuItem>
+            ))}
+          </div>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>

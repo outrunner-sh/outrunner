@@ -182,6 +182,10 @@ type UserCredentialsRow = {
   anthropic_key_ciphertext: string | null;
   anthropic_key_hint: string | null;
   anthropic_key_updated_at: string | null;
+  // Neev AI (supabase/migrations/20261007140000_neev_ai_keys.sql).
+  neev_key_ciphertext: string | null;
+  neev_key_hash: string | null;
+  neev_key_created_at: string | null;
   created_at: string;
   updated_at: string;
 };
