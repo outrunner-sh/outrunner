@@ -158,6 +158,8 @@ pub fn run() {
             claude_login::connect_claude_debug,
             claude_login::connect_claude_cancel,
             local_runtime::local_status,
+            local_runtime::local_claude_login,
+            local_runtime::local_claude_login_cancel,
             local_runtime::local_pick_folder,
             local_runtime::local_check_folder,
             local_runtime::local_list_sessions,

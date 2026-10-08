@@ -11,6 +11,7 @@
 // any request without a token signed by that secret.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -44,6 +45,9 @@ const TOKEN_TTL_SECONDS: u64 = 300;
 /// Covers the slowest relayed call: create (a base-branch fetch, capped at 30s
 /// by the agent) and start (Claude's TUI, capped at 15s).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long a `claude auth login` may wait for the user to approve in the
+/// browser before it is stopped.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// Managed state: the agent process, the open relayed sockets, and the folders
 /// the user picked in this run.
@@ -55,6 +59,10 @@ pub struct LocalRuntime {
     /// Canonical paths chosen in the folder dialog. With the folders existing
     /// sessions work in, these are the only ones the page may name.
     picked: Mutex<HashSet<PathBuf>>,
+    /// `claude auth login` in progress, with a number for the attempt, so a
+    /// retry, a cancel or quitting the app can stop it.
+    login: Mutex<Option<(u32, Child)>>,
+    next_login: AtomicU32,
 }
 
 struct Agent {
@@ -102,11 +110,22 @@ impl LocalRuntime {
     /// so work carries on and the next launch reattaches.
     pub fn shutdown(&self) {
         self.close_all_sockets();
+        self.stop_claude_login();
         if let Ok(mut guard) = self.agent.try_lock() {
             if let Some(mut agent) = guard.take() {
                 let _ = agent.child.kill();
                 let _ = agent.child.wait();
             }
+        }
+    }
+
+    /// Stop a `claude auth login` in progress, if any. It holds a localhost
+    /// port open for the browser's redirect until it ends.
+    fn stop_claude_login(&self) {
+        let mut login = self.login.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, mut child)) = login.take() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 
@@ -164,20 +183,9 @@ fn spawn_agent() -> Result<Agent, String> {
         .map_err(|error| error.to_string())?;
     let secret = random_hex(32);
 
-    let mut command = Command::new(&binary);
-    // A clean environment: the agent passes its own on to every Claude session,
-    // so only what a terminal session would have goes in.
-    command.env_clear();
-    for key in ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR"] {
-        if let Some(value) = std::env::var_os(key) {
-            command.env(key, value);
-        }
-    }
+    // The agent passes its environment on to every Claude session.
+    let mut command = user_command(&binary);
     command
-        .env("PATH", session_path())
-        // A GUI app gets no locale, and tmux without a UTF-8 one draws Claude's
-        // prompt glyph as `_` — which is also what the agent waits for.
-        .env("LANG", utf8_locale())
         // `tmux attach` refuses to run without a terminal type.
         .env("TERM", "xterm-256color")
         .env("RUNTIME_AGENT_SECRET", &secret)
@@ -212,6 +220,67 @@ fn spawn_agent() -> Result<Agent, String> {
             Err("agent-did-not-start".into())
         }
     }
+}
+
+/// A command with only what a terminal session would have: the user's identity
+/// and home, the login-shell PATH and a UTF-8 locale. The agent runs this way,
+/// and so its Claude sessions, so the login check and login below use it too:
+/// they then see exactly the Claude Code login a session will.
+fn user_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(program);
+    command.env_clear();
+    for key in ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+        .env("PATH", session_path())
+        // A GUI app gets no locale, and tmux without a UTF-8 one draws Claude's
+        // prompt glyph as `_` — which is also what the agent waits for.
+        .env("LANG", utf8_locale());
+    command
+}
+
+/// Wait for `child` up to `limit`; past it, kill it. Whether it exited on its
+/// own.
+fn exit_within(child: &mut Child, limit: Duration) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+/// Whether Claude Code on this Mac is logged in, as `claude auth status` says.
+/// None when it cannot tell: a Claude Code too old to have `auth status`, or
+/// one that did not answer in time. The page blocks only on a clear no.
+fn claude_logged_in(claude: &str) -> Option<bool> {
+    let mut child = user_command(claude)
+        .args(["auth", "status", "--json"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if !exit_within(&mut child, Duration::from_secs(10)) {
+        return None;
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    // It exits 1 when logged out, so read the answer, not the status.
+    parse_logged_in(&out)
+}
+
+fn parse_logged_in(out: &str) -> Option<bool> {
+    serde_json::from_str::<serde_json::Value>(out).ok()?.get("loggedIn")?.as_bool()
 }
 
 fn utf8_locale() -> String {
@@ -262,17 +331,8 @@ fn login_shell_path() -> Option<String> {
         .spawn()
         .ok()?;
     // A profile that waits on input, or is just slow, must not hang the app.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    if !exit_within(&mut child, Duration::from_secs(5)) {
+        return None;
     }
     let mut out = String::new();
     child.stdout.take()?.read_to_string(&mut out).ok()?;
@@ -371,6 +431,8 @@ pub struct LocalStatus {
     git: Option<String>,
     tmux: Option<String>,
     claude: Option<String>,
+    /// Whether that Claude Code is logged in; None when it cannot tell.
+    claude_logged_in: Option<bool>,
 }
 
 /// What local sessions need on this Mac and whether it is there, so the UI can
@@ -379,17 +441,112 @@ pub struct LocalStatus {
 pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
     let device_id = device_id(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let claude = which("claude");
         Ok(LocalStatus {
             device_id,
             root: root_dir()?.to_string_lossy().into_owned(),
             agent_bundled: agent_binary().is_ok(),
             git: which("git"),
             tmux: which("tmux"),
-            claude: which("claude"),
+            claude_logged_in: claude.as_deref().and_then(claude_logged_in),
+            claude,
         })
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Log Claude Code in on this Mac, for a user who has never run it here, and
+/// resolve when that is done. `claude auth login` opens the browser itself, on a
+/// link that redirects back to a port it listens on, so approving there finishes
+/// the login with nothing to paste. The login lands where Claude Code keeps it,
+/// for every local session and the user's own terminal alike; the app never
+/// sees it.
+///
+/// Errors: `claude-missing`; `login-cancelled` when `local_claude_login_cancel`
+/// or a newer attempt stopped this one; `login-timed-out`; and
+/// `login-failed: <its last lines>` when the CLI exits unsuccessfully, so a
+/// failure says why instead of leaving the page waiting.
+#[tauri::command]
+pub async fn local_claude_login(state: State<'_, LocalRuntime>) -> Result<(), String> {
+    run_claude_login(&state, Path::new(&which("claude").ok_or("claude-missing")?)).await
+}
+
+/// `local_claude_login` with the binary given, so a test can stand in for it.
+async fn run_claude_login(state: &LocalRuntime, claude: &Path) -> Result<(), String> {
+    state.stop_claude_login();
+    let mut child = user_command(claude)
+        .args(["auth", "login"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("login-failed: {error}"))?;
+    // Keep what it prints, for the error if it fails; draining both pipes also
+    // means it can never block on a full one.
+    let output = Arc::new(Mutex::new(String::new()));
+    for pipe in [
+        child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+        child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let output = Arc::clone(&output);
+        std::thread::spawn(move || {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                let mut output = output.lock().unwrap_or_else(PoisonError::into_inner);
+                output.push_str(&line);
+                output.push('\n');
+            }
+        });
+    }
+    let attempt = state.next_login.fetch_add(1, Ordering::Relaxed);
+    *state.login.lock().unwrap_or_else(PoisonError::into_inner) = Some((attempt, child));
+
+    let deadline = Instant::now() + LOGIN_TIMEOUT;
+    loop {
+        let exited = {
+            let mut login = state.login.lock().unwrap_or_else(PoisonError::into_inner);
+            let Some((_, child)) = login.as_mut().filter(|(id, _)| *id == attempt) else {
+                return Err("login-cancelled".into());
+            };
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    login.take();
+                    Some(status)
+                }
+                _ => None,
+            }
+        };
+        if let Some(status) = exited {
+            if status.success() {
+                return Ok(());
+            }
+            // Let the reader threads catch the last of its output.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let output = output.lock().unwrap_or_else(PoisonError::into_inner);
+            return Err(format!("login-failed: {}", last_lines(&output, 4)));
+        }
+        if Instant::now() >= deadline {
+            state.stop_claude_login();
+            return Err("login-timed-out".into());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// Stop a `local_claude_login` in progress; the page's Cancel.
+#[tauri::command]
+pub async fn local_claude_login_cancel(state: State<'_, LocalRuntime>) -> Result<(), String> {
+    state.stop_claude_login();
+    Ok(())
+}
+
+/// Up to `n` non-blank lines from the end of `text`, joined for one line of UI.
+fn last_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    lines[lines.len().saturating_sub(n)..].join(" | ")
 }
 
 #[derive(Serialize)]
@@ -786,6 +943,95 @@ async fn relay(url: String, mut commands: mpsc::UnboundedReceiver<Outbound>, eve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_whether_claude_is_logged_in_from_auth_status() {
+        assert_eq!(parse_logged_in(r#"{"loggedIn": true, "authMethod": "claude.ai"}"#), Some(true));
+        assert_eq!(parse_logged_in(r#"{"loggedIn": false, "authMethod": "none"}"#), Some(false));
+        // A Claude Code without `auth status` prints usage, not JSON.
+        assert_eq!(parse_logged_in("error: unknown command 'auth'"), None);
+        assert_eq!(parse_logged_in(r#"{"authMethod": "none"}"#), None);
+    }
+
+    #[test]
+    fn the_login_check_reads_a_real_auth_status() {
+        // A stand-in `claude` that answers like a logged-out one: JSON, exit 1.
+        let dir = std::env::temp_dir().join(format!("outrunner-auth-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let claude = dir.join("claude");
+        std::fs::write(&claude, "#!/bin/sh\necho '{\"loggedIn\": false}'\nexit 1\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(claude_logged_in(claude.to_str().unwrap()), Some(false));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "asks this Mac's real Claude Code"]
+    fn the_login_check_gets_an_answer_from_the_real_claude() {
+        let claude = which("claude").expect("claude on the login-shell PATH");
+        assert!(claude_logged_in(&claude).is_some(), "no clear answer from {claude}");
+    }
+
+    /// A stand-in `claude` whose `auth login` runs `body`.
+    fn fake_claude(name: &str, body: &str) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("outrunner-{name}-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let claude = dir.join("claude");
+        std::fs::write(&claude, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir, claude)
+    }
+
+    #[test]
+    fn a_login_resolves_when_the_cli_exits_cleanly() {
+        let (dir, claude) = fake_claude("login-ok", "echo 'Login successful.'");
+        let runtime = LocalRuntime::default();
+        let result = tauri::async_runtime::block_on(run_claude_login(&runtime, &claude));
+        assert_eq!(result, Ok(()));
+        assert!(runtime.login.lock().unwrap().is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_login_says_what_the_cli_printed() {
+        let (dir, claude) = fake_claude(
+            "login-fail",
+            "echo 'Opening browser to sign in…'\necho 'OAuth error: access denied' >&2\nexit 1",
+        );
+        let runtime = LocalRuntime::default();
+        let err = tauri::async_runtime::block_on(run_claude_login(&runtime, &claude)).unwrap_err();
+        assert!(err.starts_with("login-failed: "), "{err}");
+        assert!(err.contains("OAuth error: access denied"), "{err}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_cancelled_login_stops_the_cli() {
+        let (dir, claude) = fake_claude("login-cancel", "exec sleep 30");
+        let runtime = Arc::new(LocalRuntime::default());
+        let canceller = Arc::clone(&runtime);
+        std::thread::spawn(move || {
+            // Cancel once the CLI is up; finding the login-shell PATH first can
+            // take seconds.
+            while canceller.login.lock().unwrap().is_none() {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            canceller.stop_claude_login();
+        });
+        let started = Instant::now();
+        let result = tauri::async_runtime::block_on(run_claude_login(&runtime, &claude));
+        assert_eq!(result, Err("login-cancelled".to_string()));
+        assert!(started.elapsed() < Duration::from_secs(20), "the CLI ran to its end");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn last_lines_keeps_the_end_without_blanks() {
+        assert_eq!(last_lines("a\n\n b \nc\nd\ne\n", 3), "c | d | e");
+        assert_eq!(last_lines("", 3), "");
+    }
 
     #[test]
     fn folders_report_whether_sessions_get_a_worktree() {

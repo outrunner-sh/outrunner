@@ -19,6 +19,8 @@ fn main() {
                 "connect_claude_debug",
                 "connect_claude_cancel",
                 "local_status",
+                "local_claude_login",
+                "local_claude_login_cancel",
                 "local_pick_folder",
                 "local_check_folder",
                 "local_list_sessions",
