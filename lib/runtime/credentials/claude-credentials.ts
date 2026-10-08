@@ -12,8 +12,8 @@
  * failing with "Connect Claude in Settings". Same secret, two homes, one of them
  * invisible to the code that needs it.
  *
- * So both doors now open onto the same row: connect on the Claude page or paste
- * on the Credentials page, and either satisfies the gate.
+ * So this door opens onto the same row the gate reads: connecting on the Claude
+ * page satisfies it.
  */
 
 import {
