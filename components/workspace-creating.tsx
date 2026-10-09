@@ -1,12 +1,16 @@
 "use client";
 
-import { Check, GitBranch, LoaderCircle } from "lucide-react";
+import { Check, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { DotMatrix, Spinner } from "@/components/ui/loaders";
 
 /**
  * Full-screen provisioning progress shown while a workspace is being created.
  * Cloud provisioning (sandbox → agent → clone → session) takes tens of seconds,
- * so instead of a bare spinner we walk a staged checklist on a time estimate.
+ * so instead of a bare spinner we walk a staged checklist on a time estimate,
+ * drawn as interior.dev's Task Steps: done steps ticked, the current one
+ * turning, the rest waiting, and one line naming the step.
  * The final stage HOLDS (never auto-completes) until the create request resolves
  * and the caller navigates away — we never claim "done" before the box is ready.
  */
@@ -55,56 +59,47 @@ export function WorkspaceCreating({
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-sm space-y-6">
-        <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
+    <div className="flex h-full min-h-screen items-center justify-center px-6">
+      <div className="w-full max-w-sm space-y-7">
+        <DotMatrix rows={6} cols={10} />
 
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <h1 className="text-foreground text-lg font-medium tracking-tight">
             Creating workspace
           </h1>
-          <p className="text-muted-foreground flex items-center gap-1.5 font-mono text-sm">
+          <p className="text-muted-foreground flex items-center gap-1.5 font-mono text-xs">
             <GitBranch className="size-3.5" />
             {projectName} · {branch}
           </p>
         </div>
 
-        <ul className="space-y-2.5">
+        <ol className="task-steps">
           {STAGES.map((stage, i) => {
-            const done = i < active;
-            const current = i === active;
+            const state = i < active ? "done" : i === active ? "current" : "pending";
             return (
-              <li key={stage.label} className="flex items-center gap-2.5">
-                <span className="grid size-4 place-items-center">
-                  {done ? (
-                    <span className="bg-foreground grid size-4 place-items-center rounded-full">
-                      <Check className="text-background size-2.5" strokeWidth={3} />
-                    </span>
-                  ) : current ? (
-                    <span className="border-foreground grid size-4 place-items-center rounded-full border">
-                      <span className="bg-foreground size-1.5 rounded-full" />
-                    </span>
+              <li key={stage.label} className={`task-step is-${state}`}>
+                <span className="task-step-mark" aria-hidden>
+                  {state === "done" ? (
+                    <Check strokeWidth={3} />
+                  ) : state === "current" ? (
+                    <Spinner />
                   ) : (
-                    <span className="bg-muted-foreground/40 size-1.5 rounded-full" />
+                    <span className="task-step-dot" />
                   )}
                 </span>
-                <span
-                  className={
-                    done || current
-                      ? "text-foreground text-sm"
-                      : "text-muted-foreground/60 text-sm"
-                  }
-                >
-                  {stage.label}
-                </span>
+                <span>{stage.label}</span>
               </li>
             );
           })}
-        </ul>
+        </ol>
 
-        <div className="text-muted-foreground flex items-center justify-between font-mono text-xs">
-          <span>{clock(elapsed)}</span>
-          <span>~{ESTIMATE_SECONDS}s typical</span>
+        <div className="text-muted-foreground flex items-center justify-between font-mono text-xs tabular-nums">
+          <span role="status">
+            {STAGES[active].label}, step {active + 1} of {STAGES.length}
+          </span>
+          <span>
+            {clock(elapsed)} <span className="text-muted-foreground/60">/ ~{ESTIMATE_SECONDS}s</span>
+          </span>
         </div>
       </div>
     </div>

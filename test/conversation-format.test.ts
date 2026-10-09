@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  activityVerb,
   describeToolUse,
   formatTokens,
   summarizeToolResult,
@@ -85,4 +86,23 @@ test("formatTokens adds separators and handles missing values", () => {
   assert.equal(formatTokens(undefined), "—");
   assert.equal(formatTokens(null), "—");
   assert.equal(formatTokens(Number.NaN), "—");
+});
+
+test("a run of reasoning alone is Thought", () => {
+  assert.equal(activityVerb([]), "Thought");
+});
+
+test("a run that changed files is Edited, whatever else it did", () => {
+  assert.equal(activityVerb(["Read", "Bash", "Edit"]), "Edited");
+  assert.equal(activityVerb(["Write"]), "Edited");
+  assert.equal(activityVerb(["MultiEdit"]), "Edited");
+  assert.equal(activityVerb(["NotebookEdit"]), "Edited");
+});
+
+test("a run that ran commands without editing is Ran", () => {
+  assert.equal(activityVerb(["Read", "Bash"]), "Ran");
+});
+
+test("a run that only read and searched is Explored", () => {
+  assert.equal(activityVerb(["Read", "Grep", "Glob", "WebFetch"]), "Explored");
 });
