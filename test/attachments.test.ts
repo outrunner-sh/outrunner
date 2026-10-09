@@ -3,8 +3,11 @@ import { test } from "node:test";
 
 import {
   ATTACHMENT_DIR,
+  attachNotice,
+  MAX_ATTACHMENTS_PER_MESSAGE,
   isImage,
   promptWithAttachments,
+  promptWithoutAttachments,
   safeFilename,
   uniqueFilenames,
 } from "@/lib/runtime/attachments";
@@ -86,4 +89,48 @@ test("promptWithAttachments tolerates an empty prompt", () => {
   const out = promptWithAttachments("", ["shot.png"]);
   assert.ok(out.includes(`${ATTACHMENT_DIR}/shot.png`));
   assert.ok(!out.endsWith("\n"));
+});
+
+test("promptWithoutAttachments recovers the typed prompt from one with a single file", () => {
+  assert.equal(promptWithoutAttachments(promptWithAttachments("what is wrong here?", ["shot.png"])), "what is wrong here?");
+});
+
+test("promptWithoutAttachments recovers the typed prompt from one with several files", () => {
+  const sent = promptWithAttachments("compare these\nsecond line", ["a.png", "b.png", "c.pdf"]);
+  assert.equal(promptWithoutAttachments(sent), "compare these\nsecond line");
+});
+
+test("promptWithoutAttachments leaves only nothing when only files were sent", () => {
+  assert.equal(promptWithoutAttachments(promptWithAttachments("", ["shot.png"])), "");
+});
+
+test("promptWithoutAttachments leaves a prompt with no header alone", () => {
+  assert.equal(promptWithoutAttachments("fix the bug"), "fix the bug");
+});
+
+test("promptWithoutAttachments leaves alone text that only looks like the header", () => {
+  const typed = "I've attached a file:\n- notes.md\n\nplease read it";
+  assert.equal(promptWithoutAttachments(typed), typed);
+  const later = `fix this\nI've attached a file:\n- ${ATTACHMENT_DIR}/x.png`;
+  assert.equal(promptWithoutAttachments(later), later);
+});
+
+test("attachNotice says files cannot go to a session on this Mac", () => {
+  assert.match(attachNotice({ allowed: false, canSend: true, skipped: 0 }) ?? "", /this Mac/);
+});
+
+test("attachNotice says files wait for the session to connect", () => {
+  assert.match(attachNotice({ allowed: true, canSend: false, skipped: 0 }) ?? "", /once the session is connected/);
+});
+
+test("attachNotice counts the files left out, in the right number", () => {
+  assert.equal(
+    attachNotice({ allowed: true, canSend: true, skipped: 1 }),
+    `Up to ${MAX_ATTACHMENTS_PER_MESSAGE} files per message: 1 was left out.`,
+  );
+  assert.match(attachNotice({ allowed: true, canSend: true, skipped: 3 }) ?? "", /3 were left out/);
+});
+
+test("attachNotice says nothing when every file was taken", () => {
+  assert.equal(attachNotice({ allowed: true, canSend: true, skipped: 0 }), null);
 });
