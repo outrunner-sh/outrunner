@@ -213,8 +213,7 @@ export function ClaudeConnection() {
       <div className="space-y-1">
         <h1 className="text-xl font-semibold text-foreground">Claude</h1>
         <p className="text-sm text-muted-foreground">
-          Connect your Claude subscription so your workspaces run on your own
-          account instead of the shared one.
+          Connect your Claude subscription. Your sessions run on your own account.
         </p>
       </div>
 

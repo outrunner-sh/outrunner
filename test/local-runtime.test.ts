@@ -51,7 +51,7 @@ test("only a clear no from the app asks for a Claude Code login", () => {
 test("a failed login says what Claude Code said", () => {
   assert.equal(
     messageForLocalError("login-failed: OAuth error | Request failed"),
-    "Claude Code couldn't log in. It said: OAuth error | Request failed",
+    "Claude Code couldn't log in. It said: Request failed",
   );
   assert.match(messageForLocalError("login-failed: "), /type \/login/);
   assert.match(messageForLocalError("login-timed-out"), /Try again/);

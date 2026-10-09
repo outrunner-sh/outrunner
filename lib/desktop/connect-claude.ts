@@ -1,3 +1,4 @@
+import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 
 /**
@@ -60,7 +61,7 @@ export function messageForError(code: string): string {
   // token for an account that has none or when the browser approval is
   // declined. Say so rather than keep waiting.
   if (code === "setup-token-exited" || code.startsWith("setup-token-exited:")) {
-    const detail = code.slice("setup-token-exited".length).replace(/^:\s*/, "");
+    const detail = cliReason(code.slice("setup-token-exited".length).replace(/^:\s*/, ""));
     return (
       "Claude Code stopped without issuing a token. Connecting needs a Claude Pro " +
       "or Max subscription on the account you approve with." +

@@ -1,3 +1,4 @@
+import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 
 /**
@@ -211,7 +212,7 @@ export function messageForLocalError(error: unknown): string {
     case "login-timed-out":
       return "No approval came from the browser. Try again.";
     case "login-failed": {
-      const said = raw.slice("login-failed:".length).trim();
+      const said = cliReason(raw.slice("login-failed:".length));
       return said
         ? `Claude Code couldn't log in. It said: ${said}`
         : "Claude Code couldn't log in. Run `claude` in Terminal and type /login.";
