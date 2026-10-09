@@ -29,7 +29,15 @@ export function SkeletonSwap({
   const showContent = ready && !showSkeleton;
   return (
     <div aria-busy={!ready || undefined} aria-label={label} className={cn("skeleton-swap", className)}>
-      <div className={cn("skeleton-swap-content", !showContent && "is-hidden")}>{children}</div>
+      {/* Hidden means unreachable too, not only invisible: no focus, no
+          clicks, nothing read aloud until it is shown. */}
+      <div
+        inert={!showContent}
+        aria-hidden={!showContent || undefined}
+        className={cn("skeleton-swap-content", !showContent && "is-hidden")}
+      >
+        {children}
+      </div>
       {showSkeleton && (
         <div aria-hidden className="skeleton-swap-skeleton">
           {skeleton}

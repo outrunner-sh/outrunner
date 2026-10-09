@@ -64,91 +64,92 @@ export function WorkspaceEnvironment({
   const summary = environmentSummary(workspace, local);
   const unfold = (row: "branch" | "pr") => setOpen((current) => (current === row ? null : row));
 
-  if (view === "changes") {
-    return (
-      <div className="studio-env-body">
-        <WorkspaceChanges
-          changes={changes}
-          active={isReady}
-          baseBranch={summary.baseBranch}
-          onBack={backToOverview}
-          backRef={backButton}
-        />
-      </div>
-    );
-  }
-
+  // Both views stay mounted, the one not in use hidden: leaving the overview
+  // for Changes (or folding the PR row) must not throw away a pull request
+  // being written there.
   return (
-    <div className={cn("studio-env-body", terminalOpen && "is-compact")}>
-      <div className="studio-env-label">
-        Environment
-        <button type="button" onClick={onClose} className="studio-env-close" title="Hide environment" aria-label="Hide environment">
-          <PanelRightClose />
-        </button>
-      </div>
-
-      <EnvRow
-        icon={summary.location.kind === "local" ? <Monitor /> : <Cloud />}
-        title={summary.location.detail}
-      >
-        {summary.location.label}
-      </EnvRow>
-
-      <EnvRow
-        ref={changesRow}
-        onClick={() => setView("changes")}
-        icon={<Plus />}
-        right={
-          <>
-            <ChangesCount changes={changes} active={isReady} />
-            <ChevronRight />
-          </>
-        }
-      >
-        Changes
-      </EnvRow>
-
-      <EnvRow
-        onClick={() => unfold("branch")}
-        expanded={open === "branch"}
-        icon={<GitBranch />}
-        right={<ChevronDown className={cn("transition-transform", open === "branch" && "rotate-180")} />}
-      >
-        <span className="truncate">{summary.branch ?? "No branch"}</span>
-      </EnvRow>
-      {open === "branch" && (
-        <dl className="studio-env-details">
-          {summary.branch ? (
-            <>
-              <dt>Compared with</dt>
-              <dd className="font-mono">{summary.baseBranch ?? "—"}</dd>
-            </>
-          ) : (
-            <dd className="col-span-2">Not a git repository: Claude edits the folder in place.</dd>
-          )}
-          {summary.workingPath && (
-            <>
-              <dt>Working in</dt>
-              <dd className="font-mono" title={summary.workingPath}>{summary.workingPath}</dd>
-            </>
-          )}
-        </dl>
+    <>
+      {view === "changes" && (
+        <div className="studio-env-body">
+          <WorkspaceChanges
+            changes={changes}
+            active={isReady}
+            baseBranch={summary.baseBranch}
+            onBack={backToOverview}
+            backRef={backButton}
+          />
+        </div>
       )}
+      <div hidden={view === "changes"} className={cn("studio-env-body", terminalOpen && "is-compact")}>
+        <div className="studio-env-label">
+          Environment
+          <button type="button" onClick={onClose} className="studio-env-close" title="Hide environment" aria-label="Hide environment">
+            <PanelRightClose />
+          </button>
+        </div>
 
-      {/* Publishing goes through the server, which reaches cloud worktrees
-          only; a local session's branch stays in the folder's repository. */}
-      {!local && summary.branch && (
-        <>
-          <EnvRow
-            onClick={() => unfold("pr")}
-            expanded={open === "pr"}
-            icon={<GitPullRequest />}
-            right={<ChevronDown className={cn("transition-transform", open === "pr" && "rotate-180")} />}
-          >
-            {pullRequest ? `PR #${pullRequest.number}` : "Create PR"}
-          </EnvRow>
-          {open === "pr" && (
-            <div className="studio-env-unfold">
+        <EnvRow
+          icon={summary.location.kind === "local" ? <Monitor /> : <Cloud />}
+          title={summary.location.detail}
+        >
+          {summary.location.label}
+        </EnvRow>
+
+        <EnvRow
+          ref={changesRow}
+          onClick={() => setView("changes")}
+          icon={<Plus />}
+          right={
+            <>
+              <ChangesCount changes={changes} active={isReady} />
+              <ChevronRight />
+            </>
+          }
+        >
+          Changes
+        </EnvRow>
+
+        <EnvRow
+          onClick={() => unfold("branch")}
+          expanded={open === "branch"}
+          icon={<GitBranch />}
+          right={<ChevronDown className={cn("transition-transform", open === "branch" && "rotate-180")} />}
+        >
+          <span className="truncate">{summary.branch ?? "No branch"}</span>
+        </EnvRow>
+        {open === "branch" && (
+          <dl className="studio-env-details">
+            {summary.branch ? (
+              <>
+                <dt>Compared with</dt>
+                <dd className="font-mono">{summary.baseBranch ?? "—"}</dd>
+              </>
+            ) : (
+              <dd className="col-span-2">Not a git repository: Claude edits the folder in place.</dd>
+            )}
+            {summary.workingPath && (
+              <>
+                <dt>Working in</dt>
+                <dd className="font-mono" title={summary.workingPath}>{summary.workingPath}</dd>
+              </>
+            )}
+          </dl>
+        )}
+
+        {/* Publishing goes through the server, which reaches cloud worktrees
+            only; a local session's branch stays in the folder's repository. */}
+        {!local && summary.branch && (
+          <>
+            <EnvRow
+              onClick={() => unfold("pr")}
+              expanded={open === "pr"}
+              icon={<GitPullRequest />}
+              right={<ChevronDown className={cn("transition-transform", open === "pr" && "rotate-180")} />}
+            >
+              {pullRequest ? `PR #${pullRequest.number}` : "Create PR"}
+            </EnvRow>
+            {/* Folded, not unmounted: the draft survives closing the row. */}
+            <div hidden={open !== "pr"} className="studio-env-unfold">
               <WorkspacePublishPanel
                 workspaceId={workspace.id}
                 branch={summary.branch}
@@ -158,10 +159,10 @@ export function WorkspaceEnvironment({
                 defaultTitle={workspace.title}
               />
             </div>
-          )}
-        </>
-      )}
-    </div>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 
