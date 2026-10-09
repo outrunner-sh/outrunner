@@ -20,6 +20,10 @@ import {
   type TeamRole,
 } from "@/lib/teams/roles";
 
+/** "Oct 16": fixed locale and zone, so the server's render and the browser's
+ *  agree (a locale date format differs between them and breaks hydration). */
+const EXPIRY = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" });
+
 const selectClass =
   "h-8 rounded-md border border-input bg-transparent px-2 text-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50";
 
@@ -283,7 +287,7 @@ function InviteSection({
           {pending.map((i) => (
             <li key={i.id} className="flex items-center gap-3 px-3 py-2 text-sm">
               <span className="flex-1 text-muted-foreground">
-                Invite as {ROLE_LABEL[i.role].toLowerCase()} · expires {new Date(i.expiresAt).toLocaleDateString()}
+                Invite as {ROLE_LABEL[i.role].toLowerCase()} · expires {EXPIRY.format(new Date(i.expiresAt))}
               </span>
               <Button
                 variant="ghost"
