@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
-import { attachNotice } from "@/lib/runtime/attachments";
+import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
 import { matchModel, modelLabel, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
 import { cn } from "@/lib/utils";
 
@@ -98,23 +98,26 @@ export function SessionComposer({
   function submit() {
     if (!canSend || sending || !hasSomethingToSend || attachments.busy) return;
     const text = value.trim();
-    const result = onSend(text, attachments.readyIds);
+    // What this send carries, kept apart from whatever is typed or attached
+    // while it is in flight: only these are settled when it lands.
+    const sentIds = attachments.readyIds;
+    const result = onSend(text, sentIds);
     setValue("");
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
     if (!result) {
-      attachments.clear();
+      attachments.forget(sentIds);
       return;
     }
-    // The files stay on show until the send lands; a failed one gives the
-    // text back too, so nothing typed is lost.
+    // The sent files stay on show until the send lands. A failed send gives
+    // its text back, ahead of anything typed since, so nothing is lost.
     setSending(true);
     void result
       .then((landed) => {
         if (landed) {
-          attachments.clear();
+          attachments.forget(sentIds);
         } else {
-          setValue((current) => current || text);
+          setValue((current) => restoreDraft(text, current));
           textareaRef.current?.focus();
         }
       })

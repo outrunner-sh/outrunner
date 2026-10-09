@@ -46,13 +46,21 @@ export function NewSessionForm({
   );
 
   // A local session opens in about a second, so it gets no progress screen.
-  if (isCreating && !local && selected) {
-    return <WorkspaceCreating projectName={selected.fullName} branch={selected.defaultBranch} />;
-  }
+  // The cloud one covers the form rather than replacing it: the composer stays
+  // mounted underneath, so a creation that fails hands its prompt back.
+  const showProgress = isCreating && !local && selected;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
+    <div className="relative flex h-full min-h-0 flex-col">
+      {showProgress && (
+        <div className="absolute inset-0 z-20 bg-background">
+          <WorkspaceCreating projectName={selected.fullName} branch={selected.defaultBranch} />
+        </div>
+      )}
+      <div
+        inert={Boolean(showProgress)}
+        className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10"
+      >
         <p
           aria-hidden
           className="pointer-events-none mb-10 select-none text-center font-display text-[13vw] leading-none text-foreground/20 sm:text-[112px]"
@@ -109,7 +117,7 @@ export function NewSessionForm({
         <LocalBlocker state={where} className="mt-4 text-center" />
       </div>
 
-      <div className="shrink-0">
+      <div inert={Boolean(showProgress)} className="shrink-0">
         {message && (
           <div
             aria-live="polite"

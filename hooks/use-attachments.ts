@@ -106,11 +106,19 @@ export function useAttachments() {
     setItems((prev) => prev.filter((item) => item.key !== key));
   }, []);
 
-  /** Forget everything after a successful send, without deleting server-side. */
-  const clear = useCallback(() => {
-    for (const entry of staged.current.values()) if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
-    staged.current.clear();
-    setItems([]);
+  /** Forget the attachments with these ids, without deleting them server-side:
+   *  they were sent, while anything staged since stays. */
+  const forget = useCallback((ids: readonly string[]) => {
+    const sent = new Set(ids);
+    const keys: string[] = [];
+    for (const [key, entry] of staged.current) {
+      if (entry.id && sent.has(entry.id)) {
+        keys.push(key);
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+        staged.current.delete(key);
+      }
+    }
+    if (keys.length > 0) setItems((prev) => prev.filter((item) => !keys.includes(item.key)));
   }, []);
 
   /** Ids to send. Excludes anything still uploading or failed. */
@@ -119,7 +127,7 @@ export function useAttachments() {
   );
   const busy = items.some((item) => item.status === "uploading");
 
-  return { items, add, remove, clear, readyIds, busy };
+  return { items, add, remove, forget, readyIds, busy };
 }
 
 /** Upload one file. A failure reads as a sentence, never a parser error: the

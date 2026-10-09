@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   ATTACHMENT_DIR,
   attachNotice,
+  restoreDraft,
   MAX_ATTACHMENTS_PER_MESSAGE,
   isImage,
   promptWithAttachments,
@@ -133,4 +134,17 @@ test("attachNotice counts the files left out, in the right number", () => {
 
 test("attachNotice says nothing when every file was taken", () => {
   assert.equal(attachNotice({ allowed: true, canSend: true, skipped: 0 }), null);
+});
+
+test("a failed send gives its prompt back to an empty composer", () => {
+  assert.equal(restoreDraft("fix the bug", ""), "fix the bug");
+  assert.equal(restoreDraft("fix the bug", "   "), "fix the bug");
+});
+
+test("a failed send keeps what was typed since, after its own prompt", () => {
+  assert.equal(restoreDraft("fix the bug", "and add a test"), "fix the bug\n\nand add a test");
+});
+
+test("a failed send of files only leaves the new draft as it is", () => {
+  assert.equal(restoreDraft("", "and add a test"), "and add a test");
 });

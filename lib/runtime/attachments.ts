@@ -115,3 +115,11 @@ export function attachNotice(input: { allowed: boolean; canSend: boolean; skippe
   }
   return null;
 }
+
+/** The composer's text after a send fails: the failed prompt back, ahead of
+ *  anything typed while it was in flight (which is kept, not overwritten). */
+export function restoreDraft(failed: string, typedSince: string): string {
+  if (!failed) return typedSince;
+  if (!typedSince.trim()) return failed;
+  return `${failed}\n\n${typedSince}`;
+}
