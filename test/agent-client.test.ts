@@ -239,3 +239,11 @@ test("an answer that isn't the agent's envelope has a status and no envelope", a
   assert.equal(error.status, 404);
   assert.equal(error.error, undefined);
 });
+
+test("a watcher's events URL carries a read-only token; the creator's doesn't", () => {
+  const client = new AgentClient(target);
+  const claims = (url: string) => verifyRuntimeToken(new URL(url).searchParams.get("token")!, target.secret);
+  assert.equal(claims(client.eventsUrl({ ...identity, readOnly: true })).readOnly, true);
+  assert.equal(claims(client.eventsUrl(identity)).readOnly, undefined);
+  assert.equal(claims(client.ptyUrl(identity)).readOnly, undefined);
+});

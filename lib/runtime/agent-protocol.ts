@@ -28,6 +28,9 @@ export const RuntimeTokenClaims = z.object({
   userId: z.string().min(1),
   /** Unix seconds. Minted with a 5-minute TTL; verified at connect time. */
   exp: z.number().int().positive(),
+  /** A teammate watching someone else's session: the conversation stream
+   *  only, never the terminal or a control route. */
+  readOnly: z.boolean().optional(),
 });
 export type RuntimeTokenClaims = z.infer<typeof RuntimeTokenClaims>;
 
@@ -233,12 +236,13 @@ export type WorkspaceSummary = z.infer<typeof WorkspaceSummary>;
 // ---------------------------------------------------------------------------
 
 export const SessionUrls = z.object({
-  ptyUrl: z.string().url(),
+  /** Absent for a teammate watching: the terminal is its creator's. */
+  ptyUrl: z.string().url().optional(),
   eventsUrl: z.string().url().optional(),
   /** Snapshot of the Workspace Summary at attach time; polled at
    *  `GET /api/workspaces/[id]/summary` for updates. */
   summary: WorkspaceSummary.optional(),
-});
+}).refine((urls) => urls.ptyUrl || urls.eventsUrl, { message: "a session attaches to a terminal or a stream" });
 export type SessionUrls = z.infer<typeof SessionUrls>;
 
 // ---------------------------------------------------------------------------

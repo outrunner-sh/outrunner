@@ -101,6 +101,10 @@ func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 			return
 		}
+		if claims.ReadOnly {
+			writeError(w, http.StatusForbidden, "UNAUTHORIZED", "a watcher's Runtime token can't control a workspace")
+			return
+		}
 		next(w, r.WithContext(context.WithValue(r.Context(), claimsContextKey{}, claims)))
 	}
 }
@@ -370,6 +374,11 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	claims, err := s.queryClaims(r)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
+		return
+	}
+	// A watcher follows the conversation; the terminal is its creator's.
+	if claims.ReadOnly {
+		writeError(w, http.StatusForbidden, "UNAUTHORIZED", "a watcher's Runtime token has no terminal")
 		return
 	}
 	conn, err := s.upgrader.Upgrade(w, r, nil)

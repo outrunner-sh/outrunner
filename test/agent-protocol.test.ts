@@ -71,6 +71,13 @@ test("schemas reject malformed messages", () => {
   assert.equal(
     PROTOCOL_SCHEMAS.SessionUrls.safeParse({}).success,
     false,
-    "ptyUrl is required",
+    "a terminal or a stream is required",
+  );
+});
+
+test("a watcher's attach has the stream and no terminal", () => {
+  assert.equal(
+    PROTOCOL_SCHEMAS.SessionUrls.safeParse({ eventsUrl: "wss://8080-signed.example/events-ws?token=t" }).success,
+    true,
   );
 });

@@ -13,6 +13,9 @@ type RuntimeTokenClaims struct {
 	ComputerID  string `json:"computerId"`
 	UserID      string `json:"userId"`
 	Exp         int64  `json:"exp"`
+	// ReadOnly is a teammate watching someone else's session: it opens the
+	// conversation stream, never the terminal or a control route.
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // PtyClientMessage is a frame from the browser on WS /pty.
