@@ -191,7 +191,7 @@ function openOrNull(
 /**
  * The OpenRouter key this user's sessions run Outrunner's models on: the shared
  * API key when the server has only that, otherwise the user's own key, capped
- * by OpenRouter at the monthly allowance, created the first time they pick one
+ * by OpenRouter at the allowance ($5 in total), created the first time they pick one
  * of the models and then kept (OpenRouter tracks the allowance per key, so a
  * fresh key each time would hand out a fresh $5). The races and failures are
  * handled in {@link ensureUserKey}.
