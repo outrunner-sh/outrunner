@@ -32,7 +32,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const owner = await getOwner();
   if (!owner) {
-    return NextResponse.json({ error: "Sign in as the Runtime owner." }, { status: 401 });
+    return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
 
   const { id } = await context.params;
@@ -59,7 +59,8 @@ export async function POST(request: Request, context: RouteContext) {
   }
   const title =
     (typeof body.title === "string" && body.title.trim().slice(0, MAX_TITLE)) ||
-    `Runtime: ${workspace.branch}`;
+    // The session's own name (its first prompt), else its branch.
+    (workspace.title ?? workspace.branch);
   const prBody = typeof body.body === "string" ? body.body.slice(0, MAX_BODY) : "";
 
   const githubToken = await optionalGithubToken(owner.id);
@@ -169,7 +170,7 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Workspace ${id} commit/push failed`, error);
     return NextResponse.json(
-      { error: "Could not commit and push this workspace. Check Runtime setup and try again." },
+      { error: "Could not commit and push this workspace. Check Outrunner's setup and try again." },
       { status: 502 },
     );
   }
@@ -216,7 +217,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
     console.error(`Workspace ${id} pull request record could not be saved`, error);
     return NextResponse.json(
-      { error: "Pull request opened, but Runtime could not save it. Refresh before publishing again." },
+      { error: "Pull request opened, but Outrunner could not save it. Refresh before publishing again." },
       { status: 500 },
     );
   }

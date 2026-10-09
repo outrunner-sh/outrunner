@@ -1,35 +1,62 @@
 "use client";
 
-import { Brain, ChevronDown, ChevronRight, Loader2, Sparkles, Terminal, Wrench } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, Sparkles, Terminal, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
+import { DotMatrix } from "@/components/ui/loaders";
+import { useStreamedText } from "@/hooks/use-streamed-text";
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 import {
+  activityVerb,
   describeToolUse,
   formatTokens,
   summarizeToolResult,
 } from "@/lib/runtime/conversation-format";
+import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { isLive } from "@/lib/session/streaming";
+import { cn } from "@/lib/utils";
 
 /**
- * The Conversation projection of the Workspace Session — a virtualized ordered
- * list of AgentEvents rendered as a light, sleek chat. Every entry comes from
+ * The Conversation projection of the Workspace Session — the ordered list of
+ * AgentEvents rendered as a chat. Not virtualized: every row is in the DOM,
+ * but rows off screen skip layout and paint (`.timeline-row`, content-
+ * visibility), which keeps a long session cheap without losing find-in-page. Every entry comes from
  * one AgentEvent; nothing is derived from PTY output (see
  * docs/architecture/session-contract.md). Assistant prose renders as a bordered
  * card, user turns as a right-aligned bubble, and tool activity as muted lines.
  */
-export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
+export function ConversationTimeline({
+  events,
+  placeholder = null,
+}: {
+  events: AgentEvent[];
+  /** What an empty conversation says (see conversationPlaceholder); a replay,
+   *  which has nothing to connect to, passes none. */
+  placeholder?: ConversationPlaceholder;
+}) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
 
-  // Auto-follow: keep pinned to the bottom as events arrive, unless the user
-  // scrolled up (then honor their position). A plain scrollTop write — no
-  // virtualizer — so there's no flushSync-during-render from measureElement.
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-follow: keep pinned to the bottom as the conversation grows, unless
+  // the user scrolled up (then honor their position). Grows, not "as events
+  // arrive": a reply keeps lengthening after its event, as its text is
+  // revealed, so this follows the content's height rather than the list.
   useEffect(() => {
     const el = parentRef.current;
-    if (!el || !stickToBottom.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [events]);
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const follow = () => {
+      if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+    };
+    follow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(follow);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div
@@ -41,15 +68,23 @@ export function ConversationTimeline({ events }: { events: AgentEvent[] }) {
       }}
       className="min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
     >
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pt-16 pb-16">
-        {events.length === 0 && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground" />
-            Waiting for Claude to speak…
+      <div ref={contentRef} className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pt-16 pb-16">
+        {placeholder === "connecting" && (
+          <div role="status" className="conversation-placeholder">
+            <DotMatrix rows={6} cols={9} />
+            <span>Connecting to Claude</span>
+          </div>
+        )}
+        {placeholder === "ready" && (
+          <div className="conversation-placeholder is-ready">
+            <span>Ready when you are</span>
+            <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
           </div>
         )}
         {buildNodes(events).map((node) => (
-          <NodeRow key={node.key} node={node} />
+          <div key={node.key} className="timeline-row">
+            <NodeRow node={node} />
+          </div>
         ))}
         {claudeIsWorking(events) && <WorkingIndicator />}
       </div>
@@ -78,9 +113,10 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
   return false;
 }
 
-/** Live "Claude is working" affordance: a spinning glyph and an elapsed timer,
- *  so activity is visible instead of a still pane. Remounts (resetting the
- *  clock) each time we re-enter the working state. */
+/** Live "Claude is working" affordance: a small dot-matrix wave and an elapsed
+ *  timer, so activity is visible instead of a still pane. Remounts (resetting
+ *  the clock) each time we re-enter the working state. The timer is tabular so
+ *  the row never shifts as digits change. */
 function WorkingIndicator() {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -89,10 +125,12 @@ function WorkingIndicator() {
     return () => clearInterval(id);
   }, []);
   return (
-    <div className="flex items-center gap-2 py-1 text-[13px] text-muted-foreground">
-      <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+    <div role="status" className="flex items-center gap-2.5 py-1 text-[13px] text-muted-foreground">
+      <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
       <span>Working</span>
-      <span className="font-mono text-[11px] text-muted-foreground/70">{(elapsed / 1000).toFixed(1)}s</span>
+      <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
+        {(elapsed / 1000).toFixed(1)}s
+      </span>
     </div>
   );
 }
@@ -104,7 +142,7 @@ type Node =
   | { kind: "state"; key: string; state: string }
   | { kind: "usage"; key: string; event: Extract<AgentEvent, { t: "usage" }> }
   | { kind: "prompt"; key: string; text: string }
-  | { kind: "prose"; key: string; text: string }
+  | { kind: "prose"; key: string; text: string; at: string }
   | { kind: "activity"; key: string; blocks: ContentBlock[]; messages: number };
 
 /** Flatten the event stream into render nodes, coalescing every consecutive
@@ -140,8 +178,12 @@ function buildNodes(events: AgentEvent[]): Node[] {
           addedToGroup = false;
         }
         flush();
-        const kind = event.role === "user" ? "prompt" : "prose";
-        nodes.push({ kind, key: `${event.uuid}-${ei}-${bi}`, text: block.text });
+        const key = `${event.uuid}-${ei}-${bi}`;
+        nodes.push(
+          event.role === "user"
+            ? { kind: "prompt", key, text: block.text }
+            : { kind: "prose", key, text: block.text, at: event.timestamp },
+        );
         return;
       }
       if (!group) group = { blocks: [], messages: 0 };
@@ -189,14 +231,24 @@ function NodeRow({ node }: { node: Node }) {
         </div>
       );
     case "prose":
-      return (
-        <div className="min-w-0">
-          <Markdown>{node.text}</Markdown>
-        </div>
-      );
+      return <Prose text={node.text} at={node.at} />;
     case "activity":
       return <ToolActivity blocks={node.blocks} />;
   }
+}
+
+/** Claude's words, revealed as they arrive (useStreamedText) with a caret at
+ *  the end while more is coming. Whether it is live is decided once, when the
+ *  row first appears: a reply written moments ago, not history replayed as the
+ *  session opens. */
+function Prose({ text, at }: { text: string; at: string }) {
+  const [live] = useState(() => isLive(at, Date.now()));
+  const { visible, streaming } = useStreamedText(text, live);
+  return (
+    <div className={cn("min-w-0", streaming && "is-streaming")} aria-busy={streaming || undefined}>
+      <Markdown>{visible}</Markdown>
+    </div>
+  );
 }
 
 /** One collapsed summary for a whole working run (Conductor / open-webui style):
@@ -206,7 +258,7 @@ function ToolActivity({ blocks }: { blocks: ContentBlock[] }) {
   const tools = blocks.filter(
     (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
   );
-  const verb = tools.length === 0 ? "Thought" : "Explored";
+  const verb = activityVerb(tools.map((tool) => tool.name));
   const summary = toolSummary(tools);
 
   return (
@@ -289,29 +341,43 @@ function ToolUseRow({ name, input }: { name: string; input: unknown }) {
   );
 }
 
+/** A tool's result: its first line, expanding to the rest only when there is
+ *  more than the preview shows. A short result is a plain row, with a blank
+ *  where the chevron would be so the rows still line up. */
 function ToolResultRow({ content }: { content: unknown }) {
   const { text, preview, truncated, lineCount } = summarizeToolResult(content);
+  const line = (
+    <>
+      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        result
+      </span>
+      <span className="truncate font-mono text-[11px] text-muted-foreground" title={preview}>
+        {preview}
+      </span>
+      {lineCount > 1 && (
+        <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+          {lineCount} lines
+        </span>
+      )}
+    </>
+  );
+  if (!truncated) {
+    return (
+      <div className="flex items-center gap-1.5 py-0.5 text-[12px]">
+        <span aria-hidden className="size-3 shrink-0" />
+        {line}
+      </div>
+    );
+  }
   return (
     <details className="group">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px]">
         <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          result
-        </span>
-        <span className="truncate font-mono text-[11px] text-muted-foreground" title={preview}>
-          {preview}
-        </span>
-        {lineCount > 1 && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
-            {lineCount} lines
-          </span>
-        )}
+        {line}
       </summary>
-      {truncated && (
-        <pre className="mt-1 ml-[18px] max-h-96 overflow-auto rounded-md border border-border bg-muted px-3 py-2 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
-          {text}
-        </pre>
-      )}
+      <pre className="mt-1 ml-[18px] max-h-96 overflow-auto rounded-md border border-border bg-muted px-3 py-2 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
+        {text}
+      </pre>
     </details>
   );
 }

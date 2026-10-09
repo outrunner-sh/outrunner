@@ -2,7 +2,7 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 
 import { signOut } from "@/app/auth/actions";
-import { Button } from "@/components/ui/button";
+import { SignOutButton } from "@/components/sign-out-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
 
 export const dynamic = "force-dynamic";
@@ -37,9 +37,7 @@ export default async function AccountSettings() {
       </div>
 
       <form action={signOut}>
-        <Button type="submit" variant="outline" size="sm">
-          Sign out
-        </Button>
+        <SignOutButton />
       </form>
     </section>
   );

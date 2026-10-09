@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { LoadingButton } from "@/components/ui/loading-button";
+import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import {
   cancelClaudeLogin,
   pollClaudeLogin,
@@ -35,6 +37,10 @@ const noopSubscribe = () => () => {};
  */
 export function ClaudeConnection() {
   const [meta, setMeta] = useState<Meta | null>(null);
+  // Whether the status is known. Until it is, the card is a skeleton rather
+  // than "Not connected" (which it may well not be); if it cannot be read, the
+  // card says so instead of guessing.
+  const [status, setStatus] = useState<"checking" | "known" | "failed">("checking");
   const [busy, setBusy] = useState(false);
   // Watching for the CLI to finish after the browser opened. Kept apart from
   // `busy` so Cancel and the code fallback stay usable for the whole wait.
@@ -45,15 +51,21 @@ export function ClaudeConnection() {
   // read it as an external store (false during SSR) rather than via effect.
   const desktop = useSyncExternalStore(noopSubscribe, isDesktopApp, () => false);
 
-  useEffect(() => {
+  const check = useCallback(() => {
     let active = true;
+    setStatus("checking");
     void fetchClaudeMeta().then((m) => {
-      if (active && m) setMeta(m);
+      if (!active) return;
+      if (m) setMeta(m);
+      setStatus(m ? "known" : "failed");
     });
     return () => {
       active = false;
     };
   }, []);
+  // An external read, resolved in a callback; not a render cascade.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => check(), [check]);
 
   // The CLI blocks on a browser round-trip, so connecting is two phases: open
   // the authorize URL, then hand back the code it produces. `pending` holds the
@@ -207,106 +219,112 @@ export function ClaudeConnection() {
       </div>
 
       <div className="rounded-lg border border-border/60 p-4">
-        {connected ? (
-          <div className="space-y-3">
+        <SkeletonSwap
+          ready={status !== "checking"}
+          skeleton={<SkeletonRows rows={1} rowHeight={32} />}
+          label="Claude connection"
+        >
+          {status === "failed" && !meta ? (
             <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <Check className="size-4 text-emerald-500" />
-                <p className="text-sm text-foreground">
-                  Connected
-                  {meta?.last4 ? (
-                    <span className="text-muted-foreground"> · ends ····{meta.last4}</span>
+              <p className="text-sm text-muted-foreground">Couldn&apos;t check your Claude connection.</p>
+              <Button variant="outline" size="sm" onClick={() => check()}>
+                Try again
+              </Button>
+            </div>
+          ) : connected ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <Check className="size-4 text-positive" />
+                  <p className="text-sm text-foreground">
+                    Connected
+                    {meta?.last4 ? (
+                      <span className="text-muted-foreground"> · ends ····{meta.last4}</span>
+                    ) : null}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {desktop ? (
+                    <LoadingButton
+                      variant="outline"
+                      status={busy || waiting ? "pending" : "idle"}
+                      labels={{ idle: "Reconnect", pending: "Reconnecting" }}
+                      onClick={() => void connect()}
+                    />
                   ) : null}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                {desktop ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busy || waiting}
-                    onClick={connect}
-                    aria-label="Reconnect"
-                  >
-                    {busy || waiting ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      "Reconnect"
-                    )}
+                  <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
+                    Disconnect
                   </Button>
-                ) : null}
-                <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
-                  Disconnect
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Applies to workspaces created or restored after connecting.
+              </p>
+            </div>
+          ) : desktop && pending ? (
+            <div className="space-y-3">
+              <p className="text-sm text-foreground">
+                {waiting
+                  ? "Waiting for you to authorize in the browser…"
+                  : "Authorize in your browser to finish."}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                This finishes on its own once you approve. Only paste a code below
+                if Claude asks you for one.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Didn&apos;t open?{" "}
+                <a
+                  href={pending}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-4"
+                >
+                  Open the sign-in page
+                </a>
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && code.trim() && !busy) void finish();
+                  }}
+                  placeholder="Paste the code…"
+                  aria-label="Authorization code"
+                  autoFocus
+                  spellCheck={false}
+                  className="border-border bg-background/60 h-9 flex-1 rounded-md border px-3 text-sm"
+                />
+                <LoadingButton
+                  status={busy ? "pending" : "idle"}
+                  labels={{ idle: "Connect", pending: "Connecting" }}
+                  disabled={!code.trim()}
+                  onClick={() => void finish()}
+                />
+                <Button variant="ghost" size="sm" disabled={busy} onClick={abandon}>
+                  Cancel
                 </Button>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Applies to workspaces created or restored after connecting.
-            </p>
-          </div>
-        ) : desktop && pending ? (
-          <div className="space-y-3">
-            <p className="text-sm text-foreground">
-              {waiting
-                ? "Waiting for you to authorize in the browser…"
-                : "Authorize in your browser to finish."}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              This finishes on its own once you approve. Only paste a code below
-              if Claude asks you for one.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Didn&apos;t open?{" "}
-              <a
-                href={pending}
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-4"
-              >
-                Open the sign-in page
-              </a>
-            </p>
-            <div className="flex items-center gap-2">
-              <input
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && code.trim() && !busy) void finish();
-                }}
-                placeholder="Paste the code…"
-                aria-label="Authorization code"
-                autoFocus
-                spellCheck={false}
-                className="border-border bg-background/60 h-9 flex-1 rounded-md border px-3 text-sm"
+          ) : desktop ? (
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-sm text-muted-foreground">Not connected.</p>
+              <LoadingButton
+                status={busy ? "pending" : "idle"}
+                labels={{ idle: "Connect Claude", pending: "Connecting" }}
+                onClick={() => void connect()}
               />
-              <Button size="sm" disabled={busy || !code.trim()} onClick={finish}>
-                {busy ? <Loader2 className="size-4 animate-spin" /> : "Connect"}
-              </Button>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={abandon}>
-                Cancel
-              </Button>
             </div>
-          </div>
-        ) : desktop ? (
-          <div className="flex items-center justify-between gap-4">
-            <p className="text-sm text-muted-foreground">Not connected.</p>
-            <Button size="sm" disabled={busy} onClick={connect}>
-              {busy ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="size-4 animate-spin" /> Connecting…
-                </span>
-              ) : (
-                "Connect Claude"
-              )}
-            </Button>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Open Outrunner in the desktop app to connect your Claude subscription.
-          </p>
-        )}
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Open Outrunner in the desktop app to connect your Claude subscription.
+            </p>
+          )}
 
-        {error ? <p className="mt-3 text-sm text-red-500">{error}</p> : null}
+        </SkeletonSwap>
+
+        {error ? <p role="alert" className="mt-3 text-sm text-destructive">{error}</p> : null}
       </div>
     </section>
   );

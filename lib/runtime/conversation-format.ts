@@ -120,3 +120,16 @@ export function formatTokens(value: number | undefined | null): string {
   if (typeof value !== "number" || Number.isNaN(value)) return "—";
   return value.toLocaleString("en-US");
 }
+
+/** Tools that change files: a run with any of them edited something. */
+const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
+/** The verb a collapsed run of Claude's work leads with: what the run did
+ *  that matters most. A change outranks a command, which outranks reading;
+ *  a run of reasoning alone "Thought". */
+export function activityVerb(toolNames: readonly string[]): "Edited" | "Ran" | "Explored" | "Thought" {
+  if (toolNames.length === 0) return "Thought";
+  if (toolNames.some((name) => EDIT_TOOLS.has(name))) return "Edited";
+  if (toolNames.includes("Bash")) return "Ran";
+  return "Explored";
+}

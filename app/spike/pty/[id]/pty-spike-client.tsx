@@ -2,7 +2,7 @@
 
 import "@xterm/xterm/css/xterm.css";
 
-import { useRef } from "react";
+import { useState } from "react";
 
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
@@ -22,7 +22,7 @@ export function PtySpikeClient({
   workspaceId: string;
   branch: string;
 }) {
-  const terminalContainer = useRef<HTMLDivElement>(null);
+  const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const attachment = useSessionAttachment(workspaceId);
   const terminal = useSessionTerminal(attachment, terminalContainer);
   const conversation = useConversationStream(attachment);
@@ -70,7 +70,7 @@ export function PtySpikeClient({
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        <div ref={terminalContainer} className="min-h-0 flex-1" />
+        <div ref={setTerminalContainer} className="min-h-0 flex-1" />
         <div className="flex w-[520px] min-w-[420px] flex-col border-l border-neutral-800">
           <ConversationTimeline events={conversation.events} />
         </div>

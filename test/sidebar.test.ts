@@ -5,6 +5,7 @@ import type { LocalSession } from "@/lib/desktop/local-runtime";
 import {
   activeSessionId,
   buildSidebarGroups,
+  deletionConsequence,
   filterSidebarGroups,
   newSessionHref,
   relativeTime,
@@ -90,8 +91,14 @@ test("sessions nest under their workspace, newest first, with links and times", 
   assert.equal(group.detail, "acme/outrunner");
   assert.deepEqual(group.start, { kind: "cloud", projectId: "p1" });
   assert.deepEqual(group.sessions, [
-    { id: "new", href: "/workspaces/new", title: "new", at: "2026-10-02T00:00:00Z" },
-    { id: "old", href: "/workspaces/old", title: "Pull latest code from main", at: "2026-10-01T00:00:00Z" },
+    { id: "new", href: "/workspaces/new", title: "new", at: "2026-10-02T00:00:00Z", deletion: { kind: "cloud" } },
+    {
+      id: "old",
+      href: "/workspaces/old",
+      title: "Pull latest code from main",
+      at: "2026-10-01T00:00:00Z",
+      deletion: { kind: "cloud" },
+    },
   ]);
 });
 
@@ -281,4 +288,52 @@ test("a workspace's + opens /new on that repository or folder, unique per click"
   // Two clicks on the same + differ, so the form is rebuilt even on the same target.
   const start = { kind: "cloud", projectId: "p1" } as const;
   assert.notEqual(newSessionHref(start, "x"), newSessionHref(start, "y"));
+});
+
+test("a cloud session can be deleted only from a settled status", () => {
+  const at = "2026-10-01T00:00:00Z";
+  const statuses = ["ready", "idle", "suspended", "archived", "failed", "provisioning", "destroying", "resuming"] as const;
+  const [group] = buildSidebarGroups(
+    [project("p1", "outrunner")],
+    statuses.map((status, i) => ({ ...workspace(`w${i}`, "p1", at), status })),
+    [],
+  );
+  const deletable = Object.fromEntries(group.sessions.map((s) => [s.id, s.deletion !== null]));
+  assert.deepEqual(
+    statuses.map((status, i) => [status, deletable[`w${i}`]]),
+    [
+      ["ready", true],
+      ["idle", true],
+      ["suspended", true],
+      ["archived", true],
+      ["failed", true],
+      ["provisioning", false],
+      ["destroying", false],
+      ["resuming", false],
+    ],
+  );
+});
+
+test("deleting a local session removes its worktree, or only forgets an in-place one", () => {
+  const [group] = buildSidebarGroups(
+    [],
+    [],
+    [
+      local("tree", "/Users/ada/app", "2026-10-01T00:00:00Z"),
+      { ...local("here", "/Users/ada/app", "2026-10-02T00:00:00Z"), inPlace: true },
+    ],
+  );
+  assert.deepEqual(
+    group.sessions.map((s) => [s.id, s.deletion]),
+    [
+      ["here", { kind: "local-in-place" }],
+      ["tree", { kind: "local-worktree" }],
+    ],
+  );
+});
+
+test("the delete confirmation says what goes and what stays", () => {
+  assert.match(deletionConsequence({ kind: "cloud" }), /Runtime Computer.*GitHub stays/);
+  assert.match(deletionConsequence({ kind: "local-worktree" }), /branch stays/);
+  assert.match(deletionConsequence({ kind: "local-in-place" }), /untouched/);
 });

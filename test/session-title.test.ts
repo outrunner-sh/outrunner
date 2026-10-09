@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TITLE_MAX, sessionTitle, workspaceLabel } from "@/lib/nav/session-title";
+import { TITLE_MAX, sessionTitle, titleToSet, workspaceLabel } from "@/lib/nav/session-title";
 
 test("a title is the prompt's first non-empty line, whitespace collapsed", () => {
   assert.equal(sessionTitle("Fix the login redirect"), "Fix the login redirect");
@@ -41,4 +41,16 @@ test("a cloud session shows its title, else its branch without runtime/", () => 
   assert.equal(workspaceLabel({ title: null, branch: "runtime/muyc8h2e-26700eb2" }), "muyc8h2e-26700eb2");
   assert.equal(workspaceLabel({ title: null, branch: "feat/x" }), "feat/x");
   assert.equal(workspaceLabel({ title: "", branch: "runtime/abc" }), "abc");
+});
+
+test("a session without a title takes one from the prompt", () => {
+  assert.equal(titleToSet({ title: null }, "Pull latest code from main\nthen rebase"), "Pull latest code from main");
+});
+
+test("a session with a title is never renamed", () => {
+  assert.equal(titleToSet({ title: "Fix OAuth redirect" }, "something else entirely"), null);
+});
+
+test("a prompt with no text gives no title", () => {
+  assert.equal(titleToSet({ title: null }, "  \n  "), null);
 });

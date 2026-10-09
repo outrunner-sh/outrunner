@@ -3,9 +3,9 @@ import { NewSessionForm } from "@/components/new-session-form";
 import type { Project } from "@/lib/runtime/types";
 
 /**
- * The full-page new-session screen: a faded wordmark over the shared
- * new-session form. Used by the /new route (deep links + the no-workspaces
- * empty state); the home page opens the same form in a modal instead.
+ * The full-page new-session screen. It is home (/), so starting a session is
+ * always one prompt away, and /new (the sidebar's "+" links, which name the
+ * repository or folder to start on).
  */
 export function NewSessionCreator({
   projects,
@@ -14,26 +14,18 @@ export function NewSessionCreator({
 }: {
   projects: Project[];
   initialProjectId?: string;
-  /** /new is reached from somewhere and needs a way back; the home page's
-   *  no-workspaces state is home already. */
+  /** /new is reached from somewhere and needs a way back where the sidebar is
+   *  hidden (narrow windows); home is home already. */
   showBack?: boolean;
 }) {
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center px-6">
+    <div className="relative h-full">
       {showBack && (
-        <div className="absolute left-4 top-4">
+        <div className="absolute left-4 top-4 z-10 sm:hidden">
           <BackButton />
         </div>
       )}
-      <div className="w-full max-w-2xl">
-        <p
-          aria-hidden
-          className="pointer-events-none mb-6 select-none text-center text-[13vw] font-bold leading-none tracking-tight text-neutral-800 sm:text-[96px]"
-        >
-          outrunner
-        </p>
-        <NewSessionForm projects={projects} initialProjectId={initialProjectId} />
-      </div>
+      <NewSessionForm projects={projects} initialProjectId={initialProjectId} />
     </div>
   );
 }

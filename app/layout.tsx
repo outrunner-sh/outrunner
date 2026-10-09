@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 
 import { ThemeProvider } from "@/components/theme-provider";
@@ -14,6 +15,14 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Geist Pixel (Square): the display face the landing page sets its accent
+// words in (neevai-labs/outrunner-landing), here for the wordmark.
+const geistPixel = localFont({
+  src: "../public/fonts/GeistPixel_Square.woff2",
+  variable: "--font-pixel",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Outrunner",
   description: "Personal cloud environment for running Claude Code.",
@@ -25,14 +34,12 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} font-sans min-h-screen antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${geistPixel.variable} font-sans min-h-screen antialiased`}
       >
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          enableSystem
-          disableTransitionOnChange
-        >
+        {/* Dark only: the product is designed dark (the landing page and every
+            surface here), and the session screen has no light palette. A
+            theme chosen earlier in Settings no longer applies. */}
+        <ThemeProvider attribute="class" forcedTheme="dark" disableTransitionOnChange>
           {children}
         </ThemeProvider>
       </body>

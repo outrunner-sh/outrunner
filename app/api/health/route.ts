@@ -70,7 +70,7 @@ export async function GET() {
     : !configured.credentialEncryption
       ? "Set CREDENTIALS_ENCRYPTION_KEY in .env.local (openssl rand -base64 32), then reload."
       : !database.migrated
-        ? "Run supabase/migrations/*.sql in the Supabase SQL editor, then reload."
+        ? "Apply the pending supabase/migrations (pnpm db:migrate, or the Supabase SQL editor), then reload."
         : null;
 
   return NextResponse.json(

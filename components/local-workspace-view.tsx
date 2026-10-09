@@ -1,8 +1,9 @@
 "use client";
 
-import { LoaderCircle, Laptop } from "lucide-react";
+import { Laptop } from "lucide-react";
 import Link from "next/link";
 
+import { RouteLoading } from "@/components/route-states";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { LOCAL_PROJECT, type LocalSession } from "@/lib/desktop/local-runtime";
@@ -34,11 +35,7 @@ export function LocalWorkspaceView({
     );
   }
   if (local.state === "loading") {
-    return (
-      <Centered>
-        <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
-      </Centered>
-    );
+    return <RouteLoading label="Looking for this session on your Mac" />;
   }
   return (
     <Centered>

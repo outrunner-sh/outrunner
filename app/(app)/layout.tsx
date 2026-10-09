@@ -1,6 +1,9 @@
+import { cookies } from "next/headers";
+
 import { AppFrame } from "@/components/app-frame";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjectOnce, listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Project, Workspace } from "@/lib/runtime/types";
 
@@ -32,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     }),
   ]);
   const projects = await withSessionProjects(listed, workspaces);
+  const collapsed = (await cookies()).get(SIDEBAR_COOKIE)?.value === "1";
 
   return (
     <AppFrame
@@ -39,6 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       workspaces={workspaces}
       ownerLogin={owner.githubLogin}
       ownerAvatarUrl={owner.avatarUrl}
+      initialCollapsed={collapsed}
     >
       {children}
     </AppFrame>

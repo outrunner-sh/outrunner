@@ -1,11 +1,12 @@
 "use client";
 
-import { ExternalLink, GitPullRequest, LoaderCircle } from "lucide-react";
+import { ExternalLink, GitPullRequest } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LoadingButton } from "@/components/ui/loading-button";
 import { Textarea } from "@/components/ui/textarea";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
 
@@ -15,15 +16,20 @@ export function WorkspacePublishPanel({
   baseBranch,
   pullRequest,
   active,
+  defaultTitle,
 }: {
   workspaceId: string;
   branch: string;
   baseBranch: string;
   pullRequest: WorkspacePullRequest | null;
   active: boolean;
+  /** The session's title, to start the pull request's title from. */
+  defaultTitle?: string | null;
 }) {
   const router = useRouter();
-  const [title, setTitle] = useState(`Runtime: ${branch}`);
+  // The session's name (its first prompt) reads as a pull request title;
+  // the generated branch name does not.
+  const [title, setTitle] = useState(defaultTitle ?? branch);
   const [body, setBody] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
@@ -70,7 +76,7 @@ export function WorkspacePublishPanel({
         setCreated(result.pullRequest);
         router.refresh();
       } catch {
-        setMessage("Could not reach Runtime. Please try again.");
+        setMessage("Could not reach Outrunner. Please try again.");
       } finally {
         setPublishing(false);
       }
@@ -112,10 +118,15 @@ export function WorkspacePublishPanel({
         />
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={publishing || !active || title.trim().length === 0} size="sm" type="submit">
-          {publishing ? <LoaderCircle className="animate-spin" /> : <GitPullRequest />}
-          {publishing ? "Publishing" : "Publish pull request"}
-        </Button>
+        {/* Busy is not disabled: while publishing, the button stays where it is
+            and ignores clicks; after a failure it offers to try again. */}
+        <LoadingButton
+          type="submit"
+          status={publishing ? "pending" : message ? "error" : "idle"}
+          labels={{ idle: "Publish pull request", pending: "Publishing", error: "Try again" }}
+          icon={<GitPullRequest />}
+          disabled={!active || title.trim().length === 0}
+        />
         {message && (
           <p aria-live="polite" className="text-destructive text-xs">
             {message}
