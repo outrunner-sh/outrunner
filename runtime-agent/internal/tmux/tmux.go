@@ -5,6 +5,7 @@ package tmux
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -22,7 +23,13 @@ var (
 	socketName = os.Getenv("RUNTIME_TMUX_SOCKET")
 	// configFile replaces ~/.tmux.conf when the server starts (`tmux -f`).
 	configFile = os.Getenv("RUNTIME_TMUX_CONFIG")
+	// program is the tmux binary: the copy the desktop app ships, so a Mac
+	// without tmux of its own runs sessions too; otherwise the one on PATH.
+	program = cmp.Or(os.Getenv("RUNTIME_TMUX_BIN"), "tmux")
 )
+
+// Program is the tmux binary every invocation runs.
+func Program() string { return program }
 
 // Args prefixes a tmux argv with the server-selection flags. Every tmux
 // invocation in the agent goes through it, or one of them would talk to a
@@ -40,7 +47,7 @@ func Args(args ...string) []string {
 
 // Command builds a tmux invocation against Runtime's server.
 func Command(ctx context.Context, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, "tmux", Args(args...)...)
+	return exec.CommandContext(ctx, program, Args(args...)...)
 }
 
 // Manager runs tmux commands via the local binary.
