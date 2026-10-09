@@ -46,3 +46,13 @@ test("explains a CLI that exited without a token or any output", () => {
   assert.match(message, /stopped without issuing a token/);
   assert.doesNotMatch(message, /It said/);
 });
+
+test("names a Claude Code install that can't run, and how to fix it", () => {
+  const message = messageForError("claude-cli-broken:/Users/x/.nvm/versions/node/v22.21.0/bin/claude");
+  assert.match(message, /^Claude Code at \/Users\/x\/\.nvm\/versions\/node\/v22\.21\.0\/bin\/claude isn't installed completely/);
+  assert.match(message, /npm install -g @anthropic-ai\/claude-code/);
+});
+
+test("still says when Claude Code isn't installed at all", () => {
+  assert.match(messageForError("claude-cli-not-found"), /isn't installed on this machine/);
+});
