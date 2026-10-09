@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
-import { Info, LogOut, MessageSquare, Settings } from "lucide-react";
+import { LogOut } from "lucide-react";
+import { useFormStatus } from "react-dom";
 
 import { signOut } from "@/app/auth/actions";
 import {
@@ -13,14 +13,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/loaders";
 
 /**
- * The bottom-of-sidebar user pill (the sidebar draws the divider above it).
- * Secondary actions (Settings, System info, Feedback, Log out) live inside the
- * popover it opens rather than as standalone sidebar rows, keeping the rail to
- * just the primary flow. Settings opens the
- * settings page and Log out runs the sign-out server action; System info /
- * Feedback stay placeholders until their destinations exist.
+ * The bottom-of-sidebar user pill (the sidebar draws the divider above it),
+ * opening onto who is signed in and Log out. Settings is the gear beside it,
+ * not repeated here.
  */
 export function HomeUserMenu({
   ownerLogin,
@@ -42,31 +40,25 @@ export function HomeUserMenu({
           <span className="truncate">{label}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link href="/settings/general">
-            <Settings />
-            Settings
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          <Info />
-          System info
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          <MessageSquare />
-          Feedback
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
         <form action={signOut}>
-          <DropdownMenuItem asChild>
-            <button type="submit" className="w-full">
-              <LogOut />
-              Log out
-            </button>
-          </DropdownMenuItem>
+          <SignOutItem />
         </form>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** Log out, staying open with "Signing out" until the redirect lands (the
+ *  menu would otherwise close at once, with nothing to say it worked). */
+function SignOutItem() {
+  const { pending } = useFormStatus();
+  return (
+    <DropdownMenuItem asChild onSelect={(event) => event.preventDefault()}>
+      <button type="submit" className="w-full" aria-busy={pending || undefined} disabled={pending}>
+        {pending ? <Spinner /> : <LogOut />}
+        {pending ? "Signing out" : "Log out"}
+      </button>
+    </DropdownMenuItem>
   );
 }
 

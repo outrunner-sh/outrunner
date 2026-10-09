@@ -12,9 +12,9 @@ export function fallbackProject(id: string): NavProject {
 
 /** A workspace's recency key: its last-active time, or its creation time when it
  *  has never been touched (a still-provisioning workspace has a null
- *  lastActiveAt). Exported so the home "Continue" target ranks by the same rule
+ *  lastActiveAt). Exported so home's default repository ranks by the same rule
  *  as the sidebar: a brand-new workspace must be considered most-recent. */
-export const recency = (w?: Workspace) => w?.lastActiveAt ?? w?.createdAt ?? "";
+export const recency = (w?: Pick<Workspace, "lastActiveAt" | "createdAt">) => w?.lastActiveAt ?? w?.createdAt ?? "";
 
 /**
  * Comparator for timestamps, newest first. By instant, not by text: the times

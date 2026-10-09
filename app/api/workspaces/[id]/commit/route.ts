@@ -32,7 +32,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const owner = await getOwner();
   if (!owner) {
-    return NextResponse.json({ error: "Sign in as the Runtime owner." }, { status: 401 });
+    return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
 
   const { id } = await context.params;
@@ -113,7 +113,7 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Workspace ${id} commit failed`, error);
     return NextResponse.json(
-      { error: "Could not commit this workspace. Check Runtime setup and try again." },
+      { error: "Could not commit this workspace. Check Outrunner's setup and try again." },
       { status: 502 },
     );
   }

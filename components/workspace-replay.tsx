@@ -2,11 +2,13 @@
 
 import "@xterm/xterm/css/xterm.css";
 
-import { FileDiff, LoaderCircle, Pause, Play } from "lucide-react";
+import { FileDiff, Pause, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/loaders";
+import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { useCastPlayer } from "@/hooks/use-cast-player";
 import type { AgentEvent, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
 import type { Cast } from "@/lib/runtime/replay/cast";
@@ -91,7 +93,7 @@ export function WorkspaceReplay({
         </label>
         <select
           id="snapshot"
-          className="rounded-md border bg-neutral-950 px-2 py-1 text-xs text-neutral-200"
+          className="h-7 rounded-md border border-white/10 bg-black px-2 text-xs text-foreground"
           value={selectedId ?? ""}
           onChange={(e) => setSelectedId(e.target.value)}
         >
@@ -101,7 +103,7 @@ export function WorkspaceReplay({
             </option>
           ))}
         </select>
-        {loading && <LoaderCircle className="text-muted-foreground size-4 animate-spin" />}
+        {loading && <Spinner className="text-muted-foreground size-4" />}
       </div>
 
       {error && (
@@ -112,15 +114,22 @@ export function WorkspaceReplay({
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
         <CastPanel cast={data?.cast ?? null} />
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border">
-          <div className="border-b px-3 py-2 text-xs font-medium">Conversation</div>
-          <div className="flex min-h-0 flex-1 flex-col">
-            <ConversationTimeline events={data?.events ?? []} />
-          </div>
+        <div className="replay-panel">
+          <div className="replay-panel-head">Conversation</div>
+          <SkeletonSwap
+            ready={data !== null || error !== null}
+            skeleton={<SkeletonRows rows={6} rowHeight={28} indent={16} className="pt-4" />}
+            label="Conversation"
+            className="min-h-0 flex-1"
+          >
+            <div className="flex h-full min-h-0 flex-col">
+              <ConversationTimeline events={data?.events ?? []} />
+            </div>
+          </SkeletonSwap>
         </div>
       </div>
 
-      <DiffPanel patch={data?.patch ?? ""} summary={data?.summary ?? null} />
+      <DiffPanel patch={data?.patch ?? null} summary={data?.summary ?? null} failed={error !== null} />
     </div>
   );
 }
@@ -130,9 +139,9 @@ function CastPanel({ cast }: { cast: Cast | null }) {
   const player = useCastPlayer(cast, containerRef);
 
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <span className="text-xs font-medium">Terminal</span>
+    <div className="replay-panel">
+      <div className="replay-panel-head">
+        <span>Terminal</span>
         <Button
           disabled={player.status === "empty"}
           onClick={player.toggle}
@@ -156,23 +165,27 @@ function CastPanel({ cast }: { cast: Cast | null }) {
           {formatTime(player.currentTime)} / {formatTime(player.duration)}
         </span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto bg-[#0b0b0b] p-2">
+      <div className="min-h-0 flex-1 overflow-auto bg-black p-2">
         <div ref={containerRef} />
       </div>
     </div>
   );
 }
 
+/** The Snapshot's uncommitted diff. Null `patch` while it loads: "no changes"
+ *  is only said once the Snapshot has actually been read. */
 function DiffPanel({
   patch,
   summary,
+  failed,
 }: {
-  patch: string;
+  patch: string | null;
   summary: WorkspaceSummary | null;
+  failed: boolean;
 }) {
   return (
-    <div className="flex max-h-64 min-h-0 flex-col overflow-hidden rounded-lg border">
-      <div className="flex items-center gap-2 border-b px-3 py-2 text-xs font-medium">
+    <div className="replay-panel max-h-64">
+      <div className="replay-panel-head">
         <FileDiff className="size-4" /> Changes
         {summary && (
           <span className="text-muted-foreground font-normal">
@@ -181,9 +194,16 @@ function DiffPanel({
           </span>
         )}
       </div>
-      <pre className="min-h-0 flex-1 overflow-auto bg-neutral-950 p-3 font-mono text-[11px] leading-relaxed text-neutral-300">
-        {patch.trim() === "" ? "No uncommitted changes captured." : patch}
-      </pre>
+      <SkeletonSwap
+        ready={patch !== null || failed}
+        skeleton={<SkeletonRows rows={4} rowHeight={20} indent={12} className="pt-3" />}
+        label="Changes"
+        className="min-h-0 flex-1"
+      >
+        <pre className="h-full overflow-auto bg-black p-3 font-mono text-[11px] leading-relaxed text-foreground/80">
+          {patch === null ? "" : patch.trim() === "" ? "No uncommitted changes captured." : patch}
+        </pre>
+      </SkeletonSwap>
     </div>
   );
 }

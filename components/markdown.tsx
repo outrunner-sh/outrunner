@@ -11,13 +11,17 @@ import remarkGfm from "remark-gfm";
  * (`.md-body .hljs-*`) so it can color classes react-markdown emits that we
  * can't reach with Tailwind. Memoized because message text is immutable once
  * streamed — re-highlighting on every parent render is wasted work.
+ *
+ * Only fences that name their language are highlighted: guessing one
+ * (`detect`) runs every grammar over every block, on every render — and a
+ * streaming reply re-renders many times a second.
  */
 export const Markdown = memo(function Markdown({ children }: { children: string }) {
   return (
     <div className="md-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        rehypePlugins={[[rehypeHighlight, { detect: false }]]}
       >
         {children}
       </ReactMarkdown>

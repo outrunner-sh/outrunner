@@ -1,10 +1,12 @@
 "use client";
 
-import { ChevronDown, Loader2, Lock, RefreshCw, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
+import { Spinner } from "@/components/ui/loaders";
 import type { Project } from "@/lib/runtime/types";
+import { cn } from "@/lib/utils";
 
 type Repo = {
   githubRepoId: number;
@@ -33,6 +35,7 @@ export function RepositorySelect({
   selectedProjectId,
   onSelect,
   disabled,
+  triggerClassName,
 }: {
   /** Already-connected projects; used before the live list has loaded. */
   projects: Project[];
@@ -40,6 +43,8 @@ export function RepositorySelect({
   /** Receives the project id to run in, connecting the repository if needed. */
   onSelect: (projectId: string) => void;
   disabled?: boolean;
+  /** Replaces the trigger's default look, to sit in a row of other pickers. */
+  triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
@@ -48,6 +53,11 @@ export function RepositorySelect({
   const [query, setQuery] = useState("");
   const [connectingId, setConnectingId] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // The option the arrow keys are on (a combobox: focus stays in the search
+  // field, and this one is announced as active).
+  const [active, setActive] = useState(0);
+  const listId = useId();
 
   const selected = projects.find((p) => p.id === selectedProjectId);
 
@@ -84,7 +94,10 @@ export function RepositorySelect({
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     }
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -114,6 +127,7 @@ export function RepositorySelect({
     if (existing) {
       onSelect(existing.id);
       setOpen(false);
+      triggerRef.current?.focus();
       return;
     }
     // Not connected yet — connect just this one, then select it.
@@ -131,6 +145,7 @@ export function RepositorySelect({
       if (!created) throw new Error("Connected, but the project did not come back.");
       onSelect(created.id);
       setOpen(false);
+      triggerRef.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not connect that repository.");
     } finally {
@@ -141,14 +156,21 @@ export function RepositorySelect({
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => {
           const next = !open;
           setOpen(next);
+          setActive(0);
           if (next) void load();
         }}
-        className="text-foreground hover:bg-accent flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors disabled:opacity-50"
+        className={
+          triggerClassName ??
+          "text-foreground hover:bg-accent flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors disabled:opacity-50"
+        }
       >
         <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
         {selected?.name ?? "Select repository…"}
@@ -157,10 +179,10 @@ export function RepositorySelect({
 
       {open && (
         <div className="bg-popover border-border absolute bottom-full left-1/2 z-50 mb-2 w-80 -translate-x-1/2 overflow-hidden rounded-lg border shadow-xl">
-          <div className="max-h-72 overflow-y-auto py-1">
+          <div id={listId} role="listbox" aria-label="Repositories" className="max-h-72 overflow-y-auto py-1">
             {loading && !listing && (
               <p className="text-muted-foreground flex items-center gap-2 px-3 py-2 text-sm">
-                <Loader2 className="size-4 animate-spin" /> Loading repositories…
+                <Spinner className="size-4" /> Loading repositories…
               </p>
             )}
             {!loading && visible.length === 0 && (
@@ -168,18 +190,27 @@ export function RepositorySelect({
                 {query ? `No repositories match “${query}”.` : "No repositories found."}
               </p>
             )}
-            {visible.map((repo) => (
+            {visible.map((repo, i) => (
               <button
                 key={repo.githubRepoId}
+                id={`${listId}-${i}`}
                 type="button"
+                role="option"
+                aria-selected={i === active}
+                tabIndex={-1}
                 disabled={connectingId !== null}
                 onClick={() => void choose(repo)}
-                className="hover:bg-accent flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm disabled:opacity-50"
+                onMouseMove={() => setActive(i)}
+                ref={i === active ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                className={cn(
+                  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm disabled:opacity-50",
+                  i === active && "bg-accent",
+                )}
               >
                 <span className="flex-1 truncate">{repo.fullName}</span>
                 {repo.private && <Lock className="text-muted-foreground size-3 shrink-0" />}
                 {connectingId === repo.githubRepoId && (
-                  <Loader2 className="size-3 shrink-0 animate-spin" />
+                  <Spinner className="size-3 shrink-0" />
                 )}
               </button>
             ))}
@@ -192,7 +223,7 @@ export function RepositorySelect({
               disabled={loading}
               className="hover:bg-accent flex w-full items-center gap-2 px-3 py-2 text-left text-sm disabled:opacity-50"
             >
-              <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} /> Refresh list
+              {loading ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />} Refresh list
             </button>
           </div>
 
@@ -205,7 +236,28 @@ export function RepositorySelect({
             <input
               ref={searchRef}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setActive(0);
+              }}
+              // ↑/↓ move through the list, Enter picks; typing filters it.
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  if (visible.length === 0) return;
+                  const step = event.key === "ArrowDown" ? 1 : -1;
+                  setActive((i) => (i + step + visible.length) % visible.length);
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  const repo = visible[active];
+                  if (repo && connectingId === null) void choose(repo);
+                }
+              }}
+              role="combobox"
+              aria-expanded={open}
+              aria-controls={listId}
+              aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
+              aria-autocomplete="list"
               placeholder="Search repositories…"
               aria-label="Search repositories"
               className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-sm outline-none"

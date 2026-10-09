@@ -87,3 +87,39 @@ export function promptWithAttachments(prompt: string, filenames: string[]): stri
       : `I've attached ${filenames.length} files:`;
   return `${header}\n${lines.join("\n")}\n\n${prompt}`.trim();
 }
+
+/**
+ * The prompt the user typed, from one as Claude logged it: without the header
+ * promptWithAttachments put in front. A prompt that does not start with that
+ * exact header is returned as is, so ordinary text that happens to mention an
+ * attachment is never cut.
+ */
+export function promptWithoutAttachments(prompt: string): string {
+  const header = /^I've attached (?:a file|\d+ files):\n(?:- [^\n]*\n?)+/;
+  const match = header.exec(prompt);
+  if (!match) return prompt;
+  const listed = match[0].split("\n").slice(1).filter((line) => line.length > 0);
+  if (!listed.every((line) => line.startsWith(`- ${ATTACHMENT_DIR}/`))) return prompt;
+  return prompt.slice(match[0].length).trim();
+}
+
+/** What the composer says about files it was handed, or null when it took
+ *  them all: they cannot go to a local session (the server delivers them), or
+ *  not yet (no session to send them to), or only some fit in one message. */
+export function attachNotice(input: { allowed: boolean; canSend: boolean; skipped: number }): string | null {
+  if (!input.allowed) return "Files can't be attached to a session on this Mac.";
+  if (!input.canSend) return "Files can be attached once the session is connected.";
+  if (input.skipped > 0) {
+    const were = input.skipped === 1 ? "was" : "were";
+    return `Up to ${MAX_ATTACHMENTS_PER_MESSAGE} files per message: ${input.skipped} ${were} left out.`;
+  }
+  return null;
+}
+
+/** The composer's text after a send fails: the failed prompt back, ahead of
+ *  anything typed while it was in flight (which is kept, not overwritten). */
+export function restoreDraft(failed: string, typedSince: string): string {
+  if (!failed) return typedSince;
+  if (!typedSince.trim()) return failed;
+  return `${failed}\n\n${typedSince}`;
+}

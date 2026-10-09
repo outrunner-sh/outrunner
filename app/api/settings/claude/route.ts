@@ -26,7 +26,7 @@ const MAX_TOKEN_LENGTH = 500;
 
 function unauthorized() {
   return NextResponse.json(
-    { error: "Sign in as the Runtime owner." },
+    { error: "Sign in to Outrunner first." },
     { status: 401 },
   );
 }

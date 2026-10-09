@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Replay view for a workspace's Snapshots — browser + storage only, no Runtime
- * Computer (M4 invariant #2). Reachable from the workspace's lifecycle controls
- * once it's archived.
+ * Computer (M4 invariant #2). For an archived workspace; nothing in the app
+ * archives one yet, so it is reached by URL.
  */
 export default async function WorkspaceReplayPage({
   params,

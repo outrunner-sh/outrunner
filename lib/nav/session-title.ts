@@ -23,6 +23,12 @@ export function sessionTitle(prompt: string): string | null {
   return `${head.trimEnd()}…`;
 }
 
+/** The title to give a session from a prompt: none when it already has one
+ *  (the first prompt names it for good) or the prompt has no text. */
+export function titleToSet(workspace: { title: string | null }, prompt: string): string | null {
+  return workspace.title ? null : sessionTitle(prompt);
+}
+
 /** What to call a cloud session: its title, else its branch without the
  *  generated `runtime/` prefix. */
 export function workspaceLabel(workspace: Pick<Workspace, "title" | "branch">): string {

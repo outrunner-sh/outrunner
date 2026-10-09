@@ -11,7 +11,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) {
-    return NextResponse.json({ error: "Sign in as the Runtime owner." }, { status: 401 });
+    return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
 
   const { id } = await context.params;

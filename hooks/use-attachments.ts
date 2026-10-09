@@ -31,102 +31,94 @@ export type PendingAttachment = {
 export function useAttachments() {
   const [items, setItems] = useState<PendingAttachment[]>([]);
   const seq = useRef(0);
+  // What is staged, kept here as well as in state: a state updater may run
+  // after the call that queued it (or twice, in development), so it can neither
+  // report which files fit nor be where previews are revoked and uploads
+  // deleted. Keyed like `items`.
+  const staged = useRef(new Map<string, { id: string | null; previewUrl: string | null }>());
 
-  const add = useCallback(async (files: File[]) => {
-    if (files.length === 0) return;
+  const setItem = useCallback((key: string, patch: Partial<PendingAttachment>) => {
+    setItems((prev) => prev.map((item) => (item.key === key ? { ...item, ...patch } : item)));
+  }, []);
 
-    // Reserve slots against what is already staged, so repeated drops cannot
-    // walk past the limit one file at a time.
-    let accepted: File[] = [];
-    setItems((prev) => {
-      const room = Math.max(0, MAX_ATTACHMENTS_PER_MESSAGE - prev.length);
-      accepted = files.slice(0, room);
-      const staged = accepted.map((file) => {
+  /**
+   * Stage files and start uploading them. Returns how many were left out for
+   * want of room (MAX_ATTACHMENTS_PER_MESSAGE), so the caller can say so; the
+   * uploads carry on in the background.
+   */
+  const add = useCallback(
+    (files: File[]): number => {
+      if (files.length === 0) return 0;
+      const room = Math.max(0, MAX_ATTACHMENTS_PER_MESSAGE - staged.current.size);
+      const accepted = files.slice(0, room).map((file) => {
         seq.current += 1;
-        return {
-          key: `pending-${seq.current}`,
+        const key = `pending-${seq.current}`;
+        const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : null;
+        staged.current.set(key, { id: null, previewUrl });
+        return { file, key, previewUrl };
+      });
+      setItems((prev) => [
+        ...prev,
+        ...accepted.map(({ file, key, previewUrl }) => ({
+          key,
           id: null,
           filename: file.name,
           contentType: file.type,
           sizeBytes: file.size,
-          previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+          previewUrl,
           status: "uploading" as const,
-        };
-      });
-      return [...prev, ...staged];
-    });
+        })),
+      ]);
 
-    await Promise.all(
-      accepted.map(async (file, index) => {
-        const key = `pending-${seq.current - accepted.length + index + 1}`;
+      for (const { file, key } of accepted) {
         if (file.size > MAX_ATTACHMENT_BYTES) {
           const mb = Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024));
-          setItems((prev) =>
-            prev.map((item) =>
-              item.key === key
-                ? { ...item, status: "error", error: `Larger than ${mb} MB` }
-                : item,
-            ),
-          );
-          return;
+          setItem(key, { status: "error", error: `Larger than ${mb} MB` });
+          continue;
         }
-        try {
-          const form = new FormData();
-          form.append("file", file);
-          const res = await fetch("/api/attachments", { method: "POST", body: form });
-          const data = (await res.json()) as {
-            attachment?: { id: string; filename: string };
-            error?: string;
-          };
-          if (!res.ok || !data.attachment) throw new Error(data.error ?? "Upload failed");
-          setItems((prev) =>
-            prev.map((item) =>
-              item.key === key
-                ? {
-                    ...item,
-                    id: data.attachment!.id,
-                    filename: data.attachment!.filename,
-                    status: "ready",
-                  }
-                : item,
-            ),
-          );
-        } catch (err) {
-          setItems((prev) =>
-            prev.map((item) =>
-              item.key === key
-                ? {
-                    ...item,
-                    status: "error",
-                    error: err instanceof Error ? err.message : "Upload failed",
-                  }
-                : item,
-            ),
-          );
-        }
-      }),
-    );
-  }, []);
+        void upload(file).then(
+          (attachment) => {
+            const entry = staged.current.get(key);
+            if (!entry) {
+              // Removed while uploading: nothing shows it, so do not keep it.
+              void fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" }).catch(() => {});
+              return;
+            }
+            entry.id = attachment.id;
+            setItem(key, { id: attachment.id, filename: attachment.filename, status: "ready" });
+          },
+          (err: unknown) =>
+            setItem(key, { status: "error", error: err instanceof Error ? err.message : "Upload failed" }),
+        );
+      }
+      return files.length - accepted.length;
+    },
+    [setItem],
+  );
 
   const remove = useCallback((key: string) => {
-    setItems((prev) => {
-      const target = prev.find((item) => item.key === key);
-      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
-      // Best-effort server cleanup: the user has already seen it go, and a
-      // leftover row is invisible to them.
-      if (target?.id) {
-        void fetch(`/api/attachments/${target.id}`, { method: "DELETE" }).catch(() => {});
-      }
-      return prev.filter((item) => item.key !== key);
-    });
+    const entry = staged.current.get(key);
+    staged.current.delete(key);
+    if (entry?.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+    // Best-effort server cleanup: the user has already seen it go, and a
+    // leftover row is invisible to them.
+    if (entry?.id) void fetch(`/api/attachments/${entry.id}`, { method: "DELETE" }).catch(() => {});
+    setItems((prev) => prev.filter((item) => item.key !== key));
   }, []);
 
-  /** Forget everything after a successful send, without deleting server-side. */
-  const clear = useCallback(() => {
-    setItems((prev) => {
-      for (const item of prev) if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-      return [];
-    });
+  /** Forget the attachments with these ids, without deleting them server-side:
+   *  they were sent, while anything staged since stays. */
+  const forget = useCallback((ids: readonly string[]) => {
+    const sent = new Set(ids);
+    const keys: string[] = [];
+    for (const [key, entry] of staged.current) {
+      if (entry.id && sent.has(entry.id)) {
+        keys.push(key);
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+        staged.current.delete(key);
+      }
+    }
+    if (keys.length > 0) setItems((prev) => prev.filter((item) => !keys.includes(item.key)));
   }, []);
 
   /** Ids to send. Excludes anything still uploading or failed. */
@@ -135,5 +127,19 @@ export function useAttachments() {
   );
   const busy = items.some((item) => item.status === "uploading");
 
-  return { items, add, remove, clear, readyIds, busy };
+  return { items, add, remove, forget, readyIds, busy };
+}
+
+/** Upload one file. A failure reads as a sentence, never a parser error: the
+ *  server (or a proxy in front of it) may answer with an HTML page. */
+async function upload(file: File): Promise<{ id: string; filename: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/attachments", { method: "POST", body: form });
+  const data = (await res.json().catch(() => ({}))) as {
+    attachment?: { id: string; filename: string };
+    error?: string;
+  };
+  if (res.ok && data.attachment) return data.attachment;
+  throw new Error(data.error ?? (res.status === 413 ? "Too large to upload" : "Upload failed"));
 }
