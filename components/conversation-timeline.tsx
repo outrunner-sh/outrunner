@@ -38,14 +38,25 @@ export function ConversationTimeline({
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
 
-  // Auto-follow: keep pinned to the bottom as events arrive, unless the user
-  // scrolled up (then honor their position). A plain scrollTop write — no
-  // virtualizer — so there's no flushSync-during-render from measureElement.
+  const contentRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-follow: keep pinned to the bottom as the conversation grows, unless
+  // the user scrolled up (then honor their position). Grows, not "as events
+  // arrive": a reply keeps lengthening after its event, as its text is
+  // revealed, so this follows the content's height rather than the list.
   useEffect(() => {
     const el = parentRef.current;
-    if (!el || !stickToBottom.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [events]);
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const follow = () => {
+      if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+    };
+    follow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(follow);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div
@@ -57,7 +68,7 @@ export function ConversationTimeline({
       }}
       className="min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
     >
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pt-16 pb-16">
+      <div ref={contentRef} className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pt-16 pb-16">
         {placeholder === "connecting" && (
           <div role="status" className="conversation-placeholder">
             <DotMatrix rows={6} cols={9} />

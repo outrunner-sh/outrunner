@@ -12,14 +12,24 @@ export const REVEAL_CATCH_UP_MS = 900;
  *  appears at once (the stream replays a session's history when it opens). */
 export const LIVE_WINDOW_MS = 15_000;
 
-/** How many characters to show after `elapsedMs` more, from `shown` towards
- *  `target`: the resting pace, or faster when a large block arrived at once,
- *  so a backlog never takes longer than REVEAL_CATCH_UP_MS to clear. */
-export function revealStep(shown: number, target: number, elapsedMs: number): number {
+/**
+ * The pace to reveal at, in characters per millisecond, decided when new text
+ * arrives: the resting pace, or fast enough to show everything still hidden
+ * within REVEAL_CATCH_UP_MS. Fixed until the next arrival — recomputed from
+ * the shrinking backlog on every tick, it would slow as it went and never
+ * meet the deadline.
+ */
+export function revealRate(shown: number, target: number): number {
+  return Math.max(REVEAL_CHARS_PER_SECOND / 1000, Math.max(0, target - shown) / REVEAL_CATCH_UP_MS);
+}
+
+/** How many characters to show after `elapsedMs` more at `rate` (revealRate),
+ *  from `shown` towards `target`: always at least one more, never past it.
+ *  Rounded up, so a tick never falls behind the pace (rounding down lost a
+ *  fraction every tick and missed the deadline). */
+export function revealStep(shown: number, target: number, elapsedMs: number, rate: number): number {
   if (shown >= target) return target;
-  const backlog = target - shown;
-  const perMs = Math.max(REVEAL_CHARS_PER_SECOND / 1000, backlog / REVEAL_CATCH_UP_MS);
-  return Math.min(target, shown + Math.max(1, Math.floor(perMs * Math.max(0, elapsedMs))));
+  return Math.min(target, shown + Math.max(1, Math.ceil(rate * Math.max(0, elapsedMs))));
 }
 
 /** The first `count` characters, stopped at the end of a word, so the reveal
