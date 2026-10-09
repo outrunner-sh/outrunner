@@ -182,6 +182,8 @@ fn spawn_agent() -> Result<Agent, String> {
     let binary = agent_binary()?;
     let root = root_dir()?;
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    // Sessions run the `claude` linked here; make sure it is the one that works.
+    let _ = find_claude();
     let log = OpenOptions::new()
         .create(true)
         .append(true)
@@ -305,12 +307,21 @@ fn utf8_locale() -> String {
 /// version manager would all be invisible. Ask the login shell once, and keep
 /// the usual prefixes as a floor in case it answers nothing. Connect Claude
 /// runs `claude setup-token` with it too.
+///
+/// It starts with the directory where [`find_claude`] links the `claude` that
+/// works, so that is the one every session runs.
 pub(crate) fn session_path() -> &'static str {
     static PATH: OnceLock<String> = OnceLock::new();
     PATH.get_or_init(|| {
-        let mut dirs: Vec<String> = login_shell_path()
-            .map(|path| path.split(':').filter(|d| !d.is_empty()).map(String::from).collect())
-            .unwrap_or_default();
+        let mut dirs: Vec<String> = claude_link_dir()
+            .map(|dir| dir.to_string_lossy().into_owned())
+            .into_iter()
+            .collect();
+        for dir in login_shell_path().unwrap_or_default().split(':').filter(|d| !d.is_empty()) {
+            if !dirs.iter().any(|d| d == dir) {
+                dirs.push(dir.to_string());
+            }
+        }
         let home = std::env::var("HOME").unwrap_or_default();
         let floor = [
             format!("{home}/.local/bin"),
@@ -360,6 +371,95 @@ pub(crate) fn which(tool: &str) -> Option<String> {
         .map(|dir| Path::new(dir).join(tool))
         .find(|candidate| candidate.is_file())
         .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// Where the `claude` that works is linked, first on [`session_path`].
+fn claude_link_dir() -> Option<PathBuf> {
+    root_dir().ok().map(|root| root.join("bin"))
+}
+
+/// The Claude Code to run on this Mac: the first `claude` on the session PATH,
+/// then on the one this app inherited, that answers `--version` as Claude Code.
+/// The first one found is not enough: an npm install whose postinstall never
+/// ran (`--ignore-scripts`, pnpm) leaves a placeholder `claude` that is not
+/// executable, or that only prints "claude native binary not installed", and it
+/// can sit on the PATH ahead of an install that works.
+///
+/// The one found is linked into [`claude_link_dir`], so sessions run it too.
+/// Err lists the candidates that didn't run: empty when there was none.
+pub(crate) fn find_claude() -> Result<PathBuf, Vec<PathBuf>> {
+    let link_dir = claude_link_dir();
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = session_path()
+        .split(':')
+        .map(PathBuf::from)
+        .chain(std::env::split_paths(&inherited))
+        .filter(|dir| Some(dir) != link_dir.as_ref());
+    let found = find_claude_in(dirs);
+    if let Some(dir) = link_dir {
+        match &found {
+            Ok(claude) => link_claude(&dir, claude),
+            Err(_) => {
+                let _ = std::fs::remove_file(dir.join("claude"));
+            }
+        }
+    }
+    found
+}
+
+fn find_claude_in(dirs: impl Iterator<Item = PathBuf>) -> Result<PathBuf, Vec<PathBuf>> {
+    let mut seen = HashSet::new();
+    let mut broken = Vec::new();
+    for dir in dirs {
+        let candidate = dir.join("claude");
+        if !candidate.is_file() {
+            continue;
+        }
+        // The same install is often on the PATH twice, by a link and directly.
+        if !seen.insert(std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone())) {
+            continue;
+        }
+        if runs_as_claude(&candidate) {
+            return Ok(candidate);
+        }
+        broken.push(candidate);
+    }
+    Err(broken)
+}
+
+/// Whether `claude --version` runs and says it is Claude Code.
+fn runs_as_claude(claude: &Path) -> bool {
+    let Ok(mut child) = user_command(claude)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    if !exit_within(&mut child, Duration::from_secs(10)) {
+        return false;
+    }
+    let mut out = String::new();
+    let read = child.stdout.take().is_some_and(|mut stdout| stdout.read_to_string(&mut out).is_ok());
+    read && child.wait().is_ok_and(|status| status.success()) && out.contains("Claude Code")
+}
+
+/// Point `dir/claude` at `claude`, replacing what was there in one rename, so a
+/// session starting meanwhile finds the old link or the new one, never none.
+fn link_claude(dir: &Path, claude: &Path) {
+    let link = dir.join("claude");
+    if std::fs::read_link(&link).is_ok_and(|target| target == claude) {
+        return;
+    }
+    let staged = dir.join(format!(".claude-{}", random_hex(4)));
+    let linked = std::fs::create_dir_all(dir)
+        .and_then(|()| std::os::unix::fs::symlink(claude, &staged))
+        .and_then(|()| std::fs::rename(&staged, &link));
+    if linked.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
 }
 
 /// Stable id for this Mac, recorded on each local workspace so another device
@@ -453,7 +553,7 @@ pub struct LocalStatus {
 pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
     let device_id = device_id(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let claude = which("claude");
+        let claude = find_claude().ok().map(|path| path.to_string_lossy().into_owned());
         Ok(LocalStatus {
             device_id,
             root: root_dir()?.to_string_lossy().into_owned(),
@@ -484,7 +584,11 @@ pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
 /// failure says why instead of leaving the page waiting.
 #[tauri::command]
 pub async fn local_claude_login(state: State<'_, LocalRuntime>) -> Result<(), String> {
-    run_claude_login(&state, Path::new(&which("claude").ok_or("claude-missing")?)).await
+    let claude = tauri::async_runtime::spawn_blocking(find_claude)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|_| "claude-missing")?;
+    run_claude_login(&state, &claude).await
 }
 
 /// `local_claude_login` with the binary given, so a test can stand in for it.
@@ -959,6 +1063,67 @@ async fn relay(url: String, mut commands: mpsc::UnboundedReceiver<Outbound>, eve
 mod tests {
     use super::*;
 
+    /// A directory holding one `claude`, with `body` as its script and `mode`.
+    fn claude_dir(name: &str, body: &str, mode: u32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("outrunner-{name}-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let claude = dir.join("claude");
+        std::fs::write(&claude, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(mode)).unwrap();
+        dir
+    }
+
+    // What npm leaves when Claude Code's postinstall never ran (2.1.293's
+    // bin/claude.exe, shortened): a 0644 script that only reports it.
+    const PLACEHOLDER: &str = "echo 'Error: claude native binary not installed.' >&2\nexit 1";
+
+    #[test]
+    fn the_first_claude_that_runs_is_used_not_the_first_found() {
+        let unfinished = claude_dir("unfinished", PLACEHOLDER, 0o644);
+        let placeholder = claude_dir("placeholder", PLACEHOLDER, 0o755);
+        let working = claude_dir("working", "echo '2.1.293 (Claude Code)'", 0o755);
+        // The same unfinished install again, through a link.
+        let linked = std::env::temp_dir().join(format!("outrunner-linked-{}", random_hex(4)));
+        std::fs::create_dir_all(&linked).unwrap();
+        std::os::unix::fs::symlink(unfinished.join("claude"), linked.join("claude")).unwrap();
+
+        let dirs = [&unfinished, &placeholder, &linked, &working].map(|d| d.to_path_buf());
+        assert_eq!(find_claude_in(dirs.clone().into_iter()), Ok(working.join("claude")));
+        assert_eq!(
+            find_claude_in(dirs[..3].to_vec().into_iter()),
+            Err(vec![unfinished.join("claude"), placeholder.join("claude")]),
+            "each broken install is reported once"
+        );
+        assert_eq!(find_claude_in(std::iter::empty()), Err(vec![]));
+        for dir in [unfinished, placeholder, linked, working] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn a_claude_that_answers_as_something_else_is_not_used() {
+        let other = claude_dir("other", "echo 'claude 0.1 (a different tool)'", 0o755);
+        assert_eq!(find_claude_in(std::iter::once(other.clone())), Err(vec![other.join("claude")]));
+        let _ = std::fs::remove_dir_all(other);
+    }
+
+    #[test]
+    fn the_link_follows_the_claude_found() {
+        let dir = std::env::temp_dir().join(format!("outrunner-link-{}", random_hex(4)));
+        let first = claude_dir("first", "echo '2.1.293 (Claude Code)'", 0o755).join("claude");
+        let second = claude_dir("second", "echo '2.1.294 (Claude Code)'", 0o755).join("claude");
+        link_claude(&dir, &first);
+        assert_eq!(std::fs::read_link(dir.join("claude")).unwrap(), first);
+        link_claude(&dir, &second);
+        assert_eq!(std::fs::read_link(dir.join("claude")).unwrap(), second);
+        // Nothing staged is left behind.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        for path in [dir, first.parent().unwrap().into(), second.parent().unwrap().into()] {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+
     #[test]
     fn reads_whether_claude_is_logged_in_from_auth_status() {
         assert_eq!(parse_logged_in(r#"{"loggedIn": true, "authMethod": "claude.ai"}"#), Some(true));
@@ -984,7 +1149,8 @@ mod tests {
     #[test]
     #[ignore = "asks this Mac's real Claude Code"]
     fn the_login_check_gets_an_answer_from_the_real_claude() {
-        let claude = which("claude").expect("claude on the login-shell PATH");
+        let claude = find_claude().expect("a claude that runs, on the login-shell PATH");
+        let claude = claude.to_string_lossy();
         assert!(claude_logged_in(&claude).is_some(), "no clear answer from {claude}");
     }
 

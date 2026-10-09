@@ -67,6 +67,16 @@ export function messageForError(code: string): string {
       (detail ? ` It said: ${detail}` : "")
     );
   }
+  // Every `claude` found failed to run; the first is named. Usually an npm
+  // install whose postinstall never ran, which leaves a placeholder behind.
+  if (code.startsWith("claude-cli-broken:")) {
+    const path = code.slice("claude-cli-broken:".length).trim();
+    return (
+      `Claude Code at ${path} isn't installed completely, so it can't run. ` +
+      "Reinstall it with `npm install -g @anthropic-ai/claude-code` (or " +
+      "`curl -fsSL https://claude.ai/install.sh | bash`), then try again."
+    );
+  }
   switch (code) {
     case "claude-cli-not-found":
       return "Claude Code isn't installed on this machine. Install it, then try again.";
