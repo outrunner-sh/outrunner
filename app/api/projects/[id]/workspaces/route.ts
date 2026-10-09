@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { neevAiKey } from "@/lib/db/credentials";
 import {
   createWorkspaceRow,
   getProject,
@@ -11,9 +12,11 @@ import {
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { keySource } from "@/lib/openrouter/keys";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
@@ -46,6 +49,11 @@ function generatedBranch(): string {
   return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
 
+/** The session can't run without the user's Claude: say so, and where to fix it. */
+function needsClaude(error: string) {
+  return NextResponse.json({ error, settingsHref: "/settings/claude" }, { status: 409 });
+}
+
 function safeErrorMessage(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && error.code === "23505") {
     return "A live workspace already uses that branch for this project.";
@@ -74,16 +82,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  // Either credential kind is fine; an empty env means none was set.
-  if (Object.keys(sessionEnv).length === 0) {
-    return NextResponse.json(
-      {
-        error: "Connect Claude in Settings before creating a workspace.",
-        // Where the page sends the user to fix it.
-        settingsHref: "/settings/claude",
-      },
-      { status: 409 },
-    );
+  // Either credential kind is fine; an empty env means none was set. Sessions
+  // start on Outrunner's models, so only without those is Claude a must.
+  const hasClaude = Object.keys(sessionEnv).length > 0;
+  if (!hasClaude && keySource() === null) {
+    return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
   if (project.private && !githubToken) {
     return NextResponse.json(
@@ -119,6 +122,10 @@ export async function POST(request: Request, context: RouteContext) {
       { error: "The configured provider is not available." },
       { status: 503 },
     );
+  }
+  // Only a Runtime Computer's agent can put a session on another model.
+  if (!hasClaude && !(provider instanceof DaytonaRuntimeProvider)) {
+    return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
 
   let workspace;
@@ -201,6 +208,12 @@ export async function POST(request: Request, context: RouteContext) {
         },
         identity,
       );
+      // Before the first launch, so Claude starts on it rather than switching.
+      await startingModel({
+        setModel: (req) => agent.setModel(identity, req),
+        neevKey: () => neevAiKey(owner.id),
+        hasClaude,
+      });
       await agent.startWorkspace(identity);
 
       await updateWorkspace(workspace.id, {
@@ -239,14 +252,16 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
+    const noModel = error instanceof NoStartingModelError;
     try {
       await updateWorkspace(workspace.id, {
         status: "failed",
-        errorMessage: "Provisioning failed. Check Outrunner's setup and try again.",
+        errorMessage: noModel ? error.message : "Provisioning failed. Check Outrunner's setup and try again.",
       });
     } catch (updateError) {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
     }
+    if (noModel) return needsClaude(error.message);
     return NextResponse.json(
       { error: "Could not create the workspace. Check Outrunner's setup and try again." },
       { status: 500 },

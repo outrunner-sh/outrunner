@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { AgentRequestError } from "@/lib/runtime/agent-client";
-import { switchFailure } from "@/lib/runtime/model-switch";
+import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { NoStartingModelError, startingModel, switchFailure } from "@/lib/runtime/model-switch";
+import type { SetModelRequest } from "@/lib/runtime/session-models";
 
 test("a refusal from the agent passes its own advice through", () => {
   const busy = new AgentRequestError(409, {
@@ -27,4 +29,84 @@ test("anything else asks to try again, without the raw error", () => {
   for (const error of [new AgentRequestError(500, { code: "INTERNAL", message: "tmux: exit 1" }), new Error("fetch failed"), "x"]) {
     assert.deepEqual(switchFailure(error), { status: 502, message: "Couldn't switch models. Please try again." });
   }
+});
+
+const KEY = "sk-or-v1-test-key-0123456789";
+const quiet = <T>(run: () => Promise<T>): Promise<T> => {
+  const warn = console.warn;
+  console.warn = () => {};
+  return run().finally(() => {
+    console.warn = warn;
+  });
+};
+
+test("a new session starts on Outrunner's default model, through OpenRouter", async () => {
+  const sent: SetModelRequest[] = [];
+  const on = await startingModel({
+    setModel: async (req) => sent.push(req),
+    neevKey: async () => KEY,
+    hasClaude: false,
+  });
+  assert.equal(on, "outrunner");
+  assert.deepEqual(sent, [{ model: "z-ai/glm-5.3", gateway: "openrouter", token: KEY }]);
+});
+
+test("it is the default with a Claude login too", async () => {
+  let sent = 0;
+  const on = await startingModel({ setModel: async () => sent++, neevKey: async () => KEY, hasClaude: true });
+  assert.equal(on, "outrunner");
+  assert.equal(sent, 1);
+});
+
+test("without Outrunner's models, a Claude login starts the session instead", async () => {
+  let sent = 0;
+  const on = await quiet(() =>
+    startingModel({
+      setModel: async () => sent++,
+      neevKey: async () => {
+        throw new NeevAiUnavailableError();
+      },
+      hasClaude: true,
+    }),
+  );
+  assert.equal(on, "claude");
+  assert.equal(sent, 0, "nothing reached the agent");
+});
+
+test("a box too old to switch falls back to Claude, or says why without it", async () => {
+  const old = async () => {
+    throw new AgentRequestError(404);
+  };
+  assert.equal(await quiet(() => startingModel({ setModel: old, neevKey: async () => KEY, hasClaude: true })), "claude");
+  await assert.rejects(
+    startingModel({ setModel: old, neevKey: async () => KEY, hasClaude: false }),
+    (error: unknown) => error instanceof NoStartingModelError && /older Outrunner/.test(error.message),
+  );
+});
+
+test("with neither, the error says Outrunner's models are missing and to connect Claude", async () => {
+  await assert.rejects(
+    startingModel({
+      setModel: async () => assert.fail("reached the agent"),
+      neevKey: async () => {
+        throw new NeevAiUnavailableError();
+      },
+      hasClaude: false,
+    }),
+    (error: unknown) =>
+      error instanceof NoStartingModelError && /aren't available on this server\. Connect Claude/.test(error.message),
+  );
+});
+
+test("any other failure without Claude asks to try again", async () => {
+  await assert.rejects(
+    startingModel({
+      setModel: async () => {
+        throw new AgentRequestError(500, { code: "INTERNAL", message: "tmux: exit 1" });
+      },
+      neevKey: async () => KEY,
+      hasClaude: false,
+    }),
+    (error: unknown) => error instanceof NoStartingModelError && /Please try again/.test(error.message) && !/tmux/.test(error.message),
+  );
 });

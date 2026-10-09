@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { MODEL_GROUPS, matchModel, modelLabel, setModelRequest } from "@/lib/runtime/session-models";
+import { DEFAULT_CLOUD_MODEL, MODEL_GROUPS, matchModel, modelLabel, offeredModel, setModelRequest } from "@/lib/runtime/session-models";
 
 test("a Claude account reply matches its family's alias", () => {
   assert.equal(matchModel(MODEL_GROUPS, "claude-opus-5")?.id, "opus");
@@ -60,4 +60,9 @@ test("a key that can't be had fails the switch", async () => {
     }),
     /aren't set up/,
   );
+});
+
+test("cloud sessions default to an Outrunner model on the menu", () => {
+  assert.equal(DEFAULT_CLOUD_MODEL.source, "neev");
+  assert.equal(offeredModel(DEFAULT_CLOUD_MODEL.id), DEFAULT_CLOUD_MODEL);
 });
