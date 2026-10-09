@@ -67,7 +67,8 @@ export type LinearIssueRef = {
 
 type ProjectRow = {
   id: string;
-  owner_id: string;
+  /** Who added it. Null once that account is gone (a team's project stays). */
+  owner_id: string | null;
   /** The team (a workspace, in the UI) it belongs to. Left out on insert, the
    *  database puts it in the owner's personal team. */
   team_id: string;
@@ -172,6 +173,46 @@ type WorkspaceSnapshotRow = {
   policy: ArchivePolicyDb;
   retention_days: number | null;
   created_at: string;
+  updated_at: string;
+};
+
+// Teams: workspaces people share (NEE-10). Written only through the functions
+// below, which check the caller's role.
+export type TeamRoleDb = "owner" | "admin" | "member" | "viewer";
+
+type TeamRow = {
+  id: string;
+  name: string;
+  personal: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type TeamMemberRow = {
+  team_id: string;
+  user_id: string;
+  role: TeamRoleDb;
+  created_at: string;
+};
+
+type TeamInviteRow = {
+  id: string;
+  team_id: string;
+  role: TeamRoleDb;
+  token_hash: string;
+  created_by: string | null;
+  created_at: string;
+  expires_at: string;
+  accepted_by: string | null;
+  accepted_at: string | null;
+  revoked_at: string | null;
+};
+
+type UserProfileRow = {
+  user_id: string;
+  github_login: string | null;
+  avatar_url: string | null;
   updated_at: string;
 };
 
@@ -343,9 +384,51 @@ export type Database = {
         Update: Partial<UserCredentialsRow>;
         Relationships: [];
       };
+      teams: {
+        Row: TeamRow;
+        Insert: Insert<TeamRow, "name">;
+        Update: Partial<TeamRow>;
+        Relationships: [];
+      };
+      team_members: {
+        Row: TeamMemberRow;
+        Insert: Insert<TeamMemberRow, "team_id" | "user_id" | "role">;
+        Update: Partial<TeamMemberRow>;
+        Relationships: [];
+      };
+      team_invites: {
+        Row: TeamInviteRow;
+        Insert: Insert<TeamInviteRow, "team_id" | "role" | "token_hash" | "expires_at">;
+        Update: Partial<TeamInviteRow>;
+        Relationships: [];
+      };
+      user_profiles: {
+        Row: UserProfileRow;
+        Insert: Insert<UserProfileRow, "user_id">;
+        Update: Partial<UserProfileRow>;
+        Relationships: [];
+      };
     };
     Views: Record<never, never>;
     Functions: {
+      create_team: { Args: { team_name: string }; Returns: string };
+      rename_team: { Args: { team: string; team_name: string }; Returns: undefined };
+      create_team_invite: {
+        Args: { team: string; invite_role: TeamRoleDb; token: string };
+        Returns: string;
+      };
+      revoke_team_invite: { Args: { invite: string }; Returns: undefined };
+      team_invite_preview: {
+        Args: { token: string };
+        Returns: Array<{ team_name: string; invite_role: TeamRoleDb }>;
+      };
+      accept_team_invite: { Args: { token: string }; Returns: string };
+      set_team_member_role: {
+        Args: { team: string; member: string; new_role: TeamRoleDb };
+        Returns: undefined;
+      };
+      remove_team_member: { Args: { team: string; member: string }; Returns: undefined };
+      delete_team: { Args: { team: string }; Returns: undefined };
       claim_runtime_computer: {
         Args: {
           requested_project_id: string;
@@ -364,6 +447,7 @@ export type Database = {
       job_status: JobStatusDb;
       runtime_computer_status: RuntimeComputerStatusDb;
       archive_policy: ArchivePolicyDb;
+      team_role: TeamRoleDb;
     };
     CompositeTypes: Record<never, never>;
   };

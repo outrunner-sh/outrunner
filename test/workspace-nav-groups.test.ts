@@ -10,6 +10,7 @@ import type { Project, Workspace } from "@/lib/runtime/types";
 function project(id: string, name = id): Project {
   return {
     id,
+    teamId: "team-1",
     githubRepoId: 1,
     fullName: `acme/${name}`,
     owner: "acme",
@@ -34,6 +35,7 @@ function workspace(
   return {
     id,
     projectId,
+    ownerId: "user-1",
     provider: "daytona",
     status: "ready",
     phase: null,

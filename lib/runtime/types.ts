@@ -12,6 +12,8 @@
 
 export type Project = {
   id: string;
+  /** The workspace (a team, in the database) it belongs to. */
+  teamId: string;
   githubRepoId: number;
   /** `owner/name`, e.g. `immadsahin/runtime`. */
   fullName: string;
@@ -71,6 +73,8 @@ export type ProviderName = "local" | "modal" | "daytona";
 export type Workspace = {
   id: string;
   projectId: string;
+  /** Who started it: the one person who acts in it. */
+  ownerId: string;
   /** Backend that owns this workspace's compute and durable storage. */
   provider: ProviderName;
   status: WorkspaceStatus;

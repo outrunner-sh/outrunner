@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
 import { setGithubToken } from "@/lib/db/credentials";
+import { saveUserProfile } from "@/lib/db/teams";
 import { optionalEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -45,6 +46,11 @@ export async function GET(request: Request) {
   }
 
   await captureGithubToken(data);
+  // How teammates see this account. Best effort, like the token: the next
+  // sign-in retries, and until then they show by account only.
+  await saveUserProfile(data.user).catch((err: unknown) =>
+    console.error(`Could not save the profile for ${data.user.id}`, err),
+  );
 
   return NextResponse.redirect(`${base}${next}`);
 }

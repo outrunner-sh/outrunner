@@ -26,6 +26,7 @@ function toProviderName(value: string): ProviderName {
 export function toProject(row: Tables["projects"]["Row"]): Project {
   return {
     id: row.id,
+    teamId: row.team_id,
     githubRepoId: row.github_repo_id,
     fullName: row.full_name,
     owner: row.owner,
@@ -46,6 +47,7 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
   return {
     id: row.id,
     projectId: row.project_id,
+    ownerId: row.owner_id,
     provider: toProviderName(row.provider),
     status: row.status,
     phase: row.phase,

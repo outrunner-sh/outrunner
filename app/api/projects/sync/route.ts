@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
+import { currentTeam } from "@/lib/db/teams";
 import { optionalEnv } from "@/lib/env";
 import {
   GitHubSyncError,
   listGitHubRepositories,
 } from "@/lib/github/client";
 import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
+import { managesTeam } from "@/lib/teams/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +35,10 @@ function isSameOriginRequest(request: Request): boolean {
  * turn all of them into projects. With no body, every repository the user's
  * GitHub token can reach is connected (the original bulk behaviour, still used
  * by the plain "Sync repositories" button).
+ *
+ * They join the workspace open in the app. A shared one takes them from its
+ * owners and admins, and only chosen ones: connecting all of someone's
+ * repositories would fill the team's list with theirs.
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -61,6 +67,20 @@ export async function POST(request: Request) {
     selection = new Set(ids);
   }
 
+  const team = await currentTeam(owner.id);
+  if (!team) {
+    return NextResponse.json({ error: "No workspace to add repositories to." }, { status: 409 });
+  }
+  if (!team.personal && !managesTeam(team.role)) {
+    return NextResponse.json(
+      { error: `Only ${team.name}'s owners and admins add its repositories.` },
+      { status: 403 },
+    );
+  }
+  if (!team.personal && !selection) {
+    return NextResponse.json({ error: "Choose the repositories to add to the workspace." }, { status: 400 });
+  }
+
   try {
     const all = await listGitHubRepositories(await requireGithubToken(owner.id));
     // Filter against what GitHub actually returned rather than trusting the
@@ -68,10 +88,10 @@ export async function POST(request: Request) {
     const repositories = selection
       ? all.filter((r) => selection.has(r.githubRepoId))
       : all;
-    const synced = await upsertProjects(owner.id, repositories);
+    const synced = await upsertProjects(owner.id, team.id, repositories);
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
-    return NextResponse.json({ synced, discovered: all.length, projects: await listProjects() });
+    return NextResponse.json({ synced, discovered: all.length, projects: await listProjects(team.id) });
   } catch (error) {
     if (error instanceof MissingGithubTokenError) {
       return NextResponse.json({ error: error.message }, { status: 409 });

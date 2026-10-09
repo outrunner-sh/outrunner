@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   toJob,
   toProject,
@@ -28,22 +28,35 @@ import type {
 } from "@/lib/runtime/types";
 
 /**
- * Data access for the three tables. RLS already restricts rows to the owner,
- * so these helpers never filter by owner_id on read.
+ * Data access through the user's session: RLS decides which rows they see (a
+ * team's members see its projects and every session on them; computers only
+ * their owner), so these helpers never filter by owner_id on read.
  */
 
 // --- projects --------------------------------------------------------------
 
-export async function listProjects(): Promise<Project[]> {
+/** The listed projects of a workspace (every team the user is in, without
+ *  one). */
+export async function listProjects(teamId?: string): Promise<Project[]> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("projects")
     .select("*")
     .is("hidden_at", null)
     .order("pushed_at", { ascending: false, nullsFirst: false });
+  if (teamId) query = query.eq("team_id", teamId);
 
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []).map(toProject);
+}
+
+/** Every project of a workspace, hidden ones too: what its sessions are on. */
+export async function listTeamProjectIds(teamId: string): Promise<string[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("projects").select("id").eq("team_id", teamId);
+  if (error) throw error;
+  return (data ?? []).map((p) => p.id);
 }
 
 export async function getProject(id: string): Promise<Project | null> {
@@ -58,9 +71,42 @@ export async function getProject(id: string): Promise<Project | null> {
   return data ? toProject(data) : null;
 }
 
-/** Upsert the repositories returned by GitHub, keyed on (owner, repo id). */
+/** A GitHub repository as a project is made from it. */
+export type ProjectRepo = {
+  githubRepoId: number;
+  fullName: string;
+  owner: string;
+  name: string;
+  defaultBranch: string;
+  private: boolean;
+  language: string | null;
+  description: string | null;
+  htmlUrl: string;
+  pushedAt: string | null;
+};
+
+function projectRow(ownerId: string, teamId: string, r: ProjectRepo) {
+  return {
+    owner_id: ownerId,
+    team_id: teamId,
+    github_repo_id: r.githubRepoId,
+    full_name: r.fullName,
+    owner: r.owner,
+    name: r.name,
+    default_branch: r.defaultBranch,
+    is_private: r.private,
+    language: r.language,
+    description: r.description,
+    html_url: r.htmlUrl,
+    pushed_at: r.pushedAt,
+  };
+}
+
+/** Upsert the repositories returned by GitHub into a workspace (the user's
+ *  personal one, for their own sync), keyed on (team, repo id). */
 export async function upsertProjects(
   ownerId: string,
+  teamId: string,
   repos: Array<{
     githubRepoId: number;
     fullName: string;
@@ -80,20 +126,8 @@ export async function upsertProjects(
   const { error, count } = await supabase
     .from("projects")
     .upsert(
-      repos.map((r) => ({
-        owner_id: ownerId,
-        github_repo_id: r.githubRepoId,
-        full_name: r.fullName,
-        owner: r.owner,
-        name: r.name,
-        default_branch: r.defaultBranch,
-        is_private: r.private,
-        language: r.language,
-        description: r.description,
-        html_url: r.htmlUrl,
-        pushed_at: r.pushedAt,
-      })),
-      { onConflict: "owner_id,github_repo_id", count: "exact" },
+      repos.map((r) => projectRow(ownerId, teamId, r)),
+      { onConflict: "team_id,github_repo_id", count: "exact" },
     );
 
   if (error) throw error;
@@ -102,9 +136,12 @@ export async function upsertProjects(
 
 // --- workspaces ------------------------------------------------------------
 
+/** Live sessions the user can see: on one project, on a workspace's projects
+ *  (`projectIds`), or all of them. */
 export async function listWorkspaces(
-  projectId?: string,
+  scope: { projectId?: string; projectIds?: string[] } = {},
 ): Promise<Workspace[]> {
+  if (scope.projectIds?.length === 0) return [];
   const supabase = await createSupabaseServerClient();
   let query = supabase
     .from("workspaces")
@@ -112,7 +149,8 @@ export async function listWorkspaces(
     .neq("status", "destroyed")
     .order("last_active_at", { ascending: false, nullsFirst: false });
 
-  if (projectId) query = query.eq("project_id", projectId);
+  if (scope.projectId) query = query.eq("project_id", scope.projectId);
+  if (scope.projectIds) query = query.in("project_id", scope.projectIds);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -264,7 +302,9 @@ export async function transitionWorkspace(input: {
 
 // --- runtime computers -----------------------------------------------------
 
-/** The one Runtime Computer for a project, if it has been provisioned. */
+/** The caller's own Runtime Computer for a project, if provisioned: there is
+ *  one per project and member, and RLS shows each member only their own. For a
+ *  session someone else started, see {@link getSessionComputer}. */
 export async function getRuntimeComputerByProject(
   projectId: string,
 ): Promise<RuntimeComputer | null> {
@@ -415,6 +455,28 @@ export async function readRuntimeComputerSecret(
 
   if (error) throw error;
   return data?.agent_secret ?? null;
+}
+
+/**
+ * The Runtime Computer a session runs on, with its secret, whoever started the
+ * session. Service role, because only its owner can read a computer's row:
+ * call it only with a workspace already read through the caller's session
+ * (getWorkspace), which proves they may see it. What they may do with it is
+ * the route's to check.
+ */
+export async function getSessionComputer(
+  workspace: Pick<Workspace, "projectId" | "ownerId">,
+): Promise<{ computer: RuntimeComputer; secret: string } | null> {
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("runtime_computers")
+    .select("*")
+    .eq("project_id", workspace.projectId)
+    .eq("owner_id", workspace.ownerId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.agent_secret ? { computer: toRuntimeComputer(data), secret: data.agent_secret } : null;
 }
 
 // --- jobs ------------------------------------------------------------------

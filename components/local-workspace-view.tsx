@@ -71,6 +71,8 @@ function asWorkspace(session: LocalSession): Workspace {
   return {
     id: session.workspaceId,
     projectId: LOCAL_PROJECT,
+    // Only this Mac's user acts in a local session.
+    ownerId: "local",
     provider: "local",
     // A local session is always openable: attaching starts (or continues) it.
     status: "ready",
