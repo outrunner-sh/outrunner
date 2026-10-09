@@ -16,7 +16,7 @@ insert into projects (owner_id, github_repo_id, full_name, owner, name)
 values ('22222222-2222-2222-2222-222222222222', 84,
         'other/runtime', 'other', 'runtime');
 
--- 1. A repo may be synced only once per owner.
+-- 1. A repo may be synced only once per team (here, a personal one).
 do $$
 begin
   insert into projects (owner_id, github_repo_id, full_name, owner, name)
@@ -27,16 +27,15 @@ exception when unique_violation then
   raise notice 'ok: duplicate repo rejected';
 end $$;
 
--- 2. A workspace cannot reference a project belonging to another owner.
+-- 2. A workspace's project must exist. (Who may start a session on which
+-- project is RLS's to decide: see the team assertions below.)
 do $$
-declare other_project_id uuid;
 begin
-  select id into other_project_id from projects where owner_id = '22222222-2222-2222-2222-222222222222';
   insert into workspaces (owner_id, project_id, branch)
-  values ('11111111-1111-1111-1111-111111111111', other_project_id, 'cross-owner');
-  raise exception 'FAIL: workspace accepted another owner''s project';
+  values ('11111111-1111-1111-1111-111111111111', gen_random_uuid(), 'no-project');
+  raise exception 'FAIL: workspace accepted a project that doesn''t exist';
 exception when foreign_key_violation then
-  raise notice 'ok: cross-owner project rejected';
+  raise notice 'ok: a session needs a real project';
 end $$;
 
 -- 3. Only one live workspace per (project, branch).
@@ -378,4 +377,410 @@ begin
     raise exception 'FAIL: a deleted account''s project survived';
   end if;
   raise notice 'ok: an account''s personal team goes with it';
+end $$;
+
+-- --- Team access (20261009140000_team_access.sql) ---------------------------
+-- Acme (3333): user 1 owns it, user 2 is an admin (from 19). Add a member (5),
+-- a viewer (6) and someone outside it (7).
+insert into auth.users (id, email)
+values ('55555555-5555-5555-5555-555555555555', 'member@example.com'),
+       ('66666666-6666-6666-6666-666666666666', 'viewer@example.com'),
+       ('77777777-7777-7777-7777-777777777777', 'outsider@example.com');
+insert into team_members (team_id, user_id, role)
+values ('33333333-3333-3333-3333-333333333333', '55555555-5555-5555-5555-555555555555', 'member'),
+       ('33333333-3333-3333-3333-333333333333', '66666666-6666-6666-6666-666666666666', 'viewer');
+insert into user_profiles (user_id, github_login)
+values ('55555555-5555-5555-5555-555555555555', 'member-gh'),
+       ('77777777-7777-7777-7777-777777777777', 'outsider-gh');
+do $$ begin
+  perform set_config('test.acme_project', id::text, false) from projects
+  where team_id = '33333333-3333-3333-3333-333333333333' and github_repo_id = 9;
+end $$;
+-- Signed-in users call auth.uid() in Supabase; claim_runtime_computer runs as
+-- the caller, so the stand-in role needs that too.
+grant usage on schema auth to authed;
+
+set role authed;
+
+-- 21. A team's members see its projects; no one else does.
+set request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+do $$
+begin
+  if not exists (select 1 from projects where id = current_setting('test.acme_project')::uuid) then
+    raise exception 'FAIL: a viewer can''t see the team''s project';
+  end if;
+  raise notice 'ok: members see their team''s projects';
+end $$;
+set request.jwt.claim.sub = '77777777-7777-7777-7777-777777777777';
+do $$
+begin
+  if exists (select 1 from projects where id = current_setting('test.acme_project')::uuid) then
+    raise exception 'FAIL: an outsider sees a team''s project';
+  end if;
+  raise notice 'ok: outsiders don''t';
+end $$;
+
+-- 22. Members start sessions on a team's project; viewers and outsiders can't.
+set request.jwt.claim.sub = '55555555-5555-5555-5555-555555555555';
+insert into workspaces (owner_id, project_id, branch)
+values ('55555555-5555-5555-5555-555555555555', current_setting('test.acme_project')::uuid, 'member-session');
+
+set request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+do $$
+begin
+  insert into workspaces (owner_id, project_id, branch)
+  values ('66666666-6666-6666-6666-666666666666', current_setting('test.acme_project')::uuid, 'viewer-session');
+  raise exception 'FAIL: a viewer started a session';
+exception when insufficient_privilege then
+  raise notice 'ok: members start sessions, viewers can''t';
+end $$;
+set request.jwt.claim.sub = '77777777-7777-7777-7777-777777777777';
+do $$
+begin
+  insert into workspaces (owner_id, project_id, branch)
+  values ('77777777-7777-7777-7777-777777777777', current_setting('test.acme_project')::uuid, 'outsider-session');
+  raise exception 'FAIL: an outsider started a session on a team''s project';
+exception when insufficient_privilege then
+  raise notice 'ok: outsiders can''t start one';
+end $$;
+
+-- 23. Teammates see each other's sessions; outsiders don't.
+do $$
+begin
+  if exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: an outsider sees a team''s session';
+  end if;
+end $$;
+set request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+do $$
+begin
+  if not exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: a viewer can''t see a teammate''s session';
+  end if;
+  raise notice 'ok: teammates see each other''s sessions';
+end $$;
+
+-- 24. A session is changed by its creator or the team's owners and admins,
+-- and keeps its creator.
+do $$
+begin
+  update workspaces set status = 'suspended' where branch = 'member-session';
+  if found then
+    raise exception 'FAIL: a viewer changed a teammate''s session';
+  end if;
+end $$;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$
+begin
+  update workspaces set status = 'suspended' where branch = 'member-session';
+  if not found then
+    raise exception 'FAIL: an admin couldn''t stop a member''s session';
+  end if;
+  update workspaces set owner_id = '22222222-2222-2222-2222-222222222222' where branch = 'member-session';
+  raise exception 'FAIL: a session''s creator was changed';
+exception when check_violation then
+  raise notice 'ok: creators and managers change a session, which keeps its creator';
+end $$;
+
+-- 25. Each member runs on a computer of their own, which no one else reads.
+set request.jwt.claim.sub = '55555555-5555-5555-5555-555555555555';
+do $$
+declare r record;
+begin
+  select * into r from claim_runtime_computer(current_setting('test.acme_project')::uuid, 'member-secret');
+  if not r.should_provision then
+    raise exception 'FAIL: a member''s first claim didn''t provision';
+  end if;
+end $$;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+declare
+  r record;
+  n integer;
+begin
+  select * into r from claim_runtime_computer(current_setting('test.acme_project')::uuid, 'owner-secret');
+  if not r.should_provision then
+    raise exception 'FAIL: the owner was handed the member''s computer';
+  end if;
+  select count(*) into n from runtime_computers where project_id = current_setting('test.acme_project')::uuid;
+  if n <> 1 then
+    raise exception 'FAIL: the owner sees % computers on the project, not just their own', n;
+  end if;
+  raise notice 'ok: one computer per member, readable by its owner only';
+end $$;
+set request.jwt.claim.sub = '66666666-6666-6666-6666-666666666666';
+do $$
+begin
+  perform claim_runtime_computer(current_setting('test.acme_project')::uuid, 'viewer-secret');
+  raise exception 'FAIL: a viewer got a computer';
+exception when raise_exception then
+  raise notice 'ok: viewers get no computer';
+end $$;
+
+-- 26. Teammates see each other's profiles; no one else's.
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+declare n integer;
+begin
+  select count(*) into n from user_profiles where github_login = 'member-gh';
+  if n <> 1 then
+    raise exception 'FAIL: a teammate''s profile is hidden';
+  end if;
+  select count(*) into n from user_profiles where github_login = 'outsider-gh';
+  if n <> 0 then
+    raise exception 'FAIL: an outsider''s profile leaked';
+  end if;
+  raise notice 'ok: profiles are visible to teammates only';
+end $$;
+
+-- 27. Renaming and inviting are for owners and admins; admins invite members
+-- and viewers, owners invite admins too; nobody is invited as owner or into a
+-- personal team.
+set request.jwt.claim.sub = '55555555-5555-5555-5555-555555555555';
+do $$
+begin
+  perform rename_team('33333333-3333-3333-3333-333333333333', 'Mine now');
+  raise exception 'FAIL: a member renamed the team';
+exception when insufficient_privilege then
+  raise notice 'ok: members can''t rename';
+end $$;
+do $$
+begin
+  perform create_team_invite('33333333-3333-3333-3333-333333333333', 'member', repeat('m', 40));
+  raise exception 'FAIL: a member invited someone';
+exception when insufficient_privilege then
+  raise notice 'ok: members can''t invite';
+end $$;
+
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+-- (A block that catches an error rolls back what it did, so what must stick
+-- runs in a block of its own.)
+do $$
+begin
+  perform rename_team('33333333-3333-3333-3333-333333333333', 'Acme Inc');
+  perform create_team_invite('33333333-3333-3333-3333-333333333333', 'member', repeat('a', 40));
+  perform create_team_invite('33333333-3333-3333-3333-333333333333', 'viewer', repeat('v', 40));
+end $$;
+do $$
+begin
+  perform create_team_invite('33333333-3333-3333-3333-333333333333', 'admin', repeat('x', 40));
+  raise exception 'FAIL: an admin invited an admin';
+exception when insufficient_privilege then
+  raise notice 'ok: admins rename and invite members and viewers, not admins';
+end $$;
+
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  perform create_team_invite('33333333-3333-3333-3333-333333333333', 'admin', repeat('b', 40));
+  begin
+    perform create_team_invite('33333333-3333-3333-3333-333333333333', 'owner', repeat('o', 40));
+    raise exception 'FAIL: an owner invite was made';
+  exception when check_violation then null;
+  end;
+  begin
+    perform create_team_invite(current_setting('test.personal_1')::uuid, 'member', repeat('p', 40));
+    raise exception 'FAIL: someone was invited into a personal team';
+  exception when check_violation then null;
+  end;
+  begin
+    perform create_team_invite('33333333-3333-3333-3333-333333333333', 'member', 'short');
+    raise exception 'FAIL: a guessable invite token was accepted';
+  exception when check_violation then null;
+  end;
+  raise notice 'ok: owners invite admins; no owner, personal or short-token invites';
+end $$;
+
+-- 28. An invite says what it's for, joins once, and not when expired or revoked.
+set request.jwt.claim.sub = '77777777-7777-7777-7777-777777777777';
+do $$
+declare
+  r record;
+  team uuid;
+begin
+  select * into r from team_invite_preview(repeat('a', 40));
+  if r.team_name is distinct from 'Acme Inc' or r.invite_role is distinct from 'member' then
+    raise exception 'FAIL: the preview said % / %', r.team_name, r.invite_role;
+  end if;
+  team := accept_team_invite(repeat('a', 40));
+  if team <> '33333333-3333-3333-3333-333333333333' or not is_team_member(team) then
+    raise exception 'FAIL: accepting didn''t join the team';
+  end if;
+  if (select role from team_members where team_id = team and user_id = auth.uid()) <> 'member' then
+    raise exception 'FAIL: joined with the wrong role';
+  end if;
+  if exists (select 1 from team_invite_preview(repeat('a', 40))) then
+    raise exception 'FAIL: a used invite still previews';
+  end if;
+  raise notice 'ok: an invite previews, then joins with its role';
+end $$;
+set request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
+do $$
+begin
+  perform accept_team_invite(repeat('a', 40));
+  raise exception 'FAIL: a used invite joined someone else';
+exception when no_data_found then
+  raise notice 'ok: an invite joins once';
+end $$;
+do $$
+begin
+  perform accept_team_invite(repeat('z', 40));
+  raise exception 'FAIL: a made-up token joined a team';
+exception when no_data_found then
+  raise notice 'ok: an unknown token joins nothing';
+end $$;
+
+reset role;
+update team_invites set expires_at = now() - interval '1 minute' where token_hash = sha256(convert_to(repeat('v', 40), 'UTF8'));
+set role authed;
+do $$
+begin
+  perform accept_team_invite(repeat('v', 40));
+  raise exception 'FAIL: an expired invite joined';
+exception when no_data_found then
+  raise notice 'ok: an expired invite doesn''t join';
+end $$;
+
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$
+declare invite uuid;
+begin
+  invite := create_team_invite('33333333-3333-3333-3333-333333333333', 'viewer', repeat('r', 40));
+  perform revoke_team_invite(invite);
+  if exists (select 1 from team_invite_preview(repeat('r', 40))) then
+    raise exception 'FAIL: a revoked invite still previews';
+  end if;
+  raise notice 'ok: a revoked invite is dead';
+end $$;
+
+-- 29. Invites are visible to the team's owners and admins only.
+do $$
+begin
+  if not exists (select 1 from team_invites where team_id = '33333333-3333-3333-3333-333333333333') then
+    raise exception 'FAIL: an admin can''t list invites';
+  end if;
+end $$;
+set request.jwt.claim.sub = '55555555-5555-5555-5555-555555555555';
+do $$
+begin
+  if exists (select 1 from team_invites) then
+    raise exception 'FAIL: a member sees invites';
+  end if;
+  raise notice 'ok: invites are for owners and admins';
+end $$;
+
+-- 30. Owners change roles, and a team always keeps an owner.
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$
+begin
+  perform set_team_member_role('33333333-3333-3333-3333-333333333333', '55555555-5555-5555-5555-555555555555', 'admin');
+  raise exception 'FAIL: an admin changed a role';
+exception when insufficient_privilege then
+  raise notice 'ok: only owners change roles';
+end $$;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  perform set_team_member_role('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'admin');
+  raise exception 'FAIL: the last owner stepped down';
+exception when check_violation then
+  raise notice 'ok: the last owner can''t step down';
+end $$;
+do $$
+begin
+  perform set_team_member_role('33333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222', 'owner');
+  perform set_team_member_role('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'admin');
+  raise notice 'ok: an owner hands over, then steps down';
+end $$;
+
+-- 31. Removing: owners remove anyone, admins members and viewers, anyone
+-- leaves, and the last owner stays.
+-- Now user 2 owns Acme; user 1 is an admin.
+do $$
+begin
+  perform remove_team_member('33333333-3333-3333-3333-333333333333', '66666666-6666-6666-6666-666666666666');
+  begin
+    perform remove_team_member('33333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222');
+    raise exception 'FAIL: an admin removed an owner';
+  exception when insufficient_privilege then null;
+  end;
+  raise notice 'ok: admins remove viewers, not owners';
+end $$;
+set request.jwt.claim.sub = '77777777-7777-7777-7777-777777777777';
+do $$
+begin
+  perform remove_team_member('33333333-3333-3333-3333-333333333333', '77777777-7777-7777-7777-777777777777');
+  if is_team_member('33333333-3333-3333-3333-333333333333') then
+    raise exception 'FAIL: leaving didn''t';
+  end if;
+  raise notice 'ok: members leave';
+end $$;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$
+begin
+  perform remove_team_member('33333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222');
+  raise exception 'FAIL: the last owner left';
+exception when check_violation then
+  raise notice 'ok: the last owner can''t leave';
+end $$;
+
+-- 32. Anyone creates a team, which they own; only an owner deletes one, never
+-- a personal team, and its projects and sessions go with it.
+set request.jwt.claim.sub = '77777777-7777-7777-7777-777777777777';
+do $$
+declare team uuid;
+begin
+  team := create_team('  Side project  ');
+  if (select name from teams where id = team) <> 'Side project' then
+    raise exception 'FAIL: the name wasn''t trimmed';
+  end if;
+  if not has_team_role(team, array['owner']::team_role[]) then
+    raise exception 'FAIL: the creator doesn''t own the team';
+  end if;
+  begin
+    perform delete_team((select id from teams where personal and created_by = auth.uid()));
+    raise exception 'FAIL: a personal team was deleted';
+  exception when check_violation then null;
+  end;
+  raise notice 'ok: anyone creates a team they own; personal teams stay';
+end $$;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  perform delete_team('33333333-3333-3333-3333-333333333333');
+  raise exception 'FAIL: an admin deleted the team';
+exception when insufficient_privilege then
+  raise notice 'ok: admins don''t delete teams';
+end $$;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$
+begin
+  perform delete_team('33333333-3333-3333-3333-333333333333');
+end $$;
+reset role;
+do $$
+begin
+  if exists (select 1 from teams where id = '33333333-3333-3333-3333-333333333333')
+     or exists (select 1 from projects where id = current_setting('test.acme_project')::uuid)
+     or exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: a deleted team left rows behind';
+  end if;
+  raise notice 'ok: an owner deletes a team, and its projects and sessions go with it';
+end $$;
+
+-- 33. A team's project outlives the account that added it.
+insert into teams (id, name, created_by)
+values ('88888888-8888-8888-8888-888888888888', 'Keeps', '11111111-1111-1111-1111-111111111111');
+insert into team_members (team_id, user_id, role)
+values ('88888888-8888-8888-8888-888888888888', '11111111-1111-1111-1111-111111111111', 'owner'),
+       ('88888888-8888-8888-8888-888888888888', '55555555-5555-5555-5555-555555555555', 'admin');
+insert into projects (owner_id, team_id, github_repo_id, full_name, owner, name)
+values ('55555555-5555-5555-5555-555555555555', '88888888-8888-8888-8888-888888888888', 11, 'k/p', 'k', 'p');
+delete from auth.users where id = '55555555-5555-5555-5555-555555555555';
+do $$
+begin
+  if not exists (select 1 from projects where github_repo_id = 11 and owner_id is null) then
+    raise exception 'FAIL: a team''s project went with the account that added it';
+  end if;
+  raise notice 'ok: a team''s project outlives whoever added it';
 end $$;
