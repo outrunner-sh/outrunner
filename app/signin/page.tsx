@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { Terminal } from "lucide-react";
 
 import { SignInButton } from "@/components/signin-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
@@ -10,7 +9,7 @@ export const dynamic = "force-dynamic";
 /** Human-readable copy for the error codes `/auth/callback` can return. */
 const ERROR_MESSAGES: Record<string, string> = {
   not_owner:
-    "That GitHub account is not the owner of this Runtime. Only the configured owner can sign in.",
+    "That GitHub account can't sign in here. Only the configured owner can.",
   missing_code: "Sign-in did not complete. Please try again.",
   exchange_failed: "Could not verify the sign-in with GitHub. Please try again.",
   access_denied: "Sign-in was cancelled.",
@@ -38,10 +37,13 @@ export default async function SignInPage({
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-xs space-y-8">
-        <div className="flex items-center justify-center gap-2 font-mono text-sm">
-          <Terminal className="size-4" />
-          <span className="font-semibold tracking-tight">outrunner</span>
+      <div className="w-full max-w-xs space-y-10">
+        {/* The home screen's wordmark, so signing in already looks like the app. */}
+        <div className="space-y-3 text-center">
+          <p aria-hidden className="select-none font-display text-6xl leading-none text-foreground/25">
+            outrunner
+          </p>
+          <h1 className="text-sm text-muted-foreground">Sign in to run your coding agents.</h1>
         </div>
 
         {message && (

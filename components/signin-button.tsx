@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { LoadingButton } from "@/components/ui/loading-button";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -84,19 +83,15 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
   return (
     <div className="space-y-2">
-      <Button
-        onClick={signIn}
-        disabled={loading}
-        size="lg"
-        className="w-full border-0 bg-neutral-900 text-white hover:bg-neutral-800"
-      >
-        {loading ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <GitHubMark />
-        )}
-        Continue with GitHub
-      </Button>
+      {/* The app's primary button (light on dark), not near-black on black. */}
+      <LoadingButton
+        size="default"
+        status={loading ? "pending" : "idle"}
+        labels={{ idle: "Continue with GitHub", pending: "Opening GitHub" }}
+        icon={<GitHubMark />}
+        onClick={() => void signIn()}
+        className="w-full"
+      />
       {error && <p className="text-destructive text-xs">{error}</p>}
     </div>
   );

@@ -85,7 +85,7 @@ async function completeTransition(input: {
 }
 
 function lifecycleError(action: LifecycleAction): string {
-  return `Could not ${action} this workspace. Check Runtime setup and try again.`;
+  return `Could not ${action} this workspace. Check Outrunner's setup and try again.`;
 }
 
 /** Resume, suspend, or permanently destroy a persisted workspace. */
@@ -97,7 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) {
     return NextResponse.json(
-      { error: "Sign in as the Runtime owner." },
+      { error: "Sign in to Outrunner first." },
       { status: 401 },
     );
   }
@@ -133,7 +133,7 @@ export async function POST(request: Request, context: RouteContext) {
   // Daytona-backed Runtime provides them. Legacy providers can't.
   if (action === "archive" || action === "restore") {
     return NextResponse.json(
-      { error: "Archive and restore are only supported on Runtime workspaces." },
+      { error: "Archive and restore are only supported on Runtime Computer workspaces." },
       { status: 409 },
     );
   }
@@ -631,7 +631,7 @@ function lifecycleConflict() {
 function lifecycleReconciliationRequired(action: LifecycleAction) {
   return NextResponse.json(
     {
-      error: `${action[0].toUpperCase()}${action.slice(1)} completed, but Runtime could not save its final state. Refresh before trying another action.`,
+      error: `${action[0].toUpperCase()}${action.slice(1)} completed, but Outrunner could not save its final state. Refresh before trying another action.`,
     },
     { status: 503 },
   );

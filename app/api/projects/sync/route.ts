@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   const owner = await getOwner();
   if (!owner) {
     return NextResponse.json(
-      { error: "Sign in as the Runtime owner." },
+      { error: "Sign in to Outrunner first." },
       { status: 401 },
     );
   }
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
 
     console.error("Repository sync failed", error);
     return NextResponse.json(
-      { error: "Could not save repositories. Check Runtime setup and try again." },
+      { error: "Could not save repositories. Check Outrunner's setup and try again." },
       { status: 500 },
     );
   }

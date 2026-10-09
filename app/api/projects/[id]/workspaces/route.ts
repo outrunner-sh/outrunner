@@ -50,7 +50,7 @@ function safeErrorMessage(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && error.code === "23505") {
     return "A live workspace already uses that branch for this project.";
   }
-  return "Could not create the workspace. Check Runtime setup and try again.";
+  return "Could not create the workspace. Check Outrunner's setup and try again.";
 }
 
 /** Create one local worktree from a Runtime project. */
@@ -62,7 +62,7 @@ export async function POST(request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) {
     return NextResponse.json(
-      { error: "Sign in as the Runtime owner." },
+      { error: "Sign in to Outrunner first." },
       { status: 401 },
     );
   }
@@ -116,7 +116,7 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error("Runtime provider is unavailable", error);
     return NextResponse.json(
-      { error: "The configured Runtime provider is not available." },
+      { error: "The configured provider is not available." },
       { status: 503 },
     );
   }
@@ -242,13 +242,13 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       await updateWorkspace(workspace.id, {
         status: "failed",
-        errorMessage: "Provisioning failed. Check Runtime setup and try again.",
+        errorMessage: "Provisioning failed. Check Outrunner's setup and try again.",
       });
     } catch (updateError) {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
     }
     return NextResponse.json(
-      { error: "Could not create the workspace. Check Runtime setup and try again." },
+      { error: "Could not create the workspace. Check Outrunner's setup and try again." },
       { status: 500 },
     );
   }
