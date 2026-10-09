@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowUp, Check, ChevronDown, FileText, Hammer, Loader2, Plus, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { ArrowUp, Check, ChevronDown, FileText, Plus, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   DropdownMenu,
@@ -11,8 +11,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
+import { attachNotice } from "@/lib/runtime/attachments";
 import { matchModel, modelLabel, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
+import { cn } from "@/lib/utils";
 
 /**
  * The prompt composer pinned at the bottom of the conversation column. Sending
@@ -37,13 +40,18 @@ export type ModelChoice = {
 export function SessionComposer({
   onSend,
   canSend,
+  placeholder = "Ask anything, / for commands, @ for context…",
   disabledPlaceholder = "Read-only — another viewer has the keyboard",
   model,
   modelChoice,
   allowAttachments = true,
 }: {
-  onSend: (text: string, attachmentIds: string[]) => void;
+  /** Send a prompt. When it returns a promise of whether the send landed, a
+   *  failed send gives the text and files back to the composer. */
+  onSend: (text: string, attachmentIds: string[]) => void | Promise<boolean>;
   canSend: boolean;
+  /** Placeholder shown while the user can type. */
+  placeholder?: string;
   /** Placeholder shown when input is disabled (offline, reader, connecting…). */
   disabledPlaceholder?: string;
   /** The Claude model in use, shown in the footer. Omitted before any assistant
@@ -56,21 +64,61 @@ export function SessionComposer({
   allowAttachments?: boolean;
 }) {
   const [value, setValue] = useState("");
+  const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // dragenter/dragleave fire for every child the pointer crosses; the outline
+  // follows the count, so it does not flicker on the way across.
+  const dragDepth = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachments = useAttachments();
 
+  // A notice says something once, then gets out of the way.
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   // A prompt of only attachments is legitimate — "here's a screenshot".
   const hasSomethingToSend = value.trim() !== "" || attachments.readyIds.length > 0;
 
+  /** Stage files, or say why they cannot be (attachNotice). */
+  function addFiles(files: File[]) {
+    if (files.length === 0) return;
+    const blocked = attachNotice({ allowed: allowAttachments, canSend, skipped: 0 });
+    if (blocked) {
+      setNotice(blocked);
+      return;
+    }
+    setNotice(attachNotice({ allowed: true, canSend: true, skipped: attachments.add(files) }));
+  }
+
   function submit() {
-    if (!canSend || !hasSomethingToSend || attachments.busy) return;
-    onSend(value.trim(), attachments.readyIds);
+    if (!canSend || sending || !hasSomethingToSend || attachments.busy) return;
+    const text = value.trim();
+    const result = onSend(text, attachments.readyIds);
     setValue("");
-    attachments.clear();
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
+    if (!result) {
+      attachments.clear();
+      return;
+    }
+    // The files stay on show until the send lands; a failed one gives the
+    // text back too, so nothing typed is lost.
+    setSending(true);
+    void result
+      .then((landed) => {
+        if (landed) {
+          attachments.clear();
+        } else {
+          setValue((current) => current || text);
+          textareaRef.current?.focus();
+        }
+      })
+      .finally(() => setSending(false));
   }
 
   return (
@@ -80,24 +128,37 @@ export function SessionComposer({
         event.preventDefault();
         submit();
       }}
+      onDragEnter={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        dragDepth.current += 1;
+        if (canSend && allowAttachments) setDragging(true);
+      }}
       onDragOver={(event) => {
         // A file dropped where it cannot be attached must still be caught:
         // left to the browser, the drop navigates the page to the file and
         // away from the session. Text drags are left alone.
         if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
-        if (canSend && allowAttachments) setDragging(true);
       }}
-      onDragLeave={() => setDragging(false)}
+      onDragLeave={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
+      }}
       onDrop={(event) => {
         if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
+        dragDepth.current = 0;
         setDragging(false);
-        if (!canSend || !allowAttachments) return;
-        void attachments.add(Array.from(event.dataTransfer.files));
+        addFiles(Array.from(event.dataTransfer.files));
       }}
       style={dragging ? { outline: "1px dashed currentColor", outlineOffset: 4 } : undefined}
     >
+      {notice && (
+        <p role="status" className="studio-composer-notice">
+          {notice}
+        </p>
+      )}
       {attachments.items.length > 0 && (
         <ul className="flex flex-wrap gap-2 px-1 pb-2">
           {attachments.items.map((item) => (
@@ -122,7 +183,7 @@ export function SessionComposer({
                 {item.status === "error" ? (item.error ?? "Failed") : item.filename}
               </span>
               {item.status === "uploading" && (
-                <Loader2 className="size-3 shrink-0 animate-spin" />
+                <Spinner className="size-3 shrink-0" />
               )}
               <button
                 type="button"
@@ -141,11 +202,7 @@ export function SessionComposer({
         ref={textareaRef}
         value={value}
         rows={1}
-        placeholder={
-          canSend
-            ? "Ask anything, / for commands, @ for context…"
-            : disabledPlaceholder
-        }
+        placeholder={canSend ? placeholder : disabledPlaceholder}
         aria-label="Message Claude"
         spellCheck={false}
         disabled={!canSend}
@@ -159,13 +216,15 @@ export function SessionComposer({
           // Pasted screenshots arrive as files on the clipboard. Only intercept
           // when there are some, so ordinary text paste is untouched.
           const files = Array.from(event.clipboardData.files);
-          if (files.length > 0 && allowAttachments) {
+          if (files.length > 0) {
             event.preventDefault();
-            void attachments.add(files);
+            addFiles(files);
           }
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
+          // Not while an input method is composing: there, Enter confirms the
+          // characters (Japanese, Chinese…) rather than sending half a prompt.
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
             submit();
           }
@@ -179,7 +238,7 @@ export function SessionComposer({
             multiple
             hidden
             onChange={(event) => {
-              void attachments.add(Array.from(event.target.files ?? []));
+              addFiles(Array.from(event.target.files ?? []));
               // Reset so picking the same file twice still fires onChange.
               event.target.value = "";
             }}
@@ -195,11 +254,6 @@ export function SessionComposer({
               <Plus />
             </button>
           )}
-          <span className="studio-composer-tag">
-            <Hammer style={{ width: 12, marginRight: 4, display: "inline" }} />
-            Build
-            <ChevronDown style={{ width: 11, marginLeft: 2, display: "inline" }} />
-          </span>
           {modelChoice ? (
             <ModelPicker model={model} choice={modelChoice} />
           ) : (
@@ -209,7 +263,7 @@ export function SessionComposer({
         <button
           type="submit"
           className="studio-composer-send"
-          disabled={!canSend || !hasSomethingToSend || attachments.busy}
+          disabled={!canSend || sending || !hasSomethingToSend || attachments.busy}
           aria-label="Send"
         >
           <ArrowUp />
@@ -222,9 +276,8 @@ export function SessionComposer({
 /** The footer's model, as a menu of the models the session can switch to. */
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
   const current = matchModel(choice.groups, model);
-  const label = choice.switching
-    ? "Switching…"
-    : (current?.label ?? (model ? modelLabel(model) : "Model"));
+  const name = current?.label ?? (model ? modelLabel(model) : "Model");
+  const label = choice.switching ? "Switching model" : name;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -235,8 +288,17 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
           title={choice.disabledReason ?? "Switch model"}
           aria-label={`Model: ${label}. Switch model`}
         >
-          {choice.switching && <Loader2 className="animate-spin" />}
-          {label}
+          {/* Both labels share one cell, so the footer holds still while the
+              name gives way to "Switching" and back. */}
+          <span className="grid place-items-center">
+            <span className={cn("col-start-1 row-start-1", choice.switching && "invisible")}>{name}</span>
+            <span
+              aria-hidden
+              className={cn("col-start-1 row-start-1 inline-flex items-center gap-1", !choice.switching && "invisible")}
+            >
+              <Spinner /> Switching
+            </span>
+          </span>
           <ChevronDown />
         </button>
       </DropdownMenuTrigger>

@@ -15,9 +15,9 @@ function localBranch(workspaceId: string): string {
 }
 
 /**
- * The new-session creation logic, shared by the full-page creator and the home
- * modal so the fetch + navigate lives in one place. Owns the selected project
- * and the in-flight/error state; the caller supplies the layout.
+ * The new-session creation logic: the fetch + navigate, apart from the screen
+ * (NewSessionForm). Owns the selected project and the in-flight/error state;
+ * the caller supplies the layout.
  */
 export function useCreateSession(projects: Project[], initialProjectId?: string) {
   const router = useRouter();
@@ -30,9 +30,11 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
 
   const selected = projects.find((project) => project.id === projectId);
 
-  function create(prompt: string, attachmentIds: string[] = []) {
-    if (!selected) return;
-    startCreating(async () => {
+  /** Create a cloud session and open it. Resolves false when it could not be
+   *  created (the message says why), so the composer keeps the prompt. */
+  function create(prompt: string, attachmentIds: string[] = []): Promise<boolean> {
+    if (!selected) return Promise.resolve(false);
+    return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
       let response: Response;
@@ -45,7 +47,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           body: JSON.stringify({ branch: "" }),
         });
       } catch {
-        setMessage("Could not reach Runtime. Please try again.");
+        setMessage("Could not reach Outrunner. Please try again.");
+        resolve(false);
         return;
       }
       const result = (await response.json().catch(() => ({}))) as CreateResponse;
@@ -54,6 +57,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         // The server names the page that fixes it, when one does (a missing
         // GitHub grant is fixed by signing in again, not in Settings).
         if (result.settingsHref) setMessageHref(result.settingsHref);
+        resolve(false);
         return;
       }
       const params = new URLSearchParams();
@@ -62,7 +66,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       const query = params.size > 0 ? `?${params}` : "";
       router.push(`/workspaces/${result.workspace.id}${query}`);
       router.refresh();
-    });
+      resolve(true);
+    }));
   }
 
   /**
@@ -71,8 +76,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    * when it is not a repository) — about a second — and opens it. Claude starts
    * there, as the session page attaches, so there is nothing else to wait for.
    */
-  function createLocal(prompt: string, folder: LocalFolder) {
-    startCreating(async () => {
+  function createLocal(prompt: string, folder: LocalFolder): Promise<boolean> {
+    return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
       const workspaceId = crypto.randomUUID();
@@ -88,11 +93,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         });
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Could not start the local session.");
+        resolve(false);
         return;
       }
       const query = prompt.trim() ? `?${new URLSearchParams({ prompt: prompt.trim() })}` : "";
       router.push(`/local/${workspaceId}${query}`);
-    });
+      resolve(true);
+    }));
   }
 
   return { projectId, setProjectId, selected, isCreating, message, messageHref, create, createLocal };
