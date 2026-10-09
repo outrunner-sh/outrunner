@@ -13,6 +13,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { onlyItsCreator } from "@/lib/runtime/session-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,8 @@ export async function POST(request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
+  const notCreator = onlyItsCreator(workspace, owner.id, "send it prompts");
+  if (notCreator) return notCreator;
 
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);

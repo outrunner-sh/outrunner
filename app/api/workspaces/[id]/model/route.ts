@@ -15,6 +15,7 @@ import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { offeredModel, setModelRequest } from "@/lib/runtime/session-models";
+import { onlyItsCreator } from "@/lib/runtime/session-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,8 @@ export async function POST(request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
+  const notCreator = onlyItsCreator(workspace, owner.id, "switch its model");
+  if (notCreator) return notCreator;
 
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);

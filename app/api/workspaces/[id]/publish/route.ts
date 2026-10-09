@@ -17,6 +17,7 @@ import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { onlyItsCreator } from "@/lib/runtime/session-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,8 @@ export async function POST(request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
+  const notCreator = onlyItsCreator(workspace, owner.id, "publish it");
+  if (notCreator) return notCreator;
   if (workspace.status !== "ready" && workspace.status !== "idle") {
     return NextResponse.json(
       { error: "The workspace must be ready before it can be published." },

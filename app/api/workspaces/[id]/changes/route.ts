@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getRuntimeComputerByProject, getWorkspace } from "@/lib/db/repositories";
+import { getSessionComputer, getWorkspace } from "@/lib/db/repositories";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 
@@ -37,7 +37,8 @@ export async function GET(request: Request, context: RouteContext) {
 
   try {
     if (provider instanceof DaytonaRuntimeProvider) {
-      const computer = await getRuntimeComputerByProject(workspace.projectId);
+      // The session's own computer, also when a teammate is looking.
+      const computer = (await getSessionComputer(workspace))?.computer;
       if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
         return NextResponse.json(
           { error: "The interactive worktree is not available yet." },

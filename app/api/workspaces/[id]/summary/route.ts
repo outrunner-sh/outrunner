@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import {
-  getRuntimeComputerByProject,
-  getWorkspace,
-  readRuntimeComputerSecret,
-} from "@/lib/db/repositories";
+import { getSessionComputer, getWorkspace } from "@/lib/db/repositories";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
@@ -47,22 +43,20 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (!computer || !computer.daytonaSandboxId) {
+  // The session's own computer, also when a teammate is looking.
+  const session = await getSessionComputer(workspace);
+  if (!session?.computer.daytonaSandboxId) {
     return NextResponse.json(
       { error: "This project has no Runtime Computer." },
       { status: 409 },
     );
   }
-
-  const secret = await readRuntimeComputerSecret(computer.id);
-  if (!secret) {
-    return NextResponse.json({ error: "Runtime Computer secret missing." }, { status: 500 });
-  }
+  const { computer, secret } = session;
+  const sandboxId = session.computer.daytonaSandboxId;
 
   let target;
   try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+    target = await provider.agentTarget(sandboxId, secret);
   } catch (error) {
     console.error(`Summary: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(

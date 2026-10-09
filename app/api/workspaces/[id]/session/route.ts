@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import {
-  getRuntimeComputerByProject,
-  getWorkspace,
-  readRuntimeComputerSecret,
-} from "@/lib/db/repositories";
+import { getSessionComputer, getWorkspace } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { sessionAccessFor } from "@/lib/runtime/session-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -58,13 +55,16 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (!computer || !computer.daytonaSandboxId) {
+  // The session's own computer: a teammate watching attaches to its creator's.
+  const session = await getSessionComputer(workspace);
+  if (!session?.computer.daytonaSandboxId) {
     return NextResponse.json(
       { error: "This project has no Runtime Computer. Create a workspace first." },
       { status: 409 },
     );
   }
+  const { computer, secret } = session;
+  const sandboxId = session.computer.daytonaSandboxId;
   if (computer.status !== "ready") {
     return NextResponse.json(
       { error: `Runtime Computer is ${computer.status}; try again shortly.` },
@@ -72,14 +72,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const secret = await readRuntimeComputerSecret(computer.id);
-  if (!secret) {
-    return NextResponse.json({ error: "Runtime Computer secret missing." }, { status: 500 });
-  }
-
   let target;
   try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+    target = await provider.agentTarget(sandboxId, secret);
   } catch (error) {
     console.error(`Session attach: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(
@@ -106,10 +101,11 @@ export async function POST(request: Request, context: RouteContext) {
     console.warn(`Session attach: summary fetch failed for ${workspace.id}`, error);
   }
 
-  const body: SessionUrls = {
-    ptyUrl: agent.ptyUrl(identity),
-    eventsUrl: agent.eventsUrl(identity),
-    ...(summary && { summary }),
-  };
+  // Its creator gets the terminal and the conversation; a teammate, the
+  // conversation alone, on a token the agent refuses for anything else.
+  const body: SessionUrls =
+    (await sessionAccessFor(workspace, owner.id)) === "act"
+      ? { ptyUrl: agent.ptyUrl(identity), eventsUrl: agent.eventsUrl(identity), ...(summary && { summary }) }
+      : { eventsUrl: agent.eventsUrl({ ...identity, readOnly: true }), ...(summary && { summary }) };
   return NextResponse.json(SessionUrls.parse(body));
 }

@@ -7,10 +7,10 @@ import {
   deleteWorkspaceSnapshots,
   getProject,
   getRuntimeComputerByProject,
+  getSessionComputer,
   getWorkspace,
   listWorkspaceSnapshots,
   markRuntimeComputerStoppedIfReady,
-  readRuntimeComputerSecret,
   transitionWorkspace,
   updateWorkspace,
 } from "@/lib/db/repositories";
@@ -19,6 +19,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { sessionAccessFor } from "@/lib/runtime/session-guard";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
@@ -119,6 +120,22 @@ export async function POST(request: Request, context: RouteContext) {
   const workspace = await getWorkspace(id);
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
+  }
+
+  // Its creator does anything to a session; the workspace's owners and admins
+  // may also stop or remove one. Archiving, restoring and resuming carry its
+  // creator's snapshots and computer, so they stay the creator's.
+  const access = await sessionAccessFor(workspace, owner.id);
+  if (access !== "act" && !(access === "manage" && (action === "suspend" || action === "destroy"))) {
+    return NextResponse.json(
+      {
+        error:
+          access === "manage"
+            ? `Only the person who started this session can ${action} it.`
+            : "Only the person who started this session, or the workspace's owners and admins, can change it.",
+      },
+      { status: 403 },
+    );
   }
 
   const resolution = resolveProvider(workspace);
@@ -349,13 +366,13 @@ async function daytonaAgent(
   provider: DaytonaRuntimeProvider,
   userId: string,
 ): Promise<{ agent: AgentClient; identity: WorkspaceIdentity }> {
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (!computer?.daytonaSandboxId || computer.status !== "ready") {
+  // The session's own computer: an admin stopping a teammate's acts on theirs.
+  const session = await getSessionComputer(workspace);
+  if (!session?.computer.daytonaSandboxId || session.computer.status !== "ready") {
     throw new Error("Runtime Computer is not available.");
   }
-  const secret = await readRuntimeComputerSecret(computer.id);
-  if (!secret) throw new Error("Runtime Computer secret is missing.");
-  const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+  const { computer, secret } = session;
+  const target = await provider.agentTarget(session.computer.daytonaSandboxId, secret);
   return {
     agent: new AgentClient(target),
     identity: {

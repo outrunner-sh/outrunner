@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { teamRole } from "@/lib/db/teams";
 import {
   createWorkspaceRow,
   getProject,
@@ -19,6 +20,7 @@ import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-ser
 import type { ProvisionPhase } from "@/lib/runtime/types";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
+import { runsSessions } from "@/lib/teams/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +73,12 @@ export async function POST(request: Request, context: RouteContext) {
   const project = await getProject(id);
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  }
+  if (!runsSessions(await teamRole(project.teamId, owner.id))) {
+    return NextResponse.json(
+      { error: "Viewers watch sessions. Ask an owner or admin to make you a member to start one." },
+      { status: 403 },
+    );
   }
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
