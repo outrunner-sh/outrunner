@@ -16,10 +16,9 @@
 
 const KEYS_URL = "https://openrouter.ai/api/v1/keys";
 
-/** What each user may spend on Neev AI before there is billing, in USD. */
+/** What each user may spend on Neev AI before there is billing, in USD: once,
+ *  in total. The key is created with limit_reset null, OpenRouter's "no reset". */
 export const NEEV_AI_LIMIT_USD = 5;
-/** The allowance renews at midnight UTC on the 1st of each month. */
-export const NEEV_AI_LIMIT_RESET = "monthly";
 
 /** Neither key is configured (or OpenRouter refused the management key), so
  *  Outrunner's models are unavailable. */
@@ -75,7 +74,7 @@ export async function createUserKey(name: string): Promise<CreatedKey> {
     body: JSON.stringify({
       name,
       limit: NEEV_AI_LIMIT_USD,
-      limit_reset: NEEV_AI_LIMIT_RESET,
+      limit_reset: null,
     }),
   });
   // OpenRouter refusing the management key itself (a revoked one, or an
