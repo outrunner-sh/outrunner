@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  asSentence,
   canRemove,
   invitableRoles,
   managesTeam,
@@ -68,4 +69,11 @@ test("the workspace shown is the one picked last, else the personal one", () => 
 
 test("workspaces list personal first, then by name", () => {
   assert.deepEqual(sortTeams([beta, personal, acme]).map((t) => t.id), ["p", "a", "b"]);
+});
+
+test("the database's refusals read as the app's sentences", () => {
+  assert.equal(asSentence("only owners invite admins"), "Only owners invite admins.");
+  assert.equal(asSentence("a workspace keeps at least one owner"), "A workspace keeps at least one owner.");
+  assert.equal(asSentence("Already a sentence."), "Already a sentence.");
+  assert.equal(asSentence(""), "");
 });

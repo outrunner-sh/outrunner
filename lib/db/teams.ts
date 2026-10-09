@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 
 import { githubLogin } from "@/lib/auth/allowlist";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
-import { pickTeam, sortTeams, type Team, type TeamRole } from "@/lib/teams/roles";
+import { asSentence, pickTeam, sortTeams, type Team, type TeamRole } from "@/lib/teams/roles";
 
 /**
  * Workspaces people share (teams, in the database). Reads go through RLS, so
@@ -50,7 +50,7 @@ export class TeamActionError extends Error {
  *  a rule it would break (23514), or nothing to act on (P0002). */
 function refused(error: { code?: string; message: string }): never {
   const status = error.code === "42501" ? 403 : error.code === "23514" ? 409 : error.code === "P0002" ? 404 : 0;
-  if (status) throw new TeamActionError(status, error.message);
+  if (status) throw new TeamActionError(status, asSentence(error.message));
   throw error;
 }
 

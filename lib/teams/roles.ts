@@ -72,3 +72,11 @@ export function pickTeam(teams: Team[], picked: string | undefined): Team | null
 export function sortTeams(teams: Team[]): Team[] {
   return [...teams].sort((a, b) => Number(b.personal) - Number(a.personal) || a.name.localeCompare(b.name));
 }
+
+/** The database's terse "only owners invite admins" as the app writes its
+ *  messages: "Only owners invite admins." */
+export function asSentence(message: string): string {
+  const text = message.trim();
+  if (!text) return text;
+  return `${text[0].toUpperCase()}${text.slice(1)}${/[.!?]$/.test(text) ? "" : "."}`;
+}
