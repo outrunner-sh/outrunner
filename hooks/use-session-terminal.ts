@@ -8,7 +8,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type RefObject,
 } from "react";
 
 import { openTerminal, type TerminalAttachment } from "@/lib/runtime/session-client";
@@ -39,13 +38,15 @@ type WsPhase = "idle" | "open" | "closed";
 /**
  * Mounts an xterm.js instance into the container and keeps it attached to the
  * workspace's PTY across reconnects. The xterm instance lives for the lifetime
- * of the container; only the WebSocket is torn down and rebuilt on token
+ * of the container element (an element, not a ref, so a container that mounts
+ * after the hook does, such as one portalled into another panel, still gets
+ * one); only the WebSocket is torn down and rebuilt on token
  * refresh or transient disconnect. This is what makes the 5-min token TTL
  * invisible to the user.
  */
 export function useSessionTerminal(
   attachment: SessionAttachment,
-  containerRef: RefObject<HTMLDivElement | null>,
+  container: HTMLDivElement | null,
   /**
    * Whether to actually hold the PTY WebSocket. The jcode engine has no PTY, so
    * its `/pty` socket closes on connect; left enabled, `onClose` → `reconnect()`
@@ -75,7 +76,6 @@ export function useSessionTerminal(
   // Own the xterm instance — it survives WS reconnects so local scrollback
   // persists across every 5-min token refresh.
   useEffect(() => {
-    const container = containerRef.current;
     if (!container) return;
 
     const term = new Terminal({
@@ -84,7 +84,7 @@ export function useSessionTerminal(
       fontFamily:
         "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
       fontSize: 13,
-      theme: { background: "#0b0b0b" },
+      theme: { background: "#000000" },
       scrollback: 5000,
     });
     const fit = new FitAddon();
@@ -113,7 +113,7 @@ export function useSessionTerminal(
       terminalRef.current = null;
       fitRef.current = null;
     };
-  }, [containerRef]);
+  }, [container]);
 
   // Reattach the WebSocket whenever fresh URLs arrive. Do NOT rebuild xterm.
   useEffect(() => {
@@ -149,8 +149,10 @@ export function useSessionTerminal(
       handle.dispose();
       handleRef.current = null;
     };
-    // attachId changes on every successful refresh -> reattach.
-  }, [attachId, attachmentStatus, enabled, reconnect, urls?.ptyUrl]);
+    // attachId changes on every successful refresh -> reattach. `container`
+    // too: the xterm effect above (which runs first) only has a terminal once
+    // the container exists, which can be after the URLs arrive.
+  }, [attachId, attachmentStatus, container, enabled, reconnect, urls?.ptyUrl]);
 
   // The agent is authoritative for writer election. Avoid accepting keystrokes
   // that it would discard, and make reader mode an actual read-only terminal.

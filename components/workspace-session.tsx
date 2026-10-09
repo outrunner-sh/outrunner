@@ -2,23 +2,30 @@
 
 import "@xterm/xterm/css/xterm.css";
 
-import { RefreshCw, TerminalSquare, Users } from "lucide-react";
+import { ChevronRight, RefreshCw, TerminalSquare, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { localAgentRequest, localTarget, messageForLocalError } from "@/lib/desktop/local-runtime";
+import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
+import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { MODEL_GROUPS, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
+import { cn } from "@/lib/utils";
 
 export function WorkspaceSession({
   workspaceId,
   local = false,
   showTerminal,
+  onToggleTerminal,
+  terminalSlot,
+  untitled = false,
   initialPrompt,
   initialAttachmentIds,
 }: {
@@ -28,13 +35,21 @@ export function WorkspaceSession({
   local?: boolean;
   /** Whether the collapsible live terminal is revealed (owned by the studio). */
   showTerminal: boolean;
+  onToggleTerminal: () => void;
+  /** Where the terminal docks: the bottom of the studio's Environment panel.
+   *  The terminal shares this session's attachment, so it is rendered here
+   *  and portalled there; null until the panel has mounted. */
+  terminalSlot: HTMLElement | null;
+  /** A cloud session with no title yet, which takes one from the first prompt
+   *  in its history (sessions from before titles were saved). */
+  untitled?: boolean;
   /** First prompt to send once the session accepts input (from /new). */
   initialPrompt?: string;
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
 }) {
   const router = useRouter();
-  const terminalContainer = useRef<HTMLDivElement>(null);
+  const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const attachment = useSessionAttachment(workspaceId, local);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
   const conversation = useConversationStream(attachment);
@@ -44,7 +59,11 @@ export function WorkspaceSession({
   // from the session attachment + conversation stream, not the terminal (which
   // stays available only as an optional shell panel).
   const [sendError, setSendError] = useState<string | null>(null);
-  const error = conversation.error ?? attachment.error ?? sendError;
+  // A broken connection outranks a failed send: reconnecting is the way out of
+  // it. A failed send or model switch is only dismissed — the composer already
+  // has the prompt back to send again.
+  const connectionError = conversation.error ?? attachment.error;
+  const error = connectionError ?? sendError;
   const refresh = () => {
     setSendError(null);
     attachment.refresh();
@@ -77,6 +96,14 @@ export function WorkspaceSession({
       });
     }
     setSendError(null);
+    // It didn't go: say why, and drop its bubble, which would otherwise stay on
+    // screen for good once a resend of the same text lands in its place. The
+    // composer gets the text back (it awaits the `false`).
+    const failed = (message: string) => {
+      setPending((prev) => prev.filter((p) => p.id !== pendingId));
+      setSendError(message);
+      return false;
+    };
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -85,26 +112,23 @@ export function WorkspaceSession({
         { content: text },
       ).then(
         () => true,
-        (error: unknown) => {
-          // The error says it didn't go; a bubble left waiting would stay on
-          // screen for good once a resend of the same text lands in its place.
-          setPending((prev) => prev.filter((p) => p.id !== pendingId));
-          setSendError(error instanceof Error ? error.message : "Could not send that message.");
-          return false;
-        },
+        (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
       );
     }
     return fetch(`/api/workspaces/${workspaceId}/message`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content: text, attachmentIds }),
-    }).then(async (res) => {
-      if (!res.ok) return false;
-      // The first prompt just named this session: re-read the sidebar.
-      const body = (await res.json().catch(() => ({}))) as { titled?: boolean };
-      if (body.titled) router.refresh();
-      return true;
-    });
+    }).then(
+      async (res) => {
+        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
+        if (!res.ok) return failed(body.error ?? "Could not send that message.");
+        // The first prompt just named this session: re-read the sidebar.
+        if (body.titled) router.refresh();
+        return true;
+      },
+      () => failed("Could not reach Outrunner. Check your connection and send it again."),
+    );
   };
 
   // The model of the most recent assistant turn — shown in the composer so it
@@ -172,6 +196,29 @@ export function WorkspaceSession({
     return optimistic.length ? [...conversation.events, ...optimistic] : conversation.events;
   }, [conversation.events, pending]);
 
+  // An untitled session names itself after the first prompt in its history,
+  // once: the server sets a title only where there is none, so this can never
+  // rename a session, and a brand-new one titled by its first send just gets
+  // `titled: false` back.
+  const firstPrompt = untitled ? firstUserPrompt(conversation.events) : null;
+  const askedToName = useRef(false);
+  useEffect(() => {
+    if (!firstPrompt || askedToName.current) return;
+    askedToName.current = true;
+    fetch(`/api/workspaces/${workspaceId}/title`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: firstPrompt }),
+    })
+      .then(async (res) => {
+        const body = res.ok ? ((await res.json().catch(() => ({}))) as { titled?: boolean }) : {};
+        if (body.titled) router.refresh();
+      })
+      .catch(() => {
+        /* cosmetic: the session keeps its branch name until the next prompt */
+      });
+  }, [firstPrompt, workspaceId, router]);
+
   // Fire the /new first prompt exactly once, as soon as we hold the keyboard.
   const sentInitial = useRef(false);
   useEffect(() => {
@@ -203,44 +250,68 @@ export function WorkspaceSession({
       {error && (
         <div className="studio-session-error" role="alert">
           <span>{error}</span>
-          <button type="button" onClick={refresh}>Try again</button>
+          {connectionError ? (
+            <button type="button" onClick={refresh}>Reconnect</button>
+          ) : (
+            <button type="button" onClick={() => setSendError(null)}>Dismiss</button>
+          )}
         </div>
       )}
 
       <section className="studio-convo-panel" aria-label="Claude conversation">
         <div className="studio-convo-body">
-          <ConversationTimeline events={timelineEvents} />
+          <ConversationTimeline
+            events={timelineEvents}
+            placeholder={conversationPlaceholder({
+              events: timelineEvents.length,
+              attachment: attachment.status,
+              stream: conversation.status,
+            })}
+          />
         </div>
       </section>
 
-      <section
-        className={`studio-term-panel${showTerminal ? "" : " is-hidden"}`}
-        aria-label="Live Claude terminal"
-      >
-        <div className="studio-convo-head">
-          <span className="studio-convo-title">
-            <TerminalSquare /> Terminal
-          </span>
-          <span className="studio-terminal-role">
-            <Users /> {terminal.role}
-            <button
-              type="button"
-              onClick={refresh}
-              className="studio-term-reconnect"
-              title="Reconnect"
-            >
-              <RefreshCw />
-            </button>
-          </span>
-        </div>
-        <div ref={terminalContainer} className="studio-live-terminal" />
-        {terminal.exitCode !== null && (
-          <p className="studio-terminal-exit">
-            Claude exited with code {terminal.exitCode}. Reconnect or start a new
-            workspace to begin another session.
-          </p>
+      {terminalSlot &&
+        createPortal(
+          <section
+            className={cn("studio-env-terminal", showTerminal && "is-open")}
+            aria-label="Live Claude terminal"
+          >
+            <div className="studio-env-terminal-head">
+              <button
+                type="button"
+                onClick={onToggleTerminal}
+                aria-expanded={showTerminal}
+                title={showTerminal ? "Hide terminal" : "Show terminal"}
+                className="studio-env-terminal-toggle"
+              >
+                <TerminalSquare /> Terminal
+                <ChevronRight className={cn("transition-transform", showTerminal && "rotate-90")} />
+              </button>
+              {showTerminal && (
+                <span className="studio-terminal-role">
+                  <Users /> {terminal.role}
+                  <button
+                    type="button"
+                    onClick={refresh}
+                    className="studio-term-reconnect"
+                    title="Reconnect"
+                  >
+                    <RefreshCw />
+                  </button>
+                </span>
+              )}
+            </div>
+            <div ref={setTerminalContainer} className="studio-live-terminal" hidden={!showTerminal} />
+            {showTerminal && terminal.exitCode !== null && (
+              <p className="studio-terminal-exit">
+                Claude exited with code {terminal.exitCode}. Reconnect or start a new
+                workspace to begin another session.
+              </p>
+            )}
+          </section>,
+          terminalSlot,
         )}
-      </section>
 
       <SessionComposer
         onSend={send}
@@ -251,23 +322,6 @@ export function WorkspaceSession({
       />
     </div>
   );
-}
-
-/** Plain text of a message event's text blocks, trimmed to match how the agent
- *  records a typed prompt (Claude logs it as a string; the watcher trims it). */
-function messageText(event: AgentEvent): string {
-  if (event.t !== "message") return "";
-  return event.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text ?? "")
-    .join("")
-    .trim();
-}
-
-/** How many text-bearing user prompts the stream has recorded. Excludes Claude's
- *  tool-result turns, which are logged as role:"user" but carry no prompt text. */
-function userPromptCount(events: AgentEvent[]): number {
-  return events.filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "").length;
 }
 
 /** Switch a local session's model: a Neev AI model runs through OpenRouter on

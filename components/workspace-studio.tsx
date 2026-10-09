@@ -1,16 +1,10 @@
 "use client";
 
-import {
-  FileDiff,
-  MessageSquarePlus,
-  PanelRightClose,
-  TerminalSquare,
-  X,
-} from "lucide-react";
+import { MessageSquarePlus, PanelRight, PanelRightClose, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 
-import { WorkspaceChanges } from "@/components/workspace-changes";
 import { SessionComposer } from "@/components/session-composer";
+import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { WorkspaceSession } from "@/components/workspace-session";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -18,11 +12,13 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
-/** The session itself: chat in the middle, changes on the right. The app
- *  sidebar to its left belongs to the layout (app/(app)/layout.tsx). */
+/** The session itself: chat in the middle, its Environment (changes, branch,
+ *  pull request, terminal) on the right. The app sidebar to its left belongs
+ *  to the layout (app/(app)/layout.tsx). */
 export function WorkspaceStudio({
   workspace,
   local,
+  pullRequest,
   initialPrompt,
   initialAttachmentIds,
 }: {
@@ -30,7 +26,7 @@ export function WorkspaceStudio({
   /** Set for a local session, which runs on this Mac and is driven through the
    *  Outrunner app rather than the server. */
   local?: LocalSession;
-  /** Kept for the page contract; the Publish panel was removed from the studio. */
+  /** The session's pull request, shown in the Environment panel when there is one. */
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
   initialPrompt?: string;
@@ -40,7 +36,19 @@ export function WorkspaceStudio({
   const [rightOpen, setRightOpen] = useState(true);
   // The live terminal is tucked away by default; it is where Claude's own
   // prompts are answered — in a local session, every shell-command approval.
+  // (Collapsed also keeps its socket closed: see useSessionTerminal.)
   const [showTerminal, setShowTerminal] = useState(false);
+  // The bottom of the Environment panel, where the session docks its terminal.
+  const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
+  // The header's terminal button shows it even with the panel closed.
+  const toggleTerminalFromHeader = () => {
+    if (showTerminal && rightOpen) {
+      setShowTerminal(false);
+    } else {
+      setRightOpen(true);
+      setShowTerminal(true);
+    }
+  };
   const isLocal = local !== undefined;
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (workspace.provider === "daytona" || isLocal);
@@ -51,29 +59,32 @@ export function WorkspaceStudio({
       <section className="studio-chat">
         <header className="studio-chat-header">
           <div className="studio-title">
-            <span className={cn("studio-status", `is-${workspace.status}`)} />
-            <div>
-              <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
-              <p title={workspace.worktreePath || undefined}>
-                {local
-                  ? `${local.name} · ${local.inPlace ? "in place" : local.branch} · this Mac`
-                  : `${workspace.title ? `${workspace.branch} · ` : ""}${workspace.provider} worktree · ${workspace.status}`}
-              </p>
-            </div>
+            <span
+              className={cn("studio-status", `is-${workspace.status}`)}
+              title={workspace.status}
+              aria-label={`Session ${workspace.status}`}
+              role="img"
+            />
+            <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
           </div>
           <div className="studio-header-actions">
             {hasLiveSession && (
               <button
-                className={cn("studio-icon-button", showTerminal && "is-active")}
-                onClick={() => setShowTerminal((open) => !open)}
-                title={showTerminal ? "Hide terminal" : "Show terminal"}
-                aria-pressed={showTerminal}
+                className={cn("studio-icon-button", showTerminal && rightOpen && "is-active")}
+                onClick={toggleTerminalFromHeader}
+                title={showTerminal && rightOpen ? "Hide terminal" : "Show terminal"}
+                aria-pressed={showTerminal && rightOpen}
               >
                 <TerminalSquare />
               </button>
             )}
-            <button className="studio-icon-button" onClick={() => setRightOpen((open) => !open)} title="Toggle changes">
-              {rightOpen ? <PanelRightClose /> : <FileDiff />}
+            <button
+              className="studio-icon-button"
+              onClick={() => setRightOpen((open) => !open)}
+              title={rightOpen ? "Hide environment" : "Show environment"}
+              aria-pressed={rightOpen}
+            >
+              {rightOpen ? <PanelRightClose /> : <PanelRight />}
             </button>
           </div>
         </header>
@@ -83,6 +94,9 @@ export function WorkspaceStudio({
               workspaceId={workspace.id}
               local={isLocal}
               showTerminal={showTerminal}
+              onToggleTerminal={() => setShowTerminal((open) => !open)}
+              terminalSlot={terminalSlot}
+              untitled={!isLocal && !workspace.title}
               initialPrompt={initialPrompt}
               initialAttachmentIds={initialAttachmentIds}
             />
@@ -98,22 +112,22 @@ export function WorkspaceStudio({
           )}
       </section>
 
-      {rightOpen && (
-        <aside className="studio-inspector">
-          <div className="studio-inspector-tabs" aria-label="Workspace changes">
-            <span className="studio-inspector-label"><FileDiff /> Changes</span>
-            <button className="studio-close-inspector" onClick={() => setRightOpen(false)} title="Close inspector"><X /></button>
-          </div>
-          <div className="studio-inspector-content is-diff">
-            <WorkspaceChanges
-              workspaceId={workspace.id}
-              local={isLocal}
-              active={isReady}
-              baseBranch={workspace.baseBranch}
-            />
-          </div>
-        </aside>
-      )}
+      {/* Hidden rather than unmounted when closed: the terminal docked at its
+          foot keeps its scrollback. The rows above poll for changes, so they
+          mount only while it is open. */}
+      <aside className="studio-inspector studio-env" hidden={!rightOpen} aria-label="Environment">
+        {rightOpen && (
+          <WorkspaceEnvironment
+            workspace={workspace}
+            local={local}
+            pullRequest={pullRequest}
+            isReady={isReady}
+            terminalOpen={hasLiveSession && showTerminal}
+            onClose={() => setRightOpen(false)}
+          />
+        )}
+        <div ref={setTerminalSlot} className="studio-env-terminal-slot" />
+      </aside>
     </div>
   );
 }
@@ -136,8 +150,8 @@ function offlineCopy({
   if (isReady) {
     return {
       title: "Live session unavailable",
-      detail: "Live sessions require the Daytona Runtime provider.",
-      placeholder: "Live sessions require the Daytona Runtime provider",
+      detail: "Live sessions need the Daytona provider, which this server is not using.",
+      placeholder: "Live sessions need the Daytona provider",
     };
   }
   return {
