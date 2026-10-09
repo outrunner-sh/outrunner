@@ -12,7 +12,22 @@ import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessions";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
-import type { Workspace } from "@/lib/runtime/types";
+import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+
+/** Whether the sidebar is collapsed: a cookie, so the layout reads it on the
+ *  server and the first render already has the sidebar as it was left (kept in
+ *  localStorage, it opened wide and then snapped shut on every load). */
+export const SIDEBAR_COOKIE = "sidebar-collapsed";
+
+/** What deleting a session takes with it. */
+export type SessionDeletion =
+  /** A cloud session: its worktree on the Runtime Computer. */
+  | { kind: "cloud" }
+  /** A local session in a worktree: the worktree on this Mac; the branch stays
+   *  in the folder's repository, in case it holds unpushed work. */
+  | { kind: "local-worktree" }
+  /** A local session that edited its folder in place: only the record of it. */
+  | { kind: "local-in-place" };
 
 export type SidebarSession = {
   id: string;
@@ -20,7 +35,26 @@ export type SidebarSession = {
   title: string;
   /** When it was last active, for ordering and the time label. */
   at: string;
+  /** What deleting it would do; null while it cannot be deleted (a cloud
+   *  session still starting, or mid-way through another change). */
+  deletion: SessionDeletion | null;
 };
+
+/** Cloud statuses a session can be deleted from: the server's own list (the
+ *  lifecycle route's `destroyable`). */
+const DELETABLE: readonly WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
+
+/** What the delete confirmation says will happen. */
+export function deletionConsequence(deletion: SessionDeletion): string {
+  switch (deletion.kind) {
+    case "cloud":
+      return "Its worktree on the Runtime Computer is removed. Anything pushed to GitHub stays.";
+    case "local-worktree":
+      return "Its worktree on this Mac is removed. The branch stays in your repository.";
+    case "local-in-place":
+      return "Outrunner forgets the session. Your folder and its files are untouched.";
+  }
+}
 
 export type SidebarGroup = {
   /** Unique across both kinds: a repository id and a folder path never collide. */
@@ -56,6 +90,7 @@ export function buildSidebarGroups(
       href: `/workspaces/${w.id}`,
       title: workspaceLabel(w),
       at: recency(w),
+      deletion: DELETABLE.includes(w.status) ? { kind: "cloud" } : null,
     })),
   }));
   const local: SidebarGroup[] = groupLocalSessions(localSessions).map((group) => ({
@@ -71,6 +106,7 @@ export function buildSidebarGroups(
         title: localSessionLabel(s),
         // Last use, not creation: comparable with a cloud session's activity.
         at: s.lastActiveAt || s.createdAt,
+        deletion: s.inPlace ? { kind: "local-in-place" as const } : { kind: "local-worktree" as const },
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));
