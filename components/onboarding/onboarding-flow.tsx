@@ -9,19 +9,13 @@ import { Button } from "@/components/ui/button";
 import type { OnboardingEnv, OnboardingFolder, RunTarget } from "@/lib/onboarding/types";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["welcome", "where", "setup", "start"] as const;
+const STEPS = ["welcome", "where", "setup"] as const;
 type Step = (typeof STEPS)[number];
 
-const SUGGESTIONS = [
-  "Explain how this codebase is organised",
-  "Find a bug and fix it",
-  "Add tests for the most important code path",
-];
-
 /**
- * First run, in four steps: welcome, where sessions run, a live checklist for
- * that choice, and the first prompt. Each step asks only for what the choice
- * needs; nothing is collected that the user's first session won't use.
+ * First run, in three steps: welcome, where sessions run, and a live checklist
+ * for that choice that ends by starting the session itself, where the user
+ * types their first message. Each step asks only for what the choice needs.
  */
 export function OnboardingFlow({
   env,
@@ -37,7 +31,6 @@ export function OnboardingFlow({
   const [folder, setFolder] = useState<OnboardingFolder | null>(null);
   const [model, setModel] = useState<CloudModel>(null);
   const [repoIds, setRepoIds] = useState<string[]>([]);
-  const [prompt, setPrompt] = useState("");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,13 +42,12 @@ export function OnboardingFlow({
   const onReady = useCallback((value: boolean) => setReady(value), []);
 
   const start = async () => {
-    if (!target || !prompt.trim()) return;
+    if (!target) return;
     setStarting(true);
     setError(null);
     try {
       const href = await env.start({
         target,
-        prompt: prompt.trim(),
         ...(target === "mac" ? { folder: folder ?? undefined } : { repoIds, model: model ?? "neev" }),
       });
       // Leaving: keep the spinner up until the session page replaces this one.
@@ -154,45 +146,6 @@ export function OnboardingFlow({
                 onReady={onReady}
               />
             )}
-            <Nav onBack={() => go("where")} onNext={() => go("start")} nextDisabled={!ready} />
-          </section>
-        )}
-
-        {step === "start" && target && (
-          <section className="space-y-6">
-            <Heading
-              title="What should your first agent do?"
-              detail={
-                target === "mac"
-                  ? `On this Mac, in ${folder?.name ?? "your folder"}.`
-                  : `In the cloud, on ${repoIds.length === 1 ? "1 repository" : `${repoIds.length} repositories`}, with ${model === "claude" ? "your Claude" : "Neev AI models"}.`
-              }
-            />
-            <div className="border-border/60 bg-card/30 rounded-xl border p-3">
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void start();
-                }}
-                rows={4}
-                autoFocus
-                placeholder="Describe a task…"
-                className="w-full resize-none bg-transparent text-sm outline-none"
-              />
-              <div className="flex flex-wrap gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setPrompt(s)}
-                    className="border-border/60 text-muted-foreground hover:text-foreground hover:bg-accent/40 rounded-full border px-2.5 py-1 text-xs"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
             {starting && target === "cloud" && (
               <p className="text-muted-foreground text-sm">
                 Setting up your cloud machine. This takes about a minute the first time.
@@ -200,16 +153,17 @@ export function OnboardingFlow({
             )}
             {error && <p className="text-destructive text-sm">{error}</p>}
             <div className="flex items-center justify-between">
-              <Button variant="ghost" onClick={() => go("setup")} disabled={starting}>
+              <Button variant="ghost" onClick={() => go("where")} disabled={starting}>
                 <ArrowLeft className="size-4" /> Back
               </Button>
-              <Button onClick={() => void start()} disabled={starting || !prompt.trim()}>
+              <Button onClick={() => void start()} disabled={!ready || starting}>
                 {starting ? <Loader2 className="size-4 animate-spin" /> : null}
                 Start session
               </Button>
             </div>
           </section>
         )}
+
       </main>
     </div>
   );

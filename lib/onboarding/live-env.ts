@@ -157,7 +157,7 @@ export function liveEnv(user: OnboardingUser): OnboardingEnv {
 }
 
 /** Same as the new-session form's local start (use-create-session.ts). */
-async function startOnMac({ prompt, folder }: FirstSession): Promise<string> {
+async function startOnMac({ prompt = "", folder }: FirstSession): Promise<string> {
   if (!folder) throw new Error("Choose a folder first.");
   const workspaceId = crypto.randomUUID();
   await localAgentRequest(localTarget(workspaceId), "POST", "/workspaces", {
@@ -165,16 +165,17 @@ async function startOnMac({ prompt, folder }: FirstSession): Promise<string> {
     repoFullName: folder.name,
     branch: `runtime/${Date.now().toString(36)}-${workspaceId.slice(0, 8)}`,
     repoPath: folder.path,
-    title: Array.from(prompt).slice(0, 120).join(""),
+    // The first prompt names the session; without one the folder does.
+    ...(prompt ? { title: Array.from(prompt).slice(0, 120).join("") } : {}),
   });
-  return `/local/${workspaceId}?${new URLSearchParams({ prompt })}`;
+  return `/local/${workspaceId}${promptQuery(prompt)}`;
 }
 
 /**
  * Connect the chosen repositories, then start the session on the first one, as
  * the new-session form does (its sync and create calls).
  */
-async function startInCloud({ prompt, repoIds = [] }: FirstSession): Promise<string> {
+async function startInCloud({ prompt = "", repoIds = [] }: FirstSession): Promise<string> {
   if (repoIds.length === 0) throw new Error("Choose a repository first.");
   const synced = await fetch("/api/projects/sync", {
     method: "POST",
@@ -195,7 +196,12 @@ async function startInCloud({ prompt, repoIds = [] }: FirstSession): Promise<str
   if (!created.ok || !result.workspace) {
     throw new Error(result.error ?? "Could not start the session. Please try again.");
   }
-  return `/workspaces/${result.workspace.id}?${new URLSearchParams({ prompt })}`;
+  return `/workspaces/${result.workspace.id}${promptQuery(prompt)}`;
+}
+
+/** The session page sends `?prompt=` as the first message; none, no query. */
+function promptQuery(prompt: string): string {
+  return prompt ? `?${new URLSearchParams({ prompt })}` : "";
 }
 
 async function markOnboarded(): Promise<void> {

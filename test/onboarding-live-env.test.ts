@@ -106,3 +106,12 @@ test("skipping marks onboarding done and goes home", async () => {
   assert.equal(await liveEnv(user).skip!(), "/");
   assert.equal(calls.length, 1);
 });
+
+test("onboarding opens the cloud session with no first message", async () => {
+  stubFetch({
+    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-9", githubRepoId: 9 }] }],
+    "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-2" } }],
+    "POST /api/onboarding/complete": () => [200, { ok: true }],
+  });
+  assert.equal(await liveEnv(user).start({ target: "cloud", repoIds: ["9"] }), "/workspaces/w-2");
+});

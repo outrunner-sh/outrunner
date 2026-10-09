@@ -68,7 +68,8 @@ export type OnboardingEnv = {
 
 export type FirstSession = {
   target: RunTarget;
-  prompt: string;
+  /** A first message to send; onboarding opens the session without one. */
+  prompt?: string;
   /** This Mac: the folder chosen. */
   folder?: OnboardingFolder;
   /** Cloud: the repositories chosen; the session runs on the first. */
