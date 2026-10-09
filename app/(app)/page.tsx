@@ -4,6 +4,7 @@ import { HomeView } from "@/components/home-view";
 import { NewSessionCreator } from "@/components/new-session-creator";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { getOnboardingUser } from "@/lib/onboarding/server";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { newestFirst, recency } from "@/lib/nav/workspace-nav-groups";
 import type { Project } from "@/lib/runtime/types";
@@ -17,6 +18,13 @@ export default async function Home() {
 
   // Shared with the sidebar's read in app/(app)/layout.tsx: one query each.
   const workspaces = await listWorkspacesOnce();
+
+  // A new user starts with onboarding. Anyone with a session already is past
+  // it, marked or not.
+  if (workspaces.length === 0) {
+    const user = await getOnboardingUser().catch(() => null);
+    if (user && !user.onboardedAt) redirect("/onboarding");
+  }
 
   // Repositories feed the new-session picker. A failed load must not block the
   // create flow.
