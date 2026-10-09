@@ -531,3 +531,31 @@ begin
   delete from teams where id = team;
 end;
 $$;
+
+-- --- grants -----------------------------------------------------------------
+
+-- Supabase projects made since 2025 grant the API roles nothing on new tables
+-- and functions by default (older ones grant everything). Say what the app
+-- needs, so these work on either: signed-in users read (RLS decides which
+-- rows; every write is a function above), the server's service role does
+-- everything, and policies call the role helpers as the signed-in user.
+grant select on teams, team_members, team_invites, user_profiles to authenticated;
+grant select, insert, update, delete on teams, team_members, team_invites, user_profiles to service_role;
+grant execute on function
+  has_team_role(uuid, team_role[]),
+  is_team_member(uuid),
+  manages_team(uuid),
+  can_run_sessions(uuid),
+  project_team(uuid),
+  workspace_team(uuid),
+  shares_team(uuid),
+  create_team(text),
+  rename_team(uuid, text),
+  create_team_invite(uuid, team_role, text),
+  revoke_team_invite(uuid),
+  team_invite_preview(text),
+  accept_team_invite(text),
+  set_team_member_role(uuid, uuid, team_role),
+  remove_team_member(uuid, uuid),
+  delete_team(uuid)
+to authenticated, service_role;
