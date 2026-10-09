@@ -154,22 +154,28 @@ fn root_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".outrunner"))
 }
 
-/// The bundled agent: Tauri places the `binaries/runtime-agent` sidecar next to
-/// the app's own executable, in the bundle and under `tauri dev` alike.
-/// `OUTRUNNER_AGENT_BINARY` overrides it for development.
-fn agent_binary() -> Result<PathBuf, String> {
-    if let Ok(path) = std::env::var("OUTRUNNER_AGENT_BINARY") {
+/// A bundled sidecar: Tauri places `binaries/<name>` next to the app's own
+/// executable, in the bundle and under `tauri dev` alike. `override_var`
+/// replaces it for development.
+fn sidecar(override_var: &str, name: &str) -> Option<PathBuf> {
+    if let Ok(path) = std::env::var(override_var) {
         if !path.trim().is_empty() {
-            return Ok(PathBuf::from(path.trim()));
+            return Some(PathBuf::from(path.trim()));
         }
     }
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let path = exe.parent().ok_or("agent-missing")?.join("runtime-agent");
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err("agent-missing".into())
-    }
+    let path = std::env::current_exe().ok()?.parent()?.join(name);
+    path.is_file().then_some(path)
+}
+
+/// The bundled agent. `OUTRUNNER_AGENT_BINARY` overrides it.
+fn agent_binary() -> Result<PathBuf, String> {
+    sidecar("OUTRUNNER_AGENT_BINARY", "runtime-agent").ok_or_else(|| "agent-missing".into())
+}
+
+/// The bundled tmux, so local sessions need none installed on the Mac.
+/// `OUTRUNNER_TMUX_BINARY` overrides it.
+fn bundled_tmux() -> Option<PathBuf> {
+    sidecar("OUTRUNNER_TMUX_BINARY", "tmux")
 }
 
 fn spawn_agent() -> Result<Agent, String> {
@@ -199,6 +205,10 @@ fn spawn_agent() -> Result<Agent, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::from(log));
+    // Without it, the agent runs whatever tmux is on PATH.
+    if let Some(tmux) = bundled_tmux() {
+        command.env("RUNTIME_TMUX_BIN", tmux);
+    }
     let mut child = command.spawn().map_err(|error| format!("agent-spawn-failed: {error}"))?;
 
     // The agent announces its OS-assigned address on stdout. Keep draining
@@ -449,7 +459,10 @@ pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
             root: root_dir()?.to_string_lossy().into_owned(),
             agent_bundled: agent_binary().is_ok(),
             git: which("git"),
-            tmux: which("tmux"),
+            // The one the agent will run: the bundled copy before any on PATH.
+            tmux: bundled_tmux()
+                .map(|path| path.to_string_lossy().into_owned())
+                .or_else(|| which("tmux")),
             claude_logged_in: claude.as_deref().and_then(claude_logged_in),
             claude,
         })
