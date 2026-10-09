@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "ai.neev.outrunner",
   "build": {
-    "beforeDevCommand": "bun run agent && bun run dev",
+    "beforeDevCommand": "bun run sidecars && bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run agent && bun run build",
+    "beforeBuildCommand": "bun run sidecars && bun run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -38,7 +38,8 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/runtime-agent"
+      "binaries/runtime-agent",
+      "binaries/tmux"
     ]
   }
 }

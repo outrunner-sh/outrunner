@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "agent": "bash ../scripts/build-agent-desktop.sh",
+    "tmux": "bash ../scripts/build-tmux-desktop.sh",
+    "sidecars": "bun run agent && bun run tmux",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
