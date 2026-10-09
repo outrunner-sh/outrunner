@@ -5,8 +5,10 @@ import { PanelLeftOpen, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import type { SidebarPerson } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import type { Team } from "@/lib/teams/roles";
 import { cn } from "@/lib/utils";
 
 const COLLAPSE_KEY = "sidebar-collapsed";
@@ -21,14 +23,22 @@ const LEGACY_COLLAPSE_KEY = "home-sidebar-collapsed";
 export function AppFrame({
   projects,
   workspaces,
+  ownerId,
   ownerLogin,
   ownerAvatarUrl,
+  team,
+  teams,
+  people,
   children,
 }: {
   projects: NavProject[];
   workspaces: Workspace[];
+  ownerId: string;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
+  team: Team | null;
+  teams: Team[];
+  people: Record<string, SidebarPerson>;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -86,8 +96,12 @@ export function AppFrame({
           <AppSidebar
             projects={projects}
             workspaces={workspaces}
+            ownerId={ownerId}
             ownerLogin={ownerLogin}
             ownerAvatarUrl={ownerAvatarUrl}
+            team={team}
+            teams={teams}
+            people={people}
             onCollapse={() => setAndRemember(true)}
           />
         )}

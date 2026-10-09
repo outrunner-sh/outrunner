@@ -18,6 +18,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { HomeUserMenu } from "@/components/home-user-menu";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
 import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
@@ -28,9 +29,11 @@ import {
   newSessionHref,
   relativeTime,
   type SidebarGroup,
+  type SidebarPerson,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import { runsSessions, type Team } from "@/lib/teams/roles";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,14 +45,24 @@ import { cn } from "@/lib/utils";
 export function AppSidebar({
   projects,
   workspaces,
+  ownerId,
   ownerLogin,
   ownerAvatarUrl,
+  team,
+  teams,
+  people,
   onCollapse,
 }: {
   projects: NavProject[];
   workspaces: Workspace[];
+  ownerId: string;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
+  /** The workspace shown, and every one the user is in, for the switcher. */
+  team: Team | null;
+  teams: Team[];
+  /** The workspace's members by user id: who started a teammate's session. */
+  people: Record<string, SidebarPerson>;
   onCollapse: () => void;
 }) {
   const pathname = usePathname();
@@ -67,9 +80,10 @@ export function AppSidebar({
     refreshLocal();
   }, [pathname, refreshLocal]);
 
+  const canStart = team ? runsSessions(team.role) : true;
   const groups = useMemo(
-    () => buildSidebarGroups(projects, workspaces, local.sessions),
-    [projects, workspaces, local.sessions],
+    () => buildSidebarGroups(projects, workspaces, local.sessions, { userId: ownerId, people, canStart }),
+    [projects, workspaces, local.sessions, ownerId, people, canStart],
   );
   const shown = filterSidebarGroups(groups, query);
 
@@ -96,6 +110,8 @@ export function AppSidebar({
         </button>
       </div>
 
+      {team && <WorkspaceSwitcher team={team} teams={teams} />}
+
       <nav className="space-y-0.5" aria-label="Main">
         <NavLink href="/new" icon={<Plus />} label="New Session" active={pathname === "/new"} />
         <NavSoon icon={<Flag />} label="Runner" />
@@ -109,7 +125,7 @@ export function AppSidebar({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-2">
-          <h2 className="text-sm text-muted-foreground">Workspaces</h2>
+          <h2 className="text-sm text-muted-foreground">Projects</h2>
           <Link
             href="/new"
             aria-label="New session"
@@ -205,6 +221,7 @@ function WorkspaceGroup({
                 : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
             )}
           >
+            {session.by && <Starter person={session.by} />}
             <span className="min-w-0 flex-1 truncate">{session.title}</span>
             {/* The server's clock and the browser's differ by the render
                 delay, which can tip "59m" into "1h": not a real mismatch. */}
@@ -219,6 +236,23 @@ function WorkspaceGroup({
         );
       })}
     </div>
+  );
+}
+
+/** Who started a teammate's session: their avatar, their login on hover. */
+function Starter({ person }: { person: SidebarPerson }) {
+  const who = person.login ? `Started by @${person.login}` : "Started by a teammate";
+  return person.avatarUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element -- a GitHub avatar, sized by CSS
+    <img src={person.avatarUrl} alt={who} title={who} className="-ml-[22px] size-4 shrink-0 rounded-full" />
+  ) : (
+    <span
+      title={who}
+      aria-label={who}
+      className="-ml-[22px] grid size-4 shrink-0 place-items-center rounded-full bg-accent text-[9px] uppercase text-foreground"
+    >
+      {person.login?.slice(0, 1) ?? "?"}
+    </span>
   );
 }
 

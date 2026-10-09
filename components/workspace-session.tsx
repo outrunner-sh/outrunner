@@ -14,6 +14,7 @@ import { MODEL_GROUPS, setModelRequest, type SessionModel } from "@/lib/runtime/
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
+import type { SidebarPerson } from "@/lib/nav/sidebar";
 
 export function WorkspaceSession({
   workspaceId,
@@ -21,6 +22,7 @@ export function WorkspaceSession({
   showTerminal,
   initialPrompt,
   initialAttachmentIds,
+  watching,
 }: {
   workspaceId: string;
   /** A local session: everything then goes through the Outrunner app to the
@@ -32,6 +34,8 @@ export function WorkspaceSession({
   initialPrompt?: string;
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
+  /** A teammate's session, watched: the conversation, live, with no composer. */
+  watching?: SidebarPerson;
 }) {
   const router = useRouter();
   const terminalContainer = useRef<HTMLDivElement>(null);
@@ -242,13 +246,33 @@ export function WorkspaceSession({
         )}
       </section>
 
-      <SessionComposer
-        onSend={send}
-        canSend={canSend}
-        model={shownModel}
-        modelChoice={modelChoice}
-        allowAttachments={!local}
-      />
+      {watching ? (
+        <WatchingBar person={watching} />
+      ) : (
+        <SessionComposer
+          onSend={send}
+          canSend={canSend}
+          model={shownModel}
+          modelChoice={modelChoice}
+          allowAttachments={!local}
+        />
+      )}
+    </div>
+  );
+}
+
+/** In place of the composer, on a teammate's session. */
+function WatchingBar({ person }: { person: SidebarPerson }) {
+  const who = person.login ? `@${person.login}` : "a teammate";
+  return (
+    <div className="studio-composer flex items-center gap-2.5 px-4 py-3 text-sm text-muted-foreground" role="status">
+      {person.avatarUrl && (
+        // eslint-disable-next-line @next/next/no-img-element -- a GitHub avatar, sized by CSS
+        <img src={person.avatarUrl} alt="" className="size-5 rounded-full" />
+      )}
+      <span>
+        You&apos;re watching {who}&apos;s session. Only they can send it prompts.
+      </span>
     </div>
   );
 }

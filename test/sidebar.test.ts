@@ -18,6 +18,7 @@ function workspace(id: string, projectId: string, at: string, title: string | nu
   return {
     id,
     projectId,
+    ownerId: "user-1",
     provider: "daytona",
     status: "ready",
     phase: null,
@@ -281,4 +282,29 @@ test("a workspace's + opens /new on that repository or folder, unique per click"
   // Two clicks on the same + differ, so the form is rebuilt even on the same target.
   const start = { kind: "cloud", projectId: "p1" } as const;
   assert.notEqual(newSessionHref(start, "x"), newSessionHref(start, "y"));
+});
+
+test("a teammate's session names who started it; your own don't", () => {
+  const mine = workspace("w1", "p1", "2026-10-09T10:00:00Z");
+  const theirs = { ...workspace("w2", "p1", "2026-10-09T11:00:00Z"), ownerId: "user-2" };
+  const [group] = buildSidebarGroups([project("p1")], [mine, theirs], [], {
+    userId: "user-1",
+    people: { "user-2": { login: "sahin", avatarUrl: "https://a/s.png" } },
+    canStart: true,
+  });
+  const byId = Object.fromEntries(group.sessions.map((s) => [s.id, s]));
+  assert.deepEqual(byId.w2.by, { login: "sahin", avatarUrl: "https://a/s.png" });
+  assert.equal(byId.w1.by, undefined);
+});
+
+test("a teammate missing from the members list still shows as someone", () => {
+  const theirs = { ...workspace("w2", "p1", "2026-10-09T11:00:00Z"), ownerId: "left" };
+  const [group] = buildSidebarGroups([project("p1")], [theirs], [], { userId: "user-1", people: {}, canStart: true });
+  assert.deepEqual(group.sessions[0].by, { login: null, avatarUrl: null });
+});
+
+test("a viewer is offered no new cloud session", () => {
+  const theirs = { ...workspace("w2", "p1", "2026-10-09T11:00:00Z"), ownerId: "user-2" };
+  const [group] = buildSidebarGroups([project("p1")], [theirs], [], { userId: "user-1", people: {}, canStart: false });
+  assert.equal(group.start, null);
 });

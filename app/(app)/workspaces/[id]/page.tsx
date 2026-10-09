@@ -2,8 +2,10 @@ import { notFound, redirect } from "next/navigation";
 
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { getUserProfile } from "@/lib/db/teams";
 import { getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
 import { getProjectOnce } from "@/lib/db/request-cache";
+import { sessionAccessFor } from "@/lib/runtime/session-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +16,8 @@ export default async function WorkspacePage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ prompt?: string; attachment?: string | string[] }>;
 }) {
-  if (!(await getOwnerSafe())) redirect("/signin");
+  const owner = await getOwnerSafe();
+  if (!owner) redirect("/signin");
 
   const { id } = await params;
   const { prompt, attachment } = await searchParams;
@@ -26,14 +29,20 @@ export default async function WorkspacePage({
   if (!workspace) notFound();
   const project = await getProjectOnce(workspace.projectId);
   if (!project) notFound();
-  const pullRequest = await getWorkspacePullRequest(workspace.id);
+  const [pullRequest, access] = await Promise.all([
+    getWorkspacePullRequest(workspace.id),
+    sessionAccessFor(workspace, owner.id),
+  ]);
+  // A teammate's session: watched, with its creator named.
+  const creator = access === "act" ? null : await getUserProfile(workspace.ownerId).catch(() => null);
 
   return (
     <WorkspaceStudio
       workspace={workspace}
       pullRequest={pullRequest}
-      initialPrompt={prompt}
-      initialAttachmentIds={initialAttachmentIds}
+      initialPrompt={access === "act" ? prompt : undefined}
+      initialAttachmentIds={access === "act" ? initialAttachmentIds : []}
+      watching={access === "act" ? undefined : { login: creator?.githubLogin ?? null, avatarUrl: creator?.avatarUrl ?? null }}
     />
   );
 }

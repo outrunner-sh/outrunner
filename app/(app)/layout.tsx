@@ -1,8 +1,17 @@
 import { AppFrame } from "@/components/app-frame";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProjectOnce, listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import {
+  currentTeamOnce,
+  getProjectOnce,
+  listProjectsOnce,
+  listTeamMembersOnce,
+  listWorkspacesOnce,
+} from "@/lib/db/request-cache";
+import { listMyTeams, type TeamMember } from "@/lib/db/teams";
+import type { SidebarPerson } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Project, Workspace } from "@/lib/runtime/types";
+import type { Team } from "@/lib/teams/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   // The sidebar is auxiliary: a failed load shows an empty list, never an error
   // page in place of the session the user opened.
-  const [listed, workspaces] = await Promise.all([
+  const [listed, workspaces, team, teams, members] = await Promise.all([
     listProjectsOnce().catch((error: unknown): Project[] => {
       console.error("Sidebar: could not load repositories", error);
       return [];
@@ -30,15 +39,34 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       console.error("Sidebar: could not load workspaces", error);
       return [];
     }),
+    currentTeamOnce().catch((error: unknown): Team | null => {
+      console.error("Sidebar: could not load the workspace", error);
+      return null;
+    }),
+    listMyTeams(owner.id).catch((error: unknown): Team[] => {
+      console.error("Sidebar: could not load workspaces to switch to", error);
+      return [];
+    }),
+    listTeamMembersOnce().catch((error: unknown): TeamMember[] => {
+      console.error("Sidebar: could not load the workspace's members", error);
+      return [];
+    }),
   ]);
   const projects = await withSessionProjects(listed, workspaces);
+  const people: Record<string, SidebarPerson> = Object.fromEntries(
+    members.map((m) => [m.userId, { login: m.githubLogin, avatarUrl: m.avatarUrl }]),
+  );
 
   return (
     <AppFrame
       projects={projects}
       workspaces={workspaces}
+      ownerId={owner.id}
       ownerLogin={owner.githubLogin}
       ownerAvatarUrl={owner.avatarUrl}
+      team={team}
+      teams={teams}
+      people={people}
     >
       {children}
     </AppFrame>

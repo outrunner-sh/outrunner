@@ -14,12 +14,17 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
 
+/** How someone shows in the sidebar. */
+export type SidebarPerson = { login: string | null; avatarUrl: string | null };
+
 export type SidebarSession = {
   id: string;
   href: string;
   title: string;
   /** When it was last active, for ordering and the time label. */
   at: string;
+  /** Who started it, when that is someone else: a teammate's session. */
+  by?: SidebarPerson;
 };
 
 export type SidebarGroup = {
@@ -41,6 +46,9 @@ export function buildSidebarGroups(
   projects: NavProject[],
   workspaces: Workspace[],
   localSessions: LocalSession[],
+  /** Who is looking, and their teammates: sessions others started name them.
+   *  `canStart` false (a viewer) offers no new cloud sessions. */
+  viewer?: { userId: string; people: Record<string, SidebarPerson>; canStart: boolean },
 ): SidebarGroup[] {
   const known = new Set(projects.map((p) => p.id));
   const cloud: SidebarGroup[] = buildNavGroups(projects, workspaces).map(({ project, items }) => ({
@@ -50,12 +58,15 @@ export function buildSidebarGroups(
     local: false,
     // A placeholder group (buildNavGroups' fallbackProject) has no repository
     // behind it to create a session in.
-    start: known.has(project.id) ? { kind: "cloud", projectId: project.id } : null,
+    start: known.has(project.id) && viewer?.canStart !== false ? { kind: "cloud", projectId: project.id } : null,
     sessions: items.map((w) => ({
       id: w.id,
       href: `/workspaces/${w.id}`,
       title: workspaceLabel(w),
       at: recency(w),
+      ...(viewer && w.ownerId !== viewer.userId && {
+        by: viewer.people[w.ownerId] ?? { login: null, avatarUrl: null },
+      }),
     })),
   }));
   const local: SidebarGroup[] = groupLocalSessions(localSessions).map((group) => ({

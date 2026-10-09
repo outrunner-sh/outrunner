@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, Info, Palette, Sparkles, User } from "lucide-react";
+import { ChevronLeft, Info, Palette, Sparkles, User, Users } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const sections = [
   { href: "/settings/general", label: "General", icon: Info },
+  // The workspace open in the app: its people, roles and invites.
+  { href: "/settings/workspace", label: "Workspace", icon: Users },
   { href: "/settings/appearance", label: "Appearance", icon: Palette },
   { href: "/settings/account", label: "Account", icon: User },
   // Where a user connects their own Claude: a failed workspace create points

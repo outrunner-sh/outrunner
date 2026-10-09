@@ -15,6 +15,7 @@ import { WorkspaceSession } from "@/components/workspace-session";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
+import type { SidebarPerson } from "@/lib/nav/sidebar";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ export function WorkspaceStudio({
   local,
   initialPrompt,
   initialAttachmentIds,
+  watching,
 }: {
   workspace: Workspace;
   /** Set for a local session, which runs on this Mac and is driven through the
@@ -36,6 +38,9 @@ export function WorkspaceStudio({
   initialPrompt?: string;
   /** Attachment ids staged on the home composer, sent with the first prompt. */
   initialAttachmentIds?: string[];
+  /** Set for a teammate's session: who started it. Watched only: no terminal,
+   *  no prompts. */
+  watching?: SidebarPerson;
 }) {
   const [rightOpen, setRightOpen] = useState(true);
   // The live terminal is tucked away by default; it is where Claude's own
@@ -62,7 +67,7 @@ export function WorkspaceStudio({
             </div>
           </div>
           <div className="studio-header-actions">
-            {hasLiveSession && (
+            {hasLiveSession && !watching && (
               <button
                 className={cn("studio-icon-button", showTerminal && "is-active")}
                 onClick={() => setShowTerminal((open) => !open)}
@@ -82,9 +87,10 @@ export function WorkspaceStudio({
             <WorkspaceSession
               workspaceId={workspace.id}
               local={isLocal}
-              showTerminal={showTerminal}
+              showTerminal={showTerminal && !watching}
               initialPrompt={initialPrompt}
               initialAttachmentIds={initialAttachmentIds}
+              watching={watching}
             />
           ) : (
             <div className="studio-offline">
