@@ -215,3 +215,167 @@ exception when insufficient_privilege then
 end $$;
 
 reset role;
+
+-- 14. Every account gets one personal team, which it owns.
+do $$
+declare
+  n integer;
+  r team_role;
+begin
+  select count(*) into n from teams
+  where personal and created_by = '11111111-1111-1111-1111-111111111111';
+  if n <> 1 then
+    raise exception 'FAIL: % personal teams for a new account', n;
+  end if;
+  select m.role into r
+  from team_members m join teams t on t.id = m.team_id
+  where t.personal and t.created_by = '11111111-1111-1111-1111-111111111111'
+    and m.user_id = '11111111-1111-1111-1111-111111111111';
+  if r is distinct from 'owner' then
+    raise exception 'FAIL: the account is % of its personal team', r;
+  end if;
+  raise notice 'ok: a new account owns one personal team';
+end $$;
+
+-- 15. A project synced without a team lands in its owner's personal team.
+do $$
+begin
+  if not exists (
+    select 1 from projects p join teams t on t.id = p.team_id
+    where p.github_repo_id = 42 and t.personal
+      and t.created_by = '11111111-1111-1111-1111-111111111111'
+  ) then
+    raise exception 'FAIL: a project without a team was not put in its owner''s personal team';
+  end if;
+  raise notice 'ok: projects default to the owner''s personal team';
+end $$;
+
+-- 16. No one else joins a personal team.
+do $$
+begin
+  insert into team_members (team_id, user_id, role)
+  select id, '22222222-2222-2222-2222-222222222222', 'member' from teams
+  where personal and created_by = '11111111-1111-1111-1111-111111111111';
+  raise exception 'FAIL: someone else joined a personal team';
+exception when check_violation then
+  raise notice 'ok: a personal team has only its own user';
+end $$;
+
+-- A shared team: user 1 owns it, user 2 is a member.
+insert into teams (id, name, created_by)
+values ('33333333-3333-3333-3333-333333333333', 'Acme', '11111111-1111-1111-1111-111111111111');
+insert into team_members (team_id, user_id, role)
+values ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'owner'),
+       ('33333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222', 'member');
+do $$ begin
+  perform set_config('test.personal_1', id::text, false) from teams
+  where personal and created_by = '11111111-1111-1111-1111-111111111111';
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+-- 17. A user sees their own teams and their members, no one else's.
+do $$
+declare n integer;
+begin
+  select count(*) into n from teams;
+  if n <> 2 then
+    raise exception 'FAIL: user 2 sees % teams, not their personal one and Acme', n;
+  end if;
+  select count(*) into n from teams where id = current_setting('test.personal_1')::uuid;
+  if n <> 0 then
+    raise exception 'FAIL: RLS leaked another user''s personal team';
+  end if;
+  select count(*) into n from team_members where team_id = '33333333-3333-3333-3333-333333333333';
+  if n <> 2 then
+    raise exception 'FAIL: a member sees % of the team''s 2 members', n;
+  end if;
+  select count(*) into n from team_members where team_id = current_setting('test.personal_1')::uuid;
+  if n <> 0 then
+    raise exception 'FAIL: RLS leaked another team''s members';
+  end if;
+  raise notice 'ok: teams and members are visible to members only';
+end $$;
+
+-- 18. Teams and memberships change through the server only.
+do $$
+begin
+  insert into teams (name) values ('Mine');
+  raise exception 'FAIL: a user created a team directly';
+exception when insufficient_privilege then
+  raise notice 'ok: users can''t create teams directly';
+end $$;
+
+do $$
+begin
+  update team_members set role = 'owner'
+  where team_id = '33333333-3333-3333-3333-333333333333'
+    and user_id = '22222222-2222-2222-2222-222222222222';
+  if found then
+    raise exception 'FAIL: a member promoted themselves';
+  end if;
+  raise notice 'ok: members can''t change their role';
+end $$;
+
+-- 19. A project goes only into a team its owner runs: not someone else's,
+-- and not one they are only a member of.
+do $$
+begin
+  insert into projects (owner_id, team_id, github_repo_id, full_name, owner, name)
+  values ('22222222-2222-2222-2222-222222222222', current_setting('test.personal_1')::uuid,
+          7, 'a/b', 'a', 'b');
+  raise exception 'FAIL: a project was put in another user''s team';
+exception when insufficient_privilege then
+  raise notice 'ok: a project can''t be put in another user''s team';
+end $$;
+
+do $$
+begin
+  insert into projects (owner_id, team_id, github_repo_id, full_name, owner, name)
+  values ('22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333',
+          8, 'a/c', 'a', 'c');
+  raise exception 'FAIL: a member added a project to the team';
+exception when insufficient_privilege then
+  raise notice 'ok: a member can''t add a team''s projects';
+end $$;
+
+reset role;
+
+update team_members set role = 'admin'
+where team_id = '33333333-3333-3333-3333-333333333333'
+  and user_id = '22222222-2222-2222-2222-222222222222';
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+begin
+  insert into projects (owner_id, team_id, github_repo_id, full_name, owner, name)
+  values ('22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333',
+          9, 'a/d', 'a', 'd');
+  raise notice 'ok: an admin adds a project to the team';
+end $$;
+
+reset role;
+
+-- 20. Deleting an account deletes its personal team and what is in it.
+insert into auth.users (id, email)
+values ('44444444-4444-4444-4444-444444444444', 'gone@example.com');
+insert into projects (owner_id, github_repo_id, full_name, owner, name)
+values ('44444444-4444-4444-4444-444444444444', 10, 'g/h', 'g', 'h');
+delete from auth.users where id = '44444444-4444-4444-4444-444444444444';
+
+do $$
+declare n integer;
+begin
+  select count(*) into n from teams where name = 'Personal' and created_by is null;
+  if n <> 0 then
+    raise exception 'FAIL: % personal teams outlived their account', n;
+  end if;
+  select count(*) into n from projects where github_repo_id = 10;
+  if n <> 0 then
+    raise exception 'FAIL: a deleted account''s project survived';
+  end if;
+  raise notice 'ok: an account''s personal team goes with it';
+end $$;

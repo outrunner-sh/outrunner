@@ -68,6 +68,9 @@ export type LinearIssueRef = {
 type ProjectRow = {
   id: string;
   owner_id: string;
+  /** The team (a workspace, in the UI) it belongs to. Left out on insert, the
+   *  database puts it in the owner's personal team. */
+  team_id: string;
   github_repo_id: number;
   full_name: string;
   owner: string;
