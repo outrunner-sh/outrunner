@@ -62,23 +62,11 @@ pub struct ClaudeLoginState(
     pub Mutex<String>,
 );
 
-/// Locate the `claude` binary the way local sessions do: on the user's
-/// login-shell PATH, then the usual install prefixes.
-///
-/// A macOS GUI app inherits launchd's PATH, not the user's shell PATH, so a
-/// Homebrew or version-manager install is invisible to a bare
-/// `Command::new("claude")`. The login shell is asked once, with a deadline and
-/// markers around the answer, so a slow profile cannot hang this and a profile
-/// that prints a banner cannot garble the path. If that shell fails or runs
-/// out of time, the PATH this app inherited is still searched: launched from a
-/// terminal, it may be the only one that names a version-manager install.
-fn claude_binary() -> Option<PathBuf> {
-    let inherited = std::env::var_os("PATH").unwrap_or_default();
-    find_in(OsStr::new(&child_path(&inherited)), "claude")
-}
-
 /// The PATH `claude` runs with: the login-shell PATH local sessions use, then
-/// whatever this app inherited, for the same reason as above.
+/// whatever this app inherited. A macOS GUI app inherits launchd's PATH, not
+/// the user's shell's; launched from a terminal, the inherited one may be the
+/// only one that names a version-manager install (and the node an npm install
+/// of `claude` starts with).
 fn child_path(inherited: &OsStr) -> OsString {
     let mut dirs: Vec<PathBuf> = std::env::split_paths(crate::local_runtime::session_path()).collect();
     for dir in std::env::split_paths(inherited) {
@@ -87,12 +75,6 @@ fn child_path(inherited: &OsStr) -> OsString {
         }
     }
     std::env::join_paths(dirs).unwrap_or_default()
-}
-
-fn find_in(path: &OsStr, name: &str) -> Option<PathBuf> {
-    std::env::split_paths(path)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
 }
 
 /// Strip ANSI escape sequences and the OSC-8 hyperlink wrappers Claude Code
@@ -189,7 +171,20 @@ fn await_match<T>(
 pub async fn connect_claude_start(
     state: tauri::State<'_, ClaudeLoginState>,
 ) -> Result<String, String> {
-    start_login(&state, claude_binary().ok_or("claude-cli-not-found")?)
+    let claude = tauri::async_runtime::spawn_blocking(crate::local_runtime::find_claude)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|broken| missing_claude(&broken))?;
+    start_login(&state, claude)
+}
+
+/// The error for no `claude` that runs: none at all, or one installed but
+/// broken, named so the page can say which install to fix.
+fn missing_claude(broken: &[PathBuf]) -> String {
+    match broken.first() {
+        None => "claude-cli-not-found".into(),
+        Some(path) => format!("claude-cli-broken:{}", path.display()),
+    }
 }
 
 /// `connect_claude_start` with the binary given, so a test can stand in for
@@ -479,18 +474,23 @@ mod tests {
     }
 
     #[test]
-    fn claude_is_found_on_the_inherited_path_when_the_login_shell_misses_it() {
+    fn the_cli_runs_with_the_login_shell_path_then_the_inherited_one() {
         let dir = std::env::temp_dir().join(format!("outrunner-inherited-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        // A name only this directory has, so a real install cannot answer first.
-        std::fs::write(dir.join("claude-only-here"), "").unwrap();
         let path = child_path(dir.as_os_str());
         // The login-shell PATH comes first; the inherited directory is kept after it.
         assert!(path.to_string_lossy().ends_with(&*dir.to_string_lossy()), "{path:?}");
-        assert_eq!(find_in(&path, "claude-only-here"), Some(dir.join("claude-only-here")));
         // Nothing is added twice.
         assert_eq!(child_path(&path), path);
-        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn no_claude_that_runs_is_reported_by_whether_one_is_installed() {
+        assert_eq!(missing_claude(&[]), "claude-cli-not-found");
+        let broken = PathBuf::from("/Users/x/.nvm/versions/node/v22.21.0/bin/claude");
+        assert_eq!(
+            missing_claude(&[broken]),
+            "claude-cli-broken:/Users/x/.nvm/versions/node/v22.21.0/bin/claude"
+        );
     }
 
     #[test]
