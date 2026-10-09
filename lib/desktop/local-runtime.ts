@@ -217,9 +217,14 @@ export function messageForLocalError(error: unknown): string {
         ? `Claude Code couldn't log in. It said: ${said}`
         : "Claude Code couldn't log in. Run `claude` in Terminal and type /login.";
     }
-    case "agent":
+    case "agent": {
       // The agent's own message, e.g. a worktree that could not be created.
-      return raw.slice("agent:".length).trim() || "The local agent reported an error.";
+      const said = raw.slice("agent:".length).trim();
+      // Its answer for a session it has no folder for: deleted, or from
+      // another Mac.
+      if (said === "unknown workspace") return "This session isn't on this Mac any more. It may have been deleted.";
+      return said || "The local agent reported an error.";
+    }
     default:
       return raw || "The local session failed.";
   }

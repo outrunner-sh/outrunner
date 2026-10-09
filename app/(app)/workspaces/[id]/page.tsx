@@ -23,7 +23,8 @@ export default async function WorkspacePage({
   const initialAttachmentIds =
     attachment === undefined ? [] : Array.isArray(attachment) ? attachment : [attachment];
   const workspace = await getWorkspace(id);
-  if (!workspace) notFound();
+  // A deleted session keeps its row, marked destroyed: it is gone all the same.
+  if (!workspace || workspace.status === "destroyed") notFound();
   const project = await getProjectOnce(workspace.projectId);
   if (!project) notFound();
   const pullRequest = await getWorkspacePullRequest(workspace.id);

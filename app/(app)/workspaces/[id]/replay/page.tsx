@@ -21,7 +21,8 @@ export default async function WorkspaceReplayPage({
 
   const { id } = await params;
   const workspace = await getWorkspace(id);
-  if (!workspace) notFound();
+  // A deleted session keeps its row, marked destroyed: it is gone all the same.
+  if (!workspace || workspace.status === "destroyed") notFound();
   const project = await getProject(workspace.projectId);
   if (!project) notFound();
 

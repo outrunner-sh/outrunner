@@ -220,6 +220,17 @@ func (s *Service) worktreePath(id string) string {
 	return filepath.Join(s.Root, "workspaces", id)
 }
 
+// requireWorktree refuses a workspace whose folder is gone: deleted, or never
+// created here. tmux given a missing start directory silently starts in $HOME,
+// so a page reopening a deleted session would otherwise get Claude running in
+// the user's home folder.
+func (s *Service) requireWorktree(id string) error {
+	if _, err := os.Stat(s.worktreePath(id)); os.IsNotExist(err) {
+		return ErrUnknownWorkspace
+	}
+	return nil
+}
+
 // castDir holds a workspace's terminal cast, kept OUTSIDE the worktree so the
 // recording never pollutes the git tree (bundle/patch/changedFiles) it archives.
 func (s *Service) castDir(id string) string {
@@ -377,6 +388,9 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		s.tmux.HideStatus(ctx, name)
 		s.beginSummary(workspaceID, worktree)
 		return name, nil // already running
+	}
+	if err := s.requireWorktree(workspaceID); err != nil {
+		return "", err
 	}
 	env := claude.SessionEnv(s.env, anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
@@ -596,6 +610,9 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 		}
 		s.beginSummary(workspaceID, s.worktreePath(workspaceID))
 		return name, nil
+	}
+	if err := s.requireWorktree(workspaceID); err != nil {
+		return "", err
 	}
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)

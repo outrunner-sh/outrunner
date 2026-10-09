@@ -15,6 +15,7 @@ import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
 import { matchModel, modelLabel, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
+import { isImeKeydown } from "@/lib/session/composing";
 import { cn } from "@/lib/utils";
 
 /**
@@ -227,7 +228,7 @@ export function SessionComposer({
         onKeyDown={(event) => {
           // Not while an input method is composing: there, Enter confirms the
           // characters (Japanese, Chinese…) rather than sending half a prompt.
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+          if (event.key === "Enter" && !event.shiftKey && !isImeKeydown(event.nativeEvent)) {
             event.preventDefault();
             submit();
           }
