@@ -1,0 +1,157 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Lock, Search } from "lucide-react";
+
+import { ChecklistRow } from "@/components/onboarding/checklist-row";
+import { ConnectClaudeRow } from "@/components/onboarding/connect-claude-row";
+import { Button } from "@/components/ui/button";
+import type { OnboardingEnv, OnboardingRepo } from "@/lib/onboarding/types";
+
+export type CloudModel = "claude" | "neev" | null;
+
+/**
+ * Everything a cloud session needs: Claude connected (or, where offered, Neev
+ * AI models with nothing to set up) and the GitHub repositories it may work in.
+ */
+export function CloudSetup({
+  env,
+  model,
+  onModel,
+  repoIds,
+  onRepoIds,
+  onReady,
+}: {
+  env: OnboardingEnv;
+  model: CloudModel;
+  onModel: (model: CloudModel) => void;
+  repoIds: string[];
+  onRepoIds: (ids: string[]) => void;
+  onReady: (ready: boolean) => void;
+}) {
+  // Null until the stored connection has been checked.
+  const [checked, setChecked] = useState(false);
+  const [repos, setRepos] = useState<OnboardingRepo[] | null>(null);
+  const [repoError, setRepoError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    void env.claudeConnected().then((connected) => {
+      if (!live) return;
+      if (connected) onModel("claude");
+      setChecked(true);
+    });
+    env.listRepos().then(
+      (list) => {
+        if (live) setRepos(list);
+      },
+      (error: unknown) => {
+        if (!live) return;
+        setRepoError(error instanceof Error ? error.message : String(error));
+        setRepos([]);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [env, onModel]);
+
+  const ready = model !== null && repoIds.length > 0;
+  useEffect(() => onReady(ready), [ready, onReady]);
+
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (repos ?? []).filter((r) => !q || r.fullName.toLowerCase().includes(q));
+  }, [repos, query]);
+
+  const toggle = (id: string) =>
+    onRepoIds(repoIds.includes(id) ? repoIds.filter((x) => x !== id) : [...repoIds, id]);
+
+  return (
+    <div className="border-border/60 bg-card/30 overflow-hidden rounded-xl border">
+      {model === "neev" ? (
+        <ChecklistRow
+          state="done"
+          title="Neev AI models"
+          detail="Starting on Neev AI models. Connect Claude anytime in Settings."
+          action={
+            <Button size="sm" variant="ghost" onClick={() => onModel(null)}>
+              Change
+            </Button>
+          }
+        />
+      ) : (
+        <ConnectClaudeRow
+          env={env}
+          connected={model === "claude" ? true : checked ? false : null}
+          onConnected={() => onModel("claude")}
+        >
+          {env.neevForCloud && (
+            <button
+              type="button"
+              onClick={() => onModel("neev")}
+              className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-4"
+            >
+              Or start on Neev AI models, with nothing to set up
+            </button>
+          )}
+        </ConnectClaudeRow>
+      )}
+
+      <ChecklistRow
+        state={repos === null ? "working" : repoError ? "problem" : repoIds.length > 0 ? "done" : "todo"}
+        title="Choose repositories"
+        detail={
+          repos === null
+            ? "Loading the repositories your GitHub account can reach…"
+            : repoError
+              ? repoError
+              : repos.length === 0
+              ? "No repositories found on your GitHub account."
+              : repoIds.length > 0
+                ? `${repoIds.length} selected. You can add more later.`
+                : "Pick the ones to work in. You can add more later."
+        }
+      >
+        {repos !== null && repos.length > 0 && (
+          <div className="space-y-2">
+            {repos.length > 6 && (
+              <label className="border-border/60 bg-background/60 flex items-center gap-2 rounded-md border px-2.5">
+                <Search className="text-muted-foreground size-3.5" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search repositories"
+                  className="h-8 flex-1 bg-transparent text-sm outline-none"
+                />
+              </label>
+            )}
+            <ul className="border-border/60 max-h-56 overflow-y-auto rounded-md border">
+              {shown.map((repo) => {
+                const checked = repoIds.includes(repo.id);
+                return (
+                  <li key={repo.id} className="border-border/40 border-b last:border-b-0">
+                    <label className="hover:bg-accent/40 flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggle(repo.id)}
+                        className="accent-foreground size-3.5"
+                      />
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs">{repo.fullName}</span>
+                      {repo.private && <Lock className="text-muted-foreground size-3" aria-label="Private" />}
+                    </label>
+                  </li>
+                );
+              })}
+              {shown.length === 0 && (
+                <li className="text-muted-foreground px-3 py-3 text-xs">No repository matches “{query}”.</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </ChecklistRow>
+    </div>
+  );
+}
