@@ -30,7 +30,7 @@ export function OnboardingFlow({
   const [ready, setReady] = useState(false);
   const [folder, setFolder] = useState<OnboardingFolder | null>(null);
   const [model, setModel] = useState<CloudModel>(null);
-  const [repoIds, setRepoIds] = useState<string[]>([]);
+  const [repoId, setRepoId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,7 +48,7 @@ export function OnboardingFlow({
     try {
       const href = await env.start({
         target,
-        ...(target === "mac" ? { folder: folder ?? undefined } : { repoIds, model: model ?? "neev" }),
+        ...(target === "mac" ? { folder: folder ?? undefined } : { repoId: repoId ?? undefined, model: model ?? "neev" }),
       });
       // Leaving: keep the spinner up until the session page replaces this one.
       if (href) return onLeave?.(href);
@@ -131,7 +131,7 @@ export function OnboardingFlow({
               detail={
                 target === "mac"
                   ? "A few things local sessions need. Each one checks itself."
-                  : "Pick the AI and the repositories your sessions work in."
+                  : "Connect Claude and pick the repository to work in."
               }
             />
             {target === "mac" ? (
@@ -141,8 +141,8 @@ export function OnboardingFlow({
                 env={env}
                 model={model}
                 onModel={setModel}
-                repoIds={repoIds}
-                onRepoIds={setRepoIds}
+                repoId={repoId}
+                onRepoId={setRepoId}
                 onReady={onReady}
               />
             )}

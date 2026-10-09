@@ -18,15 +18,16 @@ export function CloudSetup({
   env,
   model,
   onModel,
-  repoIds,
-  onRepoIds,
+  repoId,
+  onRepoId,
   onReady,
 }: {
   env: OnboardingEnv;
   model: CloudModel;
   onModel: (model: CloudModel) => void;
-  repoIds: string[];
-  onRepoIds: (ids: string[]) => void;
+  /** The one repository the session works in. */
+  repoId: string | null;
+  onRepoId: (id: string) => void;
   onReady: (ready: boolean) => void;
 }) {
   // Null until the stored connection has been checked.
@@ -57,7 +58,7 @@ export function CloudSetup({
     };
   }, [env, onModel]);
 
-  const ready = model !== null && repoIds.length > 0;
+  const ready = model !== null && repoId !== null;
   useEffect(() => onReady(ready), [ready, onReady]);
 
   const shown = useMemo(() => {
@@ -65,8 +66,7 @@ export function CloudSetup({
     return (repos ?? []).filter((r) => !q || r.fullName.toLowerCase().includes(q));
   }, [repos, query]);
 
-  const toggle = (id: string) =>
-    onRepoIds(repoIds.includes(id) ? repoIds.filter((x) => x !== id) : [...repoIds, id]);
+  const chosen = repos?.find((r) => r.id === repoId);
 
   return (
     <div className="border-border/60 bg-card/30 overflow-hidden rounded-xl border">
@@ -100,8 +100,8 @@ export function CloudSetup({
       )}
 
       <ChecklistRow
-        state={repos === null ? "working" : repoError ? "problem" : repoIds.length > 0 ? "done" : "todo"}
-        title="Choose repositories"
+        state={repos === null ? "working" : repoError ? "problem" : repoId !== null ? "done" : "todo"}
+        title="Choose a repository"
         detail={
           repos === null
             ? "Loading the repositories your GitHub account can reach…"
@@ -109,9 +109,9 @@ export function CloudSetup({
               ? repoError
               : repos.length === 0
               ? "No repositories found on your GitHub account."
-              : repoIds.length > 0
-                ? `${repoIds.length} selected. You can add more later.`
-                : "Pick the ones to work in. You can add more later."
+              : chosen
+                ? `${chosen.fullName}. You can add more later.`
+                : "Pick the one your first session works in. You can add more later."
         }
       >
         {repos !== null && repos.length > 0 && (
@@ -129,14 +129,15 @@ export function CloudSetup({
             )}
             <ul className="border-border/60 max-h-56 overflow-y-auto rounded-md border">
               {shown.map((repo) => {
-                const checked = repoIds.includes(repo.id);
+                const checked = repo.id === repoId;
                 return (
                   <li key={repo.id} className="border-border/40 border-b last:border-b-0">
                     <label className="hover:bg-accent/40 flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm">
                       <input
-                        type="checkbox"
+                        type="radio"
+                        name="onboarding-repository"
                         checked={checked}
-                        onChange={() => toggle(repo.id)}
+                        onChange={() => onRepoId(repo.id)}
                         className="accent-foreground size-3.5"
                       />
                       <span className="min-w-0 flex-1 truncate font-mono text-xs">{repo.fullName}</span>

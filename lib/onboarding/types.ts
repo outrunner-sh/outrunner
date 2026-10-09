@@ -72,8 +72,8 @@ export type FirstSession = {
   prompt?: string;
   /** This Mac: the folder chosen. */
   folder?: OnboardingFolder;
-  /** Cloud: the repositories chosen; the session runs on the first. */
-  repoIds?: string[];
+  /** Cloud: the repository the session works in (its GitHub id). */
+  repoId?: string;
   /** Cloud: the user's own Claude, or Neev AI models. */
   model?: "claude" | "neev";
 };

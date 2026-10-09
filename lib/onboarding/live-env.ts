@@ -172,19 +172,19 @@ async function startOnMac({ prompt = "", folder }: FirstSession): Promise<string
 }
 
 /**
- * Connect the chosen repositories, then start the session on the first one, as
- * the new-session form does (its sync and create calls).
+ * Connect the chosen repository, then start the session there, as the
+ * new-session form does (its sync and create calls).
  */
-async function startInCloud({ prompt = "", repoIds = [] }: FirstSession): Promise<string> {
-  if (repoIds.length === 0) throw new Error("Choose a repository first.");
+async function startInCloud({ prompt = "", repoId }: FirstSession): Promise<string> {
+  if (!repoId) throw new Error("Choose a repository first.");
   const synced = await fetch("/api/projects/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repoIds: repoIds.map(Number) }),
+    body: JSON.stringify({ repoIds: [Number(repoId)] }),
   });
   const syncBody = (await synced.json().catch(() => ({}))) as { projects?: Project[]; error?: string };
   if (!synced.ok) throw new Error(syncBody.error ?? "Could not connect those repositories.");
-  const project = syncBody.projects?.find((p) => String(p.githubRepoId) === repoIds[0]);
+  const project = syncBody.projects?.find((p) => String(p.githubRepoId) === repoId);
   if (!project) throw new Error("Could not find that repository after connecting it.");
 
   const created = await fetch(`/api/projects/${project.id}/workspaces`, {

@@ -63,7 +63,7 @@ test("a failed repository listing says why", async () => {
   await assert.rejects(liveEnv(user).listRepos(), /Sign out and back in/);
 });
 
-test("a cloud start connects the chosen repositories, starts on the first, and marks onboarding done", async () => {
+test("a cloud start connects the chosen repository, starts there, and marks onboarding done", async () => {
   const calls = stubFetch({
     "POST /api/projects/sync": () => [
       200,
@@ -75,7 +75,7 @@ test("a cloud start connects the chosen repositories, starts on the first, and m
   const href = await liveEnv(user).start({
     target: "cloud",
     prompt: "Fix the flaky test",
-    repoIds: ["9", "7"],
+    repoId: "9",
     model: "claude",
   });
   assert.equal(href, "/workspaces/w-1?prompt=Fix+the+flaky+test");
@@ -83,7 +83,7 @@ test("a cloud start connects the chosen repositories, starts on the first, and m
     calls.map((c) => `${c.method} ${c.url}`),
     ["POST /api/projects/sync", "POST /api/projects/p-9/workspaces", "POST /api/onboarding/complete"],
   );
-  assert.deepEqual(calls[0].body, { repoIds: [9, 7] });
+  assert.deepEqual(calls[0].body, { repoIds: [9] });
 });
 
 test("a refused cloud start shows the server's reason and leaves onboarding unmarked", async () => {
@@ -95,7 +95,7 @@ test("a refused cloud start shows the server's reason and leaves onboarding unma
     ],
   });
   await assert.rejects(
-    liveEnv(user).start({ target: "cloud", prompt: "Hi", repoIds: ["9"] }),
+    liveEnv(user).start({ target: "cloud", prompt: "Hi", repoId: "9" }),
     /Connect Claude in Settings/,
   );
   assert.ok(!calls.some((c) => c.url === "/api/onboarding/complete"));
@@ -113,5 +113,5 @@ test("onboarding opens the cloud session with no first message", async () => {
     "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-2" } }],
     "POST /api/onboarding/complete": () => [200, { ok: true }],
   });
-  assert.equal(await liveEnv(user).start({ target: "cloud", repoIds: ["9"] }), "/workspaces/w-2");
+  assert.equal(await liveEnv(user).start({ target: "cloud", repoId: "9" }), "/workspaces/w-2");
 });
