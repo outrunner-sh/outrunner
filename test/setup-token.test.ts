@@ -38,7 +38,7 @@ test("rejects a too-short opaque value", () => {
 test("explains a CLI that exited without a token, with what it said", () => {
   const message = messageForError("setup-token-exited: Opening browser | Login failed");
   assert.match(message, /Claude Pro or Max subscription/);
-  assert.match(message, /It said: Opening browser \| Login failed$/);
+  assert.match(message, /It said: Login failed$/);
 });
 
 test("explains a CLI that exited without a token or any output", () => {
