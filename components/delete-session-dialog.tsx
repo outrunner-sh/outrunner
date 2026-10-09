@@ -10,17 +10,20 @@ import { deleteSession } from "@/lib/session/delete-session";
 
 /**
  * Confirm deleting a session: what goes and what stays, then a hold (not a
- * click) to do it. `onDeleted` runs once it is gone, for the caller to leave
- * the session if it is open and re-read the list.
+ * click) to do it. `onDeleting` runs just before, so the caller can leave the
+ * session if it is open (its page would otherwise try to restart it mid-delete);
+ * `onDeleted` runs once it is gone, to re-read the list.
  */
 export function DeleteSessionDialog({
   session,
   onOpenChange,
+  onDeleting,
   onDeleted,
 }: {
   /** The session to delete; null keeps the dialog closed. */
   session: { id: string; title: string; deletion: SessionDeletion } | null;
   onOpenChange: (open: boolean) => void;
+  onDeleting?: (id: string) => void;
   onDeleted: (id: string) => void;
 }) {
   const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
@@ -28,6 +31,7 @@ export function DeleteSessionDialog({
   const confirm = async () => {
     if (!session) return;
     setState({ busy: true, error: null });
+    onDeleting?.(session.id);
     try {
       await deleteSession(session.id, session.deletion);
       setState({ busy: false, error: null });

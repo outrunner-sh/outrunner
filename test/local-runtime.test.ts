@@ -57,6 +57,10 @@ test("a failed login says what Claude Code said", () => {
   assert.match(messageForLocalError("login-timed-out"), /Try again/);
 });
 
+test("a session the agent has no folder for reads as deleted, not 'unknown workspace'", () => {
+  assert.match(messageForLocalError("agent: unknown workspace"), /isn't on this Mac any more/);
+});
+
 test("app error codes become sentences; agent messages pass through", () => {
   assert.match(messageForLocalError("folder-missing"), /isn.t there any more/);
   assert.match(messageForLocalError("folder-not-chosen"), /Choose the folder/);

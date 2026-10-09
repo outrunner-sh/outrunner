@@ -81,12 +81,16 @@ export function AppSidebar({
   );
   const shown = filterSidebarGroups(groups, query);
 
-  // The session whose delete confirmation is open. Once it is gone: leave it
-  // if it is the one on screen, and re-read both lists.
+  // The session whose delete confirmation is open. Leave it before deleting
+  // when it is the one on screen: its page reconnects when the session stops,
+  // and would ask to start it again mid-delete. Once it is gone, re-read both
+  // lists.
   const [deleting, setDeleting] = useState<DeletingSession | null>(null);
   const router = useRouter();
-  const onDeleted = (id: string) => {
+  const onDeleting = (id: string) => {
     if (id === active) router.push("/");
+  };
+  const onDeleted = () => {
     router.refresh();
     refreshLocal();
   };
@@ -174,6 +178,7 @@ export function AppSidebar({
         onOpenChange={(open) => {
           if (!open) setDeleting(null);
         }}
+        onDeleting={onDeleting}
         onDeleted={onDeleted}
       />
 

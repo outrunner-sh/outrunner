@@ -701,6 +701,10 @@ func (s *Server) eventsWS(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func respond(w http.ResponseWriter, ok string, err error) {
+	if errors.Is(err, workspace.ErrUnknownWorkspace) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
