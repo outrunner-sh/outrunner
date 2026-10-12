@@ -1,0 +1,93 @@
+name: Desktop auto release
+
+# Releases the Mac app when a change to it lands on main: merging a PR that
+# touches the app (runtime-desktop) or the agent it bundles (runtime-agent)
+# builds the next patch version (0.3.0 -> 0.3.1), signs and notarizes it,
+# publishes the GitHub Release and puts it on the download link and the
+# installed apps' updater. Nobody has to tag or publish anything.
+#
+#   Opt out:  label the PR `no-release` before merging. Its changes go out
+#             with the next release instead.
+#   Minor or major version: push a desktop-v0.4.0 tag as before
+#             (desktop-release.yml); automatic releases carry on from it.
+#
+# A tag or release made with the workflow's own token starts no workflow, so
+# this one calls the build and the publish itself instead of handing over
+# through a tag (desktop-release.yml) and a release event (desktop-publish.yml).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "runtime-desktop/**"
+      - "runtime-agent/**"
+
+permissions:
+  contents: read
+
+# One release at a time, each numbered after the last. A merge that lands
+# while one builds waits; if several do, only the newest runs, and it carries
+# them all.
+concurrency:
+  group: desktop-auto-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan
+    # The mirror pushes main to immadsahin/outrunner, which can't sign.
+    if: github.repository == 'neevai-labs/outrunner'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # the merged PR's labels
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Next version
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LABELS=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null) | .labels[].name] | join(",")')
+          if [[ ",$LABELS," == *",no-release,"* ]]; then
+            echo "::notice::the merged PR is labelled no-release: nothing released"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          LATEST=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/desktop-v" --jq '.[].ref' |
+            sed 's#^refs/tags/desktop-v##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          [ -n "$LATEST" ] || { echo "::error::no desktop-v* tag to count on from; push the first one by hand"; exit 1; }
+          IFS=. read -r MAJOR MINOR PATCH <<< "$LATEST"
+          VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "::notice::releasing Outrunner $VERSION (after $LATEST)"
+          {
+            echo "release=true"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and release
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    permissions:
+      contents: write # tag and publish the release
+    uses: ./.github/workflows/desktop-release.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      publish: true
+    secrets: inherit
+
+  publish:
+    name: Publish to downloads
+    needs: [plan, build]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/desktop-publish.yml
+    with:
+      tag: desktop-v${{ needs.plan.outputs.version }}
+    secrets: inherit
