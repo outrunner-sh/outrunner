@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
@@ -427,7 +428,9 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 // ("tmux paste: no session").
 func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust bool) error {
 	const minWait = 2 * time.Second
-	const maxWait = 15 * time.Second
+	// Room for a first run's screens (theme, security notes) and the trust
+	// dialog, a second apart, on a Claude Code still starting up.
+	const maxWait = 20 * time.Second
 	launched := time.Now()
 	var lastAnswer time.Time
 	for ctx.Err() == nil && time.Since(launched) < maxWait {
@@ -435,17 +438,20 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust 
 			return errClaudeExited
 		}
 		pane, err := s.tmux.CapturePane(ctx, name)
-		// The dialog is checked first: its "❯ Yes, I trust this folder" line
-		// also contains the composer glyph.
-		if err == nil && isTrustDialog(pane) {
-			// Re-press only after a beat: a just-launched TUI can drop a key, and
-			// the pane must show where the last one moved the selection.
-			if key := trustKey(pane); acceptTrust && key != "" && time.Since(lastAnswer) >= time.Second {
+		if err == nil && isComposer(pane) && time.Since(launched) >= minWait {
+			break
+		}
+		// Re-press only after a beat: a just-launched TUI can drop a key, and
+		// the pane must show where the last one moved the selection.
+		if err == nil && time.Since(lastAnswer) >= time.Second {
+			key := firstRunKey(pane)
+			if key == "" && acceptTrust && isTrustDialog(pane) {
+				key = trustKey(pane)
+			}
+			if key != "" {
 				_ = s.tmux.SendKey(ctx, name, key)
 				lastAnswer = time.Now()
 			}
-		} else if err == nil && strings.Contains(pane, "❯") && time.Since(launched) >= minWait {
-			break
 		}
 		select {
 		case <-ctx.Done():
@@ -466,6 +472,45 @@ var errClaudeExited = errors.New("Claude Code exited as soon as it started")
 // see it.
 func claudeExited(err error, folder string) error {
 	return fmt.Errorf("%w. To see why, run `claude` in a terminal in %s", err, folder)
+}
+
+// isComposer reports whether a pane shows Claude's prompt box, ready for
+// input: a line starting with its prompt (❯ in 2.1, > in 2.0) right under a
+// horizontal rule. The theme picker, the trust dialog and permission questions
+// show ❯ too, as an indented selection, and never under a rule; taking any ❯
+// for the prompt once typed a user's first message into the theme picker
+// ("prompt not confirmed delivered after 20 attempts").
+func isComposer(pane string) bool {
+	previous := ""
+	for _, line := range strings.Split(pane, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if (strings.HasPrefix(line, "❯") || strings.HasPrefix(line, ">")) && isRule(previous) {
+			return true
+		}
+		previous = line
+	}
+	return false
+}
+
+func isRule(line string) bool {
+	line = strings.TrimSpace(line)
+	return utf8.RuneCountInString(line) >= 10 && strings.Trim(line, "─") == ""
+}
+
+// firstRunKey answers the screens Claude Code shows the first time it runs on
+// a Mac, before any session can start: logging in through Outrunner doesn't
+// get past them. The theme picker takes the theme it preselects, the security
+// notes need Enter. Login isn't one: Outrunner asks for it before a session.
+func firstRunKey(pane string) string {
+	switch {
+	case strings.Contains(pane, "Choose the text style"):
+		return "Enter"
+	case strings.Contains(pane, "Security notes:") && strings.Contains(pane, "to continue"):
+		return "Enter"
+	}
+	return ""
 }
 
 // isTrustDialog reports whether a pane shows Claude Code's folder-trust prompt,

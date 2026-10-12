@@ -32,8 +32,8 @@ type fakeSessions struct {
 }
 
 func newFakeSessions() *fakeSessions {
-	// The composer glyph lets waitClaudeReady see a ready Claude.
-	return &fakeSessions{running: map[string]bool{}, pane: "❯ \n  ⏵⏵ accept edits on"}
+	// Claude's prompt box lets waitClaudeReady see a ready Claude.
+	return &fakeSessions{running: map[string]bool{}, pane: composerPane}
 }
 
 func (f *fakeSessions) NewSession(_ context.Context, name, _ string, command []string, _ []string) error {

@@ -125,7 +125,7 @@ func TestStartAnswersYesWhicheverWayTheTrustDialogIsOrdered(t *testing.T) {
 						delete(fake.running, sessionName(id))
 						return ""
 					}
-					return "❯ \n  ⏵⏵ accept edits on" // the composer: trusted
+					return composerPane // trusted
 				}
 				return ""
 			}
@@ -146,5 +146,84 @@ func TestStartReportsAClaudeThatExitsAsItStarts(t *testing.T) {
 	_, err := s.Start(context.Background(), id, "")
 	if !errors.Is(err, errClaudeExited) || !strings.Contains(err.Error(), folder) {
 		t.Fatalf("Start = %v, want errClaudeExited naming the folder to look in", err)
+	}
+}
+
+// Panes as Claude Code draws them in tmux (2.1.295 unless noted), trimmed.
+const (
+	composerPane = `────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle)`
+	// 2.0.x: the same box, with > for its prompt and a placeholder.
+	composer20Pane = `────────────────────────────────────────────────────────────
+> Try "refactor .env.example"
+────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle)`
+	themePane = ` Let's get started.
+ Choose the text style that looks best with your terminal
+ To change this later, run /theme
+     Auto (match terminal)
+ ❯ ✔ Dark mode
+     Light mode
+ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  1  function greet() {`
+	securityPane = ` Security notes:
+ 1. Claude can make mistakes
+    You should always review Claude's responses, especially when running code.
+ Press Enter to continue…`
+	permissionPane = ` Bash command
+   rm -rf build
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for rm commands
+   3. No, and tell Claude what to do differently (esc)`
+)
+
+func TestIsComposerTellsThePromptBoxFromMenus(t *testing.T) {
+	for _, c := range []struct {
+		name, pane string
+		want       bool
+	}{
+		{"prompt box", composerPane, true},
+		{"2.0's prompt box", composer20Pane, true},
+		{"prompt box with a prompt typed", strings.Replace(composerPane, "❯ ", "❯ fix the tests", 1), true},
+		{"theme picker", themePane, false},
+		{"security notes", securityPane, false},
+		{"trust dialog", trustNoFirst, false},
+		{"permission question", permissionPane, false},
+		{"blank", "", false},
+	} {
+		if got := isComposer(c.pane); got != c.want {
+			t.Errorf("%s: isComposer = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestStartGetsPastAFirstRunsScreens(t *testing.T) {
+	t.Parallel()
+	s, fake, id, _ := stoppedSession(t)
+	// Claude Code's first run on a Mac, then a folder it hasn't seen.
+	screens := map[string]string{themePane: securityPane, securityPane: trustNoFirst}
+	fake.pane = themePane
+	fake.onKey = func(key string) string {
+		switch {
+		case key == "Enter" && screens[fake.pane] != "":
+			return screens[fake.pane]
+		case key == "Down" && fake.pane == trustNoFirst:
+			return trustNoFirstMoved
+		case key == "Enter" && fake.pane == trustNoFirstMoved:
+			return composerPane
+		}
+		return ""
+	}
+	if _, err := s.Start(context.Background(), id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if want := []string{"Enter", "Enter", "Down", "Enter"}; !slices.Equal(fake.keys, want) {
+		t.Errorf("keys pressed = %q, want %q", fake.keys, want)
+	}
+	if fake.pane != composerPane {
+		t.Errorf("Start returned before Claude's prompt box showed: %q", fake.pane)
 	}
 }
