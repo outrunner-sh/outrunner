@@ -90,13 +90,19 @@ fn strip_ansi(raw: &str) -> String {
 }
 
 /// The first Claude authorize URL in the transcript, if it has arrived.
+///
+/// Its host depends on the Claude Code version: current ones print
+/// `https://claude.com/cai/oauth/authorize?…`, older ones
+/// `https://claude.ai/oauth/authorize?…` (and Console logins an Anthropic host),
+/// so the `oauth/authorize` path is what marks it, on any Claude or Anthropic
+/// host. Matching only claude.com left an older CLI's link unseen, and Connect
+/// failed with "didn't return a sign-in link" over a link it had printed.
 fn find_authorize_url(text: &str) -> Option<String> {
-    let re = regex::Regex::new(r"https://claude\.com/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+").unwrap();
-    // The CLI prints the URL twice (once inside an OSC-8 hyperlink, once bare)
-    // and they can run together once the escapes are stripped; `oauth/authorize`
-    // marks the real start and `state=` ends it.
-    let found = re.find(text)?.as_str();
-    Some(found.to_string())
+    let re = regex::Regex::new(
+        r"https://(?:[a-z0-9-]+\.)*(?:claude\.com|claude\.ai|anthropic\.com)/(?:[A-Za-z0-9._~-]+/)*oauth/authorize\?[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+",
+    )
+    .unwrap();
+    Some(re.find(text)?.as_str().to_string())
 }
 
 /// The minted token, if the child has printed one.
@@ -191,7 +197,9 @@ fn missing_claude(broken: &[PathBuf]) -> String {
 /// the CLI.
 fn start_login(state: &ClaudeLoginState, binary: PathBuf) -> Result<String, String> {
     let pty = NativePtySystem::default()
-        .openpty(PtySize { rows: 48, cols: 120, pixel_width: 0, pixel_height: 0 })
+        // Wide enough that the sign-in link (several hundred characters) is
+        // never hard-wrapped onto lines of its own.
+        .openpty(PtySize { rows: 48, cols: 1000, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| format!("pty-failed: {e}"))?;
 
     let mut cmd = CommandBuilder::new(binary);
@@ -383,6 +391,40 @@ mod tests {
         let url = find_authorize_url(&strip_ansi(raw)).expect("url");
         assert!(url.starts_with("https://claude.com/cai/oauth/authorize"));
         assert!(url.contains("state=abc"));
+    }
+
+    #[test]
+    fn finds_an_older_claude_codes_claude_ai_authorize_url() {
+        // What an older Claude Code printed on a user's Mac: a claude.ai link
+        // with the manual-code redirect, which matching claude.com alone missed.
+        let raw = concat!(
+            "\u{2733} Opening browser to sign in\u{2026}\n",
+            "Browser didn't open? Use the url below to sign in:\n\n",
+            "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+            "&response_type=code&redirect_uri=https%3A%2F%2Fconsole.anthropic.com%2Foauth%2Fcode%2Fcallback",
+            "&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference&code_challenge=abc",
+            "&code_challenge_method=S256&state=aBpZzoGQmPLhOGknrwjf19Ook7FIPIEDA\n\n",
+            "Paste code here if prompted > ",
+        );
+        let url = find_authorize_url(&strip_ansi(raw)).expect("url");
+        assert!(url.starts_with("https://claude.ai/oauth/authorize?code=true"), "{url}");
+        assert!(url.ends_with("state=aBpZzoGQmPLhOGknrwjf19Ook7FIPIEDA"), "{url}");
+    }
+
+    #[test]
+    fn an_authorize_url_on_any_claude_host_is_found_and_others_are_not() {
+        for url in [
+            "https://claude.com/cai/oauth/authorize?code=true&state=s",
+            "https://claude.ai/oauth/authorize?code=true&state=s",
+            "https://platform.claude.com/oauth/authorize?code=true&state=s",
+            "https://console.anthropic.com/oauth/authorize?code=true&state=s",
+        ] {
+            assert_eq!(find_authorize_url(&format!("visit {url}\n")).as_deref(), Some(url));
+        }
+        // Not an authorize link, or not Claude's: never handed to the browser.
+        assert_eq!(find_authorize_url("https://claude.ai/login\n"), None);
+        assert_eq!(find_authorize_url("https://evil.example/oauth/authorize?x=1\n"), None);
+        assert_eq!(find_authorize_url("https://claude.ai.evil.example/oauth/authorize?x=1\n"), None);
     }
 
     #[test]
