@@ -499,6 +499,25 @@ func isRule(line string) bool {
 	return utf8.RuneCountInString(line) >= 10 && strings.Trim(line, "─") == ""
 }
 
+// awaitsAnswer reports whether Claude is showing a menu instead of its prompt
+// box: a question, a permission prompt, a first-run screen. Typing a prompt
+// there would be read as a choice ("1", Enter: Yes), so it waits for the user.
+func awaitsAnswer(pane string) bool {
+	if isComposer(pane) {
+		return false
+	}
+	if firstRunKey(pane) != "" {
+		return true
+	}
+	for _, line := range strings.Split(pane, "\n") {
+		// A menu's selection is indented (or boxed); the prompt starts the line.
+		if i := strings.Index(line, "❯"); i > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // firstRunKey answers the screens Claude Code shows the first time it runs on
 // a Mac, before any session can start: logging in through Outrunner doesn't
 // get past them. The theme picker takes the theme it preselects, the security
@@ -834,6 +853,11 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 // caller retries — but the text is already in the composer, or has landed since.
 // So a retry of the same text only presses Enter again, and succeeds at once if
 // the earlier copy was recorded in the meantime.
+//
+// Neither the paste nor an Enter goes into a menu Claude is showing instead of
+// its prompt box (a permission question, a first-run screen): there they would
+// be read as a choice. That send fails with errAwaitsAnswer for the user to
+// answer in the terminal.
 func (s *Service) SendMessage(workspaceID, content string) error {
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
@@ -852,13 +876,20 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 		return nil // the earlier copy landed after that send gave up
 	case !retry:
 		before = s.userTurns(workspaceID)
+		if s.awaitingAnswer(ctx, name) {
+			return errAwaitsAnswer
+		}
 		if err := s.tmux.Paste(ctx, name, content); err != nil {
 			return err
 		}
 	}
 	var lastErr error
 	for attempt := 0; attempt < submitAttempts && ctx.Err() == nil; attempt++ {
-		if err := s.tmux.SubmitEnter(ctx, name); err != nil {
+		if s.awaitingAnswer(ctx, name) {
+			// Keep watching for the turn, which may have landed just before the
+			// menu came up, but press nothing into it.
+			lastErr = errAwaitsAnswer
+		} else if err := s.tmux.SubmitEnter(ctx, name); err != nil {
 			lastErr = err
 		}
 		time.Sleep(submitPollInterval)
@@ -875,6 +906,17 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	// Report the failure so the caller sees a non-2xx and can retry, rather than
 	// a 200 for an undelivered prompt.
 	return fmt.Errorf("prompt not confirmed delivered after %d attempts", submitAttempts)
+}
+
+// errAwaitsAnswer is a send held back from a menu Claude is showing.
+var errAwaitsAnswer = errors.New("Claude is waiting for an answer in the terminal (a question or a permission prompt). Answer it there, then send again")
+
+// awaitingAnswer reports whether the session shows a menu rather than Claude's
+// prompt box. A pane that can't be read doesn't block: the send goes ahead as
+// it always did.
+func (s *Service) awaitingAnswer(ctx context.Context, name string) bool {
+	pane, err := s.tmux.CapturePane(ctx, name)
+	return err == nil && awaitsAnswer(pane)
 }
 
 const (

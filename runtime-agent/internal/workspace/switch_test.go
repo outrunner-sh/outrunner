@@ -29,6 +29,8 @@ type fakeSessions struct {
 	onKey func(key string) string
 	// exitAtOnce makes a session's Claude exit as soon as it is launched.
 	exitAtOnce bool
+	// pastes and enters count what a send typed.
+	pastes, enters int
 }
 
 func newFakeSessions() *fakeSessions {
@@ -75,9 +77,19 @@ func (f *fakeSessions) KillSession(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeSessions) Paste(context.Context, string, string) error { return nil }
+func (f *fakeSessions) Paste(context.Context, string, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pastes++
+	return nil
+}
 
-func (f *fakeSessions) SubmitEnter(context.Context, string) error { return nil }
+func (f *fakeSessions) SubmitEnter(context.Context, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enters++
+	return nil
+}
 
 func (f *fakeSessions) SendKey(_ context.Context, _ string, key string) error {
 	f.mu.Lock()

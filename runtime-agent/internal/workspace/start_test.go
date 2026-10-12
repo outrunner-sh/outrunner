@@ -197,6 +197,10 @@ func TestIsComposerTellsThePromptBoxFromMenus(t *testing.T) {
 		if got := isComposer(c.pane); got != c.want {
 			t.Errorf("%s: isComposer = %v, want %v", c.name, got, c.want)
 		}
+		menu := c.pane != "" && !c.want
+		if got := awaitsAnswer(c.pane); got != menu {
+			t.Errorf("%s: awaitsAnswer = %v, want %v", c.name, got, menu)
+		}
 	}
 }
 
@@ -225,5 +229,20 @@ func TestStartGetsPastAFirstRunsScreens(t *testing.T) {
 	}
 	if fake.pane != composerPane {
 		t.Errorf("Start returned before Claude's prompt box showed: %q", fake.pane)
+	}
+}
+
+func TestASendTypesNothingIntoAMenu(t *testing.T) {
+	t.Parallel()
+	s, fake, id, _ := stoppedSession(t)
+	if _, err := s.Start(context.Background(), id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	fake.pane = permissionPane // "1" or Enter here would answer Yes
+	if err := s.SendMessage(id, "1"); !errors.Is(err, errAwaitsAnswer) {
+		t.Fatalf("SendMessage = %v, want errAwaitsAnswer", err)
+	}
+	if fake.pastes != 0 || fake.enters != 0 {
+		t.Errorf("typed into the menu: %d pastes, %d Enters", fake.pastes, fake.enters)
 	}
 }
