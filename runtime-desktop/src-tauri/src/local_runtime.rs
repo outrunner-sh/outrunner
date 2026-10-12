@@ -1375,6 +1375,7 @@ mod tests {
         let repo = work.join("app");
         std::fs::create_dir_all(&repo).unwrap();
         std::env::set_var("OUTRUNNER_ROOT", work.join("root"));
+        crate::install_crypto_provider(); // as run() does, for the relay's clients
         let git = |args: &[&str]| {
             let ok = Command::new("git")
                 .arg("-C")
