@@ -23,6 +23,7 @@
     "allow-local-status",
     "allow-local-claude-login",
     "allow-local-claude-login-cancel",
+    "allow-local-claude-setup",
     "allow-local-pick-folder",
     "allow-local-check-folder",
     "allow-local-list-sessions",

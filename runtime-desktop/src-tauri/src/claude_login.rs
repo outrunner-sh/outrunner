@@ -173,24 +173,25 @@ fn await_match<T>(
 
 /// Spawn `claude setup-token` under a PTY and return the authorize URL the user
 /// must visit. The child is left running, blocked on its code prompt.
+///
+/// With no Claude Code here that runs (none, a broken one, or one too old),
+/// Outrunner's own copy is set up first, so connecting never asks the user to
+/// install or update anything. Its download takes a while on the first
+/// connect only.
 #[tauri::command]
 pub async fn connect_claude_start(
     state: tauri::State<'_, ClaudeLoginState>,
 ) -> Result<String, String> {
-    let claude = tauri::async_runtime::spawn_blocking(crate::local_runtime::find_claude)
+    let found = tauri::async_runtime::spawn_blocking(crate::local_runtime::find_claude)
         .await
-        .map_err(|error| error.to_string())?
-        .map_err(|broken| missing_claude(&broken))?;
+        .map_err(|error| error.to_string())?;
+    let claude = match found {
+        Ok(claude) => claude,
+        Err(_) => crate::managed_claude::ensure()
+            .await
+            .map_err(|error| format!("claude-setup-failed:{error}"))?,
+    };
     start_login(&state, claude)
-}
-
-/// The error for no `claude` that runs: none at all, or one installed but
-/// broken, named so the page can say which install to fix.
-fn missing_claude(broken: &[PathBuf]) -> String {
-    match broken.first() {
-        None => "claude-cli-not-found".into(),
-        Some(path) => format!("claude-cli-broken:{}", path.display()),
-    }
 }
 
 /// `connect_claude_start` with the binary given, so a test can stand in for
@@ -213,6 +214,8 @@ fn start_login(state: &ClaudeLoginState, binary: PathBuf) -> Result<String, Stri
     // An npm install's `claude` starts with `#!/usr/bin/env node`, and
     // launchd's PATH has no node in it.
     cmd.env("PATH", child_path(&std::env::var_os("PATH").unwrap_or_default()));
+    // Outrunner's own Claude Code must not install itself for the user's shell.
+    cmd.env("DISABLE_AUTOUPDATER", "1");
 
     let child = pty.slave.spawn_command(cmd).map_err(|e| format!("spawn-failed: {e}"))?;
     let mut reader = pty.master.try_clone_reader().map_err(|e| format!("pty-read-failed: {e}"))?;
@@ -523,16 +526,6 @@ mod tests {
         assert!(path.to_string_lossy().ends_with(&*dir.to_string_lossy()), "{path:?}");
         // Nothing is added twice.
         assert_eq!(child_path(&path), path);
-    }
-
-    #[test]
-    fn no_claude_that_runs_is_reported_by_whether_one_is_installed() {
-        assert_eq!(missing_claude(&[]), "claude-cli-not-found");
-        let broken = PathBuf::from("/Users/x/.nvm/versions/node/v22.21.0/bin/claude");
-        assert_eq!(
-            missing_claude(&[broken]),
-            "claude-cli-broken:/Users/x/.nvm/versions/node/v22.21.0/bin/claude"
-        );
     }
 
     #[test]

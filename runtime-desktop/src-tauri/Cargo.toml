@@ -45,4 +45,7 @@ sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
 tauri-plugin-updater = "2"
+# Outrunner's own Claude Code (src/managed_claude.rs) downloads as zstd, a
+# third of its size. Pure Rust, so the universal build needs no C toolchain.
+ruzstd = "0.8"
 
