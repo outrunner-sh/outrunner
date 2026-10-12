@@ -23,6 +23,10 @@ type fakeSessions struct {
 	// newErrs fail NewSession calls in order; nil entries (or none left) succeed.
 	newErrs  []error
 	launches [][]string
+	// keys are the keys pressed; onKey, when set, answers one with the pane
+	// it leads to ("" leaves the pane as it is).
+	keys  []string
+	onKey func(key string) string
 }
 
 func newFakeSessions() *fakeSessions {
@@ -72,6 +76,18 @@ func (f *fakeSessions) KillSession(_ context.Context, name string) error {
 func (f *fakeSessions) Paste(context.Context, string, string) error { return nil }
 
 func (f *fakeSessions) SubmitEnter(context.Context, string) error { return nil }
+
+func (f *fakeSessions) SendKey(_ context.Context, _ string, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.keys = append(f.keys, key)
+	if f.onKey != nil {
+		if pane := f.onKey(key); pane != "" {
+			f.pane = pane
+		}
+	}
+	return nil
+}
 
 func (f *fakeSessions) CapturePane(context.Context, string) (string, error) {
 	f.mu.Lock()
