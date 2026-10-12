@@ -33,7 +33,7 @@ export function OnboardingPreview() {
 
 type Scenario = {
   surface: "desktop" | "browser";
-  tools: "all" | "no-tmux" | "no-claude";
+  tools: "all" | "no-tmux" | "no-claude" | "claude-setup-fails";
   claudeCode: "logged-in" | "logged-out" | "login-fails";
   claudeConnected: "no" | "yes";
   connect: "succeeds" | "no-subscription";
@@ -55,7 +55,12 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
   surface: { label: "Opened in", values: [["desktop", "Mac app"], ["browser", "Browser"]] },
   tools: {
     label: "Mac tools",
-    values: [["all", "All installed"], ["no-tmux", "No tmux"], ["no-claude", "No Claude Code"]],
+    values: [
+      ["all", "All installed"],
+      ["no-tmux", "No tmux"],
+      ["no-claude", "No Claude Code"],
+      ["claude-setup-fails", "Claude Code setup fails"],
+    ],
   },
   claudeCode: {
     label: "Claude Code",
@@ -91,21 +96,41 @@ function mockEnv(s: Scenario): OnboardingEnv {
   // the command; a login that succeeds stays logged in.
   let checks = 0;
   let loggedIn = s.claudeCode === "logged-in";
+  // The app setting up its own Claude Code: when it started, and whether the
+  // scenario fails it partway.
+  let setupStarted: number | null = null;
+  const SETUP_MS = 6000;
+  const noClaude = s.tools === "no-claude" || s.tools === "claude-setup-fails";
   let cancelled = false;
   return {
     user: { name: "Sajda Kabir", login: "sajdakabir", avatarUrl: null },
     desktop: s.surface === "desktop",
     neevForCloud: s.neev === "yes",
     async checkMac() {
-      await wait(checks === 0 ? 900 : 600);
+      await wait(checks === 0 ? 900 : 300);
       const fixed = checks++ > 0;
+      const elapsed = setupStarted === null ? 0 : Date.now() - setupStarted;
+      const total = 75_949_326;
+      const claudeSetup =
+        setupStarted === null
+          ? null
+          : s.tools === "claude-setup-fails" && elapsed > SETUP_MS / 2
+            ? { state: "failed" as const, message: "Couldn't download Claude Code: connection reset." }
+            : elapsed < SETUP_MS
+              ? { state: "installing" as const, received: Math.floor((total * elapsed) / SETUP_MS), total }
+              : null;
       return {
         agent: true,
         git: true,
         tmux: fixed || s.tools !== "no-tmux",
-        claude: fixed || s.tools !== "no-claude",
+        claude: !noClaude || (setupStarted !== null && claudeSetup === null),
         claudeLoggedIn: loggedIn,
+        setsUpClaude: true,
+        claudeSetup,
       };
+    },
+    async setUpClaudeCode() {
+      setupStarted = Date.now();
     },
     async logInToClaudeCode() {
       cancelled = false;

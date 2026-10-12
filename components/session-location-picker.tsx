@@ -114,7 +114,9 @@ export function LocalFolderButton({
 /**
  * Why a local session cannot start yet. When the reason is Claude Code not
  * being logged in on this Mac, it offers the login right there: the app opens
- * the browser, and the note clears once the user approves.
+ * the browser, and the note clears once the user approves. While the app sets
+ * up its own Claude Code it shows how far that has got, and a failed one can
+ * be tried again.
  */
 export function LocalBlocker({
   state,
@@ -123,7 +125,7 @@ export function LocalBlocker({
   state: SessionLocationState;
   className?: string;
 }) {
-  const { blocker, needsClaudeLogin, claudeLogin } = state;
+  const { blocker, needsClaudeLogin, claudeLogin, claudeSetup } = state;
   if (!blocker) return null;
   const { login, start, cancel } = claudeLogin;
   const action = "font-medium text-foreground underline underline-offset-4 hover:opacity-80";
@@ -141,6 +143,13 @@ export function LocalBlocker({
           {login.state === "error" ? login.message : blocker}{" "}
           <button type="button" onClick={() => void start()} className={action}>
             {login.state === "error" ? "Try again" : "Log in"}
+          </button>
+        </>
+      ) : claudeSetup.failed ? (
+        <>
+          {blocker}{" "}
+          <button type="button" onClick={() => void claudeSetup.retry()} className={action}>
+            Try again
           </button>
         </>
       ) : (

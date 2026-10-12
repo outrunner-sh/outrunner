@@ -56,3 +56,10 @@ test("names a Claude Code install that can't run, and how to fix it", () => {
 test("still says when Claude Code isn't installed at all", () => {
   assert.match(messageForError("claude-cli-not-found"), /isn't installed on this machine/);
 });
+
+test("says why the app couldn't set up its own Claude Code", () => {
+  assert.equal(
+    messageForError("claude-setup-failed:Couldn't download Claude Code: connection reset"),
+    "Couldn't download Claude Code: connection reset. Check your connection, then try again.",
+  );
+});

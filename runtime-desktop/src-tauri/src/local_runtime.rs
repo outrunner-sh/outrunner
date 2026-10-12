@@ -31,6 +31,8 @@ use tauri_plugin_dialog::DialogExt;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::managed_claude::{self, Version, MIN_VERSION};
+
 /// tmux server name for local sessions, so they never mix with the user's own.
 const TMUX_SOCKET: &str = "outrunner";
 /// Local sessions ask before shell commands; edits are auto-accepted. The cloud
@@ -146,7 +148,7 @@ impl LocalRuntime {
 
 /// Where the agent keeps worktrees, casts and workspace facts:
 /// `~/.outrunner`, or `OUTRUNNER_ROOT` (development, and the relay's own test).
-fn root_dir() -> Result<PathBuf, String> {
+pub(crate) fn root_dir() -> Result<PathBuf, String> {
     if let Some(root) = std::env::var_os("OUTRUNNER_ROOT").filter(|r| !r.is_empty()) {
         return Ok(PathBuf::from(root));
     }
@@ -250,7 +252,10 @@ fn user_command(program: impl AsRef<OsStr>) -> Command {
         .env("PATH", session_path())
         // A GUI app gets no locale, and tmux without a UTF-8 one draws Claude's
         // prompt glyph as `_` — which is also what the agent waits for.
-        .env("LANG", utf8_locale());
+        .env("LANG", utf8_locale())
+        // Outrunner's own Claude Code must not install itself for the user's
+        // shell; managed_claude keeps it current. Sessions set this too.
+        .env("DISABLE_AUTOUPDATER", "1");
     command
 }
 
@@ -379,14 +384,18 @@ fn claude_link_dir() -> Option<PathBuf> {
 }
 
 /// The Claude Code to run on this Mac: the first `claude` on the session PATH,
-/// then on the one this app inherited, that answers `--version` as Claude Code.
-/// The first one found is not enough: an npm install whose postinstall never
-/// ran (`--ignore-scripts`, pnpm) leaves a placeholder `claude` that is not
-/// executable, or that only prints "claude native binary not installed", and it
-/// can sit on the PATH ahead of an install that works.
+/// then on the one this app inherited, that answers `--version` as a Claude
+/// Code at least [`MIN_VERSION`]; failing that, Outrunner's own copy
+/// ([`managed_claude`]). The first one found is not enough: an npm install
+/// whose postinstall never ran (`--ignore-scripts`, pnpm) leaves a placeholder
+/// `claude` that is not executable, or that only prints "claude native binary
+/// not installed", and it can sit on the PATH ahead of an install that works.
+/// An old one runs, but a session started on it exits at once.
 ///
 /// The one found is linked into [`claude_link_dir`], so sessions run it too.
-/// Err lists the candidates that didn't run: empty when there was none.
+/// Err lists the candidates that didn't run or are too old: empty when there
+/// was none. Callers then set Outrunner's copy up ([`managed_claude::start`],
+/// [`managed_claude::ensure`]).
 pub(crate) fn find_claude() -> Result<PathBuf, Vec<PathBuf>> {
     let link_dir = claude_link_dir();
     let inherited = std::env::var_os("PATH").unwrap_or_default();
@@ -395,7 +404,19 @@ pub(crate) fn find_claude() -> Result<PathBuf, Vec<PathBuf>> {
         .map(PathBuf::from)
         .chain(std::env::split_paths(&inherited))
         .filter(|dir| Some(dir) != link_dir.as_ref());
-    let found = find_claude_in(dirs);
+    // Development: search only these directories, to try an old or broken
+    // Claude Code without uninstalling the one this Mac has.
+    let only = std::env::var_os("OUTRUNNER_CLAUDE_SEARCH_PATH").filter(|dirs| !dirs.is_empty());
+    let dirs: Box<dyn Iterator<Item = PathBuf>> = match &only {
+        Some(only) => Box::new(std::env::split_paths(only).collect::<Vec<_>>().into_iter()),
+        None => Box::new(dirs),
+    };
+    let found = find_claude_in(dirs).or_else(|unusable| {
+        managed_claude::installed()
+            .map(|(_, claude)| claude)
+            .filter(|claude| claude_version(claude).is_some())
+            .ok_or(unusable)
+    });
     if let Some(dir) = link_dir {
         match &found {
             Ok(claude) => link_claude(&dir, claude),
@@ -419,7 +440,7 @@ fn find_claude_in(dirs: impl Iterator<Item = PathBuf>) -> Result<PathBuf, Vec<Pa
         if !seen.insert(std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone())) {
             continue;
         }
-        if runs_as_claude(&candidate) {
+        if claude_version(&candidate).is_some_and(|version| version >= MIN_VERSION) {
             return Ok(candidate);
         }
         broken.push(candidate);
@@ -427,23 +448,28 @@ fn find_claude_in(dirs: impl Iterator<Item = PathBuf>) -> Result<PathBuf, Vec<Pa
     Err(broken)
 }
 
-/// Whether `claude --version` runs and says it is Claude Code.
-fn runs_as_claude(claude: &Path) -> bool {
-    let Ok(mut child) = user_command(claude)
+/// The version `claude --version` answers with, when it runs and says it is
+/// Claude Code.
+pub(crate) fn claude_version(claude: &Path) -> Option<Version> {
+    let mut child = user_command(claude)
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-    else {
-        return false;
-    };
+        .ok()?;
     if !exit_within(&mut child, Duration::from_secs(10)) {
-        return false;
+        return None;
     }
     let mut out = String::new();
-    let read = child.stdout.take().is_some_and(|mut stdout| stdout.read_to_string(&mut out).is_ok());
-    read && child.wait().is_ok_and(|status| status.success()) && out.contains("Claude Code")
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    let ran = child.wait().is_ok_and(|status| status.success());
+    (ran && out.contains("Claude Code")).then(|| Version::parse(out.trim())).flatten()
+}
+
+/// What the link sessions run points at, if there is one.
+pub(crate) fn linked_claude() -> Option<PathBuf> {
+    std::fs::read_link(claude_link_dir()?.join("claude")).ok()
 }
 
 /// Point `dir/claude` at `claude`, replacing what was there in one rename, so a
@@ -483,7 +509,7 @@ fn device_id(app: &AppHandle) -> Result<String, String> {
     Ok(ID.get_or_init(|| id).clone())
 }
 
-fn random_hex(bytes: usize) -> String {
+pub(crate) fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).expect("the OS random source is unavailable");
     buf.iter().map(|b| format!("{b:02x}")).collect()
@@ -545,6 +571,10 @@ pub struct LocalStatus {
     claude: Option<String>,
     /// Whether that Claude Code is logged in; None when it cannot tell.
     claude_logged_in: Option<bool>,
+    /// Outrunner setting up its own Claude Code (`local_claude_setup`), while
+    /// there is none that runs; a setup that failed before one turned up is
+    /// over.
+    claude_setup: Option<managed_claude::Setup>,
 }
 
 /// What local sessions need on this Mac and whether it is there, so the UI can
@@ -564,11 +594,27 @@ pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
                 .map(|path| path.to_string_lossy().into_owned())
                 .or_else(|| which("tmux")),
             claude_logged_in: claude.as_deref().and_then(claude_logged_in),
+            claude_setup: claude.is_none().then(managed_claude::setup_status).flatten(),
             claude,
         })
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Set up Outrunner's own Claude Code when this Mac has none that a session
+/// can run: none at all, a broken install, or one older than [`MIN_VERSION`].
+/// Returns at once; `local_status` reports the download's progress, and its
+/// `claude` once it is ready.
+#[tauri::command]
+pub async fn local_claude_setup() -> Result<(), String> {
+    let found = tauri::async_runtime::spawn_blocking(find_claude)
+        .await
+        .map_err(|error| error.to_string())?;
+    if found.is_err() {
+        managed_claude::start();
+    }
+    Ok(())
 }
 
 /// Log Claude Code in on this Mac, for a user who has never run it here, and
@@ -1109,6 +1155,18 @@ mod tests {
     }
 
     #[test]
+    fn a_claude_code_too_old_for_sessions_is_passed_over() {
+        // 1.0.30 runs, but has no --session-id: a session started on it exits.
+        let old = claude_dir("old", "echo '1.0.30 (Claude Code)'", 0o755);
+        let current = claude_dir("current", "echo '2.0.0 (Claude Code)'", 0o755);
+        assert_eq!(find_claude_in(std::iter::once(old.clone())), Err(vec![old.join("claude")]));
+        assert_eq!(find_claude_in([old.clone(), current.clone()].into_iter()), Ok(current.join("claude")));
+        for dir in [old, current] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
     fn the_link_follows_the_claude_found() {
         let dir = std::env::temp_dir().join(format!("outrunner-link-{}", random_hex(4)));
         let first = claude_dir("first", "echo '2.1.293 (Claude Code)'", 0o755).join("claude");
@@ -1317,6 +1375,7 @@ mod tests {
         let repo = work.join("app");
         std::fs::create_dir_all(&repo).unwrap();
         std::env::set_var("OUTRUNNER_ROOT", work.join("root"));
+        crate::install_crypto_provider(); // as run() does, for the relay's clients
         let git = |args: &[&str]| {
             let ok = Command::new("git")
                 .arg("-C")

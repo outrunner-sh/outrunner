@@ -12,6 +12,8 @@ import {
   needsClaudeLogin,
   pickLocalFolder,
   rememberFolder,
+  setsUpClaude,
+  setUpClaudeCode,
 } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
 import type { FirstSession, OnboardingEnv, OnboardingRepo, OnboardingUser } from "@/lib/onboarding/types";
@@ -49,8 +51,12 @@ export function liveEnv(user: OnboardingUser): OnboardingEnv {
         tmux: Boolean(status.tmux),
         claude: Boolean(status.claude),
         claudeLoggedIn: status.claudeLoggedIn ?? null,
+        setsUpClaude: setsUpClaude(status),
+        claudeSetup: status.claudeSetup ?? null,
       };
     },
+
+    setUpClaudeCode,
 
     async logInToClaudeCode() {
       loginStopped = false;

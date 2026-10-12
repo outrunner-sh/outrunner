@@ -44,8 +44,18 @@ export function useLocalRuntime(): { runtime: LocalRuntime; recheck: () => Promi
     const next = await readRuntime();
     if (mounted.current) setRuntime(next);
   }, []);
+  // Follow the app's download of its own Claude Code until it lands or fails.
+  const settingUp = runtime.state === "ready" && runtime.status.claudeSetup?.state === "installing";
+  useEffect(() => {
+    if (!settingUp) return;
+    const timer = setTimeout(() => void recheck(), SETUP_CHECK_MS);
+    return () => clearTimeout(timer);
+  }, [settingUp, runtime, recheck]);
   return { runtime, recheck };
 }
+
+/** How often to look in on Claude Code being set up. */
+const SETUP_CHECK_MS = 1500;
 
 /** A Claude Code login started from the page. */
 export type ClaudeLogin =

@@ -67,7 +67,8 @@ export function ConnectClaudeRow({
           : connected
             ? "Connected. Your sessions run on your Claude subscription."
             : connect.state === "waiting"
-              ? "Approve in your browser. This finishes on its own."
+              ? // The first connect on a Mac without Claude Code sets it up before the browser opens.
+                "Approve in your browser when it opens. This finishes on its own."
               : connect.state === "error"
                 ? connect.message
                 : env.desktop

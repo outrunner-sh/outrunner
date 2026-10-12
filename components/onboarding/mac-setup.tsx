@@ -6,6 +6,7 @@ import { Folder, FolderGit2 } from "lucide-react";
 import { ChecklistRow, CommandSnippet, type RowState } from "@/components/onboarding/checklist-row";
 import { ConnectClaudeRow } from "@/components/onboarding/connect-claude-row";
 import { Button } from "@/components/ui/button";
+import { claudeSetupText } from "@/lib/desktop/local-runtime";
 import type { MacStatus, OnboardingEnv, OnboardingFolder } from "@/lib/onboarding/types";
 
 type Login = { state: "idle" } | { state: "waiting" } | { state: "error"; message: string };
@@ -77,6 +78,47 @@ export function MacSetup({
     }
   }, [env]);
 
+  // Checks again without the spinner: for following Claude Code's setup.
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await env.checkMac());
+    } catch {
+      // The next look, or Check again, says what is wrong.
+    }
+  }, [env]);
+  const setUpClaude = useCallback(async () => {
+    await env.setUpClaudeCode().catch(() => {});
+    await refresh();
+  }, [env, refresh]);
+
+  // No Claude Code here that a session can run: the app sets up its own as
+  // soon as that shows, and the row follows it until it lands. A failure
+  // waits for Try again.
+  const setupNeeded = status !== null && !status.claude && status.setsUpClaude && status.claudeSetup === null;
+  const settingUp = status?.claudeSetup?.state === "installing";
+  useEffect(() => {
+    if (!setupNeeded) return;
+    let live = true;
+    env
+      .setUpClaudeCode()
+      .catch(() => {})
+      .then(() => env.checkMac())
+      .then(
+        (found) => {
+          if (live) setStatus(found);
+        },
+        () => {},
+      );
+    return () => {
+      live = false;
+    };
+  }, [setupNeeded, env]);
+  useEffect(() => {
+    if (!settingUp) return;
+    const timer = setTimeout(() => void refresh(), SETUP_CHECK_MS);
+    return () => clearTimeout(timer);
+  }, [settingUp, status, refresh]);
+
   const missing = status
     ? (
         [
@@ -88,6 +130,8 @@ export function MacSetup({
         ] as const
       ).filter(([, present]) => !present)
     : [];
+  // What the user has to install: not a Claude Code the app sets up itself.
+  const install = missing.filter(([name]) => !(name === "Claude Code" && status?.setsUpClaude));
   const toolsReady = status !== null && missing.length === 0;
   // Only a clear no asks for a login; an app that can't tell leaves it to the session.
   // Sessions here run the Mac's own Claude Code, so it must be logged in too.
@@ -115,7 +159,13 @@ export function MacSetup({
   };
 
   const toolsState: RowState =
-    checking && !status ? "working" : checkError ? "problem" : toolsReady ? "done" : "problem";
+    (checking && !status) || (install.length === 0 && settingUp)
+      ? "working"
+      : checkError
+        ? "problem"
+        : toolsReady
+          ? "done"
+          : "problem";
   const loginState: RowState = login.state === "waiting" ? "working" : "problem";
 
   return (
@@ -130,19 +180,25 @@ export function MacSetup({
               ? "Checking for git, tmux and Claude Code…"
               : toolsReady
                 ? "git, tmux and Claude Code are installed."
-                : `Install ${missing.map(([name]) => name).join(", ")}, then check again.`
+                : install.length > 0
+                  ? `Install ${install.map(([name]) => name).join(", ")}, then check again.`
+                  : claudeSetupText(status.claudeSetup)
         }
         action={
-          (status && !toolsReady) || checkError ? (
+          status?.claudeSetup?.state === "failed" && install.length === 0 ? (
+            <Button size="sm" variant="outline" onClick={() => void setUpClaude()}>
+              Try again
+            </Button>
+          ) : (status && install.length > 0) || checkError ? (
             <Button size="sm" variant="outline" disabled={checking} onClick={() => void check()}>
               Check again
             </Button>
           ) : undefined
         }
       >
-        {missing.length > 0 && (
+        {install.length > 0 && (
           <div className="space-y-2">
-            {missing.map(([name, , command]) =>
+            {install.map(([name, , command]) =>
               command ? (
                 <CommandSnippet key={name} command={command} />
               ) : (
@@ -222,3 +278,6 @@ export function MacSetup({
     </div>
   );
 }
+
+/** How often to look in on Claude Code being set up. */
+const SETUP_CHECK_MS = 1500;
