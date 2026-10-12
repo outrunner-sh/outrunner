@@ -11,11 +11,15 @@ import type { AgentEndpoint, SandboxBackend, SandboxBox } from "@/lib/runtime/sa
  * Neev sandboxes (NeevCloud Agent Sandboxes): NEEV_API_KEY, NEEV_ORG_ID,
  * NEEV_PROJECT_ID, optional NEEV_SANDBOX_TEMPLATE and NEEV_BASE_URL.
  *
+ * NEEV_API_KEY is a project API key with Resource Type "Sandboxes"
+ * (`sk-nc-…`). It is sent as is to the sandbox's own runtime (its
+ * `connect_url`). A personal access token (`pat-nc-…`) gets a 401 there, and
+ * connect tokens can't be minted with an API key.
+ *
  * What differs from Daytona, all found on real sandboxes:
- *  - Commands and file writes inside a sandbox (its `connect_url`) need a
- *    short-lived connect token minted from the API; the API key itself gets a
- *    401 there, and the SDK (0.8.2) sends the key. So this file talks to the
- *    sandbox directly ({@link SandboxRuntime}); the SDK does the rest.
+ *  - Commands and file writes go to the sandbox's runtime directly
+ *    ({@link SandboxRuntime}), whose exec takes a login shell and an
+ *    environment; the SDK does the rest.
  *  - The sandbox user is root, and Claude refuses bypassPermissions as root.
  *    Preparing the box creates a `runtime` user, and every command after that
  *    runs as it.
@@ -32,8 +36,6 @@ const BOX_USER = "runtime";
 const BOX_HOME = `/home/${BOX_USER}`;
 /** Uploads land here (the only writable tree), then move into place. */
 const UPLOAD_DIR = "/workspace";
-/** Connect tokens last 300 s; refresh well before. */
-const TOKEN_REFRESH_MS = 240_000;
 /** Installing tmux and Claude Code measured ~55 s; leave room for a slow mirror. */
 const PREPARE_TIMEOUT_MS = 600_000;
 const PREPARE_POLL_MS = 3_000;
@@ -105,24 +107,12 @@ export class NeevBackend implements SandboxBackend {
     await this.neev().sandboxes.delete(id);
   }
 
-  /** How to reach one sandbox's runtime: its URL and a way to get a token. */
+  /** How to reach one sandbox's runtime: its URL, on the project's API key. */
   private async connection(id: string): Promise<Connection> {
     const sandbox = await this.neev().sandboxes.get(id);
     const connectUrl = sandbox.connectUrl;
     if (!connectUrl) throw new Error(`Neev sandbox ${id} has no connect URL (phase ${sandbox.phase})`);
-    const client = this.neev();
-    const path =
-      `/api/v1beta1/orgs/${encodeURIComponent(requireEnv("NEEV_ORG_ID"))}` +
-      `/projects/${encodeURIComponent(requireEnv("NEEV_PROJECT_ID"))}` +
-      `/sandboxes/${encodeURIComponent(id)}/connect-token`;
-    return {
-      connectUrl: connectUrl.replace(/\/$/, ""),
-      mintToken: async () => {
-        const body = await client.raw.request<{ token?: string }>({ method: "POST", path });
-        if (!body?.token) throw new Error(`Neev returned no connect token for ${id}`);
-        return body.token;
-      },
-    };
+    return { connectUrl: connectUrl.replace(/\/$/, ""), apiKey: requireEnv("NEEV_API_KEY") };
   }
 
   private box(sandbox: Sandbox, runtime: SandboxRuntime): SandboxBox {
@@ -217,29 +207,29 @@ export function asUserArgs(command: string, env?: Record<string, string>): strin
   return ["-l", BOX_USER, ...(names.length > 0 ? ["-w", names.join(",")] : []), "-c", command];
 }
 
-type Connection = { connectUrl: string; mintToken: () => Promise<string> };
+type Connection = { connectUrl: string; apiKey: string };
 
 type ExecResult = { stdout: string; stderr: string; exitCode: number };
 
 /**
- * The calls this backend makes inside a sandbox, on a connect token: exec
- * (newline-delimited JSON, base64 chunks, then an exit event) and a file write.
+ * The calls this backend makes inside a sandbox, on the project's API key:
+ * exec (newline-delimited JSON, base64 chunks, then an exit event) and a file
+ * write.
  */
 export class SandboxRuntime {
   private readonly conn: Connection;
-  private token: string | null = null;
-  private tokenAt = 0;
 
   constructor(conn: Connection) {
     this.conn = conn;
   }
 
-  private async bearer(): Promise<string> {
-    if (!this.token || Date.now() - this.tokenAt > TOKEN_REFRESH_MS) {
-      this.token = await this.conn.mintToken();
-      this.tokenAt = Date.now();
-    }
-    return this.token;
+  /** A refusal, with what to fix when it is the key's type. */
+  private async refused(what: string, response: Response): Promise<Error> {
+    const hint =
+      response.status === 401
+        ? " NEEV_API_KEY must be a project API key with Resource Type \"Sandboxes\" (sk-nc-…)."
+        : "";
+    return new Error(`Neev ${what} failed (HTTP ${response.status}): ${tail(await response.text())}${hint}`);
   }
 
   async exec(
@@ -250,7 +240,7 @@ export class SandboxRuntime {
     const response = await fetch(`${this.conn.connectUrl}/v1/exec`, {
       method: "POST",
       headers: {
-        authorization: `Bearer ${await this.bearer()}`,
+        authorization: `Bearer ${this.conn.apiKey}`,
         "content-type": "application/json",
         accept: "application/x-ndjson",
       },
@@ -262,9 +252,7 @@ export class SandboxRuntime {
       }),
       signal: options.timeoutMs ? AbortSignal.timeout(options.timeoutMs + 30_000) : undefined,
     });
-    if (!response.ok) {
-      throw new Error(`Neev exec failed (HTTP ${response.status}): ${tail(await response.text())}`);
-    }
+    if (!response.ok) throw await this.refused("exec", response);
     return parseExecStream(await response.text());
   }
 
@@ -274,16 +262,14 @@ export class SandboxRuntime {
       {
         method: "POST",
         headers: {
-          authorization: `Bearer ${await this.bearer()}`,
+          authorization: `Bearer ${this.conn.apiKey}`,
           "content-type": "application/octet-stream",
         },
         // A Blob: fetch's types take no Buffer, and a copy keeps the bytes as is.
         body: new Blob([Uint8Array.from(data)]),
       },
     );
-    if (!response.ok) {
-      throw new Error(`Neev write ${path} failed (HTTP ${response.status}): ${tail(await response.text())}`);
-    }
+    if (!response.ok) throw await this.refused(`write ${path}`, response);
   }
 }
 

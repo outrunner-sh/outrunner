@@ -46,8 +46,7 @@ test("the box setup installs what the agent needs and makes its user", () => {
   assert.equal(s.includes("sudo"), false, "Neev has no usable sudo; setup runs as root");
 });
 
-test("connect tokens are minted once and reused while fresh", async () => {
-  let mints = 0;
+test("commands go to the sandbox on the project's API key", async () => {
   const seen: Array<{ url: string; auth: string; body: unknown }> = [];
   globalThis.fetch = (async (url: string, init: RequestInit) => {
     seen.push({
@@ -57,22 +56,19 @@ test("connect tokens are minted once and reused while fresh", async () => {
     });
     return new Response(JSON.stringify({ type: "exit", exit_code: 0 }) + "\n", { status: 200 });
   }) as typeof fetch;
-  const runtime = new SandboxRuntime({
-    connectUrl: "https://box.example.test",
-    mintToken: async () => `tok-${++mints}`,
-  });
+  const runtime = new SandboxRuntime({ connectUrl: "https://box.example.test", apiKey: "sk-nc-test" });
   await runtime.exec("bash", ["-lc", "true"], { env: { A: "1" } });
-  await runtime.exec("bash", ["-lc", "true"]);
-  assert.equal(mints, 1);
+  assert.equal(seen.length, 1, "one request: no token is minted first");
   assert.equal(seen[0].url, "https://box.example.test/v1/exec");
-  assert.equal(seen[0].auth, "Bearer tok-1");
+  assert.equal(seen[0].auth, "Bearer sk-nc-test");
   assert.deepEqual((seen[0].body as { env: string[] }).env, ["A=1"]);
 });
 
-test("a refused exec reports its status", async () => {
+test("a 401 says which key Neev needs", async () => {
   globalThis.fetch = (async () => new Response("invalid credentials", { status: 401 })) as typeof fetch;
-  const runtime = new SandboxRuntime({ connectUrl: "https://box.example.test", mintToken: async () => "t" });
-  await assert.rejects(runtime.exec("true", []), /HTTP 401/);
+  const runtime = new SandboxRuntime({ connectUrl: "https://box.example.test", apiKey: "pat-nc-personal" });
+  await assert.rejects(runtime.exec("true", []), /HTTP 401[\s\S]*Resource Type "Sandboxes"/);
+  await assert.rejects(runtime.write("/workspace/x", new Uint8Array([1])), /HTTP 401[\s\S]*sk-nc-/);
 });
 
 test("box setup runs in the background and is polled to its exit status", async () => {
