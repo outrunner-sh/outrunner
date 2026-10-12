@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  claudeSetupNeeded,
+  claudeSetupText,
   LocalSocket,
   localSocketUrl,
   messageForLocalError,
   missingTools,
   needsClaudeLogin,
+  toolsToInstall,
   openSocket,
   parseLocalSocketUrl,
 } from "@/lib/desktop/local-runtime";
@@ -35,6 +38,35 @@ test("other URLs are not local sockets", () => {
 test("missing tools are named in install order", () => {
   const status = { deviceId: "d", root: "/r", agentBundled: true, git: "/usr/bin/git", tmux: null, claude: null };
   assert.deepEqual(missingTools(status), ["tmux", "Claude Code"]);
+});
+
+test("an app that sets Claude Code up itself never asks the user to install it", () => {
+  const base = { deviceId: "d", root: "/r", agentBundled: true, git: "/g", tmux: null, claude: null };
+  // Built before it could: installing it is the user's job, as before.
+  assert.deepEqual(toolsToInstall(base), ["tmux", "Claude Code"]);
+  assert.equal(claudeSetupNeeded(base), false);
+  // Built since: the app sets it up once asked, and not again while it is under
+  // way or after it failed (that waits for Try again).
+  assert.deepEqual(toolsToInstall({ ...base, claudeSetup: null }), ["tmux"]);
+  assert.equal(claudeSetupNeeded({ ...base, claudeSetup: null }), true);
+  const installing = { state: "installing" as const, received: 0, total: 0 };
+  assert.equal(claudeSetupNeeded({ ...base, claudeSetup: installing }), false);
+  assert.equal(claudeSetupNeeded({ ...base, claudeSetup: { state: "failed", message: "x" } }), false);
+  // One that runs needs nothing.
+  assert.equal(claudeSetupNeeded({ ...base, claude: "/c", claudeSetup: null }), false);
+});
+
+test("setting up Claude Code shows how far it has got, or why it failed", () => {
+  assert.equal(claudeSetupText(null), "Setting up Claude Code for Outrunner…");
+  assert.equal(claudeSetupText({ state: "installing", received: 0, total: 0 }), "Setting up Claude Code for Outrunner…");
+  assert.equal(
+    claudeSetupText({ state: "installing", received: 37_974_663, total: 75_949_326 }),
+    "Setting up Claude Code for Outrunner… 50%",
+  );
+  assert.equal(
+    claudeSetupText({ state: "failed", message: "Claude Code's download didn't match its checksum." }),
+    "Claude Code's download didn't match its checksum.",
+  );
 });
 
 test("only a clear no from the app asks for a Claude Code login", () => {

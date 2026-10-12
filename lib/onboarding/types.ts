@@ -6,6 +6,8 @@
  * the real desktop bridge and APIs.
  */
 
+import type { ClaudeSetup } from "@/lib/desktop/local-runtime";
+
 /** Where the user's sessions run. */
 export type RunTarget = "mac" | "cloud";
 
@@ -18,6 +20,11 @@ export type MacStatus = {
   claude: boolean;
   /** Whether Claude Code is logged in; null when it could not tell. */
   claudeLoggedIn: boolean | null;
+  /** The app sets up its own Claude Code when there is none that runs, so
+   *  the user installs nothing. False in an app built before it could. */
+  setsUpClaude: boolean;
+  /** Where that setup has got to; null when nothing is under way. */
+  claudeSetup: ClaudeSetup | null;
 };
 
 export type OnboardingFolder = {
@@ -49,6 +56,8 @@ export type OnboardingEnv = {
   /** Whether a cloud session may start on Neev AI models without Claude. */
   neevForCloud: boolean;
   checkMac(): Promise<MacStatus>;
+  /** Start setting up the app's own Claude Code; `checkMac` follows it. */
+  setUpClaudeCode(): Promise<void>;
   /** Run `claude auth login`; resolves once the user approved in the browser. */
   logInToClaudeCode(): Promise<void>;
   cancelClaudeCodeLogin(): void;

@@ -40,7 +40,18 @@ export type LocalStatus = {
   /** Whether that Claude Code is logged in; null when the app cannot tell.
    *  Absent from an app built before it checked. */
   claudeLoggedIn?: boolean | null;
+  /** The app setting up its own Claude Code; null when it isn't. Absent from
+   *  an app built before it could, which leaves installing it to the user. */
+  claudeSetup?: ClaudeSetup | null;
 };
+
+/**
+ * Outrunner downloading its own copy of Claude Code, for a Mac whose own is
+ * missing, broken or too old for a session.
+ */
+export type ClaudeSetup =
+  | { state: "installing"; received: number; total: number }
+  | { state: "failed"; message: string };
 
 export type LocalFolder = {
   /** A repository's top level (even if a subfolder was chosen), else the folder. */
@@ -107,6 +118,40 @@ export function missingTools(status: LocalStatus): string[] {
   if (!status.tmux) missing.push("tmux");
   if (!status.claude) missing.push("Claude Code");
   return missing;
+}
+
+/** Whether the app sets Claude Code up itself instead of asking the user to. */
+export function setsUpClaude(status: LocalStatus): boolean {
+  return status.claudeSetup !== undefined;
+}
+
+/** The missing tools the user has to install: all but a Claude Code the app sets up. */
+export function toolsToInstall(status: LocalStatus): string[] {
+  const missing = missingTools(status);
+  return setsUpClaude(status) ? missing.filter((tool) => tool !== "Claude Code") : missing;
+}
+
+/** Whether the app should start setting up its own Claude Code now: none runs
+ *  here, and no setup is under way or has just failed. */
+export function claudeSetupNeeded(status: LocalStatus): boolean {
+  return !status.claude && status.claudeSetup === null;
+}
+
+/** Where setting up Claude Code has got to, for a line on the page. */
+export function claudeSetupText(setup: ClaudeSetup | null | undefined): string {
+  if (setup?.state === "failed") return setup.message;
+  if (setup?.state === "installing" && setup.total > 0) {
+    return `Setting up Claude Code for Outrunner… ${Math.floor((setup.received / setup.total) * 100)}%`;
+  }
+  return "Setting up Claude Code for Outrunner…";
+}
+
+/**
+ * Start setting up Outrunner's own Claude Code, when this Mac has none that
+ * runs a session. Resolves at once; `localStatus` follows the download.
+ */
+export function setUpClaudeCode(): Promise<void> {
+  return call<void>("local_claude_setup");
 }
 
 /**

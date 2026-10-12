@@ -5,10 +5,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useClaudeLocalLogin, useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
 import {
   checkLocalFolder,
+  claudeSetupNeeded,
+  claudeSetupText,
   needsClaudeLogin,
   pickLocalFolder,
   rememberedFolder,
   rememberFolder,
+  setUpClaudeCode,
+  toolsToInstall,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
 
@@ -50,6 +54,18 @@ export function useSessionLocation() {
   );
 
   const location: SessionLocation = runtime.state === "ready" ? chosen : "cloud";
+
+  // Choosing This Mac on a Mac with no Claude Code a session can run (none,
+  // a broken one, one too old) sets up the app's own; nothing to install. A
+  // failure waits for Try again.
+  const setupNeeded = location === "local" && runtime.state === "ready" && claudeSetupNeeded(runtime.status);
+  const setUpClaude = useCallback(async () => {
+    await setUpClaudeCode().catch(() => {});
+    await recheck();
+  }, [recheck]);
+  useEffect(() => {
+    if (setupNeeded) void setUpClaude();
+  }, [setupNeeded, setUpClaude]);
 
   const setLocation = useCallback((next: SessionLocation) => {
     setChosen(next);
@@ -129,6 +145,12 @@ export function useSessionLocation() {
     /** The blocker is Claude Code needing a login, which the page can start. */
     needsClaudeLogin: location === "local" && runtime.state === "ready" && needsClaudeLogin(runtime.status),
     claudeLogin,
+    /** Setting up the app's own Claude Code failed; `retry` starts it again. */
+    claudeSetup: {
+      failed:
+        location === "local" && runtime.state === "ready" && runtime.status.claudeSetup?.state === "failed",
+      retry: setUpClaude,
+    },
     /** The folder a local session would use; null for cloud, or while blocked. */
     localFolder: location === "local" && !blocker && folder.state === "ok" ? folder.folder : null,
   };
@@ -160,10 +182,12 @@ function saveLocation(location: SessionLocation): void {
 function localBlocker(runtime: LocalRuntime, folder: FolderChoice): string | null {
   if (runtime.state === "error") return runtime.message;
   if (runtime.state !== "ready") return "Local sessions run in the Outrunner Mac app.";
-  if (runtime.missing.length > 0) {
-    const tmux = runtime.missing.includes("tmux") ? " (brew install tmux)" : "";
-    return `Install ${runtime.missing.join(", ")}${tmux} to run sessions on this Mac.`;
+  const install = toolsToInstall(runtime.status);
+  if (install.length > 0) {
+    const tmux = install.includes("tmux") ? " (brew install tmux)" : "";
+    return `Install ${install.join(", ")}${tmux} to run sessions on this Mac.`;
   }
+  if (!runtime.status.claude) return claudeSetupText(runtime.status.claudeSetup);
   if (needsClaudeLogin(runtime.status)) return "Log in to Claude Code to run sessions on this Mac.";
   switch (folder.state) {
     case "none":

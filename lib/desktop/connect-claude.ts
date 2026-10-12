@@ -68,8 +68,14 @@ export function messageForError(code: string): string {
       (detail ? ` It said: ${detail}` : "")
     );
   }
-  // Every `claude` found failed to run; the first is named. Usually an npm
-  // install whose postinstall never ran, which leaves a placeholder behind.
+  // No Claude Code here ran, and the app couldn't set up its own: it says why.
+  if (code.startsWith("claude-setup-failed:")) {
+    const reason = code.slice("claude-setup-failed:".length).trim() || "Couldn't set up Claude Code.";
+    return `${/[.!?]$/.test(reason) ? reason : `${reason}.`} Check your connection, then try again.`;
+  }
+  // From an app built before it set up its own Claude Code: every `claude`
+  // found failed to run; the first is named. Usually an npm install whose
+  // postinstall never ran, which leaves a placeholder behind.
   if (code.startsWith("claude-cli-broken:")) {
     const path = code.slice("claude-cli-broken:".length).trim();
     return (
