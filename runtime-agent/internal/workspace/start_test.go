@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -135,5 +136,15 @@ func TestStartAnswersYesWhicheverWayTheTrustDialogIsOrdered(t *testing.T) {
 				t.Errorf("keys pressed = %q, want %q", fake.keys, c.keys)
 			}
 		})
+	}
+}
+
+func TestStartReportsAClaudeThatExitsAsItStarts(t *testing.T) {
+	t.Parallel()
+	s, fake, id, folder := stoppedSession(t)
+	fake.exitAtOnce = true // e.g. an old Claude Code: "unknown option '--session-id'"
+	_, err := s.Start(context.Background(), id, "")
+	if !errors.Is(err, errClaudeExited) || !strings.Contains(err.Error(), folder) {
+		t.Fatalf("Start = %v, want errClaudeExited naming the folder to look in", err)
 	}
 }

@@ -27,6 +27,8 @@ type fakeSessions struct {
 	// it leads to ("" leaves the pane as it is).
 	keys  []string
 	onKey func(key string) string
+	// exitAtOnce makes a session's Claude exit as soon as it is launched.
+	exitAtOnce bool
 }
 
 func newFakeSessions() *fakeSessions {
@@ -45,7 +47,7 @@ func (f *fakeSessions) NewSession(_ context.Context, name, _ string, command []s
 			return err
 		}
 	}
-	f.running[name] = true
+	f.running[name] = !f.exitAtOnce
 	return nil
 }
 

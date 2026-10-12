@@ -402,7 +402,9 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
 	s.startRecorder(ctx, workspaceID)
-	s.waitClaudeReady(ctx, name, s.local(workspaceID))
+	if err := s.waitClaudeReady(ctx, name, s.local(workspaceID)); err != nil {
+		return "", claudeExited(err, worktree)
+	}
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
 }
@@ -418,14 +420,19 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 // directory Claude has never seen, so without this the first prompt would be
 // typed into the dialog. Choosing the checkout in Outrunner is the user's trust
 // decision; a Runtime Computer never shows the dialog (deploy pre-seeds it).
-func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust bool) {
+//
+// A Claude that exits meanwhile (an option its version lacks, a crash, a
+// "No" to that dialog) takes its session with it: that is errClaudeExited,
+// rather than a session reported ready that the first prompt then finds gone
+// ("tmux paste: no session").
+func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust bool) error {
 	const minWait = 2 * time.Second
 	const maxWait = 15 * time.Second
 	launched := time.Now()
 	var lastAnswer time.Time
-	for {
-		if ctx.Err() != nil || time.Since(launched) >= maxWait {
-			return
+	for ctx.Err() == nil && time.Since(launched) < maxWait {
+		if !s.tmux.HasSession(ctx, name) {
+			return errClaudeExited
 		}
 		pane, err := s.tmux.CapturePane(ctx, name)
 		// The dialog is checked first: its "❯ Yes, I trust this folder" line
@@ -438,14 +445,27 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust 
 				lastAnswer = time.Now()
 			}
 		} else if err == nil && strings.Contains(pane, "❯") && time.Since(launched) >= minWait {
-			return
+			break
 		}
 		select {
 		case <-ctx.Done():
-			return
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+	if ctx.Err() == nil && !s.tmux.HasSession(ctx, name) {
+		return errClaudeExited
+	}
+	return nil
+}
+
+var errClaudeExited = errors.New("Claude Code exited as soon as it started")
+
+// claudeExited says where to look. What Claude printed as it exited is gone
+// with its session: tmux can't keep it (on macOS a pty drops what an
+// instantly exiting process wrote last), so its own terminal is the way to
+// see it.
+func claudeExited(err error, folder string) error {
+	return fmt.Errorf("%w. To see why, run `claude` in a terminal in %s", err, folder)
 }
 
 // isTrustDialog reports whether a pane shows Claude Code's folder-trust prompt,
@@ -651,7 +671,9 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 		return "", err
 	}
 	s.continueRecorder(ctx, workspaceID)
-	s.waitClaudeReady(ctx, name, s.local(workspaceID))
+	if err := s.waitClaudeReady(ctx, name, s.local(workspaceID)); err != nil {
+		return "", claudeExited(err, worktree)
+	}
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
 }
