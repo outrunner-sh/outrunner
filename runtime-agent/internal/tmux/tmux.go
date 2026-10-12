@@ -162,6 +162,15 @@ func (m *Manager) SubmitEnter(ctx context.Context, name string) error {
 	return nil
 }
 
+// SendKey presses one named key (tmux's names: Enter, Down, Up) in the
+// session's active pane.
+func (m *Manager) SendKey(ctx context.Context, name, key string) error {
+	if out, err := Command(ctx, "send-keys", "-t", name, key).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys %s %s: %v: %s", key, name, err, out)
+	}
+	return nil
+}
+
 // CapturePane returns the current visible contents of the session's active
 // pane. Used to detect when Claude's TUI has finished mounting and is ready to
 // accept a submitted prompt.
