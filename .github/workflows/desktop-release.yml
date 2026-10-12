@@ -4,10 +4,15 @@ name: Desktop release
 # signed with the Developer ID certificate and notarized by Apple, so it
 # installs with no Gatekeeper warning and no `xattr` step.
 #
+#   Automatic: merging a PR that changes the app or the agent releases the next
+#             patch version, published (desktop-auto-release.yml calls this
+#             with publish: true, then desktop-publish.yml).
 #   Release:  git tag desktop-v0.2.0 && git push origin desktop-v0.2.0
 #             -> builds Outrunner 0.2.0 and attaches the DMG and the signed
 #                update bundle to a DRAFT GitHub Release. Smoke-test it, then publish the draft by hand;
 #                desktop-publish.yml then puts it on the public download link.
+#                The way to a new minor or major version; automatic releases
+#                carry on from it.
 #   Dry run:  Actions -> Desktop release -> Run workflow, with a version
 #             -> the same signed + notarized build, as a workflow artifact only.
 #
@@ -35,6 +40,18 @@ on:
       version:
         description: "Version to stamp into the app, e.g. 0.2.0 (no release is created)"
         required: true
+  # desktop-auto-release.yml. A release made with the workflow's token starts
+  # no workflow of its own, so the caller runs desktop-publish.yml next.
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.3.1"
+        type: string
+        required: true
+      publish:
+        description: "Publish the release at this commit (tagging it) instead of only building"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -68,14 +85,20 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
         run: |
           set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+          # draft: a pushed desktop-v* tag. publish: desktop-auto-release.yml,
+          # whose event is its own push to main. none: a dry run.
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#desktop-v}"
-            RELEASE=true
+            RELEASE=draft
+          elif [ "$INPUT_PUBLISH" = "true" ]; then
+            VERSION="$INPUT_VERSION"
+            RELEASE=publish
           else
             VERSION="$INPUT_VERSION"
-            RELEASE=false
+            RELEASE=none
           fi
           # CFBundleShortVersionString must be up to three dot-separated
           # integers; macOS rejects or misorders anything else (0.2.0-beta, v0.2).
@@ -85,6 +108,7 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
           # Tauri's output names, used by every later step.
           {
             echo "APP=$BUNDLE_DIR/macos/Outrunner.app"
@@ -383,24 +407,50 @@ jobs:
           if-no-files-found: error
 
       - name: Attach to a draft release
-        if: steps.version.outputs.release == 'true'
+        if: steps.version.outputs.release == 'draft'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
           # A re-run of the same tag may replace the files of a DRAFT, which
           # nobody outside the repo has seen. Once published, the release is
           # what users downloaded and what went to the website: never swap it.
-          if IS_DRAFT=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
+          if IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
             if [ "$IS_DRAFT" != "true" ]; then
-              echo "::error::release $GITHUB_REF_NAME is already published; refusing to replace its DMG. Tag a new version instead."
+              echo "::error::release $TAG is already published; refusing to replace its DMG. Tag a new version instead."
               exit 1
             fi
-            gh release upload "$GITHUB_REF_NAME" "$OUT"/* --clobber
+            gh release upload "$TAG" "$OUT"/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$OUT"/* \
+            gh release create "$TAG" "$OUT"/* \
               --draft --verify-tag \
               --title "Outrunner $VERSION" \
               --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag Outrunner to Applications."
           fi
+
+      # The automatic release: tagged and published here, only once the build
+      # passed every check above, so a failed build leaves no tag and the next
+      # merge takes the same version. The notes list the PRs since the last
+      # release.
+      - name: Publish the release
+        if: steps.version.outputs.release == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::release $TAG already exists; refusing to replace it."
+            exit 1
+          fi
+          PREVIOUS=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          FROM=()
+          if [[ "$PREVIOUS" == desktop-v* ]]; then FROM=(--notes-start-tag "$PREVIOUS"); fi
+          gh release create "$TAG" "$OUT"/* \
+            --target "$GITHUB_SHA" --latest \
+            --title "Outrunner $VERSION" \
+            --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag Outrunner to Applications." \
+            --generate-notes ${FROM[@]+"${FROM[@]}"}

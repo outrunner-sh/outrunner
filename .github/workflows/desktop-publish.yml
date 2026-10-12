@@ -5,7 +5,9 @@ name: Desktop publish
 # Release itself is not downloadable by anyone outside it.
 #
 #   Automatic: publishing a desktop-v* release (the draft desktop-release.yml
-#              made) puts it live, usually within a minute. It only ever moves
+#              made) puts it live, usually within a minute. A release
+#              desktop-auto-release.yml published comes here by workflow_call:
+#              one published with the workflow's token sends no release event. It only ever moves
 #              the latest link FORWARD: publishing an older draft after a newer
 #              release uploads its versioned file and leaves the latest alone.
 #   Rollback:  Actions -> Desktop publish -> Run workflow with an older tag
@@ -37,6 +39,12 @@ on:
       tag:
         description: "Published release to make the latest download, e.g. desktop-v0.2.0"
         required: true
+  workflow_call:
+    inputs:
+      tag:
+        description: "Published release to make the latest download"
+        type: string
+        required: true
 
 permissions:
   contents: read # download the release's files
@@ -51,7 +59,7 @@ jobs:
     name: Publish to downloads
     if: >-
       github.repository == 'neevai-labs/outrunner' &&
-      (github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'desktop-v'))
+      (github.event_name != 'release' || startsWith(github.event.release.tag_name, 'desktop-v'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
