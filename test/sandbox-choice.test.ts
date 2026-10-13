@@ -9,6 +9,7 @@ const noKey = async () => null;
 const settings = (sandbox: "outrunner" | "daytona", connected: boolean) => ({
   sandbox,
   daytona: { connected, hint: connected ? "ab12" : null, updatedAt: null },
+  boxSize: "small" as const,
 });
 
 const saved = process.env.RUNTIME_PROVIDER;

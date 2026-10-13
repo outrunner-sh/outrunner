@@ -4,6 +4,7 @@ import type {
   ProvisionedComputer,
   ProvisionComputerInput,
 } from "@/lib/runtime/computer-provider";
+import type { BoxResources } from "@/lib/runtime/sandbox/backend";
 import type { ProviderName, RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
 
 const POLL_INTERVAL_MS = 500;
@@ -45,6 +46,8 @@ export type EnsureRuntimeComputerInput = {
   repoFullName: string;
   githubToken?: string;
   sessionEnv?: Record<string, string>;
+  /** CPU and memory, if a box is made now (one already there keeps its own). */
+  size?: BoxResources;
 };
 
 export type EnsuredRuntimeComputer = {
@@ -89,6 +92,7 @@ export async function ensureRuntimeComputer(
       repoFullName: input.repoFullName,
       githubToken: input.githubToken,
       sessionEnv: input.sessionEnv,
+      size: input.size,
     });
     await deps.update(claim.computer.id, {
       status: "ready",

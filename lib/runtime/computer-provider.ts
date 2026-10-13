@@ -21,7 +21,7 @@ import {
   pushBranch,
   readFileDiff,
 } from "@/lib/runtime/git";
-import type { SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import type { BoxResources, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
   ChangedFile,
   CommitWorkspaceResult,
@@ -130,6 +130,8 @@ export type ProvisionComputerInput = {
    *  provisioning (a dedicated delivery channel), so per-workspace secrets don't
    *  ride the boot env. */
   sessionEnv?: Record<string, string>;
+  /** CPU and memory for the new box, where the backend can size one. */
+  size?: BoxResources;
   /** Optional live per-stage progress (the UI/verify script logs these). */
   onStage?: (stage: ProvisionStage, ms: number) => void;
 };
@@ -221,7 +223,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     let sandbox: SandboxBox | null = null;
     try {
       sandbox = await timer.stage("sandbox_create", () =>
-        this.backend.create({ "runtime.role": "computer", "runtime.engine": "claude" }),
+        this.backend.create({ "runtime.role": "computer", "runtime.engine": "claude" }, input.size),
       );
       const box = sandbox;
       const home = await box.home();
@@ -279,7 +281,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       // (worktrees, jcode sessions, conversation logs) stay live, so
       // reconnect/resume just works with no wake path.
       sandbox = await timer.stage("sandbox_create", () =>
-        this.backend.create({ "runtime.role": "computer", "runtime.engine": "jcode" }),
+        this.backend.create({ "runtime.role": "computer", "runtime.engine": "jcode" }, input.size),
       );
       const box = sandbox;
       const home = await box.home();

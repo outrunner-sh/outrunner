@@ -31,10 +31,14 @@ export interface SandboxBox {
   agentEndpoint(port: number): Promise<AgentEndpoint>;
 }
 
+/** CPU and memory a new box boots with. */
+export type BoxResources = { cpu: number; memoryGb: number };
+
 export interface SandboxBackend {
   /** An always-on box (never stopped or deleted on its own), ready to use.
-   *  `labels` tag it for the provider's console. */
-  create(labels: Record<string, string>): Promise<SandboxBox>;
+   *  `labels` tag it for the provider's console. `size` is honoured where the
+   *  provider can size a box (Neev); elsewhere it gets the provider's default. */
+  create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox>;
   get(id: string): Promise<SandboxBox>;
   /** Whether it is up and able to host sessions. False when it is gone. */
   alive(id: string): Promise<boolean>;

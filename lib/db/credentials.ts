@@ -24,6 +24,8 @@ import {
   sharedApiKey,
 } from "@/lib/openrouter/keys";
 import { ensureUserKey } from "@/lib/openrouter/user-key";
+import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
+import type { Database } from "@/lib/supabase/database.types";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -177,30 +179,43 @@ export type SandboxChoice = "outrunner" | "daytona";
 export type SandboxSettings = {
   sandbox: SandboxChoice;
   daytona: { connected: boolean; hint: string | null; updatedAt: string | null };
+  /** How big a new Outrunner sandbox is (lib/runtime/box-sizes.ts). */
+  boxSize: BoxSizeId;
 };
+
+const SANDBOX_COLUMNS = "sandbox, daytona_key_ciphertext, daytona_key_hint, daytona_key_updated_at";
 
 export async function getSandboxSettings(userId: string): Promise<SandboxSettings> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("user_credentials")
-    .select("sandbox, daytona_key_ciphertext, daytona_key_hint, daytona_key_updated_at")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  // Before 20261013120000_user_sandbox.sql is applied, everyone is on
-  // Outrunner's sandboxes, as they were.
-  if (error && probeStatus(error) === "outdated") {
-    return { sandbox: "outrunner", daytona: { connected: false, hint: null, updatedAt: null } };
-  }
+  const read = (columns: string) =>
+    supabase.from("user_credentials").select(columns).eq("user_id", userId).maybeSingle();
+  let { data, error } = await read(`${SANDBOX_COLUMNS}, box_size`);
+  // Until 20261013130000_user_box_size.sql is applied, the default size; and
+  // until 20261013120000_user_sandbox.sql, everyone on Outrunner's sandboxes,
+  // as they were.
+  if (error && probeStatus(error) === "outdated") ({ data, error } = await read(SANDBOX_COLUMNS));
+  if (error && probeStatus(error) === "outdated") ({ data, error } = { data: null, error: null });
   if (error) throw error;
+  const row = data as Partial<Database["public"]["Tables"]["user_credentials"]["Row"]> | null;
   return {
-    sandbox: data?.sandbox ?? "outrunner",
+    sandbox: row?.sandbox ?? "outrunner",
     daytona: {
-      connected: Boolean(data?.daytona_key_ciphertext),
-      hint: data?.daytona_key_hint ?? null,
-      updatedAt: data?.daytona_key_updated_at ?? null,
+      connected: Boolean(row?.daytona_key_ciphertext),
+      hint: row?.daytona_key_hint ?? null,
+      updatedAt: row?.daytona_key_updated_at ?? null,
     },
+    boxSize: isBoxSizeId(row?.box_size) ? row.box_size : DEFAULT_BOX_SIZE,
   };
+}
+
+/** Make the user's new Outrunner sandboxes this size. */
+export async function setBoxSize(userId: string, size: BoxSizeId): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("user_credentials")
+    .upsert({ user_id: userId, box_size: size }, { onConflict: "user_id" });
+
+  if (error) throw error;
 }
 
 export async function setSandboxChoice(userId: string, sandbox: SandboxChoice): Promise<void> {

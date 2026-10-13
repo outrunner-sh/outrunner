@@ -90,10 +90,12 @@ const input = {
 test("concurrent first-workspace ensures provision exactly one Runtime Computer", async () => {
   const harness = concurrencyHarness();
   let provisions = 0;
+  const sizes: unknown[] = [];
   const provider: RuntimeComputerProvisioner = {
     name: "neev",
-    provisionComputer: async () => {
+    provisionComputer: async (request) => {
       provisions += 1;
+      sizes.push(request.size);
       // Keep the owner request in the external-provision phase long enough
       // for its peer to observe the durable provisioning row and wait.
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -105,9 +107,10 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
     },
   };
 
+  const sized = { ...input, size: { cpu: 4, memoryGb: 8 } };
   const [first, second] = await Promise.all([
-    ensureRuntimeComputer(provider, input, harness.deps),
-    ensureRuntimeComputer(provider, input, harness.deps),
+    ensureRuntimeComputer(provider, sized, harness.deps),
+    ensureRuntimeComputer(provider, sized, harness.deps),
   ]);
 
   assert.equal(provisions, 1);
@@ -116,6 +119,8 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
   assert.equal(harness.row()?.status, "ready");
   // So a later session knows which provider has the box.
   assert.equal(harness.row()?.provider, "neev");
+  // The box is made at the size asked for.
+  assert.deepEqual(sizes, [{ cpu: 4, memoryGb: 8 }]);
 });
 
 test("a provision failure is persisted as an error for a later retry", async () => {

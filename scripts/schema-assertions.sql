@@ -241,3 +241,22 @@ begin
   end if;
   raise notice 'ok: sandbox choice defaults to outrunner, is checked, and computers record a provider';
 end $$;
+
+-- 15. Box size: Small by default, and only the sizes the app knows.
+do $$
+declare size text;
+begin
+  insert into user_credentials (user_id) values ('11111111-1111-1111-1111-111111111111')
+    on conflict (user_id) do nothing;
+  select box_size into size from user_credentials where user_id = '11111111-1111-1111-1111-111111111111';
+  if size <> 'small' then
+    raise exception 'FAIL: box_size defaults to %, not small', size;
+  end if;
+  begin
+    update user_credentials set box_size = 'huge' where user_id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'FAIL: box_size accepted a size the app does not know';
+  exception when check_violation then
+    null;
+  end;
+  raise notice 'ok: box size defaults to small and is checked';
+end $$;
