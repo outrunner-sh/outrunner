@@ -44,7 +44,15 @@ export type LocalStatus = {
   /** The app setting up its own Claude Code; null when it isn't. Absent from
    *  an app built before it could, which leaves installing it to the user. */
   claudeSetup?: ClaudeSetup | null;
+  /** The Codex a Codex session runs, its login, and the app setting up its
+   *  own, as for Claude Code. Absent from an app built before Codex. */
+  codex?: string | null;
+  codexLoggedIn?: boolean | null;
+  codexSetup?: ClaudeSetup | null;
 };
+
+/** One model the Mac's Codex login may use, as Codex lists it. */
+export type CodexModel = { id: string; displayName: string; isDefault?: boolean };
 
 /**
  * Outrunner downloading its own copy of Claude Code, for a Mac whose own is
@@ -83,6 +91,10 @@ export type LocalSession = {
    *  createdAt. Absent from agents bundled before it existed. */
   lastActiveAt?: string;
   running: boolean;
+  /** The model it runs; absent when it runs its agent's default. */
+  model?: string;
+  /** "codex" for a Codex session; absent for Claude Code. */
+  agent?: "codex";
 };
 
 export function tauriCore(): TauriCore | null {
@@ -97,11 +109,11 @@ function requireCore(): TauriCore {
   return core;
 }
 
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function call<T>(cmd: string, args?: Record<string, unknown>, cli?: string): Promise<T> {
   try {
     return (await requireCore().invoke(cmd, args)) as T;
   } catch (error) {
-    throw new Error(messageForLocalError(error));
+    throw new Error(messageForLocalError(error, cli));
   }
 }
 
@@ -139,12 +151,12 @@ export function claudeSetupNeeded(status: LocalStatus): boolean {
 }
 
 /** Where setting up Claude Code has got to, for a line on the page. */
-export function claudeSetupText(setup: ClaudeSetup | null | undefined): string {
+export function claudeSetupText(setup: ClaudeSetup | null | undefined, cli = "Claude Code"): string {
   if (setup?.state === "failed") return setup.message;
   if (setup?.state === "installing" && setup.total > 0) {
-    return `Setting up Claude Code for Outrunner… ${Math.floor((setup.received / setup.total) * 100)}%`;
+    return `Setting up ${cli} for Outrunner… ${Math.floor((setup.received / setup.total) * 100)}%`;
   }
-  return "Setting up Claude Code for Outrunner…";
+  return `Setting up ${cli} for Outrunner…`;
 }
 
 /**
@@ -190,6 +202,38 @@ export async function outrunnerKey(): Promise<string> {
 export async function putOnOutrunnerModel(workspaceId: string): Promise<void> {
   const body = await setModelRequest(DEFAULT_CLOUD_MODEL.id, outrunnerKey);
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+}
+
+/** Whether this app can run Codex sessions (it was built after Codex came in). */
+export function supportsCodex(status: LocalStatus): boolean {
+  return status.codexSetup !== undefined;
+}
+
+/** Whether the app should start setting up its own Codex now: none runs here,
+ *  and no setup is under way or has just failed. */
+export function codexSetupNeeded(status: LocalStatus): boolean {
+  return supportsCodex(status) && !status.codex && status.codexSetup === null;
+}
+
+/** Whether Codex must be logged in before a Codex session can run. */
+export function needsCodexLogin(status: LocalStatus): boolean {
+  return Boolean(status.codex) && status.codexLoggedIn === false;
+}
+
+/** Start setting up Outrunner's own Codex; `localStatus` follows it. */
+export function setUpCodex(): Promise<void> {
+  return call<void>("local_codex_setup");
+}
+
+/** Log Codex in on this Mac (`codex login`: ChatGPT, in the browser). */
+export function logInToCodex(): Promise<void> {
+  return call<void>("local_codex_login", undefined, "Codex");
+}
+
+/** The models the Mac's Codex login may use; [] outside the Mac app. */
+export async function codexModels(): Promise<CodexModel[]> {
+  if (!tauriCore()) return [];
+  return call<CodexModel[]>("local_codex_models");
 }
 
 /** Whether this server runs Outrunner's models; asked once per page load. */
@@ -275,7 +319,7 @@ export function rememberFolder(path: string | null): void {
 }
 
 /** Human-readable message for an error the app returned. */
-export function messageForLocalError(error: unknown): string {
+export function messageForLocalError(error: unknown, cli = "Claude Code"): string {
   const raw = error instanceof Error ? error.message : String(error ?? "");
   const code = raw.split(":")[0];
   switch (code) {
@@ -294,12 +338,19 @@ export function messageForLocalError(error: unknown): string {
       return "Choose the folder to work in again.";
     case "claude-missing":
       return "Install Claude Code to run sessions on this Mac.";
+    case "codex-missing":
+      return "Codex isn't set up on this Mac yet.";
+    case "codex-models-failed":
+      return `Codex couldn't list its models: ${raw.slice("codex-models-failed:".length).trim()}`;
     case "login-cancelled":
-      return "The Claude Code login was stopped. Try again.";
+      return `The ${cli} login was stopped. Try again.`;
     case "login-timed-out":
       return "No approval came from the browser. Try again.";
     case "login-failed": {
       const said = cliReason(raw.slice("login-failed:".length));
+      if (cli !== "Claude Code") {
+        return said ? `${cli} couldn't log in. It said: ${said}` : `${cli} couldn't log in. Try again.`;
+      }
       return said
         ? `Claude Code couldn't log in. It said: ${said}`
         : "Claude Code couldn't log in. Run `claude` in Terminal and type /login.";

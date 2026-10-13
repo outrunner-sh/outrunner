@@ -10,10 +10,16 @@ import { createPortal } from "react-dom";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { localAgentRequest, localTarget, messageForLocalError, outrunnerKey } from "@/lib/desktop/local-runtime";
+import {
+  codexModels,
+  localAgentRequest,
+  localTarget,
+  messageForLocalError,
+  outrunnerKey,
+} from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
-import { MODEL_GROUPS, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
+import { MODEL_GROUPS, setModelRequest, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
@@ -22,6 +28,7 @@ import { cn } from "@/lib/utils";
 export function WorkspaceSession({
   workspaceId,
   local = false,
+  agent = "claude",
   showTerminal,
   onToggleTerminal,
   terminalSlot,
@@ -33,6 +40,8 @@ export function WorkspaceSession({
   /** A local session: everything then goes through the Outrunner app to the
    *  agent on this Mac, instead of through the server. */
   local?: boolean;
+  /** What runs it: Claude Code, or (on this Mac) Codex. */
+  agent?: "claude" | "codex";
   /** Whether the collapsible live terminal is revealed (owned by the studio). */
   showTerminal: boolean;
   onToggleTerminal: () => void;
@@ -159,18 +168,24 @@ export function WorkspaceSession({
   const delivered = userPromptCount(conversation.events);
   const working =
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
+  // A Codex session offers what its login may use, as Codex itself lists it.
+  const codexGroups = useCodexModelGroups(agent === "codex");
   const modelChoice: ModelChoice = {
-    groups: MODEL_GROUPS,
+    groups: agent === "codex" ? codexGroups : MODEL_GROUPS,
     switching,
     disabledReason: !canSend
       ? "Waiting for the session to connect"
       : working
-        ? "Switch models once Claude has finished this turn"
+        ? `Switch models once ${agent === "codex" ? "Codex" : "Claude"} has finished this turn`
         : null,
     onChange: (model) => {
       setSwitching(true);
       setSendError(null);
-      (local ? switchLocalModel(workspaceId, model) : switchCloudModel(workspaceId, model))
+      (agent === "codex"
+        ? switchCodexModel(workspaceId, model)
+        : local
+          ? switchLocalModel(workspaceId, model)
+          : switchCloudModel(workspaceId, model))
         .then(() => setPicked({ model: model.id, events: conversation.events.length }))
         .catch((error: unknown) =>
           setSendError(
@@ -322,6 +337,32 @@ export function WorkspaceSession({
       />
     </div>
   );
+}
+
+/** Switch a Codex session's model: Codex takes it from the next turn. */
+async function switchCodexModel(workspaceId: string, model: SessionModel): Promise<void> {
+  await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, { model: model.id });
+}
+
+/** The models the Mac's Codex login may use, as a menu group; empty until
+ *  they are in (or when `on` is false). */
+function useCodexModelGroups(on: boolean): ModelGroup[] {
+  const [groups, setGroups] = useState<ModelGroup[]>([]);
+  useEffect(() => {
+    if (!on) return;
+    let live = true;
+    codexModels()
+      .then((models) => {
+        if (!live) return;
+        const list: SessionModel[] = models.map((m) => ({ id: m.id, label: m.displayName || m.id, source: "codex" }));
+        setGroups(list.length > 0 ? [{ label: "Codex", models: list }] : []);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [on]);
+  return groups;
 }
 
 /** Switch a local session's model: a Neev AI model runs through OpenRouter on

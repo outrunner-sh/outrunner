@@ -93,6 +93,7 @@ export function WorkspaceStudio({
             <WorkspaceSession
               workspaceId={workspace.id}
               local={isLocal}
+              agent={local?.agent === "codex" ? "codex" : "claude"}
               showTerminal={showTerminal}
               onToggleTerminal={() => setShowTerminal((open) => !open)}
               terminalSlot={terminalSlot}

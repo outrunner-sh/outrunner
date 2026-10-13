@@ -6,8 +6,10 @@ import {
   cancelClaudeLogin,
   localStatus,
   logInToClaude,
+  logInToCodex,
   missingTools,
   needsClaudeLogin,
+  needsCodexLogin,
   type LocalStatus,
 } from "@/lib/desktop/local-runtime";
 
@@ -45,7 +47,9 @@ export function useLocalRuntime(): { runtime: LocalRuntime; recheck: () => Promi
     if (mounted.current) setRuntime(next);
   }, []);
   // Follow the app's download of its own Claude Code until it lands or fails.
-  const settingUp = runtime.state === "ready" && runtime.status.claudeSetup?.state === "installing";
+  const settingUp =
+    runtime.state === "ready" &&
+    (runtime.status.claudeSetup?.state === "installing" || runtime.status.codexSetup?.state === "installing");
   useEffect(() => {
     if (!settingUp) return;
     const timer = setTimeout(() => void recheck(), SETUP_CHECK_MS);
@@ -73,7 +77,7 @@ const LOGIN_CHECK_MS = 3000;
  * login landed: either way `onLoggedIn` refreshes what the page knows. A
  * failure is shown with what Claude Code said, never left waiting in silence.
  */
-export function useClaudeLocalLogin(onLoggedIn: () => Promise<void>) {
+export function useClaudeLocalLogin(onLoggedIn: () => Promise<void>, cli: "claude" | "codex" = "claude") {
   const [login, setLogin] = useState<ClaudeLogin>({ state: "idle" });
   // The attempt the page is waiting on. A cancel or unmount moves it on, so a
   // stale answer is dropped.
@@ -92,7 +96,7 @@ export function useClaudeLocalLogin(onLoggedIn: () => Promise<void>) {
     try {
       // The CLI normally exits once logged in. The status check covers one that
       // logs in and stays up.
-      await Promise.race([logInToClaude(), loggedIn(current)]);
+      await Promise.race([cli === "codex" ? logInToCodex() : logInToClaude(), loggedIn(current, cli)]);
       if (!current()) return;
       attempt.current++; // stops the status check
       void cancelClaudeLogin().catch(() => {});
@@ -103,7 +107,7 @@ export function useClaudeLocalLogin(onLoggedIn: () => Promise<void>) {
       attempt.current++;
       setLogin({ state: "error", message: error instanceof Error ? error.message : String(error) });
     }
-  }, [onLoggedIn]);
+  }, [onLoggedIn, cli]);
 
   const cancel = useCallback(() => {
     attempt.current++;
@@ -116,13 +120,13 @@ export function useClaudeLocalLogin(onLoggedIn: () => Promise<void>) {
 
 /** Resolves once this Mac's Claude Code reports a login; stays pending, and
  *  stops asking, once `current` turns false. */
-function loggedIn(current: () => boolean): Promise<void> {
+function loggedIn(current: () => boolean, cli: "claude" | "codex"): Promise<void> {
   return new Promise((resolve) => {
     const check = async () => {
       if (!current()) return;
       const status = await localStatus().catch(() => null);
       if (!current()) return;
-      if (status && !needsClaudeLogin(status)) resolve();
+      if (status && !(cli === "codex" ? needsCodexLogin(status) : needsClaudeLogin(status))) resolve();
       else setTimeout(check, LOGIN_CHECK_MS);
     };
     setTimeout(check, LOGIN_CHECK_MS);

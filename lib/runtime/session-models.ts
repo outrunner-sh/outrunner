@@ -3,8 +3,9 @@
  * without React or a session.
  */
 
-/** Who serves a model: the user's own Claude, or Neev AI through OpenRouter. */
-export type ModelSource = "claude" | "neev";
+/** Who serves a model: the user's own Claude, Neev AI through OpenRouter, or
+ *  (a Codex session) the user's own Codex login. */
+export type ModelSource = "claude" | "neev" | "codex";
 
 /** `id` is what the session runs: a Claude alias, or an OpenRouter slug. */
 export type SessionModel = { id: string; label: string; source: ModelSource };
