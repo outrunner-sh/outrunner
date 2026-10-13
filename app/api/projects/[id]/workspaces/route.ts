@@ -17,6 +17,7 @@ import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
+import { getSessionDefaults } from "@/lib/runtime/session-defaults-server";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase } from "@/lib/runtime/types";
@@ -212,6 +213,7 @@ export async function POST(request: Request, context: RouteContext) {
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
         neevKey: () => neevAiKey(owner.id),
+        preferred: (await getSessionDefaults().catch(() => null))?.cloud.model,
         hasClaude,
       });
       await agent.startWorkspace(identity);

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, Info, Sparkles, User } from "lucide-react";
+import { Boxes, ChevronLeft, Info, Sparkles, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,8 @@ const sections = [
   // Where a user connects their own Claude: a failed workspace create points
   // here when it has none.
   { href: "/settings/claude", label: "Claude", icon: Sparkles },
+  // What new sessions start on: the agent and model, on this Mac and in the cloud.
+  { href: "/settings/models", label: "Models", icon: Boxes },
 ];
 
 /** The settings-nav column: a Back link home, then the section links with the

@@ -110,3 +110,23 @@ test("any other failure without Claude asks to try again", async () => {
     (error: unknown) => error instanceof NoStartingModelError && /Please try again/.test(error.message) && !/tmux/.test(error.message),
   );
 });
+
+test("a new session starts on the model chosen in Settings", async () => {
+  const sent: SetModelRequest[] = [];
+  const setModel = async (req: SetModelRequest) => sent.push(req);
+  // A Claude account model, with Claude: on Claude, at that model.
+  assert.equal(await startingModel({ setModel, neevKey: async () => KEY, hasClaude: true, preferred: "sonnet" }), "claude");
+  assert.deepEqual(sent.pop(), { model: "sonnet" });
+  // Without Claude it can't: Outrunner's default instead.
+  assert.equal(await startingModel({ setModel, neevKey: async () => KEY, hasClaude: false, preferred: "sonnet" }), "outrunner");
+  assert.deepEqual(sent.pop(), { model: "z-ai/glm-5.3", gateway: "openrouter", token: KEY });
+  // Another of Outrunner's models.
+  assert.equal(
+    await startingModel({ setModel, neevKey: async () => KEY, hasClaude: false, preferred: "anthropic/claude-sonnet-5" }),
+    "outrunner",
+  );
+  assert.deepEqual(sent.pop(), { model: "anthropic/claude-sonnet-5", gateway: "openrouter", token: KEY });
+  // Something no longer on the menu: the default.
+  await startingModel({ setModel, neevKey: async () => KEY, hasClaude: true, preferred: "gone-model" });
+  assert.equal(sent.pop()?.model, "z-ai/glm-5.3");
+});

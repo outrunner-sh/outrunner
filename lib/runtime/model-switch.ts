@@ -2,6 +2,7 @@ import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import {
   DEFAULT_CLOUD_MODEL,
+  offeredModel,
   setModelRequest,
   type SetModelRequest,
 } from "@/lib/runtime/session-models";
@@ -38,20 +39,33 @@ export class NoStartingModelError extends Error {
 }
 
 /**
- * Put a new cloud session on Outrunner's default model before Claude first
- * launches, so it starts there. When it can't (no OpenRouter key on this
- * server, OpenRouter refusing, a box whose agent predates switching), the
- * session starts on the user's Claude login instead, or fails without one.
- * Returns which it starts on.
+ * Put a new cloud session on its starting model before Claude first launches,
+ * so it starts there: the user's default from Settings (`preferred`), else
+ * Outrunner's default model. A preferred Claude account model needs the
+ * user's Claude; without it the session starts on Outrunner's. When
+ * Outrunner's can't be had (no OpenRouter key on this server, OpenRouter
+ * refusing, a box whose agent predates switching), the session starts on the
+ * user's Claude login instead, or fails without one. Returns which it starts on.
  */
 export async function startingModel(deps: {
   setModel: (req: SetModelRequest) => Promise<unknown>;
   neevKey: () => Promise<string>;
   hasClaude: boolean;
+  preferred?: string | null;
 }): Promise<"outrunner" | "claude"> {
+  const preferred = offeredModel(deps.preferred);
+  if (preferred?.source === "claude" && deps.hasClaude) {
+    // The session runs on the user's Claude either way; a box that can't
+    // switch models just starts on Claude's own default.
+    await deps.setModel({ model: preferred.id }).catch((error: unknown) => {
+      console.warn(`A new session starts on Claude's default, not ${preferred.id}`, error);
+    });
+    return "claude";
+  }
+  const target = preferred?.source === "neev" ? preferred : DEFAULT_CLOUD_MODEL;
   try {
-    const req = await setModelRequest(DEFAULT_CLOUD_MODEL.id, deps.neevKey);
-    if (!req) throw new Error(`${DEFAULT_CLOUD_MODEL.id} is not on the menu`);
+    const req = await setModelRequest(target.id, deps.neevKey);
+    if (!req) throw new Error(`${target.id} is not on the menu`);
     await deps.setModel(req);
     return "outrunner";
   } catch (error) {
