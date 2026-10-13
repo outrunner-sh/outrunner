@@ -16,10 +16,13 @@
  */
 
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
+import type { Allowance } from "@/lib/openrouter/allowance";
 import {
   createUserKey,
   disableUserKey,
   keySource,
+  keyUsage,
+  NEEV_AI_LIMIT_USD,
   NeevAiUnavailableError,
   sharedApiKey,
 } from "@/lib/openrouter/keys";
@@ -186,6 +189,27 @@ function openOrNull(
     );
     return null;
   }
+}
+
+/**
+ * What the user has spent of their allowance on Outrunner's models, or null
+ * where there's no allowance to show: the server runs them on one shared key
+ * (or not at all). Before their key exists, nothing is spent.
+ */
+export async function neevAiAllowance(userId: string): Promise<Allowance | null> {
+  if (keySource() !== "per-user") return null;
+
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_credentials")
+    .select("neev_key_hash")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.neev_key_hash) return { usedUsd: 0, limitUsd: NEEV_AI_LIMIT_USD };
+
+  const usage = await keyUsage(data.neev_key_hash);
+  return { usedUsd: usage.usedUsd, limitUsd: usage.limitUsd ?? NEEV_AI_LIMIT_USD };
 }
 
 /**
