@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { OnboardingLive } from "@/components/onboarding/onboarding-live";
 import { OnboardingPreview } from "@/components/onboarding/onboarding-preview";
 import { getOnboardingUser } from "@/lib/onboarding/server";
+import { keySource } from "@/lib/openrouter/keys";
 
 export const dynamic = "force-dynamic";
 
@@ -24,5 +25,12 @@ export default async function OnboardingPage() {
   if (!user) redirect("/signin?next=/onboarding");
   if (user.onboardedAt) redirect("/");
 
-  return <OnboardingLive user={{ name: user.name, login: user.login, avatarUrl: user.avatarUrl }} />;
+  return (
+    <OnboardingLive
+      user={{ name: user.name, login: user.login, avatarUrl: user.avatarUrl }}
+      // A cloud session starts without the user's Claude only on Outrunner's
+      // models, which need an OpenRouter key on this server.
+      neevForCloud={keySource() !== null}
+    />
+  );
 }

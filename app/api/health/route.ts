@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { optionalEnv, providerName } from "@/lib/env";
+import { keySource } from "@/lib/openrouter/keys";
 import {
   probeRuntimeDatabase,
   RUNTIME_TABLES,
@@ -33,6 +34,9 @@ export async function GET() {
     // Blank means open sign-up, which is a valid state — this reports whether
     // access is restricted, not whether something is missing.
     accessRestricted: Boolean(optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN")),
+    // Which OpenRouter setup Outrunner's models run on ("per-user", capped;
+    // "shared"; or null: off, and cloud sessions need the user's Claude).
+    outrunnerModels: keySource(),
   };
 
   /**

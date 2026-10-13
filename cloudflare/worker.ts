@@ -31,6 +31,14 @@ interface Env {
   CREDENTIALS_ENCRYPTION_KEY: string;
   /** Optional allowlist. BLANK MEANS OPEN — note the polarity. */
   RUNTIME_OWNER_GITHUB_LOGIN?: string;
+  /**
+   * Outrunner's own models (lib/openrouter/keys.ts), which new cloud sessions
+   * start on. Without either, a session needs the user's Claude. The
+   * management key gives each user a key of their own capped at $5; the API
+   * key alone is one shared, uncapped key. Set the management key.
+   */
+  OPENROUTER_MANAGEMENT_KEY?: string;
+  OPENROUTER_API_KEY?: string;
 }
 
 export class OutrunnerControlPlane extends Container<Env> {
@@ -68,6 +76,8 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.RUNTIME_OWNER_GITHUB_LOGIN
         ? { RUNTIME_OWNER_GITHUB_LOGIN: env.RUNTIME_OWNER_GITHUB_LOGIN }
         : {}),
+      ...(env.OPENROUTER_MANAGEMENT_KEY ? { OPENROUTER_MANAGEMENT_KEY: env.OPENROUTER_MANAGEMENT_KEY } : {}),
+      ...(env.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: env.OPENROUTER_API_KEY } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own

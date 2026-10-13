@@ -35,6 +35,10 @@ export const MODEL_GROUPS: ModelGroup[] = [
   { label: "Claude account", models: CLAUDE_MODELS },
 ];
 
+/** What a new cloud session starts on: Outrunner's own model, so anyone can
+ *  start one without a Claude account. */
+export const DEFAULT_CLOUD_MODEL: SessionModel = NEEV_AI_MODELS[0];
+
 /** Trim Claude's model id to a stable label — drop a trailing -YYYYMMDD date so
  *  "claude-opus-4-5-20250115" reads as "claude-opus-4-5". */
 export function modelLabel(model: string): string {

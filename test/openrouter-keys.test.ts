@@ -6,7 +6,6 @@ import {
   disableUserKey,
   keySource,
   managementKey,
-  NEEV_AI_LIMIT_RESET,
   NEEV_AI_LIMIT_USD,
   NeevAiUnavailableError,
 } from "@/lib/openrouter/keys";
@@ -36,7 +35,7 @@ afterEach(() => {
   else process.env.OPENROUTER_API_KEY = realApiKey;
 });
 
-test("a user's key is created capped at the monthly allowance", async () => {
+test("a user's key is created capped at $5 in total", async () => {
   const seen = stubFetch(
     new Response(JSON.stringify({ key: "sk-or-v1-user", data: { hash: "h123", limit: 5 } }), {
       status: 201,
@@ -52,14 +51,14 @@ test("a user's key is created capped at the monthly allowance", async () => {
     (seen[0].init.headers as Record<string, string>).authorization,
     "Bearer mgmt-test-key",
   );
-  // OpenRouter enforces the cap itself, so it has to be in the create call.
+  // OpenRouter enforces the cap itself, so it has to be in the create call,
+  // and with limit_reset null, OpenRouter's "no reset": the $5 is once.
   assert.deepEqual(JSON.parse(String(seen[0].init.body)), {
     name: "outrunner user u-1",
     limit: NEEV_AI_LIMIT_USD,
-    limit_reset: NEEV_AI_LIMIT_RESET,
+    limit_reset: null,
   });
   assert.equal(NEEV_AI_LIMIT_USD, 5);
-  assert.equal(NEEV_AI_LIMIT_RESET, "monthly");
 });
 
 test("without a management key Neev AI is unavailable, and nothing is sent", async () => {

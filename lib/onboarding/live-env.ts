@@ -31,16 +31,16 @@ const LOGIN_CHECK_MS = 3000;
  * app's own APIs for the cloud. Each action is the same one the rest of the app
  * uses (Settings → Claude, the new-session form), not a parallel copy.
  */
-export function liveEnv(user: OnboardingUser): OnboardingEnv {
+export function liveEnv(user: OnboardingUser, server: { neevForCloud: boolean }): OnboardingEnv {
   let loginStopped = false;
   let connectStopped = false;
 
   return {
     user,
     desktop: isDesktopApp(),
-    // Cloud sessions still need the user's own Claude: the server refuses a
-    // create without it. Offer Neev AI here once a session can start on it.
-    neevForCloud: false,
+    // Whether a cloud session may start without the user's Claude, on
+    // Outrunner's models: the server knows, from its OpenRouter key.
+    neevForCloud: server.neevForCloud,
 
     async checkMac() {
       const status = await localStatus();

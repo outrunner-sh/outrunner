@@ -74,6 +74,18 @@ fails on save and every workspace create is refused — so check
 deploy is up. Losing or rotating it makes stored credentials undecryptable;
 users are asked to reconnect rather than seeing an error.
 
+**Outrunner's models** (optional, but new cloud sessions start on them): set
+an OpenRouter *management* key, so each user gets a key of their own capped at
+$5 in total. Without it, a cloud session needs the user's own Claude.
+
+```bash
+pnpm dlx wrangler secret put OPENROUTER_MANAGEMENT_KEY
+```
+
+`/api/health` reports `outrunnerModels: "per-user"` once it is in. A plain
+`OPENROUTER_API_KEY` also works (`"shared"`), but every session then shares
+one uncapped key that any session's Claude can read.
+
 There is deliberately **no** `GITHUB_PAT`, `ANTHROPIC_API_KEY` or
 `CLAUDE_CODE_OAUTH_TOKEN`. The app stopped reading them when it went
 multi-user: each user's own credentials are sealed in the database and
