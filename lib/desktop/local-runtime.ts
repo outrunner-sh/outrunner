@@ -287,9 +287,23 @@ export function rememberFolder(path: string | null): void {
   }
 }
 
+/**
+ * What an app older than the page says for a command it doesn't have yet. The
+ * page goes live with a deploy, the app only when the user updates it.
+ */
+const NEEDS_NEWER_APP: Record<string, string> = {
+  local_clone_repo:
+    "This version of the Outrunner app can't clone repositories. Update the app, or choose a folder on this Mac instead.",
+};
+
 /** Human-readable message for an error the app returned. */
 export function messageForLocalError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error ?? "");
+  // Tauri's refusal of a command the app doesn't have.
+  const missing = /^(\w+) not allowed\. Command not found$/.exec(raw);
+  if (missing) {
+    return NEEDS_NEWER_APP[missing[1]] ?? "This version of the Outrunner app can't do that yet. Update the app, then try again.";
+  }
   const code = raw.split(":")[0];
   switch (code) {
     case "agent-missing":
