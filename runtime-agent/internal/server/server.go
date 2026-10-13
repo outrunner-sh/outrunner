@@ -130,9 +130,11 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		PermissionMode: mode,
 		Title:          req.Title,
 		Model:          req.Model,
+		Agent:          req.Agent,
 	})
 	switch {
-	case errors.Is(err, workspace.ErrBypassInFolder):
+	case errors.Is(err, workspace.ErrBypassInFolder), errors.Is(err, workspace.ErrUnknownAgent),
+		errors.Is(err, workspace.ErrCodexLocalOnly):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	case err != nil:

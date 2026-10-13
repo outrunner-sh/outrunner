@@ -82,6 +82,9 @@ type Service struct {
 	// of Claude-in-tmux. nil means the default Claude Code engine. Start, Stop,
 	// SessionLog, SessionAlive, and SendMessage branch on it.
 	jcode *jcodeEngine
+	// codex runs the workspaces whose agent is Codex, each on its own app
+	// server; the rest run Claude Code.
+	codex *codexEngine
 
 	// DefaultPermissionMode applies when a workspace's recorded facts carry no
 	// mode — one created before modes existed, or whose facts file is gone. The
@@ -125,6 +128,12 @@ type workspaceFacts struct {
 	// Gateway, when set, runs the session through it on a key of its own (in
 	// the session's gateway file) instead of the user's Claude credential.
 	Gateway claude.Gateway `json:"gateway,omitempty"`
+	// Agent is what runs the session: AgentCodex, or Claude Code (empty, or
+	// AgentClaude). It never changes after Create.
+	Agent string `json:"agent,omitempty"`
+	// CodexThreadID is a Codex session's conversation, which Codex keeps and
+	// resumes by it.
+	CodexThreadID string `json:"codexThreadId,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -147,6 +156,9 @@ type CreateInput struct {
 	// Model is the session's --model; empty keeps Claude's default. Callers
 	// validate it (claude.ValidModel).
 	Model string
+	// Agent is AgentCodex, or Claude Code (empty or AgentClaude). Codex runs
+	// only on this Mac.
+	Agent string
 }
 
 func NewService(root string) *Service {
@@ -161,6 +173,7 @@ func NewService(root string) *Service {
 		lifeLocks: map[string]*sync.Mutex{},
 		summaries: map[string]*Summary{},
 		recorders: map[string]*cast.Recorder{},
+		codex:     newCodexEngine(codexBin(), env, root),
 	}
 }
 
@@ -256,6 +269,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if in.RepoPath != "" && in.PermissionMode == claude.Bypass {
 		return "", ErrBypassInFolder
 	}
+	switch in.Agent {
+	case "", AgentClaude:
+	case AgentCodex:
+		if in.RepoPath == "" {
+			return "", ErrCodexLocalOnly
+		}
+	default:
+		return "", fmt.Errorf("%w %q", ErrUnknownAgent, in.Agent)
+	}
 	defer s.lockLifecycle(in.WorkspaceID)()
 	facts := workspaceFacts{
 		Branch:         in.Branch,
@@ -278,6 +300,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	// session still running on it.
 	if prior.Model != "" || facts.Model == "" {
 		facts.Model, facts.Gateway = prior.Model, prior.Gateway
+	}
+	// Nor the agent, nor its conversation.
+	facts.Agent, facts.CodexThreadID = in.Agent, prior.CodexThreadID
+	if existed {
+		facts.Agent = prior.Agent
 	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
@@ -377,6 +404,9 @@ func (s *Service) local(workspaceID string) bool {
 func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string) (string, error) {
 	defer s.lockLifecycle(workspaceID)()
 	name := sessionName(workspaceID)
+	if s.isCodex(workspaceID) {
+		return s.startCodex(ctx, workspaceID)
+	}
 	if s.jcode != nil {
 		if err := s.jcode.StartSession(ctx, workspaceID, s.worktreePath(workspaceID)); err != nil {
 			return "", err
@@ -622,6 +652,16 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if !ok {
 		return ErrUnknownWorkspace // never write facts for a workspace never created
 	}
+	if f.Agent == AgentCodex {
+		// Codex takes a model per turn: recorded, it runs the next one, with no
+		// relaunch. Gateways are Claude's.
+		if choice.Gateway != claude.NoGateway {
+			return ErrModelUnsupported
+		}
+		f.Model = choice.Model
+		s.setFacts(workspaceID, f)
+		return nil
+	}
 	env := ""
 	if choice.Gateway != claude.NoGateway {
 		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
@@ -717,6 +757,9 @@ func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken stri
 func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken string, resume bool, lock *sendState) (string, error) {
 	lock.staged = nil // the composer it was typed into is about to go
 	name := sessionName(workspaceID)
+	if s.isCodex(workspaceID) {
+		return s.startCodex(ctx, workspaceID) // Codex resumes its own thread
+	}
 	if s.jcode != nil {
 		// jcode sessions live on the bridge; StartSession is idempotent and
 		// re-attaches Runtime's view. --continue semantics are the bridge's.
@@ -877,6 +920,9 @@ func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 // summary's endedAt. The Summary itself is retained so a post-stop
 // SummaryOf still returns the last-known state.
 func (s *Service) Stop(ctx context.Context, workspaceID string) error {
+	if s.isCodex(workspaceID) {
+		s.codex.Stop(workspaceID) // and then its shell, below
+	}
 	if s.jcode != nil {
 		s.jcode.StopSession(workspaceID)
 		s.endSummary(workspaceID)
@@ -916,6 +962,13 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	defer lock.Unlock()
 	if s.jcode != nil {
 		return s.jcode.SendMessage(workspaceID, content)
+	}
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		// A turn is a request, answered once Codex has it: nothing to paste,
+		// nothing to confirm on screen.
+		return s.codex.Send(ctx, workspaceID, content, f.Model)
 	}
 	// The send lock is held throughout, so a hung tmux must not hold it forever:
 	// past the deadline its commands are killed and the next send can proceed.
@@ -1305,6 +1358,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
 	_ = os.Remove(s.gatewayEnvPath(workspaceID))
+	_ = os.Remove(s.codex.ConversationLog(workspaceID))
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()
@@ -1319,6 +1373,13 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 // the session's own, and --continue reuses its file, so "newest jsonl" ==
 // "current session"; an in-place session's conversation is named by id.
 func (s *Service) SessionLog(workspaceID string) string {
+	if s.isCodex(workspaceID) {
+		path := s.codex.ConversationLog(workspaceID)
+		if _, err := os.Stat(path); err != nil {
+			return ""
+		}
+		return path
+	}
 	if s.jcode != nil {
 		return s.jcode.ConversationLog(workspaceID)
 	}
