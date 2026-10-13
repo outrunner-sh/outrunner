@@ -25,6 +25,7 @@ export function AppFrame({
   ownerLogin,
   ownerAvatarUrl,
   initialCollapsed = false,
+  initialFolded = [],
   children,
 }: {
   projects: NavProject[];
@@ -33,6 +34,8 @@ export function AppFrame({
   ownerAvatarUrl: string | null;
   /** From the cookie, read by the layout on the server. */
   initialCollapsed?: boolean;
+  /** The projects folded shut in the sidebar, from their cookie. */
+  initialFolded?: string[];
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
@@ -114,6 +117,7 @@ export function AppFrame({
             ownerAvatarUrl={ownerAvatarUrl}
             onCollapse={() => setAndRemember(true)}
             searchSignal={searchSignal}
+            initialFolded={initialFolded}
           />
         )}
       </div>
