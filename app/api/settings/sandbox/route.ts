@@ -4,10 +4,12 @@ import { getOwner } from "@/lib/auth/owner";
 import {
   clearDaytonaKey,
   getSandboxSettings,
+  setBoxSize,
   setDaytonaKey,
   setSandboxChoice,
   type SandboxChoice,
 } from "@/lib/db/credentials";
+import { boxSize, isBoxSizeId } from "@/lib/runtime/box-sizes";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { daytonaAcceptsKey } from "@/lib/runtime/sandbox/daytona";
 
@@ -17,7 +19,8 @@ export const dynamic = "force-dynamic";
  * Where the user's cloud sessions run (Settings → Sandbox): Outrunner's
  * sandboxes, or their own Daytona on their API key. GET returns the choice and
  * whether a key is stored (its last 4 characters), never the key. PUT sets the
- * choice and, with `daytonaKey`, stores a key Daytona has accepted. DELETE
+ * choice and, with `daytonaKey`, stores a key Daytona has accepted; with
+ * `boxSize`, the size of new Outrunner sandboxes (not a locked one). DELETE
  * forgets the key, which moves new sessions back to Outrunner's sandboxes.
  */
 
@@ -46,7 +49,7 @@ export async function PUT(request: Request) {
   const owner = await getOwner();
   if (!owner) return unauthorized();
 
-  let body: { sandbox?: unknown; daytonaKey?: unknown };
+  let body: { sandbox?: unknown; daytonaKey?: unknown; boxSize?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -54,6 +57,11 @@ export async function PUT(request: Request) {
   }
   const sandbox = CHOICES.find((c) => c === body?.sandbox);
   if (!sandbox) return invalid("Choose Outrunner's sandbox or your own Daytona.");
+  if (body.boxSize !== undefined && !isBoxSizeId(body.boxSize)) return invalid("Choose one of the box sizes.");
+  const size = isBoxSizeId(body.boxSize) ? boxSize(body.boxSize) : null;
+  if (size?.locked) {
+    return NextResponse.json({ error: `${size.label} needs a higher plan.` }, { status: 403 });
+  }
 
   if (body.daytonaKey !== undefined) {
     const key = typeof body.daytonaKey === "string" ? body.daytonaKey.trim() : "";
@@ -77,6 +85,7 @@ export async function PUT(request: Request) {
   }
 
   await setSandboxChoice(owner.id, sandbox);
+  if (size) await setBoxSize(owner.id, size.id);
   return NextResponse.json(await getSandboxSettings(owner.id));
 }
 
