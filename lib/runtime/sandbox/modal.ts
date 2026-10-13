@@ -260,3 +260,23 @@ export function box(sandbox: Sandbox, stash: Stash | undefined): SandboxBox {
 function tail(text: string): string {
   return text.trim().split("\n").slice(-3).join(" | ").slice(0, 400);
 }
+
+/** Whether Modal accepts `token` (Settings → Sandbox checks one before saving
+ *  it): false when it refuses it, a throw when it can't be asked. Makes the
+ *  account's Outrunner App, which its sandboxes go in, so a token that can't
+ *  make one is refused too. */
+export async function modalAcceptsToken(token: ModalToken): Promise<boolean> {
+  const modal = new ModalClient({ tokenId: token.tokenId, tokenSecret: token.tokenSecret });
+  try {
+    await modal.apps.fromName(MODAL_APP, { createIfMissing: true });
+    return true;
+  } catch (error) {
+    // gRPC's UNAUTHENTICATED (an unknown token: "Token not found") and
+    // PERMISSION_DENIED.
+    const code = (error as { code?: unknown }).code;
+    if (code === 16 || code === 7) return false;
+    throw error;
+  } finally {
+    modal.close();
+  }
+}

@@ -5,14 +5,17 @@ import { Check, Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
-import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
-import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
+import type { SandboxChoice, SandboxSettings, StoredKey } from "@/lib/db/credentials";
+import { BOX_SIZES, boxSize, DEFAULT_BOX_SIZE, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { cn } from "@/lib/utils";
+
+type OwnSandbox = Exclude<SandboxChoice, "outrunner">;
 
 /**
  * Settings → Sandbox: where the user's cloud sessions run. Outrunner's
  * sandboxes are the default and need nothing; their own Daytona needs an API
- * key, which the server checks with Daytona before keeping it.
+ * key and their own Modal a token, which the server checks with the provider
+ * before keeping it.
  */
 export function SandboxSettingsForm({
   initial,
@@ -28,24 +31,32 @@ export function SandboxSettingsForm({
   const [settings, setSettings] = useState(initial);
   const [choice, setChoice] = useState<SandboxChoice>(initial.sandbox);
   const [size, setSize] = useState<BoxSizeId>(initial.boxSize);
-  const [key, setKey] = useState("");
+  const [daytonaKey, setDaytonaKey] = useState("");
+  const [modalId, setModalId] = useState("");
+  const [modalSecret, setModalSecret] = useState("");
   // A stored key is only replaced on purpose.
-  const [replacing, setReplacing] = useState(false);
+  const [replacing, setReplacing] = useState<OwnSandbox | null>(null);
   const [status, setStatus] = useState<ActionStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
-  const askingForKey = choice === "daytona" && (!settings.daytona.connected || replacing);
+  const asking = (sandbox: OwnSandbox) => choice === sandbox && (!settings[sandbox].connected || replacing === sandbox);
+  const typedDaytona = daytonaKey.trim() !== "";
+  const typedModal = modalId.trim() !== "" && modalSecret.trim() !== "";
+  // Sized here: Outrunner's sandboxes (where they can be), and the user's own
+  // Modal, where the higher-plan sizes are theirs to pay for.
+  const sized = (choice === "outrunner" && sizes) || choice === "modal";
   const dirty =
     choice !== settings.sandbox ||
-    (choice === "outrunner" && size !== settings.boxSize) ||
-    (askingForKey && key.trim() !== "");
-  const canSave = dirty && !(askingForKey && !key.trim());
+    (sized && size !== settings.boxSize) ||
+    (asking("daytona") && typedDaytona) ||
+    (asking("modal") && typedModal);
+  const canSave = dirty && !(asking("daytona") && !typedDaytona) && !(asking("modal") && !typedModal);
 
-  async function send(method: "PUT" | "DELETE", body?: object): Promise<void> {
+  async function send(method: "PUT" | "DELETE", body?: object, query = ""): Promise<void> {
     setStatus("pending");
     setError(null);
     try {
-      const res = await fetch("/api/settings/sandbox", {
+      const res = await fetch(`/api/settings/sandbox${query}`, {
         method,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
@@ -56,8 +67,10 @@ export function SandboxSettingsForm({
       setSettings(data);
       setChoice(data.sandbox);
       setSize(data.boxSize);
-      setKey("");
-      setReplacing(false);
+      setDaytonaKey("");
+      setModalId("");
+      setModalSecret("");
+      setReplacing(null);
       setStatus("success");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that.");
@@ -68,9 +81,27 @@ export function SandboxSettingsForm({
   const save = () =>
     void send("PUT", {
       sandbox: choice,
-      ...(choice === "outrunner" && sizes ? { boxSize: size } : {}),
-      ...(askingForKey && key.trim() ? { daytonaKey: key.trim() } : {}),
+      ...(sized ? { boxSize: size } : {}),
+      ...(asking("daytona") && typedDaytona ? { daytonaKey: daytonaKey.trim() } : {}),
+      ...(asking("modal") && typedModal
+        ? { modalToken: { tokenId: modalId.trim(), tokenSecret: modalSecret.trim() } }
+        : {}),
     });
+  const saveOnEnter = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter" && canSave && status !== "pending") save();
+  };
+
+  function choose(next: SandboxChoice) {
+    setChoice(next);
+    // A size for a higher plan, chosen for Modal, can't be Outrunner's.
+    if (next === "outrunner" && boxSize(size).locked) setSize(DEFAULT_BOX_SIZE);
+    setStatus("idle");
+  }
+
+  function changeSize(next: BoxSizeId) {
+    setSize(next);
+    setStatus("idle");
+  }
 
   return (
     <section className="space-y-6">
@@ -82,52 +113,32 @@ export function SandboxSettingsForm({
       <div role="radiogroup" aria-label="Sandbox" className="space-y-3">
         <Option
           selected={choice === "outrunner"}
-          onSelect={() => {
-            setChoice("outrunner");
-            setStatus("idle");
-          }}
+          onSelect={() => choose("outrunner")}
           title="Outrunner's sandbox"
           badge="Default"
           detail={`Runs on ${outrunnerRunsOn}. Nothing to set up.`}
         >
-          {choice === "outrunner" && sizes ? (
-            <BoxSizePicker
-              value={size}
-              onChange={(next) => {
-                setSize(next);
-                setStatus("idle");
-              }}
-            />
-          ) : null}
+          {choice === "outrunner" && sizes ? <BoxSizePicker value={size} onChange={changeSize} /> : null}
         </Option>
         <Option
           selected={choice === "daytona"}
-          onSelect={() => {
-            setChoice("daytona");
-            setStatus("idle");
-          }}
+          onSelect={() => choose("daytona")}
           title="Your own Daytona"
           detail="Runs in your Daytona account, on your API key, and Daytona bills you for it."
         >
           {choice === "daytona" ? (
-            askingForKey ? (
+            asking("daytona") ? (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <input
-                    type="password"
-                    value={key}
-                    onChange={(event) => setKey(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && canSave && status !== "pending") save();
-                    }}
+                  <KeyInput
+                    value={daytonaKey}
+                    onChange={setDaytonaKey}
+                    onKeyDown={saveOnEnter}
                     placeholder="Paste your Daytona API key"
-                    aria-label="Daytona API key"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="border-border bg-background/60 h-9 flex-1 rounded-md border px-3 text-sm"
+                    label="Daytona API key"
                   />
-                  {replacing ? (
-                    <Button variant="ghost" size="sm" onClick={() => setReplacing(false)}>
+                  {replacing === "daytona" ? (
+                    <Button variant="ghost" size="sm" onClick={() => setReplacing(null)}>
                       Cancel
                     </Button>
                   ) : null}
@@ -146,31 +157,73 @@ export function SandboxSettingsForm({
                 </p>
               </div>
             ) : (
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <Check className="size-4 text-positive" />
-                  <p className="text-sm text-foreground">
-                    Key saved
-                    {settings.daytona.hint ? (
-                      <span className="text-muted-foreground"> · ends ····{settings.daytona.hint}</span>
+              <SavedKey
+                what="Key"
+                stored={settings.daytona}
+                busy={status === "pending"}
+                onReplace={() => setReplacing("daytona")}
+                onRemove={() => void send("DELETE", undefined, "?key=daytona")}
+              />
+            )
+          ) : null}
+        </Option>
+        <Option
+          selected={choice === "modal"}
+          onSelect={() => choose("modal")}
+          title="Your own Modal"
+          detail="Runs in your Modal account, on your token, and Modal bills you for it. Modal ends a sandbox after a day; Outrunner starts it again where it was the next time you open a session."
+        >
+          {choice === "modal" ? (
+            <div className="space-y-4">
+              {asking("modal") ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <KeyInput
+                      value={modalId}
+                      onChange={setModalId}
+                      onKeyDown={saveOnEnter}
+                      placeholder="Token ID (ak-…)"
+                      label="Modal token ID"
+                      reveal
+                    />
+                    <KeyInput
+                      value={modalSecret}
+                      onChange={setModalSecret}
+                      onKeyDown={saveOnEnter}
+                      placeholder="Token secret (as-…)"
+                      label="Modal token secret"
+                    />
+                    {replacing === "modal" ? (
+                      <Button variant="ghost" size="sm" onClick={() => setReplacing(null)}>
+                        Cancel
+                      </Button>
                     ) : null}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Create one in{" "}
+                    <a
+                      href="https://modal.com/settings/tokens"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline underline-offset-4"
+                    >
+                      Modal → Settings → API Tokens
+                    </a>
+                    . It&apos;s checked with Modal, then stored encrypted. Sandboxes go in an App
+                    called outrunner.
                   </p>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setReplacing(true)}>
-                    Replace
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={status === "pending"}
-                    onClick={() => void send("DELETE")}
-                  >
-                    Remove key
-                  </Button>
-                </div>
-              </div>
-            )
+              ) : (
+                <SavedKey
+                  what="Token"
+                  stored={settings.modal}
+                  busy={status === "pending"}
+                  onReplace={() => setReplacing("modal")}
+                  onRemove={() => void send("DELETE", undefined, "?key=modal")}
+                />
+              )}
+              <BoxSizePicker value={size} onChange={changeSize} ownAccount />
+            </div>
           ) : null}
         </Option>
       </div>
@@ -197,8 +250,85 @@ export function SandboxSettingsForm({
   );
 }
 
-/** CPU and memory a new sandbox boots with; the locked sizes need a higher plan. */
-function BoxSizePicker({ value, onChange }: { value: BoxSizeId; onChange: (size: BoxSizeId) => void }) {
+/** A field for a key or a token's part, hidden unless `reveal` (a token id,
+ *  which isn't secret). */
+function KeyInput({
+  value,
+  onChange,
+  onKeyDown,
+  placeholder,
+  label,
+  reveal,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown: (event: React.KeyboardEvent) => void;
+  placeholder: string;
+  label: string;
+  reveal?: boolean;
+}) {
+  return (
+    <input
+      type={reveal ? "text" : "password"}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}
+      aria-label={label}
+      autoComplete="off"
+      spellCheck={false}
+      className="border-border bg-background/60 h-9 min-w-48 flex-1 rounded-md border px-3 text-sm"
+    />
+  );
+}
+
+/** A stored key: its last 4 characters, and the way to replace or remove it. */
+function SavedKey({
+  what,
+  stored,
+  busy,
+  onReplace,
+  onRemove,
+}: {
+  what: "Key" | "Token";
+  stored: StoredKey;
+  busy: boolean;
+  onReplace: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center gap-2">
+        <Check className="size-4 text-positive" />
+        <p className="text-sm text-foreground">
+          {what} saved
+          {stored.hint ? <span className="text-muted-foreground"> · ends ····{stored.hint}</span> : null}
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={onReplace}>
+          Replace
+        </Button>
+        <Button variant="ghost" size="sm" disabled={busy} onClick={onRemove}>
+          Remove {what.toLowerCase()}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** CPU and memory a new sandbox boots with. On Outrunner's, the locked sizes
+ *  need a higher plan; on the user's own account (`ownAccount`) every size is
+ *  theirs. */
+function BoxSizePicker({
+  value,
+  onChange,
+  ownAccount,
+}: {
+  value: BoxSizeId;
+  onChange: (size: BoxSizeId) => void;
+  ownAccount?: boolean;
+}) {
   return (
     <div className="space-y-2">
       <div className="space-y-0.5">
@@ -208,17 +338,18 @@ function BoxSizePicker({ value, onChange }: { value: BoxSizeId; onChange: (size:
       <div role="radiogroup" aria-label="Box size" className="divide-y divide-border/60 rounded-md border border-border/60">
         {BOX_SIZES.map((size) => {
           const selected = size.id === value;
+          const locked = size.locked && !ownAccount;
           return (
             <button
               key={size.id}
               type="button"
               role="radio"
               aria-checked={selected}
-              disabled={size.locked}
+              disabled={locked}
               onClick={() => onChange(size.id)}
               className="flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 text-left disabled:cursor-not-allowed"
             >
-              {size.locked ? (
+              {locked ? (
                 <Lock aria-hidden className="size-4 shrink-0 text-muted-foreground" />
               ) : (
                 <span
@@ -231,10 +362,10 @@ function BoxSizePicker({ value, onChange }: { value: BoxSizeId; onChange: (size:
                   {selected ? <span className="size-2 rounded-full bg-foreground" /> : null}
                 </span>
               )}
-              <span className={cn("flex-1 text-sm", size.locked ? "text-muted-foreground" : "text-foreground")}>
+              <span className={cn("flex-1 text-sm", locked ? "text-muted-foreground" : "text-foreground")}>
                 {size.label}
               </span>
-              {size.locked ? (
+              {locked ? (
                 <span className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                   Higher plan
                 </span>
@@ -247,8 +378,8 @@ function BoxSizePicker({ value, onChange }: { value: BoxSizeId; onChange: (size:
         })}
       </div>
       <p className="text-xs text-muted-foreground">
-        Larger sizes need a higher plan. Applies to new sandboxes; one already running keeps its
-        size.
+        {ownAccount ? "Billed by your provider at its rates. " : "Larger sizes need a higher plan. "}
+        Applies to new sandboxes; one already running keeps its size.
       </p>
     </div>
   );
