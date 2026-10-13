@@ -181,6 +181,8 @@ pub fn run() {
             local_runtime::local_socket_open,
             local_runtime::local_socket_send,
             local_runtime::local_socket_close,
+            updater::update_status,
+            updater::restart_to_update,
         ])
         // Must be registered first: focus the existing window instead of
         // spawning a second instance (and forward any deep link it carried).
