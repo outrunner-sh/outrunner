@@ -19,6 +19,46 @@ import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
  *  localStorage, it opened wide and then snapped shut on every load). */
 export const SIDEBAR_COOKIE = "sidebar-collapsed";
 
+/** The projects folded shut in the sidebar, by group key: a cookie for the
+ *  same reason as {@link SIDEBAR_COOKIE}. */
+export const FOLDED_PROJECTS_COOKIE = "sidebar-folded";
+/** A cookie holds about 4 KB; folder paths are long. The latest folds win. */
+const MAX_FOLDED = 40;
+
+/** The folded group keys a cookie holds; none for one that's missing or not
+ *  ours. */
+export function readFoldedProjects(value: string | undefined): string[] {
+  if (!value) return [];
+  try {
+    const keys: unknown = JSON.parse(decodeURIComponent(value));
+    return Array.isArray(keys) ? keys.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The `document.cookie` assignment that remembers `keys` folded. */
+export function foldedProjectsCookie(keys: string[]): string {
+  const kept = encodeURIComponent(JSON.stringify(keys.slice(-MAX_FOLDED)));
+  return `${FOLDED_PROJECTS_COOKIE}=${kept}; path=/; max-age=31536000; samesite=lax`;
+}
+
+/** Remember `keys` folded, for the next page the server renders. */
+export function rememberFoldedProjects(keys: string[]): void {
+  document.cookie = foldedProjectsCookie(keys);
+}
+
+/** The sessions a project shows: all of them while it's open or a search is
+ *  on (a match must never hide); folded, only the one on screen, so where you
+ *  are stays in sight. */
+export function shownSessions(
+  group: SidebarGroup,
+  options: { folded: boolean; searching: boolean; active?: string },
+): SidebarSession[] {
+  if (!options.folded || options.searching) return group.sessions;
+  return group.sessions.filter((session) => session.id === options.active);
+}
+
 /** What deleting a session takes with it. */
 export type SessionDeletion =
   /** A cloud session: its worktree on the Runtime Computer. */

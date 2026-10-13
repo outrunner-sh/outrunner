@@ -7,8 +7,12 @@ import {
   buildSidebarGroups,
   deletionConsequence,
   filterSidebarGroups,
+  FOLDED_PROJECTS_COOKIE,
+  foldedProjectsCookie,
   newSessionHref,
+  readFoldedProjects,
   relativeTime,
+  shownSessions,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
@@ -336,4 +340,38 @@ test("the delete confirmation says what goes and what stays", () => {
   assert.match(deletionConsequence({ kind: "cloud" }), /Runtime Computer.*GitHub stays/);
   assert.match(deletionConsequence({ kind: "local-worktree" }), /branch stays/);
   assert.match(deletionConsequence({ kind: "local-in-place" }), /untouched/);
+});
+
+test("a folded project shows only the session on screen, and every session while searching", () => {
+  const [group] = buildSidebarGroups(
+    [project("p1")],
+    [
+      workspace("w1", "p1", "2026-10-01T00:00:00Z"),
+      workspace("w2", "p1", "2026-10-02T00:00:00Z"),
+    ],
+    [],
+  );
+  const ids = (options: Parameters<typeof shownSessions>[1]) => shownSessions(group, options).map((s) => s.id);
+  assert.deepEqual(ids({ folded: false, searching: false, active: "w1" }), ["w2", "w1"]);
+  assert.deepEqual(ids({ folded: true, searching: false, active: "w1" }), ["w1"]);
+  assert.deepEqual(ids({ folded: true, searching: false, active: "elsewhere" }), []);
+  assert.deepEqual(ids({ folded: true, searching: true }), ["w2", "w1"]);
+});
+
+test("folded projects round-trip through their cookie, the latest kept when there are too many", () => {
+  const keys = ["cloud:p1", "local:/Users/me/a folder, with; odd \"chars\""];
+  const value = foldedProjectsCookie(keys).split(";")[0].slice(`${FOLDED_PROJECTS_COOKIE}=`.length);
+  assert.deepEqual(readFoldedProjects(value), keys);
+
+  const many = Array.from({ length: 60 }, (_, i) => `cloud:p${i}`);
+  const kept = readFoldedProjects(foldedProjectsCookie(many).split(";")[0].split("=")[1]);
+  assert.equal(kept.length, 40);
+  assert.equal(kept.at(-1), "cloud:p59");
+});
+
+test("a missing or garbled folded-projects cookie folds nothing", () => {
+  assert.deepEqual(readFoldedProjects(undefined), []);
+  assert.deepEqual(readFoldedProjects("%E0%A4%A"), []);
+  assert.deepEqual(readFoldedProjects(encodeURIComponent('{"not":"a list"}')), []);
+  assert.deepEqual(readFoldedProjects(encodeURIComponent('["cloud:p1", 7, null]')), ["cloud:p1"]);
 });
