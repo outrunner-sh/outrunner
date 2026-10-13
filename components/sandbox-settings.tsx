@@ -42,8 +42,9 @@ export function SandboxSettingsForm({
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-      const data = (await res.json()) as SandboxSettings & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Couldn't save that.");
+      // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
+      const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
+      if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Try again.");
       setSettings(data);
       setChoice(data.sandbox);
       setKey("");

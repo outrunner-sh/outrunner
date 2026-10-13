@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { daytonaAcceptsKey } from "@/lib/runtime/sandbox/daytona";
+import { probeStatus } from "@/lib/supabase/probe";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,23 @@ function unauthorized() {
 
 function invalid(error: string) {
   return NextResponse.json({ error }, { status: 400 });
+}
+
+/** Run a save, answering the database's refusal as JSON the page can show. */
+async function saving(save: () => Promise<NextResponse>): Promise<NextResponse> {
+  try {
+    return await save();
+  } catch (error) {
+    // Before 20261013120000_user_sandbox.sql the columns aren't there.
+    if (probeStatus(error as { code?: string }) === "outdated") {
+      return NextResponse.json(
+        { error: "This can't be saved until Outrunner's database is updated. Try again later." },
+        { status: 503 },
+      );
+    }
+    console.error("Could not save sandbox settings", error);
+    return NextResponse.json({ error: "Couldn't save that. Try again." }, { status: 500 });
+  }
 }
 
 export async function GET() {
@@ -55,29 +73,31 @@ export async function PUT(request: Request) {
   const sandbox = CHOICES.find((c) => c === body?.sandbox);
   if (!sandbox) return invalid("Choose Outrunner's sandbox or your own Daytona.");
 
-  if (body.daytonaKey !== undefined) {
-    const key = typeof body.daytonaKey === "string" ? body.daytonaKey.trim() : "";
-    if (key.length < MIN_KEY_LENGTH || key.length > MAX_KEY_LENGTH || /\s/.test(key)) {
-      return invalid("That doesn't look like a Daytona API key. Copy it from Daytona → API Keys.");
+  return saving(async () => {
+    if (body.daytonaKey !== undefined) {
+      const key = typeof body.daytonaKey === "string" ? body.daytonaKey.trim() : "";
+      if (key.length < MIN_KEY_LENGTH || key.length > MAX_KEY_LENGTH || /\s/.test(key)) {
+        return invalid("That doesn't look like a Daytona API key. Copy it from Daytona → API Keys.");
+      }
+      let accepted: boolean;
+      try {
+        accepted = await daytonaAcceptsKey(key);
+      } catch (error) {
+        console.error("Could not check a Daytona key", error);
+        return NextResponse.json(
+          { error: "Couldn't reach Daytona to check that key. Try again in a moment." },
+          { status: 502 },
+        );
+      }
+      if (!accepted) return invalid("Daytona didn't accept that key. Check it in Daytona → API Keys.");
+      await setDaytonaKey(owner.id, key);
+    } else if (sandbox === "daytona" && !(await getSandboxSettings(owner.id)).daytona.connected) {
+      return invalid("Add your Daytona API key to run sessions on your own Daytona.");
     }
-    let accepted: boolean;
-    try {
-      accepted = await daytonaAcceptsKey(key);
-    } catch (error) {
-      console.error("Could not check a Daytona key", error);
-      return NextResponse.json(
-        { error: "Couldn't reach Daytona to check that key. Try again in a moment." },
-        { status: 502 },
-      );
-    }
-    if (!accepted) return invalid("Daytona didn't accept that key. Check it in Daytona → API Keys.");
-    await setDaytonaKey(owner.id, key);
-  } else if (sandbox === "daytona" && !(await getSandboxSettings(owner.id)).daytona.connected) {
-    return invalid("Add your Daytona API key to run sessions on your own Daytona.");
-  }
 
-  await setSandboxChoice(owner.id, sandbox);
-  return NextResponse.json(await getSandboxSettings(owner.id));
+    await setSandboxChoice(owner.id, sandbox);
+    return NextResponse.json(await getSandboxSettings(owner.id));
+  });
 }
 
 export async function DELETE(request: Request) {
@@ -87,6 +107,8 @@ export async function DELETE(request: Request) {
   const owner = await getOwner();
   if (!owner) return unauthorized();
 
-  await clearDaytonaKey(owner.id);
-  return NextResponse.json(await getSandboxSettings(owner.id));
+  return saving(async () => {
+    await clearDaytonaKey(owner.id);
+    return NextResponse.json(await getSandboxSettings(owner.id));
+  });
 }
