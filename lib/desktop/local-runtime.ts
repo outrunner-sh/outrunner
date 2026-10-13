@@ -228,6 +228,19 @@ export function checkLocalFolder(path: string): Promise<LocalFolder> {
   return call<LocalFolder>("local_check_folder", { path });
 }
 
+/**
+ * Clone a repository picked from GitHub (`owner/name`) into ~/outrunner/repos,
+ * or use the clone made before, as the folder a local session works in. The
+ * user's GitHub token goes to the app for this clone only, so private
+ * repositories clone too.
+ */
+export async function cloneLocalRepository(fullName: string): Promise<LocalFolder> {
+  const res = await fetch("/api/github/clone-token", { method: "POST" });
+  const data = (await res.json().catch(() => null)) as { token?: string; error?: string } | null;
+  if (!res.ok || !data?.token) throw new Error(data?.error ?? "Couldn't reach GitHub for that repository.");
+  return call<LocalFolder>("local_clone_repo", { fullName, token: data.token });
+}
+
 /** This Mac's local sessions, newest first. They live only on this Mac. */
 export async function listLocalSessions(): Promise<LocalSession[]> {
   if (!tauriCore()) return [];
@@ -288,6 +301,18 @@ export function messageForLocalError(error: unknown): string {
       return "Lost contact with the local agent. Try again.";
     case "folder-missing":
       return "That folder isn't there any more. Choose another.";
+    case "clone-failed": {
+      const said = raw.slice("clone-failed:".length).trim();
+      return said ? `Couldn't clone that repository. git said: ${said}` : "Couldn't clone that repository.";
+    }
+    case "git-missing":
+      return "Cloning needs git. Install the Xcode Command Line Tools (run `xcode-select --install`), then try again.";
+    case "repo-folders-taken":
+      return "~/outrunner/repos already has folders of that name. Move some away and try again.";
+    case "repo-invalid":
+      return "That isn't a GitHub repository name.";
+    case "repo-folder":
+      return "Couldn't make a folder in ~/outrunner/repos for it.";
     case "folder-not-chosen":
     case "folder-required":
       // The app only works in folders picked in its own dialog.

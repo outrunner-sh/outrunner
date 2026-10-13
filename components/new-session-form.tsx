@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
-import { LocalBlocker, LocalFolderButton, SessionLocationMenu } from "@/components/session-location-picker";
+import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
@@ -89,7 +89,7 @@ export function NewSessionForm({
           <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
             <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />
             {local ? (
-              <LocalFolderButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
+              <LocalRepositoryButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
             ) : (
               <RepositorySelect
                 projects={projects}
