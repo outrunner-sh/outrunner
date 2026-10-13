@@ -13,17 +13,28 @@ type Connect = { state: "idle" } | { state: "waiting" } | { state: "error"; mess
  * once in the browser and stored with their account. The same connection
  * Settings → Claude shows, on both onboarding paths, so connecting here reads
  * as connected there.
+ *
+ * Where a session can start without it, `onSkip` offers Skip; a skipped row
+ * still offers Connect Claude, for a user who changes their mind.
  */
 export function ConnectClaudeRow({
   env,
   connected,
   onConnected,
+  todo,
+  skipped,
+  onSkip,
   children,
 }: {
   env: OnboardingEnv;
   /** Null while it is still being checked. */
   connected: boolean | null;
   onConnected: () => void;
+  /** What it is for, while it is not connected (the default speaks of the subscription). */
+  todo?: React.ReactNode;
+  /** Set once the user chose Skip: what that means for them. */
+  skipped?: React.ReactNode;
+  onSkip?: () => void;
   /** Alternatives offered below the row while it is not connected. */
   children?: React.ReactNode;
 }) {
@@ -55,7 +66,9 @@ export function ConnectClaudeRow({
           ? "working"
           : connect.state === "error"
             ? "problem"
-            : "todo";
+            : skipped
+              ? "skipped"
+              : "todo";
 
   return (
     <ChecklistRow
@@ -71,9 +84,11 @@ export function ConnectClaudeRow({
                 "Approve in your browser when it opens. This finishes on its own."
               : connect.state === "error"
                 ? connect.message
-                : env.desktop
-                  ? "Use your Claude Pro or Max subscription. Approve once in your browser."
-                  : "Connecting Claude needs the Outrunner Mac app."
+                : !env.desktop
+                  ? "Connecting Claude needs the Outrunner Mac app."
+                  : skipped
+                    ? skipped
+                    : (todo ?? "Use your Claude Pro or Max subscription. Approve once in your browser.")
       }
       action={
         connected !== false ? undefined : connect.state === "waiting" ? (
@@ -89,9 +104,21 @@ export function ConnectClaudeRow({
             Cancel
           </Button>
         ) : (
-          <Button size="sm" disabled={!env.desktop} onClick={() => void run()}>
-            {connect.state === "error" ? "Try again" : "Connect Claude"}
-          </Button>
+          <>
+            {onSkip && !skipped && (
+              <Button size="sm" variant="ghost" onClick={onSkip}>
+                Skip
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant={skipped ? "outline" : "default"}
+              disabled={!env.desktop}
+              onClick={() => void run()}
+            >
+              {connect.state === "error" ? "Try again" : "Connect Claude"}
+            </Button>
+          </>
         )
       }
     >

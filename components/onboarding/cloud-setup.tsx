@@ -5,14 +5,14 @@ import { Lock, Search } from "lucide-react";
 
 import { ChecklistRow } from "@/components/onboarding/checklist-row";
 import { ConnectClaudeRow } from "@/components/onboarding/connect-claude-row";
-import { Button } from "@/components/ui/button";
 import type { OnboardingEnv, OnboardingRepo } from "@/lib/onboarding/types";
 
 export type CloudModel = "claude" | "neev" | null;
 
 /**
- * Everything a cloud session needs: Claude connected (or, where offered, Neev
- * AI models with nothing to set up) and the GitHub repositories it may work in.
+ * Everything a cloud session needs: Claude connected (or, where the server runs
+ * Outrunner's own models, Skip: sessions start on those) and the GitHub
+ * repository it works in.
  */
 export function CloudSetup({
   env,
@@ -70,34 +70,19 @@ export function CloudSetup({
 
   return (
     <div className="border-border/60 bg-card/30 overflow-hidden rounded-xl border">
-      {model === "neev" ? (
-        <ChecklistRow
-          state="done"
-          title="Neev AI models"
-          detail="Starting on Neev AI models. Connect Claude anytime in Settings."
-          action={
-            <Button size="sm" variant="ghost" onClick={() => onModel(null)}>
-              Change
-            </Button>
-          }
-        />
-      ) : (
-        <ConnectClaudeRow
-          env={env}
-          connected={model === "claude" ? true : checked ? false : null}
-          onConnected={() => onModel("claude")}
-        >
-          {env.neevForCloud && (
-            <button
-              type="button"
-              onClick={() => onModel("neev")}
-              className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-4"
-            >
-              Or start on Neev AI models, with nothing to set up
-            </button>
-          )}
-        </ConnectClaudeRow>
-      )}
+      <ConnectClaudeRow
+        env={env}
+        connected={model === "claude" ? true : checked ? false : null}
+        onConnected={() => onModel("claude")}
+        {...(env.neevForCloud && {
+          todo: "Use your Claude Pro or Max subscription, or skip: sessions then start on Outrunner's model.",
+          skipped:
+            model === "neev"
+              ? "Skipped. Sessions start on Outrunner's model. Connect Claude anytime in Settings."
+              : undefined,
+          onSkip: () => onModel("neev"),
+        })}
+      />
 
       <ChecklistRow
         state={repos === null ? "working" : repoError ? "problem" : repoId !== null ? "done" : "todo"}

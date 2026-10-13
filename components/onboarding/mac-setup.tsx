@@ -137,7 +137,10 @@ export function MacSetup({
   // Sessions here run the Mac's own Claude Code, so it must be logged in too.
   // Checked quietly: it only becomes a step when it isn't.
   const loggedIn = toolsReady && status.claudeLoggedIn !== false;
-  const ready = toolsReady && claude === true && loggedIn && folder !== null;
+  // Sessions here run on Claude Code's own login on this Mac, so connecting
+  // Claude (for cloud sessions) is only offered, never required.
+  const [skippedClaude, setSkippedClaude] = useState(false);
+  const ready = toolsReady && (claude === true || skippedClaude) && loggedIn && folder !== null;
 
   useEffect(() => onReady(ready), [ready, onReady]);
 
@@ -211,7 +214,18 @@ export function MacSetup({
         )}
       </ChecklistRow>
 
-      <ConnectClaudeRow env={env} connected={claude} onConnected={() => setClaude(true)} />
+      <ConnectClaudeRow
+        env={env}
+        connected={claude}
+        onConnected={() => setClaude(true)}
+        todo="For cloud sessions. Sessions on this Mac use Claude Code's own login, so you can skip this."
+        skipped={
+          skippedClaude
+            ? "Skipped. Sessions on this Mac use Claude Code's own login. Connect Claude for cloud sessions anytime in Settings."
+            : undefined
+        }
+        onSkip={() => setSkippedClaude(true)}
+      />
 
       {toolsReady && !loggedIn && (
         <ChecklistRow

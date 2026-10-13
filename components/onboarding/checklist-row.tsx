@@ -1,8 +1,8 @@
-import { AlertCircle, Check, Circle, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Circle, Loader2, Minus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-export type RowState = "todo" | "working" | "done" | "problem";
+export type RowState = "todo" | "working" | "done" | "problem" | "skipped";
 
 /**
  * One line of a setup checklist: what it is, whether it's done, and the one
@@ -29,7 +29,12 @@ export function ChecklistRow({
       <div className="flex items-start gap-3">
         <StateIcon state={state} />
         <div className="min-w-0 flex-1">
-          <p className={cn("text-sm font-medium", state === "done" && "text-muted-foreground")}>
+          <p
+            className={cn(
+              "text-sm font-medium",
+              (state === "done" || state === "skipped") && "text-muted-foreground",
+            )}
+          >
             {title}
           </p>
           {detail && <div className="text-muted-foreground mt-0.5 text-xs">{detail}</div>}
@@ -66,6 +71,12 @@ function StateIcon({ state }: { state: RowState }) {
       return (
         <span className={cn(box, "text-muted-foreground/50")} aria-label="To do">
           <Circle className="size-4" />
+        </span>
+      );
+    case "skipped":
+      return (
+        <span className={cn(box, "bg-muted text-muted-foreground")} aria-label="Skipped">
+          <Minus className="size-3.5" strokeWidth={3} />
         </span>
       );
   }
