@@ -4,12 +4,14 @@ import type {
   ProvisionedComputer,
   ProvisionComputerInput,
 } from "@/lib/runtime/computer-provider";
-import type { RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
+import type { ProviderName, RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
 
 const POLL_INTERVAL_MS = 500;
 const PROVISION_WAIT_MS = 3 * 60_000;
 
 export type RuntimeComputerProvisioner = {
+  /** Recorded on the computer, so a later session knows which provider has it. */
+  readonly name: ProviderName;
   provisionComputer(input: ProvisionComputerInput): Promise<ProvisionedComputer>;
 };
 
@@ -27,6 +29,7 @@ export type EnsureRuntimeComputerDependencies = {
     patch: {
       status?: RuntimeComputerStatus;
       daytonaSandboxId?: string | null;
+      provider?: ProviderName;
       agentBaseUrl?: string | null;
       provisionTimings?: RuntimeComputer["provisionTimings"];
       errorMessage?: string | null;
@@ -90,6 +93,7 @@ export async function ensureRuntimeComputer(
     await deps.update(claim.computer.id, {
       status: "ready",
       daytonaSandboxId: provisioned.sandboxId,
+      provider: provider.name,
       agentBaseUrl: provisioned.agentBaseUrl,
       provisionTimings: provisioned.timings,
       errorMessage: null,

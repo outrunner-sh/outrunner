@@ -15,6 +15,7 @@ function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
     status: "provisioning",
     imageVersion: "v1",
     daytonaSandboxId: null,
+    provider: null,
     agentBaseUrl: null,
     provisionTimings: null,
     errorMessage: null,
@@ -66,6 +67,7 @@ function concurrencyHarness() {
         ...(patch.daytonaSandboxId !== undefined && {
           daytonaSandboxId: patch.daytonaSandboxId,
         }),
+        ...(patch.provider !== undefined && { provider: patch.provider }),
         ...(patch.agentBaseUrl !== undefined && { agentBaseUrl: patch.agentBaseUrl }),
         ...(patch.provisionTimings !== undefined && {
           provisionTimings: patch.provisionTimings,
@@ -89,6 +91,7 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
   const harness = concurrencyHarness();
   let provisions = 0;
   const provider: RuntimeComputerProvisioner = {
+    name: "neev",
     provisionComputer: async () => {
       provisions += 1;
       // Keep the owner request in the external-provision phase long enough
@@ -111,6 +114,8 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
   assert.equal(first.computer.id, second.computer.id);
   assert.equal([first.provisioned, second.provisioned].filter(Boolean).length, 1);
   assert.equal(harness.row()?.status, "ready");
+  // So a later session knows which provider has the box.
+  assert.equal(harness.row()?.provider, "neev");
 });
 
 test("a provision failure is persisted as an error for a later retry", async () => {
@@ -118,7 +123,7 @@ test("a provision failure is persisted as an error for a later retry", async () 
   await assert.rejects(
     () =>
       ensureRuntimeComputer(
-        { provisionComputer: async () => Promise.reject(new Error("Daytona unavailable")) },
+        { name: "daytona", provisionComputer: async () => Promise.reject(new Error("Daytona unavailable")) },
         input,
         harness.deps,
       ),
@@ -133,6 +138,7 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
   const harness = concurrencyHarness();
   let provisions = 0;
   const provider: RuntimeComputerProvisioner = {
+    name: "neev",
     provisionComputer: async () => {
       provisions += 1;
       if (provisions === 1) throw new Error("Daytona unavailable");

@@ -65,18 +65,22 @@ export type ProvisionPhase =
  * Backend that owns a workspace's compute. `local`/`modal` are the workspace-per-
  * sandbox model; `daytona` and `neev` are Runtime's real model (Project → Runtime
  * Computer → Workspace) where many workspaces share one always-on box.
+ * `user-daytona` is that model in the session owner's own Daytona account, on
+ * their key (Settings → Sandbox); the others are the deployment's.
  */
-export type ProviderName = "local" | "modal" | "daytona" | "neev";
+export type ProviderName = "local" | "modal" | "daytona" | "neev" | "user-daytona";
 
 /** Whether the provider runs sessions on a project's Runtime Computer, which
  *  is what live sessions attach to. */
 export function onRuntimeComputer(provider: ProviderName): boolean {
-  return provider === "daytona" || provider === "neev";
+  return provider === "daytona" || provider === "neev" || provider === "user-daytona";
 }
 
 export type Workspace = {
   id: string;
   projectId: string;
+  /** Who made it: on `user-daytona`, whose Daytona key reaches it. */
+  ownerId: string;
   /** Backend that owns this workspace's compute and durable storage. */
   provider: ProviderName;
   status: WorkspaceStatus;
@@ -144,6 +148,9 @@ export type RuntimeComputer = {
   imageVersion: string;
   /** Daytona sandbox id; null until compute is provisioned. */
   daytonaSandboxId: string | null;
+  /** The provider that made it; null from before that was recorded (the
+   *  deployment's provider made those). */
+  provider: ProviderName | null;
   /** Base of the Daytona preview URL the runtime-agent is reachable at. */
   agentBaseUrl: string | null;
   /** Wall-clock breakdown of the last provision; null until first measured. */
