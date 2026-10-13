@@ -26,15 +26,15 @@ const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foregr
  * starts on that instruction.
  */
 export function NewSessionForm({
-  projects,
+  projects: listed,
   initialProjectId,
 }: {
   projects: Project[];
   /** Repo to preselect (the last-used project). Falls back to the first. */
   initialProjectId?: string;
 }) {
-  const { projectId, setProjectId, selected, isCreating, message, messageHref, create, createLocal } =
-    useCreateSession(projects, initialProjectId);
+  const { projects, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal } =
+    useCreateSession(listed, initialProjectId);
   const where = useSessionLocation();
   const local = where.location === "local";
   // No repositories only blocks the cloud; a local session needs none.
@@ -94,7 +94,7 @@ export function NewSessionForm({
               <RepositorySelect
                 projects={projects}
                 selectedProjectId={projectId}
-                onSelect={setProjectId}
+                onSelect={selectProject}
                 disabled={isCreating}
                 triggerClassName={CHIP_BUTTON}
               />
