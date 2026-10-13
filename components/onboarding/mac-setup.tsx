@@ -137,10 +137,14 @@ export function MacSetup({
   // Sessions here run the Mac's own Claude Code, so it must be logged in too.
   // Checked quietly: it only becomes a step when it isn't.
   const loggedIn = toolsReady && status.claudeLoggedIn !== false;
+  // Where the server runs Outrunner's models, a Mac that isn't logged in runs
+  // its sessions on those instead, so the login is offered, not required.
+  const onOutrunnerModel = toolsReady && !loggedIn && env.outrunnerModels;
   // Sessions here run on Claude Code's own login on this Mac, so connecting
   // Claude (for cloud sessions) is only offered, never required.
   const [skippedClaude, setSkippedClaude] = useState(false);
-  const ready = toolsReady && (claude === true || skippedClaude) && loggedIn && folder !== null;
+  const ready =
+    toolsReady && (claude === true || skippedClaude) && (loggedIn || onOutrunnerModel) && folder !== null;
 
   useEffect(() => onReady(ready), [ready, onReady]);
 
@@ -169,7 +173,8 @@ export function MacSetup({
         : toolsReady
           ? "done"
           : "problem";
-  const loginState: RowState = login.state === "waiting" ? "working" : "problem";
+  const loginState: RowState =
+    login.state === "waiting" ? "working" : onOutrunnerModel && login.state === "idle" ? "skipped" : "problem";
 
   return (
     <div className="border-border/60 bg-card/30 overflow-hidden rounded-xl border">
@@ -218,10 +223,10 @@ export function MacSetup({
         env={env}
         connected={claude}
         onConnected={() => setClaude(true)}
-        todo="For cloud sessions. Sessions on this Mac use Claude Code's own login, so you can skip this."
+        todo="Only for cloud sessions, so you can skip this. Sessions on this Mac don't use it."
         skipped={
           skippedClaude
-            ? "Skipped. Sessions on this Mac use Claude Code's own login. Connect Claude for cloud sessions anytime in Settings."
+            ? "Skipped. It's only for cloud sessions: connect Claude anytime in Settings."
             : undefined
         }
         onSkip={() => setSkippedClaude(true)}
@@ -236,7 +241,9 @@ export function MacSetup({
               ? "Approve in your browser…"
               : login.state === "error"
                 ? login.message
-                : "Sessions on this Mac run Claude Code here, and it isn't logged in."
+                : onOutrunnerModel
+                  ? "Not logged in, so sessions on this Mac run on Outrunner's model. Log in to use your Claude subscription instead."
+                  : "Sessions on this Mac run Claude Code here, and it isn't logged in."
           }
           action={
             login.state === "waiting" ? (
@@ -252,7 +259,7 @@ export function MacSetup({
                 Cancel
               </Button>
             ) : (
-              <Button size="sm" onClick={() => void logIn()}>
+              <Button size="sm" variant={onOutrunnerModel ? "outline" : "default"} onClick={() => void logIn()}>
                 {login.state === "error" ? "Try again" : "Log in"}
               </Button>
             )

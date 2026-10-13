@@ -30,7 +30,7 @@ export default async function OnboardingPage() {
       user={{ name: user.name, login: user.login, avatarUrl: user.avatarUrl }}
       // A cloud session starts without the user's Claude only on Outrunner's
       // models, which need an OpenRouter key on this server.
-      neevForCloud={keySource() !== null}
+      outrunnerModels={keySource() !== null}
     />
   );
 }

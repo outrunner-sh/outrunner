@@ -54,7 +54,7 @@ export type OnboardingEnv = {
   /** Inside the Outrunner Mac app, where This Mac and Connect Claude work. */
   desktop: boolean;
   /** Whether a cloud session may start on Neev AI models without Claude. */
-  neevForCloud: boolean;
+  outrunnerModels: boolean;
   checkMac(): Promise<MacStatus>;
   /** Start setting up the app's own Claude Code; `checkMac` follows it. */
   setUpClaudeCode(): Promise<void>;

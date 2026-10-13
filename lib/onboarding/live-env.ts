@@ -11,7 +11,9 @@ import {
   logInToClaude,
   needsClaudeLogin,
   pickLocalFolder,
+  putOnOutrunnerModel,
   rememberFolder,
+  runsOnOutrunnerModel,
   setsUpClaude,
   setUpClaudeCode,
 } from "@/lib/desktop/local-runtime";
@@ -31,7 +33,7 @@ const LOGIN_CHECK_MS = 3000;
  * app's own APIs for the cloud. Each action is the same one the rest of the app
  * uses (Settings → Claude, the new-session form), not a parallel copy.
  */
-export function liveEnv(user: OnboardingUser, server: { neevForCloud: boolean }): OnboardingEnv {
+export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
   let loginStopped = false;
   let connectStopped = false;
 
@@ -40,7 +42,7 @@ export function liveEnv(user: OnboardingUser, server: { neevForCloud: boolean })
     desktop: isDesktopApp(),
     // Whether a cloud session may start without the user's Claude, on
     // Outrunner's models: the server knows, from its OpenRouter key.
-    neevForCloud: server.neevForCloud,
+    outrunnerModels: server.outrunnerModels,
 
     async checkMac() {
       const status = await localStatus();
@@ -150,7 +152,8 @@ export function liveEnv(user: OnboardingUser, server: { neevForCloud: boolean })
     },
 
     async start(input) {
-      const href = input.target === "mac" ? await startOnMac(input) : await startInCloud(input);
+      const href =
+        input.target === "mac" ? await startOnMac(input, server.outrunnerModels) : await startInCloud(input);
       await markOnboarded();
       return href;
     },
@@ -162,11 +165,16 @@ export function liveEnv(user: OnboardingUser, server: { neevForCloud: boolean })
   };
 }
 
-/** Same as the new-session form's local start (use-create-session.ts). */
-async function startOnMac({ prompt = "", folder }: FirstSession): Promise<string> {
+/**
+ * Same as the new-session form's local start (use-create-session.ts): on a Mac
+ * whose Claude Code isn't logged in, where the server runs Outrunner's models,
+ * the session starts on those.
+ */
+async function startOnMac({ prompt = "", folder }: FirstSession, outrunnerModels: boolean): Promise<string> {
   if (!folder) throw new Error("Choose a folder first.");
   const workspaceId = crypto.randomUUID();
-  await localAgentRequest(localTarget(workspaceId), "POST", "/workspaces", {
+  const target = localTarget(workspaceId);
+  await localAgentRequest(target, "POST", "/workspaces", {
     workspaceId,
     repoFullName: folder.name,
     branch: `runtime/${Date.now().toString(36)}-${workspaceId.slice(0, 8)}`,
@@ -174,6 +182,16 @@ async function startOnMac({ prompt = "", folder }: FirstSession): Promise<string
     // The first prompt names the session; without one the folder does.
     ...(prompt ? { title: Array.from(prompt).slice(0, 120).join("") } : {}),
   });
+  const status = outrunnerModels ? await localStatus().catch(() => null) : null;
+  if (status && runsOnOutrunnerModel(status, outrunnerModels)) {
+    try {
+      await putOnOutrunnerModel(workspaceId);
+    } catch (error) {
+      // Not left to open on Claude Code's login screen.
+      void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
+      throw error;
+    }
+  }
   return `/local/${workspaceId}${promptQuery(prompt)}`;
 }
 
