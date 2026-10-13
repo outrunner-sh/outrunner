@@ -26,6 +26,7 @@
     "allow-local-claude-setup",
     "allow-local-codex-setup",
     "allow-local-codex-login",
+    "allow-local-codex-models",
     "allow-local-pick-folder",
     "allow-local-check-folder",
     "allow-local-list-sessions",

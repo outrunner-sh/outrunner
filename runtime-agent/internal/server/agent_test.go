@@ -51,6 +51,10 @@ func TestASessionsAgentIsCheckedAtCreateAndListed(t *testing.T) {
 	if code, out := call("ws-c", "POST", "/workspaces", map[string]any{"workspaceId": "ws-c", "repoPath": t.TempDir(), "agent": "codex"}); code != http.StatusOK {
 		t.Fatalf("create a Codex session = %d %v", code, out)
 	}
+	// Codex's models are about the Mac: a workspace's own token can't ask.
+	if code, _ := call("ws-c", "GET", "/codex/models", nil); code != http.StatusUnauthorized {
+		t.Errorf("models with a workspace token = %d, want 401", code)
+	}
 	_, out := call(protocol.ListingWorkspaceID, "GET", "/workspaces", nil)
 	list, _ := out["workspaces"].([]any)
 	if len(list) != 1 || list[0].(map[string]any)["agent"] != "codex" {

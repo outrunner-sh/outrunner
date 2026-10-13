@@ -166,3 +166,21 @@ func TestASessionsAgentNeverChanges(t *testing.T) {
 		t.Errorf("agent after re-create = %q", f.Agent)
 	}
 }
+
+func TestCodexModelsComeFromCodexAndAreReused(t *testing.T) {
+	t.Parallel()
+	s := NewService(t.TempDir())
+	s.codex = newCodexEngine(os.Args[0], codextest.Env(), s.Root)
+	models, err := s.CodexModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0].ID != "fake-default" || !models[0].IsDefault {
+		t.Fatalf("models = %+v", models)
+	}
+	// Asked again within minutes: the same list, without starting Codex again.
+	s.codex.bin = "/nonexistent/codex"
+	if again, err := s.CodexModels(context.Background()); err != nil || len(again) != 2 {
+		t.Errorf("second ask = %+v, %v; want the cached list", again, err)
+	}
+}

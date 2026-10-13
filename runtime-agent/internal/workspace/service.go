@@ -22,6 +22,7 @@ import (
 
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
+	"runtime-agent/internal/codex"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/snapshot"
@@ -91,6 +92,11 @@ type Service struct {
 	// desktop shell sets it so that gap can never widen a local session to
 	// bypassPermissions on the user's own machine.
 	DefaultPermissionMode claude.PermissionMode
+}
+
+// CodexModels lists the models this Mac's Codex login may use.
+func (s *Service) CodexModels(ctx context.Context) ([]codex.Model, error) {
+	return s.codex.Models(ctx)
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through

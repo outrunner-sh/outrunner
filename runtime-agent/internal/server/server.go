@@ -80,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
+	mux.HandleFunc("GET /codex/models", s.authed(s.codexModels))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -249,6 +250,23 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workspaces": s.ws.LocalSessions(r.Context())})
+}
+
+// codexModels lists the models the Mac's Codex login may use, for the page's
+// menus. Like listing sessions it takes the listing token only: it is about
+// the Mac, not one workspace.
+func (s *Server) codexModels(w http.ResponseWriter, r *http.Request) {
+	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
+	if claims == nil || claims.WorkspaceID != protocol.ListingWorkspaceID {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize listing models")
+		return
+	}
+	models, err := s.ws.CodexModels(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "CODEX", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": models})
 }
 
 // workspaceChanges serves the Changes panel for a session whose control plane

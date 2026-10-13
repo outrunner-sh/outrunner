@@ -49,6 +49,10 @@ type codexEngine struct {
 
 	mu       sync.Mutex
 	sessions map[string]*codexSession
+
+	modelsMu sync.Mutex
+	models   []codex.Model
+	modelsAt time.Time
 }
 
 type codexSession struct {
@@ -255,6 +259,53 @@ func (e *codexEngine) append(workspaceID string, lines ...[]byte) {
 	for _, line := range lines {
 		_, _ = f.Write(line)
 	}
+}
+
+// modelsFresh is how long a model list is reused: it changes only with a
+// Codex release or a different login.
+const modelsFresh = 10 * time.Minute
+
+// Models lists the models the Mac's Codex login may use, for the page's
+// menus: from a running session's server when there is one, else from one
+// started just to ask.
+func (e *codexEngine) Models(ctx context.Context) ([]codex.Model, error) {
+	e.modelsMu.Lock()
+	defer e.modelsMu.Unlock()
+	if e.models != nil && e.clock().Sub(e.modelsAt) < modelsFresh {
+		return e.models, nil
+	}
+	var client *codex.Client
+	e.mu.Lock()
+	for _, s := range e.sessions {
+		if !closed(s.client) {
+			client = s.client
+			break
+		}
+	}
+	e.mu.Unlock()
+	if client == nil {
+		c, err := codex.Start(e.bin, e.root, e.env, codex.Handlers{Request: declineRequests})
+		if err != nil {
+			return nil, err
+		}
+		defer c.Close()
+		if err := c.Initialize(ctx, "outrunner", "1"); err != nil {
+			return nil, err
+		}
+		client = c
+	}
+	models, err := client.Models(ctx)
+	if err != nil {
+		return nil, err
+	}
+	shown := make([]codex.Model, 0, len(models))
+	for _, m := range models {
+		if !m.Hidden {
+			shown = append(shown, m)
+		}
+	}
+	e.models, e.modelsAt = shown, e.clock()
+	return shown, nil
 }
 
 // declineRequests answers what Codex asks. With approvals set to never it

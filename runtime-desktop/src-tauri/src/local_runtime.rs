@@ -952,6 +952,33 @@ pub async fn local_list_sessions(
     list_sessions(&app, &state).await
 }
 
+/// The models this Mac's Codex login may use (`[{id, displayName, isDefault}]`),
+/// for the page's menus. Asked of the agent with the listing token, as the
+/// session list is: it is about the Mac, not one session.
+#[tauri::command]
+pub async fn local_codex_models(app: AppHandle, state: State<'_, LocalRuntime>) -> Result<serde_json::Value, String> {
+    let agent = state.agent().await?;
+    let token = mint_token(&agent.secret, LISTING_WORKSPACE_ID, "local", &device_id(&app)?);
+    let response = http_client()
+        .get(format!("http://{}/codex/models", agent.addr))
+        .bearer_auth(token)
+        // Asking may start Codex first.
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|error| format!("agent-unreachable: {error}"))?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    if !status.is_success() {
+        let message = body
+            .pointer("/error/message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Codex couldn't list its models.");
+        return Err(format!("codex-models-failed: {message}"));
+    }
+    Ok(body.get("models").cloned().unwrap_or_else(|| serde_json::json!([])))
+}
+
 async fn list_sessions(app: &AppHandle, state: &LocalRuntime) -> Result<serde_json::Value, String> {
     let agent = state.agent().await?;
     // The agent lists only for its listing workspace id, which no real

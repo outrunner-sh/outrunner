@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-local-codex-models"
+description = "Enables the local_codex_models command without any pre-configured scope."
+commands.allow = ["local_codex_models"]
+
+[[permission]]
+identifier = "deny-local-codex-models"
+description = "Denies the local_codex_models command without any pre-configured scope."
+commands.deny = ["local_codex_models"]
