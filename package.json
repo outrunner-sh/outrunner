@@ -7,9 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "node --experimental-strip-types server.ts",
+    "dev": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON server.ts",
     "build": "next build",
-    "start": "NODE_ENV=production node --experimental-strip-types server.ts",
+    "start": "NODE_ENV=production node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON server.ts",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --import ./scripts/test-loader.mjs --test \"test/**/*.test.ts\"",
