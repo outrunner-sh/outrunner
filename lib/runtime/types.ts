@@ -63,10 +63,16 @@ export type ProvisionPhase =
 
 /**
  * Backend that owns a workspace's compute. `local`/`modal` are the workspace-per-
- * sandbox model; `daytona` is Runtime's real model (Project → Runtime Computer →
- * Workspace) where many workspaces share one always-on box.
+ * sandbox model; `daytona` and `neev` are Runtime's real model (Project → Runtime
+ * Computer → Workspace) where many workspaces share one always-on box.
  */
 export type ProviderName = "local" | "modal" | "daytona" | "neev";
+
+/** Whether the provider runs sessions on a project's Runtime Computer, which
+ *  is what live sessions attach to. */
+export function onRuntimeComputer(provider: ProviderName): boolean {
+  return provider === "daytona" || provider === "neev";
+}
 
 export type Workspace = {
   id: string;
