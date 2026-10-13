@@ -6,7 +6,12 @@ import Link from "next/link";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
-import { LocalBlocker, LocalFolderButton, SessionLocationMenu } from "@/components/session-location-picker";
+import {
+  LocalAgentMenu,
+  LocalBlocker,
+  LocalFolderButton,
+  SessionLocationMenu,
+} from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
@@ -89,7 +94,10 @@ export function NewSessionForm({
           <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
             <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />
             {local ? (
-              <LocalFolderButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
+              <>
+                <LocalFolderButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
+                <LocalAgentMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />
+              </>
             ) : (
               <RepositorySelect
                 projects={projects}
@@ -137,7 +145,11 @@ export function NewSessionForm({
         <SessionComposer
           onSend={(text, attachmentIds) =>
             where.localFolder
-              ? createLocal(text, where.localFolder, where.outrunnerModel)
+              ? createLocal(text, where.localFolder, {
+                  onOutrunnerModel: where.outrunnerModel,
+                  agent: where.agent,
+                  model: where.agentModel,
+                })
               : create(text, attachmentIds)
           }
           canSend={!isCreating && (local ? where.localFolder !== null : selected != null)}

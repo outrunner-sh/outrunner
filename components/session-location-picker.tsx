@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Cloud, Folder, FolderGit2, Laptop } from "lucide-react";
+import { Bot, Check, ChevronDown, Cloud, Folder, FolderGit2, Laptop } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -111,6 +111,55 @@ export function LocalFolderButton({
   );
 }
 
+/** The agent a This Mac session runs: Claude Code, or Codex. */
+export function LocalAgentMenu({
+  state,
+  disabled,
+  className,
+}: {
+  state: SessionLocationState;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const { agent, setAgent, codexSupported } = state;
+  const label = agent === "codex" ? "Codex" : "Claude Code";
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label={`Agent: ${label}. Change the agent`}
+          title="The agent that runs the session"
+          className={className}
+        >
+          <Bot className="size-4 shrink-0" />
+          {label}
+          <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="center" className="w-64">
+        <DropdownMenuItem onSelect={() => setAgent("claude")} className="items-start">
+          <span className="min-w-0 flex-1">
+            <span className="block">Claude Code</span>
+            <span className="block text-xs text-muted-foreground">Anthropic&apos;s agent, on your Claude login</span>
+          </span>
+          <Check className={cn("mt-0.5", agent === "claude" ? "opacity-100" : "opacity-0")} />
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={!codexSupported} onSelect={() => setAgent("codex")} className="items-start">
+          <span className="min-w-0 flex-1">
+            <span className="block">Codex</span>
+            <span className="block text-xs text-muted-foreground">
+              {codexSupported ? "OpenAI's agent, on your ChatGPT login" : "Update the Outrunner app to use it"}
+            </span>
+          </span>
+          <Check className={cn("mt-0.5", agent === "codex" ? "opacity-100" : "opacity-0")} />
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * Why a local session cannot start yet. When the reason is Claude Code not
  * being logged in on this Mac, it offers the login right there: the app opens
@@ -125,20 +174,21 @@ export function LocalBlocker({
   state: SessionLocationState;
   className?: string;
 }) {
-  const { blocker, needsClaudeLogin, outrunnerModel, claudeLogin, claudeSetup } = state;
+  const { blocker, needsClaudeLogin, needsCodexLogin, outrunnerModel, claudeLogin, codexLogin, claudeSetup } = state;
   if (!blocker && !outrunnerModel) return null;
-  const { login, start, cancel } = claudeLogin;
+  const { login, start, cancel } = needsCodexLogin ? codexLogin : claudeLogin;
+  const needsLogin = needsClaudeLogin || needsCodexLogin;
   const action = "font-medium text-foreground underline underline-offset-4 hover:opacity-80";
   return (
     <p aria-live="polite" className={cn("text-xs text-muted-foreground", className)}>
-      {(needsClaudeLogin || (outrunnerModel && !blocker)) && login.state === "waiting" ? (
+      {(needsLogin || (outrunnerModel && !blocker)) && login.state === "waiting" ? (
         <>
           Approve the login in your browser…{" "}
           <button type="button" onClick={cancel} className={action}>
             Cancel
           </button>
         </>
-      ) : needsClaudeLogin ? (
+      ) : needsLogin ? (
         <>
           {login.state === "error" ? login.message : blocker}{" "}
           <button type="button" onClick={() => void start()} className={action}>

@@ -9,6 +9,7 @@ import {
   putOnOutrunnerModel,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
+import type { LocalAgent } from "@/lib/runtime/session-defaults";
 import type { Project } from "@/lib/runtime/types";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
@@ -97,12 +98,18 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    * when it is not a repository) — about a second — and opens it. Claude starts
    * there, as the session page attaches, so there is nothing else to wait for.
    *
-   * `onOutrunnerModel` (this Mac's Claude Code isn't logged in) puts it on
-   * Outrunner's model before then, so Claude starts on that with no login. A
-   * session that can't be is removed again rather than left to open on a
-   * login screen.
+   * `agent` runs it (Claude Code, or Codex) on `model` (null: its default).
+   * `onOutrunnerModel` (this Mac's Claude Code isn't logged in) puts a Claude
+   * Code session on Outrunner's model before then, so Claude starts on that
+   * with no login. A session that can't be is removed again rather than left
+   * to open on a login screen.
    */
-  function createLocal(prompt: string, folder: LocalFolder, onOutrunnerModel = false): Promise<boolean> {
+  function createLocal(
+    prompt: string,
+    folder: LocalFolder,
+    options: { onOutrunnerModel?: boolean; agent?: LocalAgent; model?: string | null } = {},
+  ): Promise<boolean> {
+    const { onOutrunnerModel = false, agent = "claude", model = null } = options;
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
@@ -116,13 +123,15 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           repoPath: folder.path,
           // By character, so the cut never splits an emoji's surrogate pair.
           title: Array.from(prompt.trim()).slice(0, 120).join(""),
+          ...(agent === "codex" ? { agent } : {}),
+          ...(model ? { model } : {}),
         });
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Could not start the local session.");
         resolve(false);
         return;
       }
-      if (onOutrunnerModel) {
+      if (onOutrunnerModel && agent === "claude") {
         try {
           await putOnOutrunnerModel(workspaceId);
         } catch (error) {
