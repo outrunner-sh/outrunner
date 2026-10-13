@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -394,6 +395,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
 	}
+	s.makeContextDir(ctx, workspaceID, worktree)
 	env := claude.SessionEnv(s.env, anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
@@ -729,6 +731,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	}
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
+	s.makeContextDir(ctx, workspaceID, worktree)
 	env := claude.SessionEnv(s.env, anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
@@ -775,7 +778,56 @@ func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []str
 // useful prompt (see claude.Orientation).
 func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
-	return claude.Orientation(worktree, f.BaseBranch)
+	// A session in the user's own folder has no branch of its own.
+	return claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+}
+
+// placeholderBranch is the name Outrunner gives a new session's branch,
+// runtime/<time>-<id> (generatedBranch in the web app, localBranch on the Mac):
+// a name nobody chose.
+var placeholderBranch = regexp.MustCompile(`^runtime/[0-9a-z]+-[0-9a-f]{8}$`)
+
+// onPlaceholderBranch reports whether a worktree is still on that branch: read
+// from git each launch, so a branch renamed since (at the user's request)
+// isn't called a placeholder.
+func onPlaceholderBranch(worktree string) bool {
+	if worktree == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", worktree, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	return err == nil && placeholderBranch.MatchString(strings.TrimSpace(string(out)))
+}
+
+// makeContextDir gives a session's worktree the .context directory the
+// orientation tells Claude it has, gitignored, for screenshots and notes. A
+// .gitignore of "*" inside ignores everything there, itself included, so none
+// of it shows in the session's changes or lands in a commit, and the
+// repository's own ignore files are left alone. Best effort: Claude starts
+// either way, and makes the directory itself if it needs one.
+//
+// Left alone: a session in the user's own folder, which isn't Outrunner's to
+// add to, and a .context the repository tracks, where a "*" would hide new
+// files the project means to commit.
+func (s *Service) makeContextDir(ctx context.Context, workspaceID, worktree string) {
+	if f, _ := s.getFacts(workspaceID); f.InPlace {
+		return
+	}
+	dir := filepath.Join(worktree, ".context")
+	ignore := filepath.Join(dir, ".gitignore")
+	if _, err := os.Stat(ignore); err == nil {
+		return
+	}
+	if _, err := os.Stat(dir); err == nil {
+		if tracked, err := s.git(ctx, worktree, "ls-files", "--", ".context"); err != nil || tracked != "" {
+			return
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(ignore, []byte("*\n"), 0o644)
 }
 
 // setFacts records a workspace's facts in memory and on disk. The file write is
