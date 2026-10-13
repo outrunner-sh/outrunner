@@ -176,6 +176,7 @@ pub fn run() {
             local_runtime::local_claude_setup,
             local_runtime::local_pick_folder,
             local_runtime::local_check_folder,
+            local_runtime::local_clone_repo,
             local_runtime::local_list_sessions,
             local_runtime::local_agent_request,
             local_runtime::local_socket_open,
