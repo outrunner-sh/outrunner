@@ -930,6 +930,14 @@ fn git_for_github(token: Option<&str>) -> Command {
     git
 }
 
+/// The staging folders of the clones running now. Outrunner runs once per Mac,
+/// so any other staging folder in `repos_dir` is from a clone cut short by
+/// quitting the app (or a crash), and the next clone removes it.
+fn clones_running() -> &'static Mutex<HashSet<PathBuf>> {
+    static RUNNING: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    RUNNING.get_or_init(Default::default)
+}
+
 /// Clone `url` into `dir`, through a hidden folder beside it that is renamed
 /// into place: a clone cut short never looks like one to reuse.
 fn clone_into(url: &str, dir: &Path, token: Option<&str>) -> Result<(), String> {
@@ -938,17 +946,51 @@ fn clone_into(url: &str, dir: &Path, token: Option<&str>) -> Result<(), String> 
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let staging = parent.join(format!(".{name}.cloning-{stamp}"));
+    {
+        let mut running = clones_running().lock().unwrap_or_else(PoisonError::into_inner);
+        remove_abandoned_clones(parent, &running);
+        running.insert(staging.clone());
+    }
+    let result = clone_through(url, &staging, dir, token);
+    clones_running().lock().unwrap_or_else(PoisonError::into_inner).remove(&staging);
+    result
+}
+
+/// Whether `name` is a staging folder's: `.<name>.cloning-<stamp>`.
+fn is_staging(name: &str) -> bool {
+    name.starts_with('.')
+        && name
+            .rsplit_once(".cloning-")
+            .is_some_and(|(_, stamp)| !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Remove the staging folders in `parent` that no clone running now owns. They
+/// are hidden, so nobody would find them, and can be a large repository each.
+fn remove_abandoned_clones(parent: &Path, running: &HashSet<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(parent) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let staging = entry.file_name().to_str().is_some_and(is_staging);
+        // file_type doesn't follow a symlink: only a real folder is removed.
+        if staging && entry.file_type().is_ok_and(|t| t.is_dir()) && !running.contains(&path) {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// The clone itself, into `staging`, then renamed to `dir`.
+fn clone_through(url: &str, staging: &Path, dir: &Path, token: Option<&str>) -> Result<(), String> {
     let out = git_for_github(token)
         .args(["clone", "--quiet", "--", url])
-        .arg(&staging)
+        .arg(staging)
         .output()
         .map_err(|error| format!("git-missing:{error}"))?;
     if !out.status.success() {
-        let _ = std::fs::remove_dir_all(&staging);
+        let _ = std::fs::remove_dir_all(staging);
         return Err(format!("clone-failed:{}", last_line(&out.stderr)));
     }
-    if let Err(error) = std::fs::rename(&staging, dir) {
-        let _ = std::fs::remove_dir_all(&staging);
+    if let Err(error) = std::fs::rename(staging, dir) {
+        let _ = std::fs::remove_dir_all(staging);
         return Err(format!("repo-folder:{error}"));
     }
     Ok(())
@@ -1357,6 +1399,32 @@ mod tests {
         assert!(error.starts_with("clone-failed:"), "{error}");
         let left: Vec<_> = std::fs::read_dir(&repos).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(left, vec![std::ffi::OsString::from("app")], "a failed clone left {left:?}");
+    }
+
+    #[test]
+    fn a_clone_cut_short_by_quitting_is_cleared_away_by_the_next_one() {
+        let from = upstream();
+        let url = from.to_string_lossy().into_owned();
+        let repos = scratch("repos");
+        // Left by an app quit mid-clone, and one another window is running now.
+        let abandoned = repos.join(".old.cloning-1760000000000000000");
+        std::fs::create_dir_all(abandoned.join(".git")).unwrap();
+        let running = repos.join(".big.cloning-1760000000000000001");
+        std::fs::create_dir_all(&running).unwrap();
+        clones_running().lock().unwrap().insert(running.clone());
+        // Not staging folders.
+        for kept in [".config", "notes.cloning-1", ".app.cloning-"] {
+            std::fs::create_dir_all(repos.join(kept)).unwrap();
+        }
+
+        ensure_clone(&repos, "app", &url, None).unwrap();
+        clones_running().lock().unwrap().remove(&running);
+
+        assert!(!abandoned.exists(), "a clone cut short was left behind");
+        assert!(running.exists(), "a clone still running was removed");
+        for kept in [".config", "notes.cloning-1", ".app.cloning-"] {
+            assert!(repos.join(kept).exists(), "{kept} was removed");
+        }
     }
 
     #[test]
