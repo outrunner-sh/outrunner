@@ -24,14 +24,21 @@ function stubFetch(routes: Record<string, (body: unknown) => [number, unknown]>)
   return calls;
 }
 
+/** A server without Outrunner's models: cloud sessions need Claude. */
+const noModels = { neevForCloud: false };
+
 afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
 test("outside the Mac app, onboarding knows it is not on the desktop", () => {
-  assert.equal(liveEnv(user).desktop, false);
-  // The server still refuses a cloud session without the user's Claude.
-  assert.equal(liveEnv(user).neevForCloud, false);
+  assert.equal(liveEnv(user, noModels).desktop, false);
+});
+
+test("cloud setup offers to skip Claude only where the server runs Outrunner's models", () => {
+  assert.equal(liveEnv(user, { neevForCloud: true }).neevForCloud, true);
+  // Without an OpenRouter key the server refuses a cloud session without Claude.
+  assert.equal(liveEnv(user, noModels).neevForCloud, false);
 });
 
 test("repositories come from GitHub, most recently pushed first", async () => {
@@ -47,7 +54,7 @@ test("repositories come from GitHub, most recently pushed first", async () => {
       },
     ],
   });
-  const repos = await liveEnv(user).listRepos();
+  const repos = await liveEnv(user, noModels).listRepos();
   assert.deepEqual(
     repos.map((r) => [r.id, r.fullName, r.private]),
     [
@@ -60,7 +67,7 @@ test("repositories come from GitHub, most recently pushed first", async () => {
 
 test("a failed repository listing says why", async () => {
   stubFetch({ "GET /api/github/repositories": () => [409, { error: "Sign out and back in to GitHub." }] });
-  await assert.rejects(liveEnv(user).listRepos(), /Sign out and back in/);
+  await assert.rejects(liveEnv(user, noModels).listRepos(), /Sign out and back in/);
 });
 
 test("a cloud start connects the chosen repository, starts there, and marks onboarding done", async () => {
@@ -72,7 +79,7 @@ test("a cloud start connects the chosen repository, starts there, and marks onbo
     "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-1" } }],
     "POST /api/onboarding/complete": () => [200, { ok: true }],
   });
-  const href = await liveEnv(user).start({
+  const href = await liveEnv(user, noModels).start({
     target: "cloud",
     prompt: "Fix the flaky test",
     repoId: "9",
@@ -95,7 +102,7 @@ test("a refused cloud start shows the server's reason and leaves onboarding unma
     ],
   });
   await assert.rejects(
-    liveEnv(user).start({ target: "cloud", prompt: "Hi", repoId: "9" }),
+    liveEnv(user, noModels).start({ target: "cloud", prompt: "Hi", repoId: "9" }),
     /Connect Claude in Settings/,
   );
   assert.ok(!calls.some((c) => c.url === "/api/onboarding/complete"));
@@ -103,7 +110,7 @@ test("a refused cloud start shows the server's reason and leaves onboarding unma
 
 test("skipping marks onboarding done and goes home", async () => {
   const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
-  assert.equal(await liveEnv(user).skip!(), "/");
+  assert.equal(await liveEnv(user, noModels).skip!(), "/");
   assert.equal(calls.length, 1);
 });
 
@@ -113,5 +120,5 @@ test("onboarding opens the cloud session with no first message", async () => {
     "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-2" } }],
     "POST /api/onboarding/complete": () => [200, { ok: true }],
   });
-  assert.equal(await liveEnv(user).start({ target: "cloud", repoId: "9" }), "/workspaces/w-2");
+  assert.equal(await liveEnv(user, noModels).start({ target: "cloud", repoId: "9" }), "/workspaces/w-2");
 });
