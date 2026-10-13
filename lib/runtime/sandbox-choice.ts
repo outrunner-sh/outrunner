@@ -38,6 +38,18 @@ export function computerMadeBy(computer: Pick<RuntimeComputer, "provider">): Pro
   return computer.provider ?? getRuntimeProvider().name;
 }
 
+/** The box of a computer already found ended (marked stopped, its box id
+ *  kept), when `provider` made it: what a provider that brings boxes back on
+ *  the disk they left starts the next one from. */
+export function endedBoxOf(
+  computer: Pick<RuntimeComputer, "status" | "daytonaSandboxId" | "provider"> | null,
+  provider: ProviderName,
+): string | undefined {
+  return computer?.status === "stopped" && computer.daytonaSandboxId && computerMadeBy(computer) === provider
+    ? computer.daytonaSandboxId
+    : undefined;
+}
+
 /** Delete a box with the provider that made it, as its project moves to
  *  another. Best effort: a box that can't be reached is logged and left. */
 export async function retireComputer(

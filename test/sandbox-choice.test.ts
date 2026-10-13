@@ -3,7 +3,7 @@ import { afterEach, beforeEach, test } from "node:test";
 
 import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { resetRuntimeProvider } from "@/lib/runtime/provider";
-import { computerMadeBy, providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
+import { computerMadeBy, endedBoxOf, providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
 
 const noKey = async () => null;
 const settings = (sandbox: "outrunner" | "daytona", connected: boolean) => ({
@@ -64,4 +64,15 @@ test("the owner's Daytona with no key says where to add one, at the first call t
   // Not cached: a key added meanwhile is read next time.
   await assert.rejects(provider.agentTarget("box-1", "secret"), NoDaytonaKeyError);
   assert.equal(reads, 2);
+});
+
+test("only a stopped computer the same provider made is a box to restore from", () => {
+  const stopped = { status: "stopped" as const, daytonaSandboxId: "sb-1", provider: "user-modal" as const };
+  assert.equal(endedBoxOf(stopped, "user-modal"), "sb-1");
+  // Up, or never had a box.
+  assert.equal(endedBoxOf({ ...stopped, status: "ready" }, "user-modal"), undefined);
+  assert.equal(endedBoxOf({ ...stopped, daytonaSandboxId: null }, "user-modal"), undefined);
+  // Another provider's box: the owner moved, and that one is retired, not restored.
+  assert.equal(endedBoxOf({ ...stopped, provider: "neev" }, "user-modal"), undefined);
+  assert.equal(endedBoxOf(null, "user-modal"), undefined);
 });
