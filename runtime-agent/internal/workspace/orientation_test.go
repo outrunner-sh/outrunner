@@ -55,6 +55,16 @@ func startOnMac(t *testing.T, repo, branch string) (*Service, *fakeSessions, str
 	return s, fake, worktree
 }
 
+// The usual This Mac session, on a git repository, works in a worktree on its
+// generated branch, and is told so like a Runtime Computer's.
+func TestAThisMacSessionOnAGitRepoIsToldItsBranchIsAPlaceholder(t *testing.T) {
+	isolateGit(t)
+	_, fake, _ := startOnMac(t, newCheckout(t), "runtime/mv69bt00-3a01334a")
+	if prompt := strings.Join(fake.lastLaunch(), " "); !strings.Contains(prompt, "You're on a new branch with a placeholder name.") {
+		t.Errorf("a This Mac session wasn't told its branch is a placeholder:\n%s", prompt)
+	}
+}
+
 // The orientation promises a gitignored .context directory: a session's
 // worktree has one, and what Claude saves there stays out of git, while the
 // user's own checkout is untouched.
