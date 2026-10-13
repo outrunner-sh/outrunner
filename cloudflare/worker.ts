@@ -39,6 +39,17 @@ interface Env {
    */
   OPENROUTER_MANAGEMENT_KEY?: string;
   OPENROUTER_API_KEY?: string;
+  /**
+   * Where cloud sessions run: "daytona" (the default) or "neev". "neev" needs
+   * the three NEEV_* below; NEEV_API_KEY is a project API key with Resource
+   * Type "Sandboxes" (sk-nc-…). See docs/deploy-cloudflare.md.
+   */
+  RUNTIME_PROVIDER?: string;
+  NEEV_API_KEY?: string;
+  NEEV_ORG_ID?: string;
+  NEEV_PROJECT_ID?: string;
+  /** Optional; the app defaults to sb-ubuntu-26-04-dev. */
+  NEEV_SANDBOX_TEMPLATE?: string;
 }
 
 export class OutrunnerControlPlane extends Container<Env> {
@@ -63,7 +74,7 @@ export class OutrunnerControlPlane extends Container<Env> {
     this.envVars = {
       NODE_ENV: "production",
       PORT: "8080",
-      RUNTIME_PROVIDER: "daytona",
+      RUNTIME_PROVIDER: env.RUNTIME_PROVIDER || "daytona",
       RUNTIME_BASE_URL: "https://outrunner.neev.ai",
       RUNTIME_AGENT_BINARY_PATH: "bin/runtime-agent-linux-amd64",
       DAYTONA_SNAPSHOT: "runtime-computer-v1",
@@ -78,6 +89,10 @@ export class OutrunnerControlPlane extends Container<Env> {
         : {}),
       ...(env.OPENROUTER_MANAGEMENT_KEY ? { OPENROUTER_MANAGEMENT_KEY: env.OPENROUTER_MANAGEMENT_KEY } : {}),
       ...(env.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: env.OPENROUTER_API_KEY } : {}),
+      ...(env.NEEV_API_KEY ? { NEEV_API_KEY: env.NEEV_API_KEY } : {}),
+      ...(env.NEEV_ORG_ID ? { NEEV_ORG_ID: env.NEEV_ORG_ID } : {}),
+      ...(env.NEEV_PROJECT_ID ? { NEEV_PROJECT_ID: env.NEEV_PROJECT_ID } : {}),
+      ...(env.NEEV_SANDBOX_TEMPLATE ? { NEEV_SANDBOX_TEMPLATE: env.NEEV_SANDBOX_TEMPLATE } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own
