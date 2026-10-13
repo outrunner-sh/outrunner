@@ -69,7 +69,7 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
   claudeConnected: { label: "Claude for cloud", values: [["no", "Not connected"], ["yes", "Connected"]] },
   connect: { label: "Connect Claude", values: [["succeeds", "Succeeds"], ["no-subscription", "No subscription"]] },
   repos: { label: "GitHub repos", values: [["many", "Many"], ["few", "Two"], ["none", "None"]] },
-  neev: { label: "Neev AI in cloud", values: [["yes", "Offered"], ["no", "Not yet"]] },
+  neev: { label: "Outrunner models", values: [["yes", "On the server"], ["no", "Not set up"]] },
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -105,7 +105,7 @@ function mockEnv(s: Scenario): OnboardingEnv {
   return {
     user: { name: "Sajda Kabir", login: "sajdakabir", avatarUrl: null },
     desktop: s.surface === "desktop",
-    neevForCloud: s.neev === "yes",
+    outrunnerModels: s.neev === "yes",
     async checkMac() {
       await wait(checks === 0 ? 900 : 300);
       const fixed = checks++ > 0;

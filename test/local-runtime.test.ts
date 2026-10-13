@@ -9,6 +9,7 @@ import {
   messageForLocalError,
   missingTools,
   needsClaudeLogin,
+  runsOnOutrunnerModel,
   toolsToInstall,
   openSocket,
   parseLocalSocketUrl,
@@ -67,6 +68,16 @@ test("setting up Claude Code shows how far it has got, or why it failed", () => 
     claudeSetupText({ state: "failed", message: "Claude Code's download didn't match its checksum." }),
     "Claude Code's download didn't match its checksum.",
   );
+});
+
+test("a session runs on Outrunner's model only when the Mac clearly isn't logged in and the server has them", () => {
+  const status = { deviceId: "d", root: "/r", agentBundled: true, git: "/g", tmux: "/t", claude: "/c" };
+  assert.equal(runsOnOutrunnerModel({ ...status, claudeLoggedIn: false }, true), true);
+  assert.equal(runsOnOutrunnerModel({ ...status, claudeLoggedIn: false }, false), false);
+  assert.equal(runsOnOutrunnerModel({ ...status, claudeLoggedIn: true }, true), false);
+  // Can't tell, or no Claude Code at all (that is set up, not routed around).
+  assert.equal(runsOnOutrunnerModel({ ...status, claudeLoggedIn: null }, true), false);
+  assert.equal(runsOnOutrunnerModel({ ...status, claude: null, claudeLoggedIn: false }, true), false);
 });
 
 test("only a clear no from the app asks for a Claude Code login", () => {

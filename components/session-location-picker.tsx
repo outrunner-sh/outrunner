@@ -125,13 +125,13 @@ export function LocalBlocker({
   state: SessionLocationState;
   className?: string;
 }) {
-  const { blocker, needsClaudeLogin, claudeLogin, claudeSetup } = state;
-  if (!blocker) return null;
+  const { blocker, needsClaudeLogin, outrunnerModel, claudeLogin, claudeSetup } = state;
+  if (!blocker && !outrunnerModel) return null;
   const { login, start, cancel } = claudeLogin;
   const action = "font-medium text-foreground underline underline-offset-4 hover:opacity-80";
   return (
     <p aria-live="polite" className={cn("text-xs text-muted-foreground", className)}>
-      {needsClaudeLogin && login.state === "waiting" ? (
+      {(needsClaudeLogin || (outrunnerModel && !blocker)) && login.state === "waiting" ? (
         <>
           Approve the login in your browser…{" "}
           <button type="button" onClick={cancel} className={action}>
@@ -143,6 +143,17 @@ export function LocalBlocker({
           {login.state === "error" ? login.message : blocker}{" "}
           <button type="button" onClick={() => void start()} className={action}>
             {login.state === "error" ? "Try again" : "Log in"}
+          </button>
+        </>
+      ) : !blocker ? (
+        // Not logged in, and the server runs Outrunner's models: not a
+        // blocker, but say so, and offer the login that switches back.
+        <>
+          {login.state === "error"
+            ? login.message
+            : "Runs on Outrunner's model, since Claude Code isn't logged in on this Mac."}{" "}
+          <button type="button" onClick={() => void start()} className={action}>
+            {login.state === "error" ? "Try again" : "Log in to use your Claude"}
           </button>
         </>
       ) : claudeSetup.failed ? (

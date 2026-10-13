@@ -74,7 +74,7 @@ export function CloudSetup({
         env={env}
         connected={model === "claude" ? true : checked ? false : null}
         onConnected={() => onModel("claude")}
-        {...(env.neevForCloud && {
+        {...(env.outrunnerModels && {
           todo: "Use your Claude Pro or Max subscription, or skip: sessions then start on Outrunner's model.",
           skipped:
             model === "neev"

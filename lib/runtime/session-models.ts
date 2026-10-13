@@ -36,7 +36,8 @@ export const MODEL_GROUPS: ModelGroup[] = [
 ];
 
 /** What a new cloud session starts on: Outrunner's own model, so anyone can
- *  start one without a Claude account. */
+ *  start one without a Claude account. A local session starts on it too when
+ *  the Mac's Claude Code isn't logged in. */
 export const DEFAULT_CLOUD_MODEL: SessionModel = NEEV_AI_MODELS[0];
 
 /** Trim Claude's model id to a stable label — drop a trailing -YYYYMMDD date so

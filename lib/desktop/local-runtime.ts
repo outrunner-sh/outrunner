@@ -1,5 +1,6 @@
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
+import { DEFAULT_CLOUD_MODEL, setModelRequest } from "@/lib/runtime/session-models";
 
 /**
  * Desktop-only bridge for local sessions: Claude Code running on this Mac.
@@ -161,6 +162,47 @@ export function setUpClaudeCode(): Promise<void> {
  */
 export function needsClaudeLogin(status: LocalStatus): boolean {
   return status.claude !== null && status.claudeLoggedIn === false;
+}
+
+/**
+ * Whether a new local session runs on Outrunner's model instead of this Mac's
+ * Claude Code login: only on a clear "not logged in" from the app, and only
+ * where the server runs Outrunner's models. Otherwise the login is a must.
+ */
+export function runsOnOutrunnerModel(status: LocalStatus, outrunnerModels: boolean): boolean {
+  return outrunnerModels && needsClaudeLogin(status);
+}
+
+/** The user's own capped key for Outrunner's models, which the server creates
+ *  on first use. A local session runs on it through OpenRouter. */
+export async function outrunnerKey(): Promise<string> {
+  const res = await fetch("/api/neev-ai/key", { method: "POST" });
+  const data = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
+  if (!res.ok || !data.key) throw new Error(data.error ?? "Outrunner's models are unavailable right now.");
+  return data.key;
+}
+
+/**
+ * Put a new local session on Outrunner's model before its first launch. The
+ * agent records it, so Claude Code starts on it through OpenRouter, with no
+ * Claude login needed (and none of its login screens).
+ */
+export async function putOnOutrunnerModel(workspaceId: string): Promise<void> {
+  const body = await setModelRequest(DEFAULT_CLOUD_MODEL.id, outrunnerKey);
+  await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+}
+
+/** Whether this server runs Outrunner's models; asked once per page load. */
+let outrunnerModelsAnswer: Promise<boolean> | null = null;
+export function outrunnerModelsAvailable(): Promise<boolean> {
+  outrunnerModelsAnswer ??= fetch("/api/neev-ai")
+    .then((res) => (res.ok ? (res.json() as Promise<{ available?: boolean }>) : { available: false }))
+    .then((data) => data.available === true)
+    .catch(() => {
+      outrunnerModelsAnswer = null; // a failed look is asked again next time
+      return false;
+    });
+  return outrunnerModelsAnswer;
 }
 
 /**

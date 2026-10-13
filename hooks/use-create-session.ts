@@ -3,7 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-import { localAgentRequest, localTarget, type LocalFolder } from "@/lib/desktop/local-runtime";
+import {
+  localAgentRequest,
+  localTarget,
+  putOnOutrunnerModel,
+  type LocalFolder,
+} from "@/lib/desktop/local-runtime";
 import type { Project } from "@/lib/runtime/types";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
@@ -75,8 +80,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    * app asks the agent here for the session's worktree (or the folder itself,
    * when it is not a repository) — about a second — and opens it. Claude starts
    * there, as the session page attaches, so there is nothing else to wait for.
+   *
+   * `onOutrunnerModel` (this Mac's Claude Code isn't logged in) puts it on
+   * Outrunner's model before then, so Claude starts on that with no login. A
+   * session that can't be is removed again rather than left to open on a
+   * login screen.
    */
-  function createLocal(prompt: string, folder: LocalFolder): Promise<boolean> {
+  function createLocal(prompt: string, folder: LocalFolder, onOutrunnerModel = false): Promise<boolean> {
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
@@ -95,6 +105,16 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         setMessage(error instanceof Error ? error.message : "Could not start the local session.");
         resolve(false);
         return;
+      }
+      if (onOutrunnerModel) {
+        try {
+          await putOnOutrunnerModel(workspaceId);
+        } catch (error) {
+          void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
+          setMessage(error instanceof Error ? error.message : "Outrunner's models are unavailable right now.");
+          resolve(false);
+          return;
+        }
       }
       const query = prompt.trim() ? `?${new URLSearchParams({ prompt: prompt.trim() })}` : "";
       router.push(`/local/${workspaceId}${query}`);

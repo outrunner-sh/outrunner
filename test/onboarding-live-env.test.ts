@@ -25,7 +25,7 @@ function stubFetch(routes: Record<string, (body: unknown) => [number, unknown]>)
 }
 
 /** A server without Outrunner's models: cloud sessions need Claude. */
-const noModels = { neevForCloud: false };
+const noModels = { outrunnerModels: false };
 
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -36,9 +36,9 @@ test("outside the Mac app, onboarding knows it is not on the desktop", () => {
 });
 
 test("cloud setup offers to skip Claude only where the server runs Outrunner's models", () => {
-  assert.equal(liveEnv(user, { neevForCloud: true }).neevForCloud, true);
+  assert.equal(liveEnv(user, { outrunnerModels: true }).outrunnerModels, true);
   // Without an OpenRouter key the server refuses a cloud session without Claude.
-  assert.equal(liveEnv(user, noModels).neevForCloud, false);
+  assert.equal(liveEnv(user, noModels).outrunnerModels, false);
 });
 
 test("repositories come from GitHub, most recently pushed first", async () => {
@@ -121,4 +121,71 @@ test("onboarding opens the cloud session with no first message", async () => {
     "POST /api/onboarding/complete": () => [200, { ok: true }],
   });
   assert.equal(await liveEnv(user, noModels).start({ target: "cloud", repoId: "9" }), "/workspaces/w-2");
+});
+
+/** The Mac app's bridge, answering local_status with `loggedIn`; records the
+ *  agent requests it relays. */
+function fakeMac(loggedIn: boolean | null): { path: string; body: unknown }[] {
+  const agent: { path: string; body: unknown }[] = [];
+  const invoke = async (cmd: string, args?: Record<string, unknown>) => {
+    if (cmd === "local_status") {
+      return { deviceId: "d", root: "/r", agentBundled: true, git: "/g", tmux: "/t", claude: "/c", claudeLoggedIn: loggedIn };
+    }
+    if (cmd === "local_agent_request") {
+      agent.push({ path: String(args?.path), body: args?.body });
+      return {};
+    }
+    throw new Error(`unexpected ${cmd}`);
+  };
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: { core: { invoke, Channel: class {} } },
+  };
+  return agent;
+}
+
+const folder = { path: "/Users/ada/app", name: "app", git: true, branch: "main" };
+const key = `sk-or-v1-${"a".repeat(64)}`;
+
+afterEach(() => {
+  delete (globalThis as Record<string, unknown>).window;
+});
+
+test("a Mac that isn't logged in starts its session on Outrunner's model", async () => {
+  const agent = fakeMac(false);
+  stubFetch({ "POST /api/neev-ai/key": () => [200, { key }], "POST /api/onboarding/complete": () => [200, {}] });
+  const href = await liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder });
+  const id = agent[0].body && (agent[0].body as { workspaceId: string }).workspaceId;
+  assert.equal(href, `/local/${id}`);
+  // Created, then put on the model before anything launches it.
+  assert.deepEqual(
+    agent.map((a) => a.path),
+    ["/workspaces", `/workspaces/${id}/model`],
+  );
+  assert.deepEqual(agent[1].body, { model: "z-ai/glm-5.3", gateway: "openrouter", token: key });
+});
+
+test("a logged-in Mac, or a server without Outrunner's models, keeps the Mac's own Claude", async () => {
+  stubFetch({ "POST /api/onboarding/complete": () => [200, {}] });
+  for (const [loggedIn, outrunnerModels] of [
+    [true, true],
+    [null, true], // the app can't tell: left to Claude Code, as before
+    [false, false],
+  ] as const) {
+    const agent = fakeMac(loggedIn);
+    await liveEnv(user, { outrunnerModels }).start({ target: "mac", folder });
+    assert.deepEqual(agent.map((a) => a.path), ["/workspaces"], `loggedIn=${loggedIn} models=${outrunnerModels}`);
+  }
+});
+
+test("a session that can't get Outrunner's model is removed, not left on a login screen", async () => {
+  const agent = fakeMac(false);
+  stubFetch({ "POST /api/neev-ai/key": () => [503, { error: "Outrunner's models are not set up on this server." }] });
+  await assert.rejects(
+    liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder }),
+    /not set up on this server/,
+  );
+  const id = (agent[0].body as { workspaceId: string }).workspaceId;
+  await new Promise((resolve) => setTimeout(resolve, 0)); // the destroy is fire-and-forget
+  assert.deepEqual(agent.map((a) => a.path), ["/workspaces", `/workspaces/${id}/destroy`]);
 });
