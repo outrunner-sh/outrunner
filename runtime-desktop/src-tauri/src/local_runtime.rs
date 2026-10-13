@@ -32,6 +32,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::managed_claude::{self, Version, MIN_VERSION};
+use crate::managed_codex;
 
 /// tmux server name for local sessions, so they never mix with the user's own.
 const TMUX_SOCKET: &str = "outrunner";
@@ -121,8 +122,9 @@ impl LocalRuntime {
         }
     }
 
-    /// Stop a `claude auth login` in progress, if any. It holds a localhost
-    /// port open for the browser's redirect until it ends.
+    /// Stop a CLI login in progress (`claude auth login`, `codex login`), if
+    /// any. It holds a localhost port open for the browser's redirect until it
+    /// ends.
     fn stop_claude_login(&self) {
         let mut login = self.login.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((_, mut child)) = login.take() {
@@ -184,8 +186,10 @@ fn spawn_agent() -> Result<Agent, String> {
     let binary = agent_binary()?;
     let root = root_dir()?;
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    // Sessions run the `claude` linked here; make sure it is the one that works.
+    // Sessions run the `claude` (and a Codex session the `codex`) linked here;
+    // make sure each is the one that works.
     let _ = find_claude();
+    let _ = find_codex();
     let log = OpenOptions::new()
         .create(true)
         .append(true)
@@ -429,10 +433,19 @@ pub(crate) fn find_claude() -> Result<PathBuf, Vec<PathBuf>> {
 }
 
 fn find_claude_in(dirs: impl Iterator<Item = PathBuf>) -> Result<PathBuf, Vec<PathBuf>> {
+    find_in(dirs, "claude", |claude| claude_version(claude).is_some_and(|version| version >= MIN_VERSION))
+}
+
+/// The first `name` in `dirs` that is `usable`. Err lists those that weren't.
+fn find_in(
+    dirs: impl Iterator<Item = PathBuf>,
+    name: &str,
+    usable: impl Fn(&Path) -> bool,
+) -> Result<PathBuf, Vec<PathBuf>> {
     let mut seen = HashSet::new();
     let mut broken = Vec::new();
     for dir in dirs {
-        let candidate = dir.join("claude");
+        let candidate = dir.join(name);
         if !candidate.is_file() {
             continue;
         }
@@ -440,7 +453,7 @@ fn find_claude_in(dirs: impl Iterator<Item = PathBuf>) -> Result<PathBuf, Vec<Pa
         if !seen.insert(std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone())) {
             continue;
         }
-        if claude_version(&candidate).is_some_and(|version| version >= MIN_VERSION) {
+        if usable(&candidate) {
             return Ok(candidate);
         }
         broken.push(candidate);
@@ -472,16 +485,108 @@ pub(crate) fn linked_claude() -> Option<PathBuf> {
     std::fs::read_link(claude_link_dir()?.join("claude")).ok()
 }
 
+/// The Codex to run on this Mac, for a session that chose it: the first
+/// `codex` on the session PATH (then the one this app inherited) at least
+/// [`managed_codex::MIN_VERSION`], failing that Outrunner's own copy. Linked as
+/// `codex` beside Claude Code's link, first on every session's PATH, so the
+/// agent runs it. Err lists the ones too old or broken.
+pub(crate) fn find_codex() -> Result<PathBuf, Vec<PathBuf>> {
+    let link_dir = claude_link_dir();
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = session_path()
+        .split(':')
+        .map(PathBuf::from)
+        .chain(std::env::split_paths(&inherited))
+        .filter(|dir| Some(dir) != link_dir.as_ref());
+    let found = find_in(dirs, "codex", |codex| {
+        codex_version(codex).is_some_and(|version| version >= managed_codex::MIN_VERSION)
+    })
+    .or_else(|unusable| {
+        managed_codex::installed()
+            .map(|(_, codex)| codex)
+            .filter(|codex| codex_version(codex).is_some())
+            .ok_or(unusable)
+    });
+    if let Some(dir) = link_dir {
+        match &found {
+            Ok(codex) => link_tool(&dir, "codex", codex),
+            Err(_) => {
+                let _ = std::fs::remove_file(dir.join("codex"));
+            }
+        }
+    }
+    found
+}
+
+/// The version `codex --version` answers with, when it runs and says it is
+/// Codex ("codex-cli 0.162.1").
+pub(crate) fn codex_version(codex: &Path) -> Option<Version> {
+    let mut child = user_command(codex)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if !exit_within(&mut child, Duration::from_secs(10)) {
+        return None;
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    let ran = child.wait().is_ok_and(|status| status.success());
+    ran.then(|| managed_codex::parse_version(&out)).flatten()
+}
+
+/// What the `codex` link points at, if there is one.
+pub(crate) fn linked_codex() -> Option<PathBuf> {
+    std::fs::read_link(claude_link_dir()?.join("codex")).ok()
+}
+
+/// Whether Codex is logged in, as `codex login status` says: it exits 0 when
+/// it is ("Logged in using ChatGPT"), non-zero with "Not logged in" when it
+/// isn't. None when it can't tell.
+fn codex_logged_in(codex: &str) -> Option<bool> {
+    let mut child = user_command(codex)
+        .args(["login", "status"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    if !exit_within(&mut child, Duration::from_secs(10)) {
+        return None;
+    }
+    let mut out = String::new();
+    let _ = child.stdout.take()?.read_to_string(&mut out);
+    let _ = child.stderr.take()?.read_to_string(&mut out);
+    parse_codex_logged_in(child.wait().ok()?.success(), &out)
+}
+
+fn parse_codex_logged_in(success: bool, out: &str) -> Option<bool> {
+    if success && out.contains("Logged in") {
+        Some(true)
+    } else if out.contains("Not logged in") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Point `dir/claude` at `claude`, replacing what was there in one rename, so a
 /// session starting meanwhile finds the old link or the new one, never none.
 fn link_claude(dir: &Path, claude: &Path) {
-    let link = dir.join("claude");
-    if std::fs::read_link(&link).is_ok_and(|target| target == claude) {
+    link_tool(dir, "claude", claude)
+}
+
+/// Point `dir/name` at `target` in one rename (see [`link_claude`]).
+fn link_tool(dir: &Path, name: &str, target: &Path) {
+    let link = dir.join(name);
+    if std::fs::read_link(&link).is_ok_and(|current| current == target) {
         return;
     }
-    let staged = dir.join(format!(".claude-{}", random_hex(4)));
+    let staged = dir.join(format!(".{name}-{}", random_hex(4)));
     let linked = std::fs::create_dir_all(dir)
-        .and_then(|()| std::os::unix::fs::symlink(claude, &staged))
+        .and_then(|()| std::os::unix::fs::symlink(target, &staged))
         .and_then(|()| std::fs::rename(&staged, &link));
     if linked.is_err() {
         let _ = std::fs::remove_file(&staged);
@@ -575,6 +680,11 @@ pub struct LocalStatus {
     /// there is none that runs; a setup that failed before one turned up is
     /// over.
     claude_setup: Option<managed_claude::Setup>,
+    /// The Codex a Codex session runs, its login, and Outrunner setting up its
+    /// own (`local_codex_setup`), as for Claude Code.
+    codex: Option<String>,
+    codex_logged_in: Option<bool>,
+    codex_setup: Option<managed_claude::Setup>,
 }
 
 /// What local sessions need on this Mac and whether it is there, so the UI can
@@ -584,6 +694,7 @@ pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
     let device_id = device_id(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let claude = find_claude().ok().map(|path| path.to_string_lossy().into_owned());
+        let codex = find_codex().ok().map(|path| path.to_string_lossy().into_owned());
         Ok(LocalStatus {
             device_id,
             root: root_dir()?.to_string_lossy().into_owned(),
@@ -596,6 +707,9 @@ pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
             claude_logged_in: claude.as_deref().and_then(claude_logged_in),
             claude_setup: claude.is_none().then(managed_claude::setup_status).flatten(),
             claude,
+            codex_logged_in: codex.as_deref().and_then(codex_logged_in),
+            codex_setup: codex.is_none().then(managed_codex::setup_status).flatten(),
+            codex,
         })
     })
     .await
@@ -615,6 +729,32 @@ pub async fn local_claude_setup() -> Result<(), String> {
         managed_claude::start();
     }
     Ok(())
+}
+
+/// Set up Outrunner's own Codex when this Mac has none a session can run (none,
+/// or one older than [`managed_codex::MIN_VERSION`]), for a user who chose
+/// Codex. Returns at once; `local_status` reports the download's progress.
+#[tauri::command]
+pub async fn local_codex_setup() -> Result<(), String> {
+    let found = tauri::async_runtime::spawn_blocking(find_codex)
+        .await
+        .map_err(|error| error.to_string())?;
+    if found.is_err() {
+        managed_codex::start();
+    }
+    Ok(())
+}
+
+/// Log Codex in on this Mac (`codex login`: ChatGPT, in the browser), and
+/// resolve when that is done. Errors as `local_claude_login`'s, with
+/// `codex-missing` when there is no Codex.
+#[tauri::command]
+pub async fn local_codex_login(state: State<'_, LocalRuntime>) -> Result<(), String> {
+    let codex = tauri::async_runtime::spawn_blocking(find_codex)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|_| "codex-missing")?;
+    run_login(&state, &codex, &["login"]).await
 }
 
 /// Log Claude Code in on this Mac, for a user who has never run it here, and
@@ -639,9 +779,16 @@ pub async fn local_claude_login(state: State<'_, LocalRuntime>) -> Result<(), St
 
 /// `local_claude_login` with the binary given, so a test can stand in for it.
 async fn run_claude_login(state: &LocalRuntime, claude: &Path) -> Result<(), String> {
+    run_login(state, claude, &["auth", "login"]).await
+}
+
+/// Run a CLI's own login (`claude auth login`, `codex login`), which opens the
+/// browser on a link that comes back to a port it listens on, and resolve when
+/// it exits. One login runs at a time; `local_claude_login_cancel` stops it.
+async fn run_login(state: &LocalRuntime, program: &Path, args: &[&str]) -> Result<(), String> {
     state.stop_claude_login();
-    let mut child = user_command(claude)
-        .args(["auth", "login"])
+    let mut child = user_command(program)
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1164,6 +1311,29 @@ mod tests {
         for dir in [old, current] {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    #[test]
+    fn a_codex_too_old_for_sessions_is_passed_over() {
+        let old = claude_dir("codex-old", "echo 'codex-cli 0.138.0'", 0o755);
+        let current = claude_dir("codex-new", "echo 'codex-cli 0.162.1'", 0o755);
+        for dir in [&old, &current] {
+            std::fs::rename(dir.join("claude"), dir.join("codex")).unwrap();
+        }
+        let usable = |codex: &Path| codex_version(codex).is_some_and(|v| v >= managed_codex::MIN_VERSION);
+        assert_eq!(find_in(std::iter::once(old.clone()), "codex", usable), Err(vec![old.join("codex")]));
+        assert_eq!(find_in([old.clone(), current.clone()].into_iter(), "codex", usable), Ok(current.join("codex")));
+        for dir in [old, current] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn reads_whether_codex_is_logged_in() {
+        assert_eq!(parse_codex_logged_in(true, "Logged in using ChatGPT\n"), Some(true));
+        assert_eq!(parse_codex_logged_in(true, "Logged in using an API key - sk-…\n"), Some(true));
+        assert_eq!(parse_codex_logged_in(false, "Not logged in\n"), Some(false));
+        assert_eq!(parse_codex_logged_in(false, "error: unrecognized subcommand 'status'"), None);
     }
 
     #[test]

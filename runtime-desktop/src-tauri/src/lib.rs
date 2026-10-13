@@ -23,6 +23,7 @@
 mod claude_login;
 mod local_runtime;
 mod managed_claude;
+mod managed_codex;
 mod updater;
 
 use tauri::{
@@ -174,6 +175,8 @@ pub fn run() {
             local_runtime::local_claude_login,
             local_runtime::local_claude_login_cancel,
             local_runtime::local_claude_setup,
+            local_runtime::local_codex_setup,
+            local_runtime::local_codex_login,
             local_runtime::local_pick_folder,
             local_runtime::local_check_folder,
             local_runtime::local_list_sessions,
@@ -325,6 +328,7 @@ pub fn run() {
             // Outrunner's own Claude Code, if it runs one, follows Anthropic's
             // releases; a Mac whose own Claude Code works has nothing to update.
             tauri::async_runtime::spawn(managed_claude::refresh());
+            tauri::async_runtime::spawn(managed_codex::refresh());
 
             Ok(())
         })

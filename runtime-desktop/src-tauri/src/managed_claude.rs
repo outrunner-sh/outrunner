@@ -32,6 +32,10 @@ pub(crate) const MIN_VERSION: Version = Version(2, 0, 0);
 pub(crate) struct Version(u64, u64, u64);
 
 impl Version {
+    pub(crate) const fn new(major: u64, minor: u64, patch: u64) -> Version {
+        Version(major, minor, patch)
+    }
+
     /// The version `claude --version` or a release channel starts with:
     /// "2.1.287 (Claude Code)", "2.1.287". A pre-release suffix is ignored.
     pub(crate) fn parse(text: &str) -> Option<Version> {
@@ -357,7 +361,7 @@ fn platform() -> &'static str {
     }
 }
 
-fn under_rosetta() -> bool {
+pub(crate) fn under_rosetta() -> bool {
     std::process::Command::new("/usr/sbin/sysctl")
         .args(["-n", "sysctl.proc_translated"])
         .output()
