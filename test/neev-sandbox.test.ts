@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
+import { asUserArgs } from "@/lib/runtime/sandbox/backend";
 import {
-  asUserArgs,
   neevPrepareScript,
   parseExecStream,
   SandboxRuntime,

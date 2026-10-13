@@ -49,3 +49,15 @@ export interface SandboxBackend {
 export async function homeOf(io: BoxIO, fallback: string): Promise<string> {
   return ((await io.exec("bash -lc 'echo $HOME'")).stdout || "").trim() || fallback;
 }
+
+/** The non-root user the agent and Claude run as on a box whose own user is
+ *  root (Neev, Modal): Claude refuses bypassPermissions as root. */
+export const BOX_USER = "runtime";
+
+/** `runuser` arguments for `command` as {@link BOX_USER} in a login shell. An
+ *  env var is let through by name only; its value travels in the exec's
+ *  environment, never in argv. */
+export function asUserArgs(command: string, env?: Record<string, string>): string[] {
+  const names = Object.keys(env ?? {});
+  return ["-l", BOX_USER, ...(names.length > 0 ? ["-w", names.join(",")] : []), "-c", command];
+}
