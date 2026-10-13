@@ -136,7 +136,9 @@ export function NewSessionForm({
         )}
         <SessionComposer
           onSend={(text, attachmentIds) =>
-            where.localFolder ? createLocal(text, where.localFolder) : create(text, attachmentIds)
+            where.localFolder
+              ? createLocal(text, where.localFolder, where.outrunnerModel)
+              : create(text, attachmentIds)
           }
           canSend={!isCreating && (local ? where.localFolder !== null : selected != null)}
           placeholder="What would you like to work on?"

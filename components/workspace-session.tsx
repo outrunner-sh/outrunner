@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { localAgentRequest, localTarget, messageForLocalError } from "@/lib/desktop/local-runtime";
+import { localAgentRequest, localTarget, messageForLocalError, outrunnerKey } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { MODEL_GROUPS, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
@@ -328,12 +328,7 @@ export function WorkspaceSession({
  *  the user's own capped key, which the server hands over (creating it the
  *  first time); a Claude account model runs on the Mac's own Claude login. */
 async function switchLocalModel(workspaceId: string, model: SessionModel): Promise<void> {
-  const body = await setModelRequest(model.id, async () => {
-    const res = await fetch("/api/neev-ai/key", { method: "POST" });
-    const data = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
-    if (!res.ok || !data.key) throw new Error(data.error ?? "Outrunner's models are unavailable right now.");
-    return data.key;
-  });
+  const body = await setModelRequest(model.id, outrunnerKey);
   if (!body) throw new Error(`${model.label} isn't one of the offered models.`);
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
 }

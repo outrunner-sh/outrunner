@@ -8,9 +8,11 @@ import {
   claudeSetupNeeded,
   claudeSetupText,
   needsClaudeLogin,
+  outrunnerModelsAvailable,
   pickLocalFolder,
   rememberedFolder,
   rememberFolder,
+  runsOnOutrunnerModel,
   setUpClaudeCode,
   toolsToInstall,
   type LocalFolder,
@@ -54,6 +56,21 @@ export function useSessionLocation() {
   );
 
   const location: SessionLocation = runtime.state === "ready" ? chosen : "cloud";
+
+  // Whether this server runs Outrunner's models: then a Mac whose Claude Code
+  // isn't logged in runs its sessions on those instead of being blocked.
+  const [outrunnerModels, setOutrunnerModels] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void outrunnerModelsAvailable().then((available) => {
+      if (live) setOutrunnerModels(available);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const onOutrunnerModel =
+    location === "local" && runtime.state === "ready" && runsOnOutrunnerModel(runtime.status, outrunnerModels);
 
   // Choosing This Mac on a Mac with no Claude Code a session can run (none,
   // a broken one, one too old) sets up the app's own; nothing to install. A
@@ -132,7 +149,7 @@ export function useSessionLocation() {
       : remembered
         ? { state: "checking" }
         : { state: "none" };
-  const blocker = location === "local" ? localBlocker(runtime, folder) : null;
+  const blocker = location === "local" ? localBlocker(runtime, folder, outrunnerModels) : null;
 
   return {
     location,
@@ -143,7 +160,11 @@ export function useSessionLocation() {
     /** Why a local session cannot start yet; null when it can (or for cloud). */
     blocker,
     /** The blocker is Claude Code needing a login, which the page can start. */
-    needsClaudeLogin: location === "local" && runtime.state === "ready" && needsClaudeLogin(runtime.status),
+    needsClaudeLogin:
+      location === "local" && runtime.state === "ready" && needsClaudeLogin(runtime.status) && !onOutrunnerModel,
+    /** Claude Code isn't logged in here, so a new session runs on Outrunner's
+     *  model; logging in (which the page can start) switches back to Claude. */
+    outrunnerModel: onOutrunnerModel,
     claudeLogin,
     /** Setting up the app's own Claude Code failed; `retry` starts it again. */
     claudeSetup: {
@@ -179,7 +200,7 @@ function saveLocation(location: SessionLocation): void {
   }
 }
 
-function localBlocker(runtime: LocalRuntime, folder: FolderChoice): string | null {
+function localBlocker(runtime: LocalRuntime, folder: FolderChoice, outrunnerModels: boolean): string | null {
   if (runtime.state === "error") return runtime.message;
   if (runtime.state !== "ready") return "Local sessions run in the Outrunner Mac app.";
   const install = toolsToInstall(runtime.status);
@@ -188,7 +209,9 @@ function localBlocker(runtime: LocalRuntime, folder: FolderChoice): string | nul
     return `Install ${install.join(", ")}${tmux} to run sessions on this Mac.`;
   }
   if (!runtime.status.claude) return claudeSetupText(runtime.status.claudeSetup);
-  if (needsClaudeLogin(runtime.status)) return "Log in to Claude Code to run sessions on this Mac.";
+  if (needsClaudeLogin(runtime.status) && !runsOnOutrunnerModel(runtime.status, outrunnerModels)) {
+    return "Log in to Claude Code to run sessions on this Mac.";
+  }
   switch (folder.state) {
     case "none":
       return "Choose a folder to work in.";
