@@ -1,15 +1,25 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
+import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
+import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { resetRuntimeProvider } from "@/lib/runtime/provider";
-import { computerMadeBy, endedBoxOf, providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
+import {
+  computerMadeBy,
+  endedBoxOf,
+  newBoxSize,
+  providerForNewSessions,
+  providerNamed,
+} from "@/lib/runtime/sandbox-choice";
+import { NoModalTokenError, UserModalRuntimeProvider } from "@/lib/runtime/user-modal-provider";
 
-const noKey = async () => null;
-const settings = (sandbox: "outrunner" | "daytona", connected: boolean) => ({
+const noKey = { daytona: async () => null, modal: async () => null };
+const settings = (sandbox: SandboxChoice, connected: boolean, boxSize: BoxSizeId = "small"): SandboxSettings => ({
   sandbox,
   daytona: { connected, hint: connected ? "ab12" : null, updatedAt: null },
-  boxSize: "small" as const,
+  modal: { connected, hint: connected ? "cd34" : null, updatedAt: null },
+  boxSize,
 });
 
 const saved = process.env.RUNTIME_PROVIDER;
@@ -33,6 +43,13 @@ test("a session in the owner's own Daytona is managed on their key, whatever the
   assert.equal(provider.name, "user-daytona");
 });
 
+test("a session in the owner's own Modal is managed on their token", () => {
+  const provider = providerNamed("user-modal", noKey);
+  assert.ok(provider instanceof UserModalRuntimeProvider);
+  assert.equal(provider.name, "user-modal");
+  assert.equal(provider.restoresBoxes, true);
+});
+
 test("a session on a provider this deployment no longer runs has none, rather than another's", () => {
   assert.equal(providerNamed("daytona", noKey), null);
 });
@@ -42,6 +59,27 @@ test("new sessions go where the user chose: Outrunner's by default, their Dayton
   assert.equal(providerForNewSessions(settings("outrunner", true), noKey).name, "neev");
   assert.equal(providerForNewSessions(settings("daytona", true), noKey).name, "user-daytona");
   assert.throws(() => providerForNewSessions(settings("daytona", false), noKey), NoDaytonaKeyError);
+  assert.equal(providerForNewSessions(settings("modal", true), noKey).name, "user-modal");
+  assert.throws(() => providerForNewSessions(settings("modal", false), noKey), NoModalTokenError);
+});
+
+test("a new box is the user's size on Outrunner's and their Modal; Large only on their Modal", () => {
+  const cpuAndMemory = (size?: { cpu: number; memoryGb: number }) => size && [size.cpu, size.memoryGb];
+  assert.deepEqual(cpuAndMemory(newBoxSize(settings("outrunner", false, "medium"))), [4, 8]);
+  assert.deepEqual(cpuAndMemory(newBoxSize(settings("modal", true, "large"))), [8, 16]);
+  // Large is for a higher plan on Outrunner's: one chosen for Modal is the default there.
+  assert.deepEqual(cpuAndMemory(newBoxSize(settings("outrunner", false, "large"))), [2, 4]);
+  // Their own Daytona keeps its own size.
+  assert.equal(newBoxSize(settings("daytona", true, "medium")), undefined);
+});
+
+test("the owner's Modal with no token says where to add one, when a box is first reached", async () => {
+  const provider = new UserModalRuntimeProvider(async () => null);
+  await assert.rejects(provider.agentTarget("sb-1", "secret"), (error: unknown) => {
+    assert.ok(error instanceof NoModalTokenError);
+    assert.match(error.message, /Settings → Sandbox/);
+    return true;
+  });
 });
 
 test("a computer from before providers were recorded is the deployment's", () => {

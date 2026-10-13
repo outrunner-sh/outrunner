@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getDaytonaKey } from "@/lib/db/credentials";
+import { ownSandboxKeys } from "@/lib/db/credentials";
 import { providerNamed } from "@/lib/runtime/sandbox-choice";
 import type { RuntimeProvider, Workspace } from "@/lib/runtime/types";
 
@@ -18,8 +18,9 @@ export type ProviderResolution =
 export function resolveProvider(workspace: Workspace): ProviderResolution {
   let provider: RuntimeProvider | null;
   try {
-    // The deployment's provider, or the owner's own Daytona (Settings → Sandbox).
-    provider = providerNamed(workspace.provider, () => getDaytonaKey(workspace.ownerId));
+    // The deployment's provider, or the owner's own Daytona or Modal
+    // (Settings → Sandbox).
+    provider = providerNamed(workspace.provider, ownSandboxKeys(workspace.ownerId));
   } catch (error) {
     console.error(`Workspace ${workspace.id} provider is unavailable`, error);
     return {
