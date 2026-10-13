@@ -6,6 +6,8 @@ import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import type { AgentEndpoint, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import { mintRelayTicket, NEEV_RELAY_PREFIX } from "@/lib/runtime/sandbox/neev-relay-ticket";
+import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel";
 
 /**
  * Neev sandboxes (NeevCloud Agent Sandboxes): NEEV_API_KEY, NEEV_ORG_ID,
@@ -27,7 +29,10 @@ import type { AgentEndpoint, SandboxBackend, SandboxBox } from "@/lib/runtime/sa
  *    Claude Code) are installed here, as root, before the deploy runs.
  *  - Files can only be written under /workspace: an upload lands there and is
  *    moved into place.
- *  - A port's preview URL needs no credential: its random slug is the secret.
+ *  - No preview URLs: Neev asks us not to use them, and their edge refuses
+ *    WebSocket upgrades. The agent is reached through the sandbox's runtime
+ *    instead ({@link neevTunnel}), and the browser's WebSockets through this
+ *    server's relay (neev-relay.ts).
  */
 
 const DEFAULT_TEMPLATE = "sb-ubuntu-26-04-dev";
@@ -85,9 +90,10 @@ export class NeevBackend implements SandboxBackend {
     });
     try {
       await sandbox.waitUntilReady();
-      const runtime = new SandboxRuntime(await this.connection(sandbox.id));
+      const conn = await this.connection(sandbox.id);
+      const runtime = new SandboxRuntime(conn);
       await prepare(runtime);
-      return this.box(sandbox, runtime);
+      return this.box(sandbox, runtime, conn);
     } catch (error) {
       await sandbox.delete().catch(() => {});
       throw error;
@@ -96,7 +102,8 @@ export class NeevBackend implements SandboxBackend {
 
   async get(id: string): Promise<SandboxBox> {
     const sandbox = await this.neev().sandboxes.get(id);
-    return this.box(sandbox, new SandboxRuntime(await this.connection(id)));
+    const conn = await this.connection(id);
+    return this.box(sandbox, new SandboxRuntime(conn), conn);
   }
 
   async alive(id: string): Promise<boolean> {
@@ -105,6 +112,7 @@ export class NeevBackend implements SandboxBackend {
 
   async delete(id: string): Promise<void> {
     await this.neev().sandboxes.delete(id);
+    closeNeevTunnels(id);
   }
 
   /** How to reach one sandbox's runtime: its URL, on the project's API key. */
@@ -115,7 +123,7 @@ export class NeevBackend implements SandboxBackend {
     return { connectUrl: connectUrl.replace(/\/$/, ""), apiKey: requireEnv("NEEV_API_KEY") };
   }
 
-  private box(sandbox: Sandbox, runtime: SandboxRuntime): SandboxBox {
+  private box(sandbox: Sandbox, runtime: SandboxRuntime, conn: Connection): SandboxBox {
     // Everything after setup runs as the box user, through a login shell so
     // HOME and PATH are its own. A secret rides in the exec's environment and
     // is let through by name (-w), never on a command line.
@@ -156,14 +164,22 @@ export class NeevBackend implements SandboxBackend {
       io,
       gitExec,
       home: async () => BOX_HOME,
-      // The preview URL carries no credential (its slug is the secret), so the
-      // same base serves control calls and the browser's WebSocket.
-      agentEndpoint: async (port): Promise<AgentEndpoint> => {
-        const url = (await sandbox.getUrl({ port, waitUntilReady: false })).replace(/\/$/, "");
-        return { controlBaseUrl: url, controlHeaders: {}, wsBaseUrl: url };
-      },
+      // Control calls go through the tunnel from this server; the browser's
+      // WebSockets come to this server's relay, which uses the same tunnel.
+      agentEndpoint: async (port): Promise<AgentEndpoint> => ({
+        controlBaseUrl: await neevTunnel(sandbox.id, port, conn.connectUrl),
+        controlHeaders: {},
+        wsBaseUrl: neevRelayBaseUrl(sandbox.id, port, conn.apiKey),
+      }),
     };
   }
+}
+
+/** Where the browser opens a sandbox port's WebSockets: this server's relay,
+ *  with a ticket for that port. */
+export function neevRelayBaseUrl(sandboxId: string, port: number, apiKey: string): string {
+  const origin = new URL(requireEnv("RUNTIME_BASE_URL")).origin.replace(/^http/, "ws");
+  return `${origin}${NEEV_RELAY_PREFIX}${sandboxId}/${port}/${mintRelayTicket(sandboxId, port, apiKey)}`;
 }
 
 /**

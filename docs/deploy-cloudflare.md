@@ -1,7 +1,7 @@
 # Deploying Outrunner to Cloudflare Containers
 
 A **provider swap** of the control plane onto Cloudflare Containers — the app is
-unchanged. Containers runs the same `next start` container, so the filesystem,
+unchanged. Containers runs the same `pnpm start` container, so the filesystem,
 Node runtime, and the on-disk `runtime-agent` binary all work as on Railway.
 **Railway stays intact** as rollback.
 
@@ -17,7 +17,7 @@ So the Dockerfile *builds* the Go agent in-image, then serves the whole app.
 
 | File | Purpose |
 | --- | --- |
-| `outrunner/Dockerfile` | Multi-stage: build the Go agent → `next build` → `next start` with the binary at `bin/runtime-agent-linux-amd64`. |
+| `outrunner/Dockerfile` | Multi-stage: build the Go agent → `next build` → `pnpm start` (server.ts: Next plus the Neev WebSocket relay) with the binary at `bin/runtime-agent-linux-amd64`. |
 | `outrunner/.dockerignore` | Keeps the image lean and `.env*`/secrets out. **Keeps `runtime-agent/`** (the Dockerfile compiles it). |
 | `outrunner/cloudflare/wrangler.jsonc` | Container + Durable Object + custom-domain config (build context = `outrunner/`). |
 | `outrunner/cloudflare/worker.ts` | Thin Worker forwarding all requests to the container. |

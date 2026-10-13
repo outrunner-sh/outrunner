@@ -2,7 +2,7 @@
  * Cloudflare Containers entry for the Outrunner control plane.
  *
  * Deploy glue only: this runs the SAME container as Railway (Next.js
- * `next start`, see ../Dockerfile) and forwards every request to it. There are
+ * `pnpm start`, see ../Dockerfile) and forwards every request to it. There are
  * NO application code changes — the swap is purely a provider change.
  *
  * NOTE: the `@cloudflare/containers` API (Container base class, `defaultPort`,
