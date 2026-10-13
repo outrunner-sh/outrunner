@@ -29,6 +29,8 @@ fn main() {
                 "local_socket_open",
                 "local_socket_send",
                 "local_socket_close",
+                "update_status",
+                "restart_to_update",
             ]),
         ),
     )

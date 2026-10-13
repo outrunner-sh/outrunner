@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { AppUpdate } from "@/components/app-update";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { Spinner } from "@/components/ui/loaders";
@@ -205,6 +206,7 @@ export function AppSidebar({
         onDeleted={onDeleted}
       />
 
+      <AppUpdate />
       <div className="flex items-center gap-1 border-t border-border/60 pt-3">
         <div className="min-w-0 flex-1">
           <HomeUserMenu ownerLogin={ownerLogin} ownerAvatarUrl={ownerAvatarUrl} />
