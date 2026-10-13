@@ -111,6 +111,15 @@ test("app error codes become sentences; agent messages pass through", () => {
   assert.equal(messageForLocalError("agent: worktree add: branch exists"), "worktree add: branch exists");
 });
 
+test("an app too old for the page says to update it, not Tauri's refusal", () => {
+  // As Tauri words it for a command missing from the app (tauri 2.11).
+  const clone = messageForLocalError(new Error("local_clone_repo not allowed. Command not found"));
+  assert.match(clone, /can't clone repositories\. Update the app, or choose a folder/);
+  assert.match(messageForLocalError("local_something_new not allowed. Command not found"), /Update the app/);
+  // A refusal for another reason stays as it was.
+  assert.match(messageForLocalError("local_status not allowed on origin [https://x]"), /not allowed on origin/);
+});
+
 // ---------------------------------------------------------------------------
 // LocalSocket over a fake Tauri core, as the app's relay would drive it.
 // ---------------------------------------------------------------------------

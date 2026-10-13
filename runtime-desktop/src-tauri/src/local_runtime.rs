@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures_util::{SinkExt, StreamExt};
 use hmac::{Hmac, Mac};
 use serde::Serialize;
@@ -58,8 +58,9 @@ pub struct LocalRuntime {
     agent: tokio::sync::Mutex<Option<Agent>>,
     sockets: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<Outbound>>>>,
     next_socket: AtomicU32,
-    /// Canonical paths chosen in the folder dialog. With the folders existing
-    /// sessions work in, these are the only ones the page may name.
+    /// Canonical paths chosen in the folder dialog, or cloned from GitHub. With
+    /// the folders existing sessions work in and the clones under
+    /// `repos_dir`, these are the only ones the page may name.
     picked: Mutex<HashSet<PathBuf>>,
     /// `claude auth login` in progress, with a number for the attempt, so a
     /// retry, a cancel or quitting the app can stop it.
@@ -781,6 +782,10 @@ async fn check_chosen(app: &AppHandle, state: &LocalRuntime, path: &str) -> Resu
     if session_works_in(&list_sessions(app, state).await?, &real) {
         return Ok(());
     }
+    // A repository Outrunner cloned for the user, in an earlier run.
+    if repos_dir().ok().and_then(|repos| std::fs::canonicalize(repos).ok()).is_some_and(|repos| real.starts_with(repos)) {
+        return Ok(());
+    }
     Err("folder-not-chosen".into())
 }
 
@@ -844,6 +849,191 @@ fn inspect_folder(path: &Path) -> Result<LocalFolder, String> {
         }
         None => LocalFolder { name: name_of(&as_given), path: as_given, git: false, branch: None },
     })
+}
+
+// ---------------------------------------------------------------------------
+// Repositories picked from GitHub
+// ---------------------------------------------------------------------------
+
+/// Where Outrunner clones the repositories a user picks from GitHub for local
+/// sessions: `~/outrunner/repos`, or `OUTRUNNER_REPOS` (development, tests).
+fn repos_dir() -> Result<PathBuf, String> {
+    if let Some(dir) = std::env::var_os("OUTRUNNER_REPOS").filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    let home = std::env::var_os("HOME").ok_or("no-home")?;
+    Ok(PathBuf::from(home).join("outrunner").join("repos"))
+}
+
+/// A repository's `owner/name` as GitHub allows them, so the page can't steer a
+/// clone anywhere else: another host, `..`, a folder outside `repos_dir`, or
+/// an option for git.
+fn github_repo(full_name: &str) -> Option<(String, String)> {
+    let (owner, name) = full_name.split_once('/')?;
+    let owner_ok = (1..=39).contains(&owner.len())
+        && !owner.starts_with('-')
+        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let name_ok = (1..=100).contains(&name.len())
+        && name != "."
+        && name != ".."
+        && !name.starts_with('-')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    (owner_ok && name_ok).then(|| (owner.to_string(), name.to_string()))
+}
+
+fn github_url(owner: &str, name: &str) -> String {
+    format!("https://github.com/{owner}/{name}")
+}
+
+/// Whether `dir` is a clone of `url`: its own `.git`, not an enclosing
+/// repository's (a home folder kept in git), with that origin.
+fn is_clone_of(dir: &Path, url: &str) -> bool {
+    if !dir.join(".git").exists() {
+        return false;
+    }
+    let normal = |u: &str| u.trim_end_matches('/').trim_end_matches(".git").to_ascii_lowercase();
+    git_output(dir, &["config", "--get", "remote.origin.url"]).is_some_and(|origin| normal(&origin) == normal(url))
+}
+
+/// The folder a repository lives in under `repos`: its clone, if one is there
+/// (`Some(dir), true`), else the first free one of `<name>`, `<name>-2`, …
+/// (another owner's repository of the same name keeps its own).
+fn clone_target(repos: &Path, name: &str, url: &str) -> Result<(PathBuf, bool), String> {
+    for n in 1..=100 {
+        let dir = if n == 1 { repos.join(name) } else { repos.join(format!("{name}-{n}")) };
+        if !dir.exists() {
+            return Ok((dir, false));
+        }
+        if is_clone_of(&dir, url) {
+            return Ok((dir, true));
+        }
+    }
+    Err("repo-folders-taken".into())
+}
+
+/// git with the user's GitHub token for this one command: as a request header
+/// in git's environment, so it never lands in the clone's config, in argv
+/// (where `ps` shows it), or on disk.
+fn git_for_github(token: Option<&str>) -> Command {
+    let mut git = Command::new("git");
+    git.env("PATH", session_path())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    if let Some(token) = token.filter(|t| !t.is_empty()) {
+        let basic = STANDARD.encode(format!("x-access-token:{token}"));
+        git.env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraheader")
+            .env("GIT_CONFIG_VALUE_0", format!("AUTHORIZATION: basic {basic}"));
+    }
+    git
+}
+
+/// The staging folders of the clones running now. Outrunner runs once per Mac,
+/// so any other staging folder in `repos_dir` is from a clone cut short by
+/// quitting the app (or a crash), and the next clone removes it.
+fn clones_running() -> &'static Mutex<HashSet<PathBuf>> {
+    static RUNNING: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    RUNNING.get_or_init(Default::default)
+}
+
+/// Clone `url` into `dir`, through a hidden folder beside it that is renamed
+/// into place: a clone cut short never looks like one to reuse.
+fn clone_into(url: &str, dir: &Path, token: Option<&str>) -> Result<(), String> {
+    let parent = dir.parent().ok_or("no-parent")?;
+    std::fs::create_dir_all(parent).map_err(|error| format!("repo-folder:{error}"))?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let staging = parent.join(format!(".{name}.cloning-{stamp}"));
+    {
+        let mut running = clones_running().lock().unwrap_or_else(PoisonError::into_inner);
+        remove_abandoned_clones(parent, &running);
+        running.insert(staging.clone());
+    }
+    let result = clone_through(url, &staging, dir, token);
+    clones_running().lock().unwrap_or_else(PoisonError::into_inner).remove(&staging);
+    result
+}
+
+/// Whether `name` is a staging folder's: `.<name>.cloning-<stamp>`.
+fn is_staging(name: &str) -> bool {
+    name.starts_with('.')
+        && name
+            .rsplit_once(".cloning-")
+            .is_some_and(|(_, stamp)| !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Remove the staging folders in `parent` that no clone running now owns. They
+/// are hidden, so nobody would find them, and can be a large repository each.
+fn remove_abandoned_clones(parent: &Path, running: &HashSet<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(parent) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let staging = entry.file_name().to_str().is_some_and(is_staging);
+        // file_type doesn't follow a symlink: only a real folder is removed.
+        if staging && entry.file_type().is_ok_and(|t| t.is_dir()) && !running.contains(&path) {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// The clone itself, into `staging`, then renamed to `dir`.
+fn clone_through(url: &str, staging: &Path, dir: &Path, token: Option<&str>) -> Result<(), String> {
+    let out = git_for_github(token)
+        .args(["clone", "--quiet", "--", url])
+        .arg(staging)
+        .output()
+        .map_err(|error| format!("git-missing:{error}"))?;
+    if !out.status.success() {
+        let _ = std::fs::remove_dir_all(staging);
+        return Err(format!("clone-failed:{}", last_line(&out.stderr)));
+    }
+    if let Err(error) = std::fs::rename(staging, dir) {
+        let _ = std::fs::remove_dir_all(staging);
+        return Err(format!("repo-folder:{error}"));
+    }
+    Ok(())
+}
+
+fn last_line(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("").chars().take(300).collect()
+}
+
+/// The repository's clone under `repos`, made now or brought up to date: the
+/// folder a session works in. A fetch that fails (offline) leaves the clone as
+/// it was.
+fn ensure_clone(repos: &Path, name: &str, url: &str, token: Option<&str>) -> Result<LocalFolder, String> {
+    let (dir, exists) = clone_target(repos, name, url)?;
+    if exists {
+        let _ = git_for_github(token).arg("-C").arg(&dir).args(["fetch", "--quiet", "--prune", "origin"]).output();
+    } else {
+        clone_into(url, &dir, token)?;
+    }
+    inspect_folder(&dir)
+}
+
+/// Clone a repository the user picked from GitHub into `~/outrunner/repos`
+/// (or use the clone made before), as the folder a local session works in.
+/// `token` is the user's GitHub token, from the page, for this clone only.
+#[tauri::command]
+pub async fn local_clone_repo(
+    state: State<'_, LocalRuntime>,
+    full_name: String,
+    token: Option<String>,
+) -> Result<LocalFolder, String> {
+    let (owner, name) = github_repo(&full_name).ok_or("repo-invalid")?;
+    let repos = repos_dir()?;
+    let folder = tauri::async_runtime::spawn_blocking(move || {
+        ensure_clone(&repos, &name, &github_url(&owner, &name), token.as_deref())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if let Ok(real) = std::fs::canonicalize(&folder.path) {
+        state.picked.lock().unwrap_or_else(PoisonError::into_inner).insert(real);
+    }
+    Ok(folder)
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
@@ -1108,6 +1298,150 @@ async fn relay(url: String, mut commands: mpsc::UnboundedReceiver<Outbound>, eve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("outrunner-{name}-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(dir).unwrap()
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=Test", "-c", "user.email=test@example.com"])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?} failed in {}", dir.display());
+    }
+
+    /// A repository with one commit on main, to clone from as if from GitHub.
+    fn upstream() -> PathBuf {
+        let dir = scratch("upstream");
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
+        dir
+    }
+
+    #[test]
+    fn only_a_github_owner_and_name_can_be_cloned() {
+        assert_eq!(github_repo("sajdakabir/Doorman"), Some(("sajdakabir".into(), "Doorman".into())));
+        assert_eq!(github_repo("neevai-labs/neev.ai_x-1"), Some(("neevai-labs".into(), "neev.ai_x-1".into())));
+        for bad in [
+            "", "Doorman", "a/b/c", "../x", "a/..", "a/.", "-a/x", "a/-x", "a/x y", "a/x;rm", "a b/x",
+            "evil.com/x", "a/--upload-pack=x",
+        ] {
+            assert_eq!(github_repo(bad), None, "{bad:?} was allowed");
+        }
+        assert_eq!(github_url("sajdakabir", "Doorman"), "https://github.com/sajdakabir/Doorman");
+    }
+
+    #[test]
+    fn a_repository_reuses_its_clone_and_another_of_the_same_name_gets_its_own_folder() {
+        let repos = scratch("repos");
+        let url = "https://github.com/sajdakabir/Doorman";
+        assert_eq!(clone_target(&repos, "Doorman", url).unwrap(), (repos.join("Doorman"), false));
+
+        // Its own clone, whatever the case or a trailing .git: reused.
+        let ours = repos.join("Doorman");
+        std::fs::create_dir_all(&ours).unwrap();
+        git(&ours, &["init", "-q"]);
+        git(&ours, &["remote", "add", "origin", "https://github.com/SajdaKabir/doorman.git"]);
+        assert_eq!(clone_target(&repos, "Doorman", url).unwrap(), (ours.clone(), true));
+
+        // Another owner's Doorman: the next free folder.
+        assert_eq!(
+            clone_target(&repos, "Doorman", "https://github.com/someone-else/Doorman").unwrap(),
+            (repos.join("Doorman-2"), false)
+        );
+        // A plain folder in the way is skipped, never cloned over.
+        std::fs::create_dir_all(repos.join("Notes")).unwrap();
+        assert_eq!(
+            clone_target(&repos, "Notes", "https://github.com/a/Notes").unwrap(),
+            (repos.join("Notes-2"), false)
+        );
+    }
+
+    #[test]
+    fn a_folder_inside_someone_elses_repository_is_not_a_clone() {
+        // A home folder kept in git: the enclosing repo's origin mustn't count.
+        let home = scratch("home");
+        git(&home, &["init", "-q"]);
+        git(&home, &["remote", "add", "origin", "https://github.com/a/Doorman"]);
+        let inside = home.join("Doorman");
+        std::fs::create_dir_all(&inside).unwrap();
+        assert!(!is_clone_of(&inside, "https://github.com/a/Doorman"));
+    }
+
+    #[test]
+    fn a_clone_is_made_once_then_reused_and_a_failed_one_leaves_nothing() {
+        let from = upstream();
+        let url = from.to_string_lossy().into_owned();
+        let repos = scratch("repos");
+
+        let folder = ensure_clone(&repos, "app", &url, None).unwrap();
+        assert_eq!(Path::new(&folder.path), repos.join("app"));
+        assert!(folder.git);
+        assert_eq!(folder.branch.as_deref(), Some("main"));
+        // Again: the same folder, brought up to date, not a second clone.
+        git(&from, &["commit", "-q", "--allow-empty", "-m", "second"]);
+        let again = ensure_clone(&repos, "app", &url, None).unwrap();
+        assert_eq!(again.path, folder.path);
+        assert!(!repos.join("app-2").exists());
+
+        let missing = repos.join("nowhere").to_string_lossy().into_owned();
+        let Err(error) = ensure_clone(&repos, "gone", &missing, None) else { panic!("cloned from nowhere") };
+        assert!(error.starts_with("clone-failed:"), "{error}");
+        let left: Vec<_> = std::fs::read_dir(&repos).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("app")], "a failed clone left {left:?}");
+    }
+
+    #[test]
+    fn a_clone_cut_short_by_quitting_is_cleared_away_by_the_next_one() {
+        let from = upstream();
+        let url = from.to_string_lossy().into_owned();
+        let repos = scratch("repos");
+        // Left by an app quit mid-clone, and one another window is running now.
+        let abandoned = repos.join(".old.cloning-1760000000000000000");
+        std::fs::create_dir_all(abandoned.join(".git")).unwrap();
+        let running = repos.join(".big.cloning-1760000000000000001");
+        std::fs::create_dir_all(&running).unwrap();
+        clones_running().lock().unwrap().insert(running.clone());
+        // Not staging folders.
+        for kept in [".config", "notes.cloning-1", ".app.cloning-"] {
+            std::fs::create_dir_all(repos.join(kept)).unwrap();
+        }
+
+        ensure_clone(&repos, "app", &url, None).unwrap();
+        clones_running().lock().unwrap().remove(&running);
+
+        assert!(!abandoned.exists(), "a clone cut short was left behind");
+        assert!(running.exists(), "a clone still running was removed");
+        for kept in [".config", "notes.cloning-1", ".app.cloning-"] {
+            assert!(repos.join(kept).exists(), "{kept} was removed");
+        }
+    }
+
+    #[test]
+    fn the_token_rides_in_the_environment_only() {
+        let git = git_for_github(Some("ghu_secret"));
+        let envs: HashMap<_, _> = git
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_string_lossy().into_owned(), v?.to_string_lossy().into_owned())))
+            .collect();
+        assert_eq!(envs["GIT_CONFIG_KEY_0"], "http.https://github.com/.extraheader");
+        assert_eq!(
+            envs["GIT_CONFIG_VALUE_0"],
+            format!("AUTHORIZATION: basic {}", STANDARD.encode("x-access-token:ghu_secret"))
+        );
+        assert!(git.get_args().all(|a| !a.to_string_lossy().contains("ghu_secret")));
+        assert!(git_for_github(None).get_envs().all(|(k, _)| k != "GIT_CONFIG_COUNT"));
+    }
 
     /// A directory holding one `claude`, with `body` as its script and `mode`.
     fn claude_dir(name: &str, body: &str, mode: u32) -> PathBuf {

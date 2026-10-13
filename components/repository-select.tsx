@@ -31,18 +31,28 @@ type Listing = { repositories: Repo[]; connected: number[] };
  * case of reusing the current project.
  */
 export function RepositorySelect({
-  projects,
-  selectedProjectId,
+  projects = [],
+  selectedProjectId = null,
   onSelect,
+  onPick,
+  label,
+  extra,
   disabled,
   triggerClassName,
 }: {
   /** Already-connected projects; used before the live list has loaded. */
-  projects: Project[];
-  selectedProjectId: string | null;
+  projects?: Project[];
+  selectedProjectId?: string | null;
   /** Receives the project to run in, connecting the repository if needed: a
    *  just-connected one is not in `projects` yet. */
-  onSelect: (project: Project) => void;
+  onSelect?: (project: Project) => void;
+  /** Instead of connecting it as a project, what picking a repository does
+   *  (a session on this Mac clones it). The menu closes as it starts. */
+  onPick?: (repo: Repo) => void;
+  /** What the trigger shows in place of the selected project. */
+  label?: { text: string; title?: string; icon: React.ReactNode };
+  /** One more row under the list, such as choosing a folder instead. */
+  extra?: { label: string; icon: React.ReactNode; onClick: () => void };
   disabled?: boolean;
   /** Replaces the trigger's default look, to sit in a row of other pickers. */
   triggerClassName?: string;
@@ -124,9 +134,15 @@ export function RepositorySelect({
   }, [listing, projects, query]);
 
   async function choose(repo: Repo) {
+    if (onPick) {
+      setOpen(false);
+      triggerRef.current?.focus();
+      onPick(repo);
+      return;
+    }
     const existing = projects.find((p) => p.githubRepoId === repo.githubRepoId);
     if (existing) {
-      onSelect(existing);
+      onSelect?.(existing);
       setOpen(false);
       triggerRef.current?.focus();
       return;
@@ -144,7 +160,7 @@ export function RepositorySelect({
       if (!res.ok) throw new Error(data.error ?? "Could not connect that repository.");
       const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
       if (!created) throw new Error("Connected, but the project did not come back.");
-      onSelect(created);
+      onSelect?.(created);
       setOpen(false);
       triggerRef.current?.focus();
     } catch (err) {
@@ -173,8 +189,19 @@ export function RepositorySelect({
           "text-foreground hover:bg-accent flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors disabled:opacity-50"
         }
       >
-        <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
-        {selected?.name ?? "Select repository…"}
+        {label ? (
+          <>
+            {label.icon}
+            <span className="truncate" title={label.title}>
+              {label.text}
+            </span>
+          </>
+        ) : (
+          <>
+            <ProjectAvatar name={selected?.name ?? "?"} className="size-5" />
+            {selected?.name ?? "Select repository…"}
+          </>
+        )}
         <ChevronDown className="text-muted-foreground size-4" />
       </button>
 
@@ -216,6 +243,21 @@ export function RepositorySelect({
               </button>
             ))}
           </div>
+
+          {extra && (
+            <div className="border-border border-t">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  extra.onClick();
+                }}
+                className="hover:bg-accent flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
+              >
+                {extra.icon} {extra.label}
+              </button>
+            </div>
+          )}
 
           <div className="border-border border-t">
             <button
