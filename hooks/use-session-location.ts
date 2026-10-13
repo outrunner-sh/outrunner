@@ -7,6 +7,7 @@ import { NO_DEFAULTS, type LocalAgent, type SessionDefaults } from "@/lib/runtim
 import { fetchSessionDefaults } from "@/lib/runtime/session-defaults-client";
 import {
   checkLocalFolder,
+  cloneLocalRepository,
   claudeSetupNeeded,
   claudeSetupText,
   codexSetupNeeded,
@@ -30,6 +31,8 @@ export type SessionLocation = "cloud" | "local";
 export type FolderChoice =
   | { state: "none" }
   | { state: "checking" }
+  /** A repository picked from GitHub, being cloned (or its clone updated). */
+  | { state: "cloning"; repo: string }
   | { state: "ok"; folder: LocalFolder }
   | { state: "error"; message: string };
 
@@ -189,6 +192,24 @@ export function useSessionLocation() {
     }
   }, []);
 
+  // A repository picked from GitHub: its clone in ~/outrunner/repos is the
+  // folder, made (or brought up to date) now.
+  const chooseRepository = useCallback(async (fullName: string) => {
+    stopCheck.current();
+    setFound({ path: "", picked: true, choice: { state: "cloning", repo: fullName } });
+    try {
+      const folder = await cloneLocalRepository(fullName);
+      rememberFolder(folder.path);
+      setFound({ path: folder.path, picked: true, choice: { state: "ok", folder } });
+    } catch (error) {
+      setFound({
+        path: "",
+        picked: true,
+        choice: { state: "error", message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }, []);
+
   const remembered = location === "local" ? rememberedFolder() : null;
   const folder: FolderChoice =
     found && (found.picked || found.path === remembered)
@@ -204,6 +225,7 @@ export function useSessionLocation() {
     runtime,
     folder,
     chooseFolder,
+    chooseRepository,
     /** Why a local session cannot start yet; null when it can (or for cloud). */
     blocker,
     /** The blocker is Claude Code needing a login, which the page can start. */
@@ -292,9 +314,11 @@ function localBlocker(
   }
   switch (folder.state) {
     case "none":
-      return "Choose a folder to work in.";
+      return "Choose a repository or a folder to work in.";
     case "checking":
       return "Checking the folder…";
+    case "cloning":
+      return `Cloning ${folder.repo} into ~/outrunner/repos…`;
     case "error":
       return folder.message;
     case "ok":

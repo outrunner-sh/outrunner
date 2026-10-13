@@ -27,6 +27,7 @@ fn main() {
                 "local_codex_models",
                 "local_pick_folder",
                 "local_check_folder",
+                "local_clone_repo",
                 "local_list_sessions",
                 "local_agent_request",
                 "local_socket_open",

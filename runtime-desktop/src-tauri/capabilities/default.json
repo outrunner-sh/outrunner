@@ -29,6 +29,7 @@
     "allow-local-codex-models",
     "allow-local-pick-folder",
     "allow-local-check-folder",
+    "allow-local-clone-repo",
     "allow-local-list-sessions",
     "allow-local-agent-request",
     "allow-local-socket-open",

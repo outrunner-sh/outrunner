@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Check, ChevronDown, Cloud, Folder, FolderGit2, Laptop } from "lucide-react";
+import { Bot, Check, ChevronDown, Cloud, Folder, FolderGit2, FolderOpen, Laptop } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -8,6 +8,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { RepositorySelect } from "@/components/repository-select";
+import { Spinner } from "@/components/ui/loaders";
 import type { SessionLocation, SessionLocationState } from "@/hooks/use-session-location";
 import { cn } from "@/lib/utils";
 
@@ -81,7 +83,12 @@ export function SessionLocationMenu({
  * repository picker does. Whether it gets a worktree (a git folder) or is
  * worked on directly is shown beside it, before anything starts.
  */
-export function LocalFolderButton({
+/**
+ * What a session on this Mac works in: a repository from the user's GitHub,
+ * cloned into ~/outrunner/repos (or the clone made before), or, from the
+ * menu's last row, any folder on this Mac.
+ */
+export function LocalRepositoryButton({
   state,
   disabled,
   className,
@@ -90,24 +97,32 @@ export function LocalFolderButton({
   disabled?: boolean;
   className?: string;
 }) {
-  const { folder, chooseFolder } = state;
+  const { folder, chooseFolder, chooseRepository } = state;
   const chosen = folder.state === "ok" ? folder.folder : null;
+  const cloning = folder.state === "cloning" ? folder.repo : null;
+  const icon = cloning ? (
+    <Spinner label="Cloning" className="size-4 shrink-0" />
+  ) : chosen?.git === false ? (
+    <Folder className="size-4 shrink-0" />
+  ) : (
+    <FolderGit2 className="size-4 shrink-0" />
+  );
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => void chooseFolder()}
-      title={chosen ? `${chosen.path}\nClick to choose another folder` : "Choose a folder to work in"}
-      className={className}
-    >
-      {chosen?.git === false ? (
-        <Folder className="size-4 shrink-0" />
-      ) : (
-        <FolderGit2 className="size-4 shrink-0" />
-      )}
-      <span className="truncate">{chosen ? chosen.name : "Choose folder…"}</span>
-      <ChevronDown className="size-3.5 shrink-0 opacity-60" />
-    </button>
+    <RepositorySelect
+      disabled={disabled || cloning !== null}
+      triggerClassName={className}
+      onPick={(repo) => void chooseRepository(repo.fullName)}
+      label={{
+        text: cloning ? `Cloning ${cloning.split("/")[1] ?? cloning}…` : chosen ? chosen.name : "Choose repository…",
+        title: chosen ? `${chosen.path}\nClick to choose another` : "A repository from GitHub, or a folder on this Mac",
+        icon,
+      }}
+      extra={{
+        label: "Choose a folder on this Mac…",
+        icon: <FolderOpen className="size-4" />,
+        onClick: () => void chooseFolder(),
+      }}
+    />
   );
 }
 

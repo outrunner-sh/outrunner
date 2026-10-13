@@ -9,7 +9,7 @@ import { SessionComposer } from "@/components/session-composer";
 import {
   LocalAgentMenu,
   LocalBlocker,
-  LocalFolderButton,
+  LocalRepositoryButton,
   SessionLocationMenu,
 } from "@/components/session-location-picker";
 import { WorkspaceCreating } from "@/components/workspace-creating";
@@ -95,7 +95,7 @@ export function NewSessionForm({
             <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />
             {local ? (
               <>
-                <LocalFolderButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
+                <LocalRepositoryButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
                 <LocalAgentMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />
               </>
             ) : (
