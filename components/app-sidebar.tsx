@@ -22,6 +22,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AppUpdate } from "@/components/app-update";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { HomeUserMenu } from "@/components/home-user-menu";
+import { OutrunnerAllowance } from "@/components/outrunner-allowance";
 import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
@@ -206,6 +207,7 @@ export function AppSidebar({
         onDeleted={onDeleted}
       />
 
+      <OutrunnerAllowance />
       <AppUpdate />
       <div className="flex items-center gap-1 border-t border-border/60 pt-3">
         <div className="min-w-0 flex-1">

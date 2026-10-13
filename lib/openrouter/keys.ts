@@ -120,3 +120,28 @@ export async function disableUserKey(hash: string): Promise<void> {
     throw new Error(`OpenRouter would not disable a key (HTTP ${response.status}).`);
   }
 }
+
+/** What a user's key has spent and may spend, in USD, as OpenRouter counts it. */
+export type KeyUsage = { usedUsd: number; limitUsd: number | null };
+
+/** Read a user's key's spend (for the sidebar's allowance bar). */
+export async function keyUsage(hash: string): Promise<KeyUsage> {
+  const management = managementKey();
+  if (!management) throw new NeevAiUnavailableError();
+
+  const response = await fetch(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
+    headers: { authorization: `Bearer ${management}` },
+  });
+  if (!response.ok) {
+    throw new Error(`OpenRouter would not read a key's usage (HTTP ${response.status}).`);
+  }
+  const body = (await response.json().catch(() => null)) as {
+    data?: { usage?: unknown; limit?: unknown };
+  } | null;
+  const used = body?.data?.usage;
+  if (typeof used !== "number" || !Number.isFinite(used)) {
+    throw new Error("OpenRouter's response had no usage in it.");
+  }
+  const limit = body?.data?.limit;
+  return { usedUsd: used, limitUsd: typeof limit === "number" && Number.isFinite(limit) ? limit : null };
+}

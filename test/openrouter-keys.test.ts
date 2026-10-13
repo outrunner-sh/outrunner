@@ -5,6 +5,7 @@ import {
   createUserKey,
   disableUserKey,
   keySource,
+  keyUsage,
   managementKey,
   NEEV_AI_LIMIT_USD,
   NeevAiUnavailableError,
@@ -127,4 +128,27 @@ test("with neither key Outrunner's models are off", () => {
   delete process.env.OPENROUTER_MANAGEMENT_KEY;
   delete process.env.OPENROUTER_API_KEY;
   assert.equal(keySource(), null);
+});
+
+test("a key's usage is read with the management key, by its hash", async () => {
+  const seen = stubFetch(
+    new Response(JSON.stringify({ data: { hash: "h/1", usage: 1.2345, limit: 5, limit_remaining: 3.7655 } })),
+  );
+  assert.deepEqual(await keyUsage("h/1"), { usedUsd: 1.2345, limitUsd: 5 });
+  assert.equal(seen[0].url, "https://openrouter.ai/api/v1/keys/h%2F1");
+  assert.equal((seen[0].init.headers as Record<string, string>).authorization, "Bearer mgmt-test-key");
+});
+
+test("a key with no limit reads as none, and an answer without usage is an error", async () => {
+  stubFetch(new Response(JSON.stringify({ data: { usage: 0, limit: null } })));
+  assert.deepEqual(await keyUsage("h"), { usedUsd: 0, limitUsd: null });
+  stubFetch(new Response(JSON.stringify({ data: {} })));
+  await assert.rejects(keyUsage("h"), /no usage/);
+  stubFetch(new Response("nope", { status: 404 }));
+  await assert.rejects(keyUsage("h"), /HTTP 404/);
+});
+
+test("without a management key there is no usage to read", async () => {
+  delete process.env.OPENROUTER_MANAGEMENT_KEY;
+  await assert.rejects(keyUsage("h"), NeevAiUnavailableError);
 });
