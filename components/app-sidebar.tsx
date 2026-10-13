@@ -3,6 +3,7 @@
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  ChevronRight,
   Ellipsis,
   Flag,
   Folder,
@@ -16,8 +17,9 @@ import {
   Terminal,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { AppUpdate } from "@/components/app-update";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
@@ -32,7 +34,9 @@ import {
   filterSidebarGroups,
   newSessionHref,
   relativeTime,
+  rememberFoldedProjects,
   type SessionDeletion,
+  shownSessions,
   type SidebarGroup,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
@@ -52,6 +56,7 @@ export function AppSidebar({
   ownerAvatarUrl,
   onCollapse,
   searchSignal = 0,
+  initialFolded = [],
 }: {
   projects: NavProject[];
   workspaces: Workspace[];
@@ -60,6 +65,8 @@ export function AppSidebar({
   onCollapse: () => void;
   /** Changes each time ⌘K is pressed: open the search field. */
   searchSignal?: number;
+  /** The projects folded shut, by group key (from their cookie). */
+  initialFolded?: string[];
 }) {
   const pathname = usePathname();
   const active = activeSessionId(pathname);
@@ -81,6 +88,14 @@ export function AppSidebar({
     [projects, workspaces, local.sessions],
   );
   const shown = filterSidebarGroups(groups, query);
+
+  // Projects folded shut with their chevron, remembered across visits.
+  const [folded, setFolded] = useState(initialFolded);
+  const toggleFolded = (key: string) => {
+    const next = folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key];
+    setFolded(next);
+    rememberFoldedProjects(next);
+  };
 
   // The session whose delete confirmation is open. Leave it before deleting
   // when it is the one on screen: its page reconnects when the session stops,
@@ -167,7 +182,16 @@ export function AppSidebar({
               </p>
             ) : (
               shown.map((group) => (
-                <WorkspaceGroup key={group.key} group={group} active={active} now={now} onDelete={setDeleting} />
+                <WorkspaceGroup
+                  key={group.key}
+                  group={group}
+                  active={active}
+                  now={now}
+                  onDelete={setDeleting}
+                  folded={folded.includes(group.key)}
+                  searching={query.trim() !== ""}
+                  onToggle={() => toggleFolded(group.key)}
+                />
               ))
             )}
           </div>
@@ -184,6 +208,7 @@ export function AppSidebar({
       />
 
       <OutrunnerAllowance />
+      <AppUpdate />
       <div className="flex items-center gap-1 border-t border-border/60 pt-3">
         <div className="min-w-0 flex-1">
           <HomeUserMenu ownerLogin={ownerLogin} ownerAvatarUrl={ownerAvatarUrl} />
@@ -201,20 +226,28 @@ export function AppSidebar({
   );
 }
 
-/** A workspace and its sessions. The `+` starts a new session in it, where
- *  there is a repository (or folder) to start one in. */
+/** A workspace and its sessions. Its name folds them away and back (the
+ *  chevron says which); the `+` starts a new session in it, where there is a
+ *  repository (or folder) to start one in. */
 function WorkspaceGroup({
   group,
   active,
   now,
   onDelete,
+  folded,
+  searching,
+  onToggle,
 }: {
   group: SidebarGroup;
   active?: string;
   now: number;
   /** Opens the delete confirmation for one of its sessions. */
   onDelete: (session: DeletingSession) => void;
+  folded: boolean;
+  searching: boolean;
+  onToggle: () => void;
 }) {
+  const listId = useId();
   const router = useRouter();
   const { start } = group;
   // Set the form's cloud/Mac choice, then open a fresh form for this target
@@ -229,10 +262,27 @@ function WorkspaceGroup({
   return (
     <div>
       <div className="group/ws flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-foreground">
-        <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-        <span className="min-w-0 flex-1 truncate" title={group.local ? `${group.detail} · this Mac` : group.detail}>
-          {group.label}
-        </span>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={!folded}
+          aria-controls={listId}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
+        >
+          <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="min-w-0 truncate" title={group.local ? `${group.detail} · this Mac` : group.detail}>
+            {group.label}
+          </span>
+          {/* Always there when folded, so a folded project reads as one; open,
+              it shows on hover, pointing down. */}
+          <ChevronRight
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition",
+              !folded && "rotate-90 opacity-0 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100",
+            )}
+          />
+        </button>
         {start && (
           <button
             type="button"
@@ -245,39 +295,41 @@ function WorkspaceGroup({
           </button>
         )}
       </div>
-      {group.sessions.map((session) => {
-        const isActive = session.id === active;
-        const { deletion } = session;
-        return (
-          <div key={session.id} className="group/row relative">
-            <Link
-              href={session.href}
-              title={session.title}
-              aria-current={isActive ? "page" : undefined}
-              className={cn(
-                "flex items-center gap-2 rounded-md py-1.5 pl-[34px] pr-2 text-sm transition-colors",
-                isActive
-                  ? "bg-accent text-foreground"
-                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-              )}
-            >
-              <span className="min-w-0 flex-1 truncate">{session.title}</span>
-              <RowTail at={session.at} now={now} hideOnHover={deletion !== null} />
-            </Link>
-            {deletion && (
-              <button
-                type="button"
-                onClick={() => onDelete({ id: session.id, title: session.title, deletion })}
-                aria-label={`Delete ${session.title}`}
-                title="Delete session"
-                className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+      <div id={listId}>
+        {shownSessions(group, { folded, searching, active }).map((session) => {
+          const isActive = session.id === active;
+          const { deletion } = session;
+          return (
+            <div key={session.id} className="group/row relative">
+              <Link
+                href={session.href}
+                title={session.title}
+                aria-current={isActive ? "page" : undefined}
+                className={cn(
+                  "flex items-center gap-2 rounded-md py-1.5 pl-[34px] pr-2 text-sm transition-colors",
+                  isActive
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                )}
               >
-                <Ellipsis className="size-3.5" />
-              </button>
-            )}
-          </div>
-        );
-      })}
+                <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                <RowTail at={session.at} now={now} hideOnHover={deletion !== null} />
+              </Link>
+              {deletion && (
+                <button
+                  type="button"
+                  onClick={() => onDelete({ id: session.id, title: session.title, deletion })}
+                  aria-label={`Delete ${session.title}`}
+                  title="Delete session"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
+                >
+                  <Ellipsis className="size-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

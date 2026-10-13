@@ -12,10 +12,14 @@
 // The tray's "Check for Updates…" runs the same check, but reports every
 // outcome, including "up to date" and errors, which the background check keeps
 // to the log.
+//
+// The page's sidebar shows an Update button while an installed update waits
+// for a restart (`update_status`, the `update-ready` event, and
+// `restart_to_update`), so "Later" isn't the last word on it.
 
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::{Mutex, MutexGuard};
@@ -46,6 +50,12 @@ enum Gate<'a> {
 }
 
 impl UpdateState {
+    /// The version installed and waiting for a restart. A check in flight
+    /// holds the lock, and then nothing is installed yet.
+    fn waiting(&self) -> Option<String> {
+        self.installed.try_lock().ok().and_then(|installed| installed.clone())
+    }
+
     fn enter(&self) -> Gate<'_> {
         match self.installed.try_lock() {
             Err(_) => Gate::Busy,
@@ -109,7 +119,11 @@ async fn check(app: &AppHandle, interactive: bool) {
     drop(installed);
 
     match result {
-        Ok(Some(version)) => ask_to_restart(app, &version),
+        Ok(Some(version)) => {
+            // The sidebar's Update button, live; ask_to_restart's dialog too.
+            let _ = app.emit("update-ready", &version);
+            ask_to_restart(app, &version);
+        }
         Ok(None) => {
             if interactive {
                 let current = app.package_info().version.to_string();
@@ -159,6 +173,33 @@ fn ask_to_restart(app: &AppHandle, version: &str) {
         });
 }
 
+/// The version installed and waiting for a restart, for the sidebar's Update
+/// button; none while a check is still in flight (nothing waits yet).
+#[tauri::command]
+pub fn update_status(state: State<'_, UpdateState>) -> Option<String> {
+    fake_update().or_else(|| state.waiting())
+}
+
+/// The sidebar's Update button: restart into the installed update.
+#[tauri::command]
+pub fn restart_to_update(app: AppHandle, state: State<'_, UpdateState>) -> Result<(), String> {
+    if update_status(state).is_none() {
+        return Err("no-update".into());
+    }
+    // Through the event loop, so RunEvent::Exit stops the local agent.
+    app.request_restart();
+    Ok(())
+}
+
+/// Debug builds never update themselves, so `OUTRUNNER_FAKE_UPDATE=<version>`
+/// pretends one is installed, to try the Update button.
+fn fake_update() -> Option<String> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var("OUTRUNNER_FAKE_UPDATE").ok().filter(|version| !version.is_empty())
+}
+
 fn inform(app: &AppHandle, title: &str, message: &str) {
     app.dialog().message(message).title(title).kind(MessageDialogKind::Info).show(|_| {});
 }
@@ -184,6 +225,18 @@ mod tests {
         // No window in which a second check sees neither "busy" nor "installed".
         assert!(matches!(state.enter(), Gate::Installed(v) if v == "0.2.1"));
         assert!(matches!(state.enter(), Gate::Installed(_)));
+    }
+
+    #[test]
+    fn the_sidebar_sees_an_update_only_once_it_is_installed() {
+        let state = UpdateState::default();
+        assert_eq!(state.waiting(), None);
+        let Gate::Run(mut guard) = state.enter() else { panic!("first check should run") };
+        // Downloading: nothing to restart into yet.
+        assert_eq!(state.waiting(), None);
+        *guard = Some("0.2.1".into());
+        drop(guard);
+        assert_eq!(state.waiting().as_deref(), Some("0.2.1"));
     }
 
     #[test]
