@@ -164,3 +164,51 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
   assert.equal(harness.row()?.status, "ready");
   assert.equal(harness.row()?.daytonaSandboxId, "daytona-retry");
 });
+
+test("a box that ended is handed to the provider to restore from", async () => {
+  const harness = concurrencyHarness();
+  const asked: unknown[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "user-modal",
+    provisionComputer: async (request) => {
+      asked.push(request.previousSandboxId);
+      return {
+        sandboxId: "sb-restored",
+        agentBaseUrl: "https://agent.example.test",
+        timings: { stages: [{ stage: "sandbox_restore", ms: 10 }], totalMs: 10 },
+      };
+    },
+  };
+
+  await ensureRuntimeComputer(provider, { ...input, previousSandboxId: "sb-ended" }, harness.deps);
+
+  assert.deepEqual(asked, ["sb-ended"]);
+  assert.equal(harness.row()?.daytonaSandboxId, "sb-restored");
+});
+
+test("a restore that fails keeps the ended box, so a retry restores from it again", async () => {
+  const harness = concurrencyHarness();
+  const asked: unknown[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "user-modal",
+    provisionComputer: async (request) => {
+      asked.push(request.previousSandboxId);
+      if (asked.length === 1) throw new Error("Modal unavailable");
+      return {
+        sandboxId: "sb-restored",
+        agentBaseUrl: "https://agent.example.test",
+        timings: { stages: [{ stage: "sandbox_restore", ms: 10 }], totalMs: 10 },
+      };
+    },
+  };
+
+  const ended = { ...input, previousSandboxId: "sb-ended" };
+  await assert.rejects(() => ensureRuntimeComputer(provider, ended, harness.deps), /Modal unavailable/);
+  // Stopped with the ended box, as a box found ended is, not an error with none.
+  assert.equal(harness.row()?.status, "stopped");
+  assert.equal(harness.row()?.daytonaSandboxId, "sb-ended");
+
+  await ensureRuntimeComputer(provider, ended, harness.deps);
+  assert.deepEqual(asked, ["sb-ended", "sb-ended"]);
+  assert.equal(harness.row()?.status, "ready");
+});

@@ -127,10 +127,14 @@ export type RuntimeComputerStatus =
  */
 export type ProvisionStage =
   | "sandbox_create"
+  /** A new box on the disk the project's ended box left (Modal). */
+  | "sandbox_restore"
   | "agent_upload"
   | "agent_boot"
   | "health_check"
-  | "mirror_clone";
+  | "mirror_clone"
+  /** Bringing a restored box's mirror up to date. */
+  | "mirror_fetch";
 
 export type StageTiming = { stage: ProvisionStage; ms: number };
 
