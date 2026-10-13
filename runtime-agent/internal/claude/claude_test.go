@@ -10,15 +10,15 @@ import (
 )
 
 func TestOrientationRendersWorkingDirAndBase(t *testing.T) {
-	got := Orientation("/work/ws1", "main")
+	got := Orientation("/work/ws1", "main", false)
 
 	for _, want := range []string{
 		"You are working inside Outrunner, a Mac app that lets the user run many coding agents in parallel.",
 		"Your work should take place in the /work/ws1 directory (unless otherwise directed), which has been set up for you to work in.",
 		// Both git-command spots must interpolate the base branch.
-		"The target branch for this workspace is origin/main. Use this for actions like diffing (git diff origin/main...) or creating PRs (gh pr create --base main).",
+		"The target branch for this workspace is origin/main. Use this for actions like diffing (`git diff origin/main...`) or creating PRs (`gh pr create --base main`).",
 		// The screenshot example embeds the worktree path.
-		"![Screenshot](</work/ws1/.context/screenshot.png>)",
+		"`![Screenshot](</work/ws1/.context/screenshot.png>)`",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("orientation missing %q:\n%s", want, got)
@@ -29,7 +29,7 @@ func TestOrientationRendersWorkingDirAndBase(t *testing.T) {
 // The four workspace lines that reference Outrunner product behavior must always
 // render verbatim, independent of the templated branch/path values.
 func TestOrientationIncludesVerbatimLines(t *testing.T) {
-	got := Orientation("/work/ws1", "main")
+	got := Orientation("/work/ws1", "main", false)
 
 	for _, want := range []string{
 		"Each workspace has a .context directory (gitignored) where you can save files to collaborate with other agents.",
@@ -50,8 +50,43 @@ func TestOrientationIncludesVerbatimLines(t *testing.T) {
 	}
 }
 
+// A new worktree's session on its generated branch gets the block word for
+// word as NEE-56 gives it, less the promise that Outrunner renames the branch,
+// which it doesn't.
+func TestOrientationForANewWorktreeIsTheWholeBlock(t *testing.T) {
+	want := "You are working inside Outrunner, a Mac app that lets the user run many coding agents in parallel.\n" +
+		"Your work should take place in the /work/ws1 directory (unless otherwise directed), which has been set up for you to work in.\n" +
+		"Each workspace has a .context directory (gitignored) where you can save files to collaborate with other agents.\n" +
+		"The target branch for this workspace is origin/main. Use this for actions like diffing (`git diff origin/main...`) or creating PRs (`gh pr create --base main`).\n" +
+		"You're on a new branch with a placeholder name.\n" +
+		"\n" +
+		"Do not rename the current branch unless the user explicitly tells you to do so.\n" +
+		"\n" +
+		"By default, the user will only see the last message that you send before stopping. Include all essential information in the last message. The intermediate messages will be collapsed and accessible by the user but not displayed by default.\n" +
+		"\n" +
+		"Save screenshots under `.context/` and embed them inline in the final response using Markdown image syntax, for example `![Screenshot](</work/ws1/.context/screenshot.png>)`.\n" +
+		"\n" +
+		"If the user asks you to work on several unrelated tasks, you can suggest they start new workspaces.\n" +
+		"Sometimes the user might send you a message they meant to send in a different workspace or a different chat. If something doesn't make sense in the context of your work, just ask.\n" +
+		`If the user asks for help with Outrunner, you can ask them to go to "Help -> Send Feedback" to get in touch with our team.`
+	if got := Orientation("/work/ws1", "main", true); got != want {
+		t.Errorf("orientation =\n%s\n\nwant\n%s", got, want)
+	}
+}
+
+func TestOrientationCallsTheBranchAPlaceholderOnlyWhenItIs(t *testing.T) {
+	const line = "You're on a new branch with a placeholder name."
+	if got := Orientation("/work/ws1", "main", false); strings.Contains(got, line) {
+		t.Errorf("a chosen branch was called a placeholder:\n%s", got)
+	}
+	// Nothing renames the branch, so the prompt must never promise it.
+	if got := Orientation("/work/ws1", "main", true); strings.Contains(got, "rename it in the background") {
+		t.Errorf("orientation promises a rename Outrunner doesn't do:\n%s", got)
+	}
+}
+
 func TestOrientationOmitsBaseWhenUnknown(t *testing.T) {
-	got := Orientation("/work/ws1", "")
+	got := Orientation("/work/ws1", "", false)
 
 	// Base is unknown (e.g. after a box restart): the target-branch guidance is
 	// dropped entirely rather than naming a bogus base.
@@ -74,7 +109,7 @@ func TestOrientationOmitsBaseWhenUnknown(t *testing.T) {
 }
 
 func TestOrientationDegradesWhenWorktreeMissing(t *testing.T) {
-	got := Orientation("", "main")
+	got := Orientation("", "main", false)
 
 	// An empty worktree (defensive: the call site always supplies one) falls back
 	// to a generic phrase and a relative screenshot path — never a bare or broken
@@ -95,7 +130,7 @@ func TestOrientationDegradesWhenWorktreeMissing(t *testing.T) {
 }
 
 func TestCommandInjectsOrientation(t *testing.T) {
-	orientation := Orientation("/work/ws1", "main")
+	orientation := Orientation("/work/ws1", "main", false)
 
 	for _, tc := range []struct {
 		name string

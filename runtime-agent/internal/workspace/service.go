@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -775,7 +776,26 @@ func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []str
 // useful prompt (see claude.Orientation).
 func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
-	return claude.Orientation(worktree, f.BaseBranch)
+	// A session in the user's own folder has no branch of its own.
+	return claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+}
+
+// placeholderBranch is the name Outrunner gives a new session's branch,
+// runtime/<time>-<id> (generatedBranch in the web app, localBranch on the Mac):
+// a name nobody chose.
+var placeholderBranch = regexp.MustCompile(`^runtime/[0-9a-z]+-[0-9a-f]{8}$`)
+
+// onPlaceholderBranch reports whether a worktree is still on that branch: read
+// from git each launch, so a branch renamed since (at the user's request)
+// isn't called a placeholder.
+func onPlaceholderBranch(worktree string) bool {
+	if worktree == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", worktree, "symbolic-ref", "--quiet", "--short", "HEAD").Output()
+	return err == nil && placeholderBranch.MatchString(strings.TrimSpace(string(out)))
 }
 
 // setFacts records a workspace's facts in memory and on disk. The file write is

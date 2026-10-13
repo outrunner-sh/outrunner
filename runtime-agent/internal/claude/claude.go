@@ -116,7 +116,9 @@ func withOrientation(argv []string, orientation string) []string {
 // "main". Both may be empty after a box restart that lost the recorded facts:
 // an empty worktree degrades to a generic phrase, and an empty baseBranch omits
 // the target-branch guidance entirely rather than naming a bogus base.
-func Orientation(worktree, baseBranch string) string {
+// placeholderBranch says the worktree is still on the branch Outrunner named
+// for it (runtime/<time>-<id>), which nobody has chosen yet.
+func Orientation(worktree, baseBranch string, placeholderBranch bool) string {
 	workingDir := worktree
 	if workingDir == "" {
 		workingDir = "workspace"
@@ -131,11 +133,14 @@ func Orientation(worktree, baseBranch string) string {
 	fmt.Fprintf(&b, "Your work should take place in the %s directory (unless otherwise directed), which has been set up for you to work in.\n", workingDir)
 	b.WriteString("Each workspace has a .context directory (gitignored) where you can save files to collaborate with other agents.\n")
 	if baseBranch != "" {
-		fmt.Fprintf(&b, "The target branch for this workspace is origin/%s. Use this for actions like diffing (git diff origin/%s...) or creating PRs (gh pr create --base %s).\n", baseBranch, baseBranch, baseBranch)
+		fmt.Fprintf(&b, "The target branch for this workspace is origin/%s. Use this for actions like diffing (`git diff origin/%s...`) or creating PRs (`gh pr create --base %s`).\n", baseBranch, baseBranch, baseBranch)
+	}
+	if placeholderBranch {
+		b.WriteString("You're on a new branch with a placeholder name.\n")
 	}
 	b.WriteString("\nDo not rename the current branch unless the user explicitly tells you to do so.\n")
 	b.WriteString("\nBy default, the user will only see the last message that you send before stopping. Include all essential information in the last message. The intermediate messages will be collapsed and accessible by the user but not displayed by default.\n")
-	fmt.Fprintf(&b, "\nSave screenshots under .context/ and embed them inline in the final response using Markdown image syntax, for example ![Screenshot](<%s>).\n", screenshotPath)
+	fmt.Fprintf(&b, "\nSave screenshots under `.context/` and embed them inline in the final response using Markdown image syntax, for example `![Screenshot](<%s>)`.\n", screenshotPath)
 	b.WriteString("\nIf the user asks you to work on several unrelated tasks, you can suggest they start new workspaces.\n")
 	b.WriteString("Sometimes the user might send you a message they meant to send in a different workspace or a different chat. If something doesn't make sense in the context of your work, just ask.\n")
 	b.WriteString("If the user asks for help with Outrunner, you can ask them to go to \"Help -> Send Feedback\" to get in touch with our team.")
