@@ -40,8 +40,9 @@ export function RepositorySelect({
   /** Already-connected projects; used before the live list has loaded. */
   projects: Project[];
   selectedProjectId: string | null;
-  /** Receives the project id to run in, connecting the repository if needed. */
-  onSelect: (projectId: string) => void;
+  /** Receives the project to run in, connecting the repository if needed: a
+   *  just-connected one is not in `projects` yet. */
+  onSelect: (project: Project) => void;
   disabled?: boolean;
   /** Replaces the trigger's default look, to sit in a row of other pickers. */
   triggerClassName?: string;
@@ -125,7 +126,7 @@ export function RepositorySelect({
   async function choose(repo: Repo) {
     const existing = projects.find((p) => p.githubRepoId === repo.githubRepoId);
     if (existing) {
-      onSelect(existing.id);
+      onSelect(existing);
       setOpen(false);
       triggerRef.current?.focus();
       return;
@@ -143,7 +144,7 @@ export function RepositorySelect({
       if (!res.ok) throw new Error(data.error ?? "Could not connect that repository.");
       const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
       if (!created) throw new Error("Connected, but the project did not come back.");
-      onSelect(created.id);
+      onSelect(created);
       setOpen(false);
       triggerRef.current?.focus();
     } catch (err) {

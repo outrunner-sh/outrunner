@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import {
   localAgentRequest,
@@ -27,13 +27,29 @@ function localBranch(workspaceId: string): string {
 export function useCreateSession(projects: Project[], initialProjectId?: string) {
   const router = useRouter();
   const [projectId, setProjectId] = useState(() => pickInitialProject(projects, initialProjectId));
+  // Repositories connected from the picker on this screen: the page's own list
+  // has them only after it reloads.
+  const [connected, setConnected] = useState<Project[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   // Set when the failure is something the user fixes in settings, so the error
   // can offer the way out instead of only naming the problem.
   const [messageHref, setMessageHref] = useState<string | null>(null);
   const [isCreating, startCreating] = useTransition();
 
-  const selected = projects.find((project) => project.id === projectId);
+  const known = useMemo(
+    () => [...projects, ...connected.filter((c) => !projects.some((p) => p.id === c.id))],
+    [projects, connected],
+  );
+  const selected = known.find((project) => project.id === projectId);
+
+  /** Run in `project`; one the page doesn't list yet was just connected. */
+  function selectProject(project: Project) {
+    setProjectId(project.id);
+    if (known.some((p) => p.id === project.id)) return;
+    setConnected((list) => [...list, project]);
+    // So the rest of the page (and the next visit) lists it too.
+    router.refresh();
+  }
 
   /** Create a cloud session and open it. Resolves false when it could not be
    *  created (the message says why), so the composer keeps the prompt. */
@@ -122,5 +138,5 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     }));
   }
 
-  return { projectId, setProjectId, selected, isCreating, message, messageHref, create, createLocal };
+  return { projects: known, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal };
 }
