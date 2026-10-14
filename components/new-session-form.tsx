@@ -11,6 +11,7 @@ import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import type { Project } from "@/lib/runtime/types";
+import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
 
 /** One item in the row beneath the wordmark: where, what, which branch, how. */
@@ -75,7 +76,7 @@ export function NewSessionForm({
               Pull in the repositories your GitHub token can access to start a session.
             </p>
             <ProjectsSyncButton align="center" />
-            {where.runtime.state === "ready" && (
+            {LOCAL_SESSIONS && where.runtime.state === "ready" && (
               <button
                 type="button"
                 onClick={() => where.setLocation("local")}
@@ -87,7 +88,7 @@ export function NewSessionForm({
           </div>
         ) : (
           <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
-            <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />
+            {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />}
             {local ? (
               <LocalRepositoryButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
             ) : (
