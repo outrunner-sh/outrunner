@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { ContinueInCloudDialog } from "@/components/continue-in-cloud-dialog";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceChanges } from "@/components/workspace-changes";
 import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
@@ -60,6 +61,7 @@ export function WorkspaceEnvironment({
     setView("overview");
   };
   const [open, setOpen] = useState<"branch" | "pr" | null>(null);
+  const [continuing, setContinuing] = useState(false);
   const changes = useWorkspaceChanges({ workspaceId: workspace.id, local: local !== undefined, active: isReady });
   const summary = environmentSummary(workspace, local);
   const unfold = (row: "branch" | "pr") => setOpen((current) => (current === row ? null : row));
@@ -88,12 +90,29 @@ export function WorkspaceEnvironment({
           </button>
         </div>
 
-        <EnvRow
-          icon={summary.location.kind === "local" ? <Monitor /> : <Cloud />}
-          title={summary.location.detail}
-        >
-          {summary.location.label}
-        </EnvRow>
+        {local ? (
+          <>
+            {/* A Mac session can continue in the cloud, as a new session. */}
+            <EnvRow
+              icon={<Monitor />}
+              title={summary.location.detail}
+              onClick={() => setContinuing(true)}
+              right={
+                <>
+                  <span className="text-[13px]">Continue in cloud</span>
+                  <Cloud />
+                </>
+              }
+            >
+              {summary.location.label}
+            </EnvRow>
+            <ContinueInCloudDialog session={local} open={continuing} onOpenChange={setContinuing} />
+          </>
+        ) : (
+          <EnvRow icon={<Cloud />} title={summary.location.detail}>
+            {summary.location.label}
+          </EnvRow>
+        )}
 
         <EnvRow
           ref={changesRow}
