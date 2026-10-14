@@ -6,7 +6,7 @@ import { PanelLeftOpen, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
-import { SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import { SIDEBAR_COOKIE, type SidebarPlace } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ export function AppFrame({
   ownerAvatarUrl,
   initialCollapsed = false,
   initialFolded = [],
+  initialPlace = "cloud",
   children,
 }: {
   projects: NavProject[];
@@ -36,6 +37,8 @@ export function AppFrame({
   initialCollapsed?: boolean;
   /** The projects folded shut in the sidebar, from their cookie. */
   initialFolded?: string[];
+  /** The sidebar tab last picked, from its cookie. */
+  initialPlace?: SidebarPlace;
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
@@ -118,6 +121,7 @@ export function AppFrame({
             onCollapse={() => setAndRemember(true)}
             searchSignal={searchSignal}
             initialFolded={initialFolded}
+            initialPlace={initialPlace}
           />
         )}
       </div>

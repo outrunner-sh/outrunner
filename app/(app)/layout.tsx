@@ -3,7 +3,13 @@ import { cookies } from "next/headers";
 import { AppFrame } from "@/components/app-frame";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjectOnce, listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
-import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import {
+  FOLDED_PROJECTS_COOKIE,
+  readFoldedProjects,
+  readSidebarPlace,
+  SIDEBAR_COOKIE,
+  SIDEBAR_PLACE_COOKIE,
+} from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Project, Workspace } from "@/lib/runtime/types";
 
@@ -38,6 +44,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const jar = await cookies();
   const collapsed = jar.get(SIDEBAR_COOKIE)?.value === "1";
   const folded = readFoldedProjects(jar.get(FOLDED_PROJECTS_COOKIE)?.value);
+  const place = readSidebarPlace(jar.get(SIDEBAR_PLACE_COOKIE)?.value);
 
   return (
     <AppFrame
@@ -47,6 +54,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       ownerAvatarUrl={owner.avatarUrl}
       initialCollapsed={collapsed}
       initialFolded={folded}
+      initialPlace={place}
     >
       {children}
     </AppFrame>

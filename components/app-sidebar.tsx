@@ -4,10 +4,9 @@ import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronRight,
+  Cloud,
   Ellipsis,
   Flag,
-  Folder,
-  FolderPlus,
   Laptop,
   PanelLeft,
   Plus,
@@ -33,11 +32,15 @@ import {
   buildSidebarGroups,
   filterSidebarGroups,
   newSessionHref,
+  placeFor,
   relativeTime,
   rememberFoldedProjects,
+  rememberSidebarPlace,
   type SessionDeletion,
   shownSessions,
   type SidebarGroup,
+  type SidebarPlace,
+  sidebarSections,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
@@ -46,8 +49,8 @@ import { cn } from "@/lib/utils";
 /**
  * The one sidebar every app page shares (rendered by app/(app)/layout.tsx, so
  * it stays put while you move between sessions): the primary actions, then
- * every workspace with its sessions nested underneath (cloud repositories and
- * this Mac's folders together, newest activity first), then the user.
+ * every workspace with its sessions nested underneath, newest activity first,
+ * on two tabs (the cloud's repositories, and this Mac's folders), then the user.
  */
 export function AppSidebar({
   projects,
@@ -57,6 +60,7 @@ export function AppSidebar({
   onCollapse,
   searchSignal = 0,
   initialFolded = [],
+  initialPlace = "cloud",
 }: {
   projects: NavProject[];
   workspaces: Workspace[];
@@ -67,6 +71,8 @@ export function AppSidebar({
   searchSignal?: number;
   /** The projects folded shut, by group key (from their cookie). */
   initialFolded?: string[];
+  /** The tab last picked (from its cookie). */
+  initialPlace?: SidebarPlace;
 }) {
   const pathname = usePathname();
   const active = activeSessionId(pathname);
@@ -87,7 +93,20 @@ export function AppSidebar({
     () => buildSidebarGroups(projects, workspaces, local.sessions),
     [projects, workspaces, local.sessions],
   );
-  const shown = filterSidebarGroups(groups, query);
+  const sections = sidebarSections(filterSidebarGroups(groups, query));
+
+  // The tab on show: the one picked on this page; else a session's own, so the
+  // session on screen is in the list; else the one last picked.
+  const [picked, setPicked] = useState<{ place: SidebarPlace; on: string } | null>(null);
+  const [lastPicked, setLastPicked] = useState(initialPlace);
+  const place = picked?.on === pathname ? picked.place : placeFor(pathname, lastPicked);
+  const pick = (next: SidebarPlace) => {
+    setPicked({ place: next, on: pathname });
+    setLastPicked(next);
+    rememberSidebarPlace(next);
+  };
+  const otherPlace: SidebarPlace = place === "cloud" ? "local" : "cloud";
+  const tabPanel = useId();
 
   // Projects folded shut with their chevron, remembered across visits.
   const [folded, setFolded] = useState(initialFolded);
@@ -122,22 +141,38 @@ export function AppSidebar({
     setSearching(false);
   };
 
+  const renderGroup = (group: SidebarGroup) => (
+    <WorkspaceGroup
+      key={group.key}
+      group={group}
+      active={active}
+      now={now}
+      onDelete={setDeleting}
+      folded={folded.includes(group.key)}
+      searching={query.trim() !== ""}
+      onToggle={() => toggleFolded(group.key)}
+    />
+  );
+
   return (
     <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 px-3 pb-3 pt-5">
-      <div className="flex items-center justify-between px-2">
+      <div className="flex items-center justify-between gap-2 px-2">
         <Link href="/" className="flex items-center gap-2 font-mono text-sm font-semibold text-foreground">
           <Terminal className="size-4" />
           outrunner
         </Link>
-        <button
-          type="button"
-          onClick={onCollapse}
-          aria-label="Collapse sidebar"
-          title="Collapse sidebar"
-          className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <PanelLeft className="size-4" />
-        </button>
+        <div className="-mr-1 flex items-center gap-1.5">
+          <PlaceTabs place={place} onPick={pick} panel={tabPanel} />
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <PanelLeft className="size-4" />
+          </button>
+        </div>
       </div>
 
       <nav className="space-y-0.5" aria-label="Main">
@@ -159,40 +194,27 @@ export function AppSidebar({
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex items-center justify-between px-2">
-          <h2 className="text-sm text-muted-foreground">Projects</h2>
-          {/* Opens the new-session screen, where any repository or folder can be
-              picked: the way to start in a project not listed yet. */}
-          <Link
-            href="/new"
-            aria-label="Start a session in another project"
-            title="Start a session in another project"
-            className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <FolderPlus className="size-4" />
-          </Link>
-        </div>
+        {/* Names the list the tabs at the top have on show. */}
+        <h2 className="px-2 text-sm text-muted-foreground">{place === "cloud" ? "Cloud" : "This Mac"}</h2>
         {/* This Mac's sessions are read from the agent after the page loads, so
-            the list waits for them rather than reshuffling as they land. */}
-        <SkeletonSwap ready={local.state !== "loading"} skeleton={<SidebarSkeleton />} label="Sessions" className="mt-2">
-          <div className="space-y-3">
-            {shown.length === 0 ? (
-              <p className="px-2 py-1 text-sm text-muted-foreground">
-                {query ? "No matching sessions" : "No sessions yet"}
-              </p>
+            its tab waits for them rather than filling in as they land. */}
+        <SkeletonSwap
+          ready={place === "cloud" || local.state !== "loading"}
+          skeleton={<SidebarSkeleton />}
+          label="Sessions"
+          className="mt-3"
+        >
+          <div id={tabPanel} role="tabpanel" className="space-y-3">
+            {sections[place].length === 0 ? (
+              <EmptyTab
+                place={place}
+                searching={query.trim() !== ""}
+                onMac={local.state !== "unavailable"}
+                elsewhere={sections[otherPlace].reduce((n, g) => n + g.sessions.length, 0)}
+                onShowElsewhere={() => pick(otherPlace)}
+              />
             ) : (
-              shown.map((group) => (
-                <WorkspaceGroup
-                  key={group.key}
-                  group={group}
-                  active={active}
-                  now={now}
-                  onDelete={setDeleting}
-                  folded={folded.includes(group.key)}
-                  searching={query.trim() !== ""}
-                  onToggle={() => toggleFolded(group.key)}
-                />
-              ))
+              sections[place].map(renderGroup)
             )}
           </div>
         </SkeletonSwap>
@@ -223,6 +245,92 @@ export function AppSidebar({
         </Link>
       </div>
     </aside>
+  );
+}
+
+const PLACES = [
+  { place: "cloud", label: "Cloud sessions", Icon: Cloud },
+  { place: "local", label: "Sessions on this Mac", Icon: Laptop },
+] as const;
+
+/** The Cloud / This Mac switch, as icons named by their tooltips: one list at
+ *  a time, so where a session runs is never mixed up. */
+function PlaceTabs({
+  place,
+  onPick,
+  panel,
+}: {
+  place: SidebarPlace;
+  onPick: (place: SidebarPlace) => void;
+  /** The id of the list the tabs switch. */
+  panel: string;
+}) {
+  return (
+    <div role="tablist" aria-label="Where sessions run" className="flex gap-0.5 rounded-lg bg-muted/60 p-0.5">
+      {PLACES.map(({ place: tab, label, Icon }) => (
+        <button
+          key={tab}
+          type="button"
+          role="tab"
+          aria-selected={place === tab}
+          aria-controls={panel}
+          aria-label={label}
+          title={label}
+          onClick={() => onPick(tab)}
+          className={cn(
+            "grid h-6 w-8 place-items-center rounded-md transition-colors",
+            place === tab
+              ? "bg-accent text-foreground shadow-sm ring-1 ring-foreground/15"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Icon aria-hidden className="size-4" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A tab with nothing to list: why, and, for a search that matched only on
+ *  the other tab, the way there. */
+function EmptyTab({
+  place,
+  searching,
+  onMac,
+  elsewhere,
+  onShowElsewhere,
+}: {
+  place: SidebarPlace;
+  searching: boolean;
+  /** In the Mac app, the only place this Mac's sessions are read from. */
+  onMac: boolean;
+  /** Sessions the search matched on the other tab. */
+  elsewhere: number;
+  onShowElsewhere: () => void;
+}) {
+  if (searching) {
+    return (
+      <p className="px-2 py-1 text-sm text-muted-foreground">
+        No matching sessions
+        {elsewhere > 0 && (
+          <>
+            {" · "}
+            <button type="button" onClick={onShowElsewhere} className="underline underline-offset-2 hover:text-foreground">
+              {elsewhere} {place === "cloud" ? "on This Mac" : "in the cloud"}
+            </button>
+          </>
+        )}
+      </p>
+    );
+  }
+  return (
+    <p className="px-2 py-1 text-sm text-muted-foreground">
+      {place === "cloud"
+        ? "No sessions yet"
+        : onMac
+          ? "No sessions on this Mac yet"
+          : "Sessions on your Mac show here in the Outrunner Mac app."}
+    </p>
   );
 }
 
@@ -258,7 +366,7 @@ function WorkspaceGroup({
     else startNextSessionInCloud();
     router.push(newSessionHref(start, Date.now().toString(36)));
   };
-  const Icon = group.local ? Laptop : Folder;
+  const Icon = group.local ? Laptop : Cloud;
   return (
     <div>
       <div className="group/ws flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-foreground">
