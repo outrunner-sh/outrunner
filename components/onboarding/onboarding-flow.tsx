@@ -7,26 +7,32 @@ import { CloudSetup, type CloudModel } from "@/components/onboarding/cloud-setup
 import { MacSetup } from "@/components/onboarding/mac-setup";
 import { Button } from "@/components/ui/button";
 import type { OnboardingEnv, OnboardingFolder, RunTarget } from "@/lib/onboarding/types";
+import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["welcome", "where", "setup"] as const;
-type Step = (typeof STEPS)[number];
+type Step = "welcome" | "where" | "setup";
 
 /**
  * First run, in three steps: welcome, where sessions run, and a live checklist
  * for that choice that ends by starting the session itself, where the user
  * types their first message. Each step asks only for what the choice needs.
+ * While new local sessions are off there is no choice to make: welcome, then
+ * the cloud's checklist.
  */
 export function OnboardingFlow({
   env,
   onLeave,
+  localSessions = LOCAL_SESSIONS,
 }: {
   env: OnboardingEnv;
   /** Go where onboarding sends the user next: the first session, or home. */
   onLeave?: (href: string) => void;
+  /** Whether This Mac is offered (lib/session/local-sessions.ts). */
+  localSessions?: boolean;
 }) {
+  const steps: readonly Step[] = localSessions ? ["welcome", "where", "setup"] : ["welcome", "setup"];
   const [step, setStep] = useState<Step>("welcome");
-  const [target, setTarget] = useState<RunTarget | null>(null);
+  const [target, setTarget] = useState<RunTarget | null>(localSessions ? null : "cloud");
   const [ready, setReady] = useState(false);
   const [folder, setFolder] = useState<OnboardingFolder | null>(null);
   const [model, setModel] = useState<CloudModel>(null);
@@ -34,7 +40,8 @@ export function OnboardingFlow({
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const index = STEPS.indexOf(step);
+  const index = steps.indexOf(step);
+  const afterWelcome: Step = localSessions ? "where" : "setup";
   const go = (next: Step) => {
     setError(null);
     setStep(next);
@@ -79,7 +86,7 @@ export function OnboardingFlow({
           <span className="font-semibold tracking-tight">outrunner</span>
         </div>
         <div className="flex items-center gap-4">
-          {step !== "welcome" && <Progress index={index} />}
+          {step !== "welcome" && steps.length > 2 && <Progress steps={steps} index={index} />}
           {skip && (
             <button
               type="button"
@@ -94,7 +101,9 @@ export function OnboardingFlow({
       </header>
 
       <main className="flex w-full max-w-xl flex-1 flex-col justify-center py-10">
-        {step === "welcome" && <Welcome name={env.user.name} onNext={() => go("where")} />}
+        {step === "welcome" && (
+          <Welcome name={env.user.name} onMac={localSessions} onNext={() => go(afterWelcome)} />
+        )}
 
         {step === "where" && (
           <section className="space-y-6">
@@ -153,7 +162,7 @@ export function OnboardingFlow({
             )}
             {error && <p className="text-destructive text-sm">{error}</p>}
             <div className="flex items-center justify-between">
-              <Button variant="ghost" onClick={() => go("where")} disabled={starting}>
+              <Button variant="ghost" onClick={() => go(localSessions ? "where" : "welcome")} disabled={starting}>
                 <ArrowLeft className="size-4" /> Back
               </Button>
               <Button onClick={() => void start()} disabled={!ready || starting}>
@@ -169,7 +178,7 @@ export function OnboardingFlow({
   );
 }
 
-function Welcome({ name, onNext }: { name: string; onNext: () => void }) {
+function Welcome({ name, onMac, onNext }: { name: string; onMac: boolean; onNext: () => void }) {
   return (
     <section className="space-y-8 text-center">
       <p
@@ -181,8 +190,8 @@ function Welcome({ name, onNext }: { name: string; onNext: () => void }) {
       <div className="space-y-2">
         <h1 className="text-xl font-semibold">Welcome, {name.split(" ")[0]}</h1>
         <p className="text-muted-foreground mx-auto max-w-sm text-sm">
-          Run many Claude Code agents in parallel, on this Mac or in the cloud. Two minutes of setup,
-          then your first session.
+          Run many Claude Code agents in parallel, {onMac ? "on this Mac or in the cloud" : "in the cloud"}.
+          Two minutes of setup, then your first session.
         </p>
       </div>
       <Button size="lg" onClick={onNext}>
@@ -201,14 +210,14 @@ function Heading({ title, detail }: { title: string; detail: string }) {
   );
 }
 
-function Progress({ index }: { index: number }) {
+function Progress({ steps, index }: { steps: readonly Step[]; index: number }) {
   return (
     <div className="flex items-center gap-3">
       <span className="text-muted-foreground text-xs">
-        Step {index} of {STEPS.length - 1}
+        Step {index} of {steps.length - 1}
       </span>
       <div className="flex gap-1">
-        {STEPS.slice(1).map((s, i) => (
+        {steps.slice(1).map((s, i) => (
           <span
             key={s}
             className={cn("h-1 w-6 rounded-full", i < index ? "bg-foreground" : "bg-muted")}
