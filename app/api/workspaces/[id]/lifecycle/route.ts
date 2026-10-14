@@ -122,7 +122,14 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const resolution = resolveProvider(workspace);
-  if (!resolution.ok) return providerErrorResponse(resolution);
+  if (!resolution.ok) {
+    // A session on a provider this deployment doesn't run (it was switched,
+    // or another build of Outrunner made it) can't be reached to tear down,
+    // but it can still be deleted: Outrunner forgets it, as a destroy does
+    // when the session's box is gone.
+    if (action === "destroy" && resolution.status === 409) return endWorkspace(workspace);
+    return providerErrorResponse(resolution);
+  }
   const provider = resolution.provider;
 
   if (provider instanceof DaytonaRuntimeProvider) {
@@ -438,6 +445,18 @@ async function destroyDaytonaWorkspace(
   provider: DaytonaRuntimeProvider,
   userId: string,
 ) {
+  return endWorkspace(workspace, async () => {
+    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    await agent.destroyWorkspace(identity);
+  });
+}
+
+/**
+ * Destroy a workspace for good: its worktree first, through `teardown` (none
+ * when its box can't be reached from here), then its snapshot index and the
+ * row itself, marked destroyed.
+ */
+async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>) {
   const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
   if (!destroyable.includes(workspace.status)) {
     return NextResponse.json(
@@ -452,8 +471,7 @@ async function destroyDaytonaWorkspace(
   // already be gone (e.g. destroying an ARCHIVED workspace whose Runtime Computer
   // was reclaimed). A missing/failed agent must not block the durable cleanup.
   try {
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
-    await agent.destroyWorkspace(identity);
+    await teardown?.();
   } catch (error) {
     console.warn(`Workspace ${workspace.id} agent teardown skipped`, error);
   }
