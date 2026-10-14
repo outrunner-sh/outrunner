@@ -55,6 +55,49 @@
       "repoPath": "/Users/ada/code/app",
       "permissionMode": "acceptEdits",
       "title": "Fix the login redirect"
+    },
+    {
+      "workspaceId": "ws-3",
+      "repoFullName": "acme/app",
+      "branch": "runtime/mv7s5hx9-3fec9c94",
+      "baseBranch": "main",
+      "from": {
+        "manifest": {
+          "version": 1,
+          "from": "local",
+          "title": "Fix the login redirect",
+          "baseBranch": "main",
+          "head": "3f2a9c1e0b7d4a6f8e2c5b1d9a0f7e3c6b4d2a18",
+          "worktree": "/Users/ada/.outrunner/workspaces/ws-2",
+          "claudeSessionId": "11111111-2222-4333-8444-555555555555",
+          "bundle": {
+            "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 2048
+          },
+          "patch": {
+            "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "size": 512
+          },
+          "conversation": {
+            "sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "size": 40960
+          }
+        },
+        "downloads": [
+          {
+            "artifact": "bundle",
+            "url": "https://storage.example.test/handoffs/u/h/bundle?token=t"
+          },
+          {
+            "artifact": "patch",
+            "url": "https://storage.example.test/handoffs/u/h/patch?token=t"
+          },
+          {
+            "artifact": "conversation",
+            "url": "https://storage.example.test/handoffs/u/h/conversation?token=t"
+          }
+        ]
+      }
     }
   ],
   "WorkspaceActionRequest": [
@@ -239,6 +282,81 @@
         {
           "artifact": "conversation",
           "url": "https://storage.example/download/conversation?token=t"
+        }
+      ]
+    }
+  ],
+  "HandoffManifest": [
+    {
+      "version": 1,
+      "from": "local",
+      "title": "Fix the login redirect",
+      "baseBranch": "main",
+      "head": "3f2a9c1e0b7d4a6f8e2c5b1d9a0f7e3c6b4d2a18",
+      "worktree": "/Users/ada/.outrunner/workspaces/ws-2",
+      "claudeSessionId": "11111111-2222-4333-8444-555555555555",
+      "bundle": {
+        "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 2048
+      },
+      "patch": {
+        "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size": 512
+      },
+      "conversation": {
+        "sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "size": 40960
+      }
+    },
+    {
+      "version": 1,
+      "from": "local",
+      "title": "Fix the login redirect",
+      "baseBranch": "main",
+      "head": "3f2a9c1e0b7d4a6f8e2c5b1d9a0f7e3c6b4d2a18",
+      "worktree": "/Users/ada/.outrunner/workspaces/ws-2",
+      "claudeSessionId": null,
+      "bundle": null,
+      "patch": {
+        "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size": 512
+      },
+      "conversation": null
+    }
+  ],
+  "ExportWorkspaceRequest": [
+    {
+      "withChat": true,
+      "uploads": [
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example.test/handoffs/u/h/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example.test/handoffs/u/h/patch?token=t"
+        },
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example.test/handoffs/u/h/conversation?token=t"
+        },
+        {
+          "artifact": "manifest",
+          "url": "https://storage.example.test/handoffs/u/h/manifest?token=t"
+        }
+      ]
+    },
+    {
+      "withChat": false,
+      "title": "Fix the login redirect",
+      "uploads": [
+        {
+          "artifact": "patch",
+          "url": "https://storage.example.test/handoffs/u/h/patch?token=t"
+        },
+        {
+          "artifact": "manifest",
+          "url": "https://storage.example.test/handoffs/u/h/manifest?token=t"
         }
       ]
     }

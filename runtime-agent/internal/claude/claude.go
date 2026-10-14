@@ -147,6 +147,24 @@ func Orientation(worktree, baseBranch string, placeholderBranch bool) string {
 	return b.String()
 }
 
+// ContinuedNote is the orientation's addendum for a session that continues one
+// from elsewhere with its conversation: the earlier messages name paths in the
+// folder it ran in before (previous), where nothing is any more. from is where
+// that was: "local" for the user's Mac, "cloud" for a cloud computer.
+func ContinuedNote(from, previous, worktree string) string {
+	where := "on a cloud computer"
+	if from == "local" {
+		where = "on the user's Mac"
+	}
+	if previous == "" {
+		previous = "another folder"
+	}
+	return fmt.Sprintf("This session continues one that ran %s, in %s: earlier messages in this conversation refer to files there. "+
+		"Its work, committed and uncommitted, is here in %s now. Files git ignores (such as .env files and installed dependencies) "+
+		"and anything that was running (such as dev servers) didn't come along: set them up again here if the work needs them.",
+		where, previous, worktree)
+}
+
 // SessionEnv builds the environment for a Claude session. The Anthropic
 // credential is held in agent memory and injected here only — never written to
 // disk on the box, never logged.

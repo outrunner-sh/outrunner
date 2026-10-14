@@ -3,7 +3,9 @@ package workspace
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +51,7 @@ func (s *Service) LocalSessions(ctx context.Context) []protocol.LocalSession {
 			Running:      s.SessionAlive(ctx, id),
 			Model:        f.Model,
 			Gateway:      string(f.Gateway),
+			Repo:         githubRepo(ctx, f.RepoPath),
 		})
 	}
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
@@ -80,4 +83,27 @@ func (s *Service) lastActiveAt(workspaceID string, f workspaceFacts) string {
 // anyone's.
 func (s *Service) ownsTranscript(f workspaceFacts) bool {
 	return s.jcode != nil || f.ClaudeSessionID != "" || !f.InPlace
+}
+
+// githubRepo is the GitHub repository (`owner/name`) a folder is a clone of,
+// read from its origin remote; empty for a folder that isn't one. A session
+// can be continued in the cloud only on a repository Outrunner can clone.
+func githubRepo(ctx context.Context, folder string) string {
+	out, err := exec.CommandContext(ctx, "git", "-C", folder, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		return ""
+	}
+	return githubRepoFromURL(strings.TrimSpace(string(out)))
+}
+
+// githubURL matches a GitHub remote over HTTPS or SSH, either spelling:
+// https://github.com/o/r(.git), git@github.com:o/r(.git), ssh://git@github.com/o/r.
+var githubURL = regexp.MustCompile(`^(?:https://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$`)
+
+func githubRepoFromURL(url string) string {
+	m := githubURL.FindStringSubmatch(url)
+	if m == nil {
+		return ""
+	}
+	return m[1] + "/" + m[2]
 }

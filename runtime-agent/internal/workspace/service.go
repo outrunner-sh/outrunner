@@ -130,6 +130,16 @@ type workspaceFacts struct {
 	Name      string `json:"name,omitempty"`
 	Title     string `json:"title,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
+	// ContinuedFrom is where a session seeded from a handoff package ran
+	// before: its conversation's paths point there.
+	ContinuedFrom *continuedFrom `json:"continuedFrom,omitempty"`
+}
+
+// continuedFrom is the session a seeded one continues: where it ran ("local"
+// or "cloud") and the folder it worked in.
+type continuedFrom struct {
+	From     string `json:"from"`
+	Worktree string `json:"worktree"`
 }
 
 // CreateInput is what Create needs to provision one workspace.
@@ -147,6 +157,9 @@ type CreateInput struct {
 	// Model is the session's --model; empty keeps Claude's default. Callers
 	// validate it (claude.ValidModel).
 	Model string
+	// From seeds the workspace from a session that ran elsewhere (a handoff
+	// package) instead of a fresh branch off BaseBranch.
+	From *protocol.SeedFrom
 }
 
 func NewService(root string) *Service {
@@ -299,6 +312,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 			}
 		}
 	}
+	if in.From != nil {
+		return s.seed(ctx, in, facts, existed)
+	}
 	// Record the facts Start/Resume need, even on the idempotent path below so a
 	// re-Create after a restart repopulates them.
 	s.setFacts(in.WorkspaceID, facts)
@@ -336,6 +352,63 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	}
 	return worktree, nil
 }
+
+// seed is Create for a workspace that continues a session from elsewhere: its
+// worktree comes from the handoff package (snapshot.Seed), on the new branch,
+// and with the package's conversation Claude resumes it by id, so the chat
+// carries on where it left off.
+func (s *Service) seed(ctx context.Context, in CreateInput, facts workspaceFacts, existed bool) (string, error) {
+	m := in.From.Manifest
+	if err := snapshot.CheckManifest(m); err != nil {
+		return "", err
+	}
+	if facts.InPlace {
+		return "", ErrSeedInPlace
+	}
+	if m.ClaudeSessionID != nil {
+		// It becomes a filename under ~/.claude/projects/<slug>/.
+		if !validSessionID(*m.ClaudeSessionID) {
+			return "", fmt.Errorf("invalid session id %q", *m.ClaudeSessionID)
+		}
+		facts.ClaudeSessionID = *m.ClaudeSessionID
+	}
+	if facts.Title == "" {
+		facts.Title = m.Title
+	}
+	facts.ContinuedFrom = &continuedFrom{From: m.From, Worktree: m.Worktree}
+	s.setFacts(in.WorkspaceID, facts)
+
+	worktree := s.worktreePath(in.WorkspaceID)
+	if _, err := os.Stat(worktree); err == nil {
+		return worktree, nil // idempotent
+	}
+	repo := s.mirrorPath()
+	if facts.RepoPath != "" {
+		repo = facts.RepoPath
+	}
+	err := snapshot.Seed(ctx, snapshot.SeedInput{
+		Repo:      repo,
+		Worktree:  worktree,
+		Branch:    in.Branch,
+		Manifest:  m,
+		Downloads: in.From.Downloads,
+		ConversationDest: func() (string, error) {
+			return s.conversationDest(worktree, facts.ClaudeSessionID)
+		},
+	})
+	if err != nil {
+		// Seed removed what it made; a workspace that never was is forgotten.
+		if !existed {
+			s.forgetWorkspace(in.WorkspaceID)
+		}
+		return "", err
+	}
+	return worktree, nil
+}
+
+// ErrSeedInPlace refuses to continue a session in a folder that isn't a git
+// repository: there is no branch to put its commits on.
+var ErrSeedInPlace = errors.New("a session can only be continued in a git repository")
 
 // ErrBypassInFolder refuses bypassPermissions for a session in a folder on the
 // user's own machine, whoever asks for it: there Claude would run every command
@@ -779,7 +852,13 @@ func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []str
 func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
 	// A session in the user's own folder has no branch of its own.
-	return claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+	o := claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+	// Only a session that brought its chat along has earlier messages whose
+	// paths point somewhere else.
+	if f.ContinuedFrom != nil && f.ClaudeSessionID != "" {
+		o += "\n\n" + claude.ContinuedNote(f.ContinuedFrom.From, f.ContinuedFrom.Worktree, worktree)
+	}
+	return o
 }
 
 // placeholderBranch is the name Outrunner gives a new session's branch,
@@ -1140,6 +1219,53 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 		ArchivedAt:       req.ArchivedAt,
 		Uploads:          req.Uploads,
 		ClaudeVersion:    snapshot.ClaudeVersion(ctx),
+	})
+}
+
+// ErrInPlaceExport refuses to pack a session that edits a folder in place: it
+// has no branch of its own to carry, and its files are the user's folder.
+var ErrInPlaceExport = errors.New("a session working in a folder in place can't be continued elsewhere")
+
+// ErrClaudeBusy refuses to pack a session mid-turn: its files and conversation
+// are still changing.
+var ErrClaudeBusy = errors.New("Claude is still working: wait for it to finish, then try again")
+
+// Export packs a session so another machine can continue it (snapshot.Pack):
+// its branch's own commits, its uncommitted work and, with WithChat, Claude's
+// conversation. The session keeps running. The jcode engine's log is not a
+// conversation Claude Code can continue, so its chat never goes.
+func (s *Service) Export(ctx context.Context, workspaceID string, req protocol.ExportWorkspaceRequest) (*protocol.HandoffManifest, error) {
+	f, _ := s.getFacts(workspaceID)
+	if f.InPlace {
+		return nil, ErrInPlaceExport
+	}
+	if err := s.requireWorktree(workspaceID); err != nil {
+		return nil, err
+	}
+	if name := sessionName(workspaceID); s.jcode == nil && s.tmux.HasSession(ctx, name) {
+		if pane, err := s.tmux.CapturePane(ctx, name); err == nil && claudeIsBusy(pane) {
+			return nil, ErrClaudeBusy
+		}
+	}
+	conversation := ""
+	if req.WithChat && s.jcode == nil {
+		conversation = s.SessionLog(workspaceID)
+	}
+	title := req.Title
+	if title == "" {
+		title = f.Title
+	}
+	from := "cloud"
+	if f.RepoPath != "" {
+		from = "local"
+	}
+	return snapshot.Pack(ctx, snapshot.PackInput{
+		From:             from,
+		Title:            title,
+		Worktree:         s.worktreePath(workspaceID),
+		BaseBranch:       f.BaseBranch,
+		ConversationPath: conversation,
+		Uploads:          req.Uploads,
 	})
 }
 

@@ -23,6 +23,7 @@ import (
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
+	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/workspace"
 )
 
@@ -76,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/stop", s.authed(s.stopWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/resume", s.authed(s.resumeWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/archive", s.authed(s.archiveWorkspace))
+	mux.HandleFunc("POST /workspaces/{id}/export", s.authed(s.exportWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/restore", s.authed(s.restoreWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
@@ -130,16 +132,19 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		PermissionMode: mode,
 		Title:          req.Title,
 		Model:          req.Model,
+		From:           req.From,
 	})
 	switch {
-	case errors.Is(err, workspace.ErrBypassInFolder):
+	case errors.Is(err, workspace.ErrBypassInFolder), errors.Is(err, workspace.ErrSeedInPlace):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"worktree": worktree})
+	// seeded tells the control plane this agent knows `from`: one from before
+	// it would have made a fresh branch instead, without a word.
+	writeJSON(w, http.StatusOK, map[string]any{"worktree": worktree, "seeded": req.From != nil})
 }
 
 func (s *Server) startWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -186,6 +191,33 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, manifest)
+}
+
+// exportWorkspace packs a session for another machine to continue, leaving it
+// running, and answers with the package's manifest.
+func (s *Server) exportWorkspace(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.ExportWorkspaceRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if len(req.Uploads) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "export requires upload URLs")
+		return
+	}
+	manifest, err := s.ws.Export(r.Context(), r.PathValue("id"), req)
+	switch {
+	case errors.Is(err, workspace.ErrUnknownWorkspace):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+	case errors.Is(err, workspace.ErrInPlaceExport), errors.Is(err, workspace.ErrClaudeBusy), errors.Is(err, snapshot.ErrNoCommit):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, manifest)
+	}
 }
 
 func (s *Server) destroyWorkspace(w http.ResponseWriter, r *http.Request) {

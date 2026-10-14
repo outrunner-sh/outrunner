@@ -61,6 +61,62 @@ export type PtyServerMessage = z.infer<typeof PtyServerMessage>;
 // Control API (HTTP, Next -> agent). Requests + a stable error envelope.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Handoff: a session continued on another machine. The agent where it ran packs
+// it (export) into signed-URL storage; the agent where it continues seeds a new
+// workspace from the package (create with `from`).
+// ---------------------------------------------------------------------------
+
+/** The files a handoff package moves; the patch and manifest always go. */
+export const HANDOFF_ARTIFACTS = ["bundle", "patch", "conversation", "manifest"] as const;
+export type HandoffArtifact = (typeof HANDOFF_ARTIFACTS)[number];
+
+/** One package file and the signed URL it is uploaded to or downloaded from. */
+export const HandoffFile = z.object({
+  artifact: z.enum(HANDOFF_ARTIFACTS),
+  url: z.string().url(),
+});
+export type HandoffFile = z.infer<typeof HandoffFile>;
+
+/** Pack a session for another machine to continue, leaving it running. */
+export const ExportWorkspaceRequest = z.object({
+  /** Take Claude's conversation along; without it the new session starts a fresh chat. */
+  withChat: z.boolean(),
+  /** Names the session in the package in place of the one the agent knows. */
+  title: z.string().optional(),
+  uploads: z.array(HandoffFile).min(1),
+});
+export type ExportWorkspaceRequest = z.infer<typeof ExportWorkspaceRequest>;
+
+const HandoffChecksum = z.object({
+  sha256: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  size: z.number().int().nonnegative(),
+});
+
+/** What a package holds: where the session ran, its commit, and a checksum for
+ *  each file. No bundle means the branch had no commits of its own; no
+ *  conversation, that the chat stayed behind. */
+export const HandoffManifest = z.object({
+  version: z.literal(1),
+  from: z.enum(["local", "cloud"]),
+  title: z.string(),
+  baseBranch: z.string(),
+  head: z.string().regex(/^[0-9a-f]{40}$/),
+  worktree: z.string(),
+  claudeSessionId: z.string().nullable(),
+  bundle: HandoffChecksum.nullable(),
+  patch: HandoffChecksum,
+  conversation: HandoffChecksum.nullable(),
+});
+export type HandoffManifest = z.infer<typeof HandoffManifest>;
+
+/** Seed a new workspace from a package instead of a fresh branch. */
+export const SeedFrom = z.object({
+  manifest: HandoffManifest,
+  downloads: z.array(HandoffFile),
+});
+export type SeedFrom = z.infer<typeof SeedFrom>;
+
 export const CreateWorkspaceRequest = z.object({
   workspaceId: z.string().min(1),
   repoFullName: z.string().min(1),
@@ -74,6 +130,8 @@ export const CreateWorkspaceRequest = z.object({
   permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions"]).optional(),
   /** Labels a local session in the desktop's list (the first prompt). */
   title: z.string().optional(),
+  /** Continue a session that ran elsewhere: seed from its handoff package. */
+  from: SeedFrom.optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
@@ -319,6 +377,8 @@ export const PROTOCOL_SCHEMAS = {
   WorkspaceActionRequest,
   ArchiveWorkspaceRequest,
   RestoreWorkspaceRequest,
+  ExportWorkspaceRequest,
+  HandoffManifest,
   ErrorResponse,
   SessionUrls,
   WorkspaceSummary,

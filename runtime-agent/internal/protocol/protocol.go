@@ -73,6 +73,9 @@ type CreateWorkspaceRequest struct {
 	// Model is Claude's --model for the session: an alias, a full model name,
 	// or a gateway slug. Empty keeps Claude's default.
 	Model string `json:"model,omitempty"`
+	// From, when set, seeds the workspace from a session that ran elsewhere
+	// (a handoff package) rather than a fresh branch off BaseBranch.
+	From *SeedFrom `json:"from,omitempty"`
 }
 
 // SetModelRequest switches a workspace's session to another model. With a
@@ -116,6 +119,9 @@ type LocalSession struct {
 	// Gateway is what it runs through ("openrouter"); empty for the user's
 	// own Claude. The key is never listed.
 	Gateway string `json:"gateway,omitempty"`
+	// Repo is the GitHub repository (`owner/name`) the folder is a clone of,
+	// read from its origin; empty for any other folder.
+	Repo string `json:"repo,omitempty"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).
@@ -160,6 +166,61 @@ type RestoreWorkspaceRequest struct {
 	BaseBranch string            `json:"baseBranch,omitempty"`
 	SessionID  *string           `json:"sessionId"`
 	Downloads  []RestoreDownload `json:"downloads"`
+}
+
+// HandoffFile is one file of a handoff package and the signed URL it moves
+// through: uploaded to at export, downloaded from at seed. `artifact` is one of
+// bundle/patch/conversation/manifest.
+type HandoffFile struct {
+	Artifact string `json:"artifact"`
+	URL      string `json:"url"`
+}
+
+// ExportWorkspaceRequest asks the agent to pack a session so another machine
+// can continue it, without stopping it: its branch's own commits, its
+// uncommitted work and, WithChat, Claude's conversation, each PUT to its signed
+// URL (the manifest last). Title, when set, names the session in the package
+// in place of the one the agent knows.
+type ExportWorkspaceRequest struct {
+	WithChat bool          `json:"withChat"`
+	Title    string        `json:"title,omitempty"`
+	Uploads  []HandoffFile `json:"uploads"`
+}
+
+// HandoffChecksum is a package file's sha256 (`sha256:<hex>`) and size, which
+// the seeding agent checks every download against.
+type HandoffChecksum struct {
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
+// HandoffManifest describes a handoff package: where the session ran, the
+// commit it was on, and the files that carry it. Bundle is nil when the branch
+// had no commits beyond its base (Head is then a commit the receiver already
+// has from GitHub), Conversation when the session moves without its chat.
+type HandoffManifest struct {
+	Version int `json:"version"`
+	// From is where the session ran: "local" (a Mac) or "cloud".
+	From       string `json:"from"`
+	Title      string `json:"title"`
+	BaseBranch string `json:"baseBranch"`
+	// Head is the commit the session's branch was on.
+	Head string `json:"head"`
+	// Worktree is the folder it ran in, for the new session's orientation:
+	// paths in the conversation point there.
+	Worktree        string           `json:"worktree"`
+	ClaudeSessionID *string          `json:"claudeSessionId"`
+	Bundle          *HandoffChecksum `json:"bundle"`
+	Patch           HandoffChecksum  `json:"patch"`
+	Conversation    *HandoffChecksum `json:"conversation"`
+}
+
+// SeedFrom starts a new workspace from a handoff package instead of a fresh
+// branch: its branch is made at the package's Head, the uncommitted work is
+// applied, and the conversation, when there is one, is continued.
+type SeedFrom struct {
+	Manifest  HandoffManifest `json:"manifest"`
+	Downloads []HandoffFile   `json:"downloads"`
 }
 
 // ErrorResponse is the stable error envelope for control-plane failures.
