@@ -1,18 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Outrunner's app icon: a terminal prompt, ">_", in near-white on a
-       near-black tile. The tile follows the macOS icon grid: an 824 px body
-       centred on the canvas, corners ~185 px. Regenerate the sizes with
+  <!-- Outrunner's app icon: outrunner.sh's ">_" mark (Lucide's terminal
+       glyph, drawn on a 24 px grid with a 2 px stroke) in #ededed on #0a0a0a.
+       The tile follows the macOS icon grid: an 824 px body centred on the
+       canvas, corners ~185 px; the glyph takes the same share of the tile as
+       on the site. Regenerate the sizes with
        `bun run tauri icon src-tauri/icons/icon.svg` in runtime-desktop. -->
-  <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#26262a"/>
-      <stop offset="1" stop-color="#0b0b0c"/>
-    </linearGradient>
-  </defs>
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#0a0a0a"/>
   <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity="0.1" stroke-width="2"/>
-  <g fill="none" stroke="#f5f5f5" stroke-width="72" stroke-linecap="round" stroke-linejoin="round">
-    <polyline points="330,360 500,512 330,664"/>
-    <line x1="560" y1="664" x2="720" y2="664"/>
+  <g transform="translate(512 512) scale(20.12) translate(-12 -12)" fill="none" stroke="#ededed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m4 17 6-6-6-6"/>
+    <path d="M12 19h8"/>
   </g>
 </svg>
