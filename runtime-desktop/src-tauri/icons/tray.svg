@@ -2,8 +2,8 @@
   <!-- Outrunner's menu bar icon: the app icon's ">_" alone, black on
        transparent, used as a template image that macOS tints for a light or
        dark menu bar (lib.rs). 22 pt at @2x. -->
-  <g transform="translate(22 22) scale(0.08) translate(-525 -512)" fill="none" stroke="#000000" stroke-width="72" stroke-linecap="round" stroke-linejoin="round">
-    <polyline points="330,360 500,512 330,664"/>
-    <line x1="560" y1="664" x2="720" y2="664"/>
+  <g transform="translate(22 22) scale(1.75) translate(-12 -12)" fill="none" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m4 17 6-6-6-6"/>
+    <path d="M12 19h8"/>
   </g>
 </svg>
