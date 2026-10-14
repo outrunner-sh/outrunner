@@ -83,6 +83,9 @@ export type LocalSession = {
    *  createdAt. Absent from agents bundled before it existed. */
   lastActiveAt?: string;
   running: boolean;
+  /** The GitHub repository (`owner/name`) the folder is a clone of; absent for
+   *  any other folder, and from agents bundled before it existed. */
+  repo?: string;
 };
 
 export function tauriCore(): TauriCore | null {
@@ -343,6 +346,10 @@ export function messageForLocalError(error: unknown): string {
         ? `Claude Code couldn't log in. It said: ${said}`
         : "Claude Code couldn't log in. Run `claude` in Terminal and type /login.";
     }
+    case "route-not-allowed":
+      // An app from before the call existed: its relay doesn't pass it on.
+      if (/\/export$/.test(raw)) return "Update the Outrunner app to continue this session in the cloud.";
+      return "This version of the Outrunner app can't do that yet. Update the app, then try again.";
     case "agent": {
       // The agent's own message, e.g. a worktree that could not be created.
       const said = raw.slice("agent:".length).trim();

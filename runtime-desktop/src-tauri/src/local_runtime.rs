@@ -47,6 +47,9 @@ const TOKEN_TTL_SECONDS: u64 = 300;
 /// Covers the slowest relayed call: create (a base-branch fetch, capped at 30s
 /// by the agent) and start (Claude's TUI, capped at 15s).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+/// An export uploads a session's package over the user's own connection, which
+/// can be slow: minutes for a few megabytes.
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// How long a `claude auth login` may wait for the user to approve in the
 /// browser before it is stopped.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -1052,7 +1055,8 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// The agent routes the page may call, each bound to the workspace its token is
-/// for. Archive/restore are absent: local workspaces have no snapshots. Only the
+/// for. Archive/restore are absent: local workspaces have no snapshots; export
+/// packs one to continue in the cloud, to URLs the server signed. Only the
 /// change set takes a query (`?path=` for one file's diff).
 fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest::Method, String> {
     let (route, query) = match path.split_once('?') {
@@ -1062,7 +1066,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
     let segments: Vec<&str> = route.trim_start_matches('/').split('/').collect();
     match (method, segments.as_slice(), query) {
         ("POST", ["workspaces"], None) => Ok(reqwest::Method::POST),
-        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model"], None)
+        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model" | "export"], None)
             if *id == workspace_id =>
         {
             Ok(reqwest::Method::POST)
@@ -1133,11 +1137,12 @@ async fn agent_call(
 ) -> Result<serde_json::Value, String> {
     let method = allowed_route(method, path, workspace_id)?;
     let token = mint_token(&agent.secret, workspace_id, project_id, device_id);
+    let timeout = if path.ends_with("/export") { EXPORT_TIMEOUT } else { REQUEST_TIMEOUT };
 
     let mut request = http_client()
         .request(method, format!("http://{}{}", agent.addr, path))
         .bearer_auth(token)
-        .timeout(REQUEST_TIMEOUT);
+        .timeout(timeout);
     if let Some(mut body) = body {
         // A create that names no mode gets the local default rather than the
         // agent's box default.
@@ -1662,6 +1667,10 @@ mod tests {
         // Another workspace's route, an unrelayed action, or a wrong method.
         assert!(allowed_route("POST", "/workspaces/ws-2/stop", "ws-1").is_err());
         assert!(allowed_route("POST", "/workspaces/ws-1/archive", "ws-1").is_err());
+        // Packing a session to continue elsewhere: its own, by POST only.
+        assert!(allowed_route("POST", "/workspaces/ws-1/export", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-2/export", "ws-1").is_err());
+        assert!(allowed_route("GET", "/workspaces/ws-1/export", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/destroy", "ws-1").is_err());
         assert!(allowed_route("GET", "/health/../workspaces", "ws-1").is_err());
     }
