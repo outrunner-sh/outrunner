@@ -1,7 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 
 import {
   InvalidError,
@@ -42,6 +39,10 @@ import {
  *  - The agent is reached through the sandbox's tunnel, a public HTTPS URL for
  *    its port that takes WebSockets. The agent wants a token on every call but
  *    /health.
+ *  - Writing a file into a sandbox goes at the speed of this server's upload to
+ *    Modal: a data center's takes 3.5 MB in 31 ms, a slow home connection many
+ *    minutes. With a `stash`, a large file goes to Outrunner's storage once
+ *    (per content) and the box downloads it instead.
  */
 
 /** The Modal App the sandboxes are made in, in the user's account. */
@@ -64,6 +65,13 @@ export const MODAL_IMAGE_SETUP = [
 
 /** A Modal token: Settings → API Tokens in Modal. */
 export type ModalToken = { tokenId: string; tokenSecret: string };
+
+/** Keeps a file where a box can download it: a signed URL, and the file's
+ *  sha256 for the box to check it by (lib/runtime/storage/box-uploads.ts). */
+export type Stash = (data: Buffer) => Promise<{ url: string; sha256: string }>;
+
+/** Files above this go through the stash, where there is one. */
+const DIRECT_UPLOAD_MAX = 256 * 1024;
 
 /** A sandbox's tunnel URL for a port, which lasts as long as the sandbox. */
 const tunnels = new Map<string, string>();
@@ -108,9 +116,11 @@ export function noSnapshot(error: unknown): boolean {
 
 export class ModalBackend implements SandboxBackend {
   private readonly token: () => Promise<ModalToken>;
+  private readonly stash: Stash | undefined;
 
-  constructor(options: { token: () => Promise<ModalToken> }) {
+  constructor(options: { token: () => Promise<ModalToken>; stash?: Stash }) {
     this.token = options.token;
+    this.stash = options.stash;
   }
 
   private async modal(): Promise<ModalClient> {
@@ -125,7 +135,7 @@ export class ModalBackend implements SandboxBackend {
   async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
     const modal = await this.modal();
     const image = modal.images.fromRegistry(MODAL_BASE_IMAGE).dockerfileCommands(MODAL_IMAGE_SETUP);
-    return box(await this.make(modal, image, labels, size));
+    return box(await this.make(modal, image, labels, size), this.stash);
   }
 
   async restore(id: string, labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox | null> {
@@ -133,7 +143,7 @@ export class ModalBackend implements SandboxBackend {
     try {
       const ended = await modal.sandboxes.fromId(id);
       const disk = await ended.experimentalGetExitSnapshot({ timeoutMs: SNAPSHOT_WAIT_MS });
-      return box(await this.make(modal, disk, labels, size));
+      return box(await this.make(modal, disk, labels, size), this.stash);
     } catch (error) {
       if (noSnapshot(error)) return null;
       throw error;
@@ -141,7 +151,7 @@ export class ModalBackend implements SandboxBackend {
   }
 
   async get(id: string): Promise<SandboxBox> {
-    return box(await (await this.modal()).sandboxes.fromId(id));
+    return box(await (await this.modal()).sandboxes.fromId(id), this.stash);
   }
 
   async alive(id: string): Promise<boolean> {
@@ -164,7 +174,8 @@ export class ModalBackend implements SandboxBackend {
   }
 }
 
-function box(sandbox: Sandbox): SandboxBox {
+/** A running sandbox as a box (exported for its tests). */
+export function box(sandbox: Sandbox, stash: Stash | undefined): SandboxBox {
   const run = async (argv: string[], env?: Record<string, string>) => {
     const proc = await sandbox.exec(argv, { env });
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -191,15 +202,27 @@ function box(sandbox: Sandbox): SandboxBox {
       const res = await asUser(`setsid ${command} > /dev/null 2>&1 < /dev/null &`);
       if (res.exitCode !== 0) throw new Error(`Modal launch failed: ${tail(res.stderr)}`);
     },
-    // The SDK copies a local file in, as root; it is then the box user's.
+    // Written as root, then made the box user's. A large file is downloaded
+    // from the stash and checked by its hash; its URL rides in the exec's
+    // environment, not on the command line.
     upload: async (data, remotePath) => {
-      const local = await mkdtemp(path.join(os.tmpdir(), "outrunner-upload-"));
       const staged = `/tmp/.upload-${randomUUID()}`;
-      try {
-        await writeFile(path.join(local, "file"), data);
-        await sandbox.filesystem.copyFromLocal(path.join(local, "file"), staged);
-      } finally {
-        await rm(local, { recursive: true, force: true });
+      if (stash && data.length > DIRECT_UPLOAD_MAX) {
+        const { url, sha256 } = await stash(data);
+        const fetched = await run(
+          [
+            "bash",
+            "-c",
+            `curl -fsSL --retry 3 --max-time 300 -o ${shellQuote(staged)} "$OUTRUNNER_UPLOAD_URL" && ` +
+              `echo ${shellQuote(`${sha256}  ${staged}`)} | sha256sum -c --status`,
+          ],
+          { OUTRUNNER_UPLOAD_URL: url },
+        );
+        if (fetched.exitCode !== 0) {
+          throw new Error(`Modal box couldn't download ${remotePath}: ${tail(fetched.stderr) || "checksum mismatch"}`);
+        }
+      } else {
+        await sandbox.filesystem.writeBytes(data, staged);
       }
       const moved = await run([
         "bash",

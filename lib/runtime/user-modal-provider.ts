@@ -21,6 +21,9 @@ export class UserModalRuntimeProvider extends ComputerRuntimeProvider {
           if (!found) throw new NoModalTokenError();
           return found;
         },
+        // Loaded when a box is first deployed to: storage is a server-only
+        // module, which a test of this provider doesn't need.
+        stash: async (data) => (await import("@/lib/runtime/storage/box-uploads")).stashForBox(data),
       }),
     );
   }

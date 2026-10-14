@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { InvalidError, NotFoundError, SnapshotCreationError, TimeoutError } from "modal";
 
 import { AGENT_PORT } from "@/lib/runtime/daytona/deploy";
-import { MODAL_IMAGE_SETUP, noSnapshot, sandboxParams } from "@/lib/runtime/sandbox/modal";
+import { box, MODAL_IMAGE_SETUP, noSnapshot, sandboxParams } from "@/lib/runtime/sandbox/modal";
 
 test("a box lives as long as Modal allows, opens the agent's port, and leaves a snapshot when it ends", () => {
   const params = sandboxParams({ "runtime.role": "computer" }, { cpu: 4, memoryGb: 8 });
@@ -41,3 +41,53 @@ test("only a missing, never-taken or failed snapshot means there's no disk to re
   assert.equal(noSnapshot(new TimeoutError("still pending")), false);
   assert.equal(noSnapshot(new Error("network")), false);
 });
+
+/** A sandbox that records each exec and write, every command succeeding. */
+function recordingSandbox() {
+  const execs: { argv: string[]; env?: Record<string, string> }[] = [];
+  const writes: { bytes: number; path: string }[] = [];
+  const done = (text = "") => ({ readText: async () => text });
+  const sandbox = {
+    sandboxId: "sb-test",
+    exec: async (argv: string[], params?: { env?: Record<string, string> }) => {
+      execs.push({ argv, env: params?.env });
+      return { stdout: done(), stderr: done(), wait: async () => 0 };
+    },
+    filesystem: {
+      writeBytes: async (data: Buffer, path: string) => {
+        writes.push({ bytes: data.length, path });
+      },
+    },
+  };
+  return { sandbox: sandbox as unknown as Parameters<typeof box>[0], execs, writes };
+}
+
+test("a large file reaches a box by download from the stash, checked by its hash", async () => {
+  const { sandbox, execs, writes } = recordingSandbox();
+  const stashed: number[] = [];
+  const stash = async (data: Buffer) => {
+    stashed.push(data.length);
+    return { url: "https://storage.example.test/signed?token=secret-token", sha256: "ab".repeat(32) };
+  };
+
+  await box(sandbox, stash).io.upload(Buffer.alloc(3_500_000), "/home/runtime/runtime-agent.gz");
+
+  assert.deepEqual(stashed, [3_500_000]);
+  assert.equal(writes.length, 0, "nothing pushed through the write stream");
+  const [download, move] = execs;
+  assert.match(download.argv.join(" "), /curl .*"\$OUTRUNNER_UPLOAD_URL".*sha256sum -c/);
+  assert.equal(download.env?.OUTRUNNER_UPLOAD_URL, "https://storage.example.test/signed?token=secret-token");
+  assert.ok(!download.argv.join(" ").includes("secret-token"), "the signed URL is on the command line");
+  assert.match(move.argv.join(" "), /install -D -o runtime -g runtime .* '\/home\/runtime\/runtime-agent\.gz'/);
+});
+
+test("a small file, or any without a stash, is written straight in", async () => {
+  const small = recordingSandbox();
+  await box(small.sandbox, async () => assert.fail("a small file was stashed")).io.upload(Buffer.from("{}"), "/home/runtime/a.json");
+  assert.equal(small.writes.length, 1);
+
+  const unstashed = recordingSandbox();
+  await box(unstashed.sandbox, undefined).io.upload(Buffer.alloc(3_500_000), "/home/runtime/runtime-agent.gz");
+  assert.deepEqual(unstashed.writes.map((w) => w.bytes), [3_500_000]);
+});
+
