@@ -1,11 +1,12 @@
 /**
- * The app sidebar's model: one list of workspaces, each with its sessions
- * nested underneath, cloud repositories and this Mac's folders together. Pure,
- * so the grouping, ordering, search and time labels are tested without React.
+ * The app sidebar's model: workspaces, each with its sessions nested
+ * underneath, on two tabs: the cloud's repositories, and this Mac's folders.
+ * Pure, so the grouping, ordering, search and time labels are tested without
+ * React.
  *
  * Cloud groups come from buildNavGroups and local ones from groupLocalSessions,
  * so the sidebar sorts and names them exactly as those already do; this only
- * puts the two side by side, newest activity first.
+ * orders each section by newest activity.
  */
 
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -47,6 +48,30 @@ export function foldedProjectsCookie(keys: string[]): string {
 /** Remember `keys` folded, for the next page the server renders. */
 export function rememberFoldedProjects(keys: string[]): void {
   document.cookie = foldedProjectsCookie(keys);
+}
+
+/** The sidebar's two tabs: sessions in the cloud, and on this Mac. */
+export type SidebarPlace = "cloud" | "local";
+
+/** The tab last picked: a cookie for the same reason as {@link SIDEBAR_COOKIE}. */
+export const SIDEBAR_PLACE_COOKIE = "sidebar-place";
+
+/** The tab a cookie holds; the cloud's for one that's missing or not ours. */
+export function readSidebarPlace(value: string | undefined): SidebarPlace {
+  return value === "local" ? "local" : "cloud";
+}
+
+/** Remember `place` picked, for the next page the server renders. */
+export function rememberSidebarPlace(place: SidebarPlace): void {
+  document.cookie = `${SIDEBAR_PLACE_COOKIE}=${place}; path=/; max-age=31536000; samesite=lax`;
+}
+
+/** The tab a page opens on: a session's own, so the session on screen is in
+ *  the list; elsewhere the one last picked. */
+export function placeFor(pathname: string, picked: SidebarPlace): SidebarPlace {
+  if (/^\/local\//.test(pathname)) return "local";
+  if (/^\/workspaces\//.test(pathname)) return "cloud";
+  return picked;
 }
 
 /** The sessions a project shows: all of them while it's open or a search is
@@ -155,9 +180,16 @@ export function buildSidebarGroups(
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));
-  // Both lists are newest-first inside; interleave the groups by their newest
-  // session. A stable sort keeps each kind's own order on a tie.
-  return [...cloud, ...local].sort((a, b) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at));
+  // The cloud's groups, then this Mac's, each by its newest session. A stable
+  // sort keeps each kind's own order on a tie.
+  const byNewest = (a: SidebarGroup, b: SidebarGroup) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at);
+  return [...cloud.sort(byNewest), ...local.sort(byNewest)];
+}
+
+/** The groups each tab lists: where a session runs is never mixed in one
+ *  list, so a repository with sessions in both places is in both. */
+export function sidebarSections(groups: SidebarGroup[]): Record<SidebarPlace, SidebarGroup[]> {
+  return { cloud: groups.filter((g) => !g.local), local: groups.filter((g) => g.local) };
 }
 
 /**

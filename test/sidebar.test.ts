@@ -10,9 +10,12 @@ import {
   FOLDED_PROJECTS_COOKIE,
   foldedProjectsCookie,
   newSessionHref,
+  placeFor,
   readFoldedProjects,
+  readSidebarPlace,
   relativeTime,
   shownSessions,
+  sidebarSections,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
@@ -64,23 +67,50 @@ function local(
   };
 }
 
-test("cloud repositories and Mac folders share one list, newest activity first", () => {
+test("the cloud's repositories come before this Mac's folders, each newest activity first", () => {
   const groups = buildSidebarGroups(
     [project("p1", "outrunner"), project("p2", "neev-ai")],
     [
       workspace("w1", "p1", "2026-10-01T00:00:00Z"),
       workspace("w2", "p2", "2026-10-05T00:00:00Z"),
     ],
-    [local("l1", "/Users/ada/notes", "2026-10-03T00:00:00Z")],
+    [
+      local("l1", "/Users/ada/notes", "2026-10-03T00:00:00Z"),
+      local("l2", "/Users/ada/site", "2026-10-09T00:00:00Z"),
+    ],
   );
   assert.deepEqual(
     groups.map((g) => [g.label, g.local]),
     [
       ["neev-ai", false],
-      ["notes", true],
       ["outrunner", false],
+      ["site", true],
+      ["notes", true],
     ],
   );
+});
+
+test("the tabs split cloud from this Mac, a repository in both places on both", () => {
+  const { cloud, local: mac } = sidebarSections(
+    buildSidebarGroups(
+      [project("p1", "outrunner")],
+      [workspace("w1", "p1", "2026-10-01T00:00:00Z")],
+      [local("l1", "/Users/ada/outrunner", "2026-10-03T00:00:00Z")],
+    ),
+  );
+  assert.deepEqual(cloud.map((g) => [g.label, g.key]), [["outrunner", "cloud:p1"]]);
+  assert.deepEqual(mac.map((g) => [g.label, g.key]), [["outrunner", "local:/Users/ada/outrunner"]]);
+});
+
+test("a search that only matches one place leaves the other tab empty", () => {
+  const groups = buildSidebarGroups(
+    [project("p1", "outrunner")],
+    [workspace("w1", "p1", "2026-10-01T00:00:00Z", "Fix the login page")],
+    [local("l1", "/Users/ada/notes", "2026-10-03T00:00:00Z", "Write the README")],
+  );
+  const { cloud, local: mac } = sidebarSections(filterSidebarGroups(groups, "readme"));
+  assert.deepEqual(cloud, []);
+  assert.deepEqual(mac.map((g) => g.label), ["notes"]);
 });
 
 test("sessions nest under their workspace, newest first, with links and times", () => {
@@ -150,16 +180,33 @@ test("group keys stay distinct between a repository and a folder of the same nam
   assert.equal(new Set(keys).size, keys.length);
 });
 
+test("a session page opens on its own tab; any other page on the one last picked", () => {
+  assert.equal(placeFor("/local/l1", "cloud"), "local");
+  assert.equal(placeFor("/workspaces/w1", "local"), "cloud");
+  assert.equal(placeFor("/new", "local"), "local");
+  assert.equal(placeFor("/settings/general", "cloud"), "cloud");
+  // Not a session page, only a path that starts like one.
+  assert.equal(placeFor("/localhost", "cloud"), "cloud");
+});
+
+test("the tab cookie reads the cloud's for anything but this Mac's", () => {
+  assert.equal(readSidebarPlace("local"), "local");
+  assert.equal(readSidebarPlace("cloud"), "cloud");
+  assert.equal(readSidebarPlace(undefined), "cloud");
+  assert.equal(readSidebarPlace("mac"), "cloud");
+});
+
 test("a Mac session ranks by its last use, not by when it was made", () => {
   const groups = buildSidebarGroups(
-    [project("p1", "outrunner")],
-    [workspace("w1", "p1", "2026-10-05T00:00:00Z")],
+    [],
+    [],
     [
-      // Made weeks ago, used today: above the cloud session from two days ago.
+      // Made weeks ago, used today: above the folder made two days ago.
       local("l1", "/Users/ada/notes", "2026-09-01T00:00:00Z", "Notes", "2026-10-07T09:00:00Z"),
+      local("l2", "/Users/ada/site", "2026-10-05T00:00:00Z"),
     ],
   );
-  assert.deepEqual(groups.map((g) => g.label), ["notes", "outrunner"]);
+  assert.deepEqual(groups.map((g) => g.label), ["notes", "site"]);
   assert.equal(groups[0].sessions[0].at, "2026-10-07T09:00:00Z");
 });
 
@@ -172,14 +219,17 @@ test("times are compared as instants, not as text", () => {
   // As text, "12:00:00Z" sorts after "12:00:00.001Z", and Postgres writes
   // "+00:00" where the agent writes "Z". Newest by instant must still win.
   const groups = buildSidebarGroups(
-    [project("p1", "cloud-newer"), project("p2", "cloud-older")],
+    [project("p1", "cloud-older"), project("p2", "cloud-newer")],
     [
-      workspace("w1", "p1", "2026-10-07T12:00:00.001+00:00"),
-      workspace("w2", "p2", "2026-10-07T11:59:59.999+00:00"),
+      workspace("w1", "p1", "2026-10-07T11:59:59.999+00:00"),
+      workspace("w2", "p2", "2026-10-07T12:00:00.001+00:00"),
     ],
-    [local("l1", "/x/mac", "2026-10-07T12:00:00Z")],
+    [
+      local("l1", "/x/mac-older", "2026-10-07T12:00:00Z"),
+      local("l2", "/x/mac-newer", "2026-10-07T12:00:00.001Z"),
+    ],
   );
-  assert.deepEqual(groups.map((g) => g.label), ["cloud-newer", "mac", "cloud-older"]);
+  assert.deepEqual(groups.map((g) => g.label), ["cloud-newer", "cloud-older", "mac-newer", "mac-older"]);
 });
 
 test("a session's own group lists its newest first even across time formats", () => {
