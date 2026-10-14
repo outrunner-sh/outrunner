@@ -18,6 +18,7 @@ import {
   toolsToInstall,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
+import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 export type SessionLocation = "cloud" | "local";
 
@@ -58,7 +59,9 @@ export function useSessionLocation() {
     null,
   );
 
-  const location: SessionLocation = runtime.state === "ready" ? chosen : "cloud";
+  // Always the cloud while new local sessions are off, whatever was chosen
+  // before (lib/session/local-sessions.ts).
+  const location: SessionLocation = LOCAL_SESSIONS && runtime.state === "ready" ? chosen : "cloud";
 
   // Whether this server runs Outrunner's models: then a Mac whose Claude Code
   // isn't logged in runs its sessions on those instead of being blocked.

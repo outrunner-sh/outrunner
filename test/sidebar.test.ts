@@ -114,6 +114,7 @@ test("a Mac folder links its sessions to /local and starts new ones in the folde
       local("a", "/Users/ada/app", "2026-10-01T00:00:00Z", "Write the README"),
       local("b", "/Users/ada/app", "2026-10-04T00:00:00Z", ""),
     ],
+    { startLocal: true },
   );
   assert.equal(group.key, "local:/Users/ada/app");
   assert.equal(group.detail, "/Users/ada/app");
@@ -374,4 +375,10 @@ test("a missing or garbled folded-projects cookie folds nothing", () => {
   assert.deepEqual(readFoldedProjects("%E0%A4%A"), []);
   assert.deepEqual(readFoldedProjects(encodeURIComponent('{"not":"a list"}')), []);
   assert.deepEqual(readFoldedProjects(encodeURIComponent('["cloud:p1", 7, null]')), ["cloud:p1"]);
+});
+
+test("while new local sessions are off, a Mac folder lists its sessions but starts none", () => {
+  const [group] = buildSidebarGroups([], [], [local("a", "/Users/ada/app", "2026-10-01T00:00:00Z", "Write the README")]);
+  assert.equal(group.start, null);
+  assert.deepEqual(group.sessions.map((s) => s.href), ["/local/a"]);
 });

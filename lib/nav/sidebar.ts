@@ -13,6 +13,7 @@ import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessi
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 /** Whether the sidebar is collapsed: a cookie, so the layout reads it on the
  *  server and the first render already has the sidebar as it was left (kept in
@@ -105,7 +106,8 @@ export type SidebarGroup = {
   /** Lives on this Mac rather than in the cloud. */
   local: boolean;
   /** Where "new session in this workspace" starts; null when its repository
-   *  could not be loaded, so there is nothing to start one in. */
+   *  could not be loaded, so there is nothing to start one in, or for a Mac
+   *  folder while new local sessions are off. */
   start: { kind: "cloud"; projectId: string } | { kind: "local"; folder: string } | null;
   /** Newest first. */
   sessions: SidebarSession[];
@@ -115,6 +117,9 @@ export function buildSidebarGroups(
   projects: NavProject[],
   workspaces: Workspace[],
   localSessions: LocalSession[],
+  /** Whether a Mac folder can start a new session (lib/session/local-sessions.ts);
+   *  its sessions are listed either way. */
+  { startLocal = LOCAL_SESSIONS }: { startLocal?: boolean } = {},
 ): SidebarGroup[] {
   const known = new Set(projects.map((p) => p.id));
   const cloud: SidebarGroup[] = buildNavGroups(projects, workspaces).map(({ project, items }) => ({
@@ -138,7 +143,7 @@ export function buildSidebarGroups(
     label: group.label,
     detail: group.folder,
     local: true,
-    start: { kind: "local", folder: group.folder },
+    start: startLocal ? { kind: "local", folder: group.folder } : null,
     sessions: group.sessions
       .map((s) => ({
         id: s.workspaceId,
