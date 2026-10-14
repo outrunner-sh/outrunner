@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -322,6 +323,29 @@ test("deployClaude runs install → upload → prep → seed → launch → heal
     sleep: noSleep,
   });
   assert.deepEqual(order, ["install", "upload", "prep", "seed", "launch", "health"]);
+});
+
+test("deployClaude doesn't upload an agent the box has already (a restored one)", async () => {
+  const binary = Buffer.from("bin");
+  const order: string[] = [];
+  const io: BoxIO = {
+    exec: async (command) => {
+      if (command.includes("sha256sum")) {
+        return { stdout: `${createHash("sha256").update(binary).digest("hex")}\n`, exitCode: 0 };
+      }
+      if (command.includes("gunzip")) order.push("prep");
+      if (command.includes("curl")) return { stdout: "200", exitCode: 0 };
+      return { stdout: "", exitCode: 0 };
+    },
+    launch: async () => {
+      order.push("launch");
+    },
+    upload: async () => {
+      order.push("upload");
+    },
+  };
+  await deployClaude(io, binary, "secret", { root: "/home/runtime", attempts: 1, sleep: noSleep });
+  assert.deepEqual(order, ["launch"]);
 });
 
 test("deployClaude throws (and never launches) when the config seed fails", async () => {

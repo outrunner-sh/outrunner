@@ -14,6 +14,7 @@
  * `runtime-computer-v2` and delete this whole path — see the pt2 spike report.
  */
 
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 import type { ProvisionStage, StageTiming, ProvisionTimings } from "@/lib/runtime/types";
@@ -503,8 +504,8 @@ export function claudeAgentLaunchScript(
   return `setsid env ${assignments} ${root}/runtime-agent > ${root}/runtime-agent.log 2>&1 < /dev/null &`;
 }
 
-/** Full Claude deploy on one box: install tmux → upload+unpack the agent →
- *  launch it in Claude mode → wait for health. Reuses the root-parameterized
+/** Full Claude deploy on one box: install tmux → upload+unpack the agent
+ *  (unless that build is there) → launch it in Claude mode → wait for health. Reuses the root-parameterized
  *  loopback /health wait. */
 export async function deployClaude(
   io: BoxIO,
@@ -518,14 +519,22 @@ export async function deployClaude(
       `claude engine install failed (exit ${install.exitCode}): ${install.stdout.trim()}`,
     );
   }
-  await io.upload(compressAgent(binary), `${opts.root}/runtime-agent.gz`);
-  const prep = await io.exec(
-    `bash -lc ${shellQuote(
-      `gunzip -f ${opts.root}/runtime-agent.gz && chmod 755 ${opts.root}/runtime-agent`,
-    )}`,
+  // A box restored on the disk an ended one left (Modal) has the agent there
+  // already. The upload is the slowest part of a deploy, so only a different
+  // build goes up.
+  const have = await io.exec(
+    `bash -lc ${shellQuote(`sha256sum ${opts.root}/runtime-agent 2>/dev/null | cut -c1-64`)}`,
   );
-  if (prep.exitCode !== 0) {
-    throw new Error(`claude agent prep failed (exit ${prep.exitCode}): ${prep.stdout.trim()}`);
+  if (have.stdout.trim() !== createHash("sha256").update(binary).digest("hex")) {
+    await io.upload(compressAgent(binary), `${opts.root}/runtime-agent.gz`);
+    const prep = await io.exec(
+      `bash -lc ${shellQuote(
+        `gunzip -f ${opts.root}/runtime-agent.gz && chmod 755 ${opts.root}/runtime-agent`,
+      )}`,
+    );
+    if (prep.exitCode !== 0) {
+      throw new Error(`claude agent prep failed (exit ${prep.exitCode}): ${prep.stdout.trim()}`);
+    }
   }
   const seed = await io.exec(`bash -lc ${shellQuote(claudeConfigSeedScript(opts.root))}`);
   if (seed.exitCode !== 0) {
