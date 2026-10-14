@@ -9,10 +9,33 @@
  */
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
+import type { HandoffStorage } from "@/lib/runtime/handoff/storage";
 import {
   SNAPSHOT_BUCKET,
   type SnapshotStorage,
 } from "@/lib/runtime/storage/snapshots";
+
+/** The same bucket for handoff packages, which also read a manifest back and
+ *  remove a package once it is used. */
+export function supabaseHandoffStorage(): HandoffStorage {
+  const bucket = createSupabaseAdminClient().storage.from(SNAPSHOT_BUCKET);
+  return {
+    ...supabaseSnapshotStorage(),
+    async readText(path) {
+      const { data, error } = await bucket.download(path);
+      if (error) {
+        // Storage answers a missing object with "Object not found".
+        if (/not found/i.test(error.message)) return null;
+        throw new Error(`failed to read "${path}": ${error.message}`);
+      }
+      return data.text();
+    },
+    async remove(paths) {
+      const { error } = await bucket.remove(paths);
+      if (error) throw new Error(`failed to remove a handoff package: ${error.message}`);
+    },
+  };
+}
 
 export function supabaseSnapshotStorage(): SnapshotStorage {
   const bucket = createSupabaseAdminClient().storage.from(SNAPSHOT_BUCKET);

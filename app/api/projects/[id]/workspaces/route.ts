@@ -9,6 +9,7 @@ import {
   getProject,
   getRuntimeComputerByProject,
   markRuntimeComputerStoppedIfReady,
+  setWorkspaceTitleIfUnset,
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -16,6 +17,13 @@ import { keySource } from "@/lib/openrouter/keys";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import {
+  HandoffUnavailableError,
+  isHandoffId,
+  loadHandoff,
+  removeHandoff,
+} from "@/lib/runtime/handoff/storage";
+import { supabaseHandoffStorage } from "@/lib/runtime/storage/supabase-adapter";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
@@ -47,6 +55,16 @@ function isValidBranchName(branch: string): boolean {
 
 function generatedBranch(): string {
   return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+}
+
+/** The project's computer runs an agent from before sessions could be
+ *  continued: it made a fresh branch instead of seeding one. */
+class AgentTooOldError extends Error {
+  constructor() {
+    super(
+      "This project's cloud computer runs an older Outrunner agent that can't continue a session yet. Start a new cloud session instead, or try again once the computer is updated.",
+    );
+  }
 }
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
@@ -98,11 +116,28 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { branch?: unknown };
+  let body: { branch?: unknown; continueFrom?: { handoffId?: unknown } };
   try {
-    body = (await request.json()) as { branch?: unknown };
+    body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  // Continuing a session from elsewhere: the package its agent uploaded (only
+  // ever the caller's own, by the path loadHandoff builds) seeds this one.
+  const handoffId = body.continueFrom?.handoffId;
+  if (body.continueFrom !== undefined && !isHandoffId(handoffId)) {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  const handoffs = isHandoffId(handoffId) ? supabaseHandoffStorage() : null;
+  let seed: Awaited<ReturnType<typeof loadHandoff>> | null = null;
+  if (handoffs && isHandoffId(handoffId)) {
+    try {
+      seed = await loadHandoff(handoffs, owner.id, handoffId);
+    } catch (error) {
+      if (!(error instanceof HandoffUnavailableError)) throw error;
+      return NextResponse.json({ error: error.message }, { status: 410 });
+    }
   }
 
   const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";
@@ -127,6 +162,15 @@ export async function POST(request: Request, context: RouteContext) {
   if (!hasClaude && !(provider instanceof DaytonaRuntimeProvider)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
+  // ...or continue a session from a package.
+  if (seed && !(provider instanceof DaytonaRuntimeProvider)) {
+    return NextResponse.json(
+      { error: "Continuing a session needs Outrunner's cloud computers, which this server doesn't run." },
+      { status: 409 },
+    );
+  }
+  // A continued session keeps comparing with what it compared with before.
+  const baseBranch = seed?.manifest.baseBranch || project.defaultBranch;
 
   let workspace;
   try {
@@ -134,9 +178,16 @@ export async function POST(request: Request, context: RouteContext) {
       ownerId: owner.id,
       projectId: project.id,
       branch: requestedBranch || generatedBranch(),
-      baseBranch: project.defaultBranch,
+      baseBranch,
       provider: provider.name,
     });
+    if (seed?.manifest.title) {
+      // The session's name; it is still the session without it.
+      const id = workspace.id;
+      await setWorkspaceTitleIfUnset(id, seed.manifest.title).catch((error: unknown) =>
+        console.error(`Workspace ${id} title could not be set`, error),
+      );
+    }
   } catch (error) {
     const message = safeErrorMessage(error);
     return NextResponse.json(
@@ -203,11 +254,16 @@ export async function POST(request: Request, context: RouteContext) {
         {
           workspaceId: workspace.id,
           repoFullName: project.fullName,
-          baseBranch: project.defaultBranch,
+          baseBranch,
           branch: workspace.branch,
+          ...(seed ? { from: seed } : {}),
         },
         identity,
       );
+      if (seed && !created.seeded) {
+        await agent.destroyWorkspace(identity).catch(() => {});
+        throw new AgentTooOldError();
+      }
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
@@ -253,18 +309,27 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
     const noModel = error instanceof NoStartingModelError;
+    const tooOld = error instanceof AgentTooOldError;
     try {
       await updateWorkspace(workspace.id, {
         status: "failed",
-        errorMessage: noModel ? error.message : "Provisioning failed. Check Outrunner's setup and try again.",
+        errorMessage: noModel || tooOld ? error.message : "Provisioning failed. Check Outrunner's setup and try again.",
       });
     } catch (updateError) {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
     }
     if (noModel) return needsClaude(error.message);
+    if (tooOld) return NextResponse.json({ error: error.message }, { status: 409 });
     return NextResponse.json(
       { error: "Could not create the workspace. Check Outrunner's setup and try again." },
       { status: 500 },
     );
+  } finally {
+    // Used or not, a package is made once: a retry packs the session again.
+    if (handoffs && isHandoffId(handoffId)) {
+      await removeHandoff(handoffs, owner.id, handoffId).catch((error: unknown) =>
+        console.error(`Handoff ${handoffId} could not be removed`, error),
+      );
+    }
   }
 }

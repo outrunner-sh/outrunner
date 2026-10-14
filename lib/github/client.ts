@@ -195,6 +195,34 @@ export async function listGitHubRepositories(
   );
 }
 
+/**
+ * One repository by its `owner/name`, as the user's token sees it; null when
+ * the token can't see it (GitHub answers 404 for a private repository it may
+ * not read, not 403).
+ */
+export async function getGitHubRepository(
+  token: string,
+  fullName: string,
+): Promise<GitHubRepository | null> {
+  const response = await fetchGitHub(new URL(`/repos/${fullName}`, GITHUB_API_URL), token);
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    console.error("GitHub repository request was rejected", { status: response.status });
+    throw new GitHubSyncError(
+      response.status === 401 || response.status === 403
+        ? "GitHub could not authorize the configured token."
+        : "GitHub could not look up the repository. Please try again.",
+      response.status,
+    );
+  }
+  try {
+    return normalizeRepository((await response.json()) as GitHubApiRepository);
+  } catch (error) {
+    console.error("GitHub returned an unreadable repository response", error);
+    throw new GitHubSyncError("GitHub returned an invalid response.");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // M9 publish: verify the token owner, then find-or-create one pull request.
 // ---------------------------------------------------------------------------

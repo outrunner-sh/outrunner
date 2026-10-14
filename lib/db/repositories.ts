@@ -58,6 +58,21 @@ export async function getProject(id: string): Promise<Project | null> {
   return data ? toProject(data) : null;
 }
 
+/** The signed-in user's project for a GitHub repository, by its `owner/name`
+ *  (GitHub's names ignore case); null when it isn't one of theirs. */
+export async function getProjectByFullName(fullName: string): Promise<Project | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("projects")
+    .select("*")
+    .ilike("full_name", fullName.replace(/[\\%_]/g, "\\$&"))
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toProject(data) : null;
+}
+
 /** Upsert the repositories returned by GitHub, keyed on (owner, repo id). */
 export async function upsertProjects(
   ownerId: string,

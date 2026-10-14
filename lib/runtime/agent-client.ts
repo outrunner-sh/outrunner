@@ -88,10 +88,14 @@ export class AgentClient {
   async createWorkspace(
     req: CreateWorkspaceRequest,
     identity: WorkspaceIdentity,
-  ): Promise<{ worktree: string }> {
+  ): Promise<{ worktree: string; seeded?: boolean }> {
     const body = CreateWorkspaceRequest.parse(req);
-    return this.post("/workspaces", identity, body) as Promise<{
+    // A seed downloads its package and imports it into the mirror first.
+    const timeout = body.from ? AGENT_LIFECYCLE_TIMEOUT_MS : AGENT_REQUEST_TIMEOUT_MS;
+    // `seeded` is only ever true from an agent that knows `from`.
+    return this.post("/workspaces", identity, body, timeout) as Promise<{
       worktree: string;
+      seeded?: boolean;
     }>;
   }
 
