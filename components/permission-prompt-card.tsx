@@ -20,7 +20,7 @@ export function PermissionPromptCard({
   onAnswer,
 }: {
   prompt: PermissionPrompt;
-  /** The option being sent, while it is. */
+  /** The option being sent, while it is: every button waits for it. */
   answering: string | null;
   error: string | null;
   onAnswer: (key: string) => void;
