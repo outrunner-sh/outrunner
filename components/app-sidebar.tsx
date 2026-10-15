@@ -26,7 +26,7 @@ import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
-import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
+import { startNewSessionsOn, startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
 import {
   activeSessionId,
   buildSidebarGroups,
@@ -107,6 +107,10 @@ export function AppSidebar({
   };
   const otherPlace: SidebarPlace = place === "cloud" ? "local" : "cloud";
   const tabPanel = useId();
+  // New sessions start where the tab is: New Session, ⌘N, and a form open now.
+  useEffect(() => {
+    startNewSessionsOn(place);
+  }, [place]);
 
   // Projects folded shut with their chevron, remembered across visits.
   const [folded, setFolded] = useState(initialFolded);

@@ -428,7 +428,9 @@ test("a missing or garbled folded-projects cookie folds nothing", () => {
 });
 
 test("while new local sessions are off, a Mac folder lists its sessions but starts none", () => {
-  const [group] = buildSidebarGroups([], [], [local("a", "/Users/ada/app", "2026-10-01T00:00:00Z", "Write the README")]);
+  const [group] = buildSidebarGroups([], [], [local("a", "/Users/ada/app", "2026-10-01T00:00:00Z", "Write the README")], {
+    startLocal: false,
+  });
   assert.equal(group.start, null);
   assert.deepEqual(group.sessions.map((s) => s.href), ["/local/a"]);
 });

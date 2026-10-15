@@ -32,6 +32,9 @@ export type FolderChoice =
   | { state: "error"; message: string };
 
 const LOCATION_KEY = "outrunner:session-location";
+/** Told when the location is set from outside the form (the sidebar's tab),
+ *  so a form already open follows it. */
+const LOCATION_EVENT = "outrunner:session-location";
 
 function savedLocation(): SessionLocation {
   try {
@@ -89,6 +92,16 @@ export function useSessionLocation() {
   useEffect(() => {
     if (setupNeeded) void setUpClaude();
   }, [setupNeeded, setUpClaude]);
+
+  // The sidebar's tab moved: a form already open follows it.
+  useEffect(() => {
+    const follow = (event: Event) => {
+      const next = (event as CustomEvent<SessionLocation>).detail;
+      if (next === "cloud" || next === "local") setChosen(next);
+    };
+    window.addEventListener(LOCATION_EVENT, follow);
+    return () => window.removeEventListener(LOCATION_EVENT, follow);
+  }, []);
 
   const setLocation = useCallback((next: SessionLocation) => {
     setChosen(next);
@@ -215,6 +228,13 @@ export function startNextSessionIn(folder: string): void {
  *  so a form last used for this Mac does not ignore the repository chosen. */
 export function startNextSessionInCloud(): void {
   saveLocation("cloud");
+}
+
+/** Make new sessions start where the sidebar's tab is, Cloud or This Mac,
+ *  a new-session form already open included. Its own choice still switches. */
+export function startNewSessionsOn(location: SessionLocation): void {
+  saveLocation(location);
+  window.dispatchEvent(new CustomEvent(LOCATION_EVENT, { detail: location }));
 }
 
 function saveLocation(location: SessionLocation): void {

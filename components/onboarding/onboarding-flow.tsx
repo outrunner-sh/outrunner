@@ -7,7 +7,7 @@ import { CloudSetup, type CloudModel } from "@/components/onboarding/cloud-setup
 import { MacSetup } from "@/components/onboarding/mac-setup";
 import { Button } from "@/components/ui/button";
 import type { OnboardingEnv, OnboardingFolder, RunTarget } from "@/lib/onboarding/types";
-import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
+import { LOCAL_IN_ONBOARDING } from "@/lib/session/local-sessions";
 import { cn } from "@/lib/utils";
 
 type Step = "welcome" | "where" | "setup";
@@ -22,12 +22,12 @@ type Step = "welcome" | "where" | "setup";
 export function OnboardingFlow({
   env,
   onLeave,
-  localSessions = LOCAL_SESSIONS,
+  localSessions = LOCAL_IN_ONBOARDING,
 }: {
   env: OnboardingEnv;
   /** Go where onboarding sends the user next: the first session, or home. */
   onLeave?: (href: string) => void;
-  /** Whether This Mac is offered (lib/session/local-sessions.ts). */
+  /** Whether This Mac is offered (LOCAL_IN_ONBOARDING). */
   localSessions?: boolean;
 }) {
   const steps: readonly Step[] = localSessions ? ["welcome", "where", "setup"] : ["welcome", "setup"];
