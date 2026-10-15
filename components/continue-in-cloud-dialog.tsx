@@ -2,17 +2,28 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/loaders";
+import { type CreatingStage, WorkspaceCreating } from "@/components/workspace-creating";
 import { localAgentRequest, localTarget, type LocalSession } from "@/lib/desktop/local-runtime";
 import { continueInCloud, continueInCloudBlocker, type ContinueStep } from "@/lib/session/continue-in-cloud";
 import { cn } from "@/lib/utils";
 
-const STEP_LABEL: Record<ContinueStep, string> = {
-  packing: "Packing up the session",
-  starting: "Starting it in the cloud",
-};
+/** The cloud's part, on the same time estimate as a new cloud session's: a
+ *  computer to set up (or one already up), then this session's code and chat
+ *  brought onto it. The last stage holds until the session is really up. */
+function cloudStages(withChat: boolean): CreatingStage[] {
+  return [
+    { label: "Preparing the cloud", at: 0 },
+    { label: "Provisioning sandbox", at: 3 },
+    { label: "Installing agent", at: 12 },
+    { label: "Cloning repository", at: 28 },
+    { label: "Bringing over your code", at: 36 },
+    ...(withChat ? [{ label: "Restoring the chat", at: 40 }] : []),
+    { label: "Starting session", at: 44 },
+  ];
+}
 
 const CHOICES = [
   { withChat: true, title: "Keep the chat", detail: "Claude carries on the conversation where it left off." },
@@ -37,7 +48,6 @@ export function ContinueInCloudDialog({
   const [withChat, setWithChat] = useState(true);
   const [state, setState] = useState<{ step: ContinueStep | null; error: string | null }>({ step: null, error: null });
   const blocker = continueInCloudBlocker(session);
-  const busy = state.step !== null;
 
   const start = async () => {
     setState({ step: "packing", error: null });
@@ -48,8 +58,7 @@ export function ContinueInCloudDialog({
         exportSession: (body) => localAgentRequest(target, "POST", `/workspaces/${session.workspaceId}/export`, body),
         onStep: (step) => setState({ step, error: null }),
       });
-      setState({ step: null, error: null });
-      onOpenChange(false);
+      // The progress stays up until the new session's page replaces this one.
       router.push(`/workspaces/${id}`);
       router.refresh();
     } catch (error) {
@@ -60,17 +69,33 @@ export function ContinueInCloudDialog({
     }
   };
 
+  // Once it is under way, the whole window shows its progress, as a new
+  // cloud session's does, until the new session opens.
+  if (state.step) {
+    return createPortal(
+      <div className="fixed inset-0 z-50 bg-background">
+        <WorkspaceCreating
+          title="Continuing in the cloud"
+          projectName={session.repo ?? session.name}
+          branch={session.branch || session.baseBranch}
+          before={[{ label: "Packing up the session on this Mac", done: state.step === "starting" }]}
+          stages={cloudStages(withChat)}
+          estimateSeconds={60}
+        />
+      </div>,
+      document.body,
+    );
+  }
+
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        // Not while it works: the outcome has to be seen.
-        if (busy) return;
         if (!next) setState({ step: null, error: null });
         onOpenChange(next);
       }}
     >
-      <DialogContent className="max-w-md gap-5 bg-[#0d0d0d]" showClose={!busy}>
+      <DialogContent className="max-w-md gap-5 bg-[#0d0d0d]">
         <div className="space-y-2">
           <DialogTitle className="text-[15px] font-medium leading-snug">Continue in the cloud</DialogTitle>
           <DialogDescription className="text-[13px] text-muted-foreground">
@@ -88,10 +113,9 @@ export function ContinueInCloudDialog({
                   type="button"
                   role="radio"
                   aria-checked={withChat === choice.withChat}
-                  disabled={busy}
                   onClick={() => setWithChat(choice.withChat)}
                   className={cn(
-                    "rounded-lg border px-3.5 py-3 text-left transition-colors disabled:opacity-60",
+                    "rounded-lg border px-3.5 py-3 text-left transition-colors",
                     withChat === choice.withChat
                       ? "border-foreground/40 bg-foreground/[0.04]"
                       : "border-border/60 hover:bg-foreground/[0.02]",
@@ -116,21 +140,13 @@ export function ContinueInCloudDialog({
         )}
 
         <div className="flex items-center justify-end gap-2">
-          {busy ? (
-            <span role="status" className="inline-flex h-8 items-center gap-2 text-[13px] text-muted-foreground">
-              <Spinner /> {STEP_LABEL[state.step!]}
-            </span>
-          ) : (
-            <>
-              <button type="button" onClick={() => onOpenChange(false)} className="route-state-button">
-                {blocker ? "Close" : "Cancel"}
-              </button>
-              {!blocker && (
-                <button type="button" onClick={() => void start()} className="route-state-button is-primary">
-                  Continue in cloud
-                </button>
-              )}
-            </>
+          <button type="button" onClick={() => onOpenChange(false)} className="route-state-button">
+            {blocker ? "Close" : "Cancel"}
+          </button>
+          {!blocker && (
+            <button type="button" onClick={() => void start()} className="route-state-button is-primary">
+              Continue in cloud
+            </button>
           )}
         </div>
       </DialogContent>
