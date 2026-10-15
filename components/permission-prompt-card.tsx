@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
  * What Claude is waiting on, in the chat: the command it wants to run, Claude
  * Code's reason for asking, and its options as buttons, the first of them
  * (Yes) the main one. Where the "Working" row would be, since that is where
- * the session is stopped.
+ * the session is stopped. No stops that step, and Claude asks what to do
+ * instead, which is answered in the composer as any message.
  */
 export function PermissionPromptCard({
   prompt,
