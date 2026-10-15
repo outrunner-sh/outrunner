@@ -40,6 +40,7 @@ type sessions interface {
 	SubmitEnter(ctx context.Context, name string) error
 	SendKey(ctx context.Context, name, key string) error
 	CapturePane(ctx context.Context, name string) (string, error)
+	CapturePaneJoined(ctx context.Context, name string) (string, error)
 }
 
 // Service holds the on-box layout and the tmux manager. One instance per agent.

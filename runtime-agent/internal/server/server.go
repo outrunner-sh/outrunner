@@ -85,6 +85,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
+	mux.HandleFunc("GET /workspaces/{id}/prompt", s.authed(s.permissionPrompt))
+	mux.HandleFunc("POST /workspaces/{id}/prompt", s.authed(s.answerPrompt))
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
 	mux.HandleFunc("GET /workspaces/{id}/changes", s.authed(s.workspaceChanges))
 	return mux
@@ -217,6 +219,41 @@ func (s *Server) exportWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	default:
 		writeJSON(w, http.StatusOK, manifest)
+	}
+}
+
+// permissionPrompt answers with the question Claude is waiting on in its
+// terminal ({"prompt": null} when none), for the chat to show.
+func (s *Server) permissionPrompt(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	prompt, err := s.ws.PermissionPrompt(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"prompt": prompt})
+}
+
+// answerPrompt picks an option of the waiting prompt; 409 when that prompt is
+// no longer the one waiting.
+func (s *Server) answerPrompt(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.AnswerPromptRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.AnswerPrompt(r.Context(), r.PathValue("id"), req)
+	switch {
+	case errors.Is(err, workspace.ErrNoPrompt):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"result": "answered"})
 	}
 }
 

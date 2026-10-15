@@ -223,6 +223,38 @@ type SeedFrom struct {
 	Downloads []HandoffFile   `json:"downloads"`
 }
 
+// PermissionPrompt is a question Claude Code is stopped on in its terminal,
+// waiting for the user: may it run this command, fetch this page. The chat
+// shows it with its options, so a session doesn't sit "working" on a prompt
+// nobody sees. ID names this prompt: an answer is refused if another took its
+// place since it was read.
+type PermissionPrompt struct {
+	ID string `json:"id"`
+	// Title is what it asks about, e.g. "Bash command".
+	Title string `json:"title"`
+	// Detail is Claude Code's own words about it: what it is for, and why it
+	// asks.
+	Detail []string `json:"detail"`
+	// Code is the command (or other text) it would run, as shown.
+	Code     string         `json:"code,omitempty"`
+	Question string         `json:"question"`
+	Options  []PromptOption `json:"options"`
+}
+
+// PromptOption is one answer: Key is the digit that picks it.
+type PromptOption struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	// Hint is the explanation Claude Code gives after the label, if any.
+	Hint string `json:"hint,omitempty"`
+}
+
+// AnswerPromptRequest picks an option of the prompt with ID.
+type AnswerPromptRequest struct {
+	ID  string `json:"id"`
+	Key string `json:"key"`
+}
+
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
 	Error struct {
