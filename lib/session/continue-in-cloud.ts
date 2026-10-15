@@ -12,11 +12,10 @@
 import type { HandoffFile } from "@/lib/runtime/agent-protocol";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 
-/** Why a session can't continue in the cloud; null when it can. */
-export function continueInCloudBlocker(session: Pick<LocalSession, "inPlace" | "repo">): string | null {
-  if (session.inPlace) {
-    return "This session edits its folder in place, with no git branch to take along.";
-  }
+/** Why a session can't continue in the cloud; null when it can. A session
+ *  editing its folder in place can, once the folder is a git repository: the
+ *  Mac's agent then says if it has no commit yet. */
+export function continueInCloudBlocker(session: Pick<LocalSession, "repo">): string | null {
   if (!session.repo) {
     return "Only a session on a GitHub repository can continue in the cloud: this folder's origin isn't on GitHub.";
   }

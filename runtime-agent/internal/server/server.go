@@ -211,7 +211,7 @@ func (s *Server) exportWorkspace(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
-	case errors.Is(err, workspace.ErrInPlaceExport), errors.Is(err, workspace.ErrClaudeBusy), errors.Is(err, snapshot.ErrNoCommit):
+	case errors.Is(err, workspace.ErrChatNotOwned), errors.Is(err, workspace.ErrClaudeBusy), errors.Is(err, snapshot.ErrNoCommit):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())

@@ -92,10 +92,9 @@ test("removing a package removes every file it could hold", async () => {
   for (const path of removed[0]) assert.ok(path.startsWith(`handoffs/${OWNER}/${HANDOFF}/`));
 });
 
-test("only a git session on a GitHub repository can continue in the cloud", () => {
-  assert.match(continueInCloudBlocker({ inPlace: true, repo: "acme/app" }) ?? "", /in place/);
-  assert.match(continueInCloudBlocker({ inPlace: false }) ?? "", /GitHub/);
-  assert.equal(continueInCloudBlocker({ inPlace: false, repo: "acme/app" }), null);
+test("only a session on a GitHub repository can continue in the cloud", () => {
+  assert.match(continueInCloudBlocker({}) ?? "", /GitHub/);
+  assert.equal(continueInCloudBlocker({ repo: "acme/app" }), null);
 });
 
 type Call = { url: string; method: string; body: unknown };

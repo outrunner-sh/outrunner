@@ -1222,9 +1222,10 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	})
 }
 
-// ErrInPlaceExport refuses to pack a session that edits a folder in place: it
-// has no branch of its own to carry, and its files are the user's folder.
-var ErrInPlaceExport = errors.New("a session working in a folder in place can't be continued elsewhere")
+// ErrChatNotOwned refuses to take the chat of a session whose transcript can't
+// be told apart from others in its folder (an in-place session from before
+// sessions had ids): it might be someone else's conversation.
+var ErrChatNotOwned = errors.New("this session's chat can't be told apart from other Claude Code chats in its folder: choose Start fresh to continue with only the code")
 
 // ErrClaudeBusy refuses to pack a session mid-turn: its files and conversation
 // are still changing.
@@ -1234,11 +1235,12 @@ var ErrClaudeBusy = errors.New("Claude is still working: wait for it to finish, 
 // its branch's own commits, its uncommitted work and, with WithChat, Claude's
 // conversation. The session keeps running. The jcode engine's log is not a
 // conversation Claude Code can continue, so its chat never goes.
+//
+// A session working in the user's folder in place packs the folder as it is
+// now: once the folder is a git repository with a commit, there is a HEAD for
+// the other side to branch from, and its base is the branch the folder is on.
 func (s *Service) Export(ctx context.Context, workspaceID string, req protocol.ExportWorkspaceRequest) (*protocol.HandoffManifest, error) {
 	f, _ := s.getFacts(workspaceID)
-	if f.InPlace {
-		return nil, ErrInPlaceExport
-	}
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return nil, err
 	}
@@ -1249,7 +1251,17 @@ func (s *Service) Export(ctx context.Context, workspaceID string, req protocol.E
 	}
 	conversation := ""
 	if req.WithChat && s.jcode == nil {
+		if !s.ownsTranscript(f) {
+			return nil, ErrChatNotOwned
+		}
 		conversation = s.SessionLog(workspaceID)
+	}
+	worktree := s.worktreePath(workspaceID)
+	base := f.BaseBranch
+	if f.InPlace {
+		if branch, err := s.git(ctx, worktree, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil && branch != "" {
+			base = branch
+		}
 	}
 	title := req.Title
 	if title == "" {
@@ -1262,8 +1274,8 @@ func (s *Service) Export(ctx context.Context, workspaceID string, req protocol.E
 	return snapshot.Pack(ctx, snapshot.PackInput{
 		From:             from,
 		Title:            title,
-		Worktree:         s.worktreePath(workspaceID),
-		BaseBranch:       f.BaseBranch,
+		Worktree:         worktree,
+		BaseBranch:       base,
 		ConversationPath: conversation,
 		Uploads:          req.Uploads,
 	})

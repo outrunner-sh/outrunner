@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/snapshot"
 )
 
 // bucket stands in for the storage the signed URLs point at.
@@ -189,11 +190,90 @@ func TestExportWaitsForClaudeToFinish(t *testing.T) {
 	}
 }
 
-func TestASessionEditingAFolderInPlaceCantBeExported(t *testing.T) {
-	s, _, id, _ := stoppedSession(t)
+func TestAFolderWithNoCommitCantBeExported(t *testing.T) {
+	isolateGit(t)
+	s, _, id, _ := stoppedSession(t) // in place, in a folder that isn't a repository
 	files, _ := bucket(t)
-	if _, err := s.Export(context.Background(), id, protocol.ExportWorkspaceRequest{Uploads: files()}); !errors.Is(err, ErrInPlaceExport) {
-		t.Fatalf("Export = %v, want ErrInPlaceExport", err)
+	if _, err := s.Export(context.Background(), id, protocol.ExportWorkspaceRequest{Uploads: files()}); !errors.Is(err, snapshot.ErrNoCommit) {
+		t.Fatalf("Export = %v, want ErrNoCommit", err)
+	}
+}
+
+// inPlaceSessionNowInARepo is a session started in place in a plain folder
+// that has since become a clone of GitHub (origin) with commits, as a user's
+// folder does when they git init and push it after starting the session.
+func inPlaceSessionNowInARepo(t *testing.T) (mac *Service, id, folder, origin string) {
+	t.Helper()
+	isolateGit(t)
+	t.Setenv("HOME", t.TempDir())
+	mac, _, id, folder = stoppedSession(t)
+	run(t, folder, "init", "--quiet", "-b", "master")
+	if err := os.WriteFile(filepath.Join(folder, "app.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, folder, "add", ".")
+	run(t, folder, "commit", "--quiet", "-m", "first")
+	origin = filepath.Join(t.TempDir(), "origin.git")
+	run(t, filepath.Dir(origin), "clone", "--quiet", "--bare", folder, origin)
+	run(t, folder, "remote", "add", "origin", origin)
+	run(t, folder, "fetch", "--quiet", "origin")
+	if err := os.WriteFile(filepath.Join(folder, "app.txt"), []byte("edited in place\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return mac, id, folder, origin
+}
+
+func TestASessionInPlaceContinuesInTheCloudOnceItsFolderIsARepository(t *testing.T) {
+	ctx := context.Background()
+	mac, id, folder, origin := inPlaceSessionNowInARepo(t)
+	f, _ := mac.getFacts(id)
+	home, _ := os.UserHomeDir()
+	log := filepath.Join(claudeProjectDir(home, folder), f.ClaudeSessionID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(log), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(log, []byte(`{"type":"user"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := bucket(t)
+	m, err := mac.Export(ctx, id, protocol.ExportWorkspaceRequest{WithChat: true, Uploads: files()})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if m.BaseBranch != "master" || m.ClaudeSessionID == nil || *m.ClaudeSessionID != f.ClaudeSessionID {
+		t.Fatalf("manifest = %+v: want the folder's branch as base, and the chat by its id", m)
+	}
+	cloud := cloudService(t, origin)
+	worktree, err := cloud.Create(ctx, CreateInput{
+		WorkspaceID: "ws-cloud", Branch: "runtime/new", BaseBranch: m.BaseBranch,
+		From: &protocol.SeedFrom{Manifest: *m, Downloads: files()},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(worktree, "app.txt")); string(got) != "edited in place\n" {
+		t.Errorf("app.txt = %q", got)
+	}
+	// The folder itself is left as it was: its edit, and nothing staged.
+	if status := run(t, folder, "status", "--porcelain"); status != "M app.txt" {
+		t.Errorf("folder status = %q", status)
+	}
+}
+
+func TestAnOldInPlaceSessionsChatCantBeToldApartSoOnlyItsCodeGoes(t *testing.T) {
+	ctx := context.Background()
+	mac, id, _, _ := inPlaceSessionNowInARepo(t)
+	// From before in-place sessions had ids: "the newest log" there could be
+	// anyone's.
+	f, _ := mac.getFacts(id)
+	f.ClaudeSessionID = ""
+	mac.setFacts(id, f)
+	files, _ := bucket(t)
+	if _, err := mac.Export(ctx, id, protocol.ExportWorkspaceRequest{WithChat: true, Uploads: files()}); !errors.Is(err, ErrChatNotOwned) {
+		t.Fatalf("Export with the chat = %v, want ErrChatNotOwned", err)
+	}
+	if _, err := mac.Export(ctx, id, protocol.ExportWorkspaceRequest{WithChat: false, Uploads: files()}); err != nil {
+		t.Fatalf("Export without the chat: %v", err)
 	}
 }
 

@@ -27,9 +27,9 @@ const HandoffVersion = 1
 // upload order. Only the patch is always there.
 var handoffPayloads = []string{"bundle", "patch", "conversation"}
 
-// ErrNoCommit refuses to pack a worktree with no commit: there is no HEAD for
-// the other side to start from.
-var ErrNoCommit = errors.New("the session has no commit to continue from")
+// ErrNoCommit refuses to pack a folder with no commit, or one that isn't a git
+// repository: there is no HEAD for the other side to start from.
+var ErrNoCommit = errors.New("this folder has no git commit to continue from: commit your work first, then try again")
 
 // PackInput is a session to pack and where its files go.
 type PackInput struct {
