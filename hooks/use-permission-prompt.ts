@@ -18,7 +18,8 @@ export type PermissionPrompt = {
   options: { key: string; label: string; hint?: string }[];
 };
 
-/** How often a working session is asked: a prompt shows within this. */
+/** How often a working session is asked: a prompt shows within this. Each ask
+ *  is one tmux capture on this Mac, so it costs next to nothing. */
 const POLL_MS = 1500;
 
 /**
