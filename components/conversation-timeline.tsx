@@ -29,11 +29,14 @@ import { cn } from "@/lib/utils";
 export function ConversationTimeline({
   events,
   placeholder = null,
+  waiting = null,
 }: {
   events: AgentEvent[];
   /** What an empty conversation says (see conversationPlaceholder); a replay,
    *  which has nothing to connect to, passes none. */
   placeholder?: ConversationPlaceholder;
+  /** What Claude is stopped on, if anything: shown where "Working" would be. */
+  waiting?: React.ReactNode;
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
@@ -86,7 +89,7 @@ export function ConversationTimeline({
             <NodeRow node={node} />
           </div>
         ))}
-        {claudeIsWorking(events) && <WorkingIndicator />}
+        {claudeIsWorking(events) && (waiting ?? <WorkingIndicator />)}
       </div>
     </div>
   );
