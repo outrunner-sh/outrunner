@@ -6,8 +6,8 @@ import { verifyRuntimeToken } from "@/lib/runtime/runtime-token";
 
 const target: AgentTarget = {
   controlBaseUrl: "https://8080-sbx.daytonaproxy01.net",
-  daytonaPreviewToken: "dt-preview-token",
-  signedWsBaseUrl: "https://8080-signed.daytonaproxy01.net",
+  controlHeaders: { "x-daytona-preview-token": "dt-preview-token" },
+  wsBaseUrl: "https://8080-signed.daytonaproxy01.net",
   secret: "computer-secret",
 };
 

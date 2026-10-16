@@ -32,6 +32,12 @@ type EnvKey =
   | "DAYTONA_API_URL"
   | "DAYTONA_TARGET"
   | "DAYTONA_SNAPSHOT"
+  // Neev sandboxes (Runtime Computer backend)
+  | "NEEV_API_KEY"
+  | "NEEV_ORG_ID"
+  | "NEEV_PROJECT_ID"
+  | "NEEV_BASE_URL"
+  | "NEEV_SANDBOX_TEMPLATE"
   // Cross-compiled runtime-agent binary uploaded on provision (decision 1A).
   | "RUNTIME_AGENT_BINARY_PATH"
   // Provider selection
@@ -63,10 +69,10 @@ export function requireEnv(key: EnvKey): string {
 /** Which RuntimeProvider implementation to use. */
 export function providerName(): ProviderName {
   const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
-  if (provider === "local" || provider === "modal" || provider === "daytona") {
+  if (provider === "local" || provider === "modal" || provider === "daytona" || provider === "neev") {
     return provider;
   }
   throw new Error(
-    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", or "daytona".`,
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona" or "neev".`,
   );
 }

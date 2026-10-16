@@ -11,7 +11,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { offeredModel, setModelRequest } from "@/lib/runtime/session-models";
@@ -49,9 +49,9 @@ export async function POST(request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
-  if (!(provider instanceof DaytonaRuntimeProvider)) {
+  if (!isComputerProvider(provider)) {
     return NextResponse.json(
-      { error: "Switching models requires the Daytona runtime provider." },
+      { error: "Switching models requires a cloud sandbox provider." },
       { status: 409 },
     );
   }

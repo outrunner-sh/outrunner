@@ -3,13 +3,16 @@ import { randomBytes } from "node:crypto";
 import type {
   ProvisionedComputer,
   ProvisionComputerInput,
-} from "@/lib/runtime/daytona-provider";
-import type { RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
+} from "@/lib/runtime/computer-provider";
+import type { BoxResources } from "@/lib/runtime/sandbox/backend";
+import type { ProviderName, RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
 
 const POLL_INTERVAL_MS = 500;
 const PROVISION_WAIT_MS = 3 * 60_000;
 
 export type RuntimeComputerProvisioner = {
+  /** Recorded on the computer, so a later session knows which provider has it. */
+  readonly name: ProviderName;
   provisionComputer(input: ProvisionComputerInput): Promise<ProvisionedComputer>;
 };
 
@@ -27,6 +30,7 @@ export type EnsureRuntimeComputerDependencies = {
     patch: {
       status?: RuntimeComputerStatus;
       daytonaSandboxId?: string | null;
+      provider?: ProviderName;
       agentBaseUrl?: string | null;
       provisionTimings?: RuntimeComputer["provisionTimings"];
       errorMessage?: string | null;
@@ -42,6 +46,11 @@ export type EnsureRuntimeComputerInput = {
   repoFullName: string;
   githubToken?: string;
   sessionEnv?: Record<string, string>;
+  /** CPU and memory, if a box is made now (one already there keeps its own). */
+  size?: BoxResources;
+  /** The project's box that ended on its own, for a provider that brings one
+   *  back on the disk it left (ProvisionComputerInput.previousSandboxId). */
+  previousSandboxId?: string;
 };
 
 export type EnsuredRuntimeComputer = {
@@ -86,10 +95,13 @@ export async function ensureRuntimeComputer(
       repoFullName: input.repoFullName,
       githubToken: input.githubToken,
       sessionEnv: input.sessionEnv,
+      size: input.size,
+      previousSandboxId: input.previousSandboxId,
     });
     await deps.update(claim.computer.id, {
       status: "ready",
       daytonaSandboxId: provisioned.sandboxId,
+      provider: provider.name,
       agentBaseUrl: provisioned.agentBaseUrl,
       provisionTimings: provisioned.timings,
       errorMessage: null,
@@ -101,10 +113,15 @@ export async function ensureRuntimeComputer(
     }
     return { computer, provisioned: true, agentSecret };
   } catch (error) {
-    await deps.update(claim.computer.id, {
-      status: "error",
-      errorMessage: "Runtime Computer provisioning failed. Check Runtime setup and try again.",
-    }).catch((updateError: unknown) =>
+    const errorMessage = "Runtime Computer provisioning failed. Check Runtime setup and try again.";
+    await deps.update(
+      claim.computer.id,
+      input.previousSandboxId
+        ? // Still the box that ended, so the next try restores from it again
+          // rather than starting over without its sessions.
+          { status: "stopped", daytonaSandboxId: input.previousSandboxId, errorMessage }
+        : { status: "error", errorMessage },
+    ).catch((updateError: unknown) =>
       console.error("Could not save Runtime Computer failure state", updateError),
     );
     throw error;

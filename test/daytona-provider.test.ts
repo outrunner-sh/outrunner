@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { toRuntimeComputer } from "@/lib/db/mappers";
-import {
-  DaytonaRuntimeProvider,
-  decodeBase64Credential,
-} from "@/lib/runtime/daytona-provider";
+import { decodeBase64Credential } from "@/lib/runtime/computer-provider";
+import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import type { RuntimeProvider } from "@/lib/runtime/types";
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
@@ -51,7 +49,7 @@ test("decodeBase64Credential rejects a truncated credential paste", () => {
   );
 });
 
-const NOT_WIRED = /not on the Daytona provider/;
+const NOT_WIRED = /not on a Runtime Computer provider/;
 
 test("provider identifies as the daytona backend without credentials", () => {
   // Constructing must not read DAYTONA_* env (lazy client) so selection and
@@ -101,6 +99,7 @@ test("toRuntimeComputer maps provision_timings and omits the agent secret", () =
     },
     error_message: null,
     last_active_at: null,
+    provider: null,
     created_at: "2026-08-05T00:00:00Z",
     updated_at: "2026-08-05T00:00:00Z",
   });
@@ -124,6 +123,7 @@ test("toRuntimeComputer tolerates absent or malformed provision_timings", () => 
     agent_secret: null,
     error_message: null,
     last_active_at: null,
+    provider: null,
     created_at: "t",
     updated_at: "t",
   };

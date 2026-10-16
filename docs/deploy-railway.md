@@ -19,7 +19,7 @@ Railway (Nixpacks) auto-detects the Next.js app. The scripts already do the righ
 things:
 
 - Build: `next build`
-- Start: `next start --port ${PORT:-3000}` — already binds Railway's injected `$PORT`.
+- Start: `pnpm start` (server.ts: Next plus the Neev WebSocket relay) — already binds Railway's injected `$PORT`.
 
 Set the package manager if Nixpacks guesses wrong (this repo uses **pnpm** — a
 `pnpm-lock.yaml` is present). No Dockerfile is needed. Add a **health check** on

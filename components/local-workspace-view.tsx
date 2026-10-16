@@ -68,6 +68,8 @@ function asWorkspace(session: LocalSession): Workspace {
   return {
     id: session.workspaceId,
     projectId: LOCAL_PROJECT,
+    // Not a row of anyone's: it lives on this Mac, outside the database.
+    ownerId: "",
     provider: "local",
     // A local session is always openable: attaching starts (or continues) it.
     status: "ready",

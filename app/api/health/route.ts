@@ -28,6 +28,10 @@ export async function GET() {
     // otherwise looks healthy cannot actually run a workspace.
     credentialEncryption: Boolean(optionalEnv("CREDENTIALS_ENCRYPTION_KEY")),
     daytona: Boolean(optionalEnv("DAYTONA_API_KEY")),
+    neev:
+      Boolean(optionalEnv("NEEV_API_KEY")) &&
+      Boolean(optionalEnv("NEEV_ORG_ID")) &&
+      Boolean(optionalEnv("NEEV_PROJECT_ID")),
     modal:
       Boolean(optionalEnv("MODAL_TOKEN_ID")) &&
       Boolean(optionalEnv("MODAL_TOKEN_SECRET")),

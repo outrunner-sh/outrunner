@@ -1,3 +1,4 @@
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   toJob,
@@ -356,6 +357,7 @@ export async function updateRuntimeComputer(
   patch: {
     status?: RuntimeComputerStatus;
     daytonaSandboxId?: string | null;
+    provider?: ProviderName;
     agentBaseUrl?: string | null;
     provisionTimings?: ProvisionTimings | null;
     errorMessage?: string | null;
@@ -363,26 +365,34 @@ export async function updateRuntimeComputer(
   },
 ): Promise<void> {
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase
-    .from("runtime_computers")
-    .update({
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.daytonaSandboxId !== undefined && {
-        daytona_sandbox_id: patch.daytonaSandboxId,
-      }),
-      ...(patch.agentBaseUrl !== undefined && {
-        agent_base_url: patch.agentBaseUrl,
-      }),
-      ...(patch.provisionTimings !== undefined && {
-        provision_timings: patch.provisionTimings,
-      }),
-      ...(patch.errorMessage !== undefined && {
-        error_message: patch.errorMessage,
-      }),
-      ...(patch.touchActive && { last_active_at: new Date().toISOString() }),
-    })
-    .eq("id", id);
+  const update = (withProvider: boolean) =>
+    supabase
+      .from("runtime_computers")
+      .update({
+        ...(patch.status !== undefined && { status: patch.status }),
+        ...(patch.daytonaSandboxId !== undefined && {
+          daytona_sandbox_id: patch.daytonaSandboxId,
+        }),
+        ...(withProvider && patch.provider !== undefined && { provider: patch.provider }),
+        ...(patch.agentBaseUrl !== undefined && {
+          agent_base_url: patch.agentBaseUrl,
+        }),
+        ...(patch.provisionTimings !== undefined && {
+          provision_timings: patch.provisionTimings,
+        }),
+        ...(patch.errorMessage !== undefined && {
+          error_message: patch.errorMessage,
+        }),
+        ...(patch.touchActive && { last_active_at: new Date().toISOString() }),
+      })
+      .eq("id", id);
 
+  let { error } = await update(true);
+  // Before 20261013120000_user_sandbox.sql adds the column, the provider isn't
+  // recorded (the deployment's is assumed); the rest still is.
+  if (error && patch.provider !== undefined && probeStatus(error) === "outdated") {
+    ({ error } = await update(false));
+  }
   if (error) throw error;
 }
 

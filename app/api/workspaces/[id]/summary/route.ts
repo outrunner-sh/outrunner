@@ -7,7 +7,7 @@ import {
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
@@ -40,9 +40,9 @@ export async function GET(_request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
-  if (!(provider instanceof DaytonaRuntimeProvider)) {
+  if (!isComputerProvider(provider)) {
     return NextResponse.json(
-      { error: "Workspace summaries require the Daytona runtime provider." },
+      { error: "Workspace summaries require a Runtime Computer provider." },
       { status: 409 },
     );
   }

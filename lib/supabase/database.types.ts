@@ -120,6 +120,8 @@ type RuntimeComputerRow = {
   provision_timings: Json | null;
   error_message: string | null;
   last_active_at: string | null;
+  /** The provider that made it; null from before it was recorded. */
+  provider: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -188,6 +190,17 @@ type UserCredentialsRow = {
   neev_key_ciphertext: string | null;
   neev_key_hash: string | null;
   neev_key_created_at: string | null;
+  // Settings → Sandbox (supabase/migrations/20261013120000_user_sandbox.sql).
+  sandbox: "outrunner" | "daytona" | "modal";
+  daytona_key_ciphertext: string | null;
+  daytona_key_hint: string | null;
+  daytona_key_updated_at: string | null;
+  // supabase/migrations/20261013140000_user_modal.sql.
+  modal_token_ciphertext: string | null;
+  modal_token_hint: string | null;
+  modal_token_updated_at: string | null;
+  // supabase/migrations/20261013130000_user_box_size.sql.
+  box_size: "x-small" | "small" | "medium" | "large";
   created_at: string;
   updated_at: string;
 };

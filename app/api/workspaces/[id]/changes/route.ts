@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { getRuntimeComputerByProject, getWorkspace } from "@/lib/db/repositories";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
-import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
 
@@ -25,18 +25,14 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
 
-  const provider = getRuntimeProvider();
-  if (provider.name !== workspace.provider) {
-    return NextResponse.json(
-      { error: `Configure the ${workspace.provider} provider to read this workspace.` },
-      { status: 409 },
-    );
-  }
+  const resolution = resolveProvider(workspace);
+  if (!resolution.ok) return providerErrorResponse(resolution);
+  const provider = resolution.provider;
 
   const path = new URL(request.url).searchParams.get("path");
 
   try {
-    if (provider instanceof DaytonaRuntimeProvider) {
+    if (isComputerProvider(provider)) {
       const computer = await getRuntimeComputerByProject(workspace.projectId);
       if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
         return NextResponse.json(
