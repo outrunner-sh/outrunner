@@ -18,24 +18,40 @@ const SIGNED_URL_TTL_SECONDS = 300;
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
 
-/** Daytona sandboxes (DAYTONA_API_KEY, optional DAYTONA_API_URL / _TARGET). */
+/**
+ * Daytona sandboxes: the deployment's account (DAYTONA_API_KEY, optional
+ * DAYTONA_API_URL / _TARGET), or a user's own, on the key `apiKey` reads (for
+ * Settings → Sandbox; their account's default region).
+ */
 export class DaytonaBackend implements SandboxBackend {
-  private client: Daytona | null = null;
+  private client: Promise<Daytona> | null = null;
+  private readonly apiKey: (() => Promise<string>) | undefined;
+
+  constructor(options: { apiKey?: () => Promise<string> } = {}) {
+    this.apiKey = options.apiKey;
+  }
 
   /** Lazy so constructing the backend (e.g. in a test) needs no credentials. */
-  private daytona(): Daytona {
-    if (!this.client) {
-      this.client = new Daytona({
+  private daytona(): Promise<Daytona> {
+    this.client ??= (async () => {
+      if (this.apiKey) return new Daytona({ apiKey: await this.apiKey() });
+      return new Daytona({
         apiKey: requireEnv("DAYTONA_API_KEY"),
         apiUrl: optionalEnv("DAYTONA_API_URL"),
         target: optionalEnv("DAYTONA_TARGET"),
       });
-    }
+    })();
+    // A key that couldn't be read is asked for again next time.
+    this.client.catch(() => {
+      this.client = null;
+    });
     return this.client;
   }
 
+  // No size: Daytona's base box has a fixed one, and sizing a box means
+  // building it from a full image, which makes its first start slow.
   async create(labels: Record<string, string>): Promise<SandboxBox> {
-    const sandbox = await this.daytona().create(
+    const sandbox = await (await this.daytona()).create(
       // Always-on: never auto-stop, never auto-delete. Base image (no
       // snapshot): claude + node ship with it.
       { autoStopInterval: 0, autoDeleteInterval: -1, labels },
@@ -45,15 +61,16 @@ export class DaytonaBackend implements SandboxBackend {
   }
 
   async get(id: string): Promise<SandboxBox> {
-    return box(await this.daytona().get(id));
+    return box(await (await this.daytona()).get(id));
   }
 
   async alive(id: string): Promise<boolean> {
-    return (await this.daytona().get(id)).state === "started";
+    return (await (await this.daytona()).get(id)).state === "started";
   }
 
   async delete(id: string): Promise<void> {
-    await this.daytona().delete(await this.daytona().get(id));
+    const daytona = await this.daytona();
+    await daytona.delete(await daytona.get(id));
   }
 }
 
@@ -108,4 +125,17 @@ function box(sandbox: Sandbox): SandboxBox {
       };
     },
   };
+}
+
+/** Whether Daytona accepts `apiKey` (Settings → Sandbox checks one before
+ *  saving it): false when it refuses it, a throw when it can't be asked. */
+export async function daytonaAcceptsKey(apiKey: string): Promise<boolean> {
+  try {
+    await new Daytona({ apiKey }).list().next();
+    return true;
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 401 || status === 403) return false;
+    throw error;
+  }
 }

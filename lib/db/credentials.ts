@@ -27,6 +27,10 @@ import {
   sharedApiKey,
 } from "@/lib/openrouter/keys";
 import { ensureUserKey } from "@/lib/openrouter/user-key";
+import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
+import type { ModalToken } from "@/lib/runtime/sandbox/modal";
+import type { Database } from "@/lib/supabase/database.types";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** What the settings UI may safely see: presence, not values. */
@@ -170,6 +174,199 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
 }
 
 /**
+ * Where the user's cloud sessions run (Settings → Sandbox): Outrunner's own
+ * sandboxes, the deployment's provider and the default, or their own Daytona
+ * or Modal account on a key they supply.
+ */
+export type SandboxChoice = "outrunner" | "daytona" | "modal";
+
+/** A stored key, as the page sees it: whether there is one, and its last 4
+ *  characters. */
+export type StoredKey = { connected: boolean; hint: string | null; updatedAt: string | null };
+
+export type SandboxSettings = {
+  sandbox: SandboxChoice;
+  daytona: StoredKey;
+  /** The Modal token; its hint is the token id's last 4. */
+  modal: StoredKey;
+  /** How big a new sandbox is, on Outrunner's or the user's own Modal
+   *  (lib/runtime/box-sizes.ts). */
+  boxSize: BoxSizeId;
+};
+
+const SANDBOX_COLUMNS = "sandbox, daytona_key_ciphertext, daytona_key_hint, daytona_key_updated_at";
+const MODAL_COLUMNS = "modal_token_ciphertext, modal_token_hint, modal_token_updated_at";
+
+export async function getSandboxSettings(userId: string): Promise<SandboxSettings> {
+  const supabase = createSupabaseAdminClient();
+  const read = (columns: string) =>
+    supabase.from("user_credentials").select(columns).eq("user_id", userId).maybeSingle();
+  let { data, error } = await read(`${SANDBOX_COLUMNS}, box_size, ${MODAL_COLUMNS}`);
+  // Each migration not yet applied reads as before it: until
+  // 20261013140000_user_modal.sql, no Modal token; until
+  // 20261013130000_user_box_size.sql, the default size; and until
+  // 20261013120000_user_sandbox.sql, everyone on Outrunner's sandboxes.
+  if (error && probeStatus(error) === "outdated") ({ data, error } = await read(`${SANDBOX_COLUMNS}, box_size`));
+  if (error && probeStatus(error) === "outdated") ({ data, error } = await read(SANDBOX_COLUMNS));
+  if (error && probeStatus(error) === "outdated") ({ data, error } = { data: null, error: null });
+  if (error) throw error;
+  const row = data as Partial<Database["public"]["Tables"]["user_credentials"]["Row"]> | null;
+  return {
+    sandbox: row?.sandbox ?? "outrunner",
+    daytona: {
+      connected: Boolean(row?.daytona_key_ciphertext),
+      hint: row?.daytona_key_hint ?? null,
+      updatedAt: row?.daytona_key_updated_at ?? null,
+    },
+    modal: {
+      connected: Boolean(row?.modal_token_ciphertext),
+      hint: row?.modal_token_hint ?? null,
+      updatedAt: row?.modal_token_updated_at ?? null,
+    },
+    boxSize: isBoxSizeId(row?.box_size) ? row.box_size : DEFAULT_BOX_SIZE,
+  };
+}
+
+/** Make the user's new sandboxes this size. */
+export async function setBoxSize(userId: string, size: BoxSizeId): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("user_credentials")
+    .upsert({ user_id: userId, box_size: size }, { onConflict: "user_id" });
+
+  if (error) throw error;
+}
+
+export async function setSandboxChoice(userId: string, sandbox: SandboxChoice): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("user_credentials")
+    .upsert({ user_id: userId, sandbox }, { onConflict: "user_id" });
+
+  if (error) throw error;
+}
+
+/** The user's Daytona API key, or null when unset or unreadable. */
+export async function getDaytonaKey(userId: string): Promise<string | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_credentials")
+    .select("daytona_key_ciphertext")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return openOrNull(data?.daytona_key_ciphertext, userId, "daytona");
+}
+
+/** Store the user's Daytona API key; the hint is its last 4 characters. */
+export async function setDaytonaKey(userId: string, apiKey: string): Promise<void> {
+  const trimmed = apiKey.trim();
+  if (!trimmed) throw new Error("Daytona API key cannot be empty");
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("user_credentials").upsert(
+    {
+      user_id: userId,
+      daytona_key_ciphertext: seal(trimmed),
+      daytona_key_hint: trimmed.slice(-4),
+      daytona_key_updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+
+  if (error) throw error;
+}
+
+/** Forget the user's Daytona key. Their sessions can't run on Daytona without
+ *  it, so if that's where they ran, new ones go back to Outrunner's sandboxes. */
+export async function clearDaytonaKey(userId: string): Promise<void> {
+  await forgetSandboxKey(userId, "daytona", {
+    daytona_key_ciphertext: null,
+    daytona_key_hint: null,
+    daytona_key_updated_at: null,
+  });
+}
+
+/** The user's own sandbox keys (lib/runtime/sandbox-choice.ts), each read
+ *  only when a box of theirs is reached. */
+export function ownSandboxKeys(userId: string): {
+  daytona: () => Promise<string | null>;
+  modal: () => Promise<ModalToken | null>;
+} {
+  return { daytona: () => getDaytonaKey(userId), modal: () => getModalToken(userId) };
+}
+
+/** The user's Modal token, or null when unset or unreadable. */
+export async function getModalToken(userId: string): Promise<ModalToken | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_credentials")
+    .select("modal_token_ciphertext")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  const opened = openOrNull(data?.modal_token_ciphertext, userId, "modal");
+  if (!opened) return null;
+  try {
+    const token = JSON.parse(opened) as Partial<ModalToken>;
+    return token.tokenId && token.tokenSecret ? { tokenId: token.tokenId, tokenSecret: token.tokenSecret } : null;
+  } catch {
+    console.error(`Could not read the Modal token for user ${userId}; treating as unset`);
+    return null;
+  }
+}
+
+/** Store the user's Modal token; the hint is its id's last 4 characters. */
+export async function setModalToken(userId: string, token: ModalToken): Promise<void> {
+  const tokenId = token.tokenId.trim();
+  const tokenSecret = token.tokenSecret.trim();
+  if (!tokenId || !tokenSecret) throw new Error("Modal token id and secret cannot be empty");
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("user_credentials").upsert(
+    {
+      user_id: userId,
+      modal_token_ciphertext: seal(JSON.stringify({ tokenId, tokenSecret })),
+      modal_token_hint: tokenId.slice(-4),
+      modal_token_updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+
+  if (error) throw error;
+}
+
+/** Forget the user's Modal token, and move new sessions back to Outrunner's
+ *  sandboxes if they ran on Modal. */
+export async function clearModalToken(userId: string): Promise<void> {
+  await forgetSandboxKey(userId, "modal", {
+    modal_token_ciphertext: null,
+    modal_token_hint: null,
+    modal_token_updated_at: null,
+  });
+}
+
+/** Clear one sandbox's key, and leave that sandbox for Outrunner's when it was
+ *  the user's choice: their other key, and a choice of the other, stay. */
+async function forgetSandboxKey(
+  userId: string,
+  sandbox: Exclude<SandboxChoice, "outrunner">,
+  cleared: Partial<Database["public"]["Tables"]["user_credentials"]["Row"]>,
+): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("user_credentials").update(cleared).eq("user_id", userId);
+  if (error) throw error;
+  const { error: moveError } = await supabase
+    .from("user_credentials")
+    .update({ sandbox: "outrunner" })
+    .eq("user_id", userId)
+    .eq("sandbox", sandbox);
+  if (moveError) throw moveError;
+}
+
+/**
  * Open a stored ciphertext, degrading a decrypt failure to null. Logs the user
  * id and which credential failed — never the ciphertext or the error's own
  * message, which can echo plaintext fragments back into the server log.
@@ -177,7 +374,7 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic",
+  which: "github" | "anthropic" | "daytona" | "modal",
 ): string | null {
   if (!ciphertext) return null;
   try {

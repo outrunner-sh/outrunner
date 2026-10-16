@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { getSandboxSettings } from "@/lib/db/credentials";
 import {
+  getProject,
   getRuntimeComputerByProject,
   getWorkspace,
+  markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
+import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
-import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { boxSize } from "@/lib/runtime/box-sizes";
+import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { computerMadeBy, endedBoxOf } from "@/lib/runtime/sandbox-choice";
+import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import type { RuntimeComputer } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +67,20 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
+  let computer = await getRuntimeComputerByProject(workspace.projectId);
+  // A box that ended on its own (Modal, after a day) comes back on the disk it
+  // left, so the session opens where it was.
+  if (computer && provider.restoresBoxes) {
+    try {
+      computer = (await bringBack(provider, computer, owner.id)) ?? computer;
+    } catch (error) {
+      console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
+      return NextResponse.json(
+        { error: "Could not restart this session's sandbox. Try again." },
+        { status: 503 },
+      );
+    }
+  }
   if (!computer || !computer.daytonaSandboxId) {
     return NextResponse.json(
       { error: "This project has no Runtime Computer. Create a workspace first." },
@@ -96,6 +118,25 @@ export async function POST(request: Request, context: RouteContext) {
   };
   const agent = new AgentClient(target);
 
+  // On a box that comes back after it ends, the session's Claude may not be
+  // running: start it (continuing its conversation), or leave it be if it is.
+  if (provider.restoresBoxes) {
+    try {
+      await agent.startWorkspace(identity);
+    } catch (error) {
+      if (error instanceof AgentRequestError && error.status === 404) {
+        return NextResponse.json(
+          {
+            error:
+              "This session's sandbox ended and couldn't be restored, so its files are gone. Start a new session.",
+          },
+          { status: 410 },
+        );
+      }
+      console.warn(`Session attach: start failed for ${workspace.id}`, error);
+    }
+  }
+
   // Fetch the current WorkspaceSummary alongside the URLs so the browser has
   // it on the first paint without an extra round-trip. If the agent hiccups,
   // omit summary — clients can hit /api/workspaces/[id]/summary directly.
@@ -112,4 +153,39 @@ export async function POST(request: Request, context: RouteContext) {
     ...(summary && { summary }),
   };
   return NextResponse.json(SessionUrls.parse(body));
+}
+
+/**
+ * The project's computer once its box is up again, when that box ended or
+ * another request is bringing it back; null when there's nothing to do (it is
+ * up, or it is another provider's). The claim lets one request restore it;
+ * the others wait for it.
+ */
+async function bringBack(
+  provider: ComputerRuntimeProvider,
+  computer: RuntimeComputer,
+  userId: string,
+): Promise<RuntimeComputer | null> {
+  if (computerMadeBy(computer) !== provider.name) return null;
+  let ended = endedBoxOf(computer, provider.name);
+  if (computer.status === "ready" && computer.daytonaSandboxId) {
+    if (await provider.computerAlive(computer.daytonaSandboxId)) return null;
+    await markRuntimeComputerStoppedIfReady(computer.id, computer.daytonaSandboxId);
+    ended = computer.daytonaSandboxId;
+  } else if (!ended && computer.status !== "provisioning") {
+    return null;
+  }
+  const project = await getProject(computer.projectId);
+  if (!project) throw new Error(`Project ${computer.projectId} not found`);
+  const ensured = await ensureProjectRuntimeComputer(provider, {
+    projectId: project.id,
+    repoFullName: project.fullName,
+    githubToken: await optionalGithubToken(userId),
+    sessionEnv: await runtimeSessionEnvironment(userId),
+    // The owner's size now, as a new box would get: Modal sizes a box as it
+    // starts, restored or not.
+    size: boxSize((await getSandboxSettings(userId)).boxSize),
+    previousSandboxId: ended,
+  });
+  return ensured.computer;
 }

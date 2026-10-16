@@ -65,18 +65,23 @@ export type ProvisionPhase =
  * Backend that owns a workspace's compute. `local`/`modal` are the workspace-per-
  * sandbox model; `daytona` and `neev` are Runtime's real model (Project → Runtime
  * Computer → Workspace) where many workspaces share one always-on box.
+ * `user-daytona` and `user-modal` are that model in the session owner's own
+ * Daytona or Modal account, on their key (Settings → Sandbox); the others are
+ * the deployment's.
  */
-export type ProviderName = "local" | "modal" | "daytona" | "neev";
+export type ProviderName = "local" | "modal" | "daytona" | "neev" | "user-daytona" | "user-modal";
 
 /** Whether the provider runs sessions on a project's Runtime Computer, which
  *  is what live sessions attach to. */
 export function onRuntimeComputer(provider: ProviderName): boolean {
-  return provider === "daytona" || provider === "neev";
+  return provider === "daytona" || provider === "neev" || provider === "user-daytona" || provider === "user-modal";
 }
 
 export type Workspace = {
   id: string;
   projectId: string;
+  /** Who made it: on `user-daytona` or `user-modal`, whose key reaches it. */
+  ownerId: string;
   /** Backend that owns this workspace's compute and durable storage. */
   provider: ProviderName;
   status: WorkspaceStatus;
@@ -123,10 +128,14 @@ export type RuntimeComputerStatus =
  */
 export type ProvisionStage =
   | "sandbox_create"
+  /** A new box on the disk the project's ended box left (Modal). */
+  | "sandbox_restore"
   | "agent_upload"
   | "agent_boot"
   | "health_check"
-  | "mirror_clone";
+  | "mirror_clone"
+  /** Bringing a restored box's mirror up to date. */
+  | "mirror_fetch";
 
 export type StageTiming = { stage: ProvisionStage; ms: number };
 
@@ -144,6 +153,9 @@ export type RuntimeComputer = {
   imageVersion: string;
   /** Daytona sandbox id; null until compute is provisioned. */
   daytonaSandboxId: string | null;
+  /** The provider that made it; null from before that was recorded (the
+   *  deployment's provider made those). */
+  provider: ProviderName | null;
   /** Base of the Daytona preview URL the runtime-agent is reachable at. */
   agentBaseUrl: string | null;
   /** Wall-clock breakdown of the last provision; null until first measured. */

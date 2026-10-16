@@ -31,10 +31,22 @@ export interface SandboxBox {
   agentEndpoint(port: number): Promise<AgentEndpoint>;
 }
 
+/** CPU and memory a new box boots with. */
+export type BoxResources = { cpu: number; memoryGb: number };
+
 export interface SandboxBackend {
-  /** An always-on box (never stopped or deleted on its own), ready to use.
-   *  `labels` tag it for the provider's console. */
-  create(labels: Record<string, string>): Promise<SandboxBox>;
+  /** A box that stays up as long as the provider lets one (forever, but on
+   *  Modal: a day), ready to use. `labels` tag it for the provider's console.
+   *  `size` is honoured where the provider can size a box (Neev, Modal);
+   *  elsewhere it gets the provider's default. */
+  create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox>;
+  /**
+   * For a provider whose boxes end on their own (Modal): a new box on the disk
+   * the ended box `id` left, so the sessions on it carry on. Nothing runs on
+   * it yet, the agent included. Null when that disk is gone, so a new box is
+   * the only way on; a throw when the provider couldn't be asked.
+   */
+  restore?(id: string, labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox | null>;
   get(id: string): Promise<SandboxBox>;
   /** Whether it is up and able to host sessions. False when it is gone. */
   alive(id: string): Promise<boolean>;
@@ -44,4 +56,16 @@ export interface SandboxBackend {
 /** `$HOME` from the box's login shell, or `fallback` if it says nothing. */
 export async function homeOf(io: BoxIO, fallback: string): Promise<string> {
   return ((await io.exec("bash -lc 'echo $HOME'")).stdout || "").trim() || fallback;
+}
+
+/** The non-root user the agent and Claude run as on a box whose own user is
+ *  root (Neev, Modal): Claude refuses bypassPermissions as root. */
+export const BOX_USER = "runtime";
+
+/** `runuser` arguments for `command` as {@link BOX_USER} in a login shell. An
+ *  env var is let through by name only; its value travels in the exec's
+ *  environment, never in argv. */
+export function asUserArgs(command: string, env?: Record<string, string>): string[] {
+  const names = Object.keys(env ?? {});
+  return ["-l", BOX_USER, ...(names.length > 0 ? ["-w", names.join(",")] : []), "-c", command];
 }

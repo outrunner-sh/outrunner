@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { ownSandboxKeys } from "@/lib/db/credentials";
+import { providerNamed } from "@/lib/runtime/sandbox-choice";
 import type { RuntimeProvider, Workspace } from "@/lib/runtime/types";
 
 /**
@@ -15,9 +16,11 @@ export type ProviderResolution =
   | { ok: false; status: 503 | 409; message: string };
 
 export function resolveProvider(workspace: Workspace): ProviderResolution {
-  let provider: RuntimeProvider;
+  let provider: RuntimeProvider | null;
   try {
-    provider = getRuntimeProvider();
+    // The deployment's provider, or the owner's own Daytona or Modal
+    // (Settings → Sandbox).
+    provider = providerNamed(workspace.provider, ownSandboxKeys(workspace.ownerId));
   } catch (error) {
     console.error(`Workspace ${workspace.id} provider is unavailable`, error);
     return {
@@ -26,7 +29,7 @@ export function resolveProvider(workspace: Workspace): ProviderResolution {
       message: "The configured Runtime provider is not available.",
     };
   }
-  if (provider.name !== workspace.provider) {
+  if (!provider) {
     return {
       ok: false,
       status: 409,

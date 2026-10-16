@@ -15,6 +15,7 @@ function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
     status: "provisioning",
     imageVersion: "v1",
     daytonaSandboxId: null,
+    provider: null,
     agentBaseUrl: null,
     provisionTimings: null,
     errorMessage: null,
@@ -66,6 +67,7 @@ function concurrencyHarness() {
         ...(patch.daytonaSandboxId !== undefined && {
           daytonaSandboxId: patch.daytonaSandboxId,
         }),
+        ...(patch.provider !== undefined && { provider: patch.provider }),
         ...(patch.agentBaseUrl !== undefined && { agentBaseUrl: patch.agentBaseUrl }),
         ...(patch.provisionTimings !== undefined && {
           provisionTimings: patch.provisionTimings,
@@ -88,9 +90,12 @@ const input = {
 test("concurrent first-workspace ensures provision exactly one Runtime Computer", async () => {
   const harness = concurrencyHarness();
   let provisions = 0;
+  const sizes: unknown[] = [];
   const provider: RuntimeComputerProvisioner = {
-    provisionComputer: async () => {
+    name: "neev",
+    provisionComputer: async (request) => {
       provisions += 1;
+      sizes.push(request.size);
       // Keep the owner request in the external-provision phase long enough
       // for its peer to observe the durable provisioning row and wait.
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -102,15 +107,20 @@ test("concurrent first-workspace ensures provision exactly one Runtime Computer"
     },
   };
 
+  const sized = { ...input, size: { cpu: 4, memoryGb: 8 } };
   const [first, second] = await Promise.all([
-    ensureRuntimeComputer(provider, input, harness.deps),
-    ensureRuntimeComputer(provider, input, harness.deps),
+    ensureRuntimeComputer(provider, sized, harness.deps),
+    ensureRuntimeComputer(provider, sized, harness.deps),
   ]);
 
   assert.equal(provisions, 1);
   assert.equal(first.computer.id, second.computer.id);
   assert.equal([first.provisioned, second.provisioned].filter(Boolean).length, 1);
   assert.equal(harness.row()?.status, "ready");
+  // So a later session knows which provider has the box.
+  assert.equal(harness.row()?.provider, "neev");
+  // The box is made at the size asked for.
+  assert.deepEqual(sizes, [{ cpu: 4, memoryGb: 8 }]);
 });
 
 test("a provision failure is persisted as an error for a later retry", async () => {
@@ -118,7 +128,7 @@ test("a provision failure is persisted as an error for a later retry", async () 
   await assert.rejects(
     () =>
       ensureRuntimeComputer(
-        { provisionComputer: async () => Promise.reject(new Error("Daytona unavailable")) },
+        { name: "daytona", provisionComputer: async () => Promise.reject(new Error("Daytona unavailable")) },
         input,
         harness.deps,
       ),
@@ -133,6 +143,7 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
   const harness = concurrencyHarness();
   let provisions = 0;
   const provider: RuntimeComputerProvisioner = {
+    name: "neev",
     provisionComputer: async () => {
       provisions += 1;
       if (provisions === 1) throw new Error("Daytona unavailable");
@@ -152,4 +163,52 @@ test("a failed Runtime Computer can be claimed and provisioned by a retry", asyn
   assert.equal(retried.provisioned, true);
   assert.equal(harness.row()?.status, "ready");
   assert.equal(harness.row()?.daytonaSandboxId, "daytona-retry");
+});
+
+test("a box that ended is handed to the provider to restore from", async () => {
+  const harness = concurrencyHarness();
+  const asked: unknown[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "user-modal",
+    provisionComputer: async (request) => {
+      asked.push(request.previousSandboxId);
+      return {
+        sandboxId: "sb-restored",
+        agentBaseUrl: "https://agent.example.test",
+        timings: { stages: [{ stage: "sandbox_restore", ms: 10 }], totalMs: 10 },
+      };
+    },
+  };
+
+  await ensureRuntimeComputer(provider, { ...input, previousSandboxId: "sb-ended" }, harness.deps);
+
+  assert.deepEqual(asked, ["sb-ended"]);
+  assert.equal(harness.row()?.daytonaSandboxId, "sb-restored");
+});
+
+test("a restore that fails keeps the ended box, so a retry restores from it again", async () => {
+  const harness = concurrencyHarness();
+  const asked: unknown[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "user-modal",
+    provisionComputer: async (request) => {
+      asked.push(request.previousSandboxId);
+      if (asked.length === 1) throw new Error("Modal unavailable");
+      return {
+        sandboxId: "sb-restored",
+        agentBaseUrl: "https://agent.example.test",
+        timings: { stages: [{ stage: "sandbox_restore", ms: 10 }], totalMs: 10 },
+      };
+    },
+  };
+
+  const ended = { ...input, previousSandboxId: "sb-ended" };
+  await assert.rejects(() => ensureRuntimeComputer(provider, ended, harness.deps), /Modal unavailable/);
+  // Stopped with the ended box, as a box found ended is, not an error with none.
+  assert.equal(harness.row()?.status, "stopped");
+  assert.equal(harness.row()?.daytonaSandboxId, "sb-ended");
+
+  await ensureRuntimeComputer(provider, ended, harness.deps);
+  assert.deepEqual(asked, ["sb-ended", "sb-ended"]);
+  assert.equal(harness.row()?.status, "ready");
 });

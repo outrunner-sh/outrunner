@@ -21,7 +21,7 @@ import {
   pushBranch,
   readFileDiff,
 } from "@/lib/runtime/git";
-import type { SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import type { BoxResources, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
   ChangedFile,
   CommitWorkspaceResult,
@@ -130,6 +130,15 @@ export type ProvisionComputerInput = {
    *  provisioning (a dedicated delivery channel), so per-workspace secrets don't
    *  ride the boot env. */
   sessionEnv?: Record<string, string>;
+  /** CPU and memory for the new box, where the backend can size one. */
+  size?: BoxResources;
+  /**
+   * The project's box before this one, which ended on its own. A backend that
+   * keeps an ended box's disk ({@link SandboxBackend.restore}, Modal) starts
+   * the new box on it, so the sessions on it carry on, and the mirror is
+   * already there. Otherwise, or with that disk gone, the box is a new one.
+   */
+  previousSandboxId?: string;
   /** Optional live per-stage progress (the UI/verify script logs these). */
   onStage?: (stage: ProvisionStage, ms: number) => void;
 };
@@ -218,11 +227,12 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       onStage: (t) => input.onStage?.(t.stage, t.ms),
     });
 
+    const labels = { "runtime.role": "computer", "runtime.engine": "claude" };
     let sandbox: SandboxBox | null = null;
     try {
-      sandbox = await timer.stage("sandbox_create", () =>
-        this.backend.create({ "runtime.role": "computer", "runtime.engine": "claude" }),
-      );
+      sandbox = await this.restoreBox(timer, labels, input);
+      const restored = sandbox !== null;
+      sandbox ??= await timer.stage("sandbox_create", () => this.backend.create(labels, input.size));
       const box = sandbox;
       const home = await box.home();
 
@@ -233,7 +243,16 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
         }),
       );
 
-      if (input.repoFullName) {
+      // A restored box has the mirror already, with the worktrees on it, as it
+      // was when the box ended: bring it up to date for the next session. Not
+      // at the cost of the restore, which has the sessions on it.
+      if (restored) {
+        await timer
+          .stage("mirror_fetch", () =>
+            fetchMirror(box.gitExec, { repoDir: `${home}/repo.git`, token: input.githubToken }),
+          )
+          .catch((error: unknown) => console.warn(`Could not fetch the mirror on restored box ${box.id}`, error));
+      } else if (input.repoFullName) {
         await timer.stage("mirror_clone", () =>
           cloneMirror(box.gitExec, {
             repoFullName: input.repoFullName!,
@@ -258,6 +277,25 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     }
   }
 
+  /** Whether this provider's boxes end on their own and come back on the
+   *  disk they left (Modal), so a box that ended is worth restoring. */
+  get restoresBoxes(): boolean {
+    return this.backend.restore !== undefined;
+  }
+
+  /** The new box on the disk `input.previousSandboxId` left, when the backend
+   *  keeps one; null to make a new box instead. */
+  private async restoreBox(
+    timer: ProvisionTimer,
+    labels: Record<string, string>,
+    input: ProvisionComputerInput,
+  ): Promise<SandboxBox | null> {
+    const previous = input.previousSandboxId;
+    if (!previous || !this.backend.restore) return null;
+    const restore = this.backend.restore.bind(this.backend);
+    return timer.stage("sandbox_restore", () => restore(previous, labels, input.size));
+  }
+
   /**
    * jcode-engine provisioning on the backend's base image, with jcode installed
    * on-provision, the subscription credential injected, the api-bridge started,
@@ -279,7 +317,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       // (worktrees, jcode sessions, conversation logs) stay live, so
       // reconnect/resume just works with no wake path.
       sandbox = await timer.stage("sandbox_create", () =>
-        this.backend.create({ "runtime.role": "computer", "runtime.engine": "jcode" }),
+        this.backend.create({ "runtime.role": "computer", "runtime.engine": "jcode" }, input.size),
       );
       const box = sandbox;
       const home = await box.home();

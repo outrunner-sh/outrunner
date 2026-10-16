@@ -12,6 +12,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
     id: "ws-1",
     projectId: "proj-1",
+    ownerId: "user-1",
     provider: "modal",
     status: "ready",
     phase: null,

@@ -5,7 +5,14 @@ import { Neev, type Sandbox } from "@neevcloud/sdk";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
-import type { AgentEndpoint, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import {
+  asUserArgs,
+  BOX_USER,
+  type AgentEndpoint,
+  type BoxResources,
+  type SandboxBackend,
+  type SandboxBox,
+} from "@/lib/runtime/sandbox/backend";
 import { mintRelayTicket, NEEV_RELAY_PREFIX } from "@/lib/runtime/sandbox/neev-relay-ticket";
 import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel";
 
@@ -36,8 +43,6 @@ import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel"
  */
 
 const DEFAULT_TEMPLATE = "sb-ubuntu-26-04-dev";
-/** The non-root user the agent and Claude run as. */
-const BOX_USER = "runtime";
 const BOX_HOME = `/home/${BOX_USER}`;
 /** Uploads land here (the only writable tree), then move into place. */
 const UPLOAD_DIR = "/workspace";
@@ -78,7 +83,7 @@ export class NeevBackend implements SandboxBackend {
     return this.client;
   }
 
-  async create(labels: Record<string, string>): Promise<SandboxBox> {
+  async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
     const sandbox = await this.neev().sandboxes.create({
       name: `outrunner-${labels["runtime.engine"] ?? "box"}-${randomUUID().slice(0, 8)}`,
       sandbox_template_id: optionalEnv("NEEV_SANDBOX_TEMPLATE") ?? DEFAULT_TEMPLATE,
@@ -87,6 +92,8 @@ export class NeevBackend implements SandboxBackend {
       allowInternet: true,
       // Always-on, like every Runtime Computer: never paused or deleted idle.
       lifecycle: { idle_timeout_seconds: 0, max_lifetime_seconds: 0 },
+      // Otherwise the template's own (2 vCPU, 2 GB for the default).
+      ...(size && { resources: neevResources(size) }),
     });
     try {
       await sandbox.waitUntilReady();
@@ -175,6 +182,11 @@ export class NeevBackend implements SandboxBackend {
   }
 }
 
+/** A size as Neev takes it. */
+export function neevResources(size: BoxResources): { cpu: number; memory_gb: number } {
+  return { cpu: size.cpu, memory_gb: size.memoryGb };
+}
+
 /** Where the browser opens a sandbox port's WebSockets: this server's relay,
  *  with a ticket for that port. */
 export function neevRelayBaseUrl(sandboxId: string, port: number, apiKey: string): string {
@@ -213,14 +225,6 @@ export async function prepare(
     throw new Error(`Neev box setup failed (exit ${status}): ${tail(log.stdout)}`);
   }
   throw new Error(`Neev box setup did not finish within ${Math.round(timeoutMs / 1000)} s`);
-}
-
-/** `runuser` arguments for `command` as the box user in a login shell. An env
- *  var is let through by name only; its value travels in the exec's
- *  environment, never in argv. */
-export function asUserArgs(command: string, env?: Record<string, string>): string[] {
-  const names = Object.keys(env ?? {});
-  return ["-l", BOX_USER, ...(names.length > 0 ? ["-w", names.join(",")] : []), "-c", command];
 }
 
 type Connection = { connectUrl: string; apiKey: string };
