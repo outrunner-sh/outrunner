@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getDaytonaKey, getSandboxSettings, neevAiKey } from "@/lib/db/credentials";
+import {
+  getDaytonaKey,
+  getSandboxSettings,
+  neevAiKey,
+  type SandboxSettings,
+} from "@/lib/db/credentials";
 import {
   createWorkspaceRow,
   getProject,
@@ -16,6 +21,7 @@ import { keySource } from "@/lib/openrouter/keys";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
+import { boxSize } from "@/lib/runtime/box-sizes";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
   computerMadeBy,
@@ -123,10 +129,12 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const daytonaKey = () => getDaytonaKey(owner.id);
+  let sandboxSettings: SandboxSettings;
   let provider: RuntimeProvider;
   try {
     // Outrunner's sandboxes, or the user's own Daytona (Settings → Sandbox).
-    provider = providerForNewSessions(await getSandboxSettings(owner.id), daytonaKey);
+    sandboxSettings = await getSandboxSettings(owner.id);
+    provider = providerForNewSessions(sandboxSettings, daytonaKey);
   } catch (error) {
     if (error instanceof NoDaytonaKeyError) return needsSandbox(error.message);
     console.error("Runtime provider is unavailable", error);
@@ -191,6 +199,9 @@ export async function POST(request: Request, context: RouteContext) {
         repoFullName: project.fullName,
         githubToken,
         sessionEnv,
+        // The user's box size, on Outrunner's sandboxes; their own Daytona
+        // keeps its default.
+        ...(sandboxSettings.sandbox === "outrunner" && { size: boxSize(sandboxSettings.boxSize) }),
       });
       const computer = ensured.computer;
       if (!computer.daytonaSandboxId) {

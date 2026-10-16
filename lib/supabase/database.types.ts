@@ -195,6 +195,8 @@ type UserCredentialsRow = {
   daytona_key_ciphertext: string | null;
   daytona_key_hint: string | null;
   daytona_key_updated_at: string | null;
+  // supabase/migrations/20261013130000_user_box_size.sql.
+  box_size: "x-small" | "small" | "medium" | "large";
   created_at: string;
   updated_at: string;
 };

@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Check } from "lucide-react";
+import { Check, Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
+import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { cn } from "@/lib/utils";
 
 /**
@@ -16,13 +17,17 @@ import { cn } from "@/lib/utils";
 export function SandboxSettingsForm({
   initial,
   outrunnerRunsOn,
+  sizes,
 }: {
   initial: SandboxSettings;
   /** What Outrunner's sandboxes are, in a few words ("NeevCloud sandboxes"). */
   outrunnerRunsOn: string;
+  /** Whether Outrunner's sandboxes can be sized here. */
+  sizes: boolean;
 }) {
   const [settings, setSettings] = useState(initial);
   const [choice, setChoice] = useState<SandboxChoice>(initial.sandbox);
+  const [size, setSize] = useState<BoxSizeId>(initial.boxSize);
   const [key, setKey] = useState("");
   // A stored key is only replaced on purpose.
   const [replacing, setReplacing] = useState(false);
@@ -30,7 +35,10 @@ export function SandboxSettingsForm({
   const [error, setError] = useState<string | null>(null);
 
   const askingForKey = choice === "daytona" && (!settings.daytona.connected || replacing);
-  const dirty = choice !== settings.sandbox || (askingForKey && key.trim() !== "");
+  const dirty =
+    choice !== settings.sandbox ||
+    (choice === "outrunner" && size !== settings.boxSize) ||
+    (askingForKey && key.trim() !== "");
   const canSave = dirty && !(askingForKey && !key.trim());
 
   async function send(method: "PUT" | "DELETE", body?: object): Promise<void> {
@@ -47,6 +55,7 @@ export function SandboxSettingsForm({
       if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Try again.");
       setSettings(data);
       setChoice(data.sandbox);
+      setSize(data.boxSize);
       setKey("");
       setReplacing(false);
       setStatus("success");
@@ -57,7 +66,11 @@ export function SandboxSettingsForm({
   }
 
   const save = () =>
-    void send("PUT", { sandbox: choice, ...(askingForKey && key.trim() ? { daytonaKey: key.trim() } : {}) });
+    void send("PUT", {
+      sandbox: choice,
+      ...(choice === "outrunner" && sizes ? { boxSize: size } : {}),
+      ...(askingForKey && key.trim() ? { daytonaKey: key.trim() } : {}),
+    });
 
   return (
     <section className="space-y-6">
@@ -76,7 +89,17 @@ export function SandboxSettingsForm({
           title="Outrunner's sandbox"
           badge="Default"
           detail={`Runs on ${outrunnerRunsOn}. Nothing to set up.`}
-        />
+        >
+          {choice === "outrunner" && sizes ? (
+            <BoxSizePicker
+              value={size}
+              onChange={(next) => {
+                setSize(next);
+                setStatus("idle");
+              }}
+            />
+          ) : null}
+        </Option>
         <Option
           selected={choice === "daytona"}
           onSelect={() => {
@@ -171,6 +194,63 @@ export function SandboxSettingsForm({
         </p>
       ) : null}
     </section>
+  );
+}
+
+/** CPU and memory a new sandbox boots with; the locked sizes need a higher plan. */
+function BoxSizePicker({ value, onChange }: { value: BoxSizeId; onChange: (size: BoxSizeId) => void }) {
+  return (
+    <div className="space-y-2">
+      <div className="space-y-0.5">
+        <p className="text-sm font-medium text-foreground">Box size</p>
+        <p className="text-xs text-muted-foreground">CPU and memory a new sandbox boots with.</p>
+      </div>
+      <div role="radiogroup" aria-label="Box size" className="divide-y divide-border/60 rounded-md border border-border/60">
+        {BOX_SIZES.map((size) => {
+          const selected = size.id === value;
+          return (
+            <button
+              key={size.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              disabled={size.locked}
+              onClick={() => onChange(size.id)}
+              className="flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 text-left disabled:cursor-not-allowed"
+            >
+              {size.locked ? (
+                <Lock aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <span
+                  aria-hidden
+                  className={cn(
+                    "flex size-4 shrink-0 items-center justify-center rounded-full border",
+                    selected ? "border-foreground" : "border-muted-foreground/60",
+                  )}
+                >
+                  {selected ? <span className="size-2 rounded-full bg-foreground" /> : null}
+                </span>
+              )}
+              <span className={cn("flex-1 text-sm", size.locked ? "text-muted-foreground" : "text-foreground")}>
+                {size.label}
+              </span>
+              {size.locked ? (
+                <span className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Higher plan
+                </span>
+              ) : null}
+              <span className="font-mono text-xs text-muted-foreground">
+                {size.cpu} vCPU · {size.memoryGb} GB
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Larger sizes need a higher plan. Applies to new sandboxes; one already running keeps its
+        size.
+      </p>
+    </div>
   );
 }
 

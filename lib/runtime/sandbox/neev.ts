@@ -5,7 +5,7 @@ import { Neev, type Sandbox } from "@neevcloud/sdk";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
-import type { AgentEndpoint, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import type { AgentEndpoint, BoxResources, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import { mintRelayTicket, NEEV_RELAY_PREFIX } from "@/lib/runtime/sandbox/neev-relay-ticket";
 import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel";
 
@@ -78,7 +78,7 @@ export class NeevBackend implements SandboxBackend {
     return this.client;
   }
 
-  async create(labels: Record<string, string>): Promise<SandboxBox> {
+  async create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox> {
     const sandbox = await this.neev().sandboxes.create({
       name: `outrunner-${labels["runtime.engine"] ?? "box"}-${randomUUID().slice(0, 8)}`,
       sandbox_template_id: optionalEnv("NEEV_SANDBOX_TEMPLATE") ?? DEFAULT_TEMPLATE,
@@ -87,6 +87,8 @@ export class NeevBackend implements SandboxBackend {
       allowInternet: true,
       // Always-on, like every Runtime Computer: never paused or deleted idle.
       lifecycle: { idle_timeout_seconds: 0, max_lifetime_seconds: 0 },
+      // Otherwise the template's own (2 vCPU, 2 GB for the default).
+      ...(size && { resources: neevResources(size) }),
     });
     try {
       await sandbox.waitUntilReady();
@@ -173,6 +175,11 @@ export class NeevBackend implements SandboxBackend {
       }),
     };
   }
+}
+
+/** A size as Neev takes it. */
+export function neevResources(size: BoxResources): { cpu: number; memory_gb: number } {
+  return { cpu: size.cpu, memory_gb: size.memoryGb };
 }
 
 /** Where the browser opens a sandbox port's WebSockets: this server's relay,

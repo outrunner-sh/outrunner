@@ -48,6 +48,8 @@ export class DaytonaBackend implements SandboxBackend {
     return this.client;
   }
 
+  // No size: Daytona's base box has a fixed one, and sizing a box means
+  // building it from a full image, which makes its first start slow.
   async create(labels: Record<string, string>): Promise<SandboxBox> {
     const sandbox = await (await this.daytona()).create(
       // Always-on: never auto-stop, never auto-delete. Base image (no
