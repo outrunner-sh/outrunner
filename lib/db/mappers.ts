@@ -13,7 +13,7 @@ import type {
 
 type Tables = Database["public"]["Tables"];
 
-const PROVIDERS: readonly ProviderName[] = ["local", "modal", "daytona", "neev"];
+const PROVIDERS: readonly ProviderName[] = ["local", "modal", "daytona", "neev", "user-daytona"];
 
 /** Narrow the free-text `provider` column to a known backend (defaults local). */
 function toProviderName(value: string): ProviderName {
@@ -46,6 +46,7 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
   return {
     id: row.id,
     projectId: row.project_id,
+    ownerId: row.owner_id,
     provider: toProviderName(row.provider),
     status: row.status,
     phase: row.phase,
@@ -100,6 +101,8 @@ export function toRuntimeComputer(
     status: row.status,
     imageVersion: row.image_version,
     daytonaSandboxId: row.daytona_sandbox_id,
+    // `?? null`: a deploy can run before the migration that adds the column.
+    provider: row.provider ? toProviderName(row.provider) : null,
     agentBaseUrl: row.agent_base_url,
     provisionTimings: toProvisionTimings(row.provision_timings),
     errorMessage: row.error_message,

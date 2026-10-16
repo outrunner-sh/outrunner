@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { neevAiKey } from "@/lib/db/credentials";
+import { getDaytonaKey, getSandboxSettings, neevAiKey } from "@/lib/db/credentials";
 import {
   createWorkspaceRow,
   getProject,
@@ -13,13 +13,18 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { keySource } from "@/lib/openrouter/keys";
-import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
+import {
+  computerMadeBy,
+  providerForNewSessions,
+  retireComputer,
+} from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
-import type { ProvisionPhase } from "@/lib/runtime/types";
+import type { ProvisionPhase, RuntimeProvider } from "@/lib/runtime/types";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 
@@ -52,6 +57,10 @@ function generatedBranch(): string {
 /** The session can't run without the user's Claude: say so, and where to fix it. */
 function needsClaude(error: string) {
   return NextResponse.json({ error, settingsHref: "/settings/claude" }, { status: 409 });
+}
+
+function needsSandbox(error: string) {
+  return NextResponse.json({ error, settingsHref: "/settings/sandbox" }, { status: 409 });
 }
 
 function safeErrorMessage(error: unknown): string {
@@ -113,10 +122,13 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let provider: ReturnType<typeof getRuntimeProvider>;
+  const daytonaKey = () => getDaytonaKey(owner.id);
+  let provider: RuntimeProvider;
   try {
-    provider = getRuntimeProvider();
+    // Outrunner's sandboxes, or the user's own Daytona (Settings → Sandbox).
+    provider = providerForNewSessions(await getSandboxSettings(owner.id), daytonaKey);
   } catch (error) {
+    if (error instanceof NoDaytonaKeyError) return needsSandbox(error.message);
     console.error("Runtime provider is unavailable", error);
     return NextResponse.json(
       { error: "The configured provider is not available." },
@@ -160,15 +172,18 @@ export async function POST(request: Request, context: RouteContext) {
       // incident). Only transition the exact ready row we checked so parallel
       // requests retain the claim RPC's single-provisioner invariant.
       const currentComputer = await getRuntimeComputerByProject(project.id);
-      if (
-        currentComputer?.status === "ready" &&
-        currentComputer.daytonaSandboxId &&
-        !(await provider.computerAlive(currentComputer.daytonaSandboxId))
-      ) {
-        await markRuntimeComputerStoppedIfReady(
-          currentComputer.id,
-          currentComputer.daytonaSandboxId,
-        );
+      if (currentComputer?.status === "ready" && currentComputer.daytonaSandboxId) {
+        const sandboxId = currentComputer.daytonaSandboxId;
+        const madeBy = computerMadeBy(currentComputer);
+        if (madeBy !== provider.name) {
+          // The owner moved to another sandbox (Settings → Sandbox). The old
+          // box goes, so no one keeps paying for one nothing uses, and the
+          // project gets a new computer where they chose.
+          await retireComputer(madeBy, daytonaKey, sandboxId);
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+        } else if (!(await provider.computerAlive(sandboxId))) {
+          await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+        }
       }
 
       const ensured = await ensureProjectRuntimeComputer(provider, {

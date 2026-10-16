@@ -215,3 +215,29 @@ exception when insufficient_privilege then
 end $$;
 
 reset role;
+
+-- 14. Settings → Sandbox: Outrunner's sandboxes by default, and nothing but
+-- the two choices; a computer records its provider, unknown on older rows.
+do $$
+declare chosen text;
+begin
+  insert into user_credentials (user_id) values ('11111111-1111-1111-1111-111111111111')
+    on conflict (user_id) do nothing;
+  select sandbox into chosen from user_credentials where user_id = '11111111-1111-1111-1111-111111111111';
+  if chosen <> 'outrunner' then
+    raise exception 'FAIL: a user''s sandbox defaults to %, not outrunner', chosen;
+  end if;
+  begin
+    update user_credentials set sandbox = 'elsewhere' where user_id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'FAIL: sandbox accepted a value that is neither choice';
+  exception when check_violation then
+    null;
+  end;
+  if not exists (
+    select 1 from information_schema.columns
+    where table_name = 'runtime_computers' and column_name = 'provider' and is_nullable = 'YES'
+  ) then
+    raise exception 'FAIL: runtime_computers.provider is missing or not nullable';
+  end if;
+  raise notice 'ok: sandbox choice defaults to outrunner, is checked, and computers record a provider';
+end $$;

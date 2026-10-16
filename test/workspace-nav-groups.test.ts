@@ -34,6 +34,7 @@ function workspace(
   return {
     id,
     projectId,
+    ownerId: "user-1",
     provider: "daytona",
     status: "ready",
     phase: null,

@@ -24,6 +24,7 @@ import {
   sharedApiKey,
 } from "@/lib/openrouter/keys";
 import { ensureUserKey } from "@/lib/openrouter/user-key";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** What the settings UI may safely see: presence, not values. */
@@ -167,6 +168,100 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
 }
 
 /**
+ * Where the user's cloud sessions run (Settings → Sandbox): Outrunner's own
+ * sandboxes, the deployment's provider and the default, or their own Daytona
+ * account on a key they supply.
+ */
+export type SandboxChoice = "outrunner" | "daytona";
+
+export type SandboxSettings = {
+  sandbox: SandboxChoice;
+  daytona: { connected: boolean; hint: string | null; updatedAt: string | null };
+};
+
+export async function getSandboxSettings(userId: string): Promise<SandboxSettings> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_credentials")
+    .select("sandbox, daytona_key_ciphertext, daytona_key_hint, daytona_key_updated_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  // Before 20261013120000_user_sandbox.sql is applied, everyone is on
+  // Outrunner's sandboxes, as they were.
+  if (error && probeStatus(error) === "outdated") {
+    return { sandbox: "outrunner", daytona: { connected: false, hint: null, updatedAt: null } };
+  }
+  if (error) throw error;
+  return {
+    sandbox: data?.sandbox ?? "outrunner",
+    daytona: {
+      connected: Boolean(data?.daytona_key_ciphertext),
+      hint: data?.daytona_key_hint ?? null,
+      updatedAt: data?.daytona_key_updated_at ?? null,
+    },
+  };
+}
+
+export async function setSandboxChoice(userId: string, sandbox: SandboxChoice): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("user_credentials")
+    .upsert({ user_id: userId, sandbox }, { onConflict: "user_id" });
+
+  if (error) throw error;
+}
+
+/** The user's Daytona API key, or null when unset or unreadable. */
+export async function getDaytonaKey(userId: string): Promise<string | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_credentials")
+    .select("daytona_key_ciphertext")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return openOrNull(data?.daytona_key_ciphertext, userId, "daytona");
+}
+
+/** Store the user's Daytona API key; the hint is its last 4 characters. */
+export async function setDaytonaKey(userId: string, apiKey: string): Promise<void> {
+  const trimmed = apiKey.trim();
+  if (!trimmed) throw new Error("Daytona API key cannot be empty");
+
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("user_credentials").upsert(
+    {
+      user_id: userId,
+      daytona_key_ciphertext: seal(trimmed),
+      daytona_key_hint: trimmed.slice(-4),
+      daytona_key_updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+
+  if (error) throw error;
+}
+
+/** Forget the user's Daytona key. Their sessions can't run on Daytona without
+ *  it, so new ones go back to Outrunner's sandboxes. */
+export async function clearDaytonaKey(userId: string): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("user_credentials")
+    .update({
+      sandbox: "outrunner",
+      daytona_key_ciphertext: null,
+      daytona_key_hint: null,
+      daytona_key_updated_at: null,
+    })
+    .eq("user_id", userId);
+
+  if (error) throw error;
+}
+
+/**
  * Open a stored ciphertext, degrading a decrypt failure to null. Logs the user
  * id and which credential failed — never the ciphertext or the error's own
  * message, which can echo plaintext fragments back into the server log.
@@ -174,7 +269,7 @@ export async function clearAnthropicKey(userId: string): Promise<void> {
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic",
+  which: "github" | "anthropic" | "daytona",
 ): string | null {
   if (!ciphertext) return null;
   try {
