@@ -276,3 +276,15 @@ begin
   update user_credentials set sandbox = 'outrunner' where user_id = '11111111-1111-1111-1111-111111111111';
   raise notice 'ok: modal is a sandbox choice, with its token columns';
 end $$;
+
+-- 17. Settings → Providers: a user's own OpenRouter key, kept sealed beside their
+-- other keys.
+do $$
+begin
+  if (select count(*) from information_schema.columns
+      where table_name = 'user_credentials'
+        and column_name in ('openrouter_key_ciphertext', 'openrouter_key_hint', 'openrouter_key_updated_at')) <> 3 then
+    raise exception 'FAIL: user_credentials lacks the OpenRouter key columns';
+  end if;
+  raise notice 'ok: user_credentials has the OpenRouter key columns';
+end $$;

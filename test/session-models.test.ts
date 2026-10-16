@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { DEFAULT_CLOUD_MODEL, MODEL_GROUPS, matchModel, modelLabel, offeredModel, setModelRequest } from "@/lib/runtime/session-models";
+import {
+  DEFAULT_CLOUD_MODEL,
+  MODEL_GROUPS,
+  matchModel,
+  modelGroups,
+  modelLabel,
+  offeredModel,
+  setModelRequest,
+} from "@/lib/runtime/session-models";
 
 test("a Claude account reply matches its family's alias", () => {
   assert.equal(matchModel(MODEL_GROUPS, "claude-opus-5")?.id, "opus");
@@ -65,4 +73,26 @@ test("a key that can't be had fails the switch", async () => {
 test("cloud sessions default to an Outrunner model on the menu", () => {
   assert.equal(DEFAULT_CLOUD_MODEL.source, "neev");
   assert.equal(offeredModel(DEFAULT_CLOUD_MODEL.id), DEFAULT_CLOUD_MODEL);
+});
+
+test("with their own OpenRouter key, a user picks which key runs Outrunner's models", () => {
+  const labels = (keys: Parameters<typeof modelGroups>[0]) => modelGroups(keys).map((g) => g.label);
+  // No key of their own: Outrunner's, as before.
+  assert.deepEqual(labels({ ownKey: false, serverModels: true, allowance: true }), ["Outrunner · $5 free", "Claude account"]);
+  assert.deepEqual(labels({ ownKey: false, serverModels: true, allowance: false }), ["Outrunner", "Claude account"]);
+  // Their own key and the server's: both, the same models on each.
+  const both = modelGroups({ ownKey: true, serverModels: true, allowance: true });
+  assert.deepEqual(both.map((g) => g.label), ["Outrunner · $5 free", "OpenRouter · your key", "Claude account"]);
+  assert.deepEqual(both[1].models.map((m) => m.id), both[0].models.map((m) => m.id));
+  assert.ok(both[1].models.every((m) => m.source === "own"));
+  // Their own key on a server with none: only theirs.
+  assert.deepEqual(labels({ ownKey: true, serverModels: false, allowance: false }), ["OpenRouter · your key", "Claude account"]);
+});
+
+test("a model offered on both keys is ticked on the key it was picked on", () => {
+  const groups = modelGroups({ ownKey: true, serverModels: true, allowance: true });
+  assert.equal(matchModel(groups, "z-ai/glm-5.3", "own")?.source, "own");
+  assert.equal(matchModel(groups, "z-ai/glm-5.3", "neev")?.source, "neev");
+  // No preference: the first offered.
+  assert.equal(matchModel(groups, "z-ai/glm-5.3")?.source, "neev");
 });

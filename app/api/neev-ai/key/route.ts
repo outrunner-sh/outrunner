@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { neevAiKey } from "@/lib/db/credentials";
+import { neevAiKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
@@ -21,12 +21,18 @@ export async function POST(request: Request) {
   if (!owner) {
     return NextResponse.json({ error: "Sign in to use Outrunner's models." }, { status: 401 });
   }
+  // Which key: the user's own, Outrunner's, or (no body) theirs if they have one.
+  const body = (await request.json().catch(() => null)) as { use?: unknown } | null;
+  const use: OpenRouterKeyUse = body?.use === "own" || body?.use === "outrunner" ? body.use : "auto";
   try {
-    const key = await neevAiKey(owner.id);
+    const key = await neevAiKey(owner.id, use);
     return NextResponse.json({ key }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     if (error instanceof NeevAiUnavailableError || error instanceof StoredKeyUnreadableError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    if (error instanceof NoOwnOpenRouterKeyError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     // OpenRouter's and the driver's messages stay in the log.
     console.error(`Could not get a Neev AI key for ${owner.id}`, error);

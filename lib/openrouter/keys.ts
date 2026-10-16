@@ -47,6 +47,25 @@ export function keySource(): "per-user" | "shared" | null {
   return null;
 }
 
+/** OpenRouter's account of the key a request is made with. */
+const CURRENT_KEY_URL = "https://openrouter.ai/api/v1/key";
+
+/**
+ * Whether OpenRouter takes `key` for running models (Settings → Providers checks
+ * a user's own before keeping it): false when it refuses it, or when it is a
+ * management key, which can make keys but not run a model; a throw when
+ * OpenRouter can't be asked.
+ */
+export async function openRouterAcceptsKey(key: string): Promise<boolean> {
+  const response = await fetch(CURRENT_KEY_URL, { headers: { authorization: `Bearer ${key}` } });
+  if (response.status === 401 || response.status === 403) return false;
+  if (!response.ok) throw new Error(`OpenRouter answered ${response.status} checking a key`);
+  const body = (await response.json().catch(() => null)) as {
+    data?: { is_management_key?: boolean; is_provisioning_key?: boolean };
+  } | null;
+  return body?.data?.is_management_key !== true && body?.data?.is_provisioning_key !== true;
+}
+
 export type CreatedKey = {
   /** The key itself. OpenRouter returns it only in this response. */
   key: string;

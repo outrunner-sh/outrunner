@@ -2,8 +2,9 @@ import { redirect } from "next/navigation";
 
 import { OnboardingLive } from "@/components/onboarding/onboarding-live";
 import { OnboardingPreview } from "@/components/onboarding/onboarding-preview";
+import { getOwner } from "@/lib/auth/owner";
+import { outrunnerModelsFor } from "@/lib/db/credentials";
 import { getOnboardingUser } from "@/lib/onboarding/server";
-import { keySource } from "@/lib/openrouter/keys";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +25,14 @@ export default async function OnboardingPage() {
   const user = await getOnboardingUser().catch(() => null);
   if (!user) redirect("/signin?next=/onboarding");
   if (user.onboardedAt) redirect("/");
+  const owner = await getOwner();
 
   return (
     <OnboardingLive
       user={{ name: user.name, login: user.login, avatarUrl: user.avatarUrl }}
       // A cloud session starts without the user's Claude only on Outrunner's
-      // models, which need an OpenRouter key on this server.
-      outrunnerModels={keySource() !== null}
+      // models, which need an OpenRouter key: the user's own, or this server's.
+      outrunnerModels={owner ? await outrunnerModelsFor(owner.id) : false}
     />
   );
 }
