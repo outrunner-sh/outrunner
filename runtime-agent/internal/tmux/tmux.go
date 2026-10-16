@@ -182,6 +182,16 @@ func (m *Manager) CapturePane(ctx context.Context, name string) (string, error) 
 	return string(out), nil
 }
 
+// CapturePaneJoined is CapturePane with lines tmux wrapped at the pane's
+// width joined back into one, so text reads as Claude wrote it.
+func (m *Manager) CapturePaneJoined(ctx context.Context, name string) (string, error) {
+	out, err := Command(ctx, "capture-pane", "-t", name, "-p", "-J").Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux capture-pane %s: %w", name, err)
+	}
+	return string(out), nil
+}
+
 // ListSessions returns the names of all live sessions.
 func (m *Manager) ListSessions(ctx context.Context) ([]string, error) {
 	out, err := Command(ctx, "list-sessions", "-F", "#{session_name}").Output()

@@ -1072,6 +1072,9 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
             Ok(reqwest::Method::POST)
         }
         ("GET", ["workspaces", id, "summary"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
+        // The question Claude waits on in its terminal, and the answer to it.
+        ("GET", ["workspaces", id, "prompt"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
+        ("POST", ["workspaces", id, "prompt"], None) if *id == workspace_id => Ok(reqwest::Method::POST),
         ("GET", ["workspaces", id, "changes"], query)
             if *id == workspace_id && query.is_none_or(valid_changes_query) =>
         {
@@ -1671,6 +1674,10 @@ mod tests {
         assert!(allowed_route("POST", "/workspaces/ws-1/export", "ws-1").is_ok());
         assert!(allowed_route("POST", "/workspaces/ws-2/export", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/export", "ws-1").is_err());
+        // The waiting permission prompt: read and answered, its own session only.
+        assert!(allowed_route("GET", "/workspaces/ws-1/prompt", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-1/prompt", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-2/prompt", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/destroy", "ws-1").is_err());
         assert!(allowed_route("GET", "/health/../workspaces", "ws-1").is_err());
     }

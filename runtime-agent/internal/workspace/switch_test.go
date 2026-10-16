@@ -109,6 +109,10 @@ func (f *fakeSessions) CapturePane(context.Context, string) (string, error) {
 	return f.pane, f.captureErr
 }
 
+func (f *fakeSessions) CapturePaneJoined(ctx context.Context, name string) (string, error) {
+	return f.CapturePane(ctx, name)
+}
+
 func (f *fakeSessions) lastLaunch() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

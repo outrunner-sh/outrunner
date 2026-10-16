@@ -9,6 +9,8 @@ import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
+import { PermissionPromptCard } from "@/components/permission-prompt-card";
+import { usePermissionPrompt } from "@/hooks/use-permission-prompt";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { localAgentRequest, localTarget, messageForLocalError, outrunnerKey } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
@@ -195,6 +197,9 @@ export function WorkspaceSession({
       }));
     return optimistic.length ? [...conversation.events, ...optimistic] : conversation.events;
   }, [conversation.events, pending]);
+  // A Mac session's Claude can stop on a permission prompt in its terminal
+  // (cloud sessions never ask): looked for while it is working.
+  const permission = usePermissionPrompt(workspaceId, local && claudeIsWorking(timelineEvents));
 
   // An untitled session names itself after the first prompt in its history,
   // once: the server sets a title only where there is none, so this can never
@@ -267,6 +272,16 @@ export function WorkspaceSession({
               attachment: attachment.status,
               stream: conversation.status,
             })}
+            waiting={
+              permission.prompt && (
+                <PermissionPromptCard
+                  prompt={permission.prompt}
+                  answering={permission.answering}
+                  error={permission.error}
+                  onAnswer={(key) => void permission.answer(key)}
+                />
+              )
+            }
           />
         </div>
       </section>
