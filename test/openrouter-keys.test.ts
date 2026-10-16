@@ -9,6 +9,7 @@ import {
   managementKey,
   NEEV_AI_LIMIT_USD,
   NeevAiUnavailableError,
+  openRouterAcceptsKey,
 } from "@/lib/openrouter/keys";
 
 const realFetch = globalThis.fetch;
@@ -151,4 +152,27 @@ test("a key with no limit reads as none, and an answer without usage is an error
 test("without a management key there is no usage to read", async () => {
   delete process.env.OPENROUTER_MANAGEMENT_KEY;
   await assert.rejects(keyUsage("h"), NeevAiUnavailableError);
+});
+
+test("a user's own key is checked with OpenRouter on its own authority", async () => {
+  const seen = stubFetch(
+    new Response(JSON.stringify({ data: { label: "mine", is_management_key: false, is_provisioning_key: false } })),
+  );
+  assert.equal(await openRouterAcceptsKey("sk-or-v1-mine"), true);
+  assert.equal(seen[0].url, "https://openrouter.ai/api/v1/key");
+  assert.equal(new Headers(seen[0].init.headers).get("authorization"), "Bearer sk-or-v1-mine");
+});
+
+test("a key OpenRouter refuses, or one that can only make keys, is not taken", async () => {
+  stubFetch(new Response(JSON.stringify({ error: { message: "No auth credentials found" } }), { status: 401 }));
+  assert.equal(await openRouterAcceptsKey("sk-or-v1-wrong"), false);
+  stubFetch(new Response(JSON.stringify({ data: { is_management_key: true } })));
+  assert.equal(await openRouterAcceptsKey("sk-or-v1-mgmt"), false);
+  stubFetch(new Response(JSON.stringify({ data: { is_provisioning_key: true } })));
+  assert.equal(await openRouterAcceptsKey("sk-or-v1-prov"), false);
+});
+
+test("an OpenRouter that can't answer is not a refusal", async () => {
+  stubFetch(new Response("down", { status: 503 }));
+  await assert.rejects(openRouterAcceptsKey("sk-or-v1-mine"), /503/);
 });

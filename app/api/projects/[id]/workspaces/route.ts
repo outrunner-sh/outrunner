@@ -6,6 +6,7 @@ import { getOwner } from "@/lib/auth/owner";
 import {
   getSandboxSettings,
   neevAiKey,
+  outrunnerModelsFor,
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
@@ -17,7 +18,6 @@ import {
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { keySource } from "@/lib/openrouter/keys";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
@@ -100,9 +100,10 @@ export async function POST(request: Request, context: RouteContext) {
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
   // Either credential kind is fine; an empty env means none was set. Sessions
-  // start on Outrunner's models, so only without those is Claude a must.
+  // start on Outrunner's models (on the user's own OpenRouter key, or the
+  // server's), so only without those is Claude a must.
   const hasClaude = Object.keys(sessionEnv).length > 0;
-  if (!hasClaude && keySource() === null) {
+  if (!hasClaude && !(await outrunnerModelsFor(owner.id))) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
   if (project.private && !githubToken) {
