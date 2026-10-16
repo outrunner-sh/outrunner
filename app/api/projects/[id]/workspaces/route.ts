@@ -25,6 +25,7 @@ import { boxSize } from "@/lib/runtime/box-sizes";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
   computerMadeBy,
+  endedBoxOf,
   providerForNewSessions,
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
@@ -180,6 +181,9 @@ export async function POST(request: Request, context: RouteContext) {
       // incident). Only transition the exact ready row we checked so parallel
       // requests retain the claim RPC's single-provisioner invariant.
       const currentComputer = await getRuntimeComputerByProject(project.id);
+      // The box that ended, for a provider that brings it back on the disk it
+      // left (Modal), so the project's sessions carry on in the new one.
+      let endedBox = endedBoxOf(currentComputer, provider.name);
       if (currentComputer?.status === "ready" && currentComputer.daytonaSandboxId) {
         const sandboxId = currentComputer.daytonaSandboxId;
         const madeBy = computerMadeBy(currentComputer);
@@ -191,6 +195,7 @@ export async function POST(request: Request, context: RouteContext) {
           await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
         } else if (!(await provider.computerAlive(sandboxId))) {
           await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
+          endedBox = sandboxId;
         }
       }
 
@@ -202,6 +207,7 @@ export async function POST(request: Request, context: RouteContext) {
         // The user's box size, on Outrunner's sandboxes; their own Daytona
         // keeps its default.
         ...(sandboxSettings.sandbox === "outrunner" && { size: boxSize(sandboxSettings.boxSize) }),
+        ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
       if (!computer.daytonaSandboxId) {

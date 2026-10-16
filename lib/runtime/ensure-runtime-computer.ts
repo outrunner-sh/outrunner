@@ -48,6 +48,9 @@ export type EnsureRuntimeComputerInput = {
   sessionEnv?: Record<string, string>;
   /** CPU and memory, if a box is made now (one already there keeps its own). */
   size?: BoxResources;
+  /** The project's box that ended on its own, for a provider that brings one
+   *  back on the disk it left (ProvisionComputerInput.previousSandboxId). */
+  previousSandboxId?: string;
 };
 
 export type EnsuredRuntimeComputer = {
@@ -93,6 +96,7 @@ export async function ensureRuntimeComputer(
       githubToken: input.githubToken,
       sessionEnv: input.sessionEnv,
       size: input.size,
+      previousSandboxId: input.previousSandboxId,
     });
     await deps.update(claim.computer.id, {
       status: "ready",
@@ -109,10 +113,15 @@ export async function ensureRuntimeComputer(
     }
     return { computer, provisioned: true, agentSecret };
   } catch (error) {
-    await deps.update(claim.computer.id, {
-      status: "error",
-      errorMessage: "Runtime Computer provisioning failed. Check Runtime setup and try again.",
-    }).catch((updateError: unknown) =>
+    const errorMessage = "Runtime Computer provisioning failed. Check Runtime setup and try again.";
+    await deps.update(
+      claim.computer.id,
+      input.previousSandboxId
+        ? // Still the box that ended, so the next try restores from it again
+          // rather than starting over without its sessions.
+          { status: "stopped", daytonaSandboxId: input.previousSandboxId, errorMessage }
+        : { status: "error", errorMessage },
+    ).catch((updateError: unknown) =>
       console.error("Could not save Runtime Computer failure state", updateError),
     );
     throw error;

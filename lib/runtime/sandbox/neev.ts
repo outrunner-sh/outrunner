@@ -5,7 +5,14 @@ import { Neev, type Sandbox } from "@neevcloud/sdk";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
-import type { AgentEndpoint, BoxResources, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
+import {
+  asUserArgs,
+  BOX_USER,
+  type AgentEndpoint,
+  type BoxResources,
+  type SandboxBackend,
+  type SandboxBox,
+} from "@/lib/runtime/sandbox/backend";
 import { mintRelayTicket, NEEV_RELAY_PREFIX } from "@/lib/runtime/sandbox/neev-relay-ticket";
 import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel";
 
@@ -36,8 +43,6 @@ import { closeNeevTunnels, neevTunnel } from "@/lib/runtime/sandbox/neev-tunnel"
  */
 
 const DEFAULT_TEMPLATE = "sb-ubuntu-26-04-dev";
-/** The non-root user the agent and Claude run as. */
-const BOX_USER = "runtime";
 const BOX_HOME = `/home/${BOX_USER}`;
 /** Uploads land here (the only writable tree), then move into place. */
 const UPLOAD_DIR = "/workspace";
@@ -220,14 +225,6 @@ export async function prepare(
     throw new Error(`Neev box setup failed (exit ${status}): ${tail(log.stdout)}`);
   }
   throw new Error(`Neev box setup did not finish within ${Math.round(timeoutMs / 1000)} s`);
-}
-
-/** `runuser` arguments for `command` as the box user in a login shell. An env
- *  var is let through by name only; its value travels in the exec's
- *  environment, never in argv. */
-export function asUserArgs(command: string, env?: Record<string, string>): string[] {
-  const names = Object.keys(env ?? {});
-  return ["-l", BOX_USER, ...(names.length > 0 ? ["-w", names.join(",")] : []), "-c", command];
 }
 
 type Connection = { connectUrl: string; apiKey: string };
