@@ -13,7 +13,8 @@ import { SessionComposer, type ModelChoice } from "@/components/session-composer
 import { localAgentRequest, localTarget, messageForLocalError, outrunnerKey } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
-import { MODEL_GROUPS, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
+import { modelGroups, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
+import { outrunnerModels } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
@@ -147,6 +148,18 @@ export function WorkspaceSession({
   // conversation continued. The pick shows until a reply reports the model it
   // actually ran.
   const [switching, setSwitching] = useState(false);
+  // Whether Outrunner's models run on the user's own OpenRouter key, which the
+  // model menu names (Settings → Providers).
+  const [ownOpenRouterKey, setOwnOpenRouterKey] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void outrunnerModels().then((answer) => {
+      if (live) setOwnOpenRouterKey(answer.ownKey);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   const repliedSincePick =
     picked !== null &&
@@ -160,7 +173,7 @@ export function WorkspaceSession({
   const working =
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
-    groups: MODEL_GROUPS,
+    groups: modelGroups(ownOpenRouterKey),
     switching,
     disabledReason: !canSend
       ? "Waiting for the session to connect"

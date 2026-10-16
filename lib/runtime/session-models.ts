@@ -30,10 +30,16 @@ export const CLAUDE_MODELS: SessionModel[] = [
 /** The menu: Outrunner's own models first, offered by default (shown under the
  *  product's name; "Neev AI" is the code's name for them), the user's Claude
  *  after. */
-export const MODEL_GROUPS: ModelGroup[] = [
-  { label: "Outrunner", models: NEEV_AI_MODELS },
-  { label: "Claude account", models: CLAUDE_MODELS },
-];
+export const MODEL_GROUPS: ModelGroup[] = modelGroups(false);
+
+/** The menu for a user: Outrunner's models are named after the key they run
+ *  on, so a user who saved their own OpenRouter key sees they are on it. */
+export function modelGroups(ownOpenRouterKey: boolean): ModelGroup[] {
+  return [
+    { label: ownOpenRouterKey ? "OpenRouter · your key" : "Outrunner", models: NEEV_AI_MODELS },
+    { label: "Claude account", models: CLAUDE_MODELS },
+  ];
+}
 
 /** What a new cloud session starts on: Outrunner's own model, so anyone can
  *  start one without a Claude account. A local session starts on it too when

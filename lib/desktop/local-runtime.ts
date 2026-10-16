@@ -192,17 +192,30 @@ export async function putOnOutrunnerModel(workspaceId: string): Promise<void> {
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
 }
 
-/** Whether this server runs Outrunner's models; asked once per page load. */
-let outrunnerModelsAnswer: Promise<boolean> | null = null;
-export function outrunnerModelsAvailable(): Promise<boolean> {
+/** Whether Outrunner's models are there for this user, and on their own
+ *  OpenRouter key (GET /api/neev-ai); asked once per page load, or again
+ *  after Settings → Providers changes the key. */
+export type OutrunnerModels = { available: boolean; ownKey: boolean };
+let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
+export function outrunnerModels(): Promise<OutrunnerModels> {
   outrunnerModelsAnswer ??= fetch("/api/neev-ai")
-    .then((res) => (res.ok ? (res.json() as Promise<{ available?: boolean }>) : { available: false }))
-    .then((data) => data.available === true)
+    .then((res): Promise<Partial<OutrunnerModels>> | Partial<OutrunnerModels> => (res.ok ? res.json() : {}))
+    .then((data) => ({ available: data.available === true, ownKey: data.ownKey === true }))
     .catch(() => {
       outrunnerModelsAnswer = null; // a failed look is asked again next time
-      return false;
+      return { available: false, ownKey: false };
     });
   return outrunnerModelsAnswer;
+}
+
+/** Whether this user can run Outrunner's models. */
+export function outrunnerModelsAvailable(): Promise<boolean> {
+  return outrunnerModels().then((answer) => answer.available);
+}
+
+/** Ask again next time: the user's OpenRouter key has just changed. */
+export function forgetOutrunnerModels(): void {
+  outrunnerModelsAnswer = null;
 }
 
 /**

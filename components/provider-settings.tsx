@@ -6,6 +6,7 @@ import { KeyInput, SavedKey } from "@/components/stored-key";
 import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import type { StoredKey } from "@/lib/db/credentials";
+import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 
 /** What Settings → Providers shows (GET /api/settings/providers). */
 export type ProviderSettings = {
@@ -46,6 +47,8 @@ export function ProviderSettingsForm({ initial }: { initial: ProviderSettings })
       const data = (await res.json().catch(() => null)) as (ProviderSettings & { error?: string }) | null;
       if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Try again.");
       setSettings(data);
+      // The model menu names the key it runs on: let it ask again.
+      forgetOutrunnerModels();
       setKey("");
       setReplacing(false);
       setStatus("success");

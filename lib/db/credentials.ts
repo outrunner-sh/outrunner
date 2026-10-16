@@ -449,17 +449,21 @@ export async function clearOpenRouterKey(userId: string): Promise<void> {
   if (error) throw error;
 }
 
-/** Whether Outrunner's models are there for this user: on their own key, or
- *  on the server's. A database from before the key's column answers by the
- *  server's alone. */
-export async function outrunnerModelsFor(userId: string): Promise<boolean> {
-  if (keySource() !== null) return true;
+/** Whether the user runs Outrunner's models on a key of their own. A database
+ *  from before the key's column says no. */
+export async function hasOwnOpenRouterKey(userId: string): Promise<boolean> {
   try {
     return (await getOpenRouterKeyStatus(userId)).connected;
   } catch (error) {
     if (probeStatus(error as { code?: string }) === "outdated") return false;
     throw error;
   }
+}
+
+/** Whether Outrunner's models are there for this user: on their own key, or
+ *  on the server's. */
+export async function outrunnerModelsFor(userId: string): Promise<boolean> {
+  return keySource() !== null || (await hasOwnOpenRouterKey(userId));
 }
 
 /**

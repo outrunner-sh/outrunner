@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { DEFAULT_CLOUD_MODEL, MODEL_GROUPS, matchModel, modelLabel, offeredModel, setModelRequest } from "@/lib/runtime/session-models";
+import {
+  DEFAULT_CLOUD_MODEL,
+  MODEL_GROUPS,
+  matchModel,
+  modelGroups,
+  modelLabel,
+  offeredModel,
+  setModelRequest,
+} from "@/lib/runtime/session-models";
 
 test("a Claude account reply matches its family's alias", () => {
   assert.equal(matchModel(MODEL_GROUPS, "claude-opus-5")?.id, "opus");
@@ -65,4 +73,12 @@ test("a key that can't be had fails the switch", async () => {
 test("cloud sessions default to an Outrunner model on the menu", () => {
   assert.equal(DEFAULT_CLOUD_MODEL.source, "neev");
   assert.equal(offeredModel(DEFAULT_CLOUD_MODEL.id), DEFAULT_CLOUD_MODEL);
+});
+
+test("Outrunner's models are named after the key they run on: the user's own, or Outrunner's", () => {
+  assert.deepEqual(modelGroups(false).map((g) => g.label), ["Outrunner", "Claude account"]);
+  const own = modelGroups(true);
+  assert.deepEqual(own.map((g) => g.label), ["OpenRouter · your key", "Claude account"]);
+  // The same models either way: only whose key pays for them differs.
+  assert.deepEqual(own[0].models, MODEL_GROUPS[0].models);
 });
