@@ -5,7 +5,9 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import {
   getSandboxSettings,
+  hasOwnOpenRouterKey,
   neevAiKey,
+  type OpenRouterKeyUse,
   outrunnerModelsFor,
   ownSandboxKeys,
   type SandboxSettings,
@@ -22,6 +24,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
+import { offeredModel } from "@/lib/runtime/session-models";
 import {
   computerMadeBy,
   endedBoxOf,
@@ -116,11 +119,29 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { branch?: unknown };
+  let body: { branch?: unknown; model?: unknown; key?: unknown };
   try {
-    body = (await request.json()) as { branch?: unknown };
+    body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  // The model chosen on the new-session screen, and for an OpenRouter one which
+  // key it runs on; none, Outrunner's default on the user's own key or the
+  // server's.
+  const chosenModel = body.model === undefined ? undefined : offeredModel(body.model);
+  if (body.model !== undefined && !chosenModel) {
+    return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+  }
+  const keyUse: OpenRouterKeyUse = body.key === "own" || body.key === "outrunner" ? body.key : "auto";
+  // Said before a box is set up for it, not after.
+  if (chosenModel?.source === "claude" && !hasClaude) {
+    return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
+  }
+  if (keyUse === "own" && !(await hasOwnOpenRouterKey(owner.id))) {
+    return NextResponse.json(
+      { error: "Save your OpenRouter key in Settings → Providers to run models on it.", settingsHref: "/settings/providers" },
+      { status: 409 },
+    );
   }
 
   const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";
@@ -243,8 +264,9 @@ export async function POST(request: Request, context: RouteContext) {
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
-        neevKey: () => neevAiKey(owner.id),
+        neevKey: () => neevAiKey(owner.id, keyUse),
         hasClaude,
+        model: chosenModel,
       });
       await agent.startWorkspace(identity);
 

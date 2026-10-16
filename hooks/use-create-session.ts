@@ -6,9 +6,11 @@ import { useMemo, useState, useTransition } from "react";
 import {
   localAgentRequest,
   localTarget,
+  putOnModel,
   putOnOutrunnerModel,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
+import type { SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
@@ -53,7 +55,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
 
   /** Create a cloud session and open it. Resolves false when it could not be
    *  created (the message says why), so the composer keeps the prompt. */
-  function create(prompt: string, attachmentIds: string[] = []): Promise<boolean> {
+  function create(prompt: string, attachmentIds: string[] = [], model?: SessionModel): Promise<boolean> {
     if (!selected) return Promise.resolve(false);
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
@@ -65,7 +67,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           headers: { "Content-Type": "application/json" },
           // Attachments are not sent here: the workspace has no box yet. They
           // ride the redirect and are delivered with the first prompt.
-          body: JSON.stringify({ branch: "" }),
+          // The model picked on this screen, and for an OpenRouter one its key;
+          // none, the server starts it on Outrunner's default.
+          body: JSON.stringify({
+            branch: "",
+            ...(model && { model: model.id }),
+            ...(model && model.source !== "claude" && { key: model.source === "own" ? "own" : "outrunner" }),
+          }),
         });
       } catch {
         setMessage("Could not reach Outrunner. Please try again.");
@@ -102,7 +110,12 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    * session that can't be is removed again rather than left to open on a
    * login screen.
    */
-  function createLocal(prompt: string, folder: LocalFolder, onOutrunnerModel = false): Promise<boolean> {
+  function createLocal(
+    prompt: string,
+    folder: LocalFolder,
+    onOutrunnerModel = false,
+    model?: SessionModel,
+  ): Promise<boolean> {
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
@@ -122,9 +135,11 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         resolve(false);
         return;
       }
-      if (onOutrunnerModel) {
+      // The model picked on this screen; without one, Outrunner's where this
+      // Mac's Claude Code isn't logged in.
+      if (model || onOutrunnerModel) {
         try {
-          await putOnOutrunnerModel(workspaceId);
+          await (model ? putOnModel(workspaceId, model) : putOnOutrunnerModel(workspaceId));
         } catch (error) {
           void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
           setMessage(error instanceof Error ? error.message : "Outrunner's models are unavailable right now.");

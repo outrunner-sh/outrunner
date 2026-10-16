@@ -3,6 +3,7 @@ import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import {
   DEFAULT_CLOUD_MODEL,
   setModelRequest,
+  type SessionModel,
   type SetModelRequest,
 } from "@/lib/runtime/session-models";
 
@@ -38,24 +39,33 @@ export class NoStartingModelError extends Error {
 }
 
 /**
- * Put a new cloud session on Outrunner's default model before Claude first
- * launches, so it starts there. When it can't (no OpenRouter key on this
- * server, OpenRouter refusing, a box whose agent predates switching), the
- * session starts on the user's Claude login instead, or fails without one.
- * Returns which it starts on.
+ * Put a new cloud session on its model before Claude first launches, so it
+ * starts there: the one chosen on the new-session screen, else Outrunner's
+ * default. When Outrunner's default can't be had (no OpenRouter key, OpenRouter
+ * refusing, a box whose agent predates switching), the session starts on the
+ * user's Claude login instead, or fails without one; a model the user chose
+ * fails rather than quietly becoming another. Returns which it starts on.
  */
 export async function startingModel(deps: {
   setModel: (req: SetModelRequest) => Promise<unknown>;
   neevKey: () => Promise<string>;
   hasClaude: boolean;
+  /** Chosen on the new-session screen; omitted, Outrunner's default. */
+  model?: SessionModel;
 }): Promise<"outrunner" | "claude"> {
+  const chosen = deps.model ?? DEFAULT_CLOUD_MODEL;
+  if (chosen.source === "claude") {
+    if (!deps.hasClaude) throw new NoStartingModelError("Connect Claude in Settings to start a session on your Claude account.");
+    await deps.setModel({ model: chosen.id });
+    return "claude";
+  }
   try {
-    const req = await setModelRequest(DEFAULT_CLOUD_MODEL.id, deps.neevKey);
-    if (!req) throw new Error(`${DEFAULT_CLOUD_MODEL.id} is not on the menu`);
+    const req = await setModelRequest(chosen.id, deps.neevKey);
+    if (!req) throw new Error(`${chosen.id} is not on the menu`);
     await deps.setModel(req);
     return "outrunner";
   } catch (error) {
-    if (deps.hasClaude) {
+    if (deps.hasClaude && !deps.model) {
       console.warn("A new session starts on Claude: Outrunner's default model was unavailable", error);
       return "claude";
     }

@@ -110,3 +110,45 @@ test("any other failure without Claude asks to try again", async () => {
     (error: unknown) => error instanceof NoStartingModelError && /Please try again/.test(error.message) && !/tmux/.test(error.message),
   );
 });
+
+test("a session starts on the model chosen for it, on the key it was chosen on", async () => {
+  const sent: SetModelRequest[] = [];
+  const on = await startingModel({
+    setModel: async (req) => void sent.push(req),
+    neevKey: async () => KEY,
+    hasClaude: false,
+    model: { id: "anthropic/claude-opus-5.5", label: "Claude Opus", source: "own" },
+  });
+  assert.equal(on, "outrunner");
+  assert.deepEqual(sent, [{ model: "anthropic/claude-opus-5.5", gateway: "openrouter", token: KEY }]);
+});
+
+test("a Claude account model needs the user's Claude, and runs on it with no key", async () => {
+  const sent: SetModelRequest[] = [];
+  const opus = { id: "opus", label: "Opus", source: "claude" } as const;
+  assert.equal(
+    await startingModel({ setModel: async (req) => void sent.push(req), neevKey: async () => assert.fail("asked for a key"), hasClaude: true, model: opus }),
+    "claude",
+  );
+  assert.deepEqual(sent, [{ model: "opus" }]);
+  await assert.rejects(
+    startingModel({ setModel: async () => assert.fail("reached the agent"), neevKey: async () => KEY, hasClaude: false, model: opus }),
+    (error: unknown) => error instanceof NoStartingModelError && /Connect Claude/.test(error.message),
+  );
+});
+
+test("a chosen model that can't be had fails instead of quietly becoming Claude", async () => {
+  await assert.rejects(
+    quiet(() =>
+      startingModel({
+        setModel: async () => assert.fail("reached the agent"),
+        neevKey: async () => {
+          throw new NeevAiUnavailableError();
+        },
+        hasClaude: true,
+        model: { id: "z-ai/glm-5.3", label: "GLM 5.3", source: "neev" },
+      }),
+    ),
+    NoStartingModelError,
+  );
+});

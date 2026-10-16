@@ -1,6 +1,6 @@
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { DEFAULT_CLOUD_MODEL, setModelRequest } from "@/lib/runtime/session-models";
+import { DEFAULT_CLOUD_MODEL, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
 
 /**
  * Desktop-only bridge for local sessions: Claude Code running on this Mac.
@@ -191,6 +191,14 @@ export async function outrunnerKey(use?: "own" | "outrunner"): Promise<string> {
  * agent records it, so Claude Code starts on it through OpenRouter, with no
  * Claude login needed (and none of its login screens).
  */
+/** Put a new local session on the model chosen for it, before its first
+ *  launch: a Claude account model, or an OpenRouter one on the key picked. */
+export async function putOnModel(workspaceId: string, model: SessionModel): Promise<void> {
+  const body = await setModelRequest(model.id, () => outrunnerKey(model.source === "own" ? "own" : "outrunner"));
+  if (!body) throw new Error(`${model.label} isn't one of the offered models.`);
+  await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+}
+
 export async function putOnOutrunnerModel(workspaceId: string): Promise<void> {
   const body = await setModelRequest(DEFAULT_CLOUD_MODEL.id, outrunnerKey);
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
