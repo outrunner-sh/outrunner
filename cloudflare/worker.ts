@@ -102,7 +102,7 @@ export class OutrunnerControlPlane extends Container<Env> {
   }
 }
 
-export default {
+const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     // One logical control-plane instance; route everything to it. Provisioning
     // is elected atomically in Postgres, so sharding to multiple instances later
@@ -110,3 +110,5 @@ export default {
     return getContainer(env.CONTROL_PLANE).fetch(request);
   },
 };
+
+export default worker;
