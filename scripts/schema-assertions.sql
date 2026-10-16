@@ -260,3 +260,19 @@ begin
   end;
   raise notice 'ok: box size defaults to small and is checked';
 end $$;
+
+-- 16. Settings → Sandbox: the user's own Modal is a choice, on a token kept
+-- sealed beside the Daytona key.
+do $$
+begin
+  insert into user_credentials (user_id) values ('11111111-1111-1111-1111-111111111111')
+    on conflict (user_id) do nothing;
+  update user_credentials set sandbox = 'modal' where user_id = '11111111-1111-1111-1111-111111111111';
+  if (select count(*) from information_schema.columns
+      where table_name = 'user_credentials'
+        and column_name in ('modal_token_ciphertext', 'modal_token_hint', 'modal_token_updated_at')) <> 3 then
+    raise exception 'FAIL: user_credentials lacks the Modal token columns';
+  end if;
+  update user_credentials set sandbox = 'outrunner' where user_id = '11111111-1111-1111-1111-111111111111';
+  raise notice 'ok: modal is a sandbox choice, with its token columns';
+end $$;

@@ -13,7 +13,7 @@ const OUTRUNNER_RUNS_ON: Partial<Record<string, string>> = {
   daytona: "Outrunner's Daytona",
 };
 
-/** Settings → Sandbox: Outrunner's sandboxes or the user's own Daytona. */
+/** Settings → Sandbox: Outrunner's sandboxes, or the user's own Daytona or Modal. */
 export default async function SandboxSettings() {
   const owner = await getOwner();
   if (!owner) redirect("/signin?next=/settings/sandbox");

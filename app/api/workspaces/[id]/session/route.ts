@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { getSandboxSettings } from "@/lib/db/credentials";
 import {
   getProject,
   getRuntimeComputerByProject,
@@ -12,6 +13,7 @@ import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
+import { boxSize } from "@/lib/runtime/box-sizes";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
@@ -180,6 +182,9 @@ async function bringBack(
     repoFullName: project.fullName,
     githubToken: await optionalGithubToken(userId),
     sessionEnv: await runtimeSessionEnvironment(userId),
+    // The owner's size now, as a new box would get: Modal sizes a box as it
+    // starts, restored or not.
+    size: boxSize((await getSandboxSettings(userId)).boxSize),
     previousSandboxId: ended,
   });
   return ensured.computer;

@@ -4,9 +4,9 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
-  getDaytonaKey,
   getSandboxSettings,
   neevAiKey,
+  ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
 import {
@@ -21,14 +21,15 @@ import { keySource } from "@/lib/openrouter/keys";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
-import { boxSize } from "@/lib/runtime/box-sizes";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
   computerMadeBy,
   endedBoxOf,
+  newBoxSize,
   providerForNewSessions,
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
+import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { ProvisionPhase, RuntimeProvider } from "@/lib/runtime/types";
@@ -129,15 +130,15 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const daytonaKey = () => getDaytonaKey(owner.id);
+  const keys = ownSandboxKeys(owner.id);
   let sandboxSettings: SandboxSettings;
   let provider: RuntimeProvider;
   try {
-    // Outrunner's sandboxes, or the user's own Daytona (Settings → Sandbox).
+    // Outrunner's sandboxes, or the user's own Daytona or Modal (Settings → Sandbox).
     sandboxSettings = await getSandboxSettings(owner.id);
-    provider = providerForNewSessions(sandboxSettings, daytonaKey);
+    provider = providerForNewSessions(sandboxSettings, keys);
   } catch (error) {
-    if (error instanceof NoDaytonaKeyError) return needsSandbox(error.message);
+    if (error instanceof NoDaytonaKeyError || error instanceof NoModalTokenError) return needsSandbox(error.message);
     console.error("Runtime provider is unavailable", error);
     return NextResponse.json(
       { error: "The configured provider is not available." },
@@ -191,7 +192,7 @@ export async function POST(request: Request, context: RouteContext) {
           // The owner moved to another sandbox (Settings → Sandbox). The old
           // box goes, so no one keeps paying for one nothing uses, and the
           // project gets a new computer where they chose.
-          await retireComputer(madeBy, daytonaKey, sandboxId);
+          await retireComputer(madeBy, keys, sandboxId);
           await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
         } else if (!(await provider.computerAlive(sandboxId))) {
           await markRuntimeComputerStoppedIfReady(currentComputer.id, sandboxId);
@@ -204,9 +205,7 @@ export async function POST(request: Request, context: RouteContext) {
         repoFullName: project.fullName,
         githubToken,
         sessionEnv,
-        // The user's box size, on Outrunner's sandboxes; their own Daytona
-        // keeps its default.
-        ...(sandboxSettings.sandbox === "outrunner" && { size: boxSize(sandboxSettings.boxSize) }),
+        size: newBoxSize(sandboxSettings),
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
