@@ -201,6 +201,10 @@ type UserCredentialsRow = {
   modal_token_updated_at: string | null;
   // supabase/migrations/20261013130000_user_box_size.sql.
   box_size: "x-small" | "small" | "medium" | "large";
+  // Settings → Providers (supabase/migrations/20261016140000_user_openrouter_key.sql).
+  openrouter_key_ciphertext: string | null;
+  openrouter_key_hint: string | null;
+  openrouter_key_updated_at: string | null;
   created_at: string;
   updated_at: string;
 };
