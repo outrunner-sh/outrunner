@@ -139,6 +139,36 @@ func TestStartAnswersYesWhicheverWayTheTrustDialogIsOrdered(t *testing.T) {
 	}
 }
 
+func TestStartTrustsARuntimeComputersWorktreeToo(t *testing.T) {
+	t.Parallel()
+	s := NewService(t.TempDir())
+	fake := newFakeSessions()
+	s.tmux = fake
+	const id = "ws-cloud"
+	// A Runtime Computer's session: no folder of the user's, a worktree of the
+	// mirror (here already made, so Create needs no git).
+	if err := os.MkdirAll(s.worktreePath(id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(context.Background(), CreateInput{WorkspaceID: id, Branch: "b", BaseBranch: "main"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { s.stopRecorder(context.Background(), id) })
+	fake.pane = trustNoFirst
+	fake.onKey = func(key string) string {
+		if key == "Down" {
+			return trustNoFirstMoved
+		}
+		return composerPane
+	}
+	if _, err := s.Start(context.Background(), id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if want := []string{"Down", "Enter"}; !slices.Equal(fake.keys, want) {
+		t.Errorf("keys pressed = %q, want %q", fake.keys, want)
+	}
+}
+
 func TestStartReportsAClaudeThatExitsAsItStarts(t *testing.T) {
 	t.Parallel()
 	s, fake, id, folder := stoppedSession(t)

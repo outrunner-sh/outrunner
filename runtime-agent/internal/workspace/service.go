@@ -405,7 +405,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
 	s.startRecorder(ctx, workspaceID)
-	if err := s.waitClaudeReady(ctx, name, s.local(workspaceID)); err != nil {
+	if err := s.waitClaudeReady(ctx, name); err != nil {
 		return "", claudeExited(err, worktree)
 	}
 	s.beginSummary(workspaceID, worktree)
@@ -419,16 +419,17 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 // capped so a slow or unexpected launch can never wedge Start. Returns early if
 // ctx is cancelled (the start request disconnected or shutdown began).
 //
-// acceptTrust answers Claude's folder-trust dialog. Every local worktree is a
-// directory Claude has never seen, so without this the first prompt would be
-// typed into the dialog. Choosing the checkout in Outrunner is the user's trust
-// decision; a Runtime Computer never shows the dialog (deploy pre-seeds it).
+// It answers Claude's folder-trust dialog. Every worktree is a directory
+// Claude has never seen, so without this the first prompt would be typed into
+// the dialog. Choosing the repository or folder in Outrunner is the user's
+// trust decision. A Runtime Computer's seeded config trusts its workspaces
+// folder, but Claude Code 2.1.296 asks for each folder inside it anyway.
 //
 // A Claude that exits meanwhile (an option its version lacks, a crash, a
 // "No" to that dialog) takes its session with it: that is errClaudeExited,
 // rather than a session reported ready that the first prompt then finds gone
 // ("tmux paste: no session").
-func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust bool) error {
+func (s *Service) waitClaudeReady(ctx context.Context, name string) error {
 	const minWait = 2 * time.Second
 	// Room for a first run's screens (theme, security notes) and the trust
 	// dialog, a second apart, on a Claude Code still starting up.
@@ -447,7 +448,7 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string, acceptTrust 
 		// the pane must show where the last one moved the selection.
 		if err == nil && time.Since(lastAnswer) >= time.Second {
 			key := firstRunKey(pane)
-			if key == "" && acceptTrust && isTrustDialog(pane) {
+			if key == "" && isTrustDialog(pane) {
 				key = trustKey(pane)
 			}
 			if key != "" {
@@ -738,7 +739,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 		return "", err
 	}
 	s.continueRecorder(ctx, workspaceID)
-	if err := s.waitClaudeReady(ctx, name, s.local(workspaceID)); err != nil {
+	if err := s.waitClaudeReady(ctx, name); err != nil {
 		return "", claudeExited(err, worktree)
 	}
 	s.beginSummary(workspaceID, worktree)

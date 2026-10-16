@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 
@@ -219,6 +223,23 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
   }
 });
 
+test("claudeInstallScript skips the install when the box already has the tools", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  // A PATH with tmux and jq present, and a sudo that records being called.
+  const bin = mkdtempSync(join(tmpdir(), "install-"));
+  const called = join(bin, "sudo-called");
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+    chmodSync(join(bin, name), 0o755);
+  }
+  execFileSync("/bin/sh", ["-c", claudeInstallScript()], { env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` } });
+  const { existsSync } = await import("node:fs");
+  assert.equal(existsSync(called), false, "sudo was not called");
+});
+
 test("claudeAgentLaunchScript roots the agent + Claude HOME at the box home", () => {
   const s = claudeAgentLaunchScript("/home/daytona", "s3cr3t", {
     CLAUDE_CODE_OAUTH_TOKEN: "tok en",
@@ -249,6 +270,30 @@ test("claudeConfigSeedScript jq-merges the onboarding-skip flags into ~/.claude.
   }
   // A merge (`. + {...}`), not an overwrite, so base-image config survives.
   assert.ok(s.includes(". +"), "merges rather than overwrites");
+});
+
+const hasJq = spawnSync("jq", ["--version"]).status === 0;
+
+test("claudeConfigSeedScript trusts the workspaces folder and keeps the existing config", { skip: !hasJq && "needs jq" }, () => {
+  const root = mkdtempSync(join(tmpdir(), "seed-"));
+  try {
+    const f = join(root, ".claude.json");
+    writeFileSync(f, JSON.stringify({ cachedFlags: 1, projects: { "/elsewhere": { allowedTools: ["x"] } } }));
+    const run = spawnSync("bash", ["-c", claudeConfigSeedScript(root)], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    const seeded = JSON.parse(readFileSync(f, "utf8"));
+    assert.equal(seeded.hasCompletedOnboarding, true);
+    assert.equal(seeded.cachedFlags, 1, "keeps the base image's config");
+    assert.deepEqual(seeded.projects["/elsewhere"], { allowedTools: ["x"] }, "keeps other folders' entries");
+    // Claude 2.1.293 asks per folder; an entry for a parent covers each worktree.
+    assert.equal(seeded.projects[`${root}/workspaces`].hasTrustDialogAccepted, true);
+
+    rmSync(f);
+    assert.equal(spawnSync("bash", ["-c", claudeConfigSeedScript(root)]).status, 0);
+    assert.equal(JSON.parse(readFileSync(f, "utf8")).projects[`${root}/workspaces`].hasTrustDialogAccepted, true, "seeds a fresh box too");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("deployClaude runs install → upload → prep → seed → launch → health in order", async () => {

@@ -16,24 +16,17 @@ import {
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
+import type { AgentEndpoint } from "@/lib/runtime/sandbox/backend";
 import type { SetModelRequest } from "@/lib/runtime/session-models";
 import {
   parseManifest,
   type SnapshotManifest,
 } from "@/lib/runtime/snapshot/manifest";
 
-/** Everything needed to reach one Runtime Computer's agent. */
-export type AgentTarget = {
-  /** Standard preview URL base for control calls, e.g.
-   *  `https://8080-<sandboxId>.daytonaproxy01.net`. */
-  controlBaseUrl: string;
-  /** Daytona preview token for the control base (sent as a header). */
-  daytonaPreviewToken: string;
-  /** Signed preview URL base for the browser WS (token already in the host). */
-  signedWsBaseUrl: string;
-  /** Per-computer Runtime secret used to mint Runtime tokens. */
-  secret: string;
-};
+/** Everything needed to reach one Runtime Computer's agent: where its sandbox
+ *  provider exposes it ({@link AgentEndpoint}) and the per-computer Runtime
+ *  secret used to mint Runtime tokens. */
+export type AgentTarget = AgentEndpoint & { secret: string };
 
 /** The authorized identity for a workspace connection (exp is filled by mint). */
 export type WorkspaceIdentity = Omit<RuntimeTokenClaims, "exp">;
@@ -55,6 +48,13 @@ const AGENT_REQUEST_TIMEOUT_MS = 12_000;
  * valid long-running restore isn't aborted and reported as a failure.
  */
 const AGENT_LIFECYCLE_TIMEOUT_MS = 180_000;
+
+/**
+ * Start and resume return once Claude's prompt is up, which the agent waits up
+ * to 15s for. Outlast that cap, so a slow launch the agent still reports as
+ * started isn't reported here as a failure.
+ */
+const AGENT_START_TIMEOUT_MS = 30_000;
 
 /**
  * A model switch checks the session (up to 10s on the agent) and relaunches
@@ -96,7 +96,12 @@ export class AgentClient {
   }
 
   startWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/start`, identity);
+    return this.post(
+      `/workspaces/${identity.workspaceId}/start`,
+      identity,
+      undefined,
+      AGENT_START_TIMEOUT_MS,
+    );
   }
 
   stopWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
@@ -114,7 +119,12 @@ export class AgentClient {
   }
 
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/resume`, identity);
+    return this.post(
+      `/workspaces/${identity.workspaceId}/resume`,
+      identity,
+      undefined,
+      AGENT_START_TIMEOUT_MS,
+    );
   }
 
   /** Switch the workspace's session to another model; the agent relaunches
@@ -182,12 +192,12 @@ export class AgentClient {
   }
 
   /**
-   * The `wss://` URL the browser opens for the live terminal: the signed
-   * Daytona preview host (token in the subdomain, so no headers) plus a short
-   * Runtime token the agent verifies.
+   * The `wss://` URL the browser opens for the live terminal: the provider's
+   * browser-ready host (any credential already in it, so no headers) plus a
+   * short Runtime token the agent verifies.
    */
   ptyUrl(identity: WorkspaceIdentity): string {
-    const base = this.target.signedWsBaseUrl
+    const base = this.target.wsBaseUrl
       .replace(/^http/, "ws")
       .replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
@@ -205,7 +215,7 @@ export class AgentClient {
    * JSONL byte offset so no event is duplicated or skipped across reconnects.
    */
   eventsUrl(identity: WorkspaceIdentity): string {
-    const base = this.target.signedWsBaseUrl
+    const base = this.target.wsBaseUrl
       .replace(/^http/, "ws")
       .replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
@@ -219,7 +229,7 @@ export class AgentClient {
    * open a `wss:` URL.
    */
   eventsSseUrl(identity: WorkspaceIdentity): string {
-    const base = this.target.signedWsBaseUrl.replace(/\/$/, "");
+    const base = this.target.wsBaseUrl.replace(/\/$/, "");
     const token = mintRuntimeToken(identity, this.target.secret);
     return `${base}/events?token=${encodeURIComponent(token)}`;
   }
@@ -251,8 +261,9 @@ export class AgentClient {
         method,
         headers: {
           ...(body !== undefined && { "content-type": "application/json" }),
+          // The provider's proxy headers first, so they can never replace ours.
+          ...this.target.controlHeaders,
           authorization: `Bearer ${token}`,
-          "x-daytona-preview-token": this.target.daytonaPreviewToken,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),

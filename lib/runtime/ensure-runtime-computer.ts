@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type {
   ProvisionedComputer,
   ProvisionComputerInput,
-} from "@/lib/runtime/daytona-provider";
+} from "@/lib/runtime/computer-provider";
 import type { RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
 
 const POLL_INTERVAL_MS = 500;

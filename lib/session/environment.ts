@@ -1,5 +1,5 @@
 import type { LocalSession } from "@/lib/desktop/local-runtime";
-import type { Workspace } from "@/lib/runtime/types";
+import { onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
 
 /** The changed set summed up, for the Environment panel's Changes row. */
 export type ChangeTotals = { files: number; additions: number; deletions: number };
@@ -43,9 +43,9 @@ export function environmentSummary(
     location: {
       kind: "cloud",
       label: "Cloud",
-      // Daytona sessions share the project's Runtime Computer; the others each
-      // have a sandbox of their own, named by their provider.
-      detail: workspace.provider === "daytona" ? "runtime-computer" : workspace.provider,
+      // Daytona and Neev sessions share the project's Runtime Computer; the
+      // others each have a sandbox of their own, named by their provider.
+      detail: onRuntimeComputer(workspace.provider) ? "runtime-computer" : workspace.provider,
     },
     branch: workspace.branch || null,
     baseBranch: workspace.branch ? workspace.baseBranch || null : null,

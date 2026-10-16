@@ -16,7 +16,7 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
@@ -132,7 +132,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
   const provider = resolution.provider;
 
-  if (provider instanceof DaytonaRuntimeProvider) {
+  if (isComputerProvider(provider)) {
     return daytonaLifecycle(action, workspace, provider, owner.id);
   }
 
@@ -152,7 +152,7 @@ export async function POST(request: Request, context: RouteContext) {
 async function daytonaLifecycle(
   action: LifecycleAction,
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputerRuntimeProvider,
   userId: string,
 ) {
   if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, userId);
@@ -171,7 +171,7 @@ async function daytonaLifecycle(
  */
 async function archiveDaytonaWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputerRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "ready" && workspace.status !== "idle") {
@@ -231,7 +231,7 @@ async function archiveDaytonaWorkspace(
  */
 async function restoreDaytonaWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputerRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "archived") {
@@ -303,7 +303,7 @@ async function restoreDaytonaWorkspace(
     });
     const computer = ensured.computer;
     if (!computer.daytonaSandboxId) {
-      throw new Error("Ready Runtime Computer has no Daytona sandbox id.");
+      throw new Error("Ready Runtime Computer has no sandbox id.");
     }
     if (!ensured.provisioned) {
       await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
@@ -353,7 +353,7 @@ async function restoreDaytonaWorkspace(
 
 async function daytonaAgent(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputerRuntimeProvider,
   userId: string,
 ): Promise<{ agent: AgentClient; identity: WorkspaceIdentity }> {
   const computer = await getRuntimeComputerByProject(workspace.projectId);
@@ -376,7 +376,7 @@ async function daytonaAgent(
 
 async function resumeDaytonaWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputerRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "suspended") {
@@ -409,7 +409,7 @@ async function resumeDaytonaWorkspace(
 
 async function suspendDaytonaWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputerRuntimeProvider,
   userId: string,
 ) {
   if (workspace.status !== "ready" && workspace.status !== "idle") {
@@ -442,7 +442,7 @@ async function suspendDaytonaWorkspace(
 
 async function destroyDaytonaWorkspace(
   workspace: Workspace,
-  provider: DaytonaRuntimeProvider,
+  provider: ComputerRuntimeProvider,
   userId: string,
 ) {
   return endWorkspace(workspace, async () => {

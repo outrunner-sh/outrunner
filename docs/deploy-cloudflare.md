@@ -1,7 +1,7 @@
 # Deploying Outrunner to Cloudflare Containers
 
 A **provider swap** of the control plane onto Cloudflare Containers — the app is
-unchanged. Containers runs the same `next start` container, so the filesystem,
+unchanged. Containers runs the same `pnpm start` container, so the filesystem,
 Node runtime, and the on-disk `runtime-agent` binary all work as on Railway.
 **Railway stays intact** as rollback.
 
@@ -17,7 +17,7 @@ So the Dockerfile *builds* the Go agent in-image, then serves the whole app.
 
 | File | Purpose |
 | --- | --- |
-| `outrunner/Dockerfile` | Multi-stage: build the Go agent → `next build` → `next start` with the binary at `bin/runtime-agent-linux-amd64`. |
+| `outrunner/Dockerfile` | Multi-stage: build the Go agent → `next build` → `pnpm start` (server.ts: Next plus the Neev WebSocket relay) with the binary at `bin/runtime-agent-linux-amd64`. |
 | `outrunner/.dockerignore` | Keeps the image lean and `.env*`/secrets out. **Keeps `runtime-agent/`** (the Dockerfile compiles it). |
 | `outrunner/cloudflare/wrangler.jsonc` | Container + Durable Object + custom-domain config (build context = `outrunner/`). |
 | `outrunner/cloudflare/worker.ts` | Thin Worker forwarding all requests to the container. |
@@ -85,6 +85,26 @@ pnpm dlx wrangler secret put OPENROUTER_MANAGEMENT_KEY
 `/api/health` reports `outrunnerModels: "per-user"` once it is in. A plain
 `OPENROUTER_API_KEY` also works (`"shared"`), but every session then shares
 one uncapped key that any session's Claude can read.
+
+**Neev sandboxes** (optional; cloud sessions run on Daytona otherwise): set
+the provider and Neev's three keys, then deploy.
+
+```bash
+pnpm dlx wrangler secret put RUNTIME_PROVIDER   # neev
+pnpm dlx wrangler secret put NEEV_API_KEY       # project API key, Resource Type "Sandboxes" (sk-nc-…)
+pnpm dlx wrangler secret put NEEV_ORG_ID
+pnpm dlx wrangler secret put NEEV_PROJECT_ID
+```
+
+`/api/health` then reports `provider: "neev"` and `configured.neev: true`.
+`NEEV_SANDBOX_TEMPLATE` is optional (default `sb-ubuntu-26-04-dev`). A personal
+access token (`pat-nc-…`) won't do: the sandbox itself refuses it. Nothing
+uses a preview URL: the app reaches each sandbox through its own runtime on
+that key, and relays the browser's terminal and conversation WebSockets
+through `/relay/neev/` on this domain, which is why `RUNTIME_BASE_URL` must be
+the live domain. Switching from Daytona gives each project a new Neev computer
+on its next session; its Daytona box is left running, so delete it in Daytona.
+Set `RUNTIME_PROVIDER` back to `daytona` (or delete it) to roll back.
 
 There is deliberately **no** `GITHUB_PAT`, `ANTHROPIC_API_KEY` or
 `CLAUDE_CODE_OAUTH_TOKEN`. The app stopped reading them when it went

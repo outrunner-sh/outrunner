@@ -9,7 +9,7 @@ import { WorkspaceSession } from "@/components/workspace-session";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
-import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** The session itself: chat in the middle, its Environment (changes, branch,
@@ -51,7 +51,7 @@ export function WorkspaceStudio({
   };
   const isLocal = local !== undefined;
   const isReady = workspace.status === "ready" || workspace.status === "idle";
-  const hasLiveSession = isReady && (workspace.provider === "daytona" || isLocal);
+  const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
   const offline = offlineCopy({ workspace, isReady });
 
   return (
@@ -150,8 +150,8 @@ function offlineCopy({
   if (isReady) {
     return {
       title: "Live session unavailable",
-      detail: "Live sessions need the Daytona provider, which this server is not using.",
-      placeholder: "Live sessions need the Daytona provider",
+      detail: "Live sessions need a cloud sandbox provider, which this server is not using.",
+      placeholder: "Live sessions need a cloud sandbox provider",
     };
   }
   return {

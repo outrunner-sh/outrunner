@@ -13,7 +13,7 @@ import type {
 
 type Tables = Database["public"]["Tables"];
 
-const PROVIDERS: readonly ProviderName[] = ["local", "modal", "daytona"];
+const PROVIDERS: readonly ProviderName[] = ["local", "modal", "daytona", "neev"];
 
 /** Narrow the free-text `provider` column to a known backend (defaults local). */
 function toProviderName(value: string): ProviderName {

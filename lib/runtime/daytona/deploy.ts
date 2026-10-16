@@ -450,11 +450,14 @@ async function resetJcode(io: BoxIO, root: string): Promise<void> {
 
 /** Install what the Claude-in-tmux engine needs beyond the base image (which
  *  already has `claude` + node). `apt-get update` first: the base ships a stale
- *  cache where tmux otherwise reports "no installation candidate". */
+ *  cache where tmux otherwise reports "no installation candidate". Skipped when
+ *  the tools are already there: a backend may install them while preparing the
+ *  box (Neev does, as root, since its sandboxes have no usable sudo). */
 export function claudeInstallScript(): string {
   return (
+    "command -v tmux >/dev/null && command -v jq >/dev/null || { " +
     "sudo apt-get update -q && " +
-    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tmux git-lfs ripgrep jq"
+    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tmux git-lfs ripgrep jq; }"
   );
 }
 
@@ -472,10 +475,14 @@ export function claudeConfigSeedScript(root: string): string {
     hasUsedBypassPermissions: true,
     hasTrustDialogAccepted: true,
   });
+  // Claude 2.1.293 ignores the global trust flag and asks per folder, with
+  // "No, exit" preselected; a folder's entry covers everything under it, and
+  // every worktree lives under workspaces/.
+  const trust = `.projects[${JSON.stringify(`${root}/workspaces`)}].hasTrustDialogAccepted = true`;
   const f = `${root}/.claude.json`;
   return (
     `[ -f ${f} ] || echo '{}' > ${f}; ` +
-    `tmp=$(mktemp) && jq ${shellQuote(`. + ${flags}`)} ${f} > "$tmp" && mv "$tmp" ${f}`
+    `tmp=$(mktemp) && jq ${shellQuote(`. + ${flags} | ${trust}`)} ${f} > "$tmp" && mv "$tmp" ${f}`
   );
 }
 

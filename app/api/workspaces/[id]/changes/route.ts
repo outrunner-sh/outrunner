@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { getRuntimeComputerByProject, getWorkspace } from "@/lib/db/repositories";
-import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export async function GET(request: Request, context: RouteContext) {
   const path = new URL(request.url).searchParams.get("path");
 
   try {
-    if (provider instanceof DaytonaRuntimeProvider) {
+    if (isComputerProvider(provider)) {
       const computer = await getRuntimeComputerByProject(workspace.projectId);
       if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
         return NextResponse.json(

@@ -20,7 +20,9 @@
 import { randomBytes } from "node:crypto";
 
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { DaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
+import { NeevRuntimeProvider } from "@/lib/runtime/neev-provider";
 import type { ProvisionStage } from "@/lib/runtime/types";
 
 const REPO = process.env.VERIFY_REPO ?? "octocat/Hello-World";
@@ -36,8 +38,19 @@ const identity: WorkspaceIdentity = {
 };
 
 async function main(): Promise<void> {
-  requireEnv("DAYTONA_API_KEY");
-  const provider = new DaytonaRuntimeProvider();
+  // VERIFY_PROVIDER=neev runs the same checks on a Neev sandbox.
+  const which = process.env.VERIFY_PROVIDER ?? "daytona";
+  let provider: ComputerRuntimeProvider;
+  if (which === "neev") {
+    requireEnv("NEEV_API_KEY");
+    requireEnv("NEEV_ORG_ID");
+    requireEnv("NEEV_PROJECT_ID");
+    provider = new NeevRuntimeProvider();
+  } else {
+    requireEnv("DAYTONA_API_KEY");
+    provider = new DaytonaRuntimeProvider();
+  }
+  console.log(`provider: ${provider.name}`);
   const secret = randomBytes(32).toString("hex");
   let sandboxId: string | null = null;
 

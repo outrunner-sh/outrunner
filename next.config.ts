@@ -4,7 +4,8 @@ const nextConfig: NextConfig = {
   // The Daytona SDK loads `form-data` lazily for file uploads. Turbopack
   // cannot transform that dynamic Node require, so leave both packages for
   // the Node runtime rather than bundling them into route handlers.
-  serverExternalPackages: ["@daytonaio/sdk", "form-data"],
+  // ssh2 (the Neev tunnel) loads optional native bindings the same way.
+  serverExternalPackages: ["@daytonaio/sdk", "form-data", "ssh2"],
 
   // The Daytona provider reads the cross-compiled runtime-agent binary at
   // request time via `readFile(RUNTIME_AGENT_BINARY_PATH)` (upload-on-provision,
