@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Box, ChevronLeft, Info, Sparkles, User } from "lucide-react";
+import { Box, ChevronLeft, Info, KeyRound, Sparkles, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,8 @@ const sections = [
   { href: "/settings/claude", label: "Claude", icon: Sparkles },
   // Where cloud sessions run; a create that needs a Daytona key points here.
   { href: "/settings/sandbox", label: "Sandbox", icon: Box },
+  // The user's own keys for the providers their models run on (OpenRouter).
+  { href: "/settings/providers", label: "Providers", icon: KeyRound },
 ];
 
 /** The settings-nav column: a Back link home, then the section links with the
