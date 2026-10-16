@@ -173,10 +173,14 @@ export function runsOnOutrunnerModel(status: LocalStatus, outrunnerModels: boole
   return outrunnerModels && needsClaudeLogin(status);
 }
 
-/** The user's own capped key for Outrunner's models, which the server creates
- *  on first use. A local session runs on it through OpenRouter. */
-export async function outrunnerKey(): Promise<string> {
-  const res = await fetch("/api/neev-ai/key", { method: "POST" });
+/** The OpenRouter key a local session runs Outrunner's models on: the user's
+ *  own (`own`), the capped one the server creates for them on first use
+ *  (`outrunner`), or, by default, theirs when they saved one. */
+export async function outrunnerKey(use?: "own" | "outrunner"): Promise<string> {
+  const res = await fetch("/api/neev-ai/key", {
+    method: "POST",
+    ...(use ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ use }) } : {}),
+  });
   const data = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
   if (!res.ok || !data.key) throw new Error(data.error ?? "Outrunner's models are unavailable right now.");
   return data.key;
@@ -195,15 +199,21 @@ export async function putOnOutrunnerModel(workspaceId: string): Promise<void> {
 /** Whether Outrunner's models are there for this user, and on their own
  *  OpenRouter key (GET /api/neev-ai); asked once per page load, or again
  *  after Settings → Providers changes the key. */
-export type OutrunnerModels = { available: boolean; ownKey: boolean };
+export type OutrunnerModels = { available: boolean; ownKey: boolean; serverModels: boolean; allowance: boolean };
 let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
 export function outrunnerModels(): Promise<OutrunnerModels> {
   outrunnerModelsAnswer ??= fetch("/api/neev-ai")
     .then((res): Promise<Partial<OutrunnerModels>> | Partial<OutrunnerModels> => (res.ok ? res.json() : {}))
-    .then((data) => ({ available: data.available === true, ownKey: data.ownKey === true }))
+    .then((data) => ({
+      available: data.available === true,
+      ownKey: data.ownKey === true,
+      // An older server says only `available`: that was its own key.
+      serverModels: data.serverModels ?? data.available === true,
+      allowance: data.allowance === true,
+    }))
     .catch(() => {
       outrunnerModelsAnswer = null; // a failed look is asked again next time
-      return { available: false, ownKey: false };
+      return { available: false, ownKey: false, serverModels: false, allowance: false };
     });
   return outrunnerModelsAnswer;
 }

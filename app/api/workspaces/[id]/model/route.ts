@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { neevAiKey } from "@/lib/db/credentials";
+import { neevAiKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
 import {
   getRuntimeComputerByProject,
   getWorkspace,
@@ -35,7 +35,9 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in to switch models." }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as { model?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { model?: unknown; key?: unknown } | null;
+  // Which key an OpenRouter model runs on: the user's own, or Outrunner's.
+  const use: OpenRouterKeyUse = body?.key === "own" || body?.key === "outrunner" ? body.key : "auto";
   if (!offeredModel(body?.model)) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
   }
@@ -70,10 +72,13 @@ export async function POST(request: Request, context: RouteContext) {
   // switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(body?.model, () => neevAiKey(owner.id));
+    req = await setModelRequest(body?.model, () => neevAiKey(owner.id, use));
   } catch (error) {
     if (error instanceof NeevAiUnavailableError || error instanceof StoredKeyUnreadableError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
+    }
+    if (error instanceof NoOwnOpenRouterKeyError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     console.error(`Model: could not get a Neev AI key for ${owner.id}`, error);
     return NextResponse.json({ error: "Outrunner's models are unavailable right now. Please try again." }, { status: 502 });

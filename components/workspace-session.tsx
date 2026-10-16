@@ -13,8 +13,8 @@ import { SessionComposer, type ModelChoice } from "@/components/session-composer
 import { localAgentRequest, localTarget, messageForLocalError, outrunnerKey } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
-import { modelGroups, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
-import { outrunnerModels } from "@/lib/desktop/local-runtime";
+import { modelGroups, type ModelSource, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
+import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
@@ -148,18 +148,26 @@ export function WorkspaceSession({
   // conversation continued. The pick shows until a reply reports the model it
   // actually ran.
   const [switching, setSwitching] = useState(false);
-  // Whether Outrunner's models run on the user's own OpenRouter key, which the
-  // model menu names (Settings → Providers).
-  const [ownOpenRouterKey, setOwnOpenRouterKey] = useState(false);
+  // Which OpenRouter keys the model menu offers Outrunner's models on: the
+  // user's own (Settings → Providers), Outrunner's, or both.
+  const [openRouter, setOpenRouter] = useState<OutrunnerModels>({
+    available: true,
+    ownKey: false,
+    serverModels: true,
+    allowance: false,
+  });
   useEffect(() => {
     let live = true;
     void outrunnerModels().then((answer) => {
-      if (live) setOwnOpenRouterKey(answer.ownKey);
+      if (live) setOpenRouter(answer);
     });
     return () => {
       live = false;
     };
   }, []);
+  // Which key's entry the menu ticks when a model is offered on both: the one
+  // last picked here, else the one a new session starts on (theirs, if saved).
+  const [keyPicked, setKeyPicked] = useState<ModelSource | null>(() => pickedKey(workspaceId));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   const repliedSincePick =
     picked !== null &&
@@ -173,7 +181,8 @@ export function WorkspaceSession({
   const working =
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(ownOpenRouterKey),
+    groups: modelGroups(openRouter),
+    preferredSource: keyPicked ?? (openRouter.ownKey ? "own" : "neev"),
     switching,
     disabledReason: !canSend
       ? "Waiting for the session to connect"
@@ -184,7 +193,11 @@ export function WorkspaceSession({
       setSwitching(true);
       setSendError(null);
       (local ? switchLocalModel(workspaceId, model) : switchCloudModel(workspaceId, model))
-        .then(() => setPicked({ model: model.id, events: conversation.events.length }))
+        .then(() => {
+          setPicked({ model: model.id, events: conversation.events.length });
+          setKeyPicked(model.source);
+          rememberPickedKey(workspaceId, model.source);
+        })
         .catch((error: unknown) =>
           setSendError(
             local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't switch models.",
@@ -341,7 +354,7 @@ export function WorkspaceSession({
  *  the user's own capped key, which the server hands over (creating it the
  *  first time); a Claude account model runs on the Mac's own Claude login. */
 async function switchLocalModel(workspaceId: string, model: SessionModel): Promise<void> {
-  const body = await setModelRequest(model.id, outrunnerKey);
+  const body = await setModelRequest(model.id, () => outrunnerKey(model.source === "own" ? "own" : "outrunner"));
   if (!body) throw new Error(`${model.label} isn't one of the offered models.`);
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
 }
@@ -352,9 +365,28 @@ async function switchCloudModel(workspaceId: string, model: SessionModel): Promi
   const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: model.id }),
+    body: JSON.stringify({ model: model.id, ...(model.source !== "claude" && { key: model.source === "own" ? "own" : "outrunner" }) }),
   });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't switch models. Please try again.");
+}
+
+/** Which key a session's model was last picked on, here (a convenience: the
+ *  reply names only the model, the same on either key). */
+function pickedKey(workspaceId: string): ModelSource | null {
+  try {
+    const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
+    return saved === "own" || saved === "neev" || saved === "claude" ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberPickedKey(workspaceId: string, source: ModelSource): void {
+  try {
+    window.localStorage.setItem(`outrunner:model-key:${workspaceId}`, source);
+  } catch {
+    // Blocked storage only costs the tick going back to the default key.
+  }
 }

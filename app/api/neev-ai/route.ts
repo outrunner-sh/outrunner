@@ -19,5 +19,11 @@ export async function GET() {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
   const ownKey = await hasOwnOpenRouterKey(owner.id);
-  return NextResponse.json({ available: ownKey || keySource() !== null, ownKey });
+  const source = keySource();
+  return NextResponse.json({
+    available: ownKey || source !== null,
+    ownKey,
+    serverModels: source !== null,
+    allowance: source === "per-user",
+  });
 }

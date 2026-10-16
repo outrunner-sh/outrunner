@@ -75,10 +75,24 @@ test("cloud sessions default to an Outrunner model on the menu", () => {
   assert.equal(offeredModel(DEFAULT_CLOUD_MODEL.id), DEFAULT_CLOUD_MODEL);
 });
 
-test("Outrunner's models are named after the key they run on: the user's own, or Outrunner's", () => {
-  assert.deepEqual(modelGroups(false).map((g) => g.label), ["Outrunner", "Claude account"]);
-  const own = modelGroups(true);
-  assert.deepEqual(own.map((g) => g.label), ["OpenRouter · your key", "Claude account"]);
-  // The same models either way: only whose key pays for them differs.
-  assert.deepEqual(own[0].models, MODEL_GROUPS[0].models);
+test("with their own OpenRouter key, a user picks which key runs Outrunner's models", () => {
+  const labels = (keys: Parameters<typeof modelGroups>[0]) => modelGroups(keys).map((g) => g.label);
+  // No key of their own: Outrunner's, as before.
+  assert.deepEqual(labels({ ownKey: false, serverModels: true, allowance: true }), ["Outrunner · $5 free", "Claude account"]);
+  assert.deepEqual(labels({ ownKey: false, serverModels: true, allowance: false }), ["Outrunner", "Claude account"]);
+  // Their own key and the server's: both, the same models on each.
+  const both = modelGroups({ ownKey: true, serverModels: true, allowance: true });
+  assert.deepEqual(both.map((g) => g.label), ["Outrunner · $5 free", "OpenRouter · your key", "Claude account"]);
+  assert.deepEqual(both[1].models.map((m) => m.id), both[0].models.map((m) => m.id));
+  assert.ok(both[1].models.every((m) => m.source === "own"));
+  // Their own key on a server with none: only theirs.
+  assert.deepEqual(labels({ ownKey: true, serverModels: false, allowance: false }), ["OpenRouter · your key", "Claude account"]);
+});
+
+test("a model offered on both keys is ticked on the key it was picked on", () => {
+  const groups = modelGroups({ ownKey: true, serverModels: true, allowance: true });
+  assert.equal(matchModel(groups, "z-ai/glm-5.3", "own")?.source, "own");
+  assert.equal(matchModel(groups, "z-ai/glm-5.3", "neev")?.source, "neev");
+  // No preference: the first offered.
+  assert.equal(matchModel(groups, "z-ai/glm-5.3")?.source, "neev");
 });

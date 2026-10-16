@@ -14,7 +14,7 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
-import { matchModel, modelLabel, type ModelGroup, type SessionModel } from "@/lib/runtime/session-models";
+import { matchModel, modelLabel, type ModelGroup, type ModelSource, type SessionModel } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +36,8 @@ export type ModelChoice = {
    *  it can. */
   disabledReason: string | null;
   switching: boolean;
+  /** Which key's entry is the current one, for a model offered on two. */
+  preferredSource?: ModelSource;
 };
 
 export function SessionComposer({
@@ -279,7 +281,7 @@ export function SessionComposer({
 
 /** The footer's model, as a menu of the models the session can switch to. */
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
-  const current = matchModel(choice.groups, model);
+  const current = matchModel(choice.groups, model, choice.preferredSource);
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
   const label = choice.switching ? "Switching model" : name;
   return (
@@ -315,12 +317,12 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
             </DropdownMenuLabel>
             {group.models.map((m) => (
               <DropdownMenuItem
-                key={m.id}
+                key={`${m.source}:${m.id}`}
                 // Always sent, even for the ticked family: the session may run an
                 // older model of it, and the agent ignores a switch to what it has.
                 onSelect={() => choice.onChange(m)}
               >
-                <Check className={m.id === current?.id ? "opacity-100" : "opacity-0"} />
+                <Check className={m.id === current?.id && m.source === current.source ? "opacity-100" : "opacity-0"} />
                 {m.label}
               </DropdownMenuItem>
             ))}
