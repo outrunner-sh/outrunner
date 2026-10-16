@@ -60,7 +60,7 @@ jobs:
     if: >-
       github.repository == 'neevai-labs/outrunner' &&
       (github.event_name != 'release' || startsWith(github.event.release.tag_name, 'desktop-v'))
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     env:
       PREFIX: outrunner
