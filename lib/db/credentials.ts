@@ -15,6 +15,8 @@
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
+import { dueForRenewal } from "@/lib/billing/allowance-renewal";
+import { entitlingSubscriptions } from "@/lib/billing/billing-store";
 import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
 import {
   type AllowanceState,
@@ -539,6 +541,37 @@ export async function refreshModelAllowance(userId: string): Promise<Allowance |
     setLimit: setKeyLimit,
     entitlements: () => entitlementsFor(userId),
   });
+}
+
+/**
+ * Renew the model allowance of every paying user whose period has turned
+ * over (lib/billing/allowance-renewal.ts), for sessions already running.
+ * How many were renewed; a user's failure is logged and the rest go on.
+ */
+export async function renewDueModelAllowances(now = new Date()): Promise<number> {
+  if (keySource() !== "per-user") return 0;
+  const subscriptions = await entitlingSubscriptions();
+  const userIds = [...new Set(subscriptions.map((s) => s.userId))];
+  const stored = new Map<string, string | null>();
+  for (let i = 0; i < userIds.length; i += 200) {
+    const { data, error } = await createSupabaseAdminClient()
+      .from("user_credentials")
+      .select("user_id, neev_allowance_period")
+      .in("user_id", userIds.slice(i, i + 200))
+      .not("neev_key_hash", "is", null);
+    if (error) throw error;
+    for (const row of data) stored.set(row.user_id, row.neev_allowance_period);
+  }
+  let renewed = 0;
+  for (const userId of dueForRenewal(subscriptions, stored, now)) {
+    try {
+      await refreshModelAllowance(userId);
+      renewed += 1;
+    } catch (error) {
+      console.error(`Could not renew the model allowance of user ${userId}`, error);
+    }
+  }
+  return renewed;
 }
 
 /** Which key Outrunner's models run on: the user's own, Outrunner's, or
