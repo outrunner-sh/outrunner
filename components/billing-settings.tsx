@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { isDesktopApp } from "@/lib/is-desktop";
 import { type BillingInterval, LOOKUP_KEYS, type Plan, PLANS } from "@/lib/billing/plans";
 import { boxSize } from "@/lib/runtime/box-sizes";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,16 @@ export function BillingSettings({
   const [failed, setFailed] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [gaveUp, setGaveUp] = useState(false);
+  // In the Mac app Stripe opens in the browser and comes back there, not
+  // here: this page stays, so it says so and reads the plan again on return.
+  const [inBrowser, setInBrowser] = useState(false);
+
+  useEffect(() => {
+    if (!inBrowser) return;
+    const reread = () => router.refresh();
+    window.addEventListener("focus", reread);
+    return () => window.removeEventListener("focus", reread);
+  }, [inBrowser, router]);
   // Back from Checkout before Stripe's webhook has landed: ask again until
   // the plan shows, then stop.
   const confirming = checkout === "success" && plan.id === "free" && !gaveUp;
@@ -77,6 +88,10 @@ export function BillingSettings({
       const data = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
       if (!res.ok || !data?.url) throw new Error(data?.error ?? "Couldn't reach Stripe. Try again.");
       window.location.assign(data.url);
+      if (isDesktopApp()) {
+        setInBrowser(true);
+        setPending(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't reach Stripe. Try again.");
       setFailed(action);
@@ -94,6 +109,9 @@ export function BillingSettings({
       </div>
 
       {checkout === "canceled" ? <Notice>Checkout canceled. Nothing was charged.</Notice> : null}
+      {inBrowser ? (
+        <Notice>Stripe opened in your browser. Finish there; your plan shows here when you come back.</Notice>
+      ) : null}
       {checkout === "success" && plan.id !== "free" ? <Notice>You&apos;re on {plan.label}. Thanks!</Notice> : null}
       {confirming ? <Notice>Confirming your payment with Stripe…</Notice> : null}
       {checkout === "success" && plan.id === "free" && gaveUp ? (
