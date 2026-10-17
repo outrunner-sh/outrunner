@@ -1,0 +1,79 @@
+/**
+ * Sending a user to Stripe: Checkout to start a plan, the customer portal to
+ * change or cancel one. Both on Stripe's own pages; nothing about a card
+ * touches Outrunner. The I/O is behind {@link CheckoutDeps}.
+ */
+
+import { type BillingInterval, LOOKUP_KEYS } from "@/lib/billing/plans";
+import { planFromSubscriptions, type SubscriptionRecord } from "@/lib/billing/subscriptions";
+
+export type CheckoutUser = { id: string; githubLogin: string; email: string | null };
+
+export type CheckoutDeps = {
+  customerIdFor(userId: string): Promise<string | null>;
+  claimCustomer(userId: string, customerId: string): Promise<string>;
+  /** A new Stripe customer for `user`; the same one for a retry with the
+   *  same idempotency key. */
+  createCustomer(user: CheckoutUser, idempotencyKey: string): Promise<string>;
+  subscriptionsFor(userId: string): Promise<SubscriptionRecord[]>;
+  priceIdFor(lookupKey: string): Promise<string>;
+  createCheckoutSession(input: {
+    customerId: string;
+    priceId: string;
+    userId: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<string>;
+  createPortalSession(customerId: string, returnUrl: string): Promise<string>;
+  now(): Date;
+};
+
+/** Where the billing page is, which Stripe sends users back to. */
+export const BILLING_PATH = "/settings/billing";
+
+/**
+ * The user's Stripe customer, made the first time. Two first checkouts at
+ * once make one: they ask Stripe with the same idempotency key, and the
+ * database keeps the first stored.
+ */
+export async function ensureCustomer(user: CheckoutUser, deps: CheckoutDeps): Promise<string> {
+  const stored = await deps.customerIdFor(user.id);
+  if (stored) return stored;
+  const created = await deps.createCustomer(user, `outrunner-customer-${user.id}`);
+  return deps.claimCustomer(user.id, created);
+}
+
+/**
+ * Where to send a user who asked for `plan`: Checkout, or the portal if they
+ * already have a paid plan, to change it there rather than pay twice.
+ */
+export async function checkoutDestination(
+  user: CheckoutUser,
+  plan: "pro" | "max",
+  interval: BillingInterval,
+  baseUrl: string,
+  deps: CheckoutDeps,
+): Promise<{ url: string; kind: "checkout" | "portal" }> {
+  const customerId = await ensureCustomer(user, deps);
+  const billing = new URL(BILLING_PATH, baseUrl).toString();
+  if (planFromSubscriptions(await deps.subscriptionsFor(user.id), deps.now()).id !== "free") {
+    return { url: await deps.createPortalSession(customerId, billing), kind: "portal" };
+  }
+  const priceId = await deps.priceIdFor(LOOKUP_KEYS[plan][interval]);
+  const url = await deps.createCheckoutSession({
+    customerId,
+    priceId,
+    userId: user.id,
+    // Stripe fills in {CHECKOUT_SESSION_ID}; braces are kept as they are.
+    successUrl: `${billing}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancelUrl: `${billing}?checkout=canceled`,
+  });
+  return { url, kind: "checkout" };
+}
+
+/** The customer portal, to manage a plan; null for a user with no customer. */
+export async function portalDestination(userId: string, baseUrl: string, deps: CheckoutDeps): Promise<string | null> {
+  const customerId = await deps.customerIdFor(userId);
+  if (!customerId) return null;
+  return deps.createPortalSession(customerId, new URL(BILLING_PATH, baseUrl).toString());
+}

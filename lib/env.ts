@@ -45,6 +45,10 @@ type EnvKey =
   | "RUNTIME_BASE_URL"
   // Bearer token the Cloudflare cron sends to POST /api/billing/reconcile.
   | "BILLING_CRON_SECRET"
+  // Stripe (RUNTIME_BILLING=stripe): a restricted or secret key, and the
+  // webhook endpoint's signing secret.
+  | "STRIPE_SECRET_KEY"
+  | "STRIPE_WEBHOOK_SECRET"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).
