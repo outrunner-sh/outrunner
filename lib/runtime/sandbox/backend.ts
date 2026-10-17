@@ -29,6 +29,9 @@ export interface SandboxBox {
   /** The box user's home, where the agent and the mirror live. */
   home(): Promise<string>;
   agentEndpoint(port: number): Promise<AgentEndpoint>;
+  /** The vCPUs it runs with, where the provider says: a resumed box keeps
+   *  the size it was made at, whatever the user's setting is now. */
+  readonly cpu?: number;
 }
 
 /** CPU and memory a new box boots with. */

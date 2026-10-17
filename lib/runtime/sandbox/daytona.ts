@@ -94,8 +94,17 @@ export class DaytonaBackend implements SandboxBackend {
       throw error;
     }
     const state = sandbox.state ?? "unknown";
-    if (STOPPED_STATES.has(state)) await sandbox.start(CREATE_TIMEOUT_SECONDS);
-    else if (STARTING_STATES.has(state)) await sandbox.waitUntilStarted(CREATE_TIMEOUT_SECONDS);
+    if (STOPPED_STATES.has(state)) {
+      try {
+        await sandbox.start(CREATE_TIMEOUT_SECONDS);
+      } catch (error) {
+        // Stopped again rather than left starting where nothing meters or
+        // stops it: its computer is saved stopped, which the reconciler
+        // doesn't check.
+        await sandbox.stop().catch((stopError: unknown) => console.error(`Could not stop box ${id} again`, stopError));
+        throw error;
+      }
+    } else if (STARTING_STATES.has(state)) await sandbox.waitUntilStarted(CREATE_TIMEOUT_SECONDS);
     else if (state !== "started") {
       // Gone or broken, not stopped: a new box rather than retrying this one.
       console.error(`Daytona box ${id} is ${state}, not stopped; starting a new one`);
@@ -142,6 +151,7 @@ function box(sandbox: Sandbox): SandboxBox {
   };
   return {
     id: sandbox.id,
+    cpu: sandbox.cpu,
     io,
     gitExec,
     // Default images aren't /home/runtime; the agent + mirror hang off $HOME.

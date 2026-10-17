@@ -154,17 +154,25 @@ export class NeevBackend implements SandboxBackend {
       await new Promise((r) => setTimeout(r, PAUSING_POLL_MS));
       await sandbox.refresh();
     }
-    if (sandbox.phase === "Paused") await sandbox.resume();
-    else if (sandbox.phase !== "Ready" && sandbox.phase !== "Pending") {
+    if (sandbox.phase !== "Paused" && sandbox.phase !== "Ready" && sandbox.phase !== "Pending") {
       // Not one Outrunner paused: crashed (NotReady), its state lost
       // (RestoreFailed), or unreadable. A new box, as before pausing existed,
       // rather than retrying one that won't come back.
       console.error(`Neev box ${id} is ${sandbox.phase}, not paused; starting a new one`);
       return null;
     }
-    await sandbox.waitUntilReady();
-    const conn = await this.connection(id);
-    return this.box(sandbox, new SandboxRuntime(conn), conn);
+    const resumed = sandbox.phase === "Paused";
+    if (resumed) await sandbox.resume();
+    try {
+      await sandbox.waitUntilReady();
+      const conn = await this.connection(id);
+      return this.box(sandbox, new SandboxRuntime(conn), conn);
+    } catch (error) {
+      // Paused again rather than left running where nothing meters or pauses
+      // it: its computer is saved stopped, which the reconciler doesn't check.
+      if (resumed) await this.pause(id).catch((pauseError: unknown) => console.error(`Could not pause box ${id} again`, pauseError));
+      throw error;
+    }
   }
 
   async delete(id: string): Promise<void> {
@@ -218,6 +226,7 @@ export class NeevBackend implements SandboxBackend {
     };
     return {
       id: sandbox.id,
+      cpu: sandbox.resources?.cpu,
       io,
       gitExec,
       home: async () => BOX_HOME,

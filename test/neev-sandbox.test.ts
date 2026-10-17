@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
+import { NotFoundError } from "@neevcloud/sdk";
+
 import { asUserArgs } from "@/lib/runtime/sandbox/backend";
 import {
+  NeevBackend,
   neevPrepareScript,
   parseExecStream,
   SandboxRuntime,
@@ -106,4 +109,63 @@ test("a box setup that never finishes times out", async () => {
   const { prepare } = await import("@/lib/runtime/sandbox/neev");
   const runtime = { exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }) };
   await assert.rejects(prepare(runtime, { timeoutMs: 5, pollMs: 1, sleep: async () => {} }), /did not finish/);
+});
+
+/** A Neev backend on a fake client: one box in `phase`, noting what's done
+ *  to it in `log`. */
+function backendWithBox(phase: string, opts: { readyFails?: boolean; gone?: boolean } = {}) {
+  const log: string[] = [];
+  const sandbox = {
+    id: "sb-1",
+    phase,
+    connectUrl: "https://sb-1.example.test",
+    resources: { cpu: 4 },
+    resume: async () => void log.push("resume"),
+    refresh: async () => sandbox,
+    waitUntilReady: async () => {
+      if (opts.readyFails) throw new Error("never ready");
+      log.push("ready");
+    },
+  };
+  const client = {
+    sandboxes: {
+      get: async () => {
+        if (opts.gone) throw new NotFoundError(404, undefined, undefined);
+        return sandbox;
+      },
+      pause: async () => void log.push("pause"),
+    },
+  };
+  const backend = new NeevBackend();
+  (backend as unknown as { client: unknown }).client = client;
+  return { backend, log };
+}
+
+test("a paused Neev box is resumed in place, at the size it was made", async () => {
+  const savedKey = process.env.NEEV_API_KEY;
+  process.env.NEEV_API_KEY = "sk-nc-test";
+  try {
+    const { backend, log } = backendWithBox("Paused");
+    const box = await backend.restore("sb-1");
+    assert.equal(box?.id, "sb-1");
+    assert.equal(box?.cpu, 4);
+    assert.deepEqual(log, ["resume", "ready"]);
+  } finally {
+    if (savedKey === undefined) delete process.env.NEEV_API_KEY;
+    else process.env.NEEV_API_KEY = savedKey;
+  }
+});
+
+test("a resume that fails partway pauses the box again, rather than leave it running", async () => {
+  const { backend, log } = backendWithBox("Paused", { readyFails: true });
+  await assert.rejects(backend.restore("sb-1"), /never ready/);
+  assert.deepEqual(log, ["resume", "pause"]);
+});
+
+test("a box that's gone or broken, not paused, is replaced: restore gives null", async () => {
+  assert.equal(await backendWithBox("Paused", { gone: true }).backend.restore("sb-1"), null);
+  const crashed = backendWithBox("NotReady");
+  assert.equal(await crashed.backend.restore("sb-1"), null);
+  assert.deepEqual(crashed.log, [], "a crashed box isn't resumed or paused");
+  assert.equal(await backendWithBox("RestoreFailed").backend.restore("sb-1"), null);
 });
