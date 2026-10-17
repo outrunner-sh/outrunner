@@ -1,4 +1,4 @@
-import { Daytona, type Sandbox } from "@daytonaio/sdk";
+import { Daytona, DaytonaNotFoundError, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
@@ -52,8 +52,9 @@ export class DaytonaBackend implements SandboxBackend {
   // building it from a full image, which makes its first start slow.
   async create(labels: Record<string, string>): Promise<SandboxBox> {
     const sandbox = await (await this.daytona()).create(
-      // Always-on: never auto-stop, never auto-delete. Base image (no
-      // snapshot): claude + node ship with it.
+      // Never auto-stopped or auto-deleted by Daytona: Outrunner stops an
+      // idle box itself (lib/billing/reconcile.ts), by what its sessions are
+      // doing. Base image (no snapshot): claude + node ship with it.
       { autoStopInterval: 0, autoDeleteInterval: -1, labels },
       { timeout: CREATE_TIMEOUT_SECONDS },
     );
@@ -65,14 +66,57 @@ export class DaytonaBackend implements SandboxBackend {
   }
 
   async alive(id: string): Promise<boolean> {
-    return (await (await this.daytona()).get(id)).state === "started";
+    try {
+      return (await (await this.daytona()).get(id)).state === "started";
+    } catch (error) {
+      if (error instanceof DaytonaNotFoundError) return false;
+      throw error;
+    }
   }
 
   async delete(id: string): Promise<void> {
     const daytona = await this.daytona();
     await daytona.delete(await daytona.get(id));
   }
+
+  async pause(id: string): Promise<void> {
+    await (await (await this.daytona()).get(id)).stop();
+  }
+
+  /** The stopped box `id`, started again on the disk it kept. Null when it's
+   *  gone or broken, so a new box is the only way on. */
+  async restore(id: string): Promise<SandboxBox | null> {
+    let sandbox: Sandbox;
+    try {
+      sandbox = await (await this.daytona()).get(id);
+    } catch (error) {
+      if (error instanceof DaytonaNotFoundError) return null;
+      throw error;
+    }
+    const state = sandbox.state ?? "unknown";
+    if (STOPPED_STATES.has(state)) {
+      try {
+        await sandbox.start(CREATE_TIMEOUT_SECONDS);
+      } catch (error) {
+        // Stopped again rather than left starting where nothing meters or
+        // stops it: its computer is saved stopped, which the reconciler
+        // doesn't check.
+        await sandbox.stop().catch((stopError: unknown) => console.error(`Could not stop box ${id} again`, stopError));
+        throw error;
+      }
+    } else if (STARTING_STATES.has(state)) await sandbox.waitUntilStarted(CREATE_TIMEOUT_SECONDS);
+    else if (state !== "started") {
+      // Gone or broken, not stopped: a new box rather than retrying this one.
+      console.error(`Daytona box ${id} is ${state}, not stopped; starting a new one`);
+      return null;
+    }
+    return box(sandbox);
+  }
 }
+
+/** States a box is started again from, and ones it's on its way up in. */
+const STOPPED_STATES = new Set(["stopped", "archived"]);
+const STARTING_STATES = new Set(["starting", "restoring", "creating"]);
 
 function box(sandbox: Sandbox): SandboxBox {
   const io: BoxIO = {
@@ -107,6 +151,7 @@ function box(sandbox: Sandbox): SandboxBox {
   };
   return {
     id: sandbox.id,
+    cpu: sandbox.cpu,
     io,
     gitExec,
     // Default images aren't /home/runtime; the agent + mirror hang off $HOME.

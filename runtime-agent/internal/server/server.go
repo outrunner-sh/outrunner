@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -50,12 +51,15 @@ type Server struct {
 	ws       *workspace.Service
 	upgrader websocket.Upgrader
 	broker   *ptyx.Broker
+	// lastInput: when a user last did something here (Unix nanoseconds) — typed
+	// in a terminal or made a control call — from the agent's start.
+	lastInput atomic.Int64
 }
 
 type claimsContextKey struct{}
 
 func New(secret string, ws *workspace.Service) *Server {
-	return &Server{
+	s := &Server{
 		secret: secret,
 		ws:     ws,
 		broker: ptyx.NewBroker(),
@@ -65,7 +69,12 @@ func New(secret string, ws *workspace.Service) *Server {
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
 	}
+	s.touch()
+	return s
 }
+
+// touch records a user's activity now.
+func (s *Server) touch() { s.lastInput.Store(time.Now().UnixNano()) }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -85,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
 	mux.HandleFunc("GET /workspaces/{id}/changes", s.authed(s.workspaceChanges))
+	mux.HandleFunc("GET /activity", s.authed(s.activity))
 	return mux
 }
 
@@ -100,6 +110,11 @@ func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Runtime token")
 			return
+		}
+		// A control call that changes something is someone at work. Reads
+		// aren't: a poll of a summary mustn't keep an idle box up.
+		if r.Method == http.MethodPost {
+			s.touch()
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), claimsContextKey{}, claims)))
 	}
@@ -240,6 +255,24 @@ func (s *Server) queryClaims(r *http.Request) (*protocol.RuntimeTokenClaims, err
 // listWorkspaces lists the local sessions this agent knows — the desktop's
 // session list, since local sessions are not in the shared database. It takes
 // the listing token only: a workspace's own token covers that workspace alone.
+// activity reports the box's activity (protocol.Activity), for the control
+// plane to pause an idle box. Box-wide, so only the listing token may ask.
+func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
+	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
+	if claims == nil || claims.WorkspaceID != protocol.ListingWorkspaceID {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize reading the box's activity")
+		return
+	}
+	last, turnInProgress := s.ws.Activity()
+	if input := time.Unix(0, s.lastInput.Load()); input.After(last) {
+		last = input
+	}
+	writeJSON(w, http.StatusOK, protocol.Activity{
+		LastActivity:   last.UTC().Format(time.RFC3339),
+		TurnInProgress: turnInProgress,
+	})
+}
+
 func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
 	if claims == nil || claims.WorkspaceID != protocol.ListingWorkspaceID {
@@ -428,7 +461,7 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	go pumpOut(sess, coalescer, writeFrame, func() bool {
 		return s.ws.SessionAlive(context.Background(), claims.WorkspaceID)
 	})
-	pumpIn(conn, sess, attachment.IsWriter, writeFrame)
+	pumpIn(conn, sess, attachment.IsWriter, writeFrame, s.touch)
 }
 
 // pumpOut reads PTY bytes and hands them to the coalescer, which decides when
@@ -460,7 +493,7 @@ func pumpOut(sess *ptyx.Session, c *ptyx.Coalescer, send func(protocol.PtyServer
 // pumpIn forwards writer input to the PTY; reader input frames are dropped.
 // Resize is honored from any client so a late-joining reader can right-size
 // its own xterm. Ping/pong keeps the connection alive.
-func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send func(protocol.PtyServerMessage) error) {
+func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send func(protocol.PtyServerMessage) error, touch func()) {
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -473,6 +506,7 @@ func pumpIn(conn *websocket.Conn, sess *ptyx.Session, isWriter func() bool, send
 		switch m.T {
 		case "input":
 			if isWriter() {
+				touch()
 				_, _ = sess.Write([]byte(m.Data))
 			}
 		case "resize":

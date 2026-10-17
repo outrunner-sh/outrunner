@@ -212,3 +212,33 @@ test("a restore that fails keeps the ended box, so a retry restores from it agai
   assert.deepEqual(asked, ["sb-ended", "sb-ended"]);
   assert.equal(harness.row()?.status, "ready");
 });
+
+test("cloud hours start when this request's box is up, at the box's own size, and never fail the provision", async () => {
+  const harness = concurrencyHarness();
+  const started: string[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "neev",
+    provisionComputer: async () => ({
+      sandboxId: "sb-new",
+      agentBaseUrl: "https://agent.example.test",
+      timings: { stages: [], totalMs: 0 },
+      // Made Medium; the user has since picked X Small: the box keeps 4.
+      cpu: 4,
+    }),
+  };
+  const deps = {
+    ...harness.deps,
+    started: async (c: RuntimeComputer, cpu: number | undefined) => {
+      started.push(`${c.daytonaSandboxId} at ${cpu} vCPU`);
+      throw new Error("database down");
+    },
+  };
+
+  const ensured = await ensureRuntimeComputer(provider, { ...input, size: { cpu: 1, memoryGb: 2 } }, deps);
+  assert.equal(ensured.provisioned, true);
+  assert.deepEqual(started, ["sb-new at 4 vCPU"]);
+
+  // A request that waited on another's provision doesn't start them again.
+  await ensureRuntimeComputer(provider, input, deps);
+  assert.deepEqual(started, ["sb-new at 4 vCPU"]);
+});

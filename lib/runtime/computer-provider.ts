@@ -115,6 +115,8 @@ export type ProvisionedComputer = {
    *  fetched fresh each time since it may be short-lived. */
   agentBaseUrl: string;
   timings: ProvisionTimings;
+  /** The box's vCPUs, where the provider says (SandboxBox.cpu). */
+  cpu?: number;
 };
 
 export type ProvisionComputerInput = {
@@ -264,17 +266,29 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       }
 
       const endpoint = await box.agentEndpoint(AGENT_PORT);
-      return { sandboxId: box.id, agentBaseUrl: endpoint.controlBaseUrl, timings: timer.timings() };
+      return { sandboxId: box.id, agentBaseUrl: endpoint.controlBaseUrl, timings: timer.timings(), cpu: box.cpu };
     } catch (error) {
-      if (sandbox) {
-        await this.backend
-          .delete(sandbox.id)
-          .catch((cleanupError: unknown) =>
-            console.error("Could not delete failed Claude computer", cleanupError),
-          );
-      }
+      if (sandbox) await this.discardFailedBox(sandbox.id, input.previousSandboxId);
       throw error;
     }
+  }
+
+  /**
+   * A box that didn't come up goes: deleted when it is a new one (on Modal, a
+   * restore is a new box too, and the ended one is kept). A paused box
+   * resumed in place is the only copy of its sessions, so it is paused again,
+   * for the next try to resume, never deleted.
+   */
+  private async discardFailedBox(id: string, previousSandboxId: string | undefined): Promise<void> {
+    if (id === previousSandboxId) {
+      await this.backend
+        .pause?.(id)
+        .catch((pauseError: unknown) => console.error(`Could not pause box ${id} again after it failed to come up`, pauseError));
+      return;
+    }
+    await this.backend
+      .delete(id)
+      .catch((cleanupError: unknown) => console.error("Could not delete failed Claude computer", cleanupError));
   }
 
   /** Whether this provider's boxes end on their own and come back on the
@@ -445,6 +459,35 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       console.error(`Could not read ${this.name} computer ${sandboxId}`, error);
       return false;
     }
+  }
+
+  /** Whether the box is running: unlike {@link computerAlive}, a provider
+   *  that can't be asked is a throw, not "gone", so a hiccup isn't taken for
+   *  a lost box. */
+  async computerRunning(sandboxId: string): Promise<boolean> {
+    return this.backend.alive(sandboxId);
+  }
+
+  /** Whether this provider can pause a box and bring it back. Not for the
+   *  jcode engine, whose provision always makes a new box: a paused one would
+   *  be left behind with its sessions. */
+  get pausesBoxes(): boolean {
+    return (
+      this.backend.pause !== undefined &&
+      this.backend.restore !== undefined &&
+      optionalEnv("RUNTIME_ENGINE") !== "jcode"
+    );
+  }
+
+  /** The box's vCPUs, where the provider says. */
+  async computerCpu(sandboxId: string): Promise<number | undefined> {
+    return (await this.backend.get(sandboxId)).cpu;
+  }
+
+  /** Pause the box, keeping its disk for the next session to resume. */
+  async pauseComputer(sandboxId: string): Promise<void> {
+    if (!this.backend.pause) throw new Error(`${this.name} can't pause a box`);
+    await this.backend.pause(sandboxId);
   }
 
   /** Tear the box down (destroys all worktrees/sessions inside it). */

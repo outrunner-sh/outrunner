@@ -239,3 +239,30 @@ test("an answer that isn't the agent's envelope has a status and no envelope", a
   assert.equal(error.status, 404);
   assert.equal(error.error, undefined);
 });
+
+test("activity asks about the whole box on the listing token", async () => {
+  let seenUrl = "";
+  let seenAuth = "";
+  const fakeFetch = (async (url: string, init: RequestInit) => {
+    seenUrl = url;
+    seenAuth = (init.headers as Record<string, string>).authorization;
+    return new Response(JSON.stringify({ lastActivity: "2026-10-17T10:02:00Z", turnInProgress: true }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const box = { projectId: identity.projectId, computerId: identity.computerId, userId: identity.userId };
+  const activity = await new AgentClient(target, fakeFetch).activity(box);
+  assert.deepEqual(activity, { lastActivity: "2026-10-17T10:02:00Z", turnInProgress: true });
+  assert.equal(seenUrl, "https://8080-sbx.daytonaproxy01.net/activity");
+  const claims = verifyRuntimeToken(seenAuth.replace(/^Bearer /, ""), target.secret);
+  assert.equal(claims.workspaceId, "*");
+  assert.equal(claims.computerId, "c-1");
+});
+
+test("an agent from before /activity answers 404, as an AgentRequestError", async () => {
+  const fakeFetch = (async () => new Response("404 page not found", { status: 404 })) as unknown as typeof fetch;
+  const box = { projectId: identity.projectId, computerId: identity.computerId, userId: identity.userId };
+  await assert.rejects(new AgentClient(target, fakeFetch).activity(box), (error: unknown) => {
+    assert.ok(error instanceof AgentRequestError);
+    assert.equal(error.status, 404);
+    return true;
+  });
+});

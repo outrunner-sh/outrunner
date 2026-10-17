@@ -29,6 +29,9 @@ export interface SandboxBox {
   /** The box user's home, where the agent and the mirror live. */
   home(): Promise<string>;
   agentEndpoint(port: number): Promise<AgentEndpoint>;
+  /** The vCPUs it runs with, where the provider says: a resumed box keeps
+   *  the size it was made at, whatever the user's setting is now. */
+  readonly cpu?: number;
 }
 
 /** CPU and memory a new box boots with. */
@@ -41,14 +44,20 @@ export interface SandboxBackend {
    *  elsewhere it gets the provider's default. */
   create(labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox>;
   /**
-   * For a provider whose boxes end on their own (Modal): a new box on the disk
-   * the ended box `id` left, so the sessions on it carry on. Nothing runs on
-   * it yet, the agent included. Null when that disk is gone, so a new box is
-   * the only way on; a throw when the provider couldn't be asked.
+   * A box back on the disk the ended box `id` left, so the sessions on it
+   * carry on: for a provider whose boxes end on their own (Modal, a new box on
+   * that disk), or one that pauses them ({@link pause}: the same box, running
+   * again). Nothing runs on it yet, the agent included. Null when that disk is
+   * gone, so a new box is the only way on; a throw when the provider couldn't
+   * be asked.
    */
   restore?(id: string, labels: Record<string, string>, size?: BoxResources): Promise<SandboxBox | null>;
+  /** Stop a box but keep its disk, for {@link restore} to bring back: how an
+   *  idle box stops costing compute. Only on providers that can. */
+  pause?(id: string): Promise<void>;
   get(id: string): Promise<SandboxBox>;
-  /** Whether it is up and able to host sessions. False when it is gone. */
+  /** Whether it is up and able to host sessions. False when it is gone or
+   *  stopped; a throw when the provider couldn't be asked. */
   alive(id: string): Promise<boolean>;
   delete(id: string): Promise<void>;
 }

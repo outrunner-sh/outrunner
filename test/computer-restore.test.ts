@@ -51,6 +51,9 @@ function fakeBox(id: string, log: string[], opts: { launchFails?: boolean } = {}
 /** A backend whose ended boxes come back as `restoresTo` (null: no disk). */
 function restoringBackend(log: string[], restoresTo: SandboxBox | null): SandboxBackend {
   return {
+    pause: async (id) => {
+      log.push(`${id}: paused`);
+    },
     create: async () => {
       log.push("created");
       return fakeBox("sb-new", log);
@@ -104,6 +107,18 @@ test("a restored box whose agent doesn't start is deleted, and the ended one kep
 
   await assert.rejects(() => provider.provisionComputer(request), /launch failed/);
   assert.deepEqual(log, ["restored from sb-ended", "sb-back: agent launched", "sb-back: deleted"]);
+});
+
+test("a paused box resumed in place that doesn't come up is paused again, never deleted", async () => {
+  const log: string[] = [];
+  // Neev and Daytona resume the same box: it is the only copy of its sessions.
+  const provider = new ComputerRuntimeProvider(
+    "neev",
+    restoringBackend(log, fakeBox("sb-ended", log, { launchFails: true })),
+  );
+
+  await assert.rejects(() => provider.provisionComputer(request), /launch failed/);
+  assert.deepEqual(log, ["restored from sb-ended", "sb-ended: agent launched", "sb-ended: paused"]);
 });
 
 test("a provider whose boxes don't end makes a new one, whatever came before", async () => {

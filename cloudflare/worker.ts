@@ -38,6 +38,9 @@ interface Env {
    * key alone is one shared, uncapped key. Set the management key.
    */
   OPENROUTER_MANAGEMENT_KEY?: string;
+  /** Bearer token the cron below sends to /api/billing/reconcile. Without
+   *  it, idle boxes aren't paused and cloud hours aren't kept. */
+  BILLING_CRON_SECRET?: string;
   OPENROUTER_API_KEY?: string;
   /**
    * Where cloud sessions run: "daytona" (the default) or "neev". "neev" needs
@@ -96,6 +99,7 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.NEEV_ORG_ID ? { NEEV_ORG_ID: env.NEEV_ORG_ID } : {}),
       ...(env.NEEV_PROJECT_ID ? { NEEV_PROJECT_ID: env.NEEV_PROJECT_ID } : {}),
       ...(env.NEEV_SANDBOX_TEMPLATE ? { NEEV_SANDBOX_TEMPLATE: env.NEEV_SANDBOX_TEMPLATE } : {}),
+      ...(env.BILLING_CRON_SECRET ? { BILLING_CRON_SECRET: env.BILLING_CRON_SECRET } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own
@@ -111,6 +115,30 @@ const worker = {
     // is elected atomically in Postgres, so sharding to multiple instances later
     // (e.g. by project id) stays safe.
     return getContainer(env.CONTROL_PLANE).fetch(request);
+  },
+
+  /**
+   * The cron in wrangler.jsonc (every 2 minutes): one reconciler run, which
+   * keeps cloud hours and pauses idle boxes (lib/billing/reconcile.ts). The
+   * container sleeps when no one uses it, so this, not a timer in it, is what
+   * runs it; the request wakes it.
+   */
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (!env.BILLING_CRON_SECRET) {
+      console.error("BILLING_CRON_SECRET is not set: idle boxes aren't paused, and cloud hours aren't kept.");
+      return;
+    }
+    const run = getContainer(env.CONTROL_PLANE)
+      .fetch(
+        new Request("https://app.internal/api/billing/reconcile", {
+          method: "POST",
+          headers: { authorization: `Bearer ${env.BILLING_CRON_SECRET}` },
+        }),
+      )
+      .then(async (response) => {
+        if (!response.ok) console.error(`Reconcile answered ${response.status}: ${await response.text()}`);
+      });
+    ctx.waitUntil(run);
   },
 };
 

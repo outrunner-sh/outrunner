@@ -76,7 +76,7 @@ users are asked to reconnect rather than seeing an error.
 
 **Outrunner's models** (optional, but new cloud sessions start on them): set
 an OpenRouter *management* key, so each user gets a key of their own capped at
-$5 in total. Without it, a cloud session needs the user's own Claude.
+their plan's allowance. Without it, a cloud session needs the user's own Claude.
 
 ```bash
 pnpm dlx wrangler secret put OPENROUTER_MANAGEMENT_KEY
@@ -85,6 +85,18 @@ pnpm dlx wrangler secret put OPENROUTER_MANAGEMENT_KEY
 `/api/health` reports `outrunnerModels: "per-user"` once it is in. A plain
 `OPENROUTER_API_KEY` also works (`"shared"`), but every session then shares
 one uncapped key that any session's Claude can read.
+
+**Cloud hours and idle pausing**: a cron in `wrangler.jsonc` runs the
+reconciler every 2 minutes (`worker.ts`, `scheduled`). It records how long
+Outrunner's boxes run and pauses one idle for 15 minutes; the next session
+resumes it. It needs a shared secret, any long random string:
+
+```bash
+openssl rand -base64 32 | pnpm dlx wrangler secret put BILLING_CRON_SECRET
+```
+
+Without it, boxes run until deleted and no hours are recorded. `/api/health`
+reports `billingCron: true` once it is in.
 
 **Neev sandboxes** (optional; cloud sessions run on Daytona otherwise): set
 the provider and Neev's three keys, then deploy.

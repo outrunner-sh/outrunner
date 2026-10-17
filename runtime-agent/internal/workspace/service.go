@@ -1400,6 +1400,26 @@ func claudeSlug(path string) string {
 // claudeSlugMax is the longest slug Claude Code keeps whole.
 const claudeSlugMax = 200
 
+// Activity reports the most recent activity in any session on this box, and
+// whether Claude is mid-turn in any of them; zero time when no session has a
+// summary yet. The control plane pauses a box idle long enough.
+func (s *Service) Activity() (last time.Time, turnInProgress bool) {
+	s.summariesMu.Lock()
+	sums := make([]*Summary, 0, len(s.summaries))
+	for _, sum := range s.summaries {
+		sums = append(sums, sum)
+	}
+	s.summariesMu.Unlock()
+	for _, sum := range sums {
+		at, open := sum.activity()
+		if at.After(last) {
+			last = at
+		}
+		turnInProgress = turnInProgress || open
+	}
+	return last, turnInProgress
+}
+
 // beginSummary creates (or refreshes) the Workspace Summary collector for a
 // workspace. Called from Start and Resume. Safe to call twice — the collector
 // itself guards against re-launch.

@@ -225,6 +225,19 @@ export const WorkspaceSummary = z.object({
 });
 export type WorkspaceSummary = z.infer<typeof WorkspaceSummary>;
 
+/** The workspace claim of the only token that may ask about the whole box
+ *  (GET /workspaces, GET /activity): no real workspace can have it. */
+export const LISTING_WORKSPACE_ID = "*";
+
+/** GET /activity: the box's most recent activity in any session or from a
+ *  user, and whether Claude is mid-turn anywhere. An idle box is paused. */
+export const Activity = z.object({
+  /** RFC3339 UTC. */
+  lastActivity: z.string(),
+  turnInProgress: z.boolean(),
+});
+export type Activity = z.infer<typeof Activity>;
+
 // ---------------------------------------------------------------------------
 // Session attachment — the browser's handle to one Workspace Session. Returned
 // by POST /api/workspaces/[id]/session. Each URL already contains the short-
@@ -322,6 +335,7 @@ export const PROTOCOL_SCHEMAS = {
   ErrorResponse,
   SessionUrls,
   WorkspaceSummary,
+  Activity,
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,

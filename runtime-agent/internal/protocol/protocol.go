@@ -90,6 +90,14 @@ type SetModelRequest struct {
 // those in /pty URLs, can never enumerate the others.
 const ListingWorkspaceID = "*"
 
+// Activity is what GET /activity reports for the whole box: the most recent
+// activity in any session or from a user (terminal input, a control call), and
+// whether Claude is mid-turn anywhere. The control plane pauses an idle box.
+type Activity struct {
+	LastActivity   string `json:"lastActivity"` // RFC3339 UTC
+	TurnInProgress bool   `json:"turnInProgress"`
+}
+
 // LocalSession is one local session the agent on a user's Mac knows about, as
 // the desktop app lists them. Local sessions are not in the shared database:
 // they exist only on the Mac that runs them.

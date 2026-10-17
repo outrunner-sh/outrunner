@@ -126,6 +126,23 @@ type RuntimeComputerRow = {
   updated_at: string;
 };
 
+/** A run of one of Outrunner's boxes (supabase/migrations/20261017120000_compute_metering.sql). */
+type ComputeIntervalRow = {
+  id: string;
+  owner_id: string;
+  computer_id: string | null;
+  sandbox_id: string;
+  cpu: number;
+  started_at: string;
+  last_seen_at: string;
+  ended_at: string | null;
+};
+
+type BillingLeaseRow = {
+  name: string;
+  held_until: string;
+};
+
 type JobRow = {
   id: string;
   owner_id: string;
@@ -357,9 +374,25 @@ export type Database = {
         Update: Partial<UserCredentialsRow>;
         Relationships: [];
       };
+      compute_intervals: {
+        Row: ComputeIntervalRow;
+        Insert: Insert<ComputeIntervalRow, "owner_id" | "sandbox_id" | "cpu">;
+        Update: Partial<ComputeIntervalRow>;
+        Relationships: [];
+      };
+      billing_leases: {
+        Row: BillingLeaseRow;
+        Insert: BillingLeaseRow;
+        Update: Partial<BillingLeaseRow>;
+        Relationships: [];
+      };
     };
     Views: Record<never, never>;
     Functions: {
+      claim_billing_lease: {
+        Args: { lease_name: string; seconds: number };
+        Returns: boolean;
+      };
       claim_runtime_computer: {
         Args: {
           requested_project_id: string;

@@ -1,0 +1,93 @@
+/**
+ * Cloud hours from the intervals Outrunner's boxes ran (compute_intervals):
+ * what a user has used of their plan's hours in a period. Pure, so the
+ * counting rules are tested without a database.
+ *
+ * Hours are Small-box hours: an hour on a box weighs its vCPUs over a Small
+ * box's 2, so a Medium (4 vCPU) hour is 2 and an X Small (1 vCPU) one half.
+ */
+
+export type Interval = {
+  sandboxId: string;
+  cpu: number;
+  startedAt: Date;
+  /** The last time the box was seen running. */
+  lastSeenAt: Date;
+  /** Null while it runs. */
+  endedAt: Date | null;
+};
+
+export type Period = { start: Date; end: Date };
+
+/** A Small box's vCPUs: one of its hours is one hour. */
+export const SMALL_BOX_CPU = 2;
+
+/**
+ * How long past its last sighting an open interval is still counted to now.
+ * The reconciler sees each box every couple of minutes; one not seen for
+ * longer may have stopped unseen, so it is counted to when it was last seen,
+ * in the user's favour, until it is seen again.
+ */
+export const OPEN_GRACE_MS = 5 * 60_000;
+
+const HOUR_MS = 60 * 60_000;
+
+/** The calendar month (UTC) `now` is in: the Free plan's period. */
+export function calendarMonth(now: Date): Period {
+  return {
+    start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+    end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
+  };
+}
+
+/** Small-box hours the intervals ran within `period`, up to `now`. */
+export function hoursUsed(intervals: readonly Interval[], period: Period, now: Date): number {
+  let weightedMs = 0;
+  for (const run of mergedRuns(intervals, now)) {
+    const start = Math.max(run.start, period.start.getTime());
+    const end = Math.min(run.end, period.end.getTime(), now.getTime());
+    if (end > start) weightedMs += (end - start) * (run.cpu / SMALL_BOX_CPU);
+  }
+  return weightedMs / HOUR_MS;
+}
+
+type Run = { start: number; end: number; cpu: number };
+
+/** Where an interval ends for counting: when it ended; while open, now, or
+ *  its last sighting once that is too long ago. */
+function endOf(interval: Interval, now: Date): number {
+  if (interval.endedAt) return interval.endedAt.getTime();
+  const seen = interval.lastSeenAt.getTime();
+  return Math.min(now.getTime(), seen + OPEN_GRACE_MS);
+}
+
+/**
+ * The intervals as runs, with overlapping ones of the same box merged: a box
+ * runs once at a time, so a moment two of its intervals share (a bad close, a
+ * race) counts once. A box keeps its size, so a merged run takes the larger
+ * if two disagree. Different boxes' runs overlap and each counts.
+ */
+function mergedRuns(intervals: readonly Interval[], now: Date): Run[] {
+  const byBox = new Map<string, Run[]>();
+  for (const interval of intervals) {
+    const run = { start: interval.startedAt.getTime(), end: endOf(interval, now), cpu: interval.cpu };
+    if (run.end <= run.start) continue;
+    byBox.set(interval.sandboxId, [...(byBox.get(interval.sandboxId) ?? []), run]);
+  }
+  const merged: Run[] = [];
+  for (const runs of byBox.values()) {
+    runs.sort((a, b) => a.start - b.start);
+    let current = { ...runs[0] };
+    for (const run of runs.slice(1)) {
+      if (run.start <= current.end) {
+        current.end = Math.max(current.end, run.end);
+        current.cpu = Math.max(current.cpu, run.cpu);
+      } else {
+        merged.push(current);
+        current = { ...run };
+      }
+    }
+    merged.push(current);
+  }
+  return merged;
+}

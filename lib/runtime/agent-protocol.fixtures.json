@@ -242,5 +242,15 @@
         }
       ]
     }
+  ],
+  "Activity": [
+    {
+      "lastActivity": "2026-10-17T10:02:00Z",
+      "turnInProgress": false
+    },
+    {
+      "lastActivity": "2026-10-17T10:15:30Z",
+      "turnInProgress": true
+    }
   ]
 }

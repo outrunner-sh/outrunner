@@ -32,6 +32,10 @@ type Summary struct {
 	tokenUsage           protocol.TokenUsageAmounts
 	lastAssistantMessage string
 	hasAssistantMessage  bool
+	// turnOpen: Claude is mid-turn, by the last message: a user one (a prompt
+	// or a tool's result) waits on the model, and an assistant one asking for
+	// a tool waits on the tool. An assistant one with only text ends the turn.
+	turnOpen bool
 
 	cancel context.CancelFunc // stops the collector goroutine when non-nil
 }
@@ -101,13 +105,20 @@ func (s *Summary) applyEvent(ev conversation.Event) {
 	defer s.mu.Unlock()
 	s.lastActivityAt = time.Now().UTC()
 	if ev.Message != nil {
-		if ev.Message.Role == "assistant" {
+		switch ev.Message.Role {
+		case "assistant":
+			s.turnOpen = false
 			for _, block := range ev.Message.Content {
 				if block.Type == "text" && block.Text != "" {
 					s.lastAssistantMessage = block.Text
 					s.hasAssistantMessage = true
 				}
+				if block.Type == "tool_use" {
+					s.turnOpen = true
+				}
 			}
+		case "user":
+			s.turnOpen = true
 		}
 	}
 	if ev.Usage != nil {
@@ -116,6 +127,14 @@ func (s *Summary) applyEvent(ev conversation.Event) {
 		s.tokenUsage.CacheCreationInputTokens += ev.Usage.CacheCreationInputTokens
 		s.tokenUsage.CacheReadInputTokens += ev.Usage.CacheReadInputTokens
 	}
+}
+
+// activity reports when this session last did something and whether Claude is
+// mid-turn in it. A session that has exited is never mid-turn.
+func (s *Summary) activity() (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastActivityAt, s.turnOpen && s.state == "running"
 }
 
 // Snapshot returns the current WorkspaceSummary. Event-driven fields are read
