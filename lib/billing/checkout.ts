@@ -5,7 +5,7 @@
  */
 
 import { type BillingInterval, LOOKUP_KEYS } from "@/lib/billing/plans";
-import { stillBills, type SubscriptionRecord } from "@/lib/billing/subscriptions";
+import { stillBills } from "@/lib/billing/subscriptions";
 
 export type CheckoutUser = { id: string; githubLogin: string; email: string | null };
 
@@ -15,7 +15,10 @@ export type CheckoutDeps = {
   /** A new Stripe customer for `user`; the same one for a retry with the
    *  same idempotency key. */
   createCustomer(user: CheckoutUser, idempotencyKey: string): Promise<string>;
-  subscriptionsFor(userId: string): Promise<SubscriptionRecord[]>;
+  /** The statuses of the customer's subscriptions, as Stripe has them now:
+   *  every one, including any Outrunner doesn't store (a price it doesn't
+   *  sell, one made in Stripe's dashboard). */
+  subscriptionStatuses(customerId: string): Promise<string[]>;
   priceIdFor(lookupKey: string): Promise<string>;
   createCheckoutSession(input: {
     customerId: string;
@@ -46,9 +49,11 @@ export async function ensureCustomer(user: CheckoutUser, deps: CheckoutDeps): Pr
 
 /**
  * Where to send a user who asked for `plan`: Checkout, or the portal if any
- * subscription of theirs can still bill, to change or fix it there rather
- * than pay twice. A new checkout expires any older one still open, so two
- * tabs can't each start a subscription.
+ * subscription Stripe holds for them can still bill (stillBills), to change
+ * or fix it there rather than pay twice. Asked of Stripe, not the stored
+ * copy, which leaves out subscriptions to prices Outrunner doesn't sell. A
+ * new checkout expires any older one still open, so two tabs can't each
+ * start a subscription.
  */
 export async function checkoutDestination(
   user: CheckoutUser,
@@ -59,7 +64,7 @@ export async function checkoutDestination(
 ): Promise<{ url: string; kind: "checkout" | "portal" }> {
   const customerId = await ensureCustomer(user, deps);
   const billing = new URL(BILLING_PATH, baseUrl).toString();
-  if ((await deps.subscriptionsFor(user.id)).some(stillBills)) {
+  if ((await deps.subscriptionStatuses(customerId)).some(stillBills)) {
     return { url: await deps.createPortalSession(customerId, billing), kind: "portal" };
   }
   const priceId = await deps.priceIdFor(LOOKUP_KEYS[plan][interval]);

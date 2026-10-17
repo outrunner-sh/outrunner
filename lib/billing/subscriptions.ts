@@ -53,8 +53,8 @@ export function entitles(subscription: SubscriptionRecord, now: Date): boolean {
  * Incomplete ones (a first payment that never went through) expire by
  * themselves.
  */
-export function stillBills(subscription: SubscriptionRecord): boolean {
-  return ["active", "trialing", "past_due", "unpaid", "paused"].includes(subscription.status);
+export function stillBills(status: string): boolean {
+  return ["active", "trialing", "past_due", "unpaid", "paused"].includes(status);
 }
 
 /** The best plan any of a user's subscriptions gives them at `now`; Free when

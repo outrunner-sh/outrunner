@@ -9,7 +9,6 @@ import {
   recordEvent,
   saveSubscription,
   subscriptionById,
-  subscriptionsFor,
   userForCustomer,
 } from "@/lib/billing/billing-store";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
@@ -44,7 +43,13 @@ export const checkoutDeps: CheckoutDeps = {
     );
     return customer.id;
   },
-  subscriptionsFor,
+  subscriptionStatuses: async (customerId) => {
+    const statuses: string[] = [];
+    for await (const subscription of stripe().subscriptions.list({ customer: customerId, status: "all", limit: 100 })) {
+      statuses.push(subscription.status);
+    }
+    return statuses;
+  },
   priceIdFor: async (lookupKey) => {
     const prices = await stripe().prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 });
     const price = prices.data[0];

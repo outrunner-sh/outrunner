@@ -21,7 +21,7 @@ function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = 
       calls.push(`create customer ${key}`);
       return "cus_new";
     },
-    subscriptionsFor: async () => opts.subscriptions ?? [],
+    subscriptionStatuses: async () => (opts.subscriptions ?? []).map((s) => s.status),
     priceIdFor: async (key) => `price_${key}`,
     createCheckoutSession: async (input) => {
       calls.push(`checkout ${input.customerId} ${input.priceId} ${input.successUrl} ${input.cancelUrl}`);
@@ -86,6 +86,11 @@ test("a user with a subscription that can still bill goes to the portal, never a
     const failing = deps({ stored: "cus_1", subscriptions: [{ ...pro, status, pastDueSince: new Date(0) }] });
     assert.equal((await checkoutDestination(user, "pro", "month", BASE, failing.d)).kind, "portal", status);
   }
+  // One Outrunner doesn't store (a price it doesn't sell) still counts:
+  // Stripe is asked, not the stored copy.
+  const unstored = deps({ stored: "cus_1" });
+  unstored.d.subscriptionStatuses = async () => ["active"];
+  assert.equal((await checkoutDestination(user, "pro", "month", BASE, unstored.d)).kind, "portal");
   // One that has ended, or never started, checks out again.
   for (const status of ["canceled", "incomplete_expired", "incomplete"]) {
     const lapsed = deps({ stored: "cus_1", subscriptions: [{ ...pro, status }] });
