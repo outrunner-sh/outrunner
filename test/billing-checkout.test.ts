@@ -31,7 +31,7 @@ function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = 
       calls.push(`portal ${customer} ${returnUrl}`);
       return "https://billing.stripe.com/p/session/1";
     },
-    now: () => NOW,
+    expireOpenCheckouts: async (customer) => void calls.push(`expire open checkouts of ${customer}`),
   };
   return { d, calls, stored: () => stored };
 }
@@ -56,13 +56,15 @@ test("a Free user goes to Checkout for the plan and interval asked, and back to 
   const destination = await checkoutDestination(user, "max", "year", BASE, d);
   assert.deepEqual(destination, { url: "https://checkout.stripe.com/c/pay/1", kind: "checkout" });
   assert.deepEqual(calls, [
+    // An older checkout in another tab can no longer be paid.
+    "expire open checkouts of cus_1",
     "checkout cus_1 price_max_yearly " +
       `${BASE}/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID} ` +
       `${BASE}/settings/billing?checkout=canceled`,
   ]);
 });
 
-test("a user with a paid plan goes to the portal to change it, never a second checkout", async () => {
+test("a user with a subscription that can still bill goes to the portal, never a second checkout", async () => {
   const pro: SubscriptionRecord = {
     stripeSubscriptionId: "sub_1",
     userId: "u-1",
@@ -79,9 +81,16 @@ test("a user with a paid plan goes to the portal to change it, never a second ch
   const { d, calls } = deps({ stored: "cus_1", subscriptions: [pro] });
   assert.equal((await checkoutDestination(user, "max", "month", BASE, d)).kind, "portal");
   assert.deepEqual(calls, [`portal cus_1 ${BASE}/settings/billing`]);
-  // One that has lapsed checks out again.
-  const lapsed = deps({ stored: "cus_1", subscriptions: [{ ...pro, status: "canceled" }] });
-  assert.equal((await checkoutDestination(user, "pro", "month", BASE, lapsed.d)).kind, "checkout");
+  // One whose payment failed past the grace can still bill: the portal, to fix it.
+  for (const status of ["past_due", "unpaid", "paused"]) {
+    const failing = deps({ stored: "cus_1", subscriptions: [{ ...pro, status, pastDueSince: new Date(0) }] });
+    assert.equal((await checkoutDestination(user, "pro", "month", BASE, failing.d)).kind, "portal", status);
+  }
+  // One that has ended, or never started, checks out again.
+  for (const status of ["canceled", "incomplete_expired", "incomplete"]) {
+    const lapsed = deps({ stored: "cus_1", subscriptions: [{ ...pro, status }] });
+    assert.equal((await checkoutDestination(user, "pro", "month", BASE, lapsed.d)).kind, "checkout", status);
+  }
 });
 
 test("the portal needs a customer", async () => {

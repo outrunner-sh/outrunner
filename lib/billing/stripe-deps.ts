@@ -4,6 +4,7 @@
 import {
   claimCustomer,
   customerIdFor,
+  deleteSubscription,
   eventHandled,
   recordEvent,
   saveSubscription,
@@ -21,6 +22,7 @@ export const syncDeps: SyncDeps = {
   userForCustomer,
   subscriptionById,
   saveSubscription,
+  deleteSubscription,
   eventHandled,
   recordEvent,
   now: () => new Date(),
@@ -67,7 +69,11 @@ export const checkoutDeps: CheckoutDeps = {
   },
   createPortalSession: async (customerId, returnUrl) =>
     (await stripe().billingPortal.sessions.create({ customer: customerId, return_url: returnUrl })).url,
-  now: () => new Date(),
+  expireOpenCheckouts: async (customerId) => {
+    for await (const session of stripe().checkout.sessions.list({ customer: customerId, status: "open", limit: 100 })) {
+      await stripe().checkout.sessions.expire(session.id);
+    }
+  },
 };
 
 /** What Stripe charges for each plan and interval, in USD, by lookup key:

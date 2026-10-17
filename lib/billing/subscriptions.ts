@@ -46,6 +46,17 @@ export function entitles(subscription: SubscriptionRecord, now: Date): boolean {
   }
 }
 
+/**
+ * Whether a subscription can still bill, whether or not it grants its plan:
+ * past due beyond the grace, unpaid or paused, Stripe may yet charge it. Such
+ * a user is sent to the portal to fix it, never to a second checkout.
+ * Incomplete ones (a first payment that never went through) expire by
+ * themselves.
+ */
+export function stillBills(subscription: SubscriptionRecord): boolean {
+  return ["active", "trialing", "past_due", "unpaid", "paused"].includes(subscription.status);
+}
+
 /** The best plan any of a user's subscriptions gives them at `now`; Free when
  *  none does. */
 export function planFromSubscriptions(subscriptions: readonly SubscriptionRecord[], now: Date): Plan {

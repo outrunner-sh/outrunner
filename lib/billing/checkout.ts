@@ -5,7 +5,7 @@
  */
 
 import { type BillingInterval, LOOKUP_KEYS } from "@/lib/billing/plans";
-import { planFromSubscriptions, type SubscriptionRecord } from "@/lib/billing/subscriptions";
+import { stillBills, type SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 export type CheckoutUser = { id: string; githubLogin: string; email: string | null };
 
@@ -25,7 +25,8 @@ export type CheckoutDeps = {
     cancelUrl: string;
   }): Promise<string>;
   createPortalSession(customerId: string, returnUrl: string): Promise<string>;
-  now(): Date;
+  /** Expire the customer's checkouts still open, so none of them can be paid. */
+  expireOpenCheckouts(customerId: string): Promise<void>;
 };
 
 /** Where the billing page is, which Stripe sends users back to. */
@@ -44,8 +45,10 @@ export async function ensureCustomer(user: CheckoutUser, deps: CheckoutDeps): Pr
 }
 
 /**
- * Where to send a user who asked for `plan`: Checkout, or the portal if they
- * already have a paid plan, to change it there rather than pay twice.
+ * Where to send a user who asked for `plan`: Checkout, or the portal if any
+ * subscription of theirs can still bill, to change or fix it there rather
+ * than pay twice. A new checkout expires any older one still open, so two
+ * tabs can't each start a subscription.
  */
 export async function checkoutDestination(
   user: CheckoutUser,
@@ -56,10 +59,11 @@ export async function checkoutDestination(
 ): Promise<{ url: string; kind: "checkout" | "portal" }> {
   const customerId = await ensureCustomer(user, deps);
   const billing = new URL(BILLING_PATH, baseUrl).toString();
-  if (planFromSubscriptions(await deps.subscriptionsFor(user.id), deps.now()).id !== "free") {
+  if ((await deps.subscriptionsFor(user.id)).some(stillBills)) {
     return { url: await deps.createPortalSession(customerId, billing), kind: "portal" };
   }
   const priceId = await deps.priceIdFor(LOOKUP_KEYS[plan][interval]);
+  await deps.expireOpenCheckouts(customerId);
   const url = await deps.createCheckoutSession({
     customerId,
     priceId,
