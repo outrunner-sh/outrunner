@@ -53,6 +53,7 @@ Requires a local Go toolchain (cross-compiles `GOOS=linux GOARCH=amd64`).
 | --- | --- |
 | `RUNTIME_PROVIDER` | `daytona` |
 | `RUNTIME_BASE_URL` | `https://<your-railway-domain>` (gates same-origin CSRF checks) |
+| `RUNTIME_BILLING` | `off` (everyone on Free; required in production, or the server won't start) |
 | `RUNTIME_OWNER_GITHUB_LOGIN` | the single GitHub login allowed to sign in |
 | `NEXT_PUBLIC_SUPABASE_URL` | from Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | from Supabase |

@@ -8,10 +8,15 @@ import { createServer } from "node:http";
 
 import next from "next";
 
+import { billingMode } from "./lib/billing/mode.ts";
 import { createNeevRelay } from "./lib/runtime/sandbox/neev-relay.ts";
 
 const dev = process.env.NODE_ENV !== "production";
 const port = Number(process.env.PORT) || 3000;
+
+// Refuse to start on a billing setting that would decide wrongly what users
+// get (lib/billing/mode.ts), rather than serve them on it.
+billingMode();
 
 const app = next({ dev, port });
 const handle = app.getRequestHandler();

@@ -118,6 +118,10 @@ note the polarity. Set it only to restrict access to named GitHub logins.
 `RUNTIME_BASE_URL=https://outrunner.neev.ai` is set in `worker.ts` and gates the
 app's same-origin CSRF checks, so it must equal the live domain.
 
+`RUNTIME_BILLING=off` is set in `worker.ts` too: everyone is on the Free plan's
+limits until Stripe billing ships. The server refuses to start in production
+without it.
+
 ## Domain: `outrunner.neev.ai`
 
 1. **DNS/route** — the `routes` entry in `wrangler.jsonc` (`custom_domain: true`)
