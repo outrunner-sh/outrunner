@@ -5,6 +5,26 @@
  */
 
 import type { Period } from "@/lib/billing/hours";
+import type { SubscriptionRecord } from "@/lib/billing/subscriptions";
+
+/**
+ * The month a subscription's allowances are in at `now`. A monthly plan's is
+ * the period Stripe bills: its recorded boundaries, which Stripe keeps on the
+ * subscription's anchor day (anchored on the 31st, February ends on March
+ * 31, not March 28); until the renewal's webhook moves them, the period
+ * stays the one recorded, so nothing renews early. A yearly plan's are the
+ * months of its year, counted from the year's start, which stays put all
+ * year.
+ */
+export function allowancePeriod(
+  subscription: Pick<SubscriptionRecord, "billingInterval" | "currentPeriodStart" | "currentPeriodEnd">,
+  now: Date,
+): Period {
+  if (subscription.billingInterval === "month") {
+    return { start: subscription.currentPeriodStart, end: subscription.currentPeriodEnd };
+  }
+  return monthlyPeriod(subscription.currentPeriodStart, now);
+}
 
 /**
  * The month-long period, counted from `anchor`, that `now` is in. A month

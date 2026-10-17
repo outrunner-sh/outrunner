@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { monthlyPeriod } from "@/lib/billing/periods";
+import { allowancePeriod, monthlyPeriod } from "@/lib/billing/periods";
 
 const at = (iso: string) => new Date(iso);
 
@@ -36,4 +36,32 @@ test("anchored on the 31st, a short month's period starts on its last day", () =
 test("the first period starts at the anchor", () => {
   const anchor = at("2026-10-17T12:00:00Z");
   assert.deepEqual(monthlyPeriod(anchor, anchor).start, anchor);
+});
+
+test("a monthly plan's period is the one Stripe bills, kept on its anchor day", () => {
+  // Anchored on Jan 31: Stripe bills Feb 28 to Mar 31. Counting a month from
+  // Feb 28 would renew on Mar 28, and again when Stripe moves to Mar 31.
+  const february = {
+    billingInterval: "month" as const,
+    currentPeriodStart: at("2026-02-28T00:00:00Z"),
+    currentPeriodEnd: at("2026-03-31T00:00:00Z"),
+  };
+  assert.deepEqual(allowancePeriod(february, at("2026-03-29T00:00:00Z")), {
+    start: at("2026-02-28T00:00:00Z"),
+    end: at("2026-03-31T00:00:00Z"),
+  });
+  // Past its end before the renewal's webhook: still that period, not a new one early.
+  assert.deepEqual(allowancePeriod(february, at("2026-03-31T00:05:00Z")).start, at("2026-02-28T00:00:00Z"));
+});
+
+test("a yearly plan's months are counted from its year's start", () => {
+  const year = {
+    billingInterval: "year" as const,
+    currentPeriodStart: at("2026-01-31T00:00:00Z"),
+    currentPeriodEnd: at("2027-01-31T00:00:00Z"),
+  };
+  assert.deepEqual(allowancePeriod(year, at("2026-03-29T00:00:00Z")), {
+    start: at("2026-02-28T00:00:00Z"),
+    end: at("2026-03-31T00:00:00Z"),
+  });
 });
