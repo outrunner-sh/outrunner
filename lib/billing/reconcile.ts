@@ -44,6 +44,9 @@ const CONCURRENCY = 5;
 export type BoxState = { running: false } | { running: true; activity: Activity | null };
 
 export type ReconcileDeps = {
+  /** Whether idle boxes are paused, or only metered: not where the provider
+   *  can't bring a paused box back (the jcode engine). */
+  pausesIdleBoxes: boolean;
   now(): Date;
   claimLease(): Promise<boolean>;
   readyComputers(): Promise<MeteredComputer[]>;
@@ -95,8 +98,13 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
     openByBox.delete(computer.sandboxId);
   }
   const seenIds: string[] = [];
+  // Longest unseen first: a run that runs out of time leaves the boxes it
+  // saw, so the ones it didn't get to come first next time, not last again.
+  // A box with no interval yet has never been seen.
+  const lastSeen = (computer: MeteredComputer) => intervalOf.get(computer.id)?.lastSeenAt.getTime() ?? -Infinity;
+  const queue = [...computers].sort((a, b) => lastSeen(a) - lastSeen(b));
 
-  await eachLimited(computers, CONCURRENCY, async (computer) => {
+  await eachLimited(queue, CONCURRENCY, async (computer) => {
     if (deps.now().getTime() >= deadline) {
       report.deferred += 1;
       return;
@@ -115,7 +123,7 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
       // Asked again just before pausing: someone may have started work since.
       // What's left of that window heals itself: a session that attached in it
       // finds the box paused on its next request and resumes it.
-      if (isIdle(state.activity, now) && (await stillIdle(deps, computer))) {
+      if (deps.pausesIdleBoxes && isIdle(state.activity, now) && (await stillIdle(deps, computer))) {
         await deps.pause(computer);
         if (interval) await deps.closeInterval(interval.id, now);
         await deps.markStopped(computer, "Paused while idle; it resumes with the next session.");

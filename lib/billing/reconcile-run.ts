@@ -20,10 +20,12 @@ export async function runReconcile(): Promise<ReconcileReport> {
   const provider = getRuntimeProvider();
   // A provider with no Runtime Computers (local, legacy Modal) has no boxes
   // Outrunner keeps running, so nothing to meter or pause.
-  if (!isComputerProvider(provider) || !provider.pausesBoxes) {
+  if (!isComputerProvider(provider)) {
     return { skipped: true, seen: 0, paused: 0, lost: 0, closed: 0, failed: 0, deferred: 0 };
   }
   return reconcile({
+    // Metered either way; paused only where a paused box comes back.
+    pausesIdleBoxes: provider.pausesBoxes,
     now: () => new Date(),
     claimLease: () => claimLease("reconcile", LEASE_SECONDS),
     readyComputers: meteredReadyComputers,
