@@ -78,11 +78,11 @@ test("cloud sessions default to an Outrunner model on the menu", () => {
 test("with their own OpenRouter key, a user picks which key runs Outrunner's models", () => {
   const labels = (keys: Parameters<typeof modelGroups>[0]) => modelGroups(keys).map((g) => g.label);
   // No key of their own: Outrunner's, as before.
-  assert.deepEqual(labels({ ownKey: false, serverModels: true, allowance: true }), ["Outrunner · $5 free", "Claude account"]);
+  assert.deepEqual(labels({ ownKey: false, serverModels: true, allowance: true }), ["Outrunner · included", "Claude account"]);
   assert.deepEqual(labels({ ownKey: false, serverModels: true, allowance: false }), ["Outrunner", "Claude account"]);
   // Their own key and the server's: both, the same models on each.
   const both = modelGroups({ ownKey: true, serverModels: true, allowance: true });
-  assert.deepEqual(both.map((g) => g.label), ["Outrunner · $5 free", "OpenRouter · your key", "Claude account"]);
+  assert.deepEqual(both.map((g) => g.label), ["Outrunner · included", "OpenRouter · your key", "Claude account"]);
   assert.deepEqual(both[1].models.map((m) => m.id), both[0].models.map((m) => m.id));
   assert.ok(both[1].models.every((m) => m.source === "own"));
   // Their own key on a server with none: only theirs.

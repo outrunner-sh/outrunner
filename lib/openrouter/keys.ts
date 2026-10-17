@@ -16,10 +16,6 @@
 
 const KEYS_URL = "https://openrouter.ai/api/v1/keys";
 
-/** What each user may spend on Neev AI before there is billing, in USD: once,
- *  in total. The key is created with limit_reset null, OpenRouter's "no reset". */
-export const NEEV_AI_LIMIT_USD = 5;
-
 /** Neither key is configured (or OpenRouter refused the management key), so
  *  Outrunner's models are unavailable. */
 export class NeevAiUnavailableError extends Error {
@@ -74,13 +70,16 @@ export type CreatedKey = {
 };
 
 /**
- * Create a capped key for one user. `name` labels it in the OpenRouter
- * dashboard; it should identify the user without personal data.
+ * Create a key for one user, capped at `limitUsd` (their plan's allowance,
+ * lib/billing/plans.ts). `name` labels it in the OpenRouter dashboard; it
+ * should identify the user without personal data. limit_reset null is
+ * OpenRouter's "no reset": a monthly allowance raises the cap each period
+ * instead, so periods follow the user's billing, not the calendar.
  *
  * Errors carry OpenRouter's status but never its body, which could echo the
  * request back.
  */
-export async function createUserKey(name: string): Promise<CreatedKey> {
+export async function createUserKey(name: string, limitUsd: number): Promise<CreatedKey> {
   const management = managementKey();
   if (!management) throw new NeevAiUnavailableError();
 
@@ -92,7 +91,7 @@ export async function createUserKey(name: string): Promise<CreatedKey> {
     },
     body: JSON.stringify({
       name,
-      limit: NEEV_AI_LIMIT_USD,
+      limit: limitUsd,
       limit_reset: null,
     }),
   });

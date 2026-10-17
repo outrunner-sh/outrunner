@@ -1,7 +1,9 @@
 /**
- * A user's allowance on Outrunner's models, as the sidebar shows it: what
- * their own key has spent of its cap ($5 in total). Imports nothing, so the
- * client and the tests use it as is.
+ * A user's allowance on Outrunner's models, as the sidebar shows it: how much
+ * of their key's cap is spent, as a percentage. The cap is dollars on
+ * OpenRouter, but users never see dollars, so the view carries none; the
+ * server builds it, and only it leaves for the browser. Imports nothing, so
+ * the client and the tests use it as is.
  */
 
 export type Allowance = { usedUsd: number; limitUsd: number };
@@ -11,10 +13,8 @@ export type AllowanceView = {
   state: "ok" | "low" | "out";
   /** How full the bar is, 0 to 100. */
   percent: number;
-  /** "$1.20 of $5 used". */
+  /** "24% used". */
   label: string;
-  /** The cap, "$5". */
-  limit: string;
 };
 
 /** OpenRouter counts in fractions of a cent: within half a cent is spent. */
@@ -28,12 +28,14 @@ export function allowanceView({ usedUsd, limitUsd }: Allowance): AllowanceView {
   return {
     state: out ? "out" : percent >= LOW_FROM_PERCENT ? "low" : "ok",
     percent,
-    label: `${dollars(Math.min(used, limitUsd))} of ${dollars(limitUsd)} used`,
-    limit: dollars(limitUsd),
+    label: `${percentLabel(percent, out)} used`,
   };
 }
 
-/** "$5" for whole dollars, "$1.20" otherwise. */
-function dollars(usd: number): string {
-  return Number.isInteger(usd) ? `$${usd}` : `$${usd.toFixed(2)}`;
+/** Whole percent, rounded down so 99.6% isn't "100%" while some is left;
+ *  "<1%" for a little, so a start isn't "0%". */
+function percentLabel(percent: number, out: boolean): string {
+  if (out) return "100%";
+  if (percent > 0 && percent < 1) return "<1%";
+  return `${Math.floor(percent)}%`;
 }

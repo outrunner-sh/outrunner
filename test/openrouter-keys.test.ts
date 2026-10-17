@@ -7,7 +7,6 @@ import {
   keySource,
   keyUsage,
   managementKey,
-  NEEV_AI_LIMIT_USD,
   NeevAiUnavailableError,
   openRouterAcceptsKey,
 } from "@/lib/openrouter/keys";
@@ -37,13 +36,13 @@ afterEach(() => {
   else process.env.OPENROUTER_API_KEY = realApiKey;
 });
 
-test("a user's key is created capped at $5 in total", async () => {
+test("a user's key is created capped at the allowance it is given", async () => {
   const seen = stubFetch(
     new Response(JSON.stringify({ key: "sk-or-v1-user", data: { hash: "h123", limit: 5 } }), {
       status: 201,
     }),
   );
-  const created = await createUserKey("outrunner user u-1");
+  const created = await createUserKey("outrunner user u-1", 5);
   assert.deepEqual(created, { key: "sk-or-v1-user", hash: "h123" });
 
   assert.equal(seen.length, 1);
@@ -54,33 +53,32 @@ test("a user's key is created capped at $5 in total", async () => {
     "Bearer mgmt-test-key",
   );
   // OpenRouter enforces the cap itself, so it has to be in the create call,
-  // and with limit_reset null, OpenRouter's "no reset": the $5 is once.
+  // and with limit_reset null, OpenRouter's "no reset": periods follow billing.
   assert.deepEqual(JSON.parse(String(seen[0].init.body)), {
     name: "outrunner user u-1",
-    limit: NEEV_AI_LIMIT_USD,
+    limit: 5,
     limit_reset: null,
   });
-  assert.equal(NEEV_AI_LIMIT_USD, 5);
 });
 
 test("without a management key Neev AI is unavailable, and nothing is sent", async () => {
   delete process.env.OPENROUTER_MANAGEMENT_KEY;
   const seen = stubFetch(new Response("{}", { status: 201 }));
   assert.equal(managementKey(), null);
-  await assert.rejects(createUserKey("x"), NeevAiUnavailableError);
+  await assert.rejects(createUserKey("x", 5), NeevAiUnavailableError);
   assert.equal(seen.length, 0);
 });
 
 test("a refused management key means Outrunner's models are not set up", async () => {
   for (const status of [401, 403]) {
     stubFetch(new Response("{}", { status }));
-    await assert.rejects(createUserKey("x"), NeevAiUnavailableError);
+    await assert.rejects(createUserKey("x", 5), NeevAiUnavailableError);
   }
 });
 
 test("an OpenRouter error reports its status, never its body", async () => {
   stubFetch(new Response('{"error":"echo of mgmt-test-key"}', { status: 500 }));
-  await assert.rejects(createUserKey("x"), (error: Error) => {
+  await assert.rejects(createUserKey("x", 5), (error: Error) => {
     assert.match(error.message, /HTTP 500/);
     assert.doesNotMatch(error.message, /mgmt-test-key/);
     return true;
@@ -89,7 +87,7 @@ test("an OpenRouter error reports its status, never its body", async () => {
 
 test("a response without the key is an error, not an empty key", async () => {
   stubFetch(new Response(JSON.stringify({ data: { hash: "h" } }), { status: 201 }));
-  await assert.rejects(createUserKey("x"), /no key/);
+  await assert.rejects(createUserKey("x", 5), /no key/);
 });
 
 test("disabling a key patches it by its hash", async () => {

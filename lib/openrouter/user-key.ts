@@ -10,8 +10,8 @@
  *   - no live key without a stored id to revoke it by: one that can't be sealed
  *     or stored is disabled before the error goes back;
  *   - a stored key that can't be decrypted is reported, not replaced: a
- *     replacement would come with a fresh $5, letting one user spend past
- *     the cap.
+ *     replacement would come with a fresh allowance, letting one user spend
+ *     past the cap.
  */
 
 import type { CreatedKey } from "@/lib/openrouter/keys";

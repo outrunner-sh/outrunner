@@ -74,7 +74,7 @@ export function ProviderSettingsForm({ initial }: { initial: ProviderSettings })
             {own
               ? "Outrunner's models run on your key, and OpenRouter bills you for them."
               : settings.serverModels
-                ? "Outrunner's models run on Outrunner's key, free up to $5 in total. Add your own to run them on your OpenRouter account instead, with no limit but yours."
+                ? "Outrunner's models run on Outrunner's key, up to your plan's included usage. Add your own to run them on your OpenRouter account instead, with no limit but yours."
                 : "Add your key to use Outrunner's models: this server has no key of its own for them."}
           </p>
         </div>
