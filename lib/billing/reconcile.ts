@@ -27,8 +27,15 @@ export const IDLE_AFTER_MS = 15 * 60_000;
  * longer keeps the box up. Long enough for any quiet tool run.
  */
 export const STUCK_TURN_AFTER_MS = 2 * 60 * 60_000;
-/** Longer than a run can take, shorter than the cron's period. */
+/** Shorter than the cron's period. */
 export const LEASE_SECONDS = 90;
+/**
+ * No box is started on past this far into a run, so the run is done before
+ * its lease expires and the next one can't work from an older snapshot: the
+ * boxes left over wait for the next run. The margin covers the slowest box
+ * already under way (an agent's 12s timeout, plus the provider's calls).
+ */
+export const RUN_DEADLINE_MS = (LEASE_SECONDS - 30) * 1000;
 /** How many boxes are asked about at once. */
 const CONCURRENCY = 5;
 
@@ -59,6 +66,8 @@ export type ReconcileReport = {
   /** Intervals closed for boxes no ready computer has. */
   closed: number;
   failed: number;
+  /** Left for the next run, out of time in this one. */
+  deferred: number;
 };
 
 /** Whether a box doing `activity` is idle at `now`. */
@@ -71,16 +80,28 @@ export function isIdle(activity: Activity | null, now: Date): boolean {
 }
 
 export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
-  const report: ReconcileReport = { skipped: false, seen: 0, paused: 0, lost: 0, closed: 0, failed: 0 };
+  const report: ReconcileReport = { skipped: false, seen: 0, paused: 0, lost: 0, closed: 0, failed: 0, deferred: 0 };
   if (!(await deps.claimLease())) return { ...report, skipped: true };
+  const deadline = deps.now().getTime() + RUN_DEADLINE_MS;
 
   const [computers, open] = await Promise.all([deps.readyComputers(), deps.openIntervals()]);
   const openByBox = new Map(open.map((interval) => [interval.sandboxId, interval]));
+  // Each ready computer's interval is its own, looked at or not this run;
+  // what's left is open for a box no ready computer has.
+  const intervalOf = new Map<string, OpenInterval>();
+  for (const computer of computers) {
+    const interval = openByBox.get(computer.sandboxId);
+    if (interval) intervalOf.set(computer.id, interval);
+    openByBox.delete(computer.sandboxId);
+  }
   const seenIds: string[] = [];
 
   await eachLimited(computers, CONCURRENCY, async (computer) => {
-    const interval = openByBox.get(computer.sandboxId);
-    openByBox.delete(computer.sandboxId);
+    if (deps.now().getTime() >= deadline) {
+      report.deferred += 1;
+      return;
+    }
+    const interval = intervalOf.get(computer.id);
     try {
       const state = await deps.observe(computer);
       const now = deps.now();
@@ -91,7 +112,10 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
         return;
       }
       report.seen += 1;
-      if (isIdle(state.activity, now)) {
+      // Asked again just before pausing: someone may have started work since.
+      // What's left of that window heals itself: a session that attached in it
+      // finds the box paused on its next request and resumes it.
+      if (isIdle(state.activity, now) && (await stillIdle(deps, computer))) {
         await deps.pause(computer);
         if (interval) await deps.closeInterval(interval.id, now);
         await deps.markStopped(computer, "Paused while idle; it resumes with the next session.");
@@ -117,6 +141,12 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
     report.closed += 1;
   }
   return report;
+}
+
+/** Whether the box is still running and idle, asked now. */
+async function stillIdle(deps: ReconcileDeps, computer: MeteredComputer): Promise<boolean> {
+  const state = await deps.observe(computer);
+  return state.running && isIdle(state.activity, deps.now());
 }
 
 /** Run `work` over `items`, at most `limit` at a time. */

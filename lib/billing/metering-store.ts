@@ -29,6 +29,24 @@ export function isMetered(provider: ProviderName | null): boolean {
   return sandboxOf(provider ?? getRuntimeProvider().name) === "outrunner";
 }
 
+/** Rows per page: PostgREST answers at most its max-rows (1000 by default),
+ *  so a read that could be longer is paged. */
+const PAGE_ROWS = 1000;
+
+/** Every row a query matches, a page at a time, in a stable order (`page`
+ *  orders by id and takes the range). */
+async function allRows<Row>(
+  page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: unknown }>,
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (let from = 0; ; from += PAGE_ROWS) {
+    const { data, error } = await page(from, from + PAGE_ROWS - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_ROWS) return rows;
+  }
+}
+
 /** Postgres' unique_violation: the box already has an open interval. */
 const UNIQUE_VIOLATION = "23505";
 
@@ -59,12 +77,15 @@ export async function openInterval(input: {
 
 export async function openIntervals(): Promise<OpenInterval[]> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("compute_intervals")
-    .select("id, sandbox_id, started_at, last_seen_at")
-    .is("ended_at", null);
-  if (error) throw error;
-  return data.map((row) => ({
+  const rows = await allRows((from, to) =>
+    supabase
+      .from("compute_intervals")
+      .select("id, sandbox_id, started_at, last_seen_at")
+      .is("ended_at", null)
+      .order("id")
+      .range(from, to),
+  );
+  return rows.map((row) => ({
     id: row.id,
     sandboxId: row.sandbox_id,
     startedAt: new Date(row.started_at),
@@ -98,14 +119,17 @@ export async function closeInterval(id: string, at: Date): Promise<void> {
 /** Every ready computer on a box Outrunner pays for. */
 export async function meteredReadyComputers(): Promise<MeteredComputer[]> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("runtime_computers")
-    .select("id, owner_id, project_id, daytona_sandbox_id, agent_secret, provider")
-    .eq("status", "ready")
-    .not("daytona_sandbox_id", "is", null)
-    .not("agent_secret", "is", null);
-  if (error) throw error;
-  return data
+  const rows = await allRows((from, to) =>
+    supabase
+      .from("runtime_computers")
+      .select("id, owner_id, project_id, daytona_sandbox_id, agent_secret, provider")
+      .eq("status", "ready")
+      .not("daytona_sandbox_id", "is", null)
+      .not("agent_secret", "is", null)
+      .order("id")
+      .range(from, to),
+  );
+  return rows
     .filter((row) => isMetered(row.provider as ProviderName | null))
     .map((row) => ({
       id: row.id,

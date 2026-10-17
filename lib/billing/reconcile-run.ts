@@ -21,7 +21,7 @@ export async function runReconcile(): Promise<ReconcileReport> {
   // A provider with no Runtime Computers (local, legacy Modal) has no boxes
   // Outrunner keeps running, so nothing to meter or pause.
   if (!isComputerProvider(provider) || !provider.pausesBoxes) {
-    return { skipped: true, seen: 0, paused: 0, lost: 0, closed: 0, failed: 0 };
+    return { skipped: true, seen: 0, paused: 0, lost: 0, closed: 0, failed: 0, deferred: 0 };
   }
   return reconcile({
     now: () => new Date(),
@@ -34,11 +34,15 @@ export async function runReconcile(): Promise<ReconcileReport> {
     },
     pause: (computer) => provider.pauseComputer(computer.sandboxId),
     markStopped: (computer, reason) => markStoppedIfReady(computer.id, computer.sandboxId, reason),
-    // The box's size isn't recorded on the computer; a provision opens its
-    // interval with it (lib/runtime/runtime-computer-service.ts), so only a box
-    // from before metering is opened here, counted as Small.
-    openInterval: (computer, at) =>
-      openInterval({ computerId: computer.id, sandboxId: computer.sandboxId, cpu: SMALL_BOX_CPU, at }),
+    // A provision opens its box's interval; this is for a box from before
+    // metering, at the size its provider reports (Small where it can't say).
+    openInterval: async (computer, at) =>
+      openInterval({
+        computerId: computer.id,
+        sandboxId: computer.sandboxId,
+        cpu: (await provider.computerCpu(computer.sandboxId)) ?? SMALL_BOX_CPU,
+        at,
+      }),
     touchIntervals,
     closeInterval,
     log: (message, error) => console.error(message, error),

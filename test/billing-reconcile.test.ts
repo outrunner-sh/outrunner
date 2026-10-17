@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { MeteredComputer, OpenInterval } from "@/lib/billing/metering-store";
-import { type BoxState, IDLE_AFTER_MS, isIdle, reconcile, STUCK_TURN_AFTER_MS } from "@/lib/billing/reconcile";
+import {
+  type BoxState,
+  IDLE_AFTER_MS,
+  isIdle,
+  reconcile,
+  RUN_DEADLINE_MS,
+  STUCK_TURN_AFTER_MS,
+} from "@/lib/billing/reconcile";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
@@ -21,20 +28,22 @@ const idle: BoxState = { running: true, activity: { lastActivity: ago(20 * MIN),
  *  write lands in `log`. */
 function world(opts: {
   computers: MeteredComputer[];
-  states: Record<string, BoxState | Error>;
+  states: Record<string, BoxState | Error | BoxState[]>;
   open?: OpenInterval[];
   lease?: boolean;
+  now?: () => Date;
 }) {
   const log: string[] = [];
   const deps = {
-    now: () => NOW,
+    now: opts.now ?? (() => NOW),
     claimLease: async () => opts.lease ?? true,
     readyComputers: async () => opts.computers,
     openIntervals: async () => opts.open ?? [],
     observe: async (c: MeteredComputer) => {
       const state = opts.states[c.id];
       if (state instanceof Error) throw state;
-      return state;
+      // A list: what each look in turn finds.
+      return Array.isArray(state) ? (state.shift() ?? state[0]) : state;
     },
     pause: async (c: MeteredComputer) => void log.push(`pause ${c.sandboxId}`),
     markStopped: async (c: MeteredComputer) => void log.push(`stopped ${c.id}`),
@@ -66,7 +75,7 @@ test("a busy box is seen; one with no interval gets one", async () => {
   });
   const report = await reconcile(deps);
   assert.deepEqual(log.sort(), [`open sb-b at ${NOW.toISOString()}`, "seen i-a"]);
-  assert.deepEqual(report, { skipped: false, seen: 2, paused: 0, lost: 0, closed: 0, failed: 0 });
+  assert.deepEqual(report, { skipped: false, seen: 2, paused: 0, lost: 0, closed: 0, failed: 0, deferred: 0 });
 });
 
 test("an idle box is paused, its interval ends now, and the computer stops", async () => {
@@ -121,4 +130,28 @@ test("with the lease held elsewhere, the run does nothing", async () => {
   const { deps, log } = world({ computers: [computer("a")], states: { a: idle }, lease: false });
   assert.equal((await reconcile(deps)).skipped, true);
   assert.deepEqual(log, []);
+});
+
+test("a box someone starts on just before its pause is left running", async () => {
+  // Idle when first looked at, busy when asked again just before pausing.
+  const { deps, log } = world({ computers: [computer("a")], states: { a: [idle, active] }, open: [interval("i-a", "sb-a")] });
+  const report = await reconcile(deps);
+  assert.deepEqual(log, ["seen i-a"]);
+  assert.equal(report.paused, 0);
+});
+
+test("a run out of time leaves the rest for the next, without closing their intervals", async () => {
+  let clock = NOW.getTime();
+  const { deps, log } = world({
+    computers: [computer("a"), computer("b"), computer("c"), computer("d"), computer("e"), computer("f")],
+    states: { a: active, b: active, c: active, d: active, e: active, f: active },
+    open: ["a", "b", "c", "d", "e", "f"].map((id) => interval(`i-${id}`, `sb-${id}`)),
+    // Each look at the clock is a while later: past the deadline after the first few.
+    now: () => new Date((clock += RUN_DEADLINE_MS / 6)),
+  });
+  const report = await reconcile(deps);
+  assert.ok(report.deferred > 0, "some boxes are left for the next run");
+  assert.equal(report.seen + report.deferred, 6);
+  assert.equal(report.closed, 0, "a deferred box's interval isn't taken for an orphan");
+  assert.ok(!log.some((line) => line.startsWith("close")));
 });
