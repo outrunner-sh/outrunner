@@ -61,6 +61,33 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
   },
 };
 
+/** The plans Stripe sells, and how often each is billed. */
+export type PaidPlanId = Exclude<PlanId, "free">;
+export type BillingInterval = "month" | "year";
+
+/** The Stripe price for each plan and interval, by its lookup key: the same
+ *  keys in test and live mode, so no price id is configured anywhere. */
+export const LOOKUP_KEYS: Readonly<Record<"pro" | "max", Record<BillingInterval, string>>> = {
+  pro: { month: "pro_monthly", year: "pro_yearly" },
+  max: { month: "max_monthly", year: "max_yearly" },
+};
+
+/** The plan a price's lookup key sells; null for one Outrunner doesn't sell. */
+export function planForLookupKey(key: string | null | undefined): "pro" | "max" | null {
+  for (const plan of ["pro", "max"] as const) {
+    if (key === LOOKUP_KEYS[plan].month || key === LOOKUP_KEYS[plan].year) return plan;
+  }
+  return null;
+}
+
+/** Plans by rank, for picking the best of several. */
+const RANK: Readonly<Record<PlanId, number>> = { free: 0, pro: 1, max: 2, enterprise: 3 };
+
+/** The better of two plans. */
+export function betterPlan(a: Plan, b: Plan): Plan {
+  return RANK[b.id] > RANK[a.id] ? b : a;
+}
+
 /** Whether `plan` may run a box of `size` on Outrunner's sandboxes. */
 export function allowsBoxSize(plan: Plan, size: BoxSizeId): boolean {
   return rank(size) <= rank(plan.largestBoxSize);

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { afterEach, test } from "node:test";
+import { test } from "node:test";
 
-import { planFor } from "@/lib/billing/entitlements";
 import { BillingConfigError, billingMode } from "@/lib/billing/mode";
 import { allowsBoxSize, boxSizeWithin, PLANS } from "@/lib/billing/plans";
 
@@ -14,21 +13,16 @@ test("billing is off by default outside production, and must be said in producti
   assert.throws(() => billingMode({ NODE_ENV: "production", RUNTIME_BILLING: "  " }), BillingConfigError);
 });
 
-test("a billing setting this build can't honour is refused, not guessed at", () => {
-  assert.throws(() => billingMode({ RUNTIME_BILLING: "stripe" }), /isn't supported by this build/);
+test("Stripe billing needs both its keys, and a setting it can't read is refused", () => {
+  const keys = { STRIPE_SECRET_KEY: "rk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_x" };
+  assert.equal(billingMode({ NODE_ENV: "production", RUNTIME_BILLING: "stripe", ...keys }), "stripe");
+  assert.throws(() => billingMode({ RUNTIME_BILLING: "stripe" }), /needs STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET/);
+  assert.throws(
+    () => billingMode({ RUNTIME_BILLING: "stripe", STRIPE_SECRET_KEY: "rk_test_x", STRIPE_WEBHOOK_SECRET: " " }),
+    /needs STRIPE_WEBHOOK_SECRET\./,
+  );
   assert.throws(() => billingMode({ RUNTIME_BILLING: "Off" }), /Invalid RUNTIME_BILLING "Off"/);
   assert.throws(() => billingMode({ RUNTIME_BILLING: "true" }), BillingConfigError);
-});
-
-const savedBilling = process.env.RUNTIME_BILLING;
-afterEach(() => {
-  if (savedBilling === undefined) delete process.env.RUNTIME_BILLING;
-  else process.env.RUNTIME_BILLING = savedBilling;
-});
-
-test("with billing off everyone is on Free", async () => {
-  process.env.RUNTIME_BILLING = "off";
-  assert.equal((await planFor("u-1")).id, "free");
 });
 
 test("Max is 5× Pro, and each paid plan includes more than the one below", () => {

@@ -369,3 +369,64 @@ begin
   end if;
   raise notice 'ok: a lease goes to one caller until it expires';
 end $$;
+
+-- 19. Stripe billing: users can neither see nor write billing, and a stored
+-- subscription is for a plan Outrunner sells.
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare n integer;
+begin
+  select count(*) into n from subscriptions;
+  if n <> 0 then raise exception 'FAIL: a user can read subscriptions'; end if;
+  select count(*) into n from billing_customers;
+  if n <> 0 then raise exception 'FAIL: a user can read billing_customers'; end if;
+  begin
+    -- A user giving themselves a plan.
+    insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
+                               current_period_start, current_period_end)
+    values ('sub_forged', '11111111-1111-1111-1111-111111111111', 'cus_x', 'active', 'max', now(), now() + interval '1 month');
+    raise exception 'FAIL: a user could insert a subscription';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    insert into billing_customers (user_id, stripe_customer_id) values ('11111111-1111-1111-1111-111111111111', 'cus_x');
+    raise exception 'FAIL: a user could set their Stripe customer';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    insert into stripe_events (id, type) values ('evt_forged', 'invoice.paid');
+    raise exception 'FAIL: a user could mark a Stripe event handled';
+  exception when insufficient_privilege then
+    null;
+  end;
+  raise notice 'ok: users can neither read nor write billing';
+end $$;
+
+reset role;
+
+do $$
+begin
+  insert into billing_customers (user_id, stripe_customer_id) values ('11111111-1111-1111-1111-111111111111', 'cus_1');
+  begin
+    insert into billing_customers (user_id, stripe_customer_id) values ('22222222-2222-2222-2222-222222222222', 'cus_1');
+    raise exception 'FAIL: two users shared a Stripe customer';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
+                               current_period_start, current_period_end)
+    values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'free', now(), now());
+    raise exception 'FAIL: a subscription was stored for a plan Stripe does not sell';
+  exception when check_violation then
+    null;
+  end;
+  insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
+                             billing_interval, current_period_start, current_period_end)
+  values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month');
+  raise notice 'ok: one Stripe customer per user, and subscriptions are for a sold plan';
+end $$;
