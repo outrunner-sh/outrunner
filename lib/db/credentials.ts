@@ -16,7 +16,12 @@
  */
 
 import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
-import { type AllowanceState, allowanceWithin, nextAllowance } from "@/lib/billing/model-allowance";
+import {
+  type AllowanceState,
+  type AllowanceStore,
+  nextAllowance,
+  refreshAllowance,
+} from "@/lib/billing/model-allowance";
 import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
 import type { Allowance } from "@/lib/openrouter/allowance";
@@ -490,42 +495,50 @@ export async function neevAiAllowance(userId: string): Promise<Allowance | null>
 export async function refreshModelAllowance(userId: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("user_credentials")
-    .select(
-      "neev_key_hash, neev_allowance_period, neev_allowance_plan, neev_allowance_baseline_usd, neev_allowance_limit_usd",
-    )
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data?.neev_key_hash) return null;
-
-  const stored: AllowanceState | null =
-    data.neev_allowance_period && data.neev_allowance_plan
-      ? {
-          period: data.neev_allowance_period,
-          plan: data.neev_allowance_plan as PlanId,
-          baselineUsd: Number(data.neev_allowance_baseline_usd ?? 0),
-          limitUsd: Number(data.neev_allowance_limit_usd ?? 0),
-        }
-      : null;
-  const usage = await keyUsage(data.neev_key_hash);
-  const next = nextAllowance(await entitlementsFor(userId), stored, usage.usedUsd);
-  if (next) {
-    // The key first, so a cap that didn't move isn't recorded as moved.
-    if (usage.limitUsd !== next.limitUsd) await setKeyLimit(data.neev_key_hash, next.limitUsd);
-    const { error: saveError } = await supabase
-      .from("user_credentials")
-      .update({
-        neev_allowance_period: next.period,
-        neev_allowance_plan: next.plan,
-        neev_allowance_baseline_usd: next.baselineUsd,
-        neev_allowance_limit_usd: next.limitUsd,
-      })
-      .eq("user_id", userId);
-    if (saveError) throw saveError;
-  }
-  return allowanceWithin((next ?? stored) as AllowanceState, usage.usedUsd);
+  const store: AllowanceStore = {
+    async read() {
+      const { data, error } = await supabase
+        .from("user_credentials")
+        .select(
+          "neev_key_hash, neev_allowance_period, neev_allowance_plan, neev_allowance_baseline_usd, neev_allowance_limit_usd",
+        )
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (error) throw error;
+      const state: AllowanceState | null =
+        data?.neev_allowance_period && data.neev_allowance_plan
+          ? {
+              period: data.neev_allowance_period,
+              plan: data.neev_allowance_plan as PlanId,
+              baselineUsd: Number(data.neev_allowance_baseline_usd ?? 0),
+              limitUsd: Number(data.neev_allowance_limit_usd ?? 0),
+            }
+          : null;
+      return { hash: data?.neev_key_hash ?? null, state };
+    },
+    async claim(previous, next) {
+      let update = supabase
+        .from("user_credentials")
+        .update({
+          neev_allowance_period: next.period,
+          neev_allowance_plan: next.plan,
+          neev_allowance_baseline_usd: next.baselineUsd,
+          neev_allowance_limit_usd: next.limitUsd,
+        })
+        .eq("user_id", userId);
+      update = previous
+        ? update.eq("neev_allowance_period", previous.period).eq("neev_allowance_plan", previous.plan)
+        : update.is("neev_allowance_period", null);
+      const { data, error } = await update.select("user_id");
+      if (error) throw error;
+      return data.length > 0;
+    },
+  };
+  return refreshAllowance(store, {
+    usage: keyUsage,
+    setLimit: setKeyLimit,
+    entitlements: () => entitlementsFor(userId),
+  });
 }
 
 /** Which key Outrunner's models run on: the user's own, Outrunner's, or
