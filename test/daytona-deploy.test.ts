@@ -302,6 +302,7 @@ test("deployClaude runs install → upload → prep → seed → launch → heal
   const io: BoxIO = {
     exec: async (command) => {
       if (command.includes("apt-get")) order.push("install");
+      if (command.includes("pkill")) order.push("stop");
       if (command.includes("gunzip")) order.push("prep");
       if (command.includes(".claude.json")) order.push("seed");
       if (command.includes("curl")) {
@@ -322,7 +323,9 @@ test("deployClaude runs install → upload → prep → seed → launch → heal
     attempts: 1,
     sleep: noSleep,
   });
-  assert.deepEqual(order, ["install", "upload", "prep", "seed", "launch", "health"]);
+  // A running agent (a box resumed with its processes) is stopped before its
+  // binary is replaced and a new one takes the port.
+  assert.deepEqual(order, ["install", "stop", "upload", "prep", "seed", "launch", "health"]);
 });
 
 test("deployClaude doesn't upload an agent the box has already (a restored one)", async () => {

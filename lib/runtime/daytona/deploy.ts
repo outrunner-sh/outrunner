@@ -504,6 +504,15 @@ export function claudeAgentLaunchScript(
   return `setsid env ${assignments} ${root}/runtime-agent > ${root}/runtime-agent.log 2>&1 < /dev/null &`;
 }
 
+/**
+ * Stop an agent still running on the box: one brought back from a pause can
+ * have its processes, and that agent holds the port on the old secret. Waits
+ * up to 5s for it to go, then kills it; succeeds when there was none.
+ */
+export const STOP_AGENT_SCRIPT =
+  "pkill -x runtime-agent; for i in $(seq 50); do pgrep -x runtime-agent >/dev/null || exit 0; sleep 0.1; done; " +
+  "pkill -9 -x runtime-agent; exit 0";
+
 /** Full Claude deploy on one box: install tmux → upload+unpack the agent
  *  (unless that build is there) → launch it in Claude mode → wait for health. Reuses the root-parameterized
  *  loopback /health wait. */
@@ -519,6 +528,8 @@ export async function deployClaude(
       `claude engine install failed (exit ${install.exitCode}): ${install.stdout.trim()}`,
     );
   }
+  // Before the upload, which can't replace a binary that's running.
+  await io.exec(`bash -lc ${shellQuote(STOP_AGENT_SCRIPT)}`);
   // A box restored on the disk an ended one left (Modal) has the agent there
   // already. The upload is the slowest part of a deploy, so only a different
   // build goes up.

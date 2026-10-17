@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { Neev, type Sandbox } from "@neevcloud/sdk";
+import { Neev, NotFoundError, type Sandbox } from "@neevcloud/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
@@ -67,6 +67,12 @@ export function neevPrepareScript(): string {
   ].join("\n");
 }
 
+/** How long Neev keeps a paused box before deleting it, with any work on it
+ *  that wasn't pushed. */
+const PAUSED_RETENTION_SECONDS = 30 * 24 * 60 * 60;
+const PAUSING_WAIT_MS = 60_000;
+const PAUSING_POLL_MS = 1_000;
+
 export class NeevBackend implements SandboxBackend {
   private client: Neev | null = null;
 
@@ -90,8 +96,14 @@ export class NeevBackend implements SandboxBackend {
       // Deny-all by default; the box clones from GitHub and Claude reaches its
       // model provider.
       allowInternet: true,
-      // Always-on, like every Runtime Computer: never paused or deleted idle.
-      lifecycle: { idle_timeout_seconds: 0, max_lifetime_seconds: 0 },
+      // Never paused or deleted by Neev for being idle: Outrunner pauses an
+      // idle box itself (lib/billing/reconcile.ts), by what its sessions are
+      // doing. A paused one is kept PAUSED_RETENTION_SECONDS, then deleted.
+      lifecycle: {
+        idle_timeout_seconds: 0,
+        max_lifetime_seconds: 0,
+        paused_retention_seconds: PAUSED_RETENTION_SECONDS,
+      },
       // Otherwise the template's own (2 vCPU, 2 GB for the default).
       ...(size && { resources: neevResources(size) }),
     });
@@ -114,7 +126,45 @@ export class NeevBackend implements SandboxBackend {
   }
 
   async alive(id: string): Promise<boolean> {
-    return (await this.neev().sandboxes.get(id)).phase === "Ready";
+    try {
+      return (await this.neev().sandboxes.get(id)).phase === "Ready";
+    } catch (error) {
+      if (error instanceof NotFoundError) return false;
+      throw error;
+    }
+  }
+
+  async pause(id: string): Promise<void> {
+    await this.neev().sandboxes.pause(id);
+    closeNeevTunnels(id);
+  }
+
+  /** The paused box `id`, running again on the disk it kept. Null when Neev
+   *  has deleted it, or it isn't paused but broken. */
+  async restore(id: string): Promise<SandboxBox | null> {
+    let sandbox: Sandbox;
+    try {
+      sandbox = await this.neev().sandboxes.get(id);
+    } catch (error) {
+      if (error instanceof NotFoundError) return null;
+      throw error;
+    }
+    // A pause still under way can't be resumed until it's done.
+    for (let waited = 0; sandbox.phase === "Pausing" && waited < PAUSING_WAIT_MS; waited += PAUSING_POLL_MS) {
+      await new Promise((r) => setTimeout(r, PAUSING_POLL_MS));
+      await sandbox.refresh();
+    }
+    if (sandbox.phase === "Paused") await sandbox.resume();
+    else if (sandbox.phase !== "Ready" && sandbox.phase !== "Pending") {
+      // Not one Outrunner paused: crashed (NotReady), its state lost
+      // (RestoreFailed), or unreadable. A new box, as before pausing existed,
+      // rather than retrying one that won't come back.
+      console.error(`Neev box ${id} is ${sandbox.phase}, not paused; starting a new one`);
+      return null;
+    }
+    await sandbox.waitUntilReady();
+    const conn = await this.connection(id);
+    return this.box(sandbox, new SandboxRuntime(conn), conn);
   }
 
   async delete(id: string): Promise<void> {
