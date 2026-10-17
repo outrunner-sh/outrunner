@@ -41,6 +41,11 @@ interface Env {
   /** Bearer token the cron below sends to /api/billing/reconcile. Without
    *  it, idle boxes aren't paused and cloud hours aren't kept. */
   BILLING_CRON_SECRET?: string;
+  /** "stripe" to sell plans (lib/billing/mode.ts), with the two Stripe keys
+   *  below; unset, everyone is on Free. */
+  RUNTIME_BILLING?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
   OPENROUTER_API_KEY?: string;
   /**
    * Where cloud sessions run: "daytona" (the default) or "neev". "neev" needs
@@ -81,9 +86,9 @@ export class OutrunnerControlPlane extends Container<Env> {
       RUNTIME_BASE_URL: "https://outrunner.neev.ai",
       RUNTIME_AGENT_BINARY_PATH: "bin/runtime-agent-linux-amd64",
       DAYTONA_SNAPSHOT: "runtime-computer-v1",
-      // Everyone on Free until Stripe billing ships (lib/billing/mode.ts). The
-      // app refuses to start in production without it.
-      RUNTIME_BILLING: "off",
+      // "stripe" sells plans, and the app refuses to start without the Stripe
+      // keys then; "off" (the default here) puts everyone on Free.
+      RUNTIME_BILLING: env.RUNTIME_BILLING || "off",
       NEXT_PUBLIC_SUPABASE_URL: env.NEXT_PUBLIC_SUPABASE_URL,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -100,6 +105,8 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.NEEV_PROJECT_ID ? { NEEV_PROJECT_ID: env.NEEV_PROJECT_ID } : {}),
       ...(env.NEEV_SANDBOX_TEMPLATE ? { NEEV_SANDBOX_TEMPLATE: env.NEEV_SANDBOX_TEMPLATE } : {}),
       ...(env.BILLING_CRON_SECRET ? { BILLING_CRON_SECRET: env.BILLING_CRON_SECRET } : {}),
+      ...(env.STRIPE_SECRET_KEY ? { STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY } : {}),
+      ...(env.STRIPE_WEBHOOK_SECRET ? { STRIPE_WEBHOOK_SECRET: env.STRIPE_WEBHOOK_SECRET } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own

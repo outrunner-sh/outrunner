@@ -130,9 +130,22 @@ note the polarity. Set it only to restrict access to named GitHub logins.
 `RUNTIME_BASE_URL=https://outrunner.neev.ai` is set in `worker.ts` and gates the
 app's same-origin CSRF checks, so it must equal the live domain.
 
-`RUNTIME_BILLING=off` is set in `worker.ts` too: everyone is on the Free plan's
-limits until Stripe billing ships. The server refuses to start in production
-without it.
+**Billing**: `RUNTIME_BILLING` defaults to `off` in `worker.ts` (everyone on
+the Free plan's limits). To sell plans, set it to `stripe` with the Stripe
+keys, test-mode ones on staging. The server refuses to start on `stripe`
+without both keys.
+
+```bash
+pnpm dlx wrangler secret put STRIPE_SECRET_KEY      # restricted key (rk_…)
+pnpm dlx wrangler secret put STRIPE_WEBHOOK_SECRET  # whsec_… from the webhook endpoint
+pnpm dlx wrangler secret put RUNTIME_BILLING        # stripe
+```
+
+The webhook endpoint is `https://<domain>/api/stripe/webhook`. Stripe needs
+these events: `checkout.session.completed`, `customer.subscription.created`,
+`.updated`, `.deleted`, `.paused`, `.resumed`, `invoice.paid`,
+`invoice.payment_failed`, and `charge.dispute.created`. Prices are found by
+lookup key (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`).
 
 ## Domain: `outrunner.neev.ai`
 
