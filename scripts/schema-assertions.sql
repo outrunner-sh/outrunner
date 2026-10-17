@@ -430,3 +430,15 @@ begin
   values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
   raise notice 'ok: one Stripe customer per user, and subscriptions are for a sold plan';
 end $$;
+
+-- 20. The model allowance's state, beside the user's key.
+do $$
+begin
+  if (select count(*) from information_schema.columns
+      where table_name = 'user_credentials'
+        and column_name in ('neev_allowance_period', 'neev_allowance_plan',
+                            'neev_allowance_baseline_usd', 'neev_allowance_limit_usd')) <> 4 then
+    raise exception 'FAIL: user_credentials lacks the model allowance columns';
+  end if;
+  raise notice 'ok: user_credentials has the model allowance columns';
+end $$;

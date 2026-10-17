@@ -139,6 +139,25 @@ export async function disableUserKey(hash: string): Promise<void> {
   }
 }
 
+/** Cap a user's key at `limitUsd` of spend over its life: how a period's
+ *  allowance is given (lib/billing/model-allowance.ts). */
+export async function setKeyLimit(hash: string, limitUsd: number): Promise<void> {
+  const management = managementKey();
+  if (!management) throw new NeevAiUnavailableError();
+
+  const response = await fetch(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
+    method: "PATCH",
+    headers: {
+      authorization: `Bearer ${management}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ limit: limitUsd }),
+  });
+  if (!response.ok) {
+    throw new Error(`OpenRouter would not change a key's limit (HTTP ${response.status}).`);
+  }
+}
+
 /** What a user's key has spent and may spend, in USD, as OpenRouter counts it. */
 export type KeyUsage = { usedUsd: number; limitUsd: number | null };
 

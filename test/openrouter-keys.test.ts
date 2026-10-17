@@ -4,6 +4,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import {
   createUserKey,
   disableUserKey,
+  setKeyLimit,
   keySource,
   keyUsage,
   managementKey,
@@ -110,6 +111,17 @@ test("a failed disable is an error with the status only", async () => {
     assert.doesNotMatch(error.message, /mgmt-test-key/);
     return true;
   });
+});
+
+test("a new period's cap is set on the key by its hash, as spend over its life", async () => {
+  const seen = stubFetch(new Response("{}", { status: 200 }));
+  await setKeyLimit("h/1", 13.5);
+  assert.equal(seen[0].url, "https://openrouter.ai/api/v1/keys/h%2F1");
+  assert.equal(seen[0].init.method, "PATCH");
+  // limit only: limit_reset stays null, so OpenRouter never resets it itself.
+  assert.deepEqual(JSON.parse(String(seen[0].init.body)), { limit: 13.5 });
+  stubFetch(new Response("{}", { status: 500 }));
+  await assert.rejects(setKeyLimit("h", 1), /HTTP 500/);
 });
 
 test("a management key means per-user keys, even beside a shared one", () => {

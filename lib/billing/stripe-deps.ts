@@ -12,6 +12,7 @@ import {
   userForCustomer,
 } from "@/lib/billing/billing-store";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
+import { refreshModelAllowance } from "@/lib/db/credentials";
 import { LOOKUP_KEYS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
 import type { SyncDeps } from "@/lib/billing/sync";
@@ -26,6 +27,8 @@ export const syncDeps: SyncDeps = {
   recordEvent,
   now: () => new Date(),
   log: (message) => console.warn(message),
+  // An upgrade's allowance applies at once, not at the next session.
+  changed: async (userId) => void (await refreshModelAllowance(userId)),
 };
 
 export const checkoutDeps: CheckoutDeps = {

@@ -15,7 +15,9 @@
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
-import { planFor } from "@/lib/billing/entitlements";
+import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
+import { type AllowanceState, allowanceWithin, nextAllowance } from "@/lib/billing/model-allowance";
+import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
@@ -24,6 +26,7 @@ import {
   keySource,
   keyUsage,
   NeevAiUnavailableError,
+  setKeyLimit,
   sharedApiKey,
 } from "@/lib/openrouter/keys";
 import { ensureUserKey } from "@/lib/openrouter/user-key";
@@ -467,25 +470,62 @@ export async function outrunnerModelsFor(userId: string): Promise<boolean> {
 }
 
 /**
- * What the user has spent of their allowance on Outrunner's models, or null
- * where there's no allowance to show: the server runs them on one shared key
- * (or not at all). Before their key exists, nothing is spent. A user with
- * their own key too still has this one, for the models they run on it.
+ * Where the user's allowance on Outrunner's models stands, as spent and cap
+ * within it (a period starts at 0), or null where there's no allowance to
+ * show: the server runs them on one shared key (or not at all). Before their
+ * key exists, nothing is spent of their plan's allowance. A user with their
+ * own key too still has this one, for the models they run on it.
  */
 export async function neevAiAllowance(userId: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
+  return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await planFor(userId)).models.usd };
+}
 
+/**
+ * Bring the cap on the user's own key in line with their plan and its period
+ * (lib/billing/model-allowance.ts), and say where it stands within the
+ * allowance. Run whenever it may have moved: a session starting on the key,
+ * the sidebar reading it, a subscription changing. Null with no key yet.
+ */
+export async function refreshModelAllowance(userId: string): Promise<Allowance | null> {
+  if (keySource() !== "per-user") return null;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_credentials")
-    .select("neev_key_hash")
+    .select(
+      "neev_key_hash, neev_allowance_period, neev_allowance_plan, neev_allowance_baseline_usd, neev_allowance_limit_usd",
+    )
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
-  if (!data?.neev_key_hash) return { usedUsd: 0, limitUsd: (await planFor(userId)).models.usd };
+  if (!data?.neev_key_hash) return null;
 
+  const stored: AllowanceState | null =
+    data.neev_allowance_period && data.neev_allowance_plan
+      ? {
+          period: data.neev_allowance_period,
+          plan: data.neev_allowance_plan as PlanId,
+          baselineUsd: Number(data.neev_allowance_baseline_usd ?? 0),
+          limitUsd: Number(data.neev_allowance_limit_usd ?? 0),
+        }
+      : null;
   const usage = await keyUsage(data.neev_key_hash);
-  return { usedUsd: usage.usedUsd, limitUsd: usage.limitUsd ?? (await planFor(userId)).models.usd };
+  const next = nextAllowance(await entitlementsFor(userId), stored, usage.usedUsd);
+  if (next) {
+    // The key first, so a cap that didn't move isn't recorded as moved.
+    if (usage.limitUsd !== next.limitUsd) await setKeyLimit(data.neev_key_hash, next.limitUsd);
+    const { error: saveError } = await supabase
+      .from("user_credentials")
+      .update({
+        neev_allowance_period: next.period,
+        neev_allowance_plan: next.plan,
+        neev_allowance_baseline_usd: next.baselineUsd,
+        neev_allowance_limit_usd: next.limitUsd,
+      })
+      .eq("user_id", userId);
+    if (saveError) throw saveError;
+  }
+  return allowanceWithin((next ?? stored) as AllowanceState, usage.usedUsd);
 }
 
 /** Which key Outrunner's models run on: the user's own, Outrunner's, or
@@ -533,7 +573,7 @@ export async function neevAiKey(userId: string, use: OpenRouterKeyUse = "auto"):
     .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
   if (rowError) throw rowError;
 
-  return ensureUserKey(
+  const key = await ensureUserKey(
     {
       async read() {
         const { data, error } = await supabase
@@ -562,10 +602,21 @@ export async function neevAiKey(userId: string, use: OpenRouterKeyUse = "auto"):
     {
       open,
       seal,
-      // Labelled by user id only: the OpenRouter dashboard needs no personal data.
-      create: async () => createUserKey(`outrunner user ${userId}`, (await planFor(userId)).models.usd),
+      // Labelled by user id only: the OpenRouter dashboard needs no personal
+      // data. Capped as a first allowance would be, with nothing spent.
+      create: async () =>
+        createUserKey(
+          `outrunner user ${userId}`,
+          (nextAllowance(await entitlementsFor(userId), null, 0) as AllowanceState).limitUsd,
+        ),
       disable: disableUserKey,
       log: (message, error) => console.error(`${message} (user ${userId})`, error),
     },
   );
+  // A session starting is when a new period's allowance is most needed. A
+  // failure leaves the cap where it was; the session still starts.
+  await refreshModelAllowance(userId).catch((error: unknown) =>
+    console.error(`Could not refresh the model allowance of user ${userId}`, error),
+  );
+  return key;
 }
