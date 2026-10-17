@@ -15,6 +15,7 @@
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
+import { planFor } from "@/lib/billing/entitlements";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
@@ -22,7 +23,6 @@ import {
   disableUserKey,
   keySource,
   keyUsage,
-  NEEV_AI_LIMIT_USD,
   NeevAiUnavailableError,
   sharedApiKey,
 } from "@/lib/openrouter/keys";
@@ -482,10 +482,10 @@ export async function neevAiAllowance(userId: string): Promise<Allowance | null>
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
-  if (!data?.neev_key_hash) return { usedUsd: 0, limitUsd: NEEV_AI_LIMIT_USD };
+  if (!data?.neev_key_hash) return { usedUsd: 0, limitUsd: (await planFor(userId)).models.usd };
 
   const usage = await keyUsage(data.neev_key_hash);
-  return { usedUsd: usage.usedUsd, limitUsd: usage.limitUsd ?? NEEV_AI_LIMIT_USD };
+  return { usedUsd: usage.usedUsd, limitUsd: usage.limitUsd ?? (await planFor(userId)).models.usd };
 }
 
 /** Which key Outrunner's models run on: the user's own, Outrunner's, or
@@ -504,11 +504,10 @@ export class NoOwnOpenRouterKeyError extends Error {
  * The OpenRouter key this user's sessions run Outrunner's models on: the key
  * they saved themselves, when `use` allows it and they have one; else the
  * shared API key when the server has only that, otherwise a key the server
- * made them, capped
- * by OpenRouter at the allowance ($5 in total), created the first time they pick one
- * of the models and then kept (OpenRouter tracks the allowance per key, so a
- * fresh key each time would hand out a fresh $5). The races and failures are
- * handled in {@link ensureUserKey}.
+ * made them, capped by OpenRouter at their plan's allowance, created the first
+ * time they pick one of the models and then kept (OpenRouter tracks the
+ * allowance per key, so a fresh key each time would hand out a fresh one). The
+ * races and failures are handled in {@link ensureUserKey}.
  *
  * It is returned in plaintext because a local session runs on the user's Mac,
  * where only the page can hand it to the agent.
@@ -564,7 +563,7 @@ export async function neevAiKey(userId: string, use: OpenRouterKeyUse = "auto"):
       open,
       seal,
       // Labelled by user id only: the OpenRouter dashboard needs no personal data.
-      create: () => createUserKey(`outrunner user ${userId}`),
+      create: async () => createUserKey(`outrunner user ${userId}`, (await planFor(userId)).models.usd),
       disable: disableUserKey,
       log: (message, error) => console.error(`${message} (user ${userId})`, error),
     },

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { billingMode } from "@/lib/billing/mode";
 import { optionalEnv, providerName } from "@/lib/env";
 import { keySource } from "@/lib/openrouter/keys";
 import {
@@ -41,6 +42,9 @@ export async function GET() {
     // Which OpenRouter setup Outrunner's models run on ("per-user", capped;
     // "shared"; or null: off, and cloud sessions need the user's Claude).
     outrunnerModels: keySource(),
+    // "off" (everyone on Free) or "stripe"; "invalid" when RUNTIME_BILLING is
+    // set wrong, which the server refuses to start on.
+    billing: billingModeOrInvalid(),
   };
 
   /**
@@ -92,4 +96,12 @@ export async function GET() {
     },
     { status: ok ? 200 : 503 },
   );
+}
+
+function billingModeOrInvalid(): ReturnType<typeof billingMode> | "invalid" {
+  try {
+    return billingMode();
+  } catch {
+    return "invalid";
+  }
 }

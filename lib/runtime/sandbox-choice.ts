@@ -1,5 +1,6 @@
-import type { SandboxSettings } from "@/lib/db/credentials";
-import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
+import { boxSizeWithin, type Plan } from "@/lib/billing/plans";
+import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
+import { boxSize, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
@@ -48,16 +49,23 @@ export function providerForNewSessions(settings: SandboxSettings, keys: OwnSandb
 }
 
 /**
- * How big a new box is, by the user's settings: their size, on their own Modal
- * or on Outrunner's sandboxes (where a backend that can't size one ignores
- * it). On Outrunner's, a size for a higher plan, one chosen for Modal, is the
- * default instead. Their own Daytona keeps its own.
+ * How big a box on `sandbox` is: the user's size on their own Modal, which
+ * bills them; on Outrunner's sandboxes (where a backend that can't size one
+ * ignores it), at most the largest their plan allows. Their own Daytona keeps
+ * its own.
  */
-export function newBoxSize(settings: SandboxSettings): BoxResources | undefined {
-  const size = boxSize(settings.boxSize);
-  if (settings.sandbox === "modal") return size;
-  if (settings.sandbox === "outrunner") return size.locked ? boxSize(DEFAULT_BOX_SIZE) : size;
+export function boxSizeOn(sandbox: SandboxChoice, size: BoxSizeId, plan: Plan): BoxResources | undefined {
+  if (sandbox === "modal") return boxSize(size);
+  if (sandbox === "outrunner") return boxSizeWithin(plan, size);
   return undefined;
+}
+
+/** Which sandbox a provider is: the user's own Daytona or Modal, or
+ *  Outrunner's (the deployment's). */
+export function sandboxOf(name: ProviderName): SandboxChoice {
+  if (name === "user-daytona") return "daytona";
+  if (name === "user-modal") return "modal";
+  return "outrunner";
 }
 
 /** The provider that has a project's computer: the one recorded, or the

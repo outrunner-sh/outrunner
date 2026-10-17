@@ -1,0 +1,76 @@
+/**
+ * Outrunner's plans and what each includes: the one place a limit is set.
+ * Pricing and Stripe ids live in Stripe; this is what a plan lets a user do.
+ * Imports nothing beyond the box sizes, so pages and tests use it as is.
+ *
+ * The model allowance is a dollar cap on the user's OpenRouter key
+ * (lib/openrouter/keys.ts). It is never shown to users in dollars: they see
+ * how much of it is used, as a percentage.
+ */
+
+import { BOX_SIZES, boxSize, type BoxSize, type BoxSizeId } from "@/lib/runtime/box-sizes";
+
+export type PlanId = "free" | "pro" | "max" | "enterprise";
+
+export type Plan = {
+  id: PlanId;
+  label: string;
+  /** Hours on Outrunner's sandboxes a month, counted in Small-box hours. */
+  cloudHoursPerMonth: number;
+  /** Outrunner sandboxes running at once. */
+  concurrentCloudSessions: number;
+  /** The largest box size on Outrunner's sandboxes. */
+  largestBoxSize: BoxSizeId;
+  /** Spend on Outrunner's models, in USD: once ever, or each month. */
+  models: { usd: number; per: "once" | "month" };
+};
+
+export const PLANS: Readonly<Record<PlanId, Plan>> = {
+  free: {
+    id: "free",
+    label: "Free",
+    cloudHoursPerMonth: 10,
+    concurrentCloudSessions: 2,
+    largestBoxSize: "small",
+    models: { usd: 5, per: "once" },
+  },
+  pro: {
+    id: "pro",
+    label: "Pro",
+    cloudHoursPerMonth: 100,
+    concurrentCloudSessions: 5,
+    largestBoxSize: "medium",
+    models: { usd: 10, per: "month" },
+  },
+  max: {
+    id: "max",
+    label: "Max",
+    cloudHoursPerMonth: 500,
+    concurrentCloudSessions: 20,
+    largestBoxSize: "large",
+    models: { usd: 50, per: "month" },
+  },
+  // Contracts set their own terms; until one needs more, Max's limits.
+  enterprise: {
+    id: "enterprise",
+    label: "Enterprise",
+    cloudHoursPerMonth: 500,
+    concurrentCloudSessions: 20,
+    largestBoxSize: "large",
+    models: { usd: 50, per: "month" },
+  },
+};
+
+/** Whether `plan` may run a box of `size` on Outrunner's sandboxes. */
+export function allowsBoxSize(plan: Plan, size: BoxSizeId): boolean {
+  return rank(size) <= rank(plan.largestBoxSize);
+}
+
+/** `size`, or the plan's largest when it is bigger than the plan allows. */
+export function boxSizeWithin(plan: Plan, size: BoxSizeId): BoxSize {
+  return allowsBoxSize(plan, size) ? boxSize(size) : boxSize(plan.largestBoxSize);
+}
+
+function rank(size: BoxSizeId): number {
+  return BOX_SIZES.findIndex((s) => s.id === size);
+}

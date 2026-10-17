@@ -78,6 +78,9 @@ export class OutrunnerControlPlane extends Container<Env> {
       RUNTIME_BASE_URL: "https://outrunner.neev.ai",
       RUNTIME_AGENT_BINARY_PATH: "bin/runtime-agent-linux-amd64",
       DAYTONA_SNAPSHOT: "runtime-computer-v1",
+      // Everyone on Free until Stripe billing ships (lib/billing/mode.ts). The
+      // app refuses to start in production without it.
+      RUNTIME_BILLING: "off",
       NEXT_PUBLIC_SUPABASE_URL: env.NEXT_PUBLIC_SUPABASE_URL,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
       SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,

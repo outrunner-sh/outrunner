@@ -4,19 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { allowanceView, type Allowance } from "@/lib/openrouter/allowance";
+import type { AllowanceView } from "@/lib/openrouter/allowance";
 import { cn } from "@/lib/utils";
 
 /**
- * How much of their allowance on Outrunner's models ($5 in total) the user has
- * spent, as a bar above their account in the sidebar; once it's spent, what
+ * How much of their allowance on Outrunner's models the user has used, as a
+ * bar above their account in the sidebar; once it's spent, what
  * to do next. Nothing where the server has no per-user allowance (one shared
  * key). Re-read on each page and when the window comes back, as sessions
  * spend it.
  */
 export function OutrunnerAllowance() {
   const pathname = usePathname();
-  const [allowance, setAllowance] = useState<Allowance | null>(null);
+  const [view, setView] = useState<AllowanceView | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,8 +24,8 @@ export function OutrunnerAllowance() {
       try {
         const res = await fetch("/api/neev-ai/usage", { cache: "no-store" });
         if (!res.ok) return; // keep what's shown; the next read may work
-        const data = (await res.json()) as { allowance: Allowance | null };
-        if (!cancelled) setAllowance(data.allowance);
+        const data = (await res.json()) as { allowance: AllowanceView | null };
+        if (!cancelled) setView(data.allowance);
       } catch {
         // Offline or a proxy's page: keep what's shown.
       }
@@ -38,8 +38,7 @@ export function OutrunnerAllowance() {
     };
   }, [pathname]);
 
-  if (!allowance) return null;
-  const view = allowanceView(allowance);
+  if (!view) return null;
   return (
     <div className="space-y-1.5 px-2 pb-3">
       <div className="flex items-baseline justify-between gap-2 text-xs">
@@ -67,7 +66,7 @@ export function OutrunnerAllowance() {
       </div>
       {view.state === "out" ? (
         <p className="text-xs text-muted-foreground">
-          You&apos;ve used your {view.limit}.{" "}
+          You&apos;ve used your included usage.{" "}
           <Link href="/settings/claude" className="text-foreground underline underline-offset-4">
             Connect Claude
           </Link>{" "}

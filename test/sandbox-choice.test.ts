@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
+import { PLANS } from "@/lib/billing/plans";
 import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
 import type { BoxSizeId } from "@/lib/runtime/box-sizes";
 import { NoDaytonaKeyError, UserDaytonaRuntimeProvider } from "@/lib/runtime/daytona-provider";
 import { resetRuntimeProvider } from "@/lib/runtime/provider";
 import {
+  boxSizeOn,
   computerMadeBy,
   endedBoxOf,
-  newBoxSize,
   providerForNewSessions,
   providerNamed,
+  sandboxOf,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError, UserModalRuntimeProvider } from "@/lib/runtime/user-modal-provider";
 
@@ -63,14 +65,26 @@ test("new sessions go where the user chose: Outrunner's by default, their Dayton
   assert.throws(() => providerForNewSessions(settings("modal", false), noKey), NoModalTokenError);
 });
 
-test("a new box is the user's size on Outrunner's and their Modal; Large only on their Modal", () => {
+test("a box is the user's size on their Modal, within their plan on Outrunner's, and Daytona's own", () => {
   const cpuAndMemory = (size?: { cpu: number; memoryGb: number }) => size && [size.cpu, size.memoryGb];
-  assert.deepEqual(cpuAndMemory(newBoxSize(settings("outrunner", false, "medium"))), [4, 8]);
-  assert.deepEqual(cpuAndMemory(newBoxSize(settings("modal", true, "large"))), [8, 16]);
-  // Large is for a higher plan on Outrunner's: one chosen for Modal is the default there.
-  assert.deepEqual(cpuAndMemory(newBoxSize(settings("outrunner", false, "large"))), [2, 4]);
+  // Free goes up to Small on Outrunner's: a larger choice is Small, a smaller one kept.
+  assert.deepEqual(cpuAndMemory(boxSizeOn("outrunner", "x-small", PLANS.free)), [1, 2]);
+  assert.deepEqual(cpuAndMemory(boxSizeOn("outrunner", "medium", PLANS.free)), [2, 4]);
+  assert.deepEqual(cpuAndMemory(boxSizeOn("outrunner", "large", PLANS.free)), [2, 4]);
+  // Pro up to Medium, Max to Large.
+  assert.deepEqual(cpuAndMemory(boxSizeOn("outrunner", "large", PLANS.pro)), [4, 8]);
+  assert.deepEqual(cpuAndMemory(boxSizeOn("outrunner", "large", PLANS.max)), [8, 16]);
+  // Their own Modal bills them: any size, whatever the plan.
+  assert.deepEqual(cpuAndMemory(boxSizeOn("modal", "large", PLANS.free)), [8, 16]);
   // Their own Daytona keeps its own size.
-  assert.equal(newBoxSize(settings("daytona", true, "medium")), undefined);
+  assert.equal(boxSizeOn("daytona", "medium", PLANS.max), undefined);
+});
+
+test("a box brought back is sized as the sandbox that made it, not where new sessions now go", () => {
+  assert.equal(sandboxOf("user-modal"), "modal");
+  assert.equal(sandboxOf("user-daytona"), "daytona");
+  assert.equal(sandboxOf("neev"), "outrunner");
+  assert.equal(sandboxOf("daytona"), "outrunner");
 });
 
 test("the owner's Modal with no token says where to add one, when a box is first reached", async () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { planFor } from "@/lib/billing/entitlements";
 import { getSandboxSettings } from "@/lib/db/credentials";
 import {
   getProject,
@@ -13,11 +14,10 @@ import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
-import { boxSize } from "@/lib/runtime/box-sizes";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
-import { computerMadeBy, endedBoxOf } from "@/lib/runtime/sandbox-choice";
+import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer } from "@/lib/runtime/types";
 
@@ -182,9 +182,9 @@ async function bringBack(
     repoFullName: project.fullName,
     githubToken: await optionalGithubToken(userId),
     sessionEnv: await runtimeSessionEnvironment(userId),
-    // The owner's size now, as a new box would get: Modal sizes a box as it
-    // starts, restored or not.
-    size: boxSize((await getSandboxSettings(userId)).boxSize),
+    // The owner's size now, as a new box on this provider would get, within
+    // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
+    size: boxSizeOn(sandboxOf(provider.name), (await getSandboxSettings(userId)).boxSize, await planFor(userId)),
     previousSandboxId: ended,
   });
   return ensured.computer;

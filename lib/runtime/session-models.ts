@@ -48,7 +48,7 @@ export type OpenRouterKeys = { ownKey: boolean; serverModels: boolean; allowance
 export function modelGroups(keys: OpenRouterKeys): ModelGroup[] {
   const groups: ModelGroup[] = [];
   if (keys.serverModels || !keys.ownKey) {
-    groups.push({ label: keys.allowance ? "Outrunner · $5 free" : "Outrunner", models: NEEV_AI_MODELS });
+    groups.push({ label: keys.allowance ? "Outrunner · included" : "Outrunner", models: NEEV_AI_MODELS });
   }
   if (keys.ownKey) groups.push({ label: "OpenRouter · your key", models: OWN_OPENROUTER_MODELS });
   groups.push({ label: "Claude account", models: CLAUDE_MODELS });
