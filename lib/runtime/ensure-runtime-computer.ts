@@ -39,6 +39,10 @@ export type EnsureRuntimeComputerDependencies = {
   ) => Promise<void>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  /** A box this request made or brought back is running, at `size` (where
+   *  sized): where its cloud hours start. A failure here is logged; it
+   *  never fails the provision. */
+  started?: (computer: RuntimeComputer, size: BoxResources | undefined) => Promise<void>;
 };
 
 export type EnsureRuntimeComputerInput = {
@@ -111,6 +115,9 @@ export async function ensureRuntimeComputer(
     if (!computer || computer.status !== "ready" || !computer.daytonaSandboxId) {
       throw new Error("Runtime Computer was not persisted as ready.");
     }
+    await deps.started?.(computer, input.size).catch((error: unknown) =>
+      console.error(`Could not start metering Runtime Computer ${computer.id}`, error),
+    );
     return { computer, provisioned: true, agentSecret };
   } catch (error) {
     const errorMessage = "Runtime Computer provisioning failed. Check Runtime setup and try again.";

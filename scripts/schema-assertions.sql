@@ -288,3 +288,84 @@ begin
   end if;
   raise notice 'ok: user_credentials has the OpenRouter key columns';
 end $$;
+
+-- 18. Cloud hours: usage is the server's alone, one open interval per box, and
+-- the reconciler's lease goes to one caller at a time.
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare n integer;
+begin
+  -- RLS on with no policies: a user sees no usage, not even their own...
+  select count(*) into n from compute_intervals;
+  if n <> 0 then
+    raise exception 'FAIL: a user can read compute_intervals';
+  end if;
+  -- ...and can't write any, which would forge their hours.
+  begin
+    insert into compute_intervals (owner_id, sandbox_id, cpu)
+    values ('11111111-1111-1111-1111-111111111111', 'sb-forged', 2);
+    raise exception 'FAIL: a user could insert into compute_intervals';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    insert into billing_leases (name, held_until) values ('reconcile', now() + interval '1 hour');
+    raise exception 'FAIL: a user could take a billing lease';
+  exception when insufficient_privilege then
+    null;
+  end;
+  raise notice 'ok: users can neither read nor write cloud usage or leases';
+end $$;
+
+reset role;
+
+do $$
+begin
+  insert into compute_intervals (owner_id, sandbox_id, cpu)
+  values ('11111111-1111-1111-1111-111111111111', 'sb-1', 2);
+  begin
+    insert into compute_intervals (owner_id, sandbox_id, cpu)
+    values ('11111111-1111-1111-1111-111111111111', 'sb-1', 2);
+    raise exception 'FAIL: a box had two open intervals';
+  exception when unique_violation then
+    null;
+  end;
+  -- Once closed, the box can run again in a new one.
+  update compute_intervals set ended_at = now() where sandbox_id = 'sb-1' and ended_at is null;
+  insert into compute_intervals (owner_id, sandbox_id, cpu)
+  values ('11111111-1111-1111-1111-111111111111', 'sb-1', 2);
+  begin
+    insert into compute_intervals (owner_id, sandbox_id, cpu, started_at, ended_at)
+    values ('11111111-1111-1111-1111-111111111111', 'sb-2', 2, now(), now() - interval '1 minute');
+    raise exception 'FAIL: an interval ended before it started';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    insert into compute_intervals (owner_id, sandbox_id, cpu) values ('11111111-1111-1111-1111-111111111111', 'sb-3', 0);
+    raise exception 'FAIL: an interval had no vCPUs';
+  exception when check_violation then
+    null;
+  end;
+  raise notice 'ok: one open interval per box, and intervals are well-formed';
+end $$;
+
+do $$
+begin
+  if not claim_billing_lease('reconcile', 60) then
+    raise exception 'FAIL: a free lease could not be taken';
+  end if;
+  if claim_billing_lease('reconcile', 60) then
+    raise exception 'FAIL: a held lease was taken again';
+  end if;
+  update billing_leases set held_until = now() - interval '1 second' where name = 'reconcile';
+  if not claim_billing_lease('reconcile', 60) then
+    raise exception 'FAIL: an expired lease could not be taken';
+  end if;
+  if has_function_privilege('authenticated', 'claim_billing_lease(text, integer)', 'execute') then
+    raise exception 'FAIL: a signed-in user may take a billing lease';
+  end if;
+  raise notice 'ok: a lease goes to one caller until it expires';
+end $$;
