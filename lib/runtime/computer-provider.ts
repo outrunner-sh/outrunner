@@ -115,6 +115,8 @@ export type ProvisionedComputer = {
    *  fetched fresh each time since it may be short-lived. */
   agentBaseUrl: string;
   timings: ProvisionTimings;
+  /** The box's vCPUs, where the provider says (SandboxBox.cpu). */
+  cpu?: number;
 };
 
 export type ProvisionComputerInput = {
@@ -264,7 +266,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       }
 
       const endpoint = await box.agentEndpoint(AGENT_PORT);
-      return { sandboxId: box.id, agentBaseUrl: endpoint.controlBaseUrl, timings: timer.timings() };
+      return { sandboxId: box.id, agentBaseUrl: endpoint.controlBaseUrl, timings: timer.timings(), cpu: box.cpu };
     } catch (error) {
       if (sandbox) await this.discardFailedBox(sandbox.id, input.previousSandboxId);
       throw error;
@@ -466,9 +468,20 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return this.backend.alive(sandboxId);
   }
 
-  /** Whether this provider can pause a box and bring it back. */
+  /** Whether this provider can pause a box and bring it back. Not for the
+   *  jcode engine, whose provision always makes a new box: a paused one would
+   *  be left behind with its sessions. */
   get pausesBoxes(): boolean {
-    return this.backend.pause !== undefined && this.backend.restore !== undefined;
+    return (
+      this.backend.pause !== undefined &&
+      this.backend.restore !== undefined &&
+      optionalEnv("RUNTIME_ENGINE") !== "jcode"
+    );
+  }
+
+  /** The box's vCPUs, where the provider says. */
+  async computerCpu(sandboxId: string): Promise<number | undefined> {
+    return (await this.backend.get(sandboxId)).cpu;
   }
 
   /** Pause the box, keeping its disk for the next session to resume. */

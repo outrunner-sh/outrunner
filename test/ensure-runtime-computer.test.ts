@@ -213,7 +213,7 @@ test("a restore that fails keeps the ended box, so a retry restores from it agai
   assert.equal(harness.row()?.status, "ready");
 });
 
-test("cloud hours start when this request's box is up, at its size, and never fail the provision", async () => {
+test("cloud hours start when this request's box is up, at the box's own size, and never fail the provision", async () => {
   const harness = concurrencyHarness();
   const started: string[] = [];
   const provider: RuntimeComputerProvisioner = {
@@ -222,17 +222,19 @@ test("cloud hours start when this request's box is up, at its size, and never fa
       sandboxId: "sb-new",
       agentBaseUrl: "https://agent.example.test",
       timings: { stages: [], totalMs: 0 },
+      // Made Medium; the user has since picked X Small: the box keeps 4.
+      cpu: 4,
     }),
   };
   const deps = {
     ...harness.deps,
-    started: async (c: RuntimeComputer, size: { cpu: number } | undefined) => {
-      started.push(`${c.daytonaSandboxId} at ${size?.cpu} vCPU`);
+    started: async (c: RuntimeComputer, cpu: number | undefined) => {
+      started.push(`${c.daytonaSandboxId} at ${cpu} vCPU`);
       throw new Error("database down");
     },
   };
 
-  const ensured = await ensureRuntimeComputer(provider, { ...input, size: { cpu: 4, memoryGb: 8 } }, deps);
+  const ensured = await ensureRuntimeComputer(provider, { ...input, size: { cpu: 1, memoryGb: 2 } }, deps);
   assert.equal(ensured.provisioned, true);
   assert.deepEqual(started, ["sb-new at 4 vCPU"]);
 

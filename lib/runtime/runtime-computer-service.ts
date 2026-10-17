@@ -23,12 +23,12 @@ const dependencies: EnsureRuntimeComputerDependencies = {
   sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
   now: Date.now,
   // Cloud hours start when one of Outrunner's boxes does.
-  started: async (computer, size) => {
+  started: async (computer, cpu) => {
     if (!isMetered(computer.provider) || !computer.daytonaSandboxId) return;
     await openInterval({
       computerId: computer.id,
       sandboxId: computer.daytonaSandboxId,
-      cpu: size?.cpu ?? SMALL_BOX_CPU,
+      cpu: cpu ?? SMALL_BOX_CPU,
       at: new Date(),
     });
   },
