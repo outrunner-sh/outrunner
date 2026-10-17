@@ -36,6 +36,9 @@ create table subscriptions (
   -- When it went past due, for the grace before the plan lapses; null
   -- otherwise.
   past_due_since timestamptz,
+  -- When this state was fetched from Stripe. A save only lands over an older
+  -- fetch, so two webhooks racing can't leave the earlier state stored.
+  synced_at timestamptz not null,
   updated_at timestamptz not null default now()
 );
 

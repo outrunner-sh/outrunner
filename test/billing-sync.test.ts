@@ -34,6 +34,7 @@ function event(type: string, object: object, id = "evt_1"): Stripe.Event {
 /** Stripe holding `subscription` now; the database knowing `customers`. */
 function world(subscription: Stripe.Subscription, customers: Record<string, string> = { cus_1: "u-1" }) {
   const saved: SubscriptionRecord[] = [];
+  const deleted: string[] = [];
   const handled = new Set<string>();
   const logs: string[] = [];
   let retrieves = 0;
@@ -44,13 +45,17 @@ function world(subscription: Stripe.Subscription, customers: Record<string, stri
     },
     userForCustomer: async (id) => customers[id] ?? null,
     subscriptionById: async (id) => saved.findLast((r) => r.stripeSubscriptionId === id) ?? null,
-    saveSubscription: async (r) => void saved.push(r),
+    saveSubscription: async (r) => {
+      saved.push(r);
+      return true;
+    },
+    deleteSubscription: async (id) => void deleted.push(id),
     eventHandled: async (id) => handled.has(id),
     recordEvent: async (id) => void handled.add(id),
     now: () => NOW,
     log: (m) => void logs.push(m),
   };
-  return { deps, saved, handled, logs, retrieves: () => retrieves };
+  return { deps, saved, deleted, handled, logs, retrieves: () => retrieves };
 }
 
 test("each synced event finds its subscription where Stripe puts it", () => {
@@ -128,4 +133,31 @@ test("only a correctly signed, recent payload is accepted as Stripe's", () => {
   assert.throws(() => stripe.webhooks.constructEvent(payload, header, "whsec_other"));
   const old = stripe.webhooks.generateTestHeaderString({ payload, secret, timestamp: Math.floor(Date.now() / 1000) - 3600 });
   assert.throws(() => stripe.webhooks.constructEvent(payload, old, secret), /timestamp/i);
+});
+
+test("a save asks to land only over an older fetch, timed before asking Stripe", async () => {
+  const w = world(stripeSubscription("canceled"));
+  const asked: Date[] = [];
+  let clock = NOW.getTime();
+  w.deps.now = () => new Date((clock += 1000));
+  w.deps.retrieveSubscription = async () => {
+    asked.push(new Date(clock));
+    return stripeSubscription("canceled");
+  };
+  let fetchedAt: Date | null = null;
+  w.deps.saveSubscription = async (_r, at) => {
+    fetchedAt = at;
+    return false; // a later fetch is stored already
+  };
+  await handleEvent(event("customer.subscription.updated", { id: "sub_1" }), w.deps);
+  assert.ok(fetchedAt! <= asked[0], "the fetch is timed before Stripe is asked, never after");
+});
+
+test("a subscription moved to a price Outrunner doesn't sell is forgotten, so it grants nothing", async () => {
+  const unknown = stripeSubscription("active");
+  (unknown.items.data[0].price as { lookup_key: string | null }).lookup_key = "legacy_plan";
+  const w = world(unknown);
+  await handleEvent(event("customer.subscription.updated", { id: "sub_1" }), w.deps);
+  assert.deepEqual(w.deleted, ["sub_1"]);
+  assert.equal(w.saved.length, 0);
 });

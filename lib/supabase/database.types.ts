@@ -157,6 +157,7 @@ type SubscriptionRow = {
   current_period_end: string;
   cancel_at_period_end: boolean;
   past_due_since: string | null;
+  synced_at: string;
   updated_at: string;
 };
 
@@ -425,6 +426,7 @@ export type Database = {
           | "plan"
           | "current_period_start"
           | "current_period_end"
+          | "synced_at"
         >;
         Update: Partial<SubscriptionRow>;
         Relationships: [];

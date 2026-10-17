@@ -13,7 +13,10 @@ export type SyncDeps = {
   retrieveSubscription(id: string): Promise<Stripe.Subscription>;
   userForCustomer(customerId: string): Promise<string | null>;
   subscriptionById(id: string): Promise<SubscriptionRecord | null>;
-  saveSubscription(record: SubscriptionRecord): Promise<void>;
+  /** Store it as fetched at `fetchedAt`, unless a later fetch is stored;
+   *  true when stored. */
+  saveSubscription(record: SubscriptionRecord, fetchedAt: Date): Promise<boolean>;
+  deleteSubscription(id: string): Promise<void>;
   eventHandled(id: string): Promise<boolean>;
   recordEvent(id: string, type: string): Promise<void>;
   now(): Date;
@@ -53,9 +56,15 @@ export function subscriptionIdOf(event: Stripe.Event): string | null {
   }
 }
 
-/** Fetch subscription `id` from Stripe and store it. Null, storing nothing,
- *  for one that isn't a known user's or sells no plan of Outrunner's. */
+/**
+ * Fetch subscription `id` from Stripe and store it. Null, storing nothing,
+ * for one that isn't a known user's; one that no longer sells a plan of
+ * Outrunner's is forgotten, so it grants nothing.
+ */
 export async function syncSubscription(id: string, deps: SyncDeps): Promise<SubscriptionRecord | null> {
+  // Taken before the fetch: a save only lands over an older fetch, so of two
+  // webhooks racing, the one that asked Stripe later wins.
+  const fetchedAt = deps.now();
   const subscription = await deps.retrieveSubscription(id);
   const customerId = idOf(subscription.customer);
   // The customer Outrunner made for the user is the authority; the user id
@@ -65,12 +74,13 @@ export async function syncSubscription(id: string, deps: SyncDeps): Promise<Subs
     deps.log(`Stripe subscription ${id} is for customer ${customerId}, who is no Outrunner user; not stored`);
     return null;
   }
-  const record = recordFromStripe(subscription, userId, await deps.subscriptionById(id), deps.now());
+  const record = recordFromStripe(subscription, userId, await deps.subscriptionById(id), fetchedAt);
   if (!record) {
-    deps.log(`Stripe subscription ${id} sells no plan Outrunner knows (no known lookup key); not stored`);
+    deps.log(`Stripe subscription ${id} sells no plan Outrunner knows (no known lookup key); forgotten`);
+    await deps.deleteSubscription(id);
     return null;
   }
-  await deps.saveSubscription(record);
+  if (!(await deps.saveSubscription(record, fetchedAt))) return null;
   return record;
 }
 

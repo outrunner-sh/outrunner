@@ -385,8 +385,8 @@ begin
   begin
     -- A user giving themselves a plan.
     insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
-                               current_period_start, current_period_end)
-    values ('sub_forged', '11111111-1111-1111-1111-111111111111', 'cus_x', 'active', 'max', now(), now() + interval '1 month');
+                               current_period_start, current_period_end, synced_at)
+    values ('sub_forged', '11111111-1111-1111-1111-111111111111', 'cus_x', 'active', 'max', now(), now() + interval '1 month', now());
     raise exception 'FAIL: a user could insert a subscription';
   exception when insufficient_privilege then
     null;
@@ -419,14 +419,14 @@ begin
   end;
   begin
     insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
-                               current_period_start, current_period_end)
-    values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'free', now(), now());
+                               current_period_start, current_period_end, synced_at)
+    values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'free', now(), now(), now());
     raise exception 'FAIL: a subscription was stored for a plan Stripe does not sell';
   exception when check_violation then
     null;
   end;
   insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
-                             billing_interval, current_period_start, current_period_end)
-  values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month');
+                             billing_interval, current_period_start, current_period_end, synced_at)
+  values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
   raise notice 'ok: one Stripe customer per user, and subscriptions are for a sold plan';
 end $$;

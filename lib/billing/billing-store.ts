@@ -62,23 +62,47 @@ export async function subscriptionById(id: string): Promise<SubscriptionRecord |
   return data ? fromRow(data) : null;
 }
 
-export async function saveSubscription(record: SubscriptionRecord): Promise<void> {
-  const { error } = await createSupabaseAdminClient().from("subscriptions").upsert(
-    {
-      stripe_subscription_id: record.stripeSubscriptionId,
-      user_id: record.userId,
-      stripe_customer_id: record.stripeCustomerId,
-      status: record.status,
-      plan: record.plan,
-      price_lookup_key: record.priceLookupKey,
-      billing_interval: record.billingInterval,
-      current_period_start: record.currentPeriodStart.toISOString(),
-      current_period_end: record.currentPeriodEnd.toISOString(),
-      cancel_at_period_end: record.cancelAtPeriodEnd,
-      past_due_since: record.pastDueSince?.toISOString() ?? null,
-    },
-    { onConflict: "stripe_subscription_id" },
-  );
+/**
+ * Store a subscription as fetched from Stripe at `fetchedAt`, unless a later
+ * fetch is stored already: two webhooks racing can't leave the older state.
+ * True when it was stored.
+ */
+export async function saveSubscription(record: SubscriptionRecord, fetchedAt: Date): Promise<boolean> {
+  const supabase = createSupabaseAdminClient();
+  const row = {
+    stripe_subscription_id: record.stripeSubscriptionId,
+    user_id: record.userId,
+    stripe_customer_id: record.stripeCustomerId,
+    status: record.status,
+    plan: record.plan,
+    price_lookup_key: record.priceLookupKey,
+    billing_interval: record.billingInterval,
+    current_period_start: record.currentPeriodStart.toISOString(),
+    current_period_end: record.currentPeriodEnd.toISOString(),
+    cancel_at_period_end: record.cancelAtPeriodEnd,
+    past_due_since: record.pastDueSince?.toISOString() ?? null,
+    synced_at: fetchedAt.toISOString(),
+  };
+  const { data: inserted, error: insertError } = await supabase
+    .from("subscriptions")
+    .upsert(row, { onConflict: "stripe_subscription_id", ignoreDuplicates: true })
+    .select("stripe_subscription_id");
+  if (insertError) throw insertError;
+  if (inserted.length > 0) return true;
+  const { data: updated, error } = await supabase
+    .from("subscriptions")
+    .update(row)
+    .eq("stripe_subscription_id", record.stripeSubscriptionId)
+    .lt("synced_at", row.synced_at)
+    .select("stripe_subscription_id");
+  if (error) throw error;
+  return updated.length > 0;
+}
+
+/** Forget a subscription that no longer sells a plan of Outrunner's (its
+ *  price was changed to one Outrunner doesn't know), so it grants nothing. */
+export async function deleteSubscription(id: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient().from("subscriptions").delete().eq("stripe_subscription_id", id);
   if (error) throw error;
 }
 
