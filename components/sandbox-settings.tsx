@@ -33,9 +33,13 @@ export function SandboxSettingsForm({
   /** The user's plan, which limits the sizes on Outrunner's sandboxes. */
   plan: Plan;
 }) {
+  // The size a box really gets on the sandbox chosen: on Outrunner's, a saved
+  // size beyond the plan is shown as the size new boxes get instead.
+  const effectiveSize = (sandbox: SandboxChoice, saved: BoxSizeId) =>
+    sandbox === "outrunner" ? boxSizeWithin(plan, saved).id : saved;
   const [settings, setSettings] = useState(initial);
   const [choice, setChoice] = useState<SandboxChoice>(initial.sandbox);
-  const [size, setSize] = useState<BoxSizeId>(initial.boxSize);
+  const [size, setSize] = useState<BoxSizeId>(effectiveSize(initial.sandbox, initial.boxSize));
   const [daytonaKey, setDaytonaKey] = useState("");
   const [modalId, setModalId] = useState("");
   const [modalSecret, setModalSecret] = useState("");
@@ -52,7 +56,7 @@ export function SandboxSettingsForm({
   const sized = (choice === "outrunner" && sizes) || choice === "modal";
   const dirty =
     choice !== settings.sandbox ||
-    (sized && size !== settings.boxSize) ||
+    (sized && size !== effectiveSize(choice, settings.boxSize)) ||
     (asking("daytona") && typedDaytona) ||
     (asking("modal") && typedModal);
   const canSave = dirty && !(asking("daytona") && !typedDaytona) && !(asking("modal") && !typedModal);
@@ -71,7 +75,7 @@ export function SandboxSettingsForm({
       if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Try again.");
       setSettings(data);
       setChoice(data.sandbox);
-      setSize(data.boxSize);
+      setSize(effectiveSize(data.sandbox, data.boxSize));
       setDaytonaKey("");
       setModalId("");
       setModalSecret("");
@@ -99,7 +103,7 @@ export function SandboxSettingsForm({
   function choose(next: SandboxChoice) {
     setChoice(next);
     // A size beyond the plan, chosen for Modal, can't be Outrunner's.
-    if (next === "outrunner") setSize(boxSizeWithin(plan, size).id);
+    setSize(effectiveSize(next, size));
     setStatus("idle");
   }
 
