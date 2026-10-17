@@ -43,6 +43,8 @@ type EnvKey =
   // Provider selection
   | "RUNTIME_PROVIDER"
   | "RUNTIME_BASE_URL"
+  // Bearer token the Cloudflare cron sends to POST /api/billing/reconcile.
+  | "BILLING_CRON_SECRET"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).

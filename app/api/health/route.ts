@@ -45,6 +45,9 @@ export async function GET() {
     // "off" (everyone on Free) or "stripe"; "invalid" when RUNTIME_BILLING is
     // set wrong, which the server refuses to start on.
     billing: billingModeOrInvalid(),
+    // The cron's secret for the reconciler, which pauses idle boxes and keeps
+    // cloud hours; without it neither happens.
+    billingCron: Boolean(optionalEnv("BILLING_CRON_SECRET")),
   };
 
   /**

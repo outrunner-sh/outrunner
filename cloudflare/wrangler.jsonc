@@ -43,5 +43,9 @@
   // Serves the app at the production domain. Deploying with this record present
   // creates/points the DNS entry in the neev.ai zone
   // (id 4025edd7b4e5bf2fea54e245dc21427e). See docs/deploy-cloudflare.md.
+  // The reconciler: keeps cloud hours and pauses idle boxes (worker.ts,
+  // scheduled). Needs the BILLING_CRON_SECRET secret.
+  "triggers": { "crons": ["*/2 * * * *"] },
+
   "routes": [{ "pattern": "outrunner.neev.ai", "custom_domain": true }]
 }
