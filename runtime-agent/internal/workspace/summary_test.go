@@ -174,3 +174,38 @@ func TestServiceSummaryOfUnknownWorkspace(t *testing.T) {
 		t.Fatalf("unknown workspace should return starting summary, got %q", snap.State)
 	}
 }
+
+func TestSummaryTurnIsOpenUntilClaudeAnswersWithText(t *testing.T) {
+	sum := newSummary("ws-1", t.TempDir())
+	message := func(role string, blocks ...protocol.ContentBlock) {
+		sum.applyEvent(conversation.Event{Message: &protocol.ConversationMessage{Role: role, Content: blocks}})
+	}
+	open := func() bool { _, o := sum.activity(); return o }
+
+	if open() {
+		t.Fatal("a new session has a turn open")
+	}
+	message("user", protocol.ContentBlock{Type: "text", Text: "run the tests"})
+	if !open() {
+		t.Error("a prompt waiting on the model isn't an open turn")
+	}
+	message("assistant", protocol.ContentBlock{Type: "text", Text: "Running them."}, protocol.ContentBlock{Type: "tool_use", Name: "Bash"})
+	if !open() {
+		t.Error("a tool running isn't an open turn")
+	}
+	message("user", protocol.ContentBlock{Type: "tool_result"})
+	if !open() {
+		t.Error("a tool's result waiting on the model isn't an open turn")
+	}
+	message("assistant", protocol.ContentBlock{Type: "text", Text: "All green."})
+	if open() {
+		t.Error("a text answer didn't end the turn")
+	}
+
+	// A session that exited mid-turn is not working.
+	message("user", protocol.ContentBlock{Type: "text", Text: "again"})
+	sum.stop()
+	if open() {
+		t.Error("an exited session still has a turn open")
+	}
+}

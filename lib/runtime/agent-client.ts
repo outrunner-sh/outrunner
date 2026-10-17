@@ -8,9 +8,11 @@
  */
 
 import {
+  Activity,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   ErrorResponse,
+  LISTING_WORKSPACE_ID,
   RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
   WorkspaceSummary,
@@ -189,6 +191,17 @@ export class AgentClient {
   async workspaceSummary(identity: WorkspaceIdentity): Promise<WorkspaceSummary> {
     const raw = await this.get(`/workspaces/${identity.workspaceId}/summary`, identity);
     return WorkspaceSummary.parse(raw);
+  }
+
+  /**
+   * The box's activity: when anything last happened on it, and whether Claude
+   * is mid-turn, for pausing an idle box. Box-wide, so it rides the listing
+   * token rather than one workspace's. An agent from before this route answers
+   * 404 (an {@link AgentRequestError} with no error envelope).
+   */
+  async activity(box: Omit<WorkspaceIdentity, "workspaceId">): Promise<Activity> {
+    const raw = await this.get("/activity", { ...box, workspaceId: LISTING_WORKSPACE_ID });
+    return Activity.parse(raw);
   }
 
   /**
