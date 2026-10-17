@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Box, ChevronLeft, Info, KeyRound, Sparkles, User } from "lucide-react";
+import { Box, ChevronLeft, CreditCard, Info, KeyRound, Sparkles, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const sections = [
   { href: "/settings/general", label: "General", icon: Info },
   { href: "/settings/account", label: "Account", icon: User },
+  // The user's plan; Stripe sends them back here after Checkout or the portal.
+  { href: "/settings/billing", label: "Billing", icon: CreditCard },
   // Where a user connects their own Claude: a failed workspace create points
   // here when it has none.
   { href: "/settings/claude", label: "Claude", icon: Sparkles },
