@@ -6,8 +6,9 @@ import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KeyInput, SavedKey } from "@/components/stored-key";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { allowsBoxSize, boxSizeWithin, type Plan } from "@/lib/billing/plans";
 import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
-import { BOX_SIZES, boxSize, DEFAULT_BOX_SIZE, type BoxSizeId } from "@/lib/runtime/box-sizes";
+import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { cn } from "@/lib/utils";
 
 type OwnSandbox = Exclude<SandboxChoice, "outrunner">;
@@ -22,12 +23,15 @@ export function SandboxSettingsForm({
   initial,
   outrunnerRunsOn,
   sizes,
+  plan,
 }: {
   initial: SandboxSettings;
   /** What Outrunner's sandboxes are, in a few words ("NeevCloud sandboxes"). */
   outrunnerRunsOn: string;
   /** Whether Outrunner's sandboxes can be sized here. */
   sizes: boolean;
+  /** The user's plan, which limits the sizes on Outrunner's sandboxes. */
+  plan: Plan;
 }) {
   const [settings, setSettings] = useState(initial);
   const [choice, setChoice] = useState<SandboxChoice>(initial.sandbox);
@@ -44,7 +48,7 @@ export function SandboxSettingsForm({
   const typedDaytona = daytonaKey.trim() !== "";
   const typedModal = modalId.trim() !== "" && modalSecret.trim() !== "";
   // Sized here: Outrunner's sandboxes (where they can be), and the user's own
-  // Modal, where the higher-plan sizes are theirs to pay for.
+  // Modal, where every size is theirs to pay for.
   const sized = (choice === "outrunner" && sizes) || choice === "modal";
   const dirty =
     choice !== settings.sandbox ||
@@ -94,8 +98,8 @@ export function SandboxSettingsForm({
 
   function choose(next: SandboxChoice) {
     setChoice(next);
-    // A size for a higher plan, chosen for Modal, can't be Outrunner's.
-    if (next === "outrunner" && boxSize(size).locked) setSize(DEFAULT_BOX_SIZE);
+    // A size beyond the plan, chosen for Modal, can't be Outrunner's.
+    if (next === "outrunner") setSize(boxSizeWithin(plan, size).id);
     setStatus("idle");
   }
 
@@ -119,7 +123,7 @@ export function SandboxSettingsForm({
           badge="Default"
           detail={`Runs on ${outrunnerRunsOn}. Nothing to set up.`}
         >
-          {choice === "outrunner" && sizes ? <BoxSizePicker value={size} onChange={changeSize} /> : null}
+          {choice === "outrunner" && sizes ? <BoxSizePicker value={size} onChange={changeSize} plan={plan} /> : null}
         </Option>
         <Option
           selected={choice === "daytona"}
@@ -223,7 +227,7 @@ export function SandboxSettingsForm({
                   onRemove={() => void send("DELETE", undefined, "?key=modal")}
                 />
               )}
-              <BoxSizePicker value={size} onChange={changeSize} ownAccount />
+              <BoxSizePicker value={size} onChange={changeSize} />
             </div>
           ) : null}
         </Option>
@@ -251,17 +255,17 @@ export function SandboxSettingsForm({
   );
 }
 
-/** CPU and memory a new sandbox boots with. On Outrunner's, the locked sizes
- *  need a higher plan; on the user's own account (`ownAccount`) every size is
+/** CPU and memory a new sandbox boots with. On Outrunner's, sizes beyond
+ *  `plan` need a higher one; on the user's own account (no plan) every size is
  *  theirs. */
 function BoxSizePicker({
   value,
   onChange,
-  ownAccount,
+  plan,
 }: {
   value: BoxSizeId;
   onChange: (size: BoxSizeId) => void;
-  ownAccount?: boolean;
+  plan?: Plan;
 }) {
   return (
     <div className="space-y-2">
@@ -272,7 +276,7 @@ function BoxSizePicker({
       <div role="radiogroup" aria-label="Box size" className="divide-y divide-border/60 rounded-md border border-border/60">
         {BOX_SIZES.map((size) => {
           const selected = size.id === value;
-          const locked = size.locked && !ownAccount;
+          const locked = plan !== undefined && !allowsBoxSize(plan, size.id);
           return (
             <button
               key={size.id}
@@ -312,7 +316,7 @@ function BoxSizePicker({
         })}
       </div>
       <p className="text-xs text-muted-foreground">
-        {ownAccount ? "Billed by your provider at its rates. " : "Larger sizes need a higher plan. "}
+        {plan ? "Larger sizes need a higher plan. " : "Billed by your provider at its rates. "}
         Applies to new sandboxes; one already running keeps its size.
       </p>
     </div>

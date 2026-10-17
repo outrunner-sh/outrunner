@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { planFor } from "@/lib/billing/entitlements";
+import { allowsBoxSize } from "@/lib/billing/plans";
 import {
   clearDaytonaKey,
   clearModalToken,
@@ -24,8 +26,8 @@ export const dynamic = "force-dynamic";
  * sandboxes, or their own Daytona or Modal on their key. GET returns the
  * choice and whether each key is stored (its last 4 characters), never a key.
  * PUT sets the choice and, with `daytonaKey` or `modalToken`, stores a key the
- * provider has accepted; with `boxSize`, the size of new sandboxes (a size for
- * a higher plan only on the user's own Modal, which they pay for). DELETE
+ * provider has accepted; with `boxSize`, the size of new sandboxes (one beyond
+ * their plan only on their own Modal, which they pay for). DELETE
  * forgets a key (`?key=daytona|modal`), which moves new sessions back to
  * Outrunner's sandboxes if they ran there.
  */
@@ -94,9 +96,9 @@ export async function PUT(request: Request) {
   if (!sandbox) return invalid("Choose Outrunner's sandbox, or your own Daytona or Modal.");
   if (body.boxSize !== undefined && !isBoxSizeId(body.boxSize)) return invalid("Choose one of the box sizes.");
   const size = isBoxSizeId(body.boxSize) ? boxSize(body.boxSize) : null;
-  // A larger size is for a higher plan on Outrunner's sandboxes; the user's
-  // own Modal is on their bill.
-  if (size?.locked && sandbox !== "modal") {
+  // A size beyond the user's plan isn't for Outrunner's sandboxes; their own
+  // Modal is on their bill.
+  if (size && sandbox !== "modal" && !allowsBoxSize(await planFor(owner.id), size.id)) {
     return NextResponse.json({ error: `${size.label} needs a higher plan.` }, { status: 403 });
   }
 

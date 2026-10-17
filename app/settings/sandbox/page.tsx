@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { SandboxSettingsForm } from "@/components/sandbox-settings";
 import { getOwner } from "@/lib/auth/owner";
+import { planFor } from "@/lib/billing/entitlements";
 import { getSandboxSettings } from "@/lib/db/credentials";
 import { providerName } from "@/lib/env";
 
@@ -24,6 +25,7 @@ export default async function SandboxSettings() {
       outrunnerRunsOn={OUTRUNNER_RUNS_ON[providerName()] ?? "Outrunner's servers"}
       // Only Neev sizes a box (lib/runtime/sandbox/backend.ts).
       sizes={providerName() === "neev"}
+      plan={await planFor(owner.id)}
     />
   );
 }

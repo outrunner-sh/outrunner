@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { planFor } from "@/lib/billing/entitlements";
 import {
   getSandboxSettings,
   hasOwnOpenRouterKey,
@@ -26,9 +27,9 @@ import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import { offeredModel } from "@/lib/runtime/session-models";
 import {
+  boxSizeOn,
   computerMadeBy,
   endedBoxOf,
-  newBoxSize,
   providerForNewSessions,
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
@@ -227,7 +228,7 @@ export async function POST(request: Request, context: RouteContext) {
         repoFullName: project.fullName,
         githubToken,
         sessionEnv,
-        size: newBoxSize(sandboxSettings),
+        size: boxSizeOn(sandboxSettings.sandbox, sandboxSettings.boxSize, await planFor(owner.id)),
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
