@@ -6,7 +6,7 @@ import type { SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
 const user = { id: "u-1", githubLogin: "octo", email: null };
-const BASE = "https://outrunner.neev.ai";
+const BASE = "https://app.outrunner.sh";
 
 function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = {}) {
   let stored: string | null = opts.stored ?? null;

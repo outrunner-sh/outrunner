@@ -40,12 +40,16 @@
     { "tag": "v1", "new_sqlite_classes": ["OutrunnerControlPlane"] }
   ],
 
-  // Serves the app at the production domain. Deploying with this record present
-  // creates/points the DNS entry in the neev.ai zone
-  // (id 4025edd7b4e5bf2fea54e245dc21427e). See docs/deploy-cloudflare.md.
   // The reconciler: keeps cloud hours and pauses idle boxes (worker.ts,
   // scheduled). Needs the BILLING_CRON_SECRET secret.
   "triggers": { "crons": ["*/2 * * * *"] },
 
-  "routes": [{ "pattern": "outrunner.neev.ai", "custom_domain": true }]
+  // Serves the app at app.outrunner.sh. Deploying creates/points each DNS entry
+  // in its zone, so both zones must be in this account. outrunner.neev.ai, the
+  // old domain, stays bound only to redirect to the new one (worker.ts), for
+  // bookmarks and Mac apps from before the move. See docs/deploy-cloudflare.md.
+  "routes": [
+    { "pattern": "app.outrunner.sh", "custom_domain": true },
+    { "pattern": "outrunner.neev.ai", "custom_domain": true }
+  ]
 }
