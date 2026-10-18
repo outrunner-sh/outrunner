@@ -134,3 +134,21 @@ function fromRow(row: SubscriptionRow): SubscriptionRecord {
     pastDueSince: row.past_due_since ? new Date(row.past_due_since) : null,
   };
 }
+
+/** Every subscription that may give a plan now (lib/billing/subscriptions.ts,
+ *  entitles), a page at a time. */
+export async function entitlingSubscriptions(): Promise<SubscriptionRecord[]> {
+  const supabase = createSupabaseAdminClient();
+  const rows: SubscriptionRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .select("*")
+      .in("status", ["active", "trialing", "past_due"])
+      .order("stripe_subscription_id")
+      .range(from, from + 999);
+    if (error) throw error;
+    rows.push(...data);
+    if (data.length < 1000) return rows.map(fromRow);
+  }
+}

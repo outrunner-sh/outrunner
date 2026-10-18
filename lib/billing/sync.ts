@@ -21,6 +21,8 @@ export type SyncDeps = {
   recordEvent(id: string, type: string): Promise<void>;
   now(): Date;
   log(message: string): void;
+  /** A user's subscriptions changed: their allowances may have moved. */
+  changed?(userId: string): Promise<void>;
 };
 
 /** The events whose subscription is synced; the rest are acknowledged and
@@ -78,10 +80,21 @@ export async function syncSubscription(id: string, deps: SyncDeps): Promise<Subs
   if (!record) {
     deps.log(`Stripe subscription ${id} sells no plan Outrunner knows (no known lookup key); forgotten`);
     await deps.deleteSubscription(id);
+    await refreshAllowances(userId, id, deps);
     return null;
   }
   if (!(await deps.saveSubscription(record, fetchedAt))) return null;
+  await refreshAllowances(userId, id, deps);
   return record;
+}
+
+/** Bring the user's allowances in line with what changed. A failure isn't a
+ *  reason to have Stripe deliver the event again: the allowance is brought in
+ *  line again whenever the user next starts a session. */
+async function refreshAllowances(userId: string, subscriptionId: string, deps: SyncDeps): Promise<void> {
+  await deps.changed?.(userId).catch((error: unknown) =>
+    deps.log(`Could not refresh user ${userId}'s allowances after subscription ${subscriptionId}: ${String(error)}`),
+  );
 }
 
 export type EventOutcome = "synced" | "duplicate" | "ignored";

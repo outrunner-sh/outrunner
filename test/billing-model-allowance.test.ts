@@ -1,0 +1,124 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  type AllowanceState,
+  type AllowanceStore,
+  allowanceWithin,
+  nextAllowance,
+  ONCE,
+  refreshAllowance,
+} from "@/lib/billing/model-allowance";
+import { PLANS } from "@/lib/billing/plans";
+
+const october = { start: new Date("2026-10-17T00:00:00Z"), end: new Date("2026-11-17T00:00:00Z") };
+const november = { start: new Date("2026-11-17T00:00:00Z"), end: new Date("2026-12-17T00:00:00Z") };
+const free = { plan: PLANS.free, allowancePeriod: null };
+const pro = (period = october) => ({ plan: PLANS.pro, allowancePeriod: period });
+const max = (period = october) => ({ plan: PLANS.max, allowancePeriod: period });
+
+test("Free is its allowance once over the key's life, and is set once", () => {
+  const first = nextAllowance(free, null, 2);
+  assert.deepEqual(first, { period: ONCE, plan: "free", baselineUsd: 0, limitUsd: 5 });
+  assert.equal(nextAllowance(free, first, 4.5), null, "using it doesn't move the cap");
+  assert.deepEqual(allowanceWithin(first!, 2), { usedUsd: 2, limitUsd: 5 });
+});
+
+test("subscribing starts a period: the cap is what's spent plus the plan's allowance", () => {
+  const onFree = nextAllowance(free, null, 3)!;
+  const subscribed = nextAllowance(pro(), onFree, 3);
+  assert.deepEqual(subscribed, { period: october.start.toISOString(), plan: "pro", baselineUsd: 3, limitUsd: 13 });
+  assert.deepEqual(allowanceWithin(subscribed!, 3), { usedUsd: 0, limitUsd: 10 }, "a period starts at 0%");
+  assert.equal(nextAllowance(pro(), subscribed, 12), null, "within the period nothing moves");
+});
+
+test("each new period renews the allowance from what's spent, unused allowance not carried over", () => {
+  const oct = nextAllowance(pro(), null, 0)!;
+  const nov = nextAllowance(pro(november), oct, 4);
+  assert.deepEqual(nov, { period: november.start.toISOString(), plan: "pro", baselineUsd: 4, limitUsd: 14 });
+});
+
+test("an upgrade mid-period adds the difference, keeping what this period has used", () => {
+  const onPro = nextAllowance(pro(), null, 0)!;
+  const onMax = nextAllowance(max(), onPro, 7);
+  // $7 of Pro's $10 used; Max allows $50 this period: $43 left.
+  assert.deepEqual(onMax, { period: october.start.toISOString(), plan: "max", baselineUsd: 0, limitUsd: 50 });
+});
+
+test("a downgrade mid-period never sets the cap below what's spent", () => {
+  const onMax = nextAllowance(max(), null, 0)!;
+  assert.equal(nextAllowance(pro(), onMax, 30)?.limitUsd, 30);
+});
+
+test("back on Free after paying, nothing more is free", () => {
+  const onPro = nextAllowance(pro(), null, 40)!;
+  const lapsed = nextAllowance(free, onPro, 48);
+  assert.deepEqual(lapsed, { period: ONCE, plan: "free", baselineUsd: 43, limitUsd: 48 });
+  assert.deepEqual(allowanceWithin(lapsed!, 48), { usedUsd: 5, limitUsd: 5 }, "shown as used up");
+});
+
+/** One user's row and key: a CAS claim, as the database does it. */
+function keyWorld(opts: { state?: AllowanceState | null; spent: number; cap: number | null; hash?: string | null }) {
+  const row = { hash: opts.hash === undefined ? "h1" : opts.hash, state: opts.state ?? null };
+  const key = { spent: opts.spent, cap: opts.cap };
+  const patches: number[] = [];
+  const store: AllowanceStore = {
+    read: async () => ({ hash: row.hash, state: row.state }),
+    claim: async (previous, next) => {
+      if (JSON.stringify(row.state) !== JSON.stringify(previous)) return false;
+      row.state = next;
+      return true;
+    },
+  };
+  const deps = {
+    usage: async () => ({ usedUsd: key.spent, limitUsd: key.cap }),
+    setLimit: async (_hash: string, usd: number) => {
+      patches.push(usd);
+      key.cap = usd;
+    },
+    entitlements: async () => pro(),
+  };
+  return { row, key, patches, store, deps };
+}
+
+test("a new period is claimed, then the key's cap moved to it", async () => {
+  const w = keyWorld({ state: nextAllowance(free, null, 2), spent: 2, cap: 5 });
+  assert.deepEqual(await refreshAllowance(w.store, w.deps), { usedUsd: 0, limitUsd: 10 });
+  assert.deepEqual(w.patches, [12]);
+  assert.equal(w.row.state?.period, october.start.toISOString());
+  // Nothing changed: nothing is sent to OpenRouter.
+  await refreshAllowance(w.store, w.deps);
+  assert.deepEqual(w.patches, [12]);
+});
+
+test("two calls at once settle on one baseline: the period can't be granted twice", async () => {
+  const w = keyWorld({ state: nextAllowance(free, null, 2), spent: 2, cap: 5 });
+  // Another call claimed the period first, from its own reading of $2 spent...
+  const winner = nextAllowance(pro(), w.row.state, 2)!;
+  const store: AllowanceStore = {
+    ...w.store,
+    claim: async () => {
+      w.row.state = winner;
+      return false;
+    },
+  };
+  // ...and the user has spent $4 more since: this call doesn't grant again from $6.
+  w.key.spent = 6;
+  assert.deepEqual(await refreshAllowance(store, w.deps), { usedUsd: 4, limitUsd: 10 });
+  assert.deepEqual(w.patches, [12], "the cap the winner claimed: $2 + $10");
+});
+
+test("a cap that failed to move after its claim is moved on the next call", async () => {
+  const w = keyWorld({ state: nextAllowance(free, null, 2), spent: 2, cap: 5 });
+  const failing = { ...w.deps, setLimit: async () => { throw new Error("OpenRouter down"); } };
+  await assert.rejects(refreshAllowance(w.store, failing), /OpenRouter down/);
+  assert.equal(w.key.cap, 5, "claimed, but the key still has the old cap");
+  w.key.spent = 3;
+  await refreshAllowance(w.store, w.deps);
+  assert.deepEqual(w.patches, [12], "the claimed cap, not a fresh one from $3");
+});
+
+test("with no key yet there's nothing to refresh", async () => {
+  const w = keyWorld({ spent: 0, cap: null, hash: null });
+  assert.equal(await refreshAllowance(w.store, w.deps), null);
+});

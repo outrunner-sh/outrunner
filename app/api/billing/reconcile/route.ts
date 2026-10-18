@@ -2,13 +2,16 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { billingMode } from "@/lib/billing/mode";
 import { runReconcile } from "@/lib/billing/reconcile-run";
+import { renewDueModelAllowances } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
 /**
- * One reconciler run (lib/billing/reconcile.ts), for the Cloudflare cron
+ * One reconciler run (lib/billing/reconcile.ts), and the model allowances
+ * due to renew for sessions already running, for the Cloudflare cron
  * (cloudflare/worker.ts, every 2 minutes). Not a user's route: it takes only
  * BILLING_CRON_SECRET, as a bearer token. Answers what the run did.
  */
@@ -21,7 +24,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
   try {
-    return NextResponse.json(await runReconcile());
+    const report = await runReconcile();
+    // Its own step: a failure here doesn't hide what the reconciler did.
+    const allowancesRenewed =
+      billingMode() === "stripe"
+        ? await renewDueModelAllowances().catch((error: unknown) => {
+            console.error("Renewing model allowances failed", error);
+            return null;
+          })
+        : 0;
+    return NextResponse.json({ ...report, allowancesRenewed });
   } catch (error) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });

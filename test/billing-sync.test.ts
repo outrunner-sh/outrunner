@@ -149,15 +149,34 @@ test("a save asks to land only over an older fetch, timed before asking Stripe",
     fetchedAt = at;
     return false; // a later fetch is stored already
   };
+  const refreshed: string[] = [];
+  w.deps.changed = async (userId) => void refreshed.push(userId);
   await handleEvent(event("customer.subscription.updated", { id: "sub_1" }), w.deps);
   assert.ok(fetchedAt! <= asked[0], "the fetch is timed before Stripe is asked, never after");
+  assert.deepEqual(refreshed, [], "nothing stored, nothing to refresh");
 });
 
 test("a subscription moved to a price Outrunner doesn't sell is forgotten, so it grants nothing", async () => {
   const unknown = stripeSubscription("active");
   (unknown.items.data[0].price as { lookup_key: string | null }).lookup_key = "legacy_plan";
   const w = world(unknown);
+  const refreshed: string[] = [];
+  w.deps.changed = async (userId) => void refreshed.push(userId);
   await handleEvent(event("customer.subscription.updated", { id: "sub_1" }), w.deps);
   assert.deepEqual(w.deleted, ["sub_1"]);
   assert.equal(w.saved.length, 0);
+  assert.deepEqual(refreshed, ["u-1"], "its plan is gone: the allowance follows");
+});
+
+test("a stored subscription refreshes the user's allowances; a failure there doesn't fail the event", async () => {
+  const w = world(stripeSubscription("active"));
+  const refreshed: string[] = [];
+  w.deps.changed = async (userId) => {
+    refreshed.push(userId);
+    throw new Error("OpenRouter down");
+  };
+  assert.equal(await handleEvent(event("customer.subscription.updated", { id: "sub_1" }), w.deps), "synced");
+  assert.deepEqual(refreshed, ["u-1"]);
+  assert.match(w.logs[0], /Could not refresh user u-1's allowances/);
+  assert.equal(w.handled.has("evt_1"), true);
 });

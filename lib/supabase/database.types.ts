@@ -236,6 +236,11 @@ type UserCredentialsRow = {
   neev_key_ciphertext: string | null;
   neev_key_hash: string | null;
   neev_key_created_at: string | null;
+  // The allowance on it (supabase/migrations/20261017160000_model_allowance.sql).
+  neev_allowance_period: string | null;
+  neev_allowance_plan: string | null;
+  neev_allowance_baseline_usd: number | null;
+  neev_allowance_limit_usd: number | null;
   // Settings → Sandbox (supabase/migrations/20261013120000_user_sandbox.sql).
   sandbox: "outrunner" | "daytona" | "modal";
   daytona_key_ciphertext: string | null;
