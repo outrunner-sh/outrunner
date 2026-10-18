@@ -6,7 +6,7 @@ GitHub Releases.
 
 ## Before you start
 
-The app is a thin shell around **https://outrunner.neev.ai**, which is live.
+The app is a thin shell around **https://app.outrunner.sh**, which is live.
 It has no local fallback, so if that site is ever down the window opens blank.
 
 Because it is a shell, web changes reach you on next launch with no reinstall.
