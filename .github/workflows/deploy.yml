@@ -1,7 +1,7 @@
 name: Deploy to Cloudflare Containers
 
 # Builds the control-plane container image and deploys it to
-# https://outrunner.neev.ai.
+# https://app.outrunner.sh (outrunner.neev.ai redirects there).
 #
 # Why this exists rather than deploying from a laptop: Cloudflare Containers has
 # no server-side build. `wrangler deploy` builds the image with a LOCAL Docker
@@ -66,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 30); do
-            if body=$(curl -fsS https://outrunner.neev.ai/api/health); then break; fi
+            if body=$(curl -fsS https://app.outrunner.sh/api/health); then break; fi
             sleep 10
           done
           : "${body:?/api/health never responded}"

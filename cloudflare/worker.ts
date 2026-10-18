@@ -83,7 +83,7 @@ export class OutrunnerControlPlane extends Container<Env> {
       NODE_ENV: "production",
       PORT: "8080",
       RUNTIME_PROVIDER: env.RUNTIME_PROVIDER || "daytona",
-      RUNTIME_BASE_URL: "https://outrunner.neev.ai",
+      RUNTIME_BASE_URL: APP_ORIGIN,
       RUNTIME_AGENT_BINARY_PATH: "bin/runtime-agent-linux-amd64",
       DAYTONA_SNAPSHOT: "runtime-computer-v1",
       // "stripe" sells plans, and the app refuses to start without the Stripe
@@ -116,8 +116,28 @@ export class OutrunnerControlPlane extends Container<Env> {
   }
 }
 
+/** Where the app lives. The same-origin CSRF check and every link Stripe or
+ *  Supabase sends users back to are built from it. */
+const APP_ORIGIN = "https://app.outrunner.sh";
+
+/** The app's old domain: it only redirects now. */
+const OLD_HOST = "outrunner.neev.ai";
+
+/**
+ * A request to the old domain, sent to the same path on the new one: 301 for
+ * a page, 308 for anything else, so a POST stays a POST. Null for the rest.
+ */
+function redirectFromOldDomain(request: Request): Response | null {
+  const url = new URL(request.url);
+  if (url.hostname !== OLD_HOST) return null;
+  const status = request.method === "GET" || request.method === "HEAD" ? 301 : 308;
+  return Response.redirect(`${APP_ORIGIN}${url.pathname}${url.search}`, status);
+}
+
 const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const moved = redirectFromOldDomain(request);
+    if (moved) return moved;
     // One logical control-plane instance; route everything to it. Provisioning
     // is elected atomically in Postgres, so sharding to multiple instances later
     // (e.g. by project id) stays safe.

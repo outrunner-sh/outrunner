@@ -8,7 +8,7 @@
   "remote": {
     "urls": [
       "http://localhost:3000",
-      "https://outrunner.neev.ai"
+      "https://app.outrunner.sh"
     ]
   },
   "permissions": [

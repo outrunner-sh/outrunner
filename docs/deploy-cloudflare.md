@@ -27,7 +27,8 @@ Account + zone (non-secret identifiers):
 
 - **Account id:** `573a49a12e65fd8fc97b0103fa200d36` (Neevcode@neevcloud.com)
 - **`neev.ai` zone id:** `4025edd7b4e5bf2fea54e245dc21427e` (active, on Cloudflare NS)
-- **Domain:** `outrunner.neev.ai`
+- **`outrunner.sh` zone:** moved into this account, for `app.outrunner.sh`
+- **Domain:** `app.outrunner.sh` (`outrunner.neev.ai` redirects to it)
 
 ## ⚠️ API token
 
@@ -127,8 +128,8 @@ injected per sandbox. A shared one would land in a box where Claude runs with
 `RUNTIME_OWNER_GITHUB_LOGIN` is optional and **blank means open sign-up** —
 note the polarity. Set it only to restrict access to named GitHub logins.
 
-`RUNTIME_BASE_URL=https://outrunner.neev.ai` is set in `worker.ts` and gates the
-app's same-origin CSRF checks, so it must equal the live domain.
+`RUNTIME_BASE_URL=https://app.outrunner.sh` is set in `worker.ts` (`APP_ORIGIN`)
+and gates the app's same-origin CSRF checks, so it must equal the live domain.
 
 **Billing**: `RUNTIME_BILLING` defaults to `off` in `worker.ts` (everyone on
 the Free plan's limits). To sell plans, set it to `stripe` with the Stripe
@@ -147,13 +148,19 @@ these events: `checkout.session.completed`, `customer.subscription.created`,
 `invoice.payment_failed`, and `charge.dispute.created`. Prices are found by
 lookup key (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`).
 
-## Domain: `outrunner.neev.ai`
+## Domain: `app.outrunner.sh`
 
-1. **DNS/route** — the `routes` entry in `wrangler.jsonc` (`custom_domain: true`)
-   creates/points `outrunner.neev.ai` in the neev.ai zone on deploy.
-2. **`RUNTIME_BASE_URL`** — already set in `worker.ts`.
-3. **Supabase → Auth → URL Configuration** — add `https://outrunner.neev.ai` to
-   the Site URL + redirect allowlist. GitHub OAuth callback stays Supabase's.
+1. **DNS/route** — the `routes` in `wrangler.jsonc` (`custom_domain: true`)
+   create/point `app.outrunner.sh` and `outrunner.neev.ai` on deploy. A custom
+   domain must be in the Worker's account, so the `outrunner.sh` zone is in
+   this one, beside `neev.ai`.
+2. **`RUNTIME_BASE_URL`** — set in `worker.ts` (`APP_ORIGIN`).
+3. **Old domain** — `outrunner.neev.ai` only redirects to the same path on
+   `app.outrunner.sh` (`worker.ts`), for bookmarks and Mac apps from before
+   the move. Stripe doesn't follow redirects: its webhook must point at the
+   new domain.
+4. **Supabase → Auth → URL Configuration** — Site URL `https://app.outrunner.sh`,
+   and it in the redirect allowlist. GitHub OAuth callback stays Supabase's.
 
 ## Deploy
 
@@ -163,18 +170,20 @@ pnpm dlx wrangler deploy
 ```
 
 Builds `../Dockerfile` (context = `outrunner/`), pushes the image, and wires the
-Worker + Durable Object + `outrunner.neev.ai`.
+Worker + Durable Object + `app.outrunner.sh` (and the old domain's redirect).
 
 ## Pre-deploy checklist
 
-- [ ] Token rotated + scoped for Workers, Containers, Durable Objects, neev.ai DNS.
+- [ ] Token rotated + scoped for Workers, Containers, Durable Objects, and DNS
+      on both the outrunner.sh and neev.ai zones.
 - [ ] All secrets set via `wrangler secret put`.
-- [ ] `https://outrunner.neev.ai` in the Supabase redirect allowlist.
+- [ ] `https://app.outrunner.sh` as the Supabase Site URL and in its redirect allowlist.
 - [ ] Supabase migrations applied.
 
 ## Smoke test
 
-1. `https://outrunner.neev.ai/api/health` → healthy.
+1. `https://app.outrunner.sh/api/health` → healthy; `https://outrunner.neev.ai`
+   redirects to it.
 2. Sign in; create a workspace → a Runtime Computer provisions; open it → the
    terminal WS connects **directly to Daytona** (unchanged by the host swap).
 3. Close/reopen the tab → session resumes.

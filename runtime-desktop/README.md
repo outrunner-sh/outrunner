@@ -1,6 +1,6 @@
 # Runtime Desktop
 
-A lightweight native macOS shell for [Outrunner](https://outrunner.neev.ai),
+A lightweight native macOS shell for [Outrunner](https://app.outrunner.sh),
 built with [Tauri v2](https://tauri.app). Conductor-style: a real app window
 plus a menu-bar (tray) presence, wrapping the hosted Runtime web UI.
 
@@ -11,7 +11,7 @@ deploy. Local sessions are the one exception, below.
 
 ## What it does today
 
-- **Main window** loads `https://outrunner.neev.ai` (system WebView — no
+- **Main window** loads `https://app.outrunner.sh` (system WebView — no
   bundled Chromium, so the app is a few MB).
 - **Tray icon + menu**: Show Runtime · New Workspace · Reload · Quit.
 - **Left-click the tray** toggles the window.
