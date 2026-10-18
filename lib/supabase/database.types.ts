@@ -138,6 +138,35 @@ type ComputeIntervalRow = {
   ended_at: string | null;
 };
 
+type BillingCustomerRow = {
+  user_id: string;
+  stripe_customer_id: string;
+  created_at: string;
+};
+
+/** A copy of a Stripe subscription (supabase/migrations/20261017150000_stripe_billing.sql). */
+type SubscriptionRow = {
+  stripe_subscription_id: string;
+  user_id: string;
+  stripe_customer_id: string;
+  status: string;
+  plan: string;
+  price_lookup_key: string | null;
+  billing_interval: string | null;
+  current_period_start: string;
+  current_period_end: string;
+  cancel_at_period_end: boolean;
+  past_due_since: string | null;
+  synced_at: string;
+  updated_at: string;
+};
+
+type StripeEventRow = {
+  id: string;
+  type: string;
+  handled_at: string;
+};
+
 type BillingLeaseRow = {
   name: string;
   held_until: string;
@@ -378,6 +407,34 @@ export type Database = {
         Row: ComputeIntervalRow;
         Insert: Insert<ComputeIntervalRow, "owner_id" | "sandbox_id" | "cpu">;
         Update: Partial<ComputeIntervalRow>;
+        Relationships: [];
+      };
+      billing_customers: {
+        Row: BillingCustomerRow;
+        Insert: Insert<BillingCustomerRow, "user_id" | "stripe_customer_id">;
+        Update: Partial<BillingCustomerRow>;
+        Relationships: [];
+      };
+      subscriptions: {
+        Row: SubscriptionRow;
+        Insert: Insert<
+          SubscriptionRow,
+          | "stripe_subscription_id"
+          | "user_id"
+          | "stripe_customer_id"
+          | "status"
+          | "plan"
+          | "current_period_start"
+          | "current_period_end"
+          | "synced_at"
+        >;
+        Update: Partial<SubscriptionRow>;
+        Relationships: [];
+      };
+      stripe_events: {
+        Row: StripeEventRow;
+        Insert: Insert<StripeEventRow, "id" | "type">;
+        Update: Partial<StripeEventRow>;
         Relationships: [];
       };
       billing_leases: {
