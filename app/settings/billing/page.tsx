@@ -47,7 +47,7 @@ export default async function BillingSettingsPage({
       subscription={subscription}
       prices={prices}
       hasCustomer={customerId !== null}
-      checkout={checkout === "success" || checkout === "canceled" ? checkout : null}
+      checkout={checkout === "success" || checkout === "canceled" || checkout === "error" ? checkout : null}
     />
   );
 }
