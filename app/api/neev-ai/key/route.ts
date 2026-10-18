@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { neevAiKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { ModelKeyRefusedError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,8 @@ export async function POST(request: Request) {
     if (error instanceof NeevAiUnavailableError || error instanceof StoredKeyUnreadableError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
-    if (error instanceof NoOwnOpenRouterKeyError) {
+    // Nothing to retry: the user has to change something (their messages say what).
+    if (error instanceof NoOwnOpenRouterKeyError || error instanceof ModelKeyRefusedError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     // OpenRouter's and the driver's messages stay in the log.

@@ -10,7 +10,8 @@
 
 import type { Entitlements } from "@/lib/billing/entitlements";
 import type { PlanId } from "@/lib/billing/plans";
-import type { KeyUsage } from "@/lib/openrouter/keys";
+import { allowanceSpent, type Allowance } from "@/lib/openrouter/allowance";
+import { AllowanceSpentError, ModelKeyDisabledError, type KeyUsage } from "@/lib/openrouter/keys";
 
 /** Where a user's allowance stands, as stored beside their key. */
 export type AllowanceState = {
@@ -98,7 +99,7 @@ export type AllowanceDeps = {
 export async function refreshAllowance(
   store: AllowanceStore,
   deps: AllowanceDeps,
-): Promise<{ usedUsd: number; limitUsd: number } | null> {
+): Promise<RefreshedAllowance | null> {
   const { hash, state } = await store.read();
   if (!hash) return null;
   const usage = await deps.usage(hash);
@@ -109,7 +110,22 @@ export async function refreshAllowance(
   if (usage.limitUsd === null || Math.abs(usage.limitUsd - current.limitUsd) > SAME_CAP_WITHIN_USD) {
     await deps.setLimit(hash, current.limitUsd);
   }
-  return allowanceWithin(current, usage.usedUsd);
+  return { ...allowanceWithin(current, usage.usedUsd), disabled: usage.disabled };
+}
+
+/** Where the allowance stands after a refresh, and whether OpenRouter has the
+ *  key disabled. */
+export type RefreshedAllowance = Allowance & { disabled: boolean };
+
+/**
+ * Refuse a key that can't run anything: one disabled on OpenRouter, or one
+ * whose allowance is spent. Null (no key yet, or the refresh failed) passes:
+ * there's nothing to judge, and OpenRouter's own cap still holds.
+ */
+export function refuseUnusable(allowance: RefreshedAllowance | null): void {
+  if (!allowance) return;
+  if (allowance.disabled) throw new ModelKeyDisabledError();
+  if (allowanceSpent(allowance)) throw new AllowanceSpentError();
 }
 
 /** What the sidebar shows: spent and cap within the allowance, so a period

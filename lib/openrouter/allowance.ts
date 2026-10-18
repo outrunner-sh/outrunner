@@ -21,9 +21,15 @@ export type AllowanceView = {
 const SPENT_WITHIN_USD = 0.005;
 const LOW_FROM_PERCENT = 80;
 
+/** Nothing of the allowance is left: what the bar shows as "out", and when the
+ *  key stops being handed out. */
+export function allowanceSpent({ usedUsd, limitUsd }: Allowance): boolean {
+  return limitUsd <= 0 || Math.max(0, usedUsd) >= limitUsd - SPENT_WITHIN_USD;
+}
+
 export function allowanceView({ usedUsd, limitUsd }: Allowance): AllowanceView {
   const used = Math.max(0, usedUsd);
-  const out = limitUsd <= 0 || used >= limitUsd - SPENT_WITHIN_USD;
+  const out = allowanceSpent({ usedUsd, limitUsd });
   const percent = out ? 100 : Math.min(100, (used / limitUsd) * 100);
   return {
     state: out ? "out" : percent >= LOW_FROM_PERCENT ? "low" : "ok",

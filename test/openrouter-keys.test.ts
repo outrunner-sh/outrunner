@@ -145,18 +145,23 @@ test("a key's usage is read with the management key, by its hash", async () => {
   const seen = stubFetch(
     new Response(JSON.stringify({ data: { hash: "h/1", usage: 1.2345, limit: 5, limit_remaining: 3.7655 } })),
   );
-  assert.deepEqual(await keyUsage("h/1"), { usedUsd: 1.2345, limitUsd: 5 });
+  assert.deepEqual(await keyUsage("h/1"), { usedUsd: 1.2345, limitUsd: 5, disabled: false });
   assert.equal(seen[0].url, "https://openrouter.ai/api/v1/keys/h%2F1");
   assert.equal((seen[0].init.headers as Record<string, string>).authorization, "Bearer mgmt-test-key");
 });
 
 test("a key with no limit reads as none, and an answer without usage is an error", async () => {
   stubFetch(new Response(JSON.stringify({ data: { usage: 0, limit: null } })));
-  assert.deepEqual(await keyUsage("h"), { usedUsd: 0, limitUsd: null });
+  assert.deepEqual(await keyUsage("h"), { usedUsd: 0, limitUsd: null, disabled: false });
   stubFetch(new Response(JSON.stringify({ data: {} })));
   await assert.rejects(keyUsage("h"), /no usage/);
   stubFetch(new Response("nope", { status: 404 }));
   await assert.rejects(keyUsage("h"), /HTTP 404/);
+});
+
+test("a key disabled on OpenRouter reads as disabled", async () => {
+  stubFetch(new Response(JSON.stringify({ data: { usage: 1, limit: 5, disabled: true } })));
+  assert.equal((await keyUsage("h")).disabled, true);
 });
 
 test("every call to OpenRouter gives up after a timeout, so a hung one can't hang a switch", async () => {

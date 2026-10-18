@@ -1,5 +1,5 @@
 import { AgentRequestError } from "@/lib/runtime/agent-client";
-import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { ModelKeyRefusedError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import {
   DEFAULT_CLOUD_MODEL,
   setModelRequest,
@@ -74,7 +74,9 @@ export async function startingModel(deps: {
         ? "This project's cloud computer runs an older Outrunner that can't run Outrunner's models. Connect Claude in Settings to use it."
         : error instanceof NeevAiUnavailableError
           ? "Outrunner's models aren't available on this server. Connect Claude in Settings to start a session."
-          : "Couldn't start the session on Outrunner's models. Please try again, or connect Claude in Settings.",
+          : error instanceof ModelKeyRefusedError
+            ? error.message
+            : "Couldn't start the session on Outrunner's models. Please try again, or connect Claude in Settings.",
     );
   }
 }

@@ -23,6 +23,8 @@ import {
   type AllowanceStore,
   nextAllowance,
   refreshAllowance,
+  type RefreshedAllowance,
+  refuseUnusable,
 } from "@/lib/billing/model-allowance";
 import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
@@ -494,7 +496,7 @@ export async function neevAiAllowance(userId: string): Promise<Allowance | null>
  * allowance. Run whenever it may have moved: a session starting on the key,
  * the sidebar reading it, a subscription changing. Null with no key yet.
  */
-export async function refreshModelAllowance(userId: string): Promise<Allowance | null> {
+export async function refreshModelAllowance(userId: string): Promise<RefreshedAllowance | null> {
   if (keySource() !== "per-user") return null;
   const supabase = createSupabaseAdminClient();
   const store: AllowanceStore = {
@@ -593,7 +595,9 @@ export class NoOwnOpenRouterKeyError extends Error {
  * made them, capped by OpenRouter at their plan's allowance, created the first
  * time they pick one of the models and then kept (OpenRouter tracks the
  * allowance per key, so a fresh key each time would hand out a fresh one). The
- * races and failures are handled in {@link ensureUserKey}.
+ * races and failures are handled in {@link ensureUserKey}. A key whose
+ * allowance is spent, or that OpenRouter has disabled, is refused with a
+ * ModelKeyRefusedError (lib/openrouter/keys.ts) instead.
  *
  * It is returned in plaintext because a local session runs on the user's Mac,
  * where only the page can hand it to the agent.
@@ -659,10 +663,15 @@ export async function neevAiKey(userId: string, use: OpenRouterKeyUse = "auto"):
       log: (message, error) => console.error(`${message} (user ${userId})`, error),
     },
   );
-  // A session starting is when a new period's allowance is most needed. A
-  // failure leaves the cap where it was; the session still starts.
-  await refreshModelAllowance(userId).catch((error: unknown) =>
-    console.error(`Could not refresh the model allowance of user ${userId}`, error),
-  );
+  // A session starting is when a new period's allowance is most needed, and
+  // the usage the refresh reads says whether the key can still run anything:
+  // a spent or disabled one is refused here, with a message the user can act
+  // on, not handed to a session that would fail on it. A failed refresh leaves
+  // the cap where it was and the key goes out: OpenRouter's cap still holds.
+  const allowance = await refreshModelAllowance(userId).catch((error: unknown) => {
+    console.error(`Could not refresh the model allowance of user ${userId}`, error);
+    return null;
+  });
+  refuseUnusable(allowance);
   return key;
 }

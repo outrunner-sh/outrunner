@@ -35,6 +35,37 @@ export class NeevAiUnavailableError extends Error {
   }
 }
 
+/** The user's key can't run anything, so it isn't handed out: handed out, it
+ *  would only fail inside the session with OpenRouter's raw error. The message
+ *  is for the user. */
+export class ModelKeyRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelKeyRefusedError";
+  }
+}
+
+/** The period's allowance is spent. A new period (or plan) raises the cap. */
+export class AllowanceSpentError extends ModelKeyRefusedError {
+  constructor() {
+    super(
+      "You've used your included usage of Outrunner's models. Connect Claude, or add your own OpenRouter key in Settings → Providers, to keep going.",
+    );
+    this.name = "AllowanceSpentError";
+  }
+}
+
+/** The key was disabled on OpenRouter, by hand: it stays off until someone
+ *  turns it back on. */
+export class ModelKeyDisabledError extends ModelKeyRefusedError {
+  constructor() {
+    super(
+      "Outrunner's models are turned off for this account. Connect Claude, or add your own OpenRouter key in Settings → Providers.",
+    );
+    this.name = "ModelKeyDisabledError";
+  }
+}
+
 /** The server's OpenRouter management key, or null without one. */
 export function managementKey(): string | null {
   return process.env.OPENROUTER_MANAGEMENT_KEY?.trim() || null;
@@ -168,10 +199,12 @@ export async function setKeyLimit(hash: string, limitUsd: number): Promise<void>
   }
 }
 
-/** What a user's key has spent and may spend, in USD, as OpenRouter counts it. */
-export type KeyUsage = { usedUsd: number; limitUsd: number | null };
+/** What a user's key has spent and may spend, in USD, as OpenRouter counts it,
+ *  and whether it was disabled there. */
+export type KeyUsage = { usedUsd: number; limitUsd: number | null; disabled: boolean };
 
-/** Read a user's key's spend (for the sidebar's allowance bar). */
+/** Read a user's key's spend (for the sidebar's allowance bar, and to refuse a
+ *  key that can't run anything). */
 export async function keyUsage(hash: string): Promise<KeyUsage> {
   const management = managementKey();
   if (!management) throw new NeevAiUnavailableError();
@@ -183,12 +216,16 @@ export async function keyUsage(hash: string): Promise<KeyUsage> {
     throw new Error(`OpenRouter would not read a key's usage (HTTP ${response.status}).`);
   }
   const body = (await response.json().catch(() => null)) as {
-    data?: { usage?: unknown; limit?: unknown };
+    data?: { usage?: unknown; limit?: unknown; disabled?: unknown };
   } | null;
   const used = body?.data?.usage;
   if (typeof used !== "number" || !Number.isFinite(used)) {
     throw new Error("OpenRouter's response had no usage in it.");
   }
   const limit = body?.data?.limit;
-  return { usedUsd: used, limitUsd: typeof limit === "number" && Number.isFinite(limit) ? limit : null };
+  return {
+    usedUsd: used,
+    limitUsd: typeof limit === "number" && Number.isFinite(limit) ? limit : null,
+    disabled: body?.data?.disabled === true,
+  };
 }
