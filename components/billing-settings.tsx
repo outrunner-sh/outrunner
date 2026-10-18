@@ -38,7 +38,7 @@ export function BillingSettings({
   subscription: ShownSubscription | null;
   prices: Record<string, number> | null;
   hasCustomer: boolean;
-  checkout: "success" | "canceled" | null;
+  checkout: "success" | "canceled" | "error" | null;
 }) {
   const router = useRouter();
   const [interval, setBillingInterval] = useState<BillingInterval>(subscription?.interval ?? "month");
@@ -109,6 +109,7 @@ export function BillingSettings({
       </div>
 
       {checkout === "canceled" ? <Notice>Checkout canceled. Nothing was charged.</Notice> : null}
+      {checkout === "error" ? <Notice>Couldn&apos;t reach Stripe to start your checkout. Try again below.</Notice> : null}
       {inBrowser ? (
         <Notice>Stripe opened in your browser. Finish there; your plan shows here when you come back.</Notice>
       ) : null}

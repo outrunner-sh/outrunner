@@ -80,6 +80,16 @@ export async function checkoutDestination(
   return { url, kind: "checkout" };
 }
 
+/** The plan and interval a link asks for (`?plan=pro|max&interval=month|year`):
+ *  null plan for one Outrunner doesn't sell; monthly unless it says yearly. */
+export function requestedPlan(params: URLSearchParams): { plan: "pro" | "max" | null; interval: BillingInterval } {
+  const plan = params.get("plan");
+  return {
+    plan: plan === "pro" || plan === "max" ? plan : null,
+    interval: params.get("interval") === "year" ? "year" : "month",
+  };
+}
+
 /** The customer portal, to manage a plan; null for a user with no customer. */
 export async function portalDestination(userId: string, baseUrl: string, deps: CheckoutDeps): Promise<string | null> {
   const customerId = await deps.customerIdFor(userId);

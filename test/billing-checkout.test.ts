@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type CheckoutDeps, checkoutDestination, ensureCustomer, portalDestination } from "@/lib/billing/checkout";
+import {
+  type CheckoutDeps,
+  checkoutDestination,
+  ensureCustomer,
+  portalDestination,
+  requestedPlan,
+} from "@/lib/billing/checkout";
 import type { SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
@@ -101,4 +107,13 @@ test("a user with a subscription that can still bill goes to the portal, never a
 test("the portal needs a customer", async () => {
   assert.equal(await portalDestination("u-1", BASE, deps().d), null);
   assert.equal(await portalDestination("u-1", BASE, deps({ stored: "cus_1" }).d), "https://billing.stripe.com/p/session/1");
+});
+
+test("a link asks for a plan Outrunner sells, monthly unless it says yearly", () => {
+  const ask = (query: string) => requestedPlan(new URLSearchParams(query));
+  assert.deepEqual(ask("plan=pro"), { plan: "pro", interval: "month" });
+  assert.deepEqual(ask("plan=max&interval=year"), { plan: "max", interval: "year" });
+  assert.deepEqual(ask("plan=enterprise&interval=year"), { plan: null, interval: "year" });
+  assert.deepEqual(ask("plan=PRO&interval=weekly"), { plan: null, interval: "month" });
+  assert.deepEqual(ask(""), { plan: null, interval: "month" });
 });
