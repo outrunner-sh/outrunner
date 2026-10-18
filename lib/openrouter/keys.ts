@@ -16,6 +16,16 @@
 
 const KEYS_URL = "https://openrouter.ai/api/v1/keys";
 
+/** How long any one call to OpenRouter may take. Without it a hung OpenRouter
+ *  leaves the model menu on "Switching…", and a key created by a call that
+ *  never returns is the more likely to be left unstored. */
+const TIMEOUT_MS = 10_000;
+
+/** fetch, given up on after {@link TIMEOUT_MS}: every call here goes through it. */
+function openRouter(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+}
+
 /** Neither key is configured (or OpenRouter refused the management key), so
  *  Outrunner's models are unavailable. */
 export class NeevAiUnavailableError extends Error {
@@ -53,7 +63,7 @@ const CURRENT_KEY_URL = "https://openrouter.ai/api/v1/key";
  * OpenRouter can't be asked.
  */
 export async function openRouterAcceptsKey(key: string): Promise<boolean> {
-  const response = await fetch(CURRENT_KEY_URL, { headers: { authorization: `Bearer ${key}` } });
+  const response = await openRouter(CURRENT_KEY_URL, { headers: { authorization: `Bearer ${key}` } });
   if (response.status === 401 || response.status === 403) return false;
   if (!response.ok) throw new Error(`OpenRouter answered ${response.status} checking a key`);
   const body = (await response.json().catch(() => null)) as {
@@ -83,7 +93,7 @@ export async function createUserKey(name: string, limitUsd: number): Promise<Cre
   const management = managementKey();
   if (!management) throw new NeevAiUnavailableError();
 
-  const response = await fetch(KEYS_URL, {
+  const response = await openRouter(KEYS_URL, {
     method: "POST",
     headers: {
       authorization: `Bearer ${management}`,
@@ -126,7 +136,7 @@ export async function disableUserKey(hash: string): Promise<void> {
   const management = managementKey();
   if (!management) throw new NeevAiUnavailableError();
 
-  const response = await fetch(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
+  const response = await openRouter(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
     method: "PATCH",
     headers: {
       authorization: `Bearer ${management}`,
@@ -145,7 +155,7 @@ export async function setKeyLimit(hash: string, limitUsd: number): Promise<void>
   const management = managementKey();
   if (!management) throw new NeevAiUnavailableError();
 
-  const response = await fetch(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
+  const response = await openRouter(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
     method: "PATCH",
     headers: {
       authorization: `Bearer ${management}`,
@@ -166,7 +176,7 @@ export async function keyUsage(hash: string): Promise<KeyUsage> {
   const management = managementKey();
   if (!management) throw new NeevAiUnavailableError();
 
-  const response = await fetch(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
+  const response = await openRouter(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
     headers: { authorization: `Bearer ${management}` },
   });
   if (!response.ok) {

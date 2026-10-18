@@ -159,6 +159,21 @@ test("a key with no limit reads as none, and an answer without usage is an error
   await assert.rejects(keyUsage("h"), /HTTP 404/);
 });
 
+test("every call to OpenRouter gives up after a timeout, so a hung one can't hang a switch", async () => {
+  const seen: Seen[] = [];
+  globalThis.fetch = ((url: string, init: RequestInit) => {
+    seen.push({ url, init });
+    return Promise.resolve(new Response(JSON.stringify({ key: "k", data: { hash: "h", usage: 0 } })));
+  }) as typeof fetch;
+  await openRouterAcceptsKey("sk-or-v1-mine");
+  await createUserKey("outrunner user u-1", 5);
+  await disableUserKey("h");
+  await setKeyLimit("h", 5);
+  await keyUsage("h");
+  assert.equal(seen.length, 5);
+  for (const { url, init } of seen) assert.ok(init.signal instanceof AbortSignal, `${init.method ?? "GET"} ${url} has no timeout`);
+});
+
 test("without a management key there is no usage to read", async () => {
   delete process.env.OPENROUTER_MANAGEMENT_KEY;
   await assert.rejects(keyUsage("h"), NeevAiUnavailableError);
