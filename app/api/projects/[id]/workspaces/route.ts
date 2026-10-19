@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
+import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import {
   getSandboxSettings,
   hasOwnOpenRouterKey,
@@ -173,6 +174,11 @@ export async function POST(request: Request, context: RouteContext) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
 
+  // A box may be about to start: the plan's hours and box count get their say
+  // before anything is created.
+  const gate = await cloudBoxStartGate(owner, provider.name);
+  if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
+
   let workspace;
   try {
     workspace = await createWorkspaceRow({
@@ -229,6 +235,8 @@ export async function POST(request: Request, context: RouteContext) {
         githubToken,
         sessionEnv,
         size: boxSizeOn(sandboxSettings.sandbox, sandboxSettings.boxSize, await planFor(owner.id)),
+        // The plan's box cap, enforced by the claim in the database.
+        maxLiveComputers: gate.cap,
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
@@ -308,15 +316,23 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
     const noModel = error instanceof NoStartingModelError;
+    // The plan's cap can refuse a start mid-flight (a simultaneous start won
+    // the slot first): say so, rather than blame the setup.
+    const refused = isPlanLimitError(error);
     try {
       await updateWorkspace(workspace.id, {
         status: "failed",
-        errorMessage: noModel ? error.message : "Provisioning failed. Check Outrunner's setup and try again.",
+        errorMessage: noModel
+          ? error.message
+          : refused
+            ? refused.message
+            : "Provisioning failed. Check Outrunner's setup and try again.",
       });
     } catch (updateError) {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
     }
     if (noModel) return needsClaude(error.message);
+    if (refused) return NextResponse.json({ error: refused.message, settingsHref: UPGRADE_HREF }, { status: 403 });
     return NextResponse.json(
       { error: "Could not create the workspace. Check Outrunner's setup and try again." },
       { status: 500 },

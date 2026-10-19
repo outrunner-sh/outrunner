@@ -280,6 +280,20 @@ export async function getRuntimeComputerByProject(
   return data ? toRuntimeComputer(data) : null;
 }
 
+/** The owner's computers, whatever their state: what a plan's box count is
+ *  counted over (see lib/billing/limits.ts). */
+export async function runtimeComputersForOwner(ownerId: string): Promise<RuntimeComputer[]> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .select("*")
+    .eq("owner_id", ownerId)
+    .order("id");
+
+  if (error) throw error;
+  return (data ?? []).map(toRuntimeComputer);
+}
+
 /**
  * Claim the single Runtime Computer slot for a project. The
  * `unique (project_id)` constraint makes this the concurrency gate for lazy
@@ -318,16 +332,30 @@ export async function createRuntimeComputer(input: {
 export async function claimRuntimeComputer(input: {
   projectId: string;
   agentSecret: string;
+  /** The plan's cap on the owner's running boxes, enforced by the claim in
+   *  the database (20261019130000_plan_box_limits.sql); null or unset when
+   *  none applies. */
+  maxLiveComputers?: number | null;
 }): Promise<{ computer: RuntimeComputer; shouldProvision: boolean }> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.rpc("claim_runtime_computer", {
-    requested_project_id: input.projectId,
-    requested_agent_secret: input.agentSecret,
-  });
+  const call = (withCap: boolean) =>
+    supabase.rpc("claim_runtime_computer", {
+      requested_project_id: input.projectId,
+      requested_agent_secret: input.agentSecret,
+      ...(withCap && { max_live_computers: input.maxLiveComputers ?? null }),
+    });
+
+  let { data, error } = await call(input.maxLiveComputers !== undefined);
+  // Before 20261019130000 takes the argument, the claim still works,
+  // uncapped, until the migration is run.
+  if (error && input.maxLiveComputers !== undefined && error.code === "PGRST202") {
+    console.warn("claim_runtime_computer without the plan's box cap: run the migrations");
+    ({ data, error } = await call(false));
+  }
 
   if (error) throw error;
   const claim = data?.[0];
-  if (!claim || data.length !== 1) {
+  if (!claim || !data || data.length !== 1) {
     throw new Error("Runtime Computer claim returned an invalid result.");
   }
   const computer = await getRuntimeComputerByProject(input.projectId);
