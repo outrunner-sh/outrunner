@@ -21,6 +21,8 @@ import {
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
+import { NoProviderKeyError } from "@/lib/providers/errors";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
@@ -139,10 +141,7 @@ export async function POST(request: Request, context: RouteContext) {
     return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
   }
   if (keyUse === "own" && !(await hasOwnOpenRouterKey(owner.id))) {
-    return NextResponse.json(
-      { error: "Save your OpenRouter key in Settings → Providers to run models on it.", settingsHref: "/settings/providers" },
-      { status: 409 },
-    );
+    return modelKeyErrorResponse(new NoProviderKeyError("openrouter"), "");
   }
 
   const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";

@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { outrunnerModelKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
+import { outrunnerModelKey, type OpenRouterKeyUse } from "@/lib/db/credentials";
 import {
   getRuntimeComputerByProject,
   getWorkspace,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
-import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
+import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
@@ -74,15 +73,7 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     req = await setModelRequest(body?.model, () => outrunnerModelKey(owner.id, use));
   } catch (error) {
-    if (error instanceof OutrunnerModelsUnavailableError || error instanceof StoredKeyUnreadableError) {
-      return NextResponse.json({ error: error.message }, { status: 503 });
-    }
-    // Nothing to retry: the user has to change something (their messages say what).
-    if (error instanceof NoOwnOpenRouterKeyError || error instanceof ModelKeyRefusedError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    console.error(`Model: could not get a key for Outrunner's models for ${owner.id}`, error);
-    return NextResponse.json({ error: "Outrunner's models are unavailable right now. Please try again." }, { status: 502 });
+    return modelKeyErrorResponse(error, `Model: could not get a key for Outrunner's models for ${owner.id}`);
   }
   if (!req) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });

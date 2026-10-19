@@ -16,7 +16,7 @@ const sections = [
   { href: "/settings/claude", label: "Claude", icon: Sparkles },
   // Where cloud sessions run; a create that needs a Daytona key points here.
   { href: "/settings/sandbox", label: "Sandbox", icon: Box },
-  // The user's own keys for the providers their models run on (OpenRouter).
+  // The user's own keys for model providers (lib/providers/registry.ts).
   { href: "/settings/providers", label: "Providers", icon: KeyRound },
 ];
 

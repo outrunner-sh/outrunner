@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { outrunnerModelKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
+import { outrunnerModelKey, type OpenRouterKeyUse } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
-import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
+import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 
 export const dynamic = "force-dynamic";
 
@@ -29,15 +28,6 @@ export async function POST(request: Request) {
     const key = await outrunnerModelKey(owner.id, use);
     return NextResponse.json({ key }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
-    if (error instanceof OutrunnerModelsUnavailableError || error instanceof StoredKeyUnreadableError) {
-      return NextResponse.json({ error: error.message }, { status: 503 });
-    }
-    // Nothing to retry: the user has to change something (their messages say what).
-    if (error instanceof NoOwnOpenRouterKeyError || error instanceof ModelKeyRefusedError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    // OpenRouter's and the driver's messages stay in the log.
-    console.error(`Could not get a key for Outrunner's models for ${owner.id}`, error);
-    return NextResponse.json({ error: "Outrunner's models are unavailable right now. Please try again." }, { status: 502 });
+    return modelKeyErrorResponse(error, `Could not get a key for Outrunner's models for ${owner.id}`);
   }
 }

@@ -1,26 +1,23 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { clearOpenRouterKey, getOpenRouterKeyStatus, setOpenRouterKey } from "@/lib/db/credentials";
+import { clearProviderKey, getProviderKeyStatuses, setProviderKey } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { keySource, openRouterAcceptsKey } from "@/lib/openrouter/keys";
+import { checkProviderKey } from "@/lib/providers/check";
+import { isProviderId, keyProblem, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
 import { probeStatus } from "@/lib/supabase/probe";
 
 export const dynamic = "force-dynamic";
 
 /**
- * The user's own model provider keys (Settings → Providers): for now their
- * OpenRouter key, which Outrunner's models then run on instead of the
- * server's. GET says whether one is saved (its last 4 characters, never the
- * key) and whether the server has a key of its own to fall back on. PUT
- * stores a key OpenRouter has accepted; DELETE forgets it.
+ * The user's own keys for model providers (Settings → Providers,
+ * lib/providers/registry.ts). GET says which providers have one (their last 4
+ * characters, never the key). PUT stores a key its provider has accepted;
+ * DELETE forgets one.
  */
 
-/** OpenRouter's keys: `sk-or-v1-` and 64 hex characters, give or take. */
-const OPENROUTER_KEY = /^sk-or-[A-Za-z0-9-]{20,200}$/;
-
 async function providers(userId: string) {
-  return { openrouter: await getOpenRouterKeyStatus(userId), serverModels: keySource() !== null };
+  return { keys: await getProviderKeyStatuses(userId) };
 }
 
 function unauthorized() {
@@ -32,8 +29,9 @@ async function changing(change: () => Promise<NextResponse>): Promise<NextRespon
   try {
     return await change();
   } catch (error) {
-    // Until the migration is applied, the key's columns aren't there.
-    if (probeStatus(error as { code?: string }) === "outdated") {
+    // Until the migration is applied, the table or its columns aren't there.
+    const status = probeStatus(error as { code?: string });
+    if (status === "outdated" || status === "missing") {
       return NextResponse.json(
         { error: "This can't be saved until Outrunner's database is updated. Try again later." },
         { status: 503 },
@@ -57,33 +55,46 @@ export async function PUT(request: Request) {
   const owner = await getOwner();
   if (!owner) return unauthorized();
 
-  const body = (await request.json().catch(() => null)) as { openrouterKey?: unknown } | null;
-  const key = typeof body?.openrouterKey === "string" ? body.openrouterKey.trim() : "";
-  if (!OPENROUTER_KEY.test(key)) {
-    return NextResponse.json(
-      { error: "That doesn't look like an OpenRouter API key (sk-or-…). Copy one from OpenRouter → Keys." },
-      { status: 400 },
-    );
+  const body = (await request.json().catch(() => null)) as
+    | { provider?: unknown; key?: unknown; openrouterKey?: unknown }
+    | null;
+  // `openrouterKey` is how a page from before the other providers saves one;
+  // kept for one release.
+  const legacy = body?.provider === undefined && typeof body?.openrouterKey === "string";
+  const provider: unknown = legacy ? "openrouter" : body?.provider;
+  const raw = legacy ? body?.openrouterKey : body?.key;
+  if (!isProviderId(provider)) {
+    return NextResponse.json({ error: "Choose one of the providers." }, { status: 400 });
   }
-  let accepted: boolean;
+  const key = typeof raw === "string" ? raw.trim() : "";
+  const problem = keyProblem(provider, key);
+  if (problem) return NextResponse.json({ error: problem }, { status: 400 });
+
+  const { label, keysPage } = PROVIDERS[provider];
+  let check;
   try {
-    accepted = await openRouterAcceptsKey(key);
+    check = await checkProviderKey(provider, key);
   } catch (error) {
-    console.error("Could not check an OpenRouter key", error);
+    console.error(`Could not check a ${label} key`, error);
     return NextResponse.json(
-      { error: "Couldn't reach OpenRouter to check that key. Try again in a moment." },
+      { error: `Couldn't reach ${label} to check that key. Try again in a moment.` },
       { status: 502 },
     );
   }
-  if (!accepted) {
+  if (!check.accepted) {
     return NextResponse.json(
-      { error: "OpenRouter didn't accept that as an API key. Use a key from OpenRouter → Keys, not a management key." },
+      {
+        error:
+          provider === "openrouter"
+            ? "OpenRouter didn't accept that as an API key. Use a key from OpenRouter → Keys, not a management key."
+            : `${label} didn't accept that key. Copy a new one from ${keysPage}.`,
+      },
       { status: 400 },
     );
   }
   return changing(async () => {
-    await setOpenRouterKey(owner.id, key);
-    return NextResponse.json(await providers(owner.id));
+    await setProviderKey(owner.id, provider, key);
+    return NextResponse.json({ ...(await providers(owner.id)), warning: check.warning ?? null });
   });
 }
 
@@ -93,8 +104,13 @@ export async function DELETE(request: Request) {
   }
   const owner = await getOwner();
   if (!owner) return unauthorized();
+  // No provider named: a page from before the other providers, removing its
+  // OpenRouter key. Kept for one release.
+  const named = new URL(request.url).searchParams.get("provider");
+  const provider: ProviderId | null = named === null ? "openrouter" : isProviderId(named) ? named : null;
+  if (!provider) return NextResponse.json({ error: "Choose one of the providers." }, { status: 400 });
   return changing(async () => {
-    await clearOpenRouterKey(owner.id);
+    await clearProviderKey(owner.id, provider);
     return NextResponse.json(await providers(owner.id));
   });
 }
