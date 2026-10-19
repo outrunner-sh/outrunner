@@ -253,9 +253,22 @@ type UserCredentialsRow = {
   // supabase/migrations/20261013130000_user_box_size.sql.
   box_size: "x-small" | "small" | "medium" | "large";
   // Settings → Providers (supabase/migrations/20261016140000_user_openrouter_key.sql).
+  // Replaced by user_provider_keys; dropped in a later release.
   openrouter_key_ciphertext: string | null;
   openrouter_key_hint: string | null;
   openrouter_key_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// A user's own key for one model provider (Settings → Providers).
+// Service-role-only (RLS on, no policies); see
+// supabase/migrations/20261019120000_user_provider_keys.sql.
+type UserProviderKeyRow = {
+  user_id: string;
+  provider: string;
+  key_ciphertext: string;
+  key_hint: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -406,6 +419,12 @@ export type Database = {
         Row: UserCredentialsRow;
         Insert: Insert<UserCredentialsRow, "user_id">;
         Update: Partial<UserCredentialsRow>;
+        Relationships: [];
+      };
+      user_provider_keys: {
+        Row: UserProviderKeyRow;
+        Insert: Insert<UserProviderKeyRow, "user_id" | "provider" | "key_ciphertext">;
+        Update: Partial<UserProviderKeyRow>;
         Relationships: [];
       };
       compute_intervals: {
