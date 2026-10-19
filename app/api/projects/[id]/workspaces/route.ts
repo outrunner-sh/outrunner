@@ -249,12 +249,10 @@ async function provisionWorkspace({
     if (!moved) console.warn(`Workspace ${workspace.id} left setup before it finished (${patch.status})`);
     return moved !== null;
   };
+  // Phases only: even the last stays "provisioning", so the ready below, with
+  // the box's details, still finds the session setting up.
   const setPhase = async (phase: ProvisionPhase) => {
-    await settle({
-      status: phase === "claude_ready" ? "ready" : "provisioning",
-      phase,
-      touchActive: phase === "claude_ready",
-    });
+    await settle({ status: "provisioning", phase });
   };
 
   try {
