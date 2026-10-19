@@ -12,6 +12,7 @@ import {
   setModelRequest,
   type ModelMenu,
 } from "@/lib/runtime/session-models";
+import { usableProviders } from "@/lib/providers/registry";
 
 const OUTRUNNER_ONLY: ModelMenu = { outrunner: true, allowance: true, keys: [] };
 const GROUPS = modelGroups(OUTRUNNER_ONLY);
@@ -133,4 +134,17 @@ test("an agent older than a provider is told apart from other refusals", () => {
   assert.equal(predatesProvider('unknown gateway "zai"'), true);
   assert.equal(predatesProvider("invalid model"), false);
   assert.equal(predatesProvider(undefined), false);
+});
+
+test("a saved key that can't be opened isn't offered, so it's never a new session's default", () => {
+  const rows = [
+    { provider: "deepseek", key_ciphertext: "ok" },
+    { provider: "openrouter", key_ciphertext: "unreadable" },
+    { provider: "retired-provider", key_ciphertext: "ok" },
+    { provider: "zai", key_ciphertext: "ok" },
+  ];
+  const keys = usableProviders(rows, (row) => row.key_ciphertext === "ok");
+  assert.deepEqual(keys, ["zai", "deepseek"], "the registry's order; unknown and unreadable dropped");
+  // The unreadable OpenRouter key no longer wins over the server's key.
+  assert.equal(defaultModel({ outrunner: true, allowance: true, keys })?.provider, "outrunner");
 });

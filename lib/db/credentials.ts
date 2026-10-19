@@ -41,7 +41,7 @@ import {
 import { ensureUserKey } from "@/lib/openrouter/user-key";
 import { moveApiKeyFromClaudeSlot } from "@/lib/providers/claude-slot";
 import { NoProviderKeyError } from "@/lib/providers/errors";
-import { isProviderId, PROVIDER_IDS, type ProviderId } from "@/lib/providers/registry";
+import { isProviderId, PROVIDER_IDS, type ProviderId, usableProviders } from "@/lib/providers/registry";
 import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
@@ -582,15 +582,33 @@ export async function getClaudeCredential(userId: string): Promise<string | null
 
 /** What the user's model menu offers (lib/runtime/session-models.ts):
  *  Outrunner's models where the server has a key for them, and each provider
- *  the user has a key for. */
+ *  the user has a key for that can be used. */
 export async function modelMenu(userId: string): Promise<ModelMenu> {
   const source = keySource();
-  const statuses = await getProviderKeyStatuses(userId);
   return {
     outrunner: source !== null,
     allowance: source === "per-user",
-    keys: PROVIDER_IDS.filter((id) => statuses[id].connected),
+    keys: await usableProviderKeys(userId),
   };
+}
+
+/**
+ * The providers whose saved key opens. One that doesn't (the encryption key
+ * changed) stays listed in Settings → Providers, but isn't offered: picked,
+ * or made a new session's default, it could only fail, where without it the
+ * default falls to a key that works. Saving it again brings it back.
+ */
+async function usableProviderKeys(userId: string): Promise<ProviderId[]> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_provider_keys")
+    .select("provider, key_ciphertext")
+    .eq("user_id", userId);
+  if (error && beforeProviderKeys(error)) {
+    return (await legacyOpenRouterKey(userId)) ? ["openrouter"] : [];
+  }
+  if (error) throw error;
+  return usableProviders(data, (row, provider) => openOrNull(row.key_ciphertext, userId, provider) !== null);
 }
 
 /** Whether the menu offers anything but the user's Claude: a session can

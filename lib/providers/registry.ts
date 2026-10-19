@@ -125,6 +125,20 @@ export function isProviderId(value: unknown): value is ProviderId {
   return typeof value === "string" && Object.hasOwn(gateways, value);
 }
 
+/** The providers among a user's saved keys whose key `opens`, in the
+ *  registry's order; rows for a provider this release doesn't know are
+ *  dropped. */
+export function usableProviders<Row extends { provider: string }>(
+  rows: Row[],
+  opens: (row: Row, provider: ProviderId) => boolean,
+): ProviderId[] {
+  const usable = new Set<ProviderId>();
+  for (const row of rows) {
+    if (isProviderId(row.provider) && opens(row, row.provider)) usable.add(row.provider);
+  }
+  return PROVIDER_IDS.filter((id) => usable.has(id));
+}
+
 /** A Claude subscription token (`claude setup-token`): it belongs in
  *  Settings → Claude, not with a provider. */
 const CLAUDE_TOKEN = /^sk-ant-oat/;
