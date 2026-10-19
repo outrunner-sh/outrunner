@@ -1,8 +1,9 @@
-import { ClaudeConnection } from "@/components/claude-connection";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
+import { providerSettingsHref } from "@/lib/settings-links";
 
-/** Claude settings: connect the user's own Claude subscription (desktop app). */
+/** Claude moved into Settings → Providers; links and bookmarks to it still
+ *  land there. */
 export default function ClaudeSettings() {
-  return <ClaudeConnection />;
+  redirect(providerSettingsHref("claude"));
 }
