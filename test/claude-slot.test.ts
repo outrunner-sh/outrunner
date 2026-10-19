@@ -3,17 +3,18 @@ import { test } from "node:test";
 
 import { moveApiKeyFromClaudeSlot, type ClaudeSlotStore } from "@/lib/providers/claude-slot";
 
-/** The Claude slot and the Anthropic provider key, as the database keeps them.
- *  Sealing here is reversible text, standing in for secret-box. */
+/** The Claude slot and the Anthropic provider key, as the database keeps them,
+ *  with the move as move_claude_slot_key does it: one step. Sealing here is
+ *  reversible text, standing in for secret-box. */
 function world(slot: string | null, provider: string | null = null) {
   const db = { slot, provider, hint: null as string | null };
   const store: ClaudeSlotStore = {
     readSlot: async () => db.slot,
-    copyToProvider: async (ciphertext, hint) => {
+    moveFromSlot: async (ciphertext, hint) => {
+      if (db.slot !== ciphertext) return false;
+      db.slot = null;
       if (db.provider === null) Object.assign(db, { provider: ciphertext, hint });
-    },
-    clearSlotIf: async (ciphertext) => {
-      if (db.slot === ciphertext) db.slot = null;
+      return true;
     },
   };
   return { db, store };
@@ -31,7 +32,7 @@ test("an API key moves to the Anthropic provider, the same ciphertext, and leave
   const { db, store } = world(seal(API_KEY));
   assert.equal(await moveApiKeyFromClaudeSlot(store, open), true);
   assert.deepEqual(db, { slot: null, provider: seal(API_KEY), hint: "WXYZ" });
-  // Again, or twice at once: nothing more happens.
+  // Again: nothing more happens.
   assert.equal(await moveApiKeyFromClaudeSlot(store, open), false);
   assert.deepEqual(db, { slot: null, provider: seal(API_KEY), hint: "WXYZ" });
 });
@@ -51,22 +52,36 @@ test("an Anthropic key already saved with the provider is newer, and kept", asyn
   assert.equal(db.slot, null);
 });
 
-test("a slot changed while the key moved is left as it now is", async () => {
+test("two requests that read the same key move it once, so a key removed in between stays removed", async () => {
   const { db, store } = world(seal(API_KEY));
-  // The user connects a subscription token in between.
-  const copy = store.copyToProvider;
-  store.copyToProvider = async (ciphertext, hint) => {
-    await copy(ciphertext, hint);
-    db.slot = seal(TOKEN);
-  };
-  await moveApiKeyFromClaudeSlot(store, open);
-  assert.equal(db.slot, seal(TOKEN));
-  assert.equal(db.provider, seal(API_KEY));
+  // A slow request reads the slot...
+  const staleRead = await store.readSlot();
+  // ...another moves the key, and the user removes it from Providers...
+  assert.equal(await moveApiKeyFromClaudeSlot(store, open), true);
+  db.provider = null;
+  // ...then the slow one moves what it read: nothing, since the slot no longer holds it.
+  const slow = { readSlot: async () => staleRead, moveFromSlot: store.moveFromSlot };
+  assert.equal(await moveApiKeyFromClaudeSlot(slow, open), false);
+  assert.equal(db.provider, null, "the removed key came back");
 });
 
-test("a failed copy leaves the key in the slot", async () => {
+test("a slot changed since it was read is left as it now is", async () => {
   const { db, store } = world(seal(API_KEY));
-  store.copyToProvider = async () => {
+  // The user connects a subscription token in between.
+  const read = store.readSlot;
+  store.readSlot = async () => {
+    const value = await read();
+    db.slot = seal(TOKEN);
+    return value;
+  };
+  assert.equal(await moveApiKeyFromClaudeSlot(store, open), false);
+  assert.equal(db.slot, seal(TOKEN));
+  assert.equal(db.provider, null);
+});
+
+test("a failed move leaves the key in the slot", async () => {
+  const { db, store } = world(seal(API_KEY));
+  store.moveFromSlot = async () => {
     throw new Error("database down");
   };
   await assert.rejects(moveApiKeyFromClaudeSlot(store, open), /database down/);

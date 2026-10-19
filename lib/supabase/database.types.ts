@@ -470,6 +470,11 @@ export type Database = {
     };
     Views: Record<never, never>;
     Functions: {
+      // supabase/migrations/20261019130000_move_claude_slot_key.sql
+      move_claude_slot_key: {
+        Args: { mover: string; sealed: string; hint: string };
+        Returns: boolean;
+      };
       claim_billing_lease: {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;

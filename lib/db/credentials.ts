@@ -543,28 +543,24 @@ export async function settleClaudeSlot(userId: string): Promise<void> {
           if (error) throw error;
           return data?.anthropic_key_ciphertext ?? null;
         },
-        async copyToProvider(ciphertext, hint) {
-          const { error } = await supabase
-            .from("user_provider_keys")
-            .upsert(
-              { user_id: userId, provider: "anthropic", key_ciphertext: ciphertext, key_hint: hint },
-              { onConflict: "user_id,provider", ignoreDuplicates: true },
-            );
+        async moveFromSlot(ciphertext, hint) {
+          // One statement in the database (20261019130000_move_claude_slot_key.sql).
+          const { data, error } = await supabase.rpc("move_claude_slot_key", {
+            mover: userId,
+            sealed: ciphertext,
+            hint,
+          });
           if (error) throw error;
-        },
-        async clearSlotIf(ciphertext) {
-          const { error } = await supabase
-            .from("user_credentials")
-            .update({ anthropic_key_ciphertext: null, anthropic_key_hint: null, anthropic_key_updated_at: null })
-            .eq("user_id", userId)
-            .eq("anthropic_key_ciphertext", ciphertext);
-          if (error) throw error;
+          return data === true;
         },
       },
       open,
     );
   } catch (error) {
-    if (beforeProviderKeys(error as { code?: string })) return;
+    // Before the migrations: the key stays in the slot, where sessions still
+    // read it (getClaudeCredential).
+    const code = (error as { code?: string }).code;
+    if (beforeProviderKeys(error as { code?: string }) || code === "PGRST202" || code === "42883") return;
     throw error;
   }
 }
