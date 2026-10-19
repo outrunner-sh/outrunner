@@ -38,10 +38,19 @@ alter table user_provider_keys enable row level security;
 revoke all on table user_provider_keys from anon, authenticated;
 
 -- Every saved OpenRouter key, as it is: the ciphertext is copied, never
--- opened. A key already here (from an earlier run, or saved since) is newer
--- and is kept.
+-- opened. Run again after the deploy, it also copies a key the old server
+-- saved in between (a replacement, if the user rotated theirs): the newer of
+-- the two is kept, by when each was saved. One saved here by the new server
+-- is newer than anything left in the old columns; an old key with no saved
+-- time never replaces one here.
 insert into user_provider_keys (user_id, provider, key_ciphertext, key_hint, updated_at)
 select user_id, 'openrouter', openrouter_key_ciphertext, openrouter_key_hint, coalesce(openrouter_key_updated_at, now())
 from user_credentials
 where openrouter_key_ciphertext is not null
-on conflict (user_id, provider) do nothing;
+on conflict (user_id, provider) do update
+  set key_ciphertext = excluded.key_ciphertext, key_hint = excluded.key_hint
+  where user_provider_keys.key_ciphertext is distinct from excluded.key_ciphertext
+    and (
+      select c.openrouter_key_updated_at from user_credentials c
+      where c.user_id = user_provider_keys.user_id
+    ) > user_provider_keys.updated_at;

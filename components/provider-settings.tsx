@@ -34,7 +34,9 @@ export function ProviderSettingsForm({ initial }: { initial: ProviderSettings })
           provider={id}
           stored={keys[id]}
           onChange={(next) => {
-            setKeys(next.keys);
+            // This card's own provider only: another card's reply, sent
+            // before a change there landed, mustn't undo it here.
+            setKeys((current) => ({ ...current, [id]: next.keys[id] }));
             // The model menu offers what keys the user has: let it ask again.
             forgetOutrunnerModels();
           }}
