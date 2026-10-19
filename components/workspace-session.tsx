@@ -13,6 +13,13 @@ import { SessionComposer, type ModelChoice } from "@/components/session-composer
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import {
+  forgetFirstPrompt,
+  hasFirstPrompt,
+  rememberedFirstPrompt,
+  withoutFirstPrompt,
+  type FirstPrompt,
+} from "@/lib/session/first-prompt";
 import { isProviderId } from "@/lib/providers/registry";
 import { defaultModel, modelGroups, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
@@ -241,27 +248,34 @@ export function WorkspaceSession({
       });
   }, [firstPrompt, workspaceId, router]);
 
-  // Fire the /new first prompt exactly once, as soon as we hold the keyboard.
+  // Fire the new session's first prompt exactly once, as soon as we hold the
+  // keyboard: the one the URL carries, else the one kept for this session
+  // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
   useEffect(() => {
-    if (sentInitial.current) return;
-    if ((!initialPrompt && !initialAttachmentIds?.length) || !canSend) return;
+    if (sentInitial.current || !canSend) return;
+    const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
+    const first = hasFirstPrompt(fromUrl)
+      ? fromUrl
+      : local
+        ? null
+        : rememberedFirstPrompt(window.sessionStorage, workspaceId);
+    if (!first) return;
     sentInitial.current = true;
     // send() queues an optimistic bubble (setState); this is a one-time guarded
     // fire on ready, not a render cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void send(initialPrompt ?? "", initialAttachmentIds ?? [])
+    void send(first.prompt, first.attachmentIds)
       .then((delivered) => {
-        // Strip only after the POST is accepted, so a failed delivery leaves
-        // ?prompt= in place for a refresh to retry. Remove just the prompt param
-        // (preserving any history state), not the whole query string.
+        // Forget it only once the POST is accepted, so a failed delivery leaves
+        // it in place for a reload to retry. Remove just the first prompt's
+        // params (preserving any history state), not the whole query string.
         if (!delivered) return;
-        const url = new URL(window.location.href);
-        url.searchParams.delete("prompt");
-        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+        if (!local) forgetFirstPrompt(window.sessionStorage, workspaceId);
+        window.history.replaceState(window.history.state, "", withoutFirstPrompt(new URL(window.location.href)));
       })
       .catch(() => {
-        /* network failure — leave ?prompt= so a refresh can retry */
+        /* network failure — leave it so a reload can retry */
       });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps

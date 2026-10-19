@@ -8,7 +8,6 @@ import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
-import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
@@ -27,7 +26,7 @@ const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foregr
  * its branch, and whether it gets a worktree), and the composer pinned to the
  * bottom, where the session's own composer sits once it opens. Submitting
  * creates a workspace and opens it, carrying the first prompt so the session
- * starts on that instruction.
+ * starts on that instruction once its box is ready.
  */
 export function NewSessionForm({
   projects: listed,
@@ -73,22 +72,12 @@ export function NewSessionForm({
   const onDefault = local ? where.outrunnerModel : menu?.available === true;
   const startsOn = picked ?? (onDefault && menu ? defaultModel(menu) : null);
 
-  // A local session opens in about a second, so it gets no progress screen.
-  // The cloud one covers the form rather than replacing it: the composer stays
-  // mounted underneath, so a creation that fails hands its prompt back.
-  const showProgress = isCreating && !local && selected;
-
+  // Either kind of session opens in about a second (a cloud one shows its
+  // setup progress on its own page), so the form only waits, disabled; one
+  // that fails hands its prompt back.
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      {showProgress && (
-        <div className="absolute inset-0 z-20 bg-background">
-          <WorkspaceCreating projectName={selected.fullName} branch={selected.defaultBranch} />
-        </div>
-      )}
-      <div
-        inert={Boolean(showProgress)}
-        className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10"
-      >
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
         <p
           aria-hidden
           className="pointer-events-none mb-10 select-none text-center font-display text-[13vw] leading-none text-foreground/20 sm:text-[112px]"
@@ -145,7 +134,7 @@ export function NewSessionForm({
         <LocalBlocker state={where} className="mt-4 text-center" />
       </div>
 
-      <div inert={Boolean(showProgress)} className="shrink-0">
+      <div className="shrink-0">
         {message && (
           <div
             aria-live="polite"
