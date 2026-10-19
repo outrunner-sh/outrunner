@@ -27,7 +27,8 @@ insert into auth.users (id) values
   ('00000000-0000-0000-0000-000000000003'), -- both
   ('00000000-0000-0000-0000-000000000004'), -- neither
   ('00000000-0000-0000-0000-000000000005'), -- OpenRouter key, replaced on the old server between runs
-  ('00000000-0000-0000-0000-000000000006'); -- OpenRouter key, replaced on the new server between runs
+  ('00000000-0000-0000-0000-000000000006'), -- OpenRouter key, replaced on the new server between runs
+  ('00000000-0000-0000-0000-000000000007'); -- OpenRouter key, removed on the new server between runs
 
 insert into user_credentials (user_id, openrouter_key_ciphertext, openrouter_key_hint, openrouter_key_updated_at, anthropic_key_ciphertext, anthropic_key_hint) values
   ('00000000-0000-0000-0000-000000000001', 'or-sealed-1', 'aaa1', '2026-10-16T10:00:00Z', null, null),
@@ -35,7 +36,8 @@ insert into user_credentials (user_id, openrouter_key_ciphertext, openrouter_key
   ('00000000-0000-0000-0000-000000000003', 'or-sealed-3', 'ccc3', null, 'ant-sealed-3', 'ddd3'),
   ('00000000-0000-0000-0000-000000000004', null, null, null, null, null),
   ('00000000-0000-0000-0000-000000000005', 'or-sealed-old-5', 'eee5', '2026-10-16T10:00:00Z', null, null),
-  ('00000000-0000-0000-0000-000000000006', 'or-sealed-old-6', 'ggg6', '2026-10-16T10:00:00Z', null, null);
+  ('00000000-0000-0000-0000-000000000006', 'or-sealed-old-6', 'ggg6', '2026-10-16T10:00:00Z', null, null),
+  ('00000000-0000-0000-0000-000000000007', 'or-sealed-7', 'jjj7', '2026-10-16T10:00:00Z', null, null);
 
 \elif :between
 
@@ -49,6 +51,12 @@ update user_provider_keys set key_ciphertext = 'or-sealed-new-6', key_hint = 'hh
   where user_id = '00000000-0000-0000-0000-000000000006';
 update user_provider_keys set key_ciphertext = 'or-sealed-new-3', key_hint = 'iii3'
   where user_id = '00000000-0000-0000-0000-000000000003';
+-- The new server removes user 7's key: its row, and the old columns
+-- (clearProviderKey), so the second run has nothing to copy back.
+delete from user_provider_keys where user_id = '00000000-0000-0000-0000-000000000007';
+update user_credentials
+  set openrouter_key_ciphertext = null, openrouter_key_hint = null, openrouter_key_updated_at = null
+  where user_id = '00000000-0000-0000-0000-000000000007';
 
 \else
 
@@ -81,6 +89,10 @@ begin
     where user_id = '00000000-0000-0000-0000-000000000006' and provider = 'openrouter'
       and key_ciphertext = 'or-sealed-new-6' and key_hint = 'hhh6';
   if not found then raise exception 'user 6: the key saved on the new server was overwritten'; end if;
+
+  -- Removed on the new server between runs: stays removed.
+  perform 1 from user_provider_keys where user_id = '00000000-0000-0000-0000-000000000007';
+  if found then raise exception 'user 7: a removed key came back'; end if;
 
   -- The Claude slot is the app's to move: SQL leaves it, and adds nothing for it.
   select count(*) into n from user_provider_keys where provider = 'anthropic';
