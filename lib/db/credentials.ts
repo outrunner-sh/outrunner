@@ -39,6 +39,7 @@ import {
   sharedApiKey,
 } from "@/lib/openrouter/keys";
 import { ensureUserKey } from "@/lib/openrouter/user-key";
+import { moveApiKeyFromClaudeSlot } from "@/lib/providers/claude-slot";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId, PROVIDER_IDS, type ProviderId } from "@/lib/providers/registry";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
@@ -521,6 +522,61 @@ async function legacyOpenRouterKey(userId: string): Promise<string | null> {
   if (error && probeStatus(error) === "outdated") return null;
   if (error) throw error;
   return openOrNull(data?.openrouter_key_ciphertext, userId, "openrouter");
+}
+
+/**
+ * Move an Anthropic API key out of the Claude slot to the Anthropic provider
+ * (lib/providers/claude-slot.ts). Run before either is read. A database
+ * without user_provider_keys keeps the key where it is.
+ */
+export async function settleClaudeSlot(userId: string): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  try {
+    await moveApiKeyFromClaudeSlot(
+      {
+        async readSlot() {
+          const { data, error } = await supabase
+            .from("user_credentials")
+            .select("anthropic_key_ciphertext")
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (error) throw error;
+          return data?.anthropic_key_ciphertext ?? null;
+        },
+        async copyToProvider(ciphertext, hint) {
+          const { error } = await supabase
+            .from("user_provider_keys")
+            .upsert(
+              { user_id: userId, provider: "anthropic", key_ciphertext: ciphertext, key_hint: hint },
+              { onConflict: "user_id,provider", ignoreDuplicates: true },
+            );
+          if (error) throw error;
+        },
+        async clearSlotIf(ciphertext) {
+          const { error } = await supabase
+            .from("user_credentials")
+            .update({ anthropic_key_ciphertext: null, anthropic_key_hint: null, anthropic_key_updated_at: null })
+            .eq("user_id", userId)
+            .eq("anthropic_key_ciphertext", ciphertext);
+          if (error) throw error;
+        },
+      },
+      open,
+    );
+  } catch (error) {
+    if (beforeProviderKeys(error as { code?: string })) return;
+    throw error;
+  }
+}
+
+/**
+ * The credential a session runs the user's own Claude on: their subscription
+ * token from the Claude slot, else (as before the Anthropic key had a place of
+ * its own) their Anthropic API key. Null with neither.
+ */
+export async function getClaudeCredential(userId: string): Promise<string | null> {
+  await settleClaudeSlot(userId);
+  return (await getAnthropicKey(userId)) ?? (await getProviderKey(userId, "anthropic"));
 }
 
 /** Whether Outrunner's models are there for this user: on their own key, or

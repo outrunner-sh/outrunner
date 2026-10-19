@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { clearProviderKey, getProviderKeyStatuses, setProviderKey } from "@/lib/db/credentials";
+import { clearProviderKey, getProviderKeyStatuses, setProviderKey, settleClaudeSlot } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { checkProviderKey } from "@/lib/providers/check";
 import { isProviderId, keyProblem, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
@@ -45,7 +45,10 @@ async function changing(change: () => Promise<NextResponse>): Promise<NextRespon
 export async function GET() {
   const owner = await getOwner();
   if (!owner) return unauthorized();
-  return changing(async () => NextResponse.json(await providers(owner.id)));
+  return changing(async () => {
+    await settleClaudeSlot(owner.id); // see app/settings/providers/page.tsx
+    return NextResponse.json(await providers(owner.id));
+  });
 }
 
 export async function PUT(request: Request) {
