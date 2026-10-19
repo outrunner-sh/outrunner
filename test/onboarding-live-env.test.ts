@@ -153,7 +153,7 @@ afterEach(() => {
 
 test("a Mac that isn't logged in starts its session on Outrunner's model", async () => {
   const agent = fakeMac(false);
-  stubFetch({ "POST /api/neev-ai/key": () => [200, { key }], "POST /api/onboarding/complete": () => [200, {}] });
+  stubFetch({ "POST /api/outrunner-models/key": () => [200, { key }], "POST /api/onboarding/complete": () => [200, {}] });
   const href = await liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder });
   const id = agent[0].body && (agent[0].body as { workspaceId: string }).workspaceId;
   assert.equal(href, `/local/${id}`);
@@ -180,7 +180,7 @@ test("a logged-in Mac, or a server without Outrunner's models, keeps the Mac's o
 
 test("a session that can't get Outrunner's model is removed, not left on a login screen", async () => {
   const agent = fakeMac(false);
-  stubFetch({ "POST /api/neev-ai/key": () => [503, { error: "Outrunner's models are not set up on this server." }] });
+  stubFetch({ "POST /api/outrunner-models/key": () => [503, { error: "Outrunner's models are not set up on this server." }] });
   await assert.rejects(
     liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder }),
     /not set up on this server/,

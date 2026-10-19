@@ -22,7 +22,7 @@ export function OutrunnerAllowance() {
     let cancelled = false;
     const read = async () => {
       try {
-        const res = await fetch("/api/neev-ai/usage", { cache: "no-store" });
+        const res = await fetch("/api/outrunner-models/usage", { cache: "no-store" });
         if (!res.ok) return; // keep what's shown; the next read may work
         const data = (await res.json()) as { allowance: AllowanceView | null };
         if (!cancelled) setView(data.allowance);

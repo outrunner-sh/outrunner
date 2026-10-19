@@ -37,7 +37,7 @@ export const CLAUDE_MODELS: SessionModel[] = [
  *  after. */
 export const MODEL_GROUPS: ModelGroup[] = modelGroups({ ownKey: false, serverModels: true, allowance: false });
 
-/** What a user's menu offers (GET /api/neev-ai): whether they saved their own
+/** What a user's menu offers (GET /api/outrunner-models): whether they saved their own
  *  OpenRouter key, whether the server has one, and whether the server's is
  *  each user's capped allowance. */
 export type OpenRouterKeys = { ownKey: boolean; serverModels: boolean; allowance: boolean };

@@ -177,7 +177,7 @@ export function runsOnOutrunnerModel(status: LocalStatus, outrunnerModels: boole
  *  own (`own`), the capped one the server creates for them on first use
  *  (`outrunner`), or, by default, theirs when they saved one. */
 export async function outrunnerKey(use?: "own" | "outrunner"): Promise<string> {
-  const res = await fetch("/api/neev-ai/key", {
+  const res = await fetch("/api/outrunner-models/key", {
     method: "POST",
     ...(use ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ use }) } : {}),
   });
@@ -205,12 +205,12 @@ export async function putOnOutrunnerModel(workspaceId: string): Promise<void> {
 }
 
 /** Whether Outrunner's models are there for this user, and on their own
- *  OpenRouter key (GET /api/neev-ai); asked once per page load, or again
+ *  OpenRouter key (GET /api/outrunner-models); asked once per page load, or again
  *  after Settings → Providers changes the key. */
 export type OutrunnerModels = { available: boolean; ownKey: boolean; serverModels: boolean; allowance: boolean };
 let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
 export function outrunnerModels(): Promise<OutrunnerModels> {
-  outrunnerModelsAnswer ??= fetch("/api/neev-ai")
+  outrunnerModelsAnswer ??= fetch("/api/outrunner-models")
     .then((res): Promise<Partial<OutrunnerModels>> | Partial<OutrunnerModels> => (res.ok ? res.json() : {}))
     .then((data) => ({
       available: data.available === true,
