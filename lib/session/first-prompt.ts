@@ -12,6 +12,39 @@ type PromptStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 const KEY_PREFIX = "outrunner:first-prompt:";
 
+/**
+ * This tab's sessionStorage, or null where the browser refuses it: reading
+ * `window.sessionStorage` itself throws when storage is blocked, so it is
+ * reached only through here. Without it the URL still carries the prompt.
+ */
+export function tabStorage(): PromptStorage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Sessions whose first prompt a page of this tab is sending, or has sent. */
+const claimed = new Set<string>();
+
+/**
+ * Claim the sending of a session's first prompt for this tab. A session page
+ * mounted again while the first is still sending (left, and back through the
+ * sidebar) finds it claimed and sends nothing, so Claude never gets it twice.
+ * False when it is already claimed.
+ */
+export function claimFirstPrompt(workspaceId: string): boolean {
+  if (claimed.has(workspaceId)) return false;
+  claimed.add(workspaceId);
+  return true;
+}
+
+/** The send didn't go: let the next session page try it again. */
+export function releaseFirstPrompt(workspaceId: string): void {
+  claimed.delete(workspaceId);
+}
+
 function key(workspaceId: string): string {
   return `${KEY_PREFIX}${workspaceId}`;
 }
@@ -40,8 +73,8 @@ export function withoutFirstPrompt(url: URL): string {
 
 /** Keep `first` for the session until it is sent. Storage refusing (private
  *  mode, full) only loses the copy the URL doesn't carry. */
-export function rememberFirstPrompt(storage: PromptStorage, workspaceId: string, first: FirstPrompt): void {
-  if (!hasFirstPrompt(first)) return;
+export function rememberFirstPrompt(storage: PromptStorage | null, workspaceId: string, first: FirstPrompt): void {
+  if (!storage || !hasFirstPrompt(first)) return;
   try {
     storage.setItem(key(workspaceId), JSON.stringify({ prompt: first.prompt.trim(), attachmentIds: first.attachmentIds }));
   } catch {
@@ -50,7 +83,8 @@ export function rememberFirstPrompt(storage: PromptStorage, workspaceId: string,
 }
 
 /** The first prompt kept for the session, if one is still waiting to go. */
-export function rememberedFirstPrompt(storage: PromptStorage, workspaceId: string): FirstPrompt | null {
+export function rememberedFirstPrompt(storage: PromptStorage | null, workspaceId: string): FirstPrompt | null {
+  if (!storage) return null;
   let raw: string | null;
   try {
     raw = storage.getItem(key(workspaceId));
@@ -73,7 +107,8 @@ export function rememberedFirstPrompt(storage: PromptStorage, workspaceId: strin
 }
 
 /** The session's first prompt has gone (or never will): drop the kept copy. */
-export function forgetFirstPrompt(storage: PromptStorage, workspaceId: string): void {
+export function forgetFirstPrompt(storage: PromptStorage | null, workspaceId: string): void {
+  if (!storage) return;
   try {
     storage.removeItem(key(workspaceId));
   } catch {

@@ -12,7 +12,7 @@ import {
 } from "@/lib/desktop/local-runtime";
 import type { SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
-import { firstPromptQuery, rememberFirstPrompt } from "@/lib/session/first-prompt";
+import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
 type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string };
@@ -89,7 +89,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         return;
       }
       const first = { prompt, attachmentIds };
-      rememberFirstPrompt(window.sessionStorage, result.workspace.id, first);
+      rememberFirstPrompt(tabStorage(), result.workspace.id, first);
       router.push(`/workspaces/${result.workspace.id}${firstPromptQuery(first)}`);
       router.refresh();
       resolve(true);

@@ -14,9 +14,12 @@ import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import {
+  claimFirstPrompt,
   forgetFirstPrompt,
   hasFirstPrompt,
+  releaseFirstPrompt,
   rememberedFirstPrompt,
+  tabStorage,
   withoutFirstPrompt,
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
@@ -259,9 +262,11 @@ export function WorkspaceSession({
       ? fromUrl
       : local
         ? null
-        : rememberedFirstPrompt(window.sessionStorage, workspaceId);
+        : rememberedFirstPrompt(tabStorage(), workspaceId);
     if (!first) return;
     sentInitial.current = true;
+    // Another mount of this session may be sending it still.
+    if (!claimFirstPrompt(workspaceId)) return;
     // send() queues an optimistic bubble (setState); this is a one-time guarded
     // fire on ready, not a render cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -270,12 +275,16 @@ export function WorkspaceSession({
         // Forget it only once the POST is accepted, so a failed delivery leaves
         // it in place for a reload to retry. Remove just the first prompt's
         // params (preserving any history state), not the whole query string.
-        if (!delivered) return;
-        if (!local) forgetFirstPrompt(window.sessionStorage, workspaceId);
+        if (!delivered) {
+          releaseFirstPrompt(workspaceId);
+          return;
+        }
+        if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
         window.history.replaceState(window.history.state, "", withoutFirstPrompt(new URL(window.location.href)));
       })
       .catch(() => {
         /* network failure — leave it so a reload can retry */
+        releaseFirstPrompt(workspaceId);
       });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps

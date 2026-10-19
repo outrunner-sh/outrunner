@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  claimFirstPrompt,
   firstPromptQuery,
   forgetFirstPrompt,
   rememberedFirstPrompt,
   rememberFirstPrompt,
+  releaseFirstPrompt,
   withoutFirstPrompt,
 } from "@/lib/session/first-prompt";
 
@@ -68,8 +70,19 @@ test("a kept copy that can't be read sends nothing", () => {
   assert.equal(rememberedFirstPrompt(storage, "w1"), null);
 });
 
-test("storage refusing never breaks creating or opening a session", () => {
-  assert.doesNotThrow(() => rememberFirstPrompt(refusing, "w1", { prompt: "hi", attachmentIds: [] }));
-  assert.equal(rememberedFirstPrompt(refusing, "w1"), null);
-  assert.doesNotThrow(() => forgetFirstPrompt(refusing, "w1"));
+test("storage refusing, or missing outright, never breaks creating or opening a session", () => {
+  for (const storage of [refusing, null]) {
+    assert.doesNotThrow(() => rememberFirstPrompt(storage, "w1", { prompt: "hi", attachmentIds: [] }));
+    assert.equal(rememberedFirstPrompt(storage, "w1"), null);
+    assert.doesNotThrow(() => forgetFirstPrompt(storage, "w1"));
+  }
+});
+
+test("a first prompt is sent by one session page at a time, and again only after a failure", () => {
+  assert.equal(claimFirstPrompt("claim-1"), true);
+  // The session opened again while the first send is still going.
+  assert.equal(claimFirstPrompt("claim-1"), false);
+  assert.equal(claimFirstPrompt("claim-2"), true);
+  releaseFirstPrompt("claim-1");
+  assert.equal(claimFirstPrompt("claim-1"), true);
 });
