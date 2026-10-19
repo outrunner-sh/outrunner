@@ -27,19 +27,24 @@ export function CustomModelDialog({
   const valid = validModelId(trimmed);
   const info = provider ? PROVIDERS[provider] : null;
 
+  // Every way out clears what was typed: it was for this provider, and the
+  // dialog opens next for whichever one is picked.
+  const close = () => {
+    setId("");
+    onOpenChange(false);
+  };
+
   const choose = () => {
     if (!provider || !valid) return;
     onChoose(provider, trimmed);
-    setId("");
-    onOpenChange(false);
+    close();
   };
 
   return (
     <Dialog
       open={provider !== null}
       onOpenChange={(open) => {
-        if (!open) setId("");
-        onOpenChange(open);
+        if (!open) close();
       }}
     >
       <DialogContent className="max-w-sm gap-5 bg-[#0d0d0d]">
@@ -68,7 +73,7 @@ export function CustomModelDialog({
           </p>
         ) : null}
         <div className="flex items-center justify-end gap-2">
-          <button type="button" onClick={() => onOpenChange(false)} className="route-state-button">
+          <button type="button" onClick={close} className="route-state-button">
             Cancel
           </button>
           <button type="button" onClick={choose} disabled={!valid} className="route-state-button">
