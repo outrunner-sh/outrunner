@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 
@@ -105,5 +106,22 @@ func TestASessionsModelIsSetAtCreateAndSwitched(t *testing.T) {
 	}
 	if _, has := listed["token"]; has {
 		t.Error("the listing carries the key")
+	}
+}
+
+func TestHealthSaysWhichGatewaysTheAgentSupports(t *testing.T) {
+	ts := httptest.NewServer(New("s", workspace.NewService(t.TempDir())).Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Status   string   `json:"status"`
+		Gateways []string `json:"gateways"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Status != "ok" || !slices.Contains(body.Gateways, "openrouter") {
+		t.Errorf("health = %+v, %v; want ok and the gateways, OpenRouter among them", body, err)
 	}
 }
