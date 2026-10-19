@@ -25,24 +25,34 @@ export function tabStorage(): PromptStorage | null {
   }
 }
 
-/** Sessions whose first prompt a page of this tab is sending, or has sent. */
-const claimed = new Set<string>();
+/** First prompts this tab is sending, by session, and the ones it has sent. */
+const sending = new Map<string, Promise<boolean>>();
+const sent = new Set<string>();
 
 /**
- * Claim the sending of a session's first prompt for this tab. A session page
- * mounted again while the first is still sending (left, and back through the
- * sidebar) finds it claimed and sends nothing, so Claude never gets it twice.
- * False when it is already claimed.
+ * Send a session's first prompt through `send`, once per tab however often its
+ * page mounts. A page mounted again while an earlier one is still sending it
+ * (left, and back through the sidebar) waits on that send instead of sending
+ * again, so Claude never gets it twice; if that send fails, this page sends it
+ * itself, so the failure shows where the user is looking rather than on a page
+ * long gone. "already" when another page of this tab sent it.
  */
-export function claimFirstPrompt(workspaceId: string): boolean {
-  if (claimed.has(workspaceId)) return false;
-  claimed.add(workspaceId);
-  return true;
-}
-
-/** The send didn't go: let the next session page try it again. */
-export function releaseFirstPrompt(workspaceId: string): void {
-  claimed.delete(workspaceId);
+export async function sendFirstPromptOnce(
+  workspaceId: string,
+  send: () => Promise<boolean>,
+): Promise<"sent" | "failed" | "already"> {
+  if (sent.has(workspaceId)) return "already";
+  const earlier = sending.get(workspaceId);
+  if (earlier) {
+    if (await earlier) return "already";
+    return sendFirstPromptOnce(workspaceId, send);
+  }
+  const attempt = send().catch(() => false);
+  sending.set(workspaceId, attempt);
+  const delivered = await attempt;
+  if (sending.get(workspaceId) === attempt) sending.delete(workspaceId);
+  if (delivered) sent.add(workspaceId);
+  return delivered ? "sent" : "failed";
 }
 
 function key(workspaceId: string): string {

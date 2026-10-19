@@ -14,11 +14,10 @@ import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import {
-  claimFirstPrompt,
   forgetFirstPrompt,
   hasFirstPrompt,
-  releaseFirstPrompt,
   rememberedFirstPrompt,
+  sendFirstPromptOnce,
   tabStorage,
   withoutFirstPrompt,
   type FirstPrompt,
@@ -265,27 +264,21 @@ export function WorkspaceSession({
         : rememberedFirstPrompt(tabStorage(), workspaceId);
     if (!first) return;
     sentInitial.current = true;
-    // Another mount of this session may be sending it still.
-    if (!claimFirstPrompt(workspaceId)) return;
     // send() queues an optimistic bubble (setState); this is a one-time guarded
-    // fire on ready, not a render cascade.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void send(first.prompt, first.attachmentIds)
-      .then((delivered) => {
-        // Forget it only once the POST is accepted, so a failed delivery leaves
-        // it in place for a reload to retry. Remove just the first prompt's
-        // params (preserving any history state), not the whole query string.
-        if (!delivered) {
-          releaseFirstPrompt(workspaceId);
-          return;
-        }
-        if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
-        window.history.replaceState(window.history.state, "", withoutFirstPrompt(new URL(window.location.href)));
-      })
-      .catch(() => {
-        /* network failure — leave it so a reload can retry */
-        releaseFirstPrompt(workspaceId);
-      });
+    // fire on ready, not a render cascade. Another mount of this session may be
+    // sending it still: sendFirstPromptOnce waits on that one instead.
+    const sessionPath = window.location.pathname;
+    void sendFirstPromptOnce(workspaceId, () => send(first.prompt, first.attachmentIds)).then((outcome) => {
+      // Forget it only once the POST is accepted, so a failed delivery leaves
+      // it in place for a reload to retry. Remove just the first prompt's
+      // params (preserving any history state), not the whole query string,
+      // and only while this session is still the page: a send that lands
+      // after the user moved on must not rewrite another page's URL.
+      if (outcome === "failed") return;
+      if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
+      const url = new URL(window.location.href);
+      if (url.pathname === sessionPath) window.history.replaceState(window.history.state, "", withoutFirstPrompt(url));
+    });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canSend, initialPrompt, initialAttachmentIds]);

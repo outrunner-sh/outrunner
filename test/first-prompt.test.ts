@@ -2,12 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  claimFirstPrompt,
   firstPromptQuery,
   forgetFirstPrompt,
   rememberedFirstPrompt,
   rememberFirstPrompt,
-  releaseFirstPrompt,
+  sendFirstPromptOnce,
   withoutFirstPrompt,
 } from "@/lib/session/first-prompt";
 
@@ -78,11 +77,43 @@ test("storage refusing, or missing outright, never breaks creating or opening a 
   }
 });
 
-test("a first prompt is sent by one session page at a time, and again only after a failure", () => {
-  assert.equal(claimFirstPrompt("claim-1"), true);
-  // The session opened again while the first send is still going.
-  assert.equal(claimFirstPrompt("claim-1"), false);
-  assert.equal(claimFirstPrompt("claim-2"), true);
-  releaseFirstPrompt("claim-1");
-  assert.equal(claimFirstPrompt("claim-1"), true);
+/** A send that settles when the test says, counting its calls. */
+function controlledSend() {
+  const calls: Array<(delivered: boolean) => void> = [];
+  return {
+    calls,
+    send: () => new Promise<boolean>((resolve) => calls.push(resolve)),
+  };
+}
+
+test("a session page mounted again mid-send waits on that send rather than sending twice", async () => {
+  const first = controlledSend();
+  const again = controlledSend();
+  const firstMount = sendFirstPromptOnce("once-1", first.send);
+  const secondMount = sendFirstPromptOnce("once-1", again.send);
+  first.calls[0](true);
+  assert.equal(await firstMount, "sent");
+  assert.equal(await secondMount, "already");
+  assert.equal(again.calls.length, 0);
+  // Sent: a later mount (back to the old ?prompt= URL) sends nothing either.
+  assert.equal(await sendFirstPromptOnce("once-1", again.send), "already");
+});
+
+test("when the earlier send fails, the page on screen sends it itself", async () => {
+  const gone = controlledSend();
+  const shown = controlledSend();
+  const leftPage = sendFirstPromptOnce("once-2", gone.send);
+  const pageOnScreen = sendFirstPromptOnce("once-2", shown.send);
+  gone.calls[0](false);
+  assert.equal(await leftPage, "failed");
+  // Its own send, so its own error shows if this one fails too.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(shown.calls.length, 1);
+  shown.calls[0](true);
+  assert.equal(await pageOnScreen, "sent");
+});
+
+test("a send that throws counts as failed, and leaves the prompt to send again", async () => {
+  assert.equal(await sendFirstPromptOnce("once-3", () => Promise.reject(new Error("offline"))), "failed");
+  assert.equal(await sendFirstPromptOnce("once-3", () => Promise.resolve(true)), "sent");
 });
