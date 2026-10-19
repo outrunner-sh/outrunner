@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { clearProviderKey, getProviderKeyStatuses, setProviderKey, settleClaudeSlot } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { keySource } from "@/lib/openrouter/keys";
 import { checkProviderKey } from "@/lib/providers/check";
 import { isProviderId, keyProblem, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
 import { probeStatus } from "@/lib/supabase/probe";
@@ -17,7 +18,10 @@ export const dynamic = "force-dynamic";
  */
 
 async function providers(userId: string) {
-  return { keys: await getProviderKeyStatuses(userId) };
+  const keys = await getProviderKeyStatuses(userId);
+  // `openrouter` and `serverModels` are what a page from before the other
+  // providers reads back after a save; kept for one release, or it breaks.
+  return { keys, openrouter: keys.openrouter, serverModels: keySource() !== null };
 }
 
 function unauthorized() {
