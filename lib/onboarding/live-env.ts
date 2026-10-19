@@ -31,7 +31,7 @@ const LOGIN_CHECK_MS = 3000;
 /**
  * Onboarding on the real thing: the Mac app's bridge for this Mac, and the
  * app's own APIs for the cloud. Each action is the same one the rest of the app
- * uses (Settings → Claude, the new-session form), not a parallel copy.
+ * uses (Settings → Providers → Claude subscription, the new-session form), not a parallel copy.
  */
 export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
   let loginStopped = false;
