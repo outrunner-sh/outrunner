@@ -182,7 +182,7 @@ export function WorkspaceSession({
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
     groups: modelGroups(openRouter),
-    preferredSource: keyPicked ?? (openRouter.ownKey ? "own" : "neev"),
+    preferredSource: keyPicked ?? (openRouter.ownKey ? "own" : "outrunner"),
     switching,
     disabledReason: !canSend
       ? "Waiting for the session to connect"
@@ -350,7 +350,7 @@ export function WorkspaceSession({
   );
 }
 
-/** Switch a local session's model: a Neev AI model runs through OpenRouter on
+/** Switch a local session's model: one of Outrunner's models runs through OpenRouter on
  *  the user's own capped key, which the server hands over (creating it the
  *  first time); a Claude account model runs on the Mac's own Claude login. */
 async function switchLocalModel(workspaceId: string, model: SessionModel): Promise<void> {
@@ -359,7 +359,7 @@ async function switchLocalModel(workspaceId: string, model: SessionModel): Promi
   await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
 }
 
-/** Switch a cloud session's model. The server adds the key a Neev AI model
+/** Switch a cloud session's model. The server adds the key one of Outrunner's models
  *  needs and calls the session's agent, so the key stays off the browser. */
 async function switchCloudModel(workspaceId: string, model: SessionModel): Promise<void> {
   const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
@@ -377,7 +377,9 @@ async function switchCloudModel(workspaceId: string, model: SessionModel): Promi
 function pickedKey(workspaceId: string): ModelSource | null {
   try {
     const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
-    return saved === "own" || saved === "neev" || saved === "claude" ? saved : null;
+    // "neev" is what Outrunner's key was saved as before the rename.
+    if (saved === "neev") return "outrunner";
+    return saved === "own" || saved === "outrunner" || saved === "claude" ? saved : null;
   } catch {
     return null;
   }

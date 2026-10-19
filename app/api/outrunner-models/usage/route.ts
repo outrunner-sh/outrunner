@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { neevAiAllowance } from "@/lib/db/credentials";
+import { outrunnerModelAllowance } from "@/lib/db/credentials";
 import { allowanceView } from "@/lib/openrouter/allowance";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export async function GET() {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
   try {
-    const allowance = await neevAiAllowance(owner.id);
+    const allowance = await outrunnerModelAllowance(owner.id);
     return NextResponse.json({ allowance: allowance && allowanceView(allowance) });
   } catch (error) {
     console.error("Could not read a user's Outrunner allowance", error);

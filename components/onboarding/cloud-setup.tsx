@@ -7,7 +7,7 @@ import { ChecklistRow } from "@/components/onboarding/checklist-row";
 import { ConnectClaudeRow } from "@/components/onboarding/connect-claude-row";
 import type { OnboardingEnv, OnboardingRepo } from "@/lib/onboarding/types";
 
-export type CloudModel = "claude" | "neev" | null;
+export type CloudModel = "claude" | "outrunner" | null;
 
 /**
  * Everything a cloud session needs: Claude connected (or, where the server runs
@@ -77,10 +77,10 @@ export function CloudSetup({
         {...(env.outrunnerModels && {
           todo: "Use your Claude Pro or Max subscription, or skip: sessions then start on Outrunner's model.",
           skipped:
-            model === "neev"
+            model === "outrunner"
               ? "Skipped. Sessions start on Outrunner's model. Connect Claude anytime in Settings."
               : undefined,
-          onSkip: () => onModel("neev"),
+          onSkip: () => onModel("outrunner"),
         })}
       />
 

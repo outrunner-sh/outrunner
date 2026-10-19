@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { neevAiKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
+import { outrunnerModelKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
 import {
   getRuntimeComputerByProject,
   getWorkspace,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { ModelKeyRefusedError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -22,8 +22,8 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 /**
  * Switch a cloud session to another model from the menu. The agent relaunches
- * Claude on it with the conversation continued. A Neev AI model runs through
- * OpenRouter on the user's key, which is fetched here and goes from this server
+ * Claude on it with the conversation continued. One of Outrunner's models runs
+ * through OpenRouter on the user's key, which is fetched here and goes from this server
  * to the box: it never reaches the browser.
  */
 export async function POST(request: Request, context: RouteContext) {
@@ -72,16 +72,16 @@ export async function POST(request: Request, context: RouteContext) {
   // switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(body?.model, () => neevAiKey(owner.id, use));
+    req = await setModelRequest(body?.model, () => outrunnerModelKey(owner.id, use));
   } catch (error) {
-    if (error instanceof NeevAiUnavailableError || error instanceof StoredKeyUnreadableError) {
+    if (error instanceof OutrunnerModelsUnavailableError || error instanceof StoredKeyUnreadableError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
     // Nothing to retry: the user has to change something (their messages say what).
     if (error instanceof NoOwnOpenRouterKeyError || error instanceof ModelKeyRefusedError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    console.error(`Model: could not get a Neev AI key for ${owner.id}`, error);
+    console.error(`Model: could not get a key for Outrunner's models for ${owner.id}`, error);
     return NextResponse.json({ error: "Outrunner's models are unavailable right now. Please try again." }, { status: 502 });
   }
   if (!req) {

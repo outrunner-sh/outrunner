@@ -10,7 +10,7 @@
  * (`getUser()`), never a value taken from a request body, path, or query.
  *
  * Nothing here returns a decrypted secret to a browser-facing payload, with one
- * exception: {@link neevAiKey}, the user's own capped Neev AI key, which a local
+ * exception: {@link outrunnerModelKey}, the user's own capped key for Outrunner's models, which a local
  * session's page hands to the agent on the user's Mac (see that function). The
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
@@ -34,7 +34,7 @@ import {
   disableUserKey,
   keySource,
   keyUsage,
-  NeevAiUnavailableError,
+  OutrunnerModelsUnavailableError,
   setKeyLimit,
   sharedApiKey,
 } from "@/lib/openrouter/keys";
@@ -485,7 +485,7 @@ export async function outrunnerModelsFor(userId: string): Promise<boolean> {
  * key exists, nothing is spent of their plan's allowance. A user with their
  * own key too still has this one, for the models they run on it.
  */
-export async function neevAiAllowance(userId: string): Promise<Allowance | null> {
+export async function outrunnerModelAllowance(userId: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
   return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await planFor(userId)).models.usd };
 }
@@ -602,7 +602,7 @@ export class NoOwnOpenRouterKeyError extends Error {
  * It is returned in plaintext because a local session runs on the user's Mac,
  * where only the page can hand it to the agent.
  */
-export async function neevAiKey(userId: string, use: OpenRouterKeyUse = "auto"): Promise<string> {
+export async function outrunnerModelKey(userId: string, use: OpenRouterKeyUse = "auto"): Promise<string> {
   if (use !== "outrunner") {
     const own = await getOwnOpenRouterKey(userId).catch((error: unknown) => {
       // A database from before the key's column has none to give.
@@ -613,7 +613,7 @@ export async function neevAiKey(userId: string, use: OpenRouterKeyUse = "auto"):
     if (use === "own") throw new NoOwnOpenRouterKeyError();
   }
   const source = keySource();
-  if (source === null) throw new NeevAiUnavailableError();
+  if (source === null) throw new OutrunnerModelsUnavailableError();
   if (source === "shared") return sharedApiKey() as string; // see lib/openrouter/keys.ts
 
   const supabase = createSupabaseAdminClient();

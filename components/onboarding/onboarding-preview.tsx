@@ -38,7 +38,7 @@ type Scenario = {
   claudeConnected: "no" | "yes";
   connect: "succeeds" | "no-subscription";
   repos: "many" | "few" | "none";
-  neev: "yes" | "no";
+  outrunnerModels: "yes" | "no";
 };
 
 const DEFAULT_SCENARIO: Scenario = {
@@ -48,7 +48,7 @@ const DEFAULT_SCENARIO: Scenario = {
   claudeConnected: "no",
   connect: "succeeds",
   repos: "many",
-  neev: "yes",
+  outrunnerModels: "yes",
 };
 
 const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], string][] } } = {
@@ -69,7 +69,7 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
   claudeConnected: { label: "Claude for cloud", values: [["no", "Not connected"], ["yes", "Connected"]] },
   connect: { label: "Connect Claude", values: [["succeeds", "Succeeds"], ["no-subscription", "No subscription"]] },
   repos: { label: "GitHub repos", values: [["many", "Many"], ["few", "Two"], ["none", "None"]] },
-  neev: { label: "Outrunner models", values: [["yes", "On the server"], ["no", "Not set up"]] },
+  outrunnerModels: { label: "Outrunner models", values: [["yes", "On the server"], ["no", "Not set up"]] },
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -105,7 +105,7 @@ function mockEnv(s: Scenario): OnboardingEnv {
   return {
     user: { name: "Sajda Kabir", login: "sajdakabir", avatarUrl: null },
     desktop: s.surface === "desktop",
-    outrunnerModels: s.neev === "yes",
+    outrunnerModels: s.outrunnerModels === "yes",
     async checkMac() {
       await wait(checks === 0 ? 900 : 300);
       const fixed = checks++ > 0;

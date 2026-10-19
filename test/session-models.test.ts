@@ -18,10 +18,10 @@ test("a Claude account reply matches its family's alias", () => {
   assert.equal(matchModel(MODEL_GROUPS, "sonnet")?.source, "claude");
 });
 
-test("a Neev AI reply matches its OpenRouter slug, not a Claude alias", () => {
-  assert.deepEqual(matchModel(MODEL_GROUPS, "z-ai/glm-5.3"), { id: "z-ai/glm-5.3", label: "GLM 5.3", source: "neev" });
-  // OpenRouter's Sonnet is Neev AI's, though the name says Sonnet.
-  assert.equal(matchModel(MODEL_GROUPS, "anthropic/claude-sonnet-5")?.source, "neev");
+test("a reply from one of Outrunner's models matches its OpenRouter slug, not a Claude alias", () => {
+  assert.deepEqual(matchModel(MODEL_GROUPS, "z-ai/glm-5.3"), { id: "z-ai/glm-5.3", label: "GLM 5.3", source: "outrunner" });
+  // OpenRouter's Sonnet is Outrunner's, though the name says Sonnet.
+  assert.equal(matchModel(MODEL_GROUPS, "anthropic/claude-sonnet-5")?.source, "outrunner");
 });
 
 test("a model outside the menu matches none", () => {
@@ -71,7 +71,7 @@ test("a key that can't be had fails the switch", async () => {
 });
 
 test("cloud sessions default to an Outrunner model on the menu", () => {
-  assert.equal(DEFAULT_CLOUD_MODEL.source, "neev");
+  assert.equal(DEFAULT_CLOUD_MODEL.source, "outrunner");
   assert.equal(offeredModel(DEFAULT_CLOUD_MODEL.id), DEFAULT_CLOUD_MODEL);
 });
 
@@ -92,7 +92,7 @@ test("with their own OpenRouter key, a user picks which key runs Outrunner's mod
 test("a model offered on both keys is ticked on the key it was picked on", () => {
   const groups = modelGroups({ ownKey: true, serverModels: true, allowance: true });
   assert.equal(matchModel(groups, "z-ai/glm-5.3", "own")?.source, "own");
-  assert.equal(matchModel(groups, "z-ai/glm-5.3", "neev")?.source, "neev");
+  assert.equal(matchModel(groups, "z-ai/glm-5.3", "outrunner")?.source, "outrunner");
   // No preference: the first offered.
-  assert.equal(matchModel(groups, "z-ai/glm-5.3")?.source, "neev");
+  assert.equal(matchModel(groups, "z-ai/glm-5.3")?.source, "outrunner");
 });

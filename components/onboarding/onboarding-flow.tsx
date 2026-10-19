@@ -55,7 +55,7 @@ export function OnboardingFlow({
     try {
       const href = await env.start({
         target,
-        ...(target === "mac" ? { folder: folder ?? undefined } : { repoId: repoId ?? undefined, model: model ?? "neev" }),
+        ...(target === "mac" ? { folder: folder ?? undefined } : { repoId: repoId ?? undefined, model: model ?? "outrunner" }),
       });
       // Leaving: keep the spinner up until the session page replaces this one.
       if (href) return onLeave?.(href);

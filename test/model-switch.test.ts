@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { AgentRequestError } from "@/lib/runtime/agent-client";
-import { AllowanceSpentError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { AllowanceSpentError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { NoStartingModelError, startingModel, switchFailure } from "@/lib/runtime/model-switch";
 import type { SetModelRequest } from "@/lib/runtime/session-models";
 
@@ -44,7 +44,7 @@ test("a new session starts on Outrunner's default model, through OpenRouter", as
   const sent: SetModelRequest[] = [];
   const on = await startingModel({
     setModel: async (req) => sent.push(req),
-    neevKey: async () => KEY,
+    openRouterKey: async () => KEY,
     hasClaude: false,
   });
   assert.equal(on, "outrunner");
@@ -53,7 +53,7 @@ test("a new session starts on Outrunner's default model, through OpenRouter", as
 
 test("it is the default with a Claude login too", async () => {
   let sent = 0;
-  const on = await startingModel({ setModel: async () => sent++, neevKey: async () => KEY, hasClaude: true });
+  const on = await startingModel({ setModel: async () => sent++, openRouterKey: async () => KEY, hasClaude: true });
   assert.equal(on, "outrunner");
   assert.equal(sent, 1);
 });
@@ -63,8 +63,8 @@ test("without Outrunner's models, a Claude login starts the session instead", as
   const on = await quiet(() =>
     startingModel({
       setModel: async () => sent++,
-      neevKey: async () => {
-        throw new NeevAiUnavailableError();
+      openRouterKey: async () => {
+        throw new OutrunnerModelsUnavailableError();
       },
       hasClaude: true,
     }),
@@ -77,9 +77,9 @@ test("a box too old to switch falls back to Claude, or says why without it", asy
   const old = async () => {
     throw new AgentRequestError(404);
   };
-  assert.equal(await quiet(() => startingModel({ setModel: old, neevKey: async () => KEY, hasClaude: true })), "claude");
+  assert.equal(await quiet(() => startingModel({ setModel: old, openRouterKey: async () => KEY, hasClaude: true })), "claude");
   await assert.rejects(
-    startingModel({ setModel: old, neevKey: async () => KEY, hasClaude: false }),
+    startingModel({ setModel: old, openRouterKey: async () => KEY, hasClaude: false }),
     (error: unknown) => error instanceof NoStartingModelError && /older Outrunner/.test(error.message),
   );
 });
@@ -88,8 +88,8 @@ test("with neither, the error says Outrunner's models are missing and to connect
   await assert.rejects(
     startingModel({
       setModel: async () => assert.fail("reached the agent"),
-      neevKey: async () => {
-        throw new NeevAiUnavailableError();
+      openRouterKey: async () => {
+        throw new OutrunnerModelsUnavailableError();
       },
       hasClaude: false,
     }),
@@ -103,9 +103,9 @@ test("a spent allowance falls back to Claude, or says what to do without it", as
     throw new AllowanceSpentError();
   };
   const setModel = async () => assert.fail("reached the agent");
-  assert.equal(await quiet(() => startingModel({ setModel, neevKey: spent, hasClaude: true })), "claude");
+  assert.equal(await quiet(() => startingModel({ setModel, openRouterKey: spent, hasClaude: true })), "claude");
   await assert.rejects(
-    startingModel({ setModel, neevKey: spent, hasClaude: false }),
+    startingModel({ setModel, openRouterKey: spent, hasClaude: false }),
     (error: unknown) => error instanceof NoStartingModelError && error.message === new AllowanceSpentError().message,
   );
 });
@@ -116,7 +116,7 @@ test("any other failure without Claude asks to try again", async () => {
       setModel: async () => {
         throw new AgentRequestError(500, { code: "INTERNAL", message: "tmux: exit 1" });
       },
-      neevKey: async () => KEY,
+      openRouterKey: async () => KEY,
       hasClaude: false,
     }),
     (error: unknown) => error instanceof NoStartingModelError && /Please try again/.test(error.message) && !/tmux/.test(error.message),
@@ -127,7 +127,7 @@ test("a session starts on the model chosen for it, on the key it was chosen on",
   const sent: SetModelRequest[] = [];
   const on = await startingModel({
     setModel: async (req) => void sent.push(req),
-    neevKey: async () => KEY,
+    openRouterKey: async () => KEY,
     hasClaude: false,
     model: { id: "anthropic/claude-opus-5.5", label: "Claude Opus", source: "own" },
   });
@@ -139,12 +139,12 @@ test("a Claude account model needs the user's Claude, and runs on it with no key
   const sent: SetModelRequest[] = [];
   const opus = { id: "opus", label: "Opus", source: "claude" } as const;
   assert.equal(
-    await startingModel({ setModel: async (req) => void sent.push(req), neevKey: async () => assert.fail("asked for a key"), hasClaude: true, model: opus }),
+    await startingModel({ setModel: async (req) => void sent.push(req), openRouterKey: async () => assert.fail("asked for a key"), hasClaude: true, model: opus }),
     "claude",
   );
   assert.deepEqual(sent, [{ model: "opus" }]);
   await assert.rejects(
-    startingModel({ setModel: async () => assert.fail("reached the agent"), neevKey: async () => KEY, hasClaude: false, model: opus }),
+    startingModel({ setModel: async () => assert.fail("reached the agent"), openRouterKey: async () => KEY, hasClaude: false, model: opus }),
     (error: unknown) => error instanceof NoStartingModelError && /Connect Claude/.test(error.message),
   );
 });
@@ -154,11 +154,11 @@ test("a chosen model that can't be had fails instead of quietly becoming Claude"
     quiet(() =>
       startingModel({
         setModel: async () => assert.fail("reached the agent"),
-        neevKey: async () => {
-          throw new NeevAiUnavailableError();
+        openRouterKey: async () => {
+          throw new OutrunnerModelsUnavailableError();
         },
         hasClaude: true,
-        model: { id: "z-ai/glm-5.3", label: "GLM 5.3", source: "neev" },
+        model: { id: "z-ai/glm-5.3", label: "GLM 5.3", source: "outrunner" },
       }),
     ),
     NoStartingModelError,

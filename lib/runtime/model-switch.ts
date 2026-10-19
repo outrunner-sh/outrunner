@@ -1,5 +1,5 @@
 import { AgentRequestError } from "@/lib/runtime/agent-client";
-import { ModelKeyRefusedError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import {
   DEFAULT_CLOUD_MODEL,
   setModelRequest,
@@ -48,7 +48,7 @@ export class NoStartingModelError extends Error {
  */
 export async function startingModel(deps: {
   setModel: (req: SetModelRequest) => Promise<unknown>;
-  neevKey: () => Promise<string>;
+  openRouterKey: () => Promise<string>;
   hasClaude: boolean;
   /** Chosen on the new-session screen; omitted, Outrunner's default. */
   model?: SessionModel;
@@ -60,7 +60,7 @@ export async function startingModel(deps: {
     return "claude";
   }
   try {
-    const req = await setModelRequest(chosen.id, deps.neevKey);
+    const req = await setModelRequest(chosen.id, deps.openRouterKey);
     if (!req) throw new Error(`${chosen.id} is not on the menu`);
     await deps.setModel(req);
     return "outrunner";
@@ -72,7 +72,7 @@ export async function startingModel(deps: {
     throw new NoStartingModelError(
       predatesSwitching(error)
         ? "This project's cloud computer runs an older Outrunner that can't run Outrunner's models. Connect Claude in Settings to use it."
-        : error instanceof NeevAiUnavailableError
+        : error instanceof OutrunnerModelsUnavailableError
           ? "Outrunner's models aren't available on this server. Connect Claude in Settings to start a session."
           : error instanceof ModelKeyRefusedError
             ? error.message

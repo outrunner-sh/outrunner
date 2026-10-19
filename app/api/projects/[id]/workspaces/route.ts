@@ -7,7 +7,7 @@ import { planFor } from "@/lib/billing/entitlements";
 import {
   getSandboxSettings,
   hasOwnOpenRouterKey,
-  neevAiKey,
+  outrunnerModelKey,
   type OpenRouterKeyUse,
   outrunnerModelsFor,
   ownSandboxKeys,
@@ -265,7 +265,7 @@ export async function POST(request: Request, context: RouteContext) {
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
-        neevKey: () => neevAiKey(owner.id, keyUse),
+        openRouterKey: () => outrunnerModelKey(owner.id, keyUse),
         hasClaude,
         model: chosenModel,
       });

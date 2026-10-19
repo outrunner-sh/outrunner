@@ -70,7 +70,7 @@ export function NewSessionForm({
         (group) => !(local && where.outrunnerModel && group.models.every((m) => m.source === "claude")),
       )
     : [];
-  const defaultSource = openRouter?.ownKey ? "own" : "neev";
+  const defaultSource = openRouter?.ownKey ? "own" : "outrunner";
   const onOutrunnersDefault = local ? where.outrunnerModel : openRouter?.available === true;
   const startsOn = picked ?? (onOutrunnersDefault ? { ...DEFAULT_CLOUD_MODEL, source: defaultSource } : null);
 

@@ -53,7 +53,7 @@ export type OnboardingEnv = {
   user: OnboardingUser;
   /** Inside the Outrunner Mac app, where This Mac and Connect Claude work. */
   desktop: boolean;
-  /** Whether a cloud session may start on Neev AI models without Claude. */
+  /** Whether a cloud session may start on Outrunner's models without Claude. */
   outrunnerModels: boolean;
   checkMac(): Promise<MacStatus>;
   /** Start setting up the app's own Claude Code; `checkMac` follows it. */
@@ -83,6 +83,6 @@ export type FirstSession = {
   folder?: OnboardingFolder;
   /** Cloud: the repository the session works in (its GitHub id). */
   repoId?: string;
-  /** Cloud: the user's own Claude, or Neev AI models. */
-  model?: "claude" | "neev";
+  /** Cloud: the user's own Claude, or Outrunner's models. */
+  model?: "claude" | "outrunner";
 };

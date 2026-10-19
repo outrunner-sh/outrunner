@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  * The signed-in user's GitHub token, for the Mac app to clone a repository
  * they picked for a local session (NEE-55): only the page can hand it to the
  * app, and the app uses it for that clone only, never writing it down. It is
- * the user's own token, returned to their own page, as `neevAiKey` is.
+ * the user's own token, returned to their own page, as `outrunnerModelKey` is.
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
