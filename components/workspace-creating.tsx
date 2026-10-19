@@ -6,13 +6,13 @@ import { useEffect, useState } from "react";
 import { DotMatrix, Spinner } from "@/components/ui/loaders";
 
 /**
- * Full-screen provisioning progress shown while a workspace is being created.
+ * Provisioning progress, shown in a new session's chat while its box is set up.
  * Cloud provisioning (sandbox → agent → clone → session) takes tens of seconds,
  * so instead of a bare spinner we walk a staged checklist on a time estimate,
  * drawn as interior.dev's Task Steps: done steps ticked, the current one
  * turning, the rest waiting, and one line naming the step.
- * The final stage HOLDS (never auto-completes) until the create request resolves
- * and the caller navigates away — we never claim "done" before the box is ready.
+ * The final stage HOLDS (never auto-completes) until the session's setup ends
+ * and its page attaches — we never claim "done" before the box is ready.
  */
 
 /** Ordered provisioning stages with the elapsed second each becomes active. */
@@ -36,20 +36,24 @@ function clock(seconds: number): string {
 export function WorkspaceCreating({
   projectName,
   branch,
+  startedAt,
 }: {
   projectName: string;
   branch: string;
+  /** When setup began (the session's creation), so a session opened midway
+   *  shows the time it has really taken. */
+  startedAt: string;
 }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    const started = Date.now();
-    const id = setInterval(
-      () => setElapsed(Math.floor((Date.now() - started) / 1000)),
-      1000,
-    );
+    const started = Date.parse(startedAt);
+    const tick = () =>
+      setElapsed(Number.isNaN(started) ? 0 : Math.max(0, Math.floor((Date.now() - started) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [startedAt]);
 
   // The active stage is the last one whose threshold we've passed, capped at the
   // final stage so we hold there until provisioning actually completes.
@@ -59,14 +63,14 @@ export function WorkspaceCreating({
   }
 
   return (
-    <div className="flex h-full min-h-screen items-center justify-center px-6">
+    <div className="flex h-full items-center justify-center px-6">
       <div className="w-full max-w-sm space-y-7">
         <DotMatrix rows={6} cols={10} />
 
         <div className="space-y-1.5">
-          <h1 className="text-foreground text-lg font-medium tracking-tight">
+          <h3 className="text-foreground text-lg font-medium tracking-tight">
             Creating workspace
-          </h1>
+          </h3>
           <p className="text-muted-foreground flex items-center gap-1.5 font-mono text-xs">
             <GitBranch className="size-3.5" />
             {projectName} · {branch}
