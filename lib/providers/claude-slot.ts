@@ -1,5 +1,5 @@
 /**
- * The Claude slot (Settings → Claude) holds a Claude subscription token
+ * The Claude slot (Settings → Providers → Claude subscription) holds a Claude subscription token
  * (`claude setup-token`, sk-ant-oat…). It used to take an Anthropic API key
  * too; an API key is now the Anthropic provider's (Settings → Providers), and
  * one still in the slot is moved there the first time the slot is read.

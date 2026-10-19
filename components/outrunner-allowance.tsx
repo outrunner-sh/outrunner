@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { AllowanceView } from "@/lib/openrouter/allowance";
+import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
 
 /**
@@ -67,7 +68,7 @@ export function OutrunnerAllowance() {
       {view.state === "out" ? (
         <p className="text-xs text-muted-foreground">
           You&apos;ve used your included usage.{" "}
-          <Link href="/settings/claude" className="text-foreground underline underline-offset-4">
+          <Link href={providerSettingsHref("claude")} className="text-foreground underline underline-offset-4">
             Connect Claude
           </Link>{" "}
           to keep going.

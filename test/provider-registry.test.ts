@@ -37,6 +37,6 @@ test("a key shaped as its provider issues one is taken, and one the agent would 
 test("a key pasted into the wrong place says where it goes", () => {
   assert.match(keyProblem("zai", SAMPLE.openrouter) ?? "", /is for OpenRouter/);
   assert.match(keyProblem("deepseek", SAMPLE.anthropic) ?? "", /is for Anthropic/);
-  assert.match(keyProblem("anthropic", "sk-ant-oat01-" + "x".repeat(40)) ?? "", /Settings → Claude/);
+  assert.match(keyProblem("anthropic", "sk-ant-oat01-" + "x".repeat(40)) ?? "", /Claude subscription instead/);
   assert.match(keyProblem("moonshot", "nope") ?? "", /doesn't look like a Moonshot \(Kimi\) API key/);
 });

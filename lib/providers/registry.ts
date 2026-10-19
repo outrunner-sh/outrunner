@@ -60,7 +60,7 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
   anthropic: {
     id: "anthropic",
     label: "Anthropic",
-    description: "Claude on your Anthropic API key, billed by Anthropic. Your Claude Pro or Max subscription goes in Settings → Claude.",
+    description: "Claude on your Anthropic API key, billed by Anthropic. Your Claude Pro or Max subscription goes under Claude subscription.",
     keyPattern: /^sk-ant-api\d{2}-[A-Za-z0-9_-]{20,300}$/,
     keyPlaceholder: "Paste your Anthropic API key (sk-ant-api…)",
     keysUrl: "https://platform.claude.com/settings/keys",
@@ -140,7 +140,7 @@ export function usableProviders<Row extends { provider: string }>(
 }
 
 /** A Claude subscription token (`claude setup-token`): it belongs in
- *  Settings → Claude, not with a provider. */
+ *  the Claude subscription tab, not with a provider. */
 const CLAUDE_TOKEN = /^sk-ant-oat/;
 
 /** Providers whose keys are told apart by their prefix, so a key pasted into
@@ -154,7 +154,7 @@ const DISTINCT: ProviderId[] = ["openrouter", "anthropic"];
 export function keyProblem(provider: ProviderId, key: string): string | null {
   const { label, keyPattern, keysPage } = PROVIDERS[provider];
   if (CLAUDE_TOKEN.test(key)) {
-    return "That's a Claude subscription token. Connect it in Settings → Claude instead.";
+    return "That's a Claude subscription token. Connect it under Settings → Providers → Claude subscription instead.";
   }
   const belongs = DISTINCT.find((other) => other !== provider && PROVIDERS[other].keyPattern.test(key));
   if (belongs) return `That key is for ${PROVIDERS[belongs].label}. Save it under ${PROVIDERS[belongs].label} instead.`;

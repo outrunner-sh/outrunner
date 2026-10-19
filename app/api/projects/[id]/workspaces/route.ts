@@ -41,6 +41,7 @@ import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-ser
 import type { ProvisionPhase, RuntimeProvider } from "@/lib/runtime/types";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
+import { providerSettingsHref } from "@/lib/settings-links";
 
 export const dynamic = "force-dynamic";
 
@@ -70,7 +71,7 @@ function generatedBranch(): string {
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
 function needsClaude(error: string) {
-  return NextResponse.json({ error, settingsHref: "/settings/claude" }, { status: 409 });
+  return NextResponse.json({ error, settingsHref: providerSettingsHref("claude") }, { status: 409 });
 }
 
 function needsSandbox(error: string) {
