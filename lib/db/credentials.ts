@@ -482,6 +482,16 @@ export async function clearProviderKey(userId: string, provider: ProviderId): Pr
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase.from("user_provider_keys").delete().eq("user_id", userId).eq("provider", provider);
   if (error) throw error;
+  // An OpenRouter key is also where it was before user_provider_keys, until
+  // a later release drops those columns: left there, the migration's second
+  // run would copy a removed key back.
+  if (provider === "openrouter") {
+    const { error: legacyError } = await supabase
+      .from("user_credentials")
+      .update({ openrouter_key_ciphertext: null, openrouter_key_hint: null, openrouter_key_updated_at: null })
+      .eq("user_id", userId);
+    if (legacyError && probeStatus(legacyError) !== "outdated") throw legacyError;
+  }
 }
 
 /** The OpenRouter key's status where it was stored before
