@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { outrunnerModelKey, type OpenRouterKeyUse } from "@/lib/db/credentials";
+import { modelKey } from "@/lib/db/credentials";
 import {
   getRuntimeComputerByProject,
   getWorkspace,
@@ -13,7 +13,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { offeredModel, setModelRequest } from "@/lib/runtime/session-models";
+import { requestedModel, setModelRequest } from "@/lib/runtime/session-models";
 
 export const dynamic = "force-dynamic";
 
@@ -34,10 +34,9 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in to switch models." }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as { model?: unknown; key?: unknown } | null;
-  // Which key an OpenRouter model runs on: the user's own, or Outrunner's.
-  const use: OpenRouterKeyUse = body?.key === "own" || body?.key === "outrunner" ? body.key : "auto";
-  if (!offeredModel(body?.model)) {
+  const body = (await request.json().catch(() => null)) as { provider?: unknown; model?: unknown; key?: unknown } | null;
+  const model = requestedModel(body);
+  if (!model) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
   }
 
@@ -67,16 +66,13 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Runtime Computer secret missing." }, { status: 500 });
   }
 
-  // The key last: the user's first one is created on OpenRouter, so only for a
-  // switch that can go ahead.
+  // The key last: a user's first key for Outrunner's models is created on
+  // OpenRouter, so only for a switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(body?.model, () => outrunnerModelKey(owner.id, use));
+    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder));
   } catch (error) {
-    return modelKeyErrorResponse(error, `Model: could not get a key for Outrunner's models for ${owner.id}`);
-  }
-  if (!req) {
-    return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+    return modelKeyErrorResponse(error, `Model: could not get the ${model.provider} key of ${owner.id}`);
   }
 
   let target;
@@ -97,7 +93,7 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     await new AgentClient(target).setModel(identity, req);
   } catch (error) {
-    const { status, message } = switchFailure(error);
+    const { status, message } = switchFailure(error, model);
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);
     return NextResponse.json({ error: message }, { status });
   }

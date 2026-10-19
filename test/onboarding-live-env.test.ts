@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
+import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { liveEnv } from "@/lib/onboarding/live-env";
 
 const user = { name: "Ada Lovelace", login: "ada", avatarUrl: null };
@@ -149,11 +150,19 @@ const key = `sk-or-v1-${"a".repeat(64)}`;
 
 afterEach(() => {
   delete (globalThis as Record<string, unknown>).window;
+  forgetOutrunnerModels(); // each test's menu is its own
 });
+
+/** A server with Outrunner's models, and a user with no keys of their own. */
+const MENU = { outrunner: true, allowance: true, keys: [], available: true };
 
 test("a Mac that isn't logged in starts its session on Outrunner's model", async () => {
   const agent = fakeMac(false);
-  stubFetch({ "POST /api/outrunner-models/key": () => [200, { key }], "POST /api/onboarding/complete": () => [200, {}] });
+  const calls = stubFetch({
+    "GET /api/outrunner-models": () => [200, MENU],
+    "POST /api/outrunner-models/key": () => [200, { key }],
+    "POST /api/onboarding/complete": () => [200, {}],
+  });
   const href = await liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder });
   const id = agent[0].body && (agent[0].body as { workspaceId: string }).workspaceId;
   assert.equal(href, `/local/${id}`);
@@ -163,6 +172,8 @@ test("a Mac that isn't logged in starts its session on Outrunner's model", async
     ["/workspaces", `/workspaces/${id}/model`],
   );
   assert.deepEqual(agent[1].body, { model: "z-ai/glm-5.3", gateway: "openrouter", token: key });
+  // On Outrunner's key: the menu's default.
+  assert.deepEqual(calls.find((c) => c.url === "/api/outrunner-models/key")?.body, { holder: "outrunner" });
 });
 
 test("a logged-in Mac, or a server without Outrunner's models, keeps the Mac's own Claude", async () => {
@@ -180,7 +191,10 @@ test("a logged-in Mac, or a server without Outrunner's models, keeps the Mac's o
 
 test("a session that can't get Outrunner's model is removed, not left on a login screen", async () => {
   const agent = fakeMac(false);
-  stubFetch({ "POST /api/outrunner-models/key": () => [503, { error: "Outrunner's models are not set up on this server." }] });
+  stubFetch({
+    "GET /api/outrunner-models": () => [200, MENU],
+    "POST /api/outrunner-models/key": () => [503, { error: "Outrunner's models are not set up on this server." }],
+  });
   await assert.rejects(
     liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder }),
     /not set up on this server/,
