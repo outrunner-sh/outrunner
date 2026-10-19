@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { hasOwnOpenRouterKey, modelKey } from "@/lib/db/credentials";
+import { getProviderKey, modelKey } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { isProviderId } from "@/lib/providers/registry";
@@ -46,5 +46,7 @@ async function keyHolder(
   }
   if (body?.use === "own") return "openrouter";
   if (body?.use === "outrunner") return "outrunner";
-  return (await hasOwnOpenRouterKey(userId)) ? "openrouter" : "outrunner";
+  // Neither: theirs only if it opens (a saved one that doesn't, after the
+  // encryption key changed, falls back to Outrunner's, as the menu does).
+  return (await getProviderKey(userId, "openrouter")) ? "openrouter" : "outrunner";
 }

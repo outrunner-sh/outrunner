@@ -484,17 +484,6 @@ export async function clearProviderKey(userId: string, provider: ProviderId): Pr
   if (error) throw error;
 }
 
-/** Whether the user runs Outrunner's models on an OpenRouter key of their
- *  own. A database from before that key was stored says no. */
-export async function hasOwnOpenRouterKey(userId: string): Promise<boolean> {
-  try {
-    return (await getProviderKeyStatuses(userId)).openrouter.connected;
-  } catch (error) {
-    if (probeStatus(error as { code?: string }) === "outdated") return false;
-    throw error;
-  }
-}
-
 /** The OpenRouter key's status where it was stored before
  *  user_provider_keys; none on a database older still. */
 async function legacyOpenRouterKeyStatus(userId: string): Promise<StoredKey> {
