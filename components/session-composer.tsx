@@ -14,6 +14,9 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
+import { CustomModelDialog } from "@/components/custom-model-dialog";
+import { isProviderId, type ProviderId } from "@/lib/providers/registry";
+import { rememberCustomModel, rememberedCustomModels } from "@/lib/runtime/custom-models";
 import { matchModel, modelLabel, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { cn } from "@/lib/utils";
@@ -281,7 +284,15 @@ export function SessionComposer({
 
 /** The footer's model, as a menu of the models the session can switch to. */
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
-  const groups = choice.groups;
+  // A group on the user's own key offers the ids they typed in before, and
+  // takes another (CustomModelDialog).
+  const [customFor, setCustomFor] = useState<ProviderId | null>(null);
+  const groups = choice.groups.map((group) => {
+    const own = group.custom && isProviderId(group.provider) ? group.provider : null;
+    if (!own) return { ...group, own };
+    const typed = rememberedCustomModels(own).filter((m) => !group.models.some((listed) => listed.id === m.id));
+    return { ...group, own, models: [...group.models, ...typed] };
+  });
   const current = matchModel(groups, model, choice.preferredProvider);
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
   const label = choice.switching ? "Switching model" : name;
@@ -328,10 +339,26 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                   <span className="truncate">{m.label}</span>
                 </DropdownMenuItem>
               ))}
+              {group.own ? (
+                <DropdownMenuItem onSelect={() => setCustomFor(group.own)}>
+                  <Check className="opacity-0" />
+                  <span className="text-muted-foreground">Other model…</span>
+                </DropdownMenuItem>
+              ) : null}
             </div>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      <CustomModelDialog
+        provider={customFor}
+        onOpenChange={(open) => {
+          if (!open) setCustomFor(null);
+        }}
+        onChoose={(provider, id) => {
+          rememberCustomModel(provider, id);
+          choice.onChange({ id, label: id, provider });
+        }}
+      />
     </>
   );
 }
