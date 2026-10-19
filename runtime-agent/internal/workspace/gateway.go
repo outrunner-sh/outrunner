@@ -39,7 +39,13 @@ func gatewayEnvFile(g claude.Gateway, token, model string) string {
 // writeGatewayEnv stores it owner-only, atomically, so a launch never sources a
 // half-written file.
 func (s *Service) writeGatewayEnv(workspaceID, content string) error {
-	path := s.gatewayEnvPath(workspaceID)
+	return writeKeysFile(s.gatewayEnvPath(workspaceID), content)
+}
+
+// writeKeysFile replaces a file of keys owner-only and atomically: a crash or
+// a full disk leaves the old file whole (and at worst a .tmp beside it, which
+// gatewayTokens reads too), never a half-written line run into the next.
+func writeKeysFile(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -78,36 +84,37 @@ func (s *Service) putGatewayEnv(workspaceID, content string) error {
 	return s.writeGatewayEnv(workspaceID, content)
 }
 
-// retireGatewayKeys appends the key lines of a replaced gateway file to the
-// session's retired file (owner-only), skipping keys already there.
+// retireGatewayKeys adds the key lines of a replaced gateway file to the
+// session's retired file, skipping keys already there. The file is rewritten
+// whole (writeKeysFile), not appended to: an append cut short would leave a
+// line the next one runs into, and the key on it would no longer be found.
 func (s *Service) retireGatewayKeys(workspaceID, prior string) error {
 	path := s.retiredGatewayPath(workspaceID)
-	existing, _ := os.ReadFile(path)
-	var add strings.Builder
+	data, _ := os.ReadFile(path)
+	existing := string(data)
+	// A last line without its newline (a file from before this was atomic)
+	// is ended, so nothing added runs into it.
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		existing += "\n"
+	}
+	content := existing
 	for _, line := range keyLines(prior) {
-		if !strings.Contains(string(existing), line+"\n") {
-			add.WriteString(line + "\n")
+		if !strings.Contains(content, line+"\n") {
+			content += line + "\n"
 		}
 	}
-	if add.Len() == 0 {
+	if content == existing && content == string(data) {
 		return nil
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(add.String()); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
+	return writeKeysFile(path, content)
 }
 
 // removeGatewayFiles removes every file holding the session's keys: its
 // gateway file, one left half-written by a crash, and its retired keys.
 func (s *Service) removeGatewayFiles(workspaceID string) {
 	path := s.gatewayEnvPath(workspaceID)
-	for _, file := range []string{path, path + ".tmp", s.retiredGatewayPath(workspaceID)} {
+	retired := s.retiredGatewayPath(workspaceID)
+	for _, file := range []string{path, path + ".tmp", retired, retired + ".tmp"} {
 		_ = os.Remove(file)
 	}
 }

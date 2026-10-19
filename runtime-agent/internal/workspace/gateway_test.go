@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -100,5 +101,40 @@ func TestAGatewaySessionWithoutItsKeyFileRefusesToLaunch(t *testing.T) {
 	}
 	if len(fake.launches) != launches {
 		t.Errorf("Claude was launched without its key file: %q", fake.lastLaunch())
+	}
+}
+
+func TestARetiredKeysFileCutShortStillMasksEveryKey(t *testing.T) {
+	t.Parallel()
+	s, _, id := runningSession(t, "sonnet")
+	ctx := context.Background()
+	const kept = "sk-or-v1-kept-0123456789abcdef"
+	const next = "sk-or-v1-next-0123456789abcdef"
+	const last = "sk-or-v1-last-0123456789abcdef"
+	// A retired file whose last line lost its newline (written by an append
+	// that stopped short), then a crash mid-rewrite leaving a .tmp beside it.
+	if err := os.MkdirAll(filepath.Dir(s.retiredGatewayPath(id)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.retiredGatewayPath(id), []byte("export ANTHROPIC_AUTH_TOKEN='"+kept+"'"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.retiredGatewayPath(id)+".tmp", []byte("export ANTHROPIC_AUTH_TOKEN='sk-or-v1-ha"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{next, last} {
+		if err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: key}, ""); err != nil {
+			t.Fatalf("SetModel: %v", err)
+		}
+	}
+	secrets := s.RedactionSecrets()
+	for _, key := range []string{kept, next, last} {
+		if !slices.Contains(secrets, key) {
+			t.Errorf("%s is not masked; masked: %q", key, secrets)
+		}
+	}
+	s.forgetWorkspace(id)
+	if _, err := os.Stat(s.retiredGatewayPath(id) + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("a half-written retired file outlived its session: %v", err)
 	}
 }
