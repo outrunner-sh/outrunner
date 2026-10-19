@@ -385,8 +385,14 @@ func TestASessionOnAGatewayGetsItsKeyFromAPrivateFile(t *testing.T) {
 	if got := s.launchCommand("ws-g", s.worktreePath("ws-g"), true); got[0] != "claude" || got[len(got)-1] != "opus" {
 		t.Errorf("launch after switching back = %q", got)
 	}
+	// The conversation it continues can still redraw the key: it stays masked
+	// until the session is forgotten.
+	if !slices.Contains(s.RedactionSecrets(), key) {
+		t.Error("the key of a session switched back to Claude is no longer masked")
+	}
+	s.forgetWorkspace("ws-g")
 	if slices.Contains(s.RedactionSecrets(), key) {
-		t.Error("a key no session uses is still listed")
+		t.Error("a forgotten session's key is still listed")
 	}
 }
 

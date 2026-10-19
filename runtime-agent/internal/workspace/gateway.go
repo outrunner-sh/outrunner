@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -53,8 +54,21 @@ func (s *Service) writeGatewayEnv(workspaceID, content string) error {
 	return nil
 }
 
-// putGatewayEnv stores the session's gateway file, or removes it for none.
+// retiredGatewayPath keeps the keys a session ran on before its current one.
+// The conversation it continues can redraw an old key (an earlier `env`), so
+// a key stays masked for the life of the session, not just while it's in use.
+func (s *Service) retiredGatewayPath(workspaceID string) string {
+	return filepath.Join(s.Root, "gateways", workspaceID+".retired")
+}
+
+// putGatewayEnv stores the session's gateway file, or removes it for none. The
+// keys of the file it replaces are kept in the retired file first.
 func (s *Service) putGatewayEnv(workspaceID, content string) error {
+	if prior := s.readGatewayEnv(workspaceID); prior != "" && prior != content {
+		if err := s.retireGatewayKeys(workspaceID, prior); err != nil {
+			return err
+		}
+	}
 	if content == "" {
 		if err := os.Remove(s.gatewayEnvPath(workspaceID)); err != nil && !os.IsNotExist(err) {
 			return err
@@ -64,30 +78,91 @@ func (s *Service) putGatewayEnv(workspaceID, content string) error {
 	return s.writeGatewayEnv(workspaceID, content)
 }
 
+// retireGatewayKeys appends the key lines of a replaced gateway file to the
+// session's retired file (owner-only), skipping keys already there.
+func (s *Service) retireGatewayKeys(workspaceID, prior string) error {
+	path := s.retiredGatewayPath(workspaceID)
+	existing, _ := os.ReadFile(path)
+	var add strings.Builder
+	for _, line := range keyLines(prior) {
+		if !strings.Contains(string(existing), line+"\n") {
+			add.WriteString(line + "\n")
+		}
+	}
+	if add.Len() == 0 {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(add.String()); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// removeGatewayFiles removes every file holding the session's keys: its
+// gateway file, one left half-written by a crash, and its retired keys.
+func (s *Service) removeGatewayFiles(workspaceID string) {
+	path := s.gatewayEnvPath(workspaceID)
+	for _, file := range []string{path, path + ".tmp", s.retiredGatewayPath(workspaceID)} {
+		_ = os.Remove(file)
+	}
+}
+
 func (s *Service) readGatewayEnv(workspaceID string) string {
 	data, _ := os.ReadFile(s.gatewayEnvPath(workspaceID))
 	return string(data)
 }
 
-// gatewayTokens are the keys of every session on a gateway, for redaction.
-// Read from the files so a restarted agent still masks the sessions tmux kept.
+// ErrGatewayKeyMissing is a session recorded on a gateway whose key file is
+// gone: launched anyway, sourcing the missing file fails and Claude exits with
+// nothing on screen to say why.
+var ErrGatewayKeyMissing = errors.New("this session's model key is missing; choose its model again to restart it")
+
+// requireGatewayEnv refuses to launch a gateway session without its key file.
+func (s *Service) requireGatewayEnv(workspaceID string) error {
+	if f, _ := s.getFacts(workspaceID); f.Gateway == claude.NoGateway {
+		return nil
+	}
+	if _, err := os.Stat(s.gatewayEnvPath(workspaceID)); err != nil {
+		return ErrGatewayKeyMissing
+	}
+	return nil
+}
+
+// gatewayTokens are every key in the gateways folder, for redaction: each
+// session's current key, its retired ones, and any a crash left in a
+// half-written file. Read from the files so a restarted agent still masks the
+// sessions tmux kept.
 func (s *Service) gatewayTokens() []string {
-	files, _ := filepath.Glob(filepath.Join(s.Root, "gateways", "*.env"))
+	files, _ := filepath.Glob(filepath.Join(s.Root, "gateways", "*"))
 	var tokens []string
 	for _, file := range files {
 		data, err := os.ReadFile(file)
 		if err != nil {
 			continue
 		}
-		for _, line := range strings.Split(string(data), "\n") {
-			value, ok := strings.CutPrefix(line, "export ANTHROPIC_AUTH_TOKEN=")
-			if !ok {
-				continue
-			}
-			if token := strings.Trim(value, "'"); token != "" {
-				tokens = append(tokens, token)
-			}
+		for _, line := range keyLines(string(data)) {
+			_, value, _ := strings.Cut(line, "=")
+			tokens = append(tokens, strings.Trim(value, "'"))
 		}
 	}
 	return tokens
+}
+
+// keyLines are a gateway file's exports of a non-empty key, in whichever
+// variable its gateway uses.
+func keyLines(content string) []string {
+	var lines []string
+	for _, line := range strings.Split(content, "\n") {
+		for _, name := range claude.GatewayKeyEnvs() {
+			if value, ok := strings.CutPrefix(line, "export "+name+"="); ok && strings.Trim(value, "'") != "" {
+				lines = append(lines, line)
+			}
+		}
+	}
+	return lines
 }
