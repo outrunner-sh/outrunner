@@ -7,7 +7,7 @@ import {
   localAgentRequest,
   localTarget,
   putOnModel,
-  putOnOutrunnerModel,
+  putOnDefaultModel,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
 import type { SessionModel } from "@/lib/runtime/session-models";
@@ -67,13 +67,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           headers: { "Content-Type": "application/json" },
           // Attachments are not sent here: the workspace has no box yet. They
           // ride the redirect and are delivered with the first prompt.
-          // The model picked on this screen, and for an OpenRouter one its key;
-          // none, the server starts it on Outrunner's default.
-          body: JSON.stringify({
-            branch: "",
-            ...(model && { model: model.id }),
-            ...(model && model.source !== "claude" && { key: model.source === "own" ? "own" : "outrunner" }),
-          }),
+          // The model picked on this screen, and who serves it; none, the
+          // server starts it on the menu's default.
+          body: JSON.stringify({ branch: "", ...(model && { provider: model.provider, model: model.id }) }),
         });
       } catch {
         setMessage("Could not reach Outrunner. Please try again.");
@@ -139,7 +135,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       // Mac's Claude Code isn't logged in.
       if (model || onOutrunnerModel) {
         try {
-          await (model ? putOnModel(workspaceId, model) : putOnOutrunnerModel(workspaceId));
+          await (model ? putOnModel(workspaceId, model) : putOnDefaultModel(workspaceId));
         } catch (error) {
           void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
           setMessage(error instanceof Error ? error.message : "Outrunner's models are unavailable right now.");

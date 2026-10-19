@@ -21,6 +21,7 @@ import {
   credentialStatus,
   getAnthropicKey,
   setAnthropicKey,
+  settleClaudeSlot,
 } from "@/lib/db/credentials";
 import { last4FromHint } from "@/lib/runtime/credentials/mask";
 
@@ -48,6 +49,8 @@ export async function getClaudeToken(ownerId: string): Promise<string | null> {
 export async function getClaudeTokenMeta(
   ownerId: string,
 ): Promise<ClaudeTokenMeta> {
+  // An Anthropic API key still here belongs to Settings → Providers now.
+  await settleClaudeSlot(ownerId);
   const status = await credentialStatus(ownerId);
   // The stored hint is already the masked tail; surface just the last 4 so this
   // matches the shape PR #18's settings page renders.

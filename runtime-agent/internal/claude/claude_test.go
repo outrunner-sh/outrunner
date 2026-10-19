@@ -287,3 +287,62 @@ func TestGatewayInputs(t *testing.T) {
 		t.Errorf("GatewayEnv = %v, unset %v", set, unset)
 	}
 }
+
+func TestEveryGatewayRunsOnItsKeyAlone(t *testing.T) {
+	ids := Gateways()
+	for _, want := range []Gateway{OpenRouter, "anthropic"} {
+		if !slices.Contains(ids, want) {
+			t.Errorf("Gateways() = %q, missing %q", ids, want)
+		}
+	}
+	for _, g := range ids {
+		const key = "sk-test-key-0123456789abcdef"
+		set, unset := GatewayEnv(g, key, "some/model")
+		if !strings.HasPrefix(set["ANTHROPIC_BASE_URL"], "https://") {
+			t.Errorf("%s: base URL %q", g, set["ANTHROPIC_BASE_URL"])
+		}
+		holders := 0
+		for _, value := range set {
+			if value == key {
+				holders++
+			}
+		}
+		if holders != 1 {
+			t.Errorf("%s: the key is in %d variables, want 1", g, holders)
+		}
+		// The other key variable can't win over the gateway's key.
+		switch {
+		case set["ANTHROPIC_AUTH_TOKEN"] == key:
+			if v, ok := set["ANTHROPIC_API_KEY"]; !ok || v != "" {
+				t.Errorf("%s: ANTHROPIC_API_KEY = %q, %v; want it set empty", g, v, ok)
+			}
+		case set["ANTHROPIC_API_KEY"] == key:
+			if _, ok := set["ANTHROPIC_AUTH_TOKEN"]; ok || !slices.Contains(unset, "ANTHROPIC_AUTH_TOKEN") {
+				t.Errorf("%s: ANTHROPIC_AUTH_TOKEN not unset", g)
+			}
+		default:
+			t.Errorf("%s: the key is in neither key variable: %v", g, set)
+		}
+		if !slices.Contains(unset, "CLAUDE_CODE_OAUTH_TOKEN") {
+			t.Errorf("%s: a Claude login token could win over the key", g)
+		}
+	}
+}
+
+func TestABadProvidersFileIsRefused(t *testing.T) {
+	for _, bad := range []string{
+		`{"x": {"baseURL": "http://plain.example", "keyEnv": "ANTHROPIC_AUTH_TOKEN"}}`,
+		`{"x": {"baseURL": "https://ok.example", "keyEnv": "PATH"}}`,
+		`{"": {"baseURL": "https://ok.example", "keyEnv": "ANTHROPIC_AUTH_TOKEN"}}`,
+		`not json`,
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("accepted %s", bad)
+				}
+			}()
+			mustParseGateways([]byte(bad))
+		}()
+	}
+}

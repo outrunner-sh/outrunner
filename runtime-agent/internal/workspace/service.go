@@ -395,6 +395,9 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
 	}
+	if err := s.requireGatewayEnv(workspaceID); err != nil {
+		return "", err
+	}
 	s.makeContextDir(ctx, workspaceID, worktree)
 	env := claude.SessionEnv(s.env, anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
@@ -729,6 +732,9 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	}
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
+	}
+	if err := s.requireGatewayEnv(workspaceID); err != nil {
+		return "", err // before the kill: the running session is left as it is
 	}
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
@@ -1305,7 +1311,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
-	_ = os.Remove(s.gatewayEnvPath(workspaceID))
+	s.removeGatewayFiles(workspaceID)
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()

@@ -1,5 +1,5 @@
 /**
- * The OpenRouter key Outrunner's own models (Neev AI, in code) run on.
+ * The OpenRouter key Outrunner's own models run on.
  *
  * Two setups, chosen by what the server is given:
  *   - OPENROUTER_MANAGEMENT_KEY: each user gets a key of their own, created
@@ -28,10 +28,10 @@ function openRouter(url: string, init: RequestInit = {}): Promise<Response> {
 
 /** Neither key is configured (or OpenRouter refused the management key), so
  *  Outrunner's models are unavailable. */
-export class NeevAiUnavailableError extends Error {
+export class OutrunnerModelsUnavailableError extends Error {
   constructor() {
     super("Outrunner's models are not set up on this server.");
-    this.name = "NeevAiUnavailableError";
+    this.name = "OutrunnerModelsUnavailableError";
   }
 }
 
@@ -122,7 +122,7 @@ export type CreatedKey = {
  */
 export async function createUserKey(name: string, limitUsd: number): Promise<CreatedKey> {
   const management = managementKey();
-  if (!management) throw new NeevAiUnavailableError();
+  if (!management) throw new OutrunnerModelsUnavailableError();
 
   const response = await openRouter(KEYS_URL, {
     method: "POST",
@@ -141,7 +141,7 @@ export async function createUserKey(name: string, limitUsd: number): Promise<Cre
   // would fix.
   if (response.status === 401 || response.status === 403) {
     console.error(`OpenRouter refused OPENROUTER_MANAGEMENT_KEY (HTTP ${response.status}); is it a management key?`);
-    throw new NeevAiUnavailableError();
+    throw new OutrunnerModelsUnavailableError();
   }
   if (!response.ok) {
     throw new Error(`OpenRouter would not create a key (HTTP ${response.status}).`);
@@ -165,7 +165,7 @@ export async function createUserKey(name: string, limitUsd: number): Promise<Cre
  */
 export async function disableUserKey(hash: string): Promise<void> {
   const management = managementKey();
-  if (!management) throw new NeevAiUnavailableError();
+  if (!management) throw new OutrunnerModelsUnavailableError();
 
   const response = await openRouter(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
     method: "PATCH",
@@ -184,7 +184,7 @@ export async function disableUserKey(hash: string): Promise<void> {
  *  allowance is given (lib/billing/model-allowance.ts). */
 export async function setKeyLimit(hash: string, limitUsd: number): Promise<void> {
   const management = managementKey();
-  if (!management) throw new NeevAiUnavailableError();
+  if (!management) throw new OutrunnerModelsUnavailableError();
 
   const response = await openRouter(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
     method: "PATCH",
@@ -207,7 +207,7 @@ export type KeyUsage = { usedUsd: number; limitUsd: number | null; disabled: boo
  *  key that can't run anything). */
 export async function keyUsage(hash: string): Promise<KeyUsage> {
   const management = managementKey();
-  if (!management) throw new NeevAiUnavailableError();
+  if (!management) throw new OutrunnerModelsUnavailableError();
 
   const response = await openRouter(`${KEYS_URL}/${encodeURIComponent(hash)}`, {
     headers: { authorization: `Bearer ${management}` },

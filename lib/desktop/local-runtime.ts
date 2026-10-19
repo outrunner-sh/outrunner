@@ -1,6 +1,15 @@
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { DEFAULT_CLOUD_MODEL, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
+import { isProviderId, type ProviderId } from "@/lib/providers/registry";
+import {
+  defaultModel,
+  type KeyHolder,
+  type ModelMenu,
+  predatesProvider,
+  predatesProviderMessage,
+  setModelRequest,
+  type SessionModel,
+} from "@/lib/runtime/session-models";
 
 /**
  * Desktop-only bridge for local sessions: Claude Code running on this Mac.
@@ -173,65 +182,73 @@ export function runsOnOutrunnerModel(status: LocalStatus, outrunnerModels: boole
   return outrunnerModels && needsClaudeLogin(status);
 }
 
-/** The OpenRouter key a local session runs Outrunner's models on: the user's
- *  own (`own`), the capped one the server creates for them on first use
- *  (`outrunner`), or, by default, theirs when they saved one. */
-export async function outrunnerKey(use?: "own" | "outrunner"): Promise<string> {
-  const res = await fetch("/api/neev-ai/key", {
+/** The key a local session's model runs on: Outrunner's (created for the
+ *  user on first use), or one of the user's own (Settings → Providers). */
+export async function modelKeyFor(holder: KeyHolder): Promise<string> {
+  const res = await fetch("/api/outrunner-models/key", {
     method: "POST",
-    ...(use ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ use }) } : {}),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ holder }),
   });
   const data = (await res.json().catch(() => ({}))) as { key?: string; error?: string };
-  if (!res.ok || !data.key) throw new Error(data.error ?? "Outrunner's models are unavailable right now.");
+  if (!res.ok || !data.key) throw new Error(data.error ?? "That model's key is unavailable right now.");
   return data.key;
 }
 
-/**
- * Put a new local session on Outrunner's model before its first launch. The
- * agent records it, so Claude Code starts on it through OpenRouter, with no
- * Claude login needed (and none of its login screens).
- */
-/** Put a new local session on the model chosen for it, before its first
- *  launch: a Claude account model, or an OpenRouter one on the key picked. */
+/** Put a local session on `model`, before its first launch or as a switch:
+ *  the agent records it, so Claude Code runs on it from then on. */
 export async function putOnModel(workspaceId: string, model: SessionModel): Promise<void> {
-  const body = await setModelRequest(model.id, () => outrunnerKey(model.source === "own" ? "own" : "outrunner"));
-  if (!body) throw new Error(`${model.label} isn't one of the offered models.`);
-  await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+  const body = await setModelRequest(model, modelKeyFor);
+  try {
+    await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+  } catch (error) {
+    // The Mac's agent is older than the model's provider.
+    if (error instanceof Error && predatesProvider(error.message)) throw new Error(predatesProviderMessage(model));
+    throw error;
+  }
 }
 
-export async function putOnOutrunnerModel(workspaceId: string): Promise<void> {
-  const body = await setModelRequest(DEFAULT_CLOUD_MODEL.id, outrunnerKey);
-  await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+/** Put a new local session on the menu's default model: on a Mac whose Claude
+ *  Code isn't logged in, so it starts with no Claude login (and none of its
+ *  login screens). */
+export async function putOnDefaultModel(workspaceId: string): Promise<void> {
+  const model = defaultModel(await outrunnerModels());
+  if (!model) throw new Error("Outrunner's models aren't available. Log Claude Code in on this Mac to start a session.");
+  await putOnModel(workspaceId, model);
 }
 
-/** Whether Outrunner's models are there for this user, and on their own
- *  OpenRouter key (GET /api/neev-ai); asked once per page load, or again
- *  after Settings → Providers changes the key. */
-export type OutrunnerModels = { available: boolean; ownKey: boolean; serverModels: boolean; allowance: boolean };
+/** What the user's model menu offers (GET /api/outrunner-models), and whether
+ *  a session can start without their Claude; asked once per page load, or
+ *  again after Settings → Providers changes a key. */
+export type OutrunnerModels = ModelMenu & { available: boolean };
+const NO_MODELS: OutrunnerModels = { outrunner: false, allowance: false, keys: [], available: false };
 let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
 export function outrunnerModels(): Promise<OutrunnerModels> {
-  outrunnerModelsAnswer ??= fetch("/api/neev-ai")
-    .then((res): Promise<Partial<OutrunnerModels>> | Partial<OutrunnerModels> => (res.ok ? res.json() : {}))
-    .then((data) => ({
-      available: data.available === true,
-      ownKey: data.ownKey === true,
-      // An older server says only `available`: that was its own key.
-      serverModels: data.serverModels ?? data.available === true,
-      allowance: data.allowance === true,
-    }))
+  outrunnerModelsAnswer ??= fetch("/api/outrunner-models")
+    .then((res): Promise<Record<string, unknown>> | Record<string, unknown> => (res.ok ? res.json() : {}))
+    .then((data): OutrunnerModels => {
+      const keys = Array.isArray(data.keys)
+        ? data.keys.filter(isProviderId)
+        : // A server from before providers says only whether there's an OpenRouter key.
+          data.ownKey === true
+          ? (["openrouter"] as ProviderId[])
+          : [];
+      const outrunner = typeof data.outrunner === "boolean" ? data.outrunner : data.serverModels === true;
+      return { outrunner, allowance: data.allowance === true, keys, available: data.available === true };
+    })
     .catch(() => {
       outrunnerModelsAnswer = null; // a failed look is asked again next time
-      return { available: false, ownKey: false, serverModels: false, allowance: false };
+      return NO_MODELS;
     });
   return outrunnerModelsAnswer;
 }
 
-/** Whether this user can run Outrunner's models. */
+/** Whether this user can start a session without their Claude. */
 export function outrunnerModelsAvailable(): Promise<boolean> {
   return outrunnerModels().then((answer) => answer.available);
 }
 
-/** Ask again next time: the user's OpenRouter key has just changed. */
+/** Ask again next time: one of the user's keys has just changed. */
 export function forgetOutrunnerModels(): void {
   outrunnerModelsAnswer = null;
 }
