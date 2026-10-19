@@ -11,7 +11,7 @@ import {
   logInToClaude,
   needsClaudeLogin,
   pickLocalFolder,
-  putOnOutrunnerModel,
+  putOnDefaultModel,
   rememberFolder,
   runsOnOutrunnerModel,
   setsUpClaude,
@@ -185,7 +185,7 @@ async function startOnMac({ prompt = "", folder }: FirstSession, outrunnerModels
   const status = outrunnerModels ? await localStatus().catch(() => null) : null;
   if (status && runsOnOutrunnerModel(status, outrunnerModels)) {
     try {
-      await putOnOutrunnerModel(workspaceId);
+      await putOnDefaultModel(workspaceId);
     } catch (error) {
       // Not left to open on Claude Code's login screen.
       void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});

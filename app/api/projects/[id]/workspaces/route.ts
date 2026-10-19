@@ -6,10 +6,9 @@ import { getOwner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import {
   getSandboxSettings,
-  hasOwnOpenRouterKey,
-  outrunnerModelKey,
-  type OpenRouterKeyUse,
-  outrunnerModelsFor,
+  modelKey,
+  modelMenu,
+  offersModels,
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
@@ -23,11 +22,12 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { NoProviderKeyError } from "@/lib/providers/errors";
+import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
-import { offeredModel } from "@/lib/runtime/session-models";
+import { defaultModel, requestedModel } from "@/lib/runtime/session-models";
 import {
   boxSizeOn,
   computerMadeBy,
@@ -109,7 +109,8 @@ export async function POST(request: Request, context: RouteContext) {
   // start on Outrunner's models (on the user's own OpenRouter key, or the
   // server's), so only without those is Claude a must.
   const hasClaude = Object.keys(sessionEnv).length > 0;
-  if (!hasClaude && !(await outrunnerModelsFor(owner.id))) {
+  const menu = await modelMenu(owner.id);
+  if (!hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
   if (project.private && !githubToken) {
@@ -122,26 +123,23 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { branch?: unknown; model?: unknown; key?: unknown };
+  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
-  // The model chosen on the new-session screen, and for an OpenRouter one which
-  // key it runs on; none, Outrunner's default on the user's own key or the
-  // server's.
-  const chosenModel = body.model === undefined ? undefined : offeredModel(body.model);
-  if (body.model !== undefined && !chosenModel) {
+  // The model chosen on the new-session screen; none, the menu's default.
+  const chosenModel = requestedModel(body);
+  if (chosenModel === null) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
   }
-  const keyUse: OpenRouterKeyUse = body.key === "own" || body.key === "outrunner" ? body.key : "auto";
   // Said before a box is set up for it, not after.
-  if (chosenModel?.source === "claude" && !hasClaude) {
+  if (chosenModel?.provider === "claude" && !hasClaude) {
     return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
   }
-  if (keyUse === "own" && !(await hasOwnOpenRouterKey(owner.id))) {
-    return modelKeyErrorResponse(new NoProviderKeyError("openrouter"), "");
+  if (chosenModel && isProviderId(chosenModel.provider) && !menu.keys.includes(chosenModel.provider)) {
+    return modelKeyErrorResponse(new NoProviderKeyError(chosenModel.provider), "");
   }
 
   const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";
@@ -264,9 +262,10 @@ export async function POST(request: Request, context: RouteContext) {
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
-        openRouterKey: () => outrunnerModelKey(owner.id, keyUse),
+        keyFor: (holder) => modelKey(owner.id, holder),
         hasClaude,
         model: chosenModel,
+        fallback: defaultModel(menu),
       });
       await agent.startWorkspace(identity);
 

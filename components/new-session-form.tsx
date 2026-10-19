@@ -12,7 +12,7 @@ import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
-import { DEFAULT_CLOUD_MODEL, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
+import { defaultModel, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
@@ -50,29 +50,28 @@ export function NewSessionForm({
   );
 
   // The model the session starts on, picked in the composer as in a session;
-  // none picked, what it starts on anyway: Outrunner's default on the cloud
-  // (on the user's own key when saved), and on a Mac whose Claude Code isn't
-  // logged in; otherwise that Mac's Claude Code default.
-  const [openRouter, setOpenRouter] = useState<OutrunnerModels | null>(null);
+  // none picked, what it starts on anyway: the menu's default on the cloud,
+  // and on a Mac whose Claude Code isn't logged in; otherwise that Mac's
+  // Claude Code default.
+  const [menu, setMenu] = useState<OutrunnerModels | null>(null);
   useEffect(() => {
     let live = true;
     void outrunnerModels().then((answer) => {
-      if (live) setOpenRouter(answer);
+      if (live) setMenu(answer);
     });
     return () => {
       live = false;
     };
   }, []);
   const [picked, setPicked] = useState<SessionModel | null>(null);
-  const groups = openRouter
-    ? modelGroups(openRouter).filter(
+  const groups = menu
+    ? modelGroups(menu).filter(
         // A Mac whose Claude Code isn't logged in has no Claude account to run.
-        (group) => !(local && where.outrunnerModel && group.models.every((m) => m.source === "claude")),
+        (group) => !(local && where.outrunnerModel && group.provider === "claude"),
       )
     : [];
-  const defaultSource = openRouter?.ownKey ? "own" : "outrunner";
-  const onOutrunnersDefault = local ? where.outrunnerModel : openRouter?.available === true;
-  const startsOn = picked ?? (onOutrunnersDefault ? { ...DEFAULT_CLOUD_MODEL, source: defaultSource } : null);
+  const onDefault = local ? where.outrunnerModel : menu?.available === true;
+  const startsOn = picked ?? (onDefault && menu ? defaultModel(menu) : null);
 
   // A local session opens in about a second, so it gets no progress screen.
   // The cloud one covers the form rather than replacing it: the composer stays
@@ -177,7 +176,7 @@ export function NewSessionForm({
                   onChange: setPicked,
                   switching: false,
                   disabledReason: isCreating ? "Starting the session" : null,
-                  preferredSource: startsOn?.source,
+                  preferredProvider: startsOn?.provider,
                 }
               : undefined
           }

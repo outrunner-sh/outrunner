@@ -42,6 +42,7 @@ import { ensureUserKey } from "@/lib/openrouter/user-key";
 import { moveApiKeyFromClaudeSlot } from "@/lib/providers/claude-slot";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId, PROVIDER_IDS, type ProviderId } from "@/lib/providers/registry";
+import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
 import type { Database } from "@/lib/supabase/database.types";
@@ -579,10 +580,34 @@ export async function getClaudeCredential(userId: string): Promise<string | null
   return (await getAnthropicKey(userId)) ?? (await getProviderKey(userId, "anthropic"));
 }
 
-/** Whether Outrunner's models are there for this user: on their own key, or
- *  on the server's. */
-export async function outrunnerModelsFor(userId: string): Promise<boolean> {
-  return keySource() !== null || (await hasOwnOpenRouterKey(userId));
+/** What the user's model menu offers (lib/runtime/session-models.ts):
+ *  Outrunner's models where the server has a key for them, and each provider
+ *  the user has a key for. */
+export async function modelMenu(userId: string): Promise<ModelMenu> {
+  const source = keySource();
+  const statuses = await getProviderKeyStatuses(userId);
+  return {
+    outrunner: source !== null,
+    allowance: source === "per-user",
+    keys: PROVIDER_IDS.filter((id) => statuses[id].connected),
+  };
+}
+
+/** Whether the menu offers anything but the user's Claude: a session can
+ *  start without it. */
+export function offersModels(menu: ModelMenu): boolean {
+  return menu.outrunner || menu.keys.length > 0;
+}
+
+/**
+ * The key a model runs on: Outrunner's, for Outrunner's models; the user's
+ * own for a provider's, or a NoProviderKeyError saying where to add one.
+ */
+export async function modelKey(userId: string, holder: KeyHolder): Promise<string> {
+  if (holder === "outrunner") return outrunnerModelKey(userId);
+  const key = await getProviderKey(userId, holder);
+  if (!key) throw new NoProviderKeyError(holder);
+  return key;
 }
 
 /**
@@ -683,13 +708,8 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
   return renewed;
 }
 
-/** Which key Outrunner's models run on: the user's own, Outrunner's, or
- *  (auto, for a new session) theirs when they have one. */
-export type OpenRouterKeyUse = "auto" | "own" | "outrunner";
-
 /**
- * The OpenRouter key this user's sessions run Outrunner's models on: the key
- * they saved themselves, when `use` allows it and they have one; else the
+ * The OpenRouter key this user's sessions run Outrunner's models on: the
  * shared API key when the server has only that, otherwise a key the server
  * made them, capped by OpenRouter at their plan's allowance, created the first
  * time they pick one of the models and then kept (OpenRouter tracks the
@@ -701,12 +721,7 @@ export type OpenRouterKeyUse = "auto" | "own" | "outrunner";
  * It is returned in plaintext because a local session runs on the user's Mac,
  * where only the page can hand it to the agent.
  */
-export async function outrunnerModelKey(userId: string, use: OpenRouterKeyUse = "auto"): Promise<string> {
-  if (use !== "outrunner") {
-    const own = await getProviderKey(userId, "openrouter");
-    if (own) return own;
-    if (use === "own") throw new NoProviderKeyError("openrouter");
-  }
+export async function outrunnerModelKey(userId: string): Promise<string> {
   const source = keySource();
   if (source === null) throw new OutrunnerModelsUnavailableError();
   if (source === "shared") return sharedApiKey() as string; // see lib/openrouter/keys.ts

@@ -14,7 +14,7 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
-import { matchModel, modelLabel, type ModelGroup, type ModelSource, type SessionModel } from "@/lib/runtime/session-models";
+import { matchModel, modelLabel, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { cn } from "@/lib/utils";
 
@@ -36,8 +36,8 @@ export type ModelChoice = {
    *  it can. */
   disabledReason: string | null;
   switching: boolean;
-  /** Which key's entry is the current one, for a model offered on two. */
-  preferredSource?: ModelSource;
+  /** Whose entry is the current one, for a model offered by two. */
+  preferredProvider?: ModelProvider;
 };
 
 export function SessionComposer({
@@ -281,54 +281,57 @@ export function SessionComposer({
 
 /** The footer's model, as a menu of the models the session can switch to. */
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
-  const current = matchModel(choice.groups, model, choice.preferredSource);
+  const groups = choice.groups;
+  const current = matchModel(groups, model, choice.preferredProvider);
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
   const label = choice.switching ? "Switching model" : name;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="studio-composer-model studio-composer-model-picker"
-          disabled={choice.switching || choice.disabledReason !== null}
-          title={choice.disabledReason ?? "Switch model"}
-          aria-label={`Model: ${label}. Switch model`}
-        >
-          {/* Both labels share one cell, so the footer holds still while the
-              name gives way to "Switching" and back. */}
-          <span className="grid place-items-center">
-            <span className={cn("col-start-1 row-start-1", choice.switching && "invisible")}>{name}</span>
-            <span
-              aria-hidden
-              className={cn("col-start-1 row-start-1 inline-flex items-center gap-1", !choice.switching && "invisible")}
-            >
-              <Spinner /> Switching
-            </span>
-          </span>
-          <ChevronDown />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="w-52">
-        {choice.groups.map((group, i) => (
-          <div key={group.label}>
-            {i > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-              {group.label}
-            </DropdownMenuLabel>
-            {group.models.map((m) => (
-              <DropdownMenuItem
-                key={`${m.source}:${m.id}`}
-                // Always sent, even for the ticked family: the session may run an
-                // older model of it, and the agent ignores a switch to what it has.
-                onSelect={() => choice.onChange(m)}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="studio-composer-model studio-composer-model-picker"
+            disabled={choice.switching || choice.disabledReason !== null}
+            title={choice.disabledReason ?? "Switch model"}
+            aria-label={`Model: ${label}. Switch model`}
+          >
+            {/* Both labels share one cell, so the footer holds still while the
+                name gives way to "Switching" and back. */}
+            <span className="grid place-items-center">
+              <span className={cn("col-start-1 row-start-1", choice.switching && "invisible")}>{name}</span>
+              <span
+                aria-hidden
+                className={cn("col-start-1 row-start-1 inline-flex items-center gap-1", !choice.switching && "invisible")}
               >
-                <Check className={m.id === current?.id && m.source === current.source ? "opacity-100" : "opacity-0"} />
-                {m.label}
-              </DropdownMenuItem>
-            ))}
-          </div>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+                <Spinner /> Switching
+              </span>
+            </span>
+            <ChevronDown />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="top" className="w-56">
+          {groups.map((group, i) => (
+            <div key={group.label}>
+              {i > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                {group.label}
+              </DropdownMenuLabel>
+              {group.models.map((m) => (
+                <DropdownMenuItem
+                  key={`${m.provider}:${m.id}`}
+                  // Always sent, even for the ticked family: the session may run an
+                  // older model of it, and the agent ignores a switch to what it has.
+                  onSelect={() => choice.onChange(m)}
+                >
+                  <Check className={m.id === current?.id && m.provider === current.provider ? "opacity-100" : "opacity-0"} />
+                  <span className="truncate">{m.label}</span>
+                </DropdownMenuItem>
+              ))}
+            </div>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
