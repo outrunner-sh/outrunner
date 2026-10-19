@@ -8,7 +8,7 @@ import {
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { ModelKeyRefusedError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -77,7 +77,8 @@ export async function POST(request: Request, context: RouteContext) {
     if (error instanceof NeevAiUnavailableError || error instanceof StoredKeyUnreadableError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
-    if (error instanceof NoOwnOpenRouterKeyError) {
+    // Nothing to retry: the user has to change something (their messages say what).
+    if (error instanceof NoOwnOpenRouterKeyError || error instanceof ModelKeyRefusedError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     console.error(`Model: could not get a Neev AI key for ${owner.id}`, error);

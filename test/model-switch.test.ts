@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { AgentRequestError } from "@/lib/runtime/agent-client";
-import { NeevAiUnavailableError } from "@/lib/openrouter/keys";
+import { AllowanceSpentError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
 import { NoStartingModelError, startingModel, switchFailure } from "@/lib/runtime/model-switch";
 import type { SetModelRequest } from "@/lib/runtime/session-models";
 
@@ -95,6 +95,18 @@ test("with neither, the error says Outrunner's models are missing and to connect
     }),
     (error: unknown) =>
       error instanceof NoStartingModelError && /aren't available on this server\. Connect Claude/.test(error.message),
+  );
+});
+
+test("a spent allowance falls back to Claude, or says what to do without it", async () => {
+  const spent = async (): Promise<string> => {
+    throw new AllowanceSpentError();
+  };
+  const setModel = async () => assert.fail("reached the agent");
+  assert.equal(await quiet(() => startingModel({ setModel, neevKey: spent, hasClaude: true })), "claude");
+  await assert.rejects(
+    startingModel({ setModel, neevKey: spent, hasClaude: false }),
+    (error: unknown) => error instanceof NoStartingModelError && error.message === new AllowanceSpentError().message,
   );
 });
 
