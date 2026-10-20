@@ -239,8 +239,9 @@ test("claudeInstallScript fails when the tools can't be installed, whatever Code
   const bin = mkdtempSync(join(tmpdir(), "install-fail-"));
   writeFileSync(join(bin, "sudo"), `#!/bin/sh\ncase "$*" in *apt-get*) exit 1;; *) exit 0;; esac\n`);
   chmodSync(join(bin, "sudo"), 0o755);
+  // Only the stand-ins on PATH: a machine's own tmux or jq mustn't count.
   assert.throws(() =>
-    execFileSync("/bin/sh", ["-c", claudeInstallScript()], { env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` }, stdio: "ignore" }),
+    execFileSync("/bin/sh", ["-c", claudeInstallScript()], { env: { ...process.env, PATH: bin }, stdio: "ignore" }),
   );
 });
 
