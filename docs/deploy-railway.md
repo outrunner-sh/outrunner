@@ -56,6 +56,7 @@ Requires a local Go toolchain (cross-compiles `GOOS=linux GOARCH=amd64`).
 | `RUNTIME_BILLING` | `off` (everyone on Free) or `stripe`; required in production, or the server won't start |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | with `RUNTIME_BILLING=stripe` (see deploy-cloudflare.md, Billing) |
 | `RUNTIME_OWNER_GITHUB_LOGIN` | the single GitHub login allowed to sign in |
+| `RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN` | optional comma-separated GitHub logins exempt from plan limits only; blank means none |
 | `NEXT_PUBLIC_SUPABASE_URL` | from Supabase |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | from Supabase |
 | `SUPABASE_SERVICE_ROLE_KEY` | from Supabase (server-only) |

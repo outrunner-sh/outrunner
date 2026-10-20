@@ -101,17 +101,17 @@ export async function openIntervals(): Promise<OpenInterval[]> {
 export async function intervalsFor(ownerId: string, period: Period): Promise<Interval[]> {
   const supabase = createSupabaseAdminClient();
   const columns = "sandbox_id, cpu, started_at, last_seen_at, ended_at";
-  const before = (from: number, to: number) =>
+  const before = () =>
     supabase
       .from("compute_intervals")
       .select(columns)
       .eq("owner_id", ownerId)
       .lt("started_at", period.end.toISOString());
   const open = await allRows((from, to) =>
-    before(from, to).is("ended_at", null).order("id").range(from, to),
+    before().is("ended_at", null).order("id").range(from, to),
   );
   const closed = await allRows((from, to) =>
-    before(from, to)
+    before()
       .not("ended_at", "is", null)
       .gt("ended_at", period.start.toISOString())
       .order("id")

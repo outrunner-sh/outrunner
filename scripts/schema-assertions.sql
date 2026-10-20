@@ -446,7 +446,7 @@ end $$;
 -- 20. A plan's box cap is enforced inside the claim, and only where a box
 -- would start: a claim that reuses its project's ready box passes at the
 -- cap; one that would start another box is refused; the owner's own Daytona
--- doesn't count; and a null cap lets the deployment's owners through.
+-- doesn't count; and a null cap remains uncapped for an exempt start.
 -- Whatever role an earlier block left, seed as the superuser.
 reset role;
 
@@ -504,6 +504,51 @@ begin
   if not exists (select 1 from runtime_computers where project_id = another_project and status = 'provisioning') then
     raise exception 'FAIL: an uncapped claim did not start a box';
   end if;
+
+  -- Keep the SQL count aligned with the TypeScript cases in
+  -- test/billing-limits.test.ts: ready and fresh provisioning count, stale
+  -- provisioning and the user's own Daytona/Modal do not.
+  update runtime_computers
+  set status = 'stopped'
+  where owner_id = '11111111-1111-1111-1111-111111111111';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: stopped boxes were counted';
+  end if;
+  update runtime_computers
+  set status = 'ready', provider = null, updated_at = now()
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 1 then
+    raise exception 'FAIL: a ready Outrunner box was not counted';
+  end if;
+
+  update runtime_computers
+  set status = 'provisioning', updated_at = now() - interval '1 minute'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 1 then
+    raise exception 'FAIL: a fresh provisioning box was not counted';
+  end if;
+
+  update runtime_computers
+  set updated_at = now() - interval '11 minutes'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a stale provisioning box was counted';
+  end if;
+
+  update runtime_computers
+  set status = 'ready', provider = 'user-daytona'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a user-owned Daytona box was counted';
+  end if;
+
+  update runtime_computers
+  set provider = 'user-modal'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a user-owned Modal box was counted';
+  end if;
+
   raise notice 'ok: the plan''s box cap holds in the claim, where a box would start';
 end $$;
 

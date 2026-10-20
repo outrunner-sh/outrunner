@@ -35,6 +35,7 @@ test("the plan's boxes are a denial only once all running", () => {
   assert.match(boxesDenial(PLANS.free, 2)?.error ?? "", /2 concurrent cloud sessions/);
 });
 
+// Keep these boundaries aligned with schema assertion 20's SQL count checks.
 test("a live box: ready, or provisioning while fresh, and never the owner's own", () => {
   assert.equal(isLiveMeteredComputer(box("ready", null, "2026-10-01T00:00:00Z"), now), true);
   assert.equal(isLiveMeteredComputer(box("ready", "neev", fresh.toISOString()), now), true);
@@ -55,12 +56,13 @@ test("a live box: ready, or provisioning while fresh, and never the owner's own"
   );
 });
 
-test("the deployment's owners are not limited; an unset allowlist is everyone", () => {
+test("only explicitly configured plan-limit exemptions are exempt", () => {
   assert.equal(exemptFromPlanLimits({ githubLogin: "MDub3y" }, "immadsahin, MDub3y"), true);
   assert.equal(exemptFromPlanLimits({ githubLogin: "MDub3y" }, "immadsahin,sajdakabir"), false);
   // A login that never resolved cannot match a set allowlist.
   assert.equal(exemptFromPlanLimits({ githubLogin: "" }, "immadsahin"), false);
-  assert.equal(exemptFromPlanLimits({ githubLogin: "anyone" }, undefined), true);
+  // Open sign-up is separate from exemptions: an unset list exempts nobody.
+  assert.equal(exemptFromPlanLimits({ githubLogin: "anyone" }, undefined), false);
 });
 
 test("a refused claim is recognised, and only that", () => {

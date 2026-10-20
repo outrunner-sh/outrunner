@@ -128,6 +128,10 @@ injected per sandbox. A shared one would land in a box where Claude runs with
 `RUNTIME_OWNER_GITHUB_LOGIN` is optional and **blank means open sign-up** —
 note the polarity. Set it only to restrict access to named GitHub logins.
 
+`RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN` is a separate optional list of GitHub
+logins exempt from plan limits only. Blank exempts nobody, so an open sign-up
+deployment still enforces plan limits for every user.
+
 `RUNTIME_BASE_URL=https://app.outrunner.sh` is set in `worker.ts` (`APP_ORIGIN`)
 and gates the app's same-origin CSRF checks, so it must equal the live domain.
 

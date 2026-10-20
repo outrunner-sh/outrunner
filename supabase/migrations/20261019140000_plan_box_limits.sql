@@ -6,10 +6,11 @@
 -- moment, on different projects where the per-project lock does not serialise
 -- them, meet a per-user lock and a count in one transaction.
 --
--- A claim passes max_live_computers = null when no cap applies: the
--- deployment's owners (RUNTIME_OWNER_GITHUB_LOGIN; an unset allowlist is an
--- open deployment), or a box on the user's own Daytona or Modal, which is
--- their bill, not the plan's (lib/billing/limits.ts).
+-- A claim passes max_live_computers = null when no cap applies: an explicitly
+-- exempt operator (RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN), or a box on the
+-- user's own Daytona or Modal, which is their bill, not the plan's
+-- (lib/billing/limits.ts). An unset exemption list applies limits to everyone,
+-- including on an open sign-up deployment.
 --
 -- The count mirrors liveMeteredComputers in lib/billing/limits.ts; keep the
 -- two together.

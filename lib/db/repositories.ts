@@ -333,7 +333,7 @@ export async function claimRuntimeComputer(input: {
   projectId: string;
   agentSecret: string;
   /** The plan's cap on the owner's running boxes, enforced by the claim in
-   *  the database (20261019130000_plan_box_limits.sql); null or unset when
+   *  the database (20261019140000_plan_box_limits.sql); null or unset when
    *  none applies. */
   maxLiveComputers?: number | null;
 }): Promise<{ computer: RuntimeComputer; shouldProvision: boolean }> {
@@ -346,7 +346,7 @@ export async function claimRuntimeComputer(input: {
     });
 
   let { data, error } = await call(input.maxLiveComputers !== undefined);
-  // Before 20261019130000 takes the argument, the claim still works,
+  // Before 20261019140000 takes the argument, the claim still works,
   // uncapped, until the migration is run.
   if (error && input.maxLiveComputers !== undefined && error.code === "PGRST202") {
     console.warn("claim_runtime_computer without the plan's box cap: run the migrations");

@@ -13,9 +13,10 @@
  * is refused with the upgrade link; a box already running is never paused
  * (the reconciler pauses idle ones itself, after 15 minutes).
  *
- * A deployment's owners (RUNTIME_OWNER_GITHUB_LOGIN) run the deployment:
- * the limits are not for them. An unset allowlist is an open deployment,
- * where everyone is an owner (lib/auth/allowlist.ts).
+ * The deployment's named operators can be exempted with
+ * RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN. That is separate from
+ * RUNTIME_OWNER_GITHUB_LOGIN, which controls sign-in; an unset exemption list
+ * exempts nobody, so open sign-up does not disable plan limits.
  */
 
 import { parseAllowlist } from "@/lib/auth/allowlist";
@@ -81,7 +82,7 @@ export type MeteredComputerRow = Pick<RuntimeComputer, "status" | "provider" | "
  *  (ready, or provisioning while still fresh — a claim whose provision died
  *  holds no slot forever), and on Outrunner's sandboxes, not the owner's
  *  own Daytona or Modal. Mirrors live_metered_computers in
- *  supabase/migrations/20261019130000_plan_box_limits.sql; keep them
+ *  supabase/migrations/20261019140000_plan_box_limits.sql; keep them
  *  together. */
 export function isLiveMeteredComputer(computer: MeteredComputerRow, now: Date): boolean {
   if (computer.provider === "user-daytona" || computer.provider === "user-modal") return false;
@@ -97,15 +98,13 @@ export function liveMeteredComputers(computers: readonly MeteredComputerRow[], n
   return computers.filter((computer) => isLiveMeteredComputer(computer, now)).length;
 }
 
-/** Whether the plan's limits are for this owner: they are not for the
- *  deployment's owners, and an unset allowlist is an open deployment where
- *  everyone is one (lib/auth/allowlist.ts). */
+/** Whether this login appears in the explicit plan-limit exemption list.
+ *  Unlike the sign-in allowlist, an unset list exempts nobody. */
 export function exemptFromPlanLimits(
   owner: Pick<Owner, "githubLogin">,
   allowlistRaw: string | undefined,
 ): boolean {
   const allowlist = parseAllowlist(allowlistRaw);
-  if (allowlist.size === 0) return true;
   return allowlist.has(owner.githubLogin.trim().toLowerCase());
 }
 
@@ -131,7 +130,9 @@ export async function cloudBoxStartGate(
       import("@/lib/db/repositories"),
     ]);
   if (!isMetered(provider)) return { cap: null };
-  if (exemptFromPlanLimits(owner, optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN"))) return { cap: null };
+  if (exemptFromPlanLimits(owner, optionalEnv("RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN"))) {
+    return { cap: null };
+  }
   const now = new Date();
   const { plan, allowancePeriod } = await entitlementsFor(owner.id);
   const period = allowancePeriod ?? calendarMonth(now);
