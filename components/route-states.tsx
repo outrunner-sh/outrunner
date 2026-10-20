@@ -21,19 +21,23 @@ export function RouteLoading({ label }: { label: string }) {
 /**
  * A state that takes the whole page or panel: a route that failed or is
  * missing, a session that didn't start. `actions` are the ways on (defaults to
- * a way home); `footer` sits under them, for a fact or a follow-up message.
+ * a way home); `footer` sits under them, for a fact shown from the start.
+ * `message` is what an action came back with: it hangs under the actions
+ * without taking space, so the centered page doesn't jump when it appears.
  */
 export function RouteMessage({
   title,
   detail,
   actions,
   footer,
+  message,
   className,
 }: {
   title: string;
   detail: React.ReactNode;
   actions?: NoticeAction[];
   footer?: React.ReactNode;
+  message?: React.ReactNode;
   className?: string;
 }) {
   return (
@@ -43,7 +47,10 @@ export function RouteMessage({
         <h1 className="route-state-title">{title}</h1>
         <p className="route-state-detail">{detail}</p>
       </div>
-      {actions ? <NoticeActions actions={actions} className="route-state-actions" /> : <HomeLink />}
+      <div className="route-state-action-row">
+        {actions ? <NoticeActions actions={actions} className="route-state-actions" /> : <HomeLink />}
+        {message && <div className="route-state-message">{message}</div>}
+      </div>
       {footer}
     </div>
   );

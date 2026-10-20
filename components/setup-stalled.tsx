@@ -32,18 +32,25 @@ export function SetupStalled({ workspace, onKeepWaiting }: { workspace: Workspac
           usually takes under a minute, so it may have stopped. Large repositories can take longer.
         </span>
       </p>
-      <NoticeActions
-        actions={[
-          { label: starting ? "Starting…" : "Start over", icon: <RotateCw />, primary: true, disabled: starting, onClick: () => void start() },
-          { label: "Keep waiting", disabled: starting, onClick: onKeepWaiting },
-          { label: "Delete", icon: <Trash2 />, disabled: starting, onClick: () => setDeleting(true) },
-        ]}
-      />
-      {error && (
-        <InlineMessage actions={error.href ? [{ label: "Open settings", href: error.href }] : undefined}>
-          {error.message}
-        </InlineMessage>
-      )}
+      {/* The reason hangs under the buttons without taking space: the steps
+          are centered, and growing would shift them all. */}
+      <div className="relative">
+        <NoticeActions
+          actions={[
+            { label: "Start over", icon: <RotateCw className={starting ? "is-working" : undefined} />, primary: true, disabled: starting, onClick: () => void start() },
+            { label: "Keep waiting", disabled: starting, onClick: onKeepWaiting },
+            { label: "Delete", icon: <Trash2 />, disabled: starting, onClick: () => setDeleting(true) },
+          ]}
+        />
+        {error && (
+          <InlineMessage
+            className="is-arriving absolute inset-x-0 top-full mt-3"
+            actions={error.href ? [{ label: "Open settings", href: error.href }] : undefined}
+          >
+            {error.message}
+          </InlineMessage>
+        )}
+      </div>
       <DeleteSessionDialog
         session={deleting ? { id: workspace.id, title: workspaceLabel(workspace), deletion: { kind: "cloud" } } : null}
         onOpenChange={setDeleting}

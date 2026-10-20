@@ -22,7 +22,8 @@ export function useStartOver(workspace: Workspace) {
 
   const start = async () => {
     setRetrying(true);
-    setRetryError(null);
+    // The last reason stays until this attempt has its own answer: clearing it
+    // now would blink it off and on again when the answer comes back at once.
     try {
       const res = await fetch(`/api/projects/${workspace.projectId}/workspaces`, {
         method: "POST",
@@ -38,6 +39,7 @@ export function useStartOver(workspace: Workspace) {
         setRetryError({ message: body.error ?? "Couldn't start a new session.", href: body.settingsHref });
         return;
       }
+      setRetryError(null);
       const first = rememberedFirstPrompt(tabStorage(), workspace.id);
       if (first) rememberFirstPrompt(tabStorage(), body.workspace.id, first);
       router.push(`/workspaces/${body.workspace.id}${first ? firstPromptQuery(first) : ""}`);
@@ -68,10 +70,10 @@ export function SessionDidntStart({ workspace, detail }: { workspace: Workspace;
         title="This session didn't start"
         detail={detail}
         actions={[
-          { label: retrying ? "Starting…" : "Try again", icon: <RotateCw />, primary: true, disabled: retrying, onClick: () => void tryAgain() },
+          { label: "Try again", icon: <RotateCw className={retrying ? "is-working" : undefined} />, primary: true, disabled: retrying, onClick: () => void tryAgain() },
           { label: "Delete session", icon: <Trash2 />, disabled: retrying, onClick: () => setDeleting(true) },
         ]}
-        footer={
+        message={
           retryError && (
             <InlineMessage
               className="max-w-sm"

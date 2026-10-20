@@ -232,7 +232,12 @@
 .notice-action:hover { background:rgba(255,255,255,.06); }
 .notice-action.is-primary { border-color:transparent; color:#111; background:#f2f2f2; }
 .notice-action.is-primary:hover { background:#fff; }
-.notice-action:disabled { opacity:.5; cursor:default; }
+/* While an action runs, its button keeps its label and width and only its
+   icon turns, and its neighbours dim; both wait 150ms, so an answer that
+   comes back at once changes nothing on screen. Re-enabling is instant. */
+.notice-action:disabled { opacity:.5; cursor:default; transition:background-color .15s, opacity .12s .15s; }
+.notice-action .is-working { animation:spinner-turn .9s linear .15s infinite; }
+@media (prefers-reduced-motion: reduce) { .notice-action .is-working { animation:none; } }
 .notice-action svg { width:13px; height:13px; }
 .notice-actions.is-inline .notice-action { height:auto; padding:0; border:0; background:transparent; color:inherit; text-decoration:underline; text-underline-offset:2px; }
 .error-ref { display:inline-flex; align-items:center; gap:4px; font-family:var(--font-geist-mono); font-size:11px; }
@@ -389,6 +394,11 @@
 .route-state-button:hover { background: rgba(255,255,255,.05); }
 .route-state-button.is-primary { border-color: transparent; color: var(--background); background: var(--foreground); }
 .route-state-button.is-primary:hover { background: color-mix(in oklab, var(--foreground) 88%, transparent); }
+.route-state-action-row { position:relative; display:flex; flex-direction:column; align-items:center; }
+.route-state-message { position:absolute; top:100%; margin-top:12px; width:max-content; max-width:min(384px, 90vw); }
+/* A reason that arrives after a click eases in rather than popping. */
+.route-state-message, .is-arriving { animation:skeleton-in .15s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .route-state-message, .is-arriving { animation:none; } }
 .route-state-actions .notice-action { height:32px; padding:0 12px; border-radius:8px; font-size:13px; }
 .dot-matrix.is-still .dot-matrix-cell { animation: none; }
 @media (prefers-reduced-motion: reduce) { .route-state { animation: none; } }
