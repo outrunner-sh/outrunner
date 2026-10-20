@@ -366,3 +366,33 @@ func TestARolloutIsTheOneBegunSinceLaunchNotOneWrittenSince(t *testing.T) {
 		t.Fatalf("codexRollout = %q, want %q", got, own)
 	}
 }
+
+func TestATailKeepsWhatItCouldNotWriteAndWritesItInOrder(t *testing.T) {
+	s, id, link, sessions := localCodexSession(t)
+	resolved, _ := filepath.EvalSymlinks(link)
+	data := fixtureRollout(t, resolved)
+	half := bytes.LastIndexByte(data[:len(data)/2], '\n') + 1
+	path := writeRollout(t, sessions, time.Now(), "rollout-full-disk.jsonl", data[:half], time.Now())
+	// The log can't be written: its folder is taken by a file.
+	blocked := filepath.Dir(conversationPath(s.Root, id))
+	if err := os.WriteFile(blocked, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tail := &codexTail{s: s, workspaceID: id}
+	drain(tail)
+	if len(tail.pending) == 0 {
+		t.Fatal("nothing kept of what couldn't be written")
+	}
+	// The rest arrives, and the log can be written again.
+	file, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	_, _ = file.Write(data[half:])
+	file.Close()
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	drain(tail)
+	got, _ := os.ReadFile(conversationPath(s.Root, id))
+	if uuids := logUUIDs(t, got); !slices.Equal(uuids, translatedUUIDs(t, data)) {
+		t.Errorf("uuids = %q\nwant every record once, in order: %q", uuids, translatedUUIDs(t, data))
+	}
+}

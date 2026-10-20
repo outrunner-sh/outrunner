@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -339,6 +340,13 @@ type codexTail struct {
 	// heldBefore: the translator was holding records at the end of the last
 	// read too, so they have waited long enough for their usage.
 	heldBefore bool
+	// pending is what a write couldn't append (a full disk, say), in order:
+	// tried again before anything after it, so the log never skips a record
+	// that a restart would then take for written.
+	pending []byte
+	// failing: the last write failed and was logged, so the next failures
+	// aren't, until one succeeds.
+	failing bool
 
 	stop context.CancelFunc
 	done chan struct{}
@@ -424,6 +432,9 @@ func (t *codexTail) read() {
 		}
 		t.partial = append([]byte(nil), data...)
 	}
+	if len(t.pending) > 0 {
+		t.write(nil) // what couldn't be written before, before anything new
+	}
 	if !t.tr.Holding() {
 		t.heldBefore = false
 	} else if t.heldBefore {
@@ -434,36 +445,52 @@ func (t *codexTail) read() {
 	}
 }
 
-// write appends records the log doesn't hold yet. A last line a crash cut
-// short is ended first, so the next record doesn't run into it.
+// write appends records the log doesn't hold yet, after any an earlier write
+// couldn't. A last line a crash cut short is ended first, so the next record
+// doesn't run into it. What can't be written now is kept and tried again on
+// the next read.
 func (t *codexTail) write(recs []codex.Record) {
 	session := t.tr.SessionID()
-	var out []byte
 	for _, rec := range recs {
 		if session == t.writtenSession && rec.Offset <= t.writtenOffset {
 			continue
 		}
-		out = append(out, rec.Line...)
+		t.pending = append(t.pending, rec.Line...)
 	}
-	if len(out) == 0 {
+	if len(t.pending) == 0 {
 		return
 	}
-	path := conversationPath(t.s.Root, t.workspaceID)
+	if err := appendRecords(conversationPath(t.s.Root, t.workspaceID), t.pending); err != nil {
+		if !t.failing {
+			log.Printf("workspace %s: couldn't write its Codex conversation (will retry): %v", t.workspaceID, err)
+		}
+		t.failing = true
+		return
+	}
+	t.pending, t.failing = nil, false
+}
+
+// appendRecords appends whole lines to a conversation log, ending a last line
+// a crash cut short first.
+func appendRecords(path string, out []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
+		return err
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
-		return
+		return err
 	}
-	defer file.Close()
 	if info, err := file.Stat(); err == nil && info.Size() > 0 {
 		last := make([]byte, 1)
 		if _, err := file.ReadAt(last, info.Size()-1); err == nil && last[0] != '\n' {
 			out = append([]byte("\n"), out...)
 		}
 	}
-	_, _ = file.Write(out)
+	_, err = file.Write(out)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 // lastWrittenRecord is the session and rollout line of the last translated
