@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: shell basics, the native Claude connect commands, the local-session relay, and the sidebar's Update button.",
+  "description": "Main window: shell basics, the native Claude connect commands, the local agent CLI logins, the local-session relay, and the sidebar's Update button.",
   "windows": [
     "main"
   ],
@@ -23,6 +23,8 @@
     "allow-local-status",
     "allow-local-claude-login",
     "allow-local-claude-login-cancel",
+    "allow-local-codex-login",
+    "allow-local-codex-login-cancel",
     "allow-local-claude-setup",
     "allow-local-pick-folder",
     "allow-local-check-folder",

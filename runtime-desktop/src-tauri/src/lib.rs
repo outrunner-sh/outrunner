@@ -173,6 +173,8 @@ pub fn run() {
             local_runtime::local_status,
             local_runtime::local_claude_login,
             local_runtime::local_claude_login_cancel,
+            local_runtime::local_codex_login,
+            local_runtime::local_codex_login_cancel,
             local_runtime::local_claude_setup,
             local_runtime::local_pick_folder,
             local_runtime::local_check_folder,
