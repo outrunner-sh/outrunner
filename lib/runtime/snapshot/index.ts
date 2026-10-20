@@ -5,10 +5,12 @@
  * (and on M3's Workspace Session) and live elsewhere.
  */
 export {
+  OPTIONAL_SNAPSHOT_ARTIFACTS,
   SNAPSHOT_ARTIFACTS,
   SnapshotManifest,
   SnapshotTree,
   parseManifest,
+  type OptionalSnapshotArtifact,
   type SnapshotArtifact,
 } from "@/lib/runtime/snapshot/manifest";
 export {

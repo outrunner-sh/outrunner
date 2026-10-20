@@ -74,3 +74,35 @@ test("schemas reject malformed messages", () => {
     "ptyUrl is required",
   );
 });
+
+test("a session credential fits its kind, and none takes no token", () => {
+  const key = "sk-proj-0123456789abcdef0123456789";
+  const { SetAuthRequest } = PROTOCOL_SCHEMAS;
+  assert.equal(SetAuthRequest.safeParse({ kind: "none", token: key }).success, false);
+  assert.equal(SetAuthRequest.safeParse({ kind: "openai-api-key" }).success, false);
+  assert.equal(SetAuthRequest.safeParse({ kind: "openai-api-key", token: "short" }).success, false);
+  assert.equal(SetAuthRequest.safeParse({ kind: "openai-api-key", token: `${key}'; rm -rf ~` }).success, false);
+  assert.equal(SetAuthRequest.safeParse({ kind: "chatgpt", token: key }).success, false);
+});
+
+test("a rollout may join an archive or a restore, but never replace what they need", () => {
+  const upload = (artifact: string) => ({ artifact, url: `https://s.example/${artifact}` });
+  const six = ["conversation", "cast", "bundle", "patch", "summary", "manifest"];
+  const archive = (artifacts: string[]) =>
+    PROTOCOL_SCHEMAS.ArchiveWorkspaceRequest.safeParse({ archivedAt: "t", uploads: artifacts.map(upload) }).success;
+  assert.equal(archive(six), true);
+  assert.equal(archive([...six, "rollout"]), true);
+  assert.equal(archive([...six, "rollout", "rollout"]), false, "no duplicates");
+  assert.equal(archive([...six.slice(1), "rollout"]), false, "the conversation is still required");
+
+  const restore = (agent: string, artifacts: string[]) =>
+    PROTOCOL_SCHEMAS.RestoreWorkspaceRequest.safeParse({
+      branch: "b",
+      sessionId: "s",
+      agent,
+      downloads: artifacts.map(upload),
+    }).success;
+  assert.equal(restore("codex", ["bundle", "patch", "conversation", "rollout"]), true);
+  assert.equal(restore("codex", ["bundle", "patch", "rollout"]), false, "the conversation is still required");
+  assert.equal(restore("gemini", ["bundle", "patch", "conversation"]), false);
+});
