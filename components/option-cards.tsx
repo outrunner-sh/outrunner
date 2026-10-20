@@ -15,10 +15,10 @@ export type OptionCard<Id extends string> = {
 };
 
 /**
- * A row of cards as a radio group: the one `chosen` has a tick, and the one
- * `shown` is the card whose details are below. Selecting a card (a click, or
- * arrow keys as in any radio group) calls `onSelect`; whether that also
- * chooses it is the caller's to say.
+ * A row of cards as tabs: the one `shown` is selected, its details below;
+ * the one `chosen` (in use) has a tick, said to a screen reader as
+ * `chosenLabel`. Selecting a card (a click, or arrow keys as in any tablist)
+ * calls `onSelect`; whether that also chooses it is the caller's to say.
  */
 export function OptionCards<Id extends string>({
   options,
@@ -27,6 +27,7 @@ export function OptionCards<Id extends string>({
   busy = false,
   onSelect,
   label,
+  chosenLabel = "chosen",
 }: {
   options: OptionCard<Id>[];
   chosen: Id | null;
@@ -34,6 +35,8 @@ export function OptionCards<Id extends string>({
   busy?: boolean;
   onSelect: (id: Id) => void;
   label: string;
+  /** What the tick means, for a screen reader: "in use", "chosen". */
+  chosenLabel?: string;
 }) {
   const cards = useRef<Partial<Record<Id, HTMLButtonElement | null>>>({});
 
@@ -48,7 +51,7 @@ export function OptionCards<Id extends string>({
   }
 
   return (
-    <div role="radiogroup" aria-label={label} onKeyDown={onKeyDown} className="grid grid-cols-3 gap-3">
+    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className="grid grid-cols-3 gap-3">
       {options.map(({ id, label: name, icon: Icon, connected }) => {
         const isChosen = id === chosen;
         const isShown = id === shown;
@@ -59,8 +62,8 @@ export function OptionCards<Id extends string>({
               cards.current[id] = el;
             }}
             type="button"
-            role="radio"
-            aria-checked={isChosen}
+            role="tab"
+            aria-selected={isShown}
             tabIndex={isShown ? 0 : -1}
             disabled={busy}
             onClick={() => onSelect(id)}
@@ -71,7 +74,12 @@ export function OptionCards<Id extends string>({
                 : "border-border/60 text-muted-foreground hover:bg-muted/30 hover:text-foreground",
             )}
           >
-            {isChosen ? <Check aria-hidden className="absolute top-2.5 right-2.5 size-4 text-foreground" /> : null}
+            {isChosen ? (
+              <>
+                <Check aria-hidden className="absolute top-2.5 right-2.5 size-4 text-foreground" />
+                <span className="sr-only">({chosenLabel})</span>
+              </>
+            ) : null}
             {connected && !isChosen ? (
               <>
                 <span aria-hidden className="absolute top-3.5 right-3.5 size-1.5 rounded-full bg-positive" />

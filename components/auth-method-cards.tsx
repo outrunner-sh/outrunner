@@ -44,6 +44,7 @@ export function AuthMethodCards({
       busy={busy}
       onSelect={onChoose}
       label={label}
+      chosenLabel="chosen"
     />
   );
 }
