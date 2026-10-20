@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
+import { InlineMessage } from "@/components/ui/notice";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
@@ -55,6 +56,8 @@ export function SessionComposer({
   model,
   modelChoice,
   allowAttachments = true,
+  sendError = null,
+  onDismissSendError,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -72,6 +75,10 @@ export function SessionComposer({
   /** False hides attaching. Attachments are delivered by the server, which
    *  cannot reach a local session's worktree on the user's Mac. */
   allowAttachments?: boolean;
+  /** Why the last send didn't go. Its text is back in the box, so the line
+   *  offers to send it again or edit it first. */
+  sendError?: string | null;
+  onDismissSendError?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -171,6 +178,23 @@ export function SessionComposer({
         <p role="status" className="studio-composer-notice">
           {notice}
         </p>
+      )}
+      {sendError && !sending && (
+        <InlineMessage
+          className="studio-composer-message"
+          actions={[
+            { label: "Retry", onClick: submit, disabled: !canSend },
+            {
+              label: "Edit",
+              onClick: () => {
+                onDismissSendError?.();
+                textareaRef.current?.focus();
+              },
+            },
+          ]}
+        >
+          Not sent · {sendError}
+        </InlineMessage>
       )}
       {attachments.items.length > 0 && (
         <ul className="flex flex-wrap gap-2 px-1 pb-2">

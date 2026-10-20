@@ -79,14 +79,11 @@ export function WorkspaceSession({
   const [sendError, setSendError] = useState<string | null>(null);
   // A model switch that didn't happen: which model, why, and where to fix it.
   const [switchError, setSwitchError] = useState<{ label: string; message: string; href?: string } | null>(null);
-  // A broken connection outranks a failed send: reconnecting is the way out of
-  // it. A failed send or model switch is only dismissed — the composer already
-  // has the prompt back to send again.
+  // A failed send is shown by the composer, beside the prompt it gave back.
   // A dropped stream gets its own notice (retrying, then lost) instead of the
   // strip, so a handshake failure mid-retry doesn't flash red.
   const streamDropped = conversation.reconnecting !== null || conversation.lost;
   const connectionError = streamDropped ? null : (conversation.error ?? attachment.error);
-  const error = connectionError ?? sendError;
   const refresh = () => {
     setSendError(null);
     conversation.refresh();
@@ -150,7 +147,7 @@ export function WorkspaceSession({
         if (body.titled) router.refresh();
         return true;
       },
-      () => failed("Could not reach Outrunner. Check your connection and send it again."),
+      () => failed("Couldn't reach Outrunner. Check your connection."),
     );
   };
 
@@ -326,14 +323,10 @@ export function WorkspaceSession({
           ]}
         />
       )}
-      {error && (
+      {connectionError && (
         <div className="studio-session-error" role="alert">
-          <span>{error}</span>
-          {connectionError ? (
-            <button type="button" onClick={refresh}>Reconnect</button>
-          ) : (
-            <button type="button" onClick={() => setSendError(null)}>Dismiss</button>
-          )}
+          <span>{connectionError}</span>
+          <button type="button" onClick={refresh}>Reconnect</button>
         </div>
       )}
 
@@ -398,6 +391,8 @@ export function WorkspaceSession({
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
+        sendError={connectionError ? null : sendError}
+        onDismissSendError={() => setSendError(null)}
       />
     </div>
   );

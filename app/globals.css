@@ -245,6 +245,7 @@
 .inline-message-details { margin:4px 0 0 20px; color:rgba(255,255,255,.5); }
 .inline-message-details summary { cursor:pointer; font-size:11px; }
 .inline-message-details pre { margin:4px 0 0; padding:8px 10px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:6px; background:#111; font:11px/1.5 var(--font-geist-mono); white-space:pre-wrap; }
+.studio-composer-message { padding:10px 16px 0; }
 /* In the session column, a notice sits where the error strip does. */
 .studio-live-session > .notice { margin:10px auto 0; max-width:820px; width:calc(100% - 32px); }
 
