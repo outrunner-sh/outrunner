@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
+	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -405,6 +406,34 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 	default:
 		respond(w, req.Model, err)
 	}
+}
+
+// setAuth gives the workspace's session its own credential, or takes it away;
+// it applies at the session's next launch. The token is checked like a
+// gateway key: it goes into a sourced file, and is masked in every session's
+// output.
+func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.SetAuthRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if !workspace.ValidAuthKind(req.Kind) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("unknown credential kind %q", req.Kind))
+		return
+	}
+	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a credential needs a valid token, and none takes one")
+		return
+	}
+	err := s.ws.SetAuth(r.Context(), r.PathValue("id"), req.Kind, req.Token)
+	if errors.Is(err, workspace.ErrAuthMismatch) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	respond(w, req.Kind, err)
 }
 
 // pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach

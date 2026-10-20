@@ -159,9 +159,15 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	}
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.
-		return claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
+		argv = claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
+	} else {
+		argv = claude.WithModel(argv, f.Model)
 	}
-	return claude.WithModel(argv, f.Model)
+	if f.Auth != "" {
+		// Sourced first, so a gateway's file, sourced after it, wins.
+		argv = claude.WithEnvFile(argv, s.authFiles().path(workspaceID))
+	}
+	return argv
 }
 
 // claudeConvDir is where Claude writes this workspace's conversation JSONL:

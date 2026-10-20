@@ -19,11 +19,16 @@ type codexAgent struct{ s *Service }
 // end with nothing to say why.
 var ErrCodexMissing = fmt.Errorf("Codex isn't installed on this computer. Install it with `%s`, then start the session again", codex.InstallHint)
 
-func (a codexAgent) prepare(_ context.Context, _ string) error {
+// prepare finds Codex, then readies the session's own Codex home when it has
+// an OpenAI key (prepareCodexHome); without one, Codex runs in the user's.
+func (a codexAgent) prepare(ctx context.Context, workspaceID string) error {
 	if _, err := a.s.lookPath("codex"); err != nil {
 		return ErrCodexMissing
 	}
-	return nil
+	if !a.s.ownCodexHome(workspaceID) {
+		return nil
+	}
+	return a.s.prepareCodexHome(ctx, workspaceID)
 }
 
 // command launches Codex with the session's orientation, model and mode, and
@@ -32,7 +37,8 @@ func (a codexAgent) prepare(_ context.Context, _ string) error {
 func (a codexAgent) command(workspaceID, worktree string, _ bool) []string {
 	s := a.s
 	f, _ := s.getFacts(workspaceID)
-	return codex.Command(s.permissionMode(workspaceID), f.CodexSessionID, f.Model, s.orientation(workspaceID, worktree))
+	argv := codex.Command(s.permissionMode(workspaceID), f.CodexSessionID, f.Model, s.orientation(workspaceID, worktree))
+	return append(s.codexLaunchEnv(workspaceID), argv...)
 }
 
 // env is the agent's own: a Claude login token means nothing to Codex.

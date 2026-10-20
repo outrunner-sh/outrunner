@@ -35,6 +35,16 @@ func (k keyFiles) read(workspaceID string) string {
 	return string(data)
 }
 
+// value is the key the session's file exports in the variable name, or "".
+func (k keyFiles) value(workspaceID, name string) string {
+	for _, line := range k.keyLines(k.read(workspaceID)) {
+		if value, ok := strings.CutPrefix(line, "export "+name+"="); ok {
+			return strings.Trim(value, "'")
+		}
+	}
+	return ""
+}
+
 // put stores the session's file, or removes it for none. The keys of the file
 // it replaces are kept in the retired file first.
 func (k keyFiles) put(workspaceID, content string) error {

@@ -87,6 +87,15 @@ type SetModelRequest struct {
 	Token   string `json:"token,omitempty"`
 }
 
+// SetAuthRequest gives a workspace's session its own credential, applied at
+// its next launch: Kind is "claude-oauth-token" or "anthropic-api-key" for a
+// Claude session, "openai-api-key" for a Codex one, or "none" to take it
+// away (the agent's own login applies again), which carries no Token.
+type SetAuthRequest struct {
+	Kind  string `json:"kind"`
+	Token string `json:"token,omitempty"`
+}
+
 // ListingWorkspaceID is the workspace claim of the only token that may list an
 // agent's sessions (GET /workspaces). No real workspace can have it — the id
 // checks on both sides refuse '*' — so a token issued for one workspace, like

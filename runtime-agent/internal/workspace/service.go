@@ -89,6 +89,12 @@ type Service struct {
 	// lookPath finds an agent's binary (exec.LookPath); tests stand in for a
 	// computer with or without it.
 	lookPath func(file string) (string, error)
+	// runCommand runs a helper an agent needs before a launch (`codex
+	// login`); tests stand in for it.
+	runCommand func(ctx context.Context, env []string, stdin string, argv ...string) ([]byte, error)
+
+	// factsWriteMu serializes updateFacts' read-modify-writes.
+	factsWriteMu sync.Mutex
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -132,6 +138,9 @@ type workspaceFacts struct {
 	// Gateway, when set, runs the session through it on a key of its own (in
 	// the session's gateway file) instead of the user's Claude credential.
 	Gateway claude.Gateway `json:"gateway,omitempty"`
+	// Auth is the kind of the session's own credential (SetAuth), kept in its
+	// auth file; empty runs on its agent's own login.
+	Auth string `json:"auth,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -162,16 +171,17 @@ type CreateInput struct {
 func NewService(root string) *Service {
 	env, secrets := sessionEnvironment(os.Environ())
 	return &Service{
-		Root:      root,
-		tmux:      tmux.New(),
-		env:       env,
-		secrets:   secrets,
-		facts:     map[string]workspaceFacts{},
-		sendLocks: map[string]*sendState{},
-		lifeLocks: map[string]*sync.Mutex{},
-		summaries: map[string]*Summary{},
-		recorders: map[string]*cast.Recorder{},
-		lookPath:  exec.LookPath,
+		Root:       root,
+		tmux:       tmux.New(),
+		env:        env,
+		secrets:    secrets,
+		facts:      map[string]workspaceFacts{},
+		sendLocks:  map[string]*sendState{},
+		lifeLocks:  map[string]*sync.Mutex{},
+		summaries:  map[string]*Summary{},
+		recorders:  map[string]*cast.Recorder{},
+		lookPath:   exec.LookPath,
+		runCommand: runCommand,
 	}
 }
 
@@ -190,7 +200,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 		switch key {
 		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT":
 			continue
-		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY":
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY":
 			if value != "" {
 				secrets = append(secrets, value)
 			}
@@ -203,7 +213,8 @@ func sessionEnvironment(base []string) ([]string, []string) {
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
-	return append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
+	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
+	return append(secrets, s.authFiles().tokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -413,7 +424,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
 	}
-	if err := s.requireGatewayEnv(workspaceID); err != nil {
+	if err := s.requireKeys(workspaceID); err != nil {
 		return "", err
 	}
 	a := s.agentFor(workspaceID)
@@ -650,7 +661,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
 	}
-	if err := s.requireGatewayEnv(workspaceID); err != nil {
+	if err := s.requireKeys(workspaceID); err != nil {
 		return "", err // before the kill: the running session is left as it is
 	}
 	a := s.agentFor(workspaceID)
@@ -755,6 +766,31 @@ func (s *Service) setFacts(workspaceID string, f workspaceFacts) {
 	if os.WriteFile(tmp, data, 0o600) != nil || os.Rename(tmp, path) != nil {
 		_ = os.Remove(tmp)
 	}
+}
+
+// updateFacts changes a workspace's recorded facts in place, reading and
+// writing them under one lock, so two changes made at once (a credential set
+// while a transcript is found) never undo each other. A workspace with no
+// facts is left without: false.
+func (s *Service) updateFacts(workspaceID string, change func(*workspaceFacts)) bool {
+	s.factsWriteMu.Lock()
+	defer s.factsWriteMu.Unlock()
+	f, ok := s.getFacts(workspaceID)
+	if !ok {
+		return false
+	}
+	change(&f)
+	s.setFacts(workspaceID, f)
+	return true
+}
+
+// requireKeys refuses to launch a session whose gateway key or own
+// credential was recorded but whose file is gone.
+func (s *Service) requireKeys(workspaceID string) error {
+	if err := s.requireGatewayEnv(workspaceID); err != nil {
+		return err
+	}
+	return s.requireAuthEnv(workspaceID)
 }
 
 func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
@@ -1141,6 +1177,9 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
 	s.gatewayFiles().remove(workspaceID)
+	s.authFiles().remove(workspaceID)
+	// A session's own Codex home holds a copy of its key (auth.json).
+	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()
