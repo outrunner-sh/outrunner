@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { clearProviderKey, getProviderKeyStatuses, setProviderKey, settleClaudeSlot } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { keySource } from "@/lib/openrouter/keys";
 import { checkProviderKey } from "@/lib/providers/check";
 import { isProviderId, keyProblem, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
-import { probeStatus } from "@/lib/supabase/probe";
 
 export const dynamic = "force-dynamic";
 
@@ -24,31 +24,14 @@ async function providers(userId: string) {
   return { keys, openrouter: keys.openrouter, serverModels: keySource() !== null };
 }
 
-function unauthorized() {
-  return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
-}
-
 /** Run a change, answering the database's refusal as JSON the page can show. */
-async function changing(change: () => Promise<NextResponse>): Promise<NextResponse> {
-  try {
-    return await change();
-  } catch (error) {
-    // Until the migration is applied, the table or its columns aren't there.
-    const status = probeStatus(error as { code?: string });
-    if (status === "outdated" || status === "missing") {
-      return NextResponse.json(
-        { error: "This can't be saved until Outrunner's database is updated. Try again later." },
-        { status: 503 },
-      );
-    }
-    console.error("Could not save provider settings", error);
-    return NextResponse.json({ error: "Couldn't save that. Try again." }, { status: 500 });
-  }
+function changing(change: () => Promise<NextResponse>): Promise<NextResponse> {
+  return savingSettings("provider settings", change);
 }
 
 export async function GET() {
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
   return changing(async () => {
     await settleClaudeSlot(owner.id); // see app/settings/providers/page.tsx
     return NextResponse.json(await providers(owner.id));
@@ -60,7 +43,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
 
   const body = (await request.json().catch(() => null)) as
     | { provider?: unknown; key?: unknown; openrouterKey?: unknown }
@@ -110,7 +93,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
   // No provider named: a page from before the other providers, removing its
   // OpenRouter key. Kept for one release.
   const named = new URL(request.url).searchParams.get("provider");
