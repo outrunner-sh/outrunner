@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { NoticeActions } from "@/components/ui/notice";
 import type { AllowanceView } from "@/lib/openrouter/allowance";
 import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
@@ -44,7 +44,7 @@ export function OutrunnerAllowance() {
     <div className="space-y-1.5 px-2 pb-3">
       <div className="flex items-baseline justify-between gap-2 text-xs">
         <span className="text-muted-foreground">Outrunner&apos;s models</span>
-        <span className={cn("tabular-nums", view.state === "out" ? "text-destructive" : "text-muted-foreground")}>
+        <span className={cn("tabular-nums", view.state === "out" ? "text-warning" : "text-muted-foreground")}>
           {view.label}
         </span>
       </div>
@@ -60,19 +60,16 @@ export function OutrunnerAllowance() {
         <div
           className={cn(
             "h-full rounded-full transition-[width] duration-500",
-            view.state === "out" ? "bg-destructive" : view.state === "low" ? "bg-warning" : "bg-foreground/70",
+            view.state === "ok" ? "bg-foreground/70" : "bg-warning",
           )}
           style={{ width: `${view.percent}%` }}
         />
       </div>
       {view.state === "out" ? (
-        <p className="text-xs text-muted-foreground">
-          You&apos;ve used your included usage.{" "}
-          <Link href={providerSettingsHref("claude")} className="text-foreground underline underline-offset-4">
-            Connect Claude
-          </Link>{" "}
-          to keep going.
-        </p>
+        <>
+          <p className="text-xs text-muted-foreground">You&apos;ve used your included usage.</p>
+          <NoticeActions actions={[{ label: "Connect Claude", href: providerSettingsHref("claude"), primary: true }]} />
+        </>
       ) : null}
     </div>
   );
