@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { useNow } from "@/hooks/use-now";
 import type { Workspace } from "@/lib/runtime/types";
-import { isSettingUp, setupState } from "@/lib/session/provisioning";
+import { isSettingUp, SETUP_STALLS_AFTER_MS, setupState } from "@/lib/session/provisioning";
 
 const POLL_MS = 2000;
 
@@ -13,7 +13,8 @@ const POLL_MS = 2000;
  * Where a new cloud session's setup stands, for its page: it opens before the
  * box is ready. While setup runs, the session's status is polled, and the page
  * re-read once it ends — ready or failed — so the session attaches, or says
- * why it didn't, without a reload.
+ * why it didn't, without a reload. `keepWaiting` gives a stalled setup another
+ * stall period of polling before it is called stalled again.
  */
 export function useWorkspaceSetup(
   workspace: Pick<Workspace, "id" | "status" | "createdAt">,
@@ -23,7 +24,9 @@ export function useWorkspaceSetup(
   const router = useRouter();
   // Ticks only matter while setting up: they move a long setup to "stalled".
   const now = useNow(isSettingUp(workspace.status) ? POLL_MS : 60_000);
-  const state = cloud ? setupState(workspace, now) : "ended";
+  const [graceUntil, setGraceUntil] = useState(0);
+  const judged = cloud ? setupState(workspace, now) : "ended";
+  const state = judged === "stalled" && now < graceUntil ? "running" : judged;
   const running = state === "running";
 
   useEffect(() => {
@@ -51,5 +54,6 @@ export function useWorkspaceSetup(
     };
   }, [running, workspace.id, router]);
 
-  return state;
+  const keepWaiting = () => setGraceUntil(Date.now() + SETUP_STALLS_AFTER_MS);
+  return { state, keepWaiting };
 }

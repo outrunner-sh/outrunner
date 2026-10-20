@@ -1,9 +1,10 @@
 "use client";
 
-import { Check, GitBranch } from "lucide-react";
+import { Check, Clock, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { DotMatrix, Spinner } from "@/components/ui/loaders";
+import { cn } from "@/lib/utils";
 
 /**
  * Provisioning progress, shown in a new session's chat while its box is set up.
@@ -37,9 +38,13 @@ export function WorkspaceCreating({
   projectName,
   branch,
   startedAt,
+  stalled,
 }: {
   projectName: string;
   branch: string;
+  /** Set up for so long it may never finish: shown under the steps, and the
+   *  current step stops turning. */
+  stalled?: React.ReactNode;
   /** When setup began (the session's creation), so a session opened midway
    *  shows the time it has really taken. */
   startedAt: string;
@@ -81,12 +86,12 @@ export function WorkspaceCreating({
           {STAGES.map((stage, i) => {
             const state = i < active ? "done" : i === active ? "current" : "pending";
             return (
-              <li key={stage.label} className={`task-step is-${state}`}>
+              <li key={stage.label} className={cn("task-step", `is-${state}`, stalled && state === "current" && "is-stalled")}>
                 <span className="task-step-mark" aria-hidden>
                   {state === "done" ? (
                     <Check strokeWidth={3} />
                   ) : state === "current" ? (
-                    <Spinner />
+                    stalled ? <Clock /> : <Spinner />
                   ) : (
                     <span className="task-step-dot" />
                   )}
@@ -105,6 +110,8 @@ export function WorkspaceCreating({
             {clock(elapsed)} <span className="text-muted-foreground/60">/ ~{ESTIMATE_SECONDS}s</span>
           </span>
         </div>
+
+        {stalled}
       </div>
     </div>
   );

@@ -12,17 +12,15 @@ import type { Workspace } from "@/lib/runtime/types";
 import { firstPromptQuery, rememberFirstPrompt, rememberedFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 
 /**
- * A cloud session whose box never came up. Try again starts a fresh session on
- * the same repository, carrying over the first prompt still waiting in this
- * tab; Delete removes the failed one.
+ * Start a fresh session on `workspace`'s repository in its place, carrying over
+ * the first prompt still waiting in this tab, and go to it.
  */
-export function SessionDidntStart({ workspace, detail }: { workspace: Workspace; detail: string }) {
+export function useStartOver(workspace: Workspace) {
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<{ message: string; href?: string } | null>(null);
-  const [deleting, setDeleting] = useState(false);
 
-  const tryAgain = async () => {
+  const start = async () => {
     setRetrying(true);
     setRetryError(null);
     try {
@@ -50,6 +48,18 @@ export function SessionDidntStart({ workspace, detail }: { workspace: Workspace;
       setRetrying(false);
     }
   };
+
+  return { start, starting: retrying, error: retryError };
+}
+
+/**
+ * A cloud session whose box never came up. Try again starts over in a fresh
+ * session; Delete removes the failed one.
+ */
+export function SessionDidntStart({ workspace, detail }: { workspace: Workspace; detail: string }) {
+  const router = useRouter();
+  const { start: tryAgain, starting: retrying, error: retryError } = useStartOver(workspace);
+  const [deleting, setDeleting] = useState(false);
 
   return (
     <>

@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { SessionComposer } from "@/components/session-composer";
 import { SessionDidntStart } from "@/components/session-didnt-start";
+import { SetupStalled } from "@/components/setup-stalled";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { WorkspaceSession } from "@/components/workspace-session";
@@ -56,10 +57,10 @@ export function WorkspaceStudio({
     }
   };
   const isLocal = local !== undefined;
-  const setup = useWorkspaceSetup(workspace, !isLocal);
+  const { state: setup, keepWaiting } = useWorkspaceSetup(workspace, !isLocal);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
-  const offline = offlineCopy({ workspace, isReady, stalled: setup === "stalled" });
+  const offline = offlineCopy({ workspace, isReady });
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
@@ -109,19 +110,24 @@ export function WorkspaceStudio({
               initialPrompt={initialPrompt}
               initialAttachmentIds={initialAttachmentIds}
             />
-          ) : setup === "running" ? (
+          ) : setup !== "ended" ? (
             <div className="studio-offline">
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <WorkspaceCreating
                   projectName={projectName ?? workspaceLabel(workspace)}
                   branch={workspace.baseBranch}
                   startedAt={workspace.createdAt}
+                  stalled={setup === "stalled" && <SetupStalled workspace={workspace} onKeepWaiting={keepWaiting} />}
                 />
               </div>
               <SessionComposer
                 onSend={() => {}}
                 canSend={false}
-                disabledPlaceholder="Claude starts here, with your first message, once the session is ready"
+                disabledPlaceholder={
+                  setup === "stalled"
+                    ? "Start over to try again"
+                    : "Claude starts here, with your first message, once the session is ready"
+                }
               />
             </div>
           ) : workspace.status === "failed" && !isLocal ? (
@@ -168,20 +174,10 @@ export function WorkspaceStudio({
 function offlineCopy({
   workspace,
   isReady,
-  stalled,
 }: {
   workspace: Workspace;
   isReady: boolean;
-  /** Set up for so long it never will (lib/session/provisioning.ts). */
-  stalled: boolean;
 }): { title: string; detail: string; placeholder: string } {
-  if (stalled) {
-    return {
-      title: "This workspace didn't start",
-      detail: "Its setup stopped before it finished. Delete it and start a new session to try again.",
-      placeholder: "Start a new session to try again",
-    };
-  }
   // A cloud one gets SessionDidntStart instead; this is a local one's.
   if (workspace.status === "failed") {
     return {

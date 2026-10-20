@@ -339,6 +339,8 @@
 .task-step-mark { display: grid; flex-shrink: 0; width: 18px; height: 18px; place-items: center; border-radius: 5px; font-size: 15px; }
 .task-step.is-done .task-step-mark { color: var(--color-positive); background: color-mix(in oklab, var(--color-positive) 18%, transparent); animation: task-step-done .35s cubic-bezier(.23, 1, .32, 1) both; }
 .task-step.is-done .task-step-mark svg { width: 12px; height: 12px; }
+.task-step.is-stalled .task-step-mark { color: #d29922; }
+.task-step.is-stalled .task-step-mark svg { width: 14px; height: 14px; }
 .task-step-dot { width: 5px; height: 5px; border-radius: 1.5px; background: currentColor; opacity: .6; }
 @keyframes task-step-done { from { transform: scale(.6); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .task-step.is-done .task-step-mark { animation: none; } }
