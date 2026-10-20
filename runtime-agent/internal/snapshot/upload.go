@@ -25,7 +25,9 @@ func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[
 	// objects, persisting an incomplete Snapshot that Replay/Restore can't read.
 	byArtifact := map[string]string{}
 	for _, up := range uploads {
-		if _, ok := artifactFile[up.Artifact]; !ok {
+		_, required := artifactFile[up.Artifact]
+		_, optional := optionalArtifactFile[up.Artifact]
+		if !required && !optional {
 			return fmt.Errorf("upload requested for unknown artifact %q", up.Artifact)
 		}
 		byArtifact[up.Artifact] = up.URL
@@ -43,10 +45,30 @@ func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[
 			return fmt.Errorf("upload %s: %w", artifact, err)
 		}
 	}
+	// An optional artifact the session has (Produce put it in paths only
+	// then), before the manifest that names it.
+	for artifact := range optionalArtifactFile {
+		if paths[artifact] == "" {
+			continue
+		}
+		if err := putFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
+			return fmt.Errorf("upload %s: %w", artifact, err)
+		}
+	}
 	if err := putFile(ctx, byArtifact["manifest"], paths["manifest"]); err != nil {
 		return fmt.Errorf("upload manifest: %w", err)
 	}
 	return nil
+}
+
+// uploadFor is the upload URL an archive gave for an artifact, or "".
+func uploadFor(uploads []protocol.ArchiveUpload, artifact string) string {
+	for _, up := range uploads {
+		if up.Artifact == artifact {
+			return up.URL
+		}
+	}
+	return ""
 }
 
 // putFile streams a file to a signed upload URL with an HTTP PUT.

@@ -1014,12 +1014,14 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	summary := s.SummaryOf(ctx, workspaceID)
 	summary.State = "archived" // the Snapshot captures the archived session
 
+	f, _ := s.getFacts(workspaceID)
 	return snapshot.Produce(ctx, snapshot.Input{
 		WorkspaceID:      workspaceID,
 		Worktree:         s.worktreePath(workspaceID),
 		CastPath:         s.castPath(workspaceID),
 		ConversationPath: s.SessionLog(workspaceID),
 		SessionID:        s.sessionID(workspaceID),
+		RolloutPath:      f.CodexRollout, // a Codex session's, raw
 		Summary:          summary,
 		ArchivedAt:       req.ArchivedAt,
 		Uploads:          req.Uploads,
@@ -1027,38 +1029,93 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	})
 }
 
-// Restore rebuilds an archived Session from its Snapshot and relaunches Claude
-// with `claude --continue`. The agent materializes + VERIFIES the worktree
-// before booting Claude (M4 invariant #4); a verification failure returns an
-// error and Claude is never started. The box need not be the original one —
-// everything is rebuilt from the Snapshot's tree + conversation (portability).
+// Restore rebuilds an archived Session from its Snapshot and relaunches its
+// agent on it: Claude with its conversation; Codex resumed by its rollout when
+// the Snapshot has one, else afresh, its translated history restored. The
+// agent materializes + VERIFIES the worktree before booting the agent (M4
+// invariant #4); a verification failure returns an error and the agent is
+// never started. The box need not be the original one — everything is
+// rebuilt from the Snapshot's tree + conversation (portability).
+//
+// The session's agent and its credential, which a fresh box has no record
+// of, come with the request and are recorded first: where a rollout goes, and
+// the launch after, depend on both.
 func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.RestoreWorkspaceRequest) (string, error) {
-	if req.SessionID == nil || *req.SessionID == "" {
-		return "", fmt.Errorf("cannot restore: snapshot has no Claude session id")
+	codexSession := req.Agent == AgentCodex
+	rollout := downloadFor(req.Downloads, "rollout") != ""
+	sessionID := ""
+	if req.SessionID != nil {
+		sessionID = *req.SessionID
 	}
-	// The session id becomes a filename under ~/.claude/projects/<slug>/; reject
-	// anything that could escape that directory (path separators, traversal).
-	if !validSessionID(*req.SessionID) {
-		return "", fmt.Errorf("cannot restore: invalid session id %q", *req.SessionID)
+	if sessionID == "" && (!codexSession || rollout) {
+		return "", fmt.Errorf("cannot restore: snapshot has no session id")
+	}
+	// The session id becomes a filename (under ~/.claude/projects/<slug>/, or
+	// a Codex sessions folder); reject anything that could escape that
+	// directory (path separators, traversal).
+	if sessionID != "" && !validSessionID(sessionID) {
+		return "", fmt.Errorf("cannot restore: invalid session id %q", sessionID)
+	}
+	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent})
+	if req.Auth != nil && req.Auth.Kind != AuthNone {
+		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
+			return "", err
+		}
 	}
 	worktree := s.worktreePath(workspaceID)
-	convDest, err := s.conversationDest(worktree, *req.SessionID)
-	if err != nil {
+	in := snapshot.MaterializeInput{
+		MirrorPath:   s.mirrorPath(),
+		WorktreePath: worktree,
+		Branch:       req.Branch,
+		Downloads:    req.Downloads,
+	}
+	switch {
+	case codexSession:
+		// No session id: Codex never recorded a conversation to restore.
+		if sessionID != "" {
+			in.ConversationDest = conversationPath(s.Root, workspaceID)
+		}
+		if rollout {
+			in.RolloutDest = restoredRolloutPath(filepath.Join(s.codexHomeFor(workspaceID), "sessions"), sessionID)
+		}
+	default:
+		convDest, err := s.conversationDest(worktree, sessionID)
+		if err != nil {
+			return "", err
+		}
+		in.ConversationDest = convDest
+	}
+	if err := snapshot.Materialize(ctx, in); err != nil {
 		return "", err
 	}
-	if err := snapshot.Materialize(ctx, snapshot.MaterializeInput{
-		MirrorPath:       s.mirrorPath(),
-		WorktreePath:     worktree,
-		Branch:           req.Branch,
-		ConversationDest: convDest,
-		Downloads:        req.Downloads,
-	}); err != nil {
-		return "", err
+	if in.RolloutDest != "" {
+		// `codex resume` finds it by the id its first line names.
+		meta, err := readRolloutMeta(in.RolloutDest)
+		if err != nil || meta.ID != sessionID {
+			return "", fmt.Errorf("cannot restore: the snapshot's rollout is not session %s", sessionID)
+		}
+		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexRollout, f.CodexSessionID = in.RolloutDest, sessionID })
 	}
-	// Verified — safe to boot Claude. Record the facts the orientation prompt
-	// needs, then relaunch with --continue against the restored session.
-	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch})
+	// Verified — safe to boot the agent, continuing the restored session.
 	return s.Resume(ctx, workspaceID, "")
+}
+
+// downloadFor is the download URL a restore gave for an artifact, or "".
+func downloadFor(downloads []protocol.RestoreDownload, artifact string) string {
+	for _, d := range downloads {
+		if d.Artifact == artifact {
+			return d.URL
+		}
+	}
+	return ""
+}
+
+// restoredRolloutPath is where a restored rollout is filed in a Codex home:
+// today's folder, named as Codex names one (rollout-<time>-<id>.jsonl).
+func restoredRolloutPath(sessions, sessionID string) string {
+	now := time.Now()
+	return filepath.Join(sessions, now.Format("2006"), now.Format("01"), now.Format("02"),
+		"rollout-"+now.Format("2006-01-02T15-04-05")+"-"+sessionID+".jsonl")
 }
 
 // validSessionID guards the session id before it is used as a path segment. A
@@ -1083,9 +1140,16 @@ func (s *Service) conversationDest(worktree, sessionID string) (string, error) {
 	return filepath.Join(claudeProjectDir(home, worktree), sessionID+".jsonl"), nil
 }
 
-// sessionID returns the Claude session id for `claude --continue` on Restore —
-// the JSONL basename without extension — or nil when Claude never wrote a log.
+// sessionID returns the session id Restore resumes by: a Codex session's
+// (its rollout's), else Claude's — the JSONL basename without extension — or
+// nil when the agent never recorded a conversation.
 func (s *Service) sessionID(workspaceID string) *string {
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
+		if f.CodexSessionID == "" {
+			return nil
+		}
+		return &f.CodexSessionID
+	}
 	log := s.SessionLog(workspaceID)
 	if log == "" {
 		return nil

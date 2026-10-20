@@ -1,8 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"slices"
 	"testing"
 
 	"runtime-agent/internal/protocol"
@@ -79,5 +82,43 @@ func TestASessionsAgentIsChosenAtCreateAndItsCredentialMustFitIt(t *testing.T) {
 		"model": "z-ai/glm-5.3", "gateway": "openrouter", "token": testGatewayKey,
 	}); code != http.StatusBadRequest {
 		t.Errorf("a Codex session onto a gateway = %d %v, want 400", code, out)
+	}
+}
+
+func TestHealthSaysWhichAgentsTheComputerRuns(t *testing.T) {
+	ts := httptest.NewServer(New("s", workspace.NewService(t.TempDir())).Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body protocol.Health
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Status != "ok" || len(body.Agents) == 0 || body.Agents[0] != "claude" {
+		t.Errorf("health = %+v, %v; want ok and Claude first among the agents", body, err)
+	}
+	_, err = exec.LookPath("codex")
+	if hasCodex := slices.Contains(body.Agents, "codex"); hasCodex != (err == nil) {
+		t.Errorf("health lists codex = %v, but codex is installed = %v", hasCodex, err == nil)
+	}
+}
+
+func TestARestoreNamesAKnownAgentAndAValidCredential(t *testing.T) {
+	const secret = "test-secret"
+	ts := httptest.NewServer(New(secret, workspace.NewService(t.TempDir())).Handler())
+	defer ts.Close()
+	call := controlCall(t, ts.URL, secret)
+	for _, extra := range []map[string]any{
+		{"agent": "gemini"},
+		{"auth": map[string]string{"kind": "chatgpt", "token": testGatewayKey}},
+		{"auth": map[string]string{"kind": "openai-api-key"}},
+	} {
+		req := map[string]any{"branch": "b", "sessionId": nil, "downloads": []map[string]string{{"artifact": "bundle", "url": "http://x/b"}}}
+		for k, v := range extra {
+			req[k] = v
+		}
+		if code, out := call("ws-r", "POST", "/workspaces/ws-r/restore", req); code != http.StatusBadRequest {
+			t.Errorf("restore with %v = %d %v, want 400", extra, code, out)
+		}
 	}
 }

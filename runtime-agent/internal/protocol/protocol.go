@@ -165,7 +165,8 @@ type ArchiveWorkspaceRequest struct {
 }
 
 // RestoreDownload is one signed download URL for a Snapshot artifact the agent
-// needs to rebuild a Session: `artifact` is one of bundle/patch/conversation.
+// needs to rebuild a Session: `artifact` is one of bundle/patch/conversation,
+// or a Codex session's optional rollout.
 type RestoreDownload struct {
 	Artifact string `json:"artifact"`
 	URL      string `json:"url"`
@@ -182,6 +183,23 @@ type RestoreWorkspaceRequest struct {
 	BaseBranch string            `json:"baseBranch,omitempty"`
 	SessionID  *string           `json:"sessionId"`
 	Downloads  []RestoreDownload `json:"downloads"`
+	// Agent is the session's agent ("claude", "codex"; empty is Claude): a
+	// fresh box has no record of it. A Codex session's optional "rollout"
+	// download resumes Codex itself; without it the session starts afresh,
+	// its translated conversation restored.
+	Agent string `json:"agent,omitempty"`
+	// Auth is the session's own credential, recorded before it relaunches
+	// (validated like POST /workspaces/{id}/auth).
+	Auth *SetAuthRequest `json:"auth,omitempty"`
+}
+
+// Health is what the unauthenticated GET /health says: that the agent is up,
+// the gateways it can run a session through, and the agents it can run.
+// Gateways and Agents are absent from agents older than each.
+type Health struct {
+	Status   string   `json:"status"`
+	Gateways []string `json:"gateways,omitempty"`
+	Agents   []string `json:"agents,omitempty"`
 }
 
 // ErrorResponse is the stable error envelope for control-plane failures.

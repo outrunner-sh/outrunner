@@ -83,6 +83,12 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &TokenUsage{})
 	case "WorkspaceStateChanged":
 		return json.Unmarshal(raw, &WorkspaceStateChanged{})
+	case "SetAuthRequest":
+		return json.Unmarshal(raw, &SetAuthRequest{})
+	case "AgentHealth":
+		return json.Unmarshal(raw, &Health{})
+	case "LocalSession":
+		return json.Unmarshal(raw, &LocalSession{})
 	default:
 		// A new fixture group with no Go struct is a drift we want to catch.
 		return errUnknown(name)

@@ -99,12 +99,17 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// health answers unauthenticated, so it says nothing but that the agent is up
-// and which gateways it can run a session through (public: they're in the
-// source), for the web app to offer only those. An agent from before this
-// field supports OpenRouter alone.
+// health answers unauthenticated, so it says nothing but that the agent is up,
+// which gateways it can run a session through (public: they're in the
+// source), and which agents (whether Codex is installed), for the web app to
+// offer only those. An agent from before gateways supports OpenRouter alone;
+// one from before agents runs Claude alone.
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "gateways": claude.Gateways()})
+	gateways := []string{}
+	for _, g := range claude.Gateways() {
+		gateways = append(gateways, string(g))
+	}
+	writeJSON(w, http.StatusOK, protocol.Health{Status: "ok", Gateways: gateways, Agents: s.ws.Agents()})
 }
 
 // authed verifies the Bearer Runtime token before invoking a control handler.
@@ -233,7 +238,21 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "restore requires a branch and download URLs")
 		return
 	}
+	if !workspace.ValidAgent(req.Agent) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("unknown agent %q", req.Agent))
+		return
+	}
+	if req.Auth != nil {
+		if err := validAuth(*req.Auth); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+			return
+		}
+	}
 	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req)
+	if errors.Is(err, workspace.ErrAuthMismatch) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
 	respond(w, name, err)
 }
 
@@ -420,12 +439,8 @@ func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if !workspace.ValidAuthKind(req.Kind) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("unknown credential kind %q", req.Kind))
-		return
-	}
-	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a credential needs a valid token, and none takes one")
+	if err := validAuth(req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	err := s.ws.SetAuth(r.Context(), r.PathValue("id"), req.Kind, req.Token)
@@ -434,6 +449,18 @@ func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, req.Kind, err)
+}
+
+// validAuth checks a session credential as set or restored: a known kind, and
+// a token shaped like a key for any kind but none, which takes none.
+func validAuth(req protocol.SetAuthRequest) error {
+	if !workspace.ValidAuthKind(req.Kind) {
+		return fmt.Errorf("unknown credential kind %q", req.Kind)
+	}
+	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+		return errors.New("a credential needs a valid token, and none takes one")
+	}
+	return nil
 }
 
 // pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach

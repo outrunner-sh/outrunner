@@ -61,6 +61,17 @@ func ValidAgent(name string) bool {
 	return name == "" || name == AgentClaude || name == AgentCodex
 }
 
+// Agents lists the agents this computer can run a session on: Claude always
+// (a computer without it says so when a session starts), Codex when its CLI
+// is installed.
+func (s *Service) Agents() []string {
+	agents := []string{AgentClaude}
+	if _, err := s.lookPath("codex"); err == nil {
+		agents = append(agents, AgentCodex)
+	}
+	return agents
+}
+
 // agentFor is the agent a workspace's session runs: the one its facts record,
 // and Claude for a session from before there was a choice.
 func (s *Service) agentFor(workspaceID string) agent {
