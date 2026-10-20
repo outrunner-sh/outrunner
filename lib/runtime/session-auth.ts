@@ -53,13 +53,10 @@ export class OutdatedComputerError extends Error {
   }
 }
 
-/** What to say of a box whose agent is too old, and couldn't be upgraded
- *  here: it takes the new Outrunner when it next starts, which it does after
- *  being paused for idling. */
+/** What to say of a box that can't do what the session needs, its agent
+ *  not upgraded here (the provider can't: a jcode engine). */
 function outdated(what: string): OutdatedComputerError {
-  return new OutdatedComputerError(
-    `This project's cloud computer runs an older Outrunner that ${what}. It updates the next time it starts, after it has been paused for being idle; try again then.`,
-  );
+  return new OutdatedComputerError(`This project's cloud computer ${what}.`);
 }
 
 /** Whether a box whose agent says `agents` runs `agent`, and, when `mustTake`,

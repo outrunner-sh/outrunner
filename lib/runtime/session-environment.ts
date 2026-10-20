@@ -37,13 +37,18 @@ export { anthropicEnvVar };
 
 /**
  * A box's agent upgrade (ComputerRuntimeProvider.upgradeAgent) for a session
- * of `userId`'s, its agent booted again with their environment as it is now.
+ * of `userId`'s, its agent booted again with their environment as it is now;
+ * undefined where the provider can't upgrade one in place (jcode).
  */
 export function boxUpgrade(
-  provider: { upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void> },
+  provider: {
+    upgradesAgents: boolean;
+    upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void>;
+  },
   sandboxId: string,
   secret: string,
   userId: string,
-): () => Promise<void> {
+): (() => Promise<void>) | undefined {
+  if (!provider.upgradesAgents) return undefined;
   return async () => provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId));
 }

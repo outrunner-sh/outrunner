@@ -380,7 +380,7 @@ async function daytonaAgent(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   userId: string,
-): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade: () => Promise<void> }> {
+): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade?: () => Promise<void> }> {
   const computer = await getRuntimeComputerByProject(workspace.projectId);
   if (!computer?.daytonaSandboxId || computer.status !== "ready") {
     throw new Error("Runtime Computer is not available.");

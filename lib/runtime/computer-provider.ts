@@ -164,6 +164,10 @@ export type ProvisionComputerInput = {
  * The `RuntimeProvider` implementation exists only so provider selection
  * (`provider.ts`/`resolve.ts`) type-checks during the transition.
  */
+/** Agent upgrades under way (ComputerRuntimeProvider.upgradeAgent), by
+ *  provider and box, across every provider instance in this server. */
+const UPGRADING = new Map<string, Promise<void>>();
+
 export class ComputerRuntimeProvider implements RuntimeProvider {
   readonly name: ProviderName;
   private readonly backend: SandboxBackend;
@@ -502,9 +506,11 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   }
 
   /** Build the {@link AgentTarget} an {@link AgentClient} needs for one box. */
-  /** Upgrades under way, by box, so requests that find the same box outdated
-   *  share one instead of restarting its agent under each other. */
-  private readonly upgrading = new Map<string, Promise<void>>();
+  /** Whether a box's agent can be upgraded in place (upgradeAgent): not on
+   *  the jcode engine, whose boxes are replaced, not redeployed. */
+  get upgradesAgents(): boolean {
+    return optionalEnv("RUNTIME_ENGINE") !== "jcode";
+  }
 
   /**
    * Bring a running box's agent up to this release's, in place: the tools it
@@ -515,16 +521,19 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
    * restart. Not for the jcode engine, whose boxes are replaced, not redeployed.
    */
   async upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void> {
-    if (optionalEnv("RUNTIME_ENGINE") === "jcode") {
+    if (!this.upgradesAgents) {
       throw new Error("A jcode computer's agent is replaced with its box, not upgraded in place.");
     }
-    const running = this.upgrading.get(sandboxId);
+    // Shared by every provider instance (one is made per request for a
+    // user's own sandbox), so two requests never redeploy one box at once.
+    const key = `${this.name}:${sandboxId}`;
+    const running = UPGRADING.get(key);
     if (running) return running;
     const upgrade = (async () => {
       const box = await this.backend.get(sandboxId);
       await deployClaude(box.io, await this.binary(), secret, { root: await box.home(), sessionEnv });
-    })().finally(() => this.upgrading.delete(sandboxId));
-    this.upgrading.set(sandboxId, upgrade);
+    })().finally(() => UPGRADING.delete(key));
+    UPGRADING.set(key, upgrade);
     return upgrade;
   }
 
