@@ -1,29 +1,41 @@
 /**
  * The model providers a user can bring their own key for (Settings →
- * Providers). Which providers there are, and where each one's endpoint is,
- * come from the runtime agent's providers.json: the agent can run a session
- * only on a provider listed there. This adds what the web app needs on top:
- * a name, what a key looks like, where to make one, and how to check it.
+ * Providers). Two kinds:
+ *   - the gateways, which Claude Code runs through (Anthropic-compatible
+ *     endpoints). Which there are, and where each one's endpoint is, come from
+ *     the runtime agent's providers.json: the agent can run a session only on
+ *     a gateway listed there;
+ *   - OpenAI, whose key is Codex's (lib/agents/registry.ts). It has no
+ *     Anthropic-compatible endpoint, so Claude Code can't run on it.
+ * This adds what the web app needs on top: a name, what a key looks like,
+ * where to make one, and how to check it.
  *
  * Imports only the JSON, so the browser and the tests use it as is.
  */
 
 import gateways from "@/runtime-agent/internal/claude/providers.json" with { type: "json" };
 
+/** A gateway: one Claude Code can run through. */
 export type ProviderId = keyof typeof gateways;
+
+/** Any provider a user can save a key for: a gateway, or OpenAI. */
+export type KeyProviderId = ProviderId | "openai";
 
 /** How a key is checked before it's kept: a GET that answers 401 or 403 for a
  *  key the provider refuses. */
 export type KeyCheck = { url: string; auth: "bearer" | "x-api-key"; headers?: Record<string, string> };
 
 export type Provider = {
-  id: ProviderId;
+  id: KeyProviderId;
   label: string;
   /** What a key here is for, on Settings → Providers. */
   description: string;
   /** What a key looks like. Loose where the provider doesn't say, but never
    *  broader than the agent takes (claude.ValidGatewayToken). */
   keyPattern: RegExp;
+  /** A start only this provider's keys have, so one pasted into another's
+   *  card can be sent here. None where keys share a shape (`sk-…`). */
+  distinctPrefix?: RegExp;
   /** The input's placeholder. */
   keyPlaceholder: string;
   /** Where to make a key, and what to call that page. */
@@ -35,14 +47,15 @@ export type Provider = {
   models: { id: string; label: string }[];
 };
 
-/** Every provider in providers.json, by id: one missing here fails the
- *  build. */
-export const PROVIDERS: Record<ProviderId, Provider> = {
+/** Every provider in providers.json, and OpenAI, by id: one missing here
+ *  fails the build. */
+export const PROVIDERS: Record<KeyProviderId, Provider> = {
   openrouter: {
     id: "openrouter",
     label: "OpenRouter",
     description: "Models on your own OpenRouter account. OpenRouter bills you, with no Outrunner limit.",
     keyPattern: /^sk-or-[A-Za-z0-9-]{20,200}$/,
+    distinctPrefix: /^sk-or-/,
     keyPlaceholder: "Paste your OpenRouter API key (sk-or-…)",
     keysUrl: "https://openrouter.ai/settings/keys",
     keysPage: "OpenRouter → Keys",
@@ -62,6 +75,7 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
     label: "Anthropic",
     description: "Claude on your Anthropic API key, billed by Anthropic. Your Claude Pro or Max subscription goes under Claude subscription.",
     keyPattern: /^sk-ant-api\d{2}-[A-Za-z0-9_-]{20,300}$/,
+    distinctPrefix: /^sk-ant-api/,
     keyPlaceholder: "Paste your Anthropic API key (sk-ant-api…)",
     keysUrl: "https://platform.claude.com/settings/keys",
     keysPage: "Claude Console → API keys",
@@ -116,13 +130,41 @@ export const PROVIDERS: Record<ProviderId, Provider> = {
       { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
     ],
   },
+  openai: {
+    id: "openai",
+    label: "OpenAI",
+    description: "Codex on your OpenAI API key, billed by OpenAI.",
+    // A project or service account key, or an older user key (sk- and
+    // letters, which DeepSeek's and Moonshot's share). An admin key is refused
+    // before this (keyProblem): it can't run a model.
+    keyPattern: /^sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,300}$/,
+    distinctPrefix: /^sk-(?:proj|svcacct)-/,
+    keyPlaceholder: "Paste your OpenAI API key (sk-proj-…)",
+    keysUrl: "https://platform.openai.com/api-keys",
+    keysPage: "OpenAI → API keys",
+    check: { url: "https://api.openai.com/v1/models", auth: "bearer" },
+    // Codex's models on an API key (codex-cli 0.146).
+    models: [
+      { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+      { id: "gpt-6-sol", label: "GPT-6 Sol" },
+      { id: "gpt-6-luna", label: "GPT-6 Luna" },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+    ],
+  },
 };
 
-/** The providers, in providers.json's order. */
+/** The gateways, in providers.json's order. */
 export const PROVIDER_IDS = Object.keys(gateways) as ProviderId[];
+
+/** Every provider a key can be saved for: the gateways, then OpenAI. */
+export const KEY_PROVIDER_IDS: KeyProviderId[] = [...PROVIDER_IDS, "openai"];
 
 export function isProviderId(value: unknown): value is ProviderId {
   return typeof value === "string" && Object.hasOwn(gateways, value);
+}
+
+export function isKeyProviderId(value: unknown): value is KeyProviderId {
+  return value === "openai" || isProviderId(value);
 }
 
 /** The providers among a user's saved keys whose key `opens`, in the
@@ -140,24 +182,36 @@ export function usableProviders<Row extends { provider: string }>(
 }
 
 /** A Claude subscription token (`claude setup-token`): it belongs in
- *  the Claude subscription tab, not with a provider. */
+ *  Claude Code's Subscription, not with a provider. */
 const CLAUDE_TOKEN = /^sk-ant-oat/;
 
-/** Providers whose keys are told apart by their prefix, so a key pasted into
- *  the wrong card can be sent to the right one. */
-const DISTINCT: ProviderId[] = ["openrouter", "anthropic"];
+/** An OpenAI admin key: it manages an organization, and can't run a model. */
+const OPENAI_ADMIN_KEY = /^sk-admin-/;
+
+/** Where a provider's key is saved, for a message sending it there: an
+ *  agent's key under that agent, any other under its own name. */
+function savedUnder(provider: KeyProviderId): string {
+  if (provider === "anthropic") return "Claude Code → API key";
+  if (provider === "openai") return "Codex → API key";
+  return PROVIDERS[provider].label;
+}
 
 /**
  * Whether `key` can be saved as `provider`'s, and if not, what to tell the
  * user. Format only: the provider itself is asked afterwards.
  */
-export function keyProblem(provider: ProviderId, key: string): string | null {
+export function keyProblem(provider: KeyProviderId, key: string): string | null {
   const { label, keyPattern, keysPage } = PROVIDERS[provider];
   if (CLAUDE_TOKEN.test(key)) {
-    return "That's a Claude subscription token. Connect it under Settings → Providers → Claude subscription instead.";
+    return "That's a Claude subscription token. Connect it under Settings → Providers → Claude Code → Subscription instead.";
   }
-  const belongs = DISTINCT.find((other) => other !== provider && PROVIDERS[other].keyPattern.test(key));
-  if (belongs) return `That key is for ${PROVIDERS[belongs].label}. Save it under ${PROVIDERS[belongs].label} instead.`;
+  if (OPENAI_ADMIN_KEY.test(key)) {
+    return "That's an OpenAI admin key, which can't run models. Create a project API key at OpenAI → API keys.";
+  }
+  const belongs = KEY_PROVIDER_IDS.find(
+    (other) => other !== provider && PROVIDERS[other].distinctPrefix?.test(key),
+  );
+  if (belongs) return `That key is for ${PROVIDERS[belongs].label}. Save it under ${savedUnder(belongs)} instead.`;
   if (!keyPattern.test(key)) return `That doesn't look like a ${label} API key. Copy one from ${keysPage}.`;
   return null;
 }

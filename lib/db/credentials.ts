@@ -41,7 +41,13 @@ import {
 import { ensureUserKey } from "@/lib/openrouter/user-key";
 import { moveApiKeyFromClaudeSlot } from "@/lib/providers/claude-slot";
 import { NoProviderKeyError } from "@/lib/providers/errors";
-import { isProviderId, PROVIDER_IDS, type ProviderId, usableProviders } from "@/lib/providers/registry";
+import {
+  isKeyProviderId,
+  KEY_PROVIDER_IDS,
+  type KeyProviderId,
+  type ProviderId,
+  usableProviders,
+} from "@/lib/providers/registry";
 import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
@@ -390,7 +396,7 @@ async function forgetSandboxKey(
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic" | "daytona" | "modal" | ProviderId,
+  which: "github" | "anthropic" | "daytona" | "modal" | KeyProviderId,
 ): string | null {
   if (!ciphertext) return null;
   try {
@@ -406,7 +412,8 @@ function openOrNull(
 
 // ---------------------------------------------------------------------------
 // The user's own keys for model providers (Settings → Providers), one row per
-// provider in user_provider_keys (lib/providers/registry.ts). Saved for
+// provider in user_provider_keys (lib/providers/registry.ts): the gateways,
+// and OpenAI for Codex. Saved for
 // OpenRouter, Outrunner's models run on it, and OpenRouter bills them,
 // instead of on the server's key.
 // ---------------------------------------------------------------------------
@@ -423,8 +430,8 @@ function beforeProviderKeys(error: { code?: string }): boolean {
  * 20261019120000_user_provider_keys.sql is applied, the OpenRouter key is
  * read from where it was before, and there are no others.
  */
-export async function getProviderKeyStatuses(userId: string): Promise<Record<ProviderId, StoredKey>> {
-  const statuses = Object.fromEntries(PROVIDER_IDS.map((id) => [id, NO_KEY])) as Record<ProviderId, StoredKey>;
+export async function getProviderKeyStatuses(userId: string): Promise<Record<KeyProviderId, StoredKey>> {
+  const statuses = Object.fromEntries(KEY_PROVIDER_IDS.map((id) => [id, NO_KEY])) as Record<KeyProviderId, StoredKey>;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_provider_keys")
@@ -436,7 +443,7 @@ export async function getProviderKeyStatuses(userId: string): Promise<Record<Pro
   }
   if (error) throw error;
   for (const row of data) {
-    if (isProviderId(row.provider)) {
+    if (isKeyProviderId(row.provider)) {
       statuses[row.provider] = { connected: true, hint: row.key_hint, updatedAt: row.updated_at };
     }
   }
@@ -444,7 +451,7 @@ export async function getProviderKeyStatuses(userId: string): Promise<Record<Pro
 }
 
 /** The user's key for `provider`, or null when unset or unreadable. */
-export async function getProviderKey(userId: string, provider: ProviderId): Promise<string | null> {
+export async function getProviderKey(userId: string, provider: KeyProviderId): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_provider_keys")
@@ -460,7 +467,7 @@ export async function getProviderKey(userId: string, provider: ProviderId): Prom
 }
 
 /** Store the user's key for `provider`; the hint is its last 4 characters. */
-export async function setProviderKey(userId: string, provider: ProviderId, apiKey: string): Promise<void> {
+export async function setProviderKey(userId: string, provider: KeyProviderId, apiKey: string): Promise<void> {
   const key = apiKey.trim();
   if (!key) throw new Error(`${provider} key cannot be empty`);
   const supabase = createSupabaseAdminClient();
@@ -478,7 +485,7 @@ export async function setProviderKey(userId: string, provider: ProviderId, apiKe
 }
 
 /** Forget the user's key for `provider`. */
-export async function clearProviderKey(userId: string, provider: ProviderId): Promise<void> {
+export async function clearProviderKey(userId: string, provider: KeyProviderId): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase.from("user_provider_keys").delete().eq("user_id", userId).eq("provider", provider);
   if (error) throw error;
