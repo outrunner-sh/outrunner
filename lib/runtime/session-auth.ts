@@ -70,22 +70,28 @@ export async function restoreCredential(
 ): Promise<SessionCredential | undefined> {
   const agents = await client.agents();
   if (!(agents ?? ["claude"]).includes(agent)) throw outdated(`can't run ${AGENTS[agent].label}`);
-  if (!auth.credential) return undefined;
+  // A Claude credential the user never picked is the one the box was set up
+  // with: nothing to carry (and an engine that takes none would refuse it).
+  if (!auth.credential || (agent === "claude" && !auth.picked)) return undefined;
   if (agents === null && (agent !== "claude" || auth.picked)) {
     throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
   }
   return auth.credential;
 }
 
-/** No error envelope on a 404: the auth route itself is missing, from an agent
- *  deployed before sessions had credentials of their own. */
-function predatesSessionAuth(error: unknown): boolean {
-  return error instanceof AgentRequestError && error.status === 404 && !error.error;
+/** An agent that can't take a session's credential: one from before sessions
+ *  had them (a 404 with no error envelope: the route itself is missing), or
+ *  one on an engine that runs every session on its own login (jcode: 409
+ *  UNSUPPORTED). */
+function takesNoSessionAuth(error: unknown): boolean {
+  if (!(error instanceof AgentRequestError)) return false;
+  return (error.status === 404 && !error.error) || (error.status === 409 && error.error?.code === "UNSUPPORTED");
 }
 
 /**
  * Give the session `auth`'s credential, if it has one. An agent from before
- * per-session credentials can't take it: that is fine for a credential the
+ * per-session credentials, or on an engine that runs every session on its own
+ * login, can't take it: that is fine for a credential the
  * user never picked (the box's own setup holds the same one), and an
  * {@link OutdatedComputerError} for one they did, which the session would
  * otherwise run without, on another account.
@@ -95,8 +101,13 @@ export async function deliverSessionAuth(client: SessionAuthClient, agent: Agent
   try {
     await client.setAuth(auth.credential);
   } catch (error) {
-    if (!predatesSessionAuth(error)) throw error;
+    if (!takesNoSessionAuth(error)) throw error;
     if (agent === "claude" && !auth.picked) return;
+    if (error instanceof AgentRequestError && error.status === 409) {
+      throw new OutdatedComputerError(
+        `This project's cloud computer runs every session on its own login, so ${AGENTS[agent].label} can't sign in the way you chose there.`,
+      );
+    }
     throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
   }
 }

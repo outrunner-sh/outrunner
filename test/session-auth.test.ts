@@ -79,8 +79,20 @@ test("a restore carries the credential; an agent from before credentials can tak
   assert.equal(await restoreCredential(current, "claude", { method: null, credential: null, picked: false }), undefined);
 
   const old = client(ok, async () => null).c;
-  // It would ignore the credential: fine for the one the box was set up with.
-  assert.deepEqual(await restoreCredential(old, "claude", unpicked), TOKEN);
+  // The one the box was set up with isn't carried: it has it.
+  assert.equal(await restoreCredential(old, "claude", unpicked), undefined);
+  assert.equal(await restoreCredential(current, "claude", unpicked), undefined);
   await assert.rejects(restoreCredential(old, "claude", picked), OutdatedComputerError);
   await assert.rejects(restoreCredential(old, "codex", { method: "api-key", credential: KEY, picked: true }), /can't run Codex/);
+});
+
+test("an engine that runs sessions on its own login: like an agent without credentials", async () => {
+  const unsupported = () =>
+    Promise.reject(new AgentRequestError(409, { code: "UNSUPPORTED", message: "this computer's engine runs sessions on its own login" }));
+  const { c } = client(unsupported);
+  await deliverSessionAuth(c, "claude", { method: "subscription", credential: TOKEN, picked: false });
+  await assert.rejects(
+    deliverSessionAuth(c, "claude", { method: "api-key", credential: TOKEN, picked: true }),
+    (error: Error) => error instanceof OutdatedComputerError && /runs every session on its own login/.test(error.message),
+  );
 });
