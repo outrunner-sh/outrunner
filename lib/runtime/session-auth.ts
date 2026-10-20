@@ -57,26 +57,44 @@ export async function requireAgentOnBox(client: SessionAuthClient, agent: AgentI
 }
 
 /**
- * The credential a restore carries: it relaunches the session at once, so
- * there's no /auth call between. An agent from before per-session
- * credentials ignores it, which is fine only for one the user never picked
- * for Claude Code (the box's own setup holds the same one); for any other,
- * an {@link OutdatedComputerError}.
+ * Run a restore, which relaunches the session at once, so its credential
+ * rides with it (there's no /auth call between): `restore` makes the call,
+ * with the credential or without. A credential goes to every agent that can
+ * take one, so a key replaced while the box ran is the one the session
+ * relaunches on. One that can't (an agent from before per-session
+ * credentials, or a jcode engine) is fine only for a Claude credential the
+ * user never picked (the box's own setup holds it): the restore goes ahead
+ * without it. For any other, an {@link OutdatedComputerError}.
  */
-export async function restoreCredential(
+export async function restoreSignedIn(
   client: SessionAuthClient,
   agent: AgentId,
   auth: ResolvedAuth,
-): Promise<SessionCredential | undefined> {
+  restore: (credential?: SessionCredential) => Promise<unknown>,
+): Promise<void> {
   const agents = await client.agents();
   if (!(agents ?? ["claude"]).includes(agent)) throw outdated(`can't run ${AGENTS[agent].label}`);
-  // A Claude credential the user never picked is the one the box was set up
-  // with: nothing to carry (and an engine that takes none would refuse it).
-  if (!auth.credential || (agent === "claude" && !auth.picked)) return undefined;
-  if (agents === null && (agent !== "claude" || auth.picked)) {
-    throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
+  const fallsBack = agent === "claude" && !auth.picked;
+  if (!auth.credential || (agents === null && fallsBack)) {
+    await restore();
+    return;
   }
-  return auth.credential;
+  if (agents === null) throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
+  try {
+    await restore(auth.credential);
+  } catch (error) {
+    if (!takesNoSessionAuth(error)) throw error;
+    // Refused before anything was restored: the engine takes no credential.
+    if (!fallsBack) throw cantTake(agent);
+    await restore();
+  }
+}
+
+/** What to say of an engine that runs every session on its own login. */
+function cantTake(agent: AgentId): OutdatedComputerError {
+  return new OutdatedComputerError(
+    `This project's cloud computer runs every session on its own login, so ${AGENTS[agent].label} can't sign in the way you chose there.`,
+  );
 }
 
 /** An agent that can't take a session's credential: one from before sessions
@@ -103,11 +121,7 @@ export async function deliverSessionAuth(client: SessionAuthClient, agent: Agent
   } catch (error) {
     if (!takesNoSessionAuth(error)) throw error;
     if (agent === "claude" && !auth.picked) return;
-    if (error instanceof AgentRequestError && error.status === 409) {
-      throw new OutdatedComputerError(
-        `This project's cloud computer runs every session on its own login, so ${AGENTS[agent].label} can't sign in the way you chose there.`,
-      );
-    }
+    if (error instanceof AgentRequestError && error.status === 409) throw cantTake(agent);
     throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
   }
 }

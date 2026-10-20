@@ -19,7 +19,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
-import { restoreCredential, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
+import { restoreSignedIn, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
@@ -337,15 +337,16 @@ async function restoreDaytonaWorkspace(
     // The restore relaunches the session at once, so its credential rides
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
-    const credential = await restoreCredential(sessionAuthClient(agent, identity), workspace.agent, auth);
-    await agent.restoreWorkspace(identity, {
-      branch: workspace.branch,
-      baseBranch: project.defaultBranch,
-      sessionId: manifest.sessionId,
-      downloads,
-      ...(workspace.agent !== "claude" && { agent: workspace.agent }),
-      ...(credential && { auth: credential }),
-    });
+    await restoreSignedIn(sessionAuthClient(agent, identity), workspace.agent, auth, (credential) =>
+      agent.restoreWorkspace(identity, {
+        branch: workspace.branch,
+        baseBranch: project.defaultBranch,
+        sessionId: manifest.sessionId,
+        downloads,
+        ...(workspace.agent !== "claude" && { agent: workspace.agent }),
+        ...(credential && { auth: credential }),
+      }),
+    );
 
     // Persist the (possibly new) box + session linkage now that the agent has
     // rebuilt and verified the worktree.

@@ -7,7 +7,7 @@ import {
   deliverSessionAuth,
   OutdatedComputerError,
   requireAgentOnBox,
-  restoreCredential,
+  restoreSignedIn,
   type SessionAuthClient,
 } from "@/lib/runtime/session-auth";
 
@@ -71,19 +71,44 @@ test("a box that can't run Codex is refused before a session is made on it", asy
   );
 });
 
-test("a restore carries the credential; an agent from before credentials can take only the box's own", async () => {
+test("a restore carries the credential to an agent that takes one, picked or not", async () => {
   const picked: ResolvedAuth = { method: "api-key", credential: TOKEN, picked: true };
   const unpicked: ResolvedAuth = { method: "subscription", credential: TOKEN, picked: false };
+  const sent: unknown[] = [];
+  const restore = async (credential?: unknown) => void sent.push(credential);
   const current = client(ok, async () => ["claude", "codex"]).c;
-  assert.deepEqual(await restoreCredential(current, "claude", picked), TOKEN);
-  assert.equal(await restoreCredential(current, "claude", { method: null, credential: null, picked: false }), undefined);
+  // A key replaced while the box ran: the restore relaunches on the new one.
+  await restoreSignedIn(current, "claude", unpicked, restore);
+  await restoreSignedIn(current, "claude", picked, restore);
+  await restoreSignedIn(current, "claude", { method: null, credential: null, picked: false }, restore);
+  assert.deepEqual(sent, [TOKEN, TOKEN, undefined]);
 
+  // An agent from before credentials would ignore it: fine for the box's own.
+  sent.length = 0;
   const old = client(ok, async () => null).c;
-  // The one the box was set up with isn't carried: it has it.
-  assert.equal(await restoreCredential(old, "claude", unpicked), undefined);
-  assert.equal(await restoreCredential(current, "claude", unpicked), undefined);
-  await assert.rejects(restoreCredential(old, "claude", picked), OutdatedComputerError);
-  await assert.rejects(restoreCredential(old, "codex", { method: "api-key", credential: KEY, picked: true }), /can't run Codex/);
+  await restoreSignedIn(old, "claude", unpicked, restore);
+  assert.deepEqual(sent, [undefined]);
+  await assert.rejects(restoreSignedIn(old, "claude", picked, restore), OutdatedComputerError);
+  await assert.rejects(
+    restoreSignedIn(old, "codex", { method: "api-key", credential: KEY, picked: true }, restore),
+    /can't run Codex/,
+  );
+});
+
+test("a jcode computer refuses a restore's credential: unpicked, it restores without", async () => {
+  const unsupported = new AgentRequestError(409, { code: "UNSUPPORTED", message: "own login" });
+  const sent: unknown[] = [];
+  const restore = async (credential?: unknown) => {
+    sent.push(credential);
+    if (credential) throw unsupported;
+  };
+  const jcode = client(ok, async () => ["claude"]).c;
+  await restoreSignedIn(jcode, "claude", { method: "subscription", credential: TOKEN, picked: false }, restore);
+  assert.deepEqual(sent, [TOKEN, undefined]);
+  await assert.rejects(
+    restoreSignedIn(jcode, "claude", { method: "api-key", credential: TOKEN, picked: true }, restore),
+    /runs every session on its own login/,
+  );
 });
 
 test("an engine that runs sessions on its own login: like an agent without credentials", async () => {
