@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { Notice } from "@/components/ui/notice";
+import { ErrorRef, Notice } from "@/components/ui/notice";
 import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
@@ -324,6 +324,15 @@ export function WorkspaceSession({
             ...(switchError.href ? [{ label: "Open settings", href: switchError.href }] : []),
             { label: "Dismiss", onClick: () => setSwitchError(null) },
           ]}
+        />
+      )}
+      {conversation.protocolErrorRef && !connectionError && !streamDropped && (
+        <Notice
+          tone="warning"
+          title="Something went wrong in this session"
+          detail="Part of the conversation couldn't be shown. Reloading usually fixes it."
+          meta={<ErrorRef value={conversation.protocolErrorRef} />}
+          actions={[{ label: "Reload", icon: <RotateCw />, primary: true, onClick: () => window.location.reload() }]}
         />
       )}
       {connectionError && (

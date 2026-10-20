@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
 import { MAX_RECONNECT_ATTEMPTS, reconnectPlan } from "@/lib/runtime/reconnect";
-import { subscribeEventsWs } from "@/lib/runtime/session-client";
+import { StreamProtocolError, subscribeEventsWs } from "@/lib/runtime/session-client";
 
 import type { SessionAttachment } from "./use-session-attachment";
 
@@ -18,6 +18,10 @@ export type ConversationStreamState = {
   reconnecting: { attempt: number; max: number; since: number } | null;
   /** Automatic retry gave up; the session itself is untouched on its box. */
   lost: boolean;
+  /** A frame the browser couldn't read, by the reference it was logged under.
+   *  Stays set until the page reloads: the frame's event is missing from the
+   *  timeline, and resuming from the cursor would not bring it back. */
+  protocolErrorRef: string | null;
   /** Force a full URL refresh + re-subscribe. Preserves the resume cursor. */
   refresh: () => void;
 };
@@ -38,21 +42,23 @@ type WsStatus = {
   /** When the current run of drops began (ms), for the elapsed time shown. */
   since: number | null;
   gaveUp: boolean;
+  protocolErrorRef: string | null;
 };
 type WsAction =
   | { kind: "frame-received" }
   | { kind: "closed"; attempt: number; at: number }
   | { kind: "gave-up" }
   | { kind: "rearm" }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "protocol-error"; ref: string };
 
-const OPEN: WsStatus = { error: null, closed: false, attempt: 0, since: null, gaveUp: false };
+const OPEN: WsStatus = { error: null, closed: false, attempt: 0, since: null, gaveUp: false, protocolErrorRef: null };
 
 function wsReducer(state: WsStatus, action: WsAction): WsStatus {
   switch (action.kind) {
     case "frame-received":
       // First frame after connect implicitly means we're open again.
-      return OPEN;
+      return { ...OPEN, protocolErrorRef: state.protocolErrorRef };
     case "closed":
       return { ...state, closed: true, attempt: action.attempt, since: state.since ?? action.at };
     case "gave-up":
@@ -61,6 +67,8 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
       return { ...state, attempt: 0, gaveUp: false };
     case "error":
       return { ...state, error: action.message };
+    case "protocol-error":
+      return { ...state, protocolErrorRef: state.protocolErrorRef ?? action.ref };
   }
 }
 
@@ -133,7 +141,12 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
             if (active) reconnect();
           }, plan.delayMs);
         },
-        onError: (err) => dispatch({ kind: "error", message: err.message }),
+        onError: (err) =>
+          dispatch(
+            err instanceof StreamProtocolError
+              ? { kind: "protocol-error", ref: err.ref }
+              : { kind: "error", message: err.message },
+          ),
       },
     );
 
@@ -214,6 +227,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
     error: ws.error ?? attachmentError,
     reconnecting,
     lost: dropped && ws.gaveUp,
+    protocolErrorRef: ws.protocolErrorRef,
     refresh: refreshStream,
   };
 }

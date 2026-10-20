@@ -24,6 +24,21 @@ import {
   type PtyClientMessage,
 } from "@/lib/runtime/agent-protocol";
 
+/**
+ * A frame the browser couldn't read: a fault on Outrunner's side, not the
+ * network's. `ref` is logged with the frame's metadata, so the code a user
+ * reads out matches one console line.
+ */
+export class StreamProtocolError extends Error {
+  readonly ref: string;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "StreamProtocolError";
+    this.ref = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+}
+
 export type TerminalAttachment = {
   /** Close the WebSocket and detach input listeners; safe to call twice. */
   dispose: () => void;
@@ -199,7 +214,9 @@ export function subscribeEventsWs(
     try {
       frame = JSON.parse((raw as MessageEvent<string>).data);
     } catch {
-      options.onError?.(new Error("Malformed events frame payload"));
+      const error = new StreamProtocolError("Malformed events frame payload");
+      console.warn(error.message, { ref: error.ref });
+      options.onError?.(error);
       return;
     }
     const parsed = AgentEvent.safeParse(frame?.data);
@@ -208,12 +225,14 @@ export function subscribeEventsWs(
       // unmodeled shape can be identified — never the raw payload, which can
       // carry user prompts or tool output.
       const data = frame?.data as { t?: unknown } | undefined;
-      console.warn("Events frame did not match AgentEvent schema", {
+      const error = new StreamProtocolError("Events frame did not match AgentEvent schema");
+      console.warn(error.message, {
+        ref: error.ref,
         issues: parsed.error.issues,
         eventId: typeof frame.id === "string" ? frame.id : undefined,
         eventType: typeof data?.t === "string" ? data.t : undefined,
       });
-      options.onError?.(new Error("Events frame did not match AgentEvent schema"));
+      options.onError?.(error);
       return;
     }
     const id = typeof frame.id === "string" ? frame.id : "";

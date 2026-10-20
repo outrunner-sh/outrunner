@@ -1,7 +1,8 @@
 "use client";
 
-import { CircleAlert, Info, Loader2, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, Copy, Info, Loader2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -63,6 +64,25 @@ export function NoticeActions({ actions, className }: { actions?: NoticeAction[]
         );
       })}
     </div>
+  );
+}
+
+/** A reference to quote when reporting a fault, with a button to copy it. */
+export function ErrorRef({ value, label = "error" }: { value: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="error-ref">
+      {label} {value}
+      <button
+        type="button"
+        aria-label={copied ? "Copied" : `Copy ${label} ${value}`}
+        onClick={() => {
+          void navigator.clipboard?.writeText(value).then(() => setCopied(true));
+        }}
+      >
+        {copied ? <Check /> : <Copy />}
+      </button>
+    </span>
   );
 }
 
