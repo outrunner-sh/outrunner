@@ -224,15 +224,36 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
   }
 });
 
+test("claudeInstallScript installs the pinned Codex, after the tools", () => {
+  const s = claudeInstallScript();
+  assert.ok(s.includes("sudo npm install -g @openai/codex@"), "installs Codex");
+  assert.ok(s.indexOf("apt-get install") < s.indexOf("npm install"), "tools first");
+});
+
+test("claudeInstallScript fails when the tools can't be installed, whatever Codex does", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  // No tmux or jq, a sudo that fails apt but runs npm, and Codex installing fine.
+  const bin = mkdtempSync(join(tmpdir(), "install-fail-"));
+  writeFileSync(join(bin, "sudo"), `#!/bin/sh\ncase "$*" in *apt-get*) exit 1;; *) exit 0;; esac\n`);
+  chmodSync(join(bin, "sudo"), 0o755);
+  // Only the stand-ins on PATH: a machine's own tmux or jq mustn't count.
+  assert.throws(() =>
+    execFileSync("/bin/sh", ["-c", claudeInstallScript()], { env: { ...process.env, PATH: bin }, stdio: "ignore" }),
+  );
+});
+
 test("claudeInstallScript skips the install when the box already has the tools", async () => {
   const { execFileSync } = await import("node:child_process");
   const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  // A PATH with tmux and jq present, and a sudo that records being called.
+  // A PATH with tmux, jq and codex present, and a sudo that records being called.
   const bin = mkdtempSync(join(tmpdir(), "install-"));
   const called = join(bin, "sudo-called");
-  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["codex", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   }

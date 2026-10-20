@@ -11,6 +11,7 @@ import {
 } from "modal";
 
 import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
+import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 import { AGENT_PORT, type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import {
@@ -55,12 +56,14 @@ const BOX_HOME = `/home/${BOX_USER}`;
 
 export const MODAL_BASE_IMAGE = "node:22-bookworm";
 /** What the agent needs on top of node:22 (git and curl are in it). Claude
- *  Code is installed for the box user, so it can keep itself up to date. */
+ *  Code is installed for the box user, so it can keep itself up to date;
+ *  Codex for every user, at the version the agent is built for. */
 export const MODAL_IMAGE_SETUP = [
   "RUN apt-get update && apt-get install -y --no-install-recommends tmux git-lfs ripgrep jq " +
     "&& rm -rf /var/lib/apt/lists/*",
   `RUN useradd -m -s /bin/bash ${BOX_USER}`,
   `RUN su - ${BOX_USER} -c 'curl -fsSL https://claude.ai/install.sh | bash'`,
+  `RUN npm install -g ${CODEX_PACKAGE}`,
 ];
 
 /** A Modal token: Settings → API Tokens in Modal. */

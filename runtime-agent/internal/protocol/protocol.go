@@ -73,6 +73,9 @@ type CreateWorkspaceRequest struct {
 	// Model is Claude's --model for the session: an alias, a full model name,
 	// or a gateway slug. Empty keeps Claude's default.
 	Model string `json:"model,omitempty"`
+	// Agent is the coding agent the session runs: "claude" or "codex"; empty
+	// is Claude. Recorded by the first create; a repeated one never changes it.
+	Agent string `json:"agent,omitempty"`
 }
 
 // SetModelRequest switches a workspace's session to another model. With a
@@ -82,6 +85,15 @@ type SetModelRequest struct {
 	Model   string `json:"model"`
 	Gateway string `json:"gateway,omitempty"`
 	Token   string `json:"token,omitempty"`
+}
+
+// SetAuthRequest gives a workspace's session its own credential, applied at
+// its next launch: Kind is "claude-oauth-token" or "anthropic-api-key" for a
+// Claude session, "openai-api-key" for a Codex one, or "none" to take it
+// away (the agent's own login applies again), which carries no Token.
+type SetAuthRequest struct {
+	Kind  string `json:"kind"`
+	Token string `json:"token,omitempty"`
 }
 
 // ListingWorkspaceID is the workspace claim of the only token that may list an
@@ -124,6 +136,8 @@ type LocalSession struct {
 	// Gateway is what it runs through ("openrouter"); empty for the user's
 	// own Claude. The key is never listed.
 	Gateway string `json:"gateway,omitempty"`
+	// Agent is the coding agent it runs ("claude", "codex"); empty is Claude.
+	Agent string `json:"agent,omitempty"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).
@@ -151,7 +165,8 @@ type ArchiveWorkspaceRequest struct {
 }
 
 // RestoreDownload is one signed download URL for a Snapshot artifact the agent
-// needs to rebuild a Session: `artifact` is one of bundle/patch/conversation.
+// needs to rebuild a Session: `artifact` is one of bundle/patch/conversation,
+// or a Codex session's optional rollout.
 type RestoreDownload struct {
 	Artifact string `json:"artifact"`
 	URL      string `json:"url"`
@@ -168,6 +183,23 @@ type RestoreWorkspaceRequest struct {
 	BaseBranch string            `json:"baseBranch,omitempty"`
 	SessionID  *string           `json:"sessionId"`
 	Downloads  []RestoreDownload `json:"downloads"`
+	// Agent is the session's agent ("claude", "codex"; empty is Claude): a
+	// fresh box has no record of it. A Codex session's optional "rollout"
+	// download resumes Codex itself; without it the session starts afresh,
+	// its translated conversation restored.
+	Agent string `json:"agent,omitempty"`
+	// Auth is the session's own credential, recorded before it relaunches
+	// (validated like POST /workspaces/{id}/auth).
+	Auth *SetAuthRequest `json:"auth,omitempty"`
+}
+
+// Health is what the unauthenticated GET /health says: that the agent is up,
+// the gateways it can run a session through, and the agents it can run.
+// Gateways and Agents are absent from agents older than each.
+type Health struct {
+	Status   string   `json:"status"`
+	Gateways []string `json:"gateways,omitempty"`
+	Agents   []string `json:"agents,omitempty"`
 }
 
 // ErrorResponse is the stable error envelope for control-plane failures.

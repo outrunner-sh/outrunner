@@ -25,7 +25,11 @@ type MaterializeInput struct {
 	// ConversationDest, when non-empty, is the absolute path to write the
 	// conversation JSONL so `claude --continue` finds the archived session.
 	ConversationDest string
-	// Downloads maps artifact (bundle/patch/conversation) -> signed download URL.
+	// RolloutDest, when non-empty, is where a Codex session's raw rollout is
+	// written, if the Snapshot has one (its download is optional).
+	RolloutDest string
+	// Downloads maps artifact (bundle/patch/conversation/rollout) -> signed
+	// download URL.
 	Downloads []protocol.RestoreDownload
 }
 
@@ -91,6 +95,11 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 		}
 		if info, err := os.Stat(in.ConversationDest); err != nil || info.Size() == 0 {
 			return fmt.Errorf("restore: conversation JSONL was not written to %s", in.ConversationDest)
+		}
+	}
+	if in.RolloutDest != "" && urls["rollout"] != "" {
+		if err := download(ctx, urls["rollout"], in.RolloutDest); err != nil {
+			return fmt.Errorf("download rollout: %w", err)
 		}
 	}
 

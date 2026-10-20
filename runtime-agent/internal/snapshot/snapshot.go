@@ -42,6 +42,9 @@ const (
 	PatchName        = "uncommitted.patch"
 	SummaryName      = "summary.json"
 	ManifestName     = "manifest.json"
+	// RolloutName is the optional raw Codex rollout of a Codex session, next
+	// to its translated conversation, so Restore can resume Codex itself.
+	RolloutName = "rollout.jsonl"
 
 	TreeKindGitBundlePatch = "git-bundle+patch"
 )
@@ -50,6 +53,12 @@ const (
 // by the manifest. The manifest itself is excluded — it can't checksum itself,
 // and it's written last as the completion marker.
 var payloadArtifacts = []string{"conversation", "cast", "bundle", "patch", "summary"}
+
+// optionalArtifactFile maps the artifacts only some sessions have (the Go mirror
+// of OPTIONAL_SNAPSHOT_ARTIFACTS) to their filenames. One is uploaded only
+// when the archive asks for it and the session has it; the manifest names
+// only those uploaded.
+var optionalArtifactFile = map[string]string{"rollout": RolloutName}
 
 // artifactFile maps an upload artifact key (as sent by Next) to its filename.
 var artifactFile = map[string]string{
@@ -84,6 +93,8 @@ type Manifest struct {
 	Cast         string `json:"cast"`
 	Tree         Tree   `json:"tree"`
 	Summary      string `json:"summary"`
+	// Rollout names the raw Codex rollout when the Snapshot has one.
+	Rollout string `json:"rollout,omitempty"`
 
 	Checksums map[string]string `json:"checksums"`
 	Sizes     map[string]int64  `json:"sizes"`
@@ -110,6 +121,9 @@ type Input struct {
 	ConversationPath string
 	// SessionID feeds `claude --continue` on Restore; nil when absent.
 	SessionID *string
+	// RolloutPath is a Codex session's raw rollout, "" for any other: uploaded
+	// as the optional rollout artifact when the archive asks for it.
+	RolloutPath string
 	// Summary is the Workspace Summary snapshotted into the manifest + summary.json.
 	Summary protocol.WorkspaceSummary
 	// ArchivedAt is echoed verbatim into the manifest so it matches the storage
@@ -156,14 +170,25 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 		return nil, err
 	}
 
+	artifacts := append([]string(nil), payloadArtifacts...)
+	if in.RolloutPath != "" && uploadFor(in.Uploads, "rollout") != "" {
+		if _, err := os.Stat(in.RolloutPath); err == nil {
+			paths["rollout"] = in.RolloutPath
+			artifacts = append(artifacts, "rollout")
+		}
+	}
+
 	checksums := map[string]string{}
 	sizes := map[string]int64{}
-	for _, artifact := range payloadArtifacts {
+	for _, artifact := range artifacts {
 		sum, size, err := checksumFile(paths[artifact])
 		if err != nil {
 			return nil, err
 		}
 		name := artifactFile[artifact]
+		if name == "" {
+			name = optionalArtifactFile[artifact]
+		}
 		checksums[name] = sum
 		sizes[name] = size
 	}
@@ -186,6 +211,9 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 		LastMessage:    in.Summary.LastAssistantMessage,
 		TokenUsage:     tokenUsageMap(in.Summary.TokenUsage),
 		ChangedFiles:   in.Summary.ChangedFiles,
+	}
+	if paths["rollout"] != "" {
+		manifest.Rollout = RolloutName
 	}
 
 	manifestPath := filepath.Join(staging, ManifestName)

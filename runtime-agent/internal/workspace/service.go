@@ -13,12 +13,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
@@ -70,6 +67,10 @@ type Service struct {
 	lifeMu    sync.Mutex
 	lifeLocks map[string]*sync.Mutex
 
+	// rolloutClaimMu makes finding a Codex session's rollout and claiming it
+	// (codexRollout) one step across sessions.
+	rolloutClaimMu sync.Mutex
+
 	summariesMu sync.Mutex
 	summaries   map[string]*Summary
 
@@ -88,6 +89,20 @@ type Service struct {
 	// desktop shell sets it so that gap can never widen a local session to
 	// bypassPermissions on the user's own machine.
 	DefaultPermissionMode claude.PermissionMode
+
+	// lookPath finds an agent's binary (exec.LookPath); tests stand in for a
+	// computer with or without it.
+	lookPath func(file string) (string, error)
+	// runCommand runs a helper an agent needs before a launch (`codex
+	// login`); tests stand in for it.
+	runCommand func(ctx context.Context, env []string, stdin string, argv ...string) ([]byte, error)
+
+	// factsWriteMu serializes updateFacts' read-modify-writes.
+	factsWriteMu sync.Mutex
+
+	// codexTails translate the running Codex sessions' rollouts.
+	codexTailsMu sync.Mutex
+	codexTails   map[string]*codexTail
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -120,11 +135,30 @@ type workspaceFacts struct {
 	// Claude Code's — and "the newest log" could be any of them. The session is
 	// launched with this id and found by it instead.
 	ClaudeSessionID string `json:"claudeSessionId,omitempty"`
+	// Agent is the coding agent the session runs (see agentFor); empty is
+	// Claude, which every session ran before there was a choice.
+	Agent string `json:"agent,omitempty"`
+	// CodexSessionID names a Codex session's conversation once Codex has
+	// recorded one: it is resumed by it (`codex resume <id>`).
+	CodexSessionID string `json:"codexSessionId,omitempty"`
+	// CodexRollout is the file Codex records that conversation in, found
+	// once (codexRollout) and translated from then on.
+	CodexRollout string `json:"codexRollout,omitempty"`
+	// CodexHome is the Codex home the session last launched in: where its
+	// running Codex writes, whatever credential it has been given since
+	// (SetAuth applies at the next launch). Empty before its first launch.
+	CodexHome string `json:"codexHome,omitempty"`
+	// CodexLaunchedAt is when a Codex session whose rollout isn't found yet
+	// was launched: the rollout it begins is no older.
+	CodexLaunchedAt string `json:"codexLaunchedAt,omitempty"`
 	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
 	// Gateway, when set, runs the session through it on a key of its own (in
 	// the session's gateway file) instead of the user's Claude credential.
 	Gateway claude.Gateway `json:"gateway,omitempty"`
+	// Auth is the kind of the session's own credential (SetAuth), kept in its
+	// auth file; empty runs on its agent's own login.
+	Auth string `json:"auth,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -147,20 +181,26 @@ type CreateInput struct {
 	// Model is the session's --model; empty keeps Claude's default. Callers
 	// validate it (claude.ValidModel).
 	Model string
+	// Agent is the coding agent the session runs (ValidAgent); empty is
+	// Claude. Recorded at the first Create only.
+	Agent string
 }
 
 func NewService(root string) *Service {
 	env, secrets := sessionEnvironment(os.Environ())
 	return &Service{
-		Root:      root,
-		tmux:      tmux.New(),
-		env:       env,
-		secrets:   secrets,
-		facts:     map[string]workspaceFacts{},
-		sendLocks: map[string]*sendState{},
-		lifeLocks: map[string]*sync.Mutex{},
-		summaries: map[string]*Summary{},
-		recorders: map[string]*cast.Recorder{},
+		Root:       root,
+		tmux:       tmux.New(),
+		env:        env,
+		secrets:    secrets,
+		facts:      map[string]workspaceFacts{},
+		sendLocks:  map[string]*sendState{},
+		lifeLocks:  map[string]*sync.Mutex{},
+		summaries:  map[string]*Summary{},
+		recorders:  map[string]*cast.Recorder{},
+		lookPath:   exec.LookPath,
+		runCommand: runCommand,
+		codexTails: map[string]*codexTail{},
 	}
 }
 
@@ -179,7 +219,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 		switch key {
 		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT":
 			continue
-		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY":
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY":
 			if value != "" {
 				secrets = append(secrets, value)
 			}
@@ -192,7 +232,8 @@ func sessionEnvironment(base []string) ([]string, []string) {
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
-	return append(append([]string(nil), s.secrets...), s.gatewayTokens()...)
+	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
+	return append(secrets, s.authFiles().tokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -263,6 +304,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		PermissionMode: in.PermissionMode,
 		Title:          in.Title,
 		Model:          in.Model,
+		Agent:          in.Agent,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
 	// A repeated Create (after a restart) keeps the session's original age, and
@@ -271,6 +313,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
 	}
+	// Nor does it ever switch the agent: the session's conversation and
+	// credentials are that agent's. A session recorded without one is Claude's.
+	if existed {
+		facts.Agent = prior.Agent
+	}
+	facts.CodexSessionID, facts.CodexRollout = prior.CodexSessionID, prior.CodexRollout
+	facts.CodexLaunchedAt, facts.Auth, facts.CodexHome = prior.CodexLaunchedAt, prior.Auth, prior.CodexHome
 	// A repeated Create (after an agent restart) never switches the model:
 	// that is SetModel's, which relaunches the session to match. A session on a
 	// gateway keeps it, key file and all — dropping it here would run the
@@ -294,7 +343,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 			// with no transcript behind it would start it afresh, cut off from
 			// its history.
 			facts.ClaudeSessionID = prior.ClaudeSessionID
-			if !existed {
+			if !existed && facts.Agent != AgentCodex {
 				facts.ClaudeSessionID = newSessionID()
 			}
 		}
@@ -395,11 +444,15 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
 	}
-	if err := s.requireGatewayEnv(workspaceID); err != nil {
+	if err := s.requireKeys(workspaceID); err != nil {
+		return "", err
+	}
+	a := s.agentFor(workspaceID)
+	if err := a.prepare(ctx, workspaceID); err != nil {
 		return "", err
 	}
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := claude.SessionEnv(s.env, anthropicToken)
+	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
@@ -408,31 +461,33 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
 	s.startRecorder(ctx, workspaceID)
-	if err := s.waitClaudeReady(ctx, name); err != nil {
-		return "", claudeExited(err, worktree)
+	if err := s.waitReady(ctx, a, name); err != nil {
+		return "", a.exited(worktree)
 	}
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
 }
 
-// waitClaudeReady blocks until Claude's TUI has mounted and can accept a
+// waitReady blocks until the agent's TUI has mounted and can accept a
 // submitted prompt, so the workspace isn't reported ready while input is still
 // silently dropped during startup. It waits for the composer prompt to render
 // and enforces a short floor (the measured input-ready point after launch),
 // capped so a slow or unexpected launch can never wedge Start. Returns early if
 // ctx is cancelled (the start request disconnected or shutdown began).
 //
-// It answers Claude's folder-trust dialog. Every worktree is a directory
-// Claude has never seen, so without this the first prompt would be typed into
-// the dialog. Choosing the repository or folder in Outrunner is the user's
-// trust decision. A Runtime Computer's seeded config trusts its workspaces
-// folder, but Claude Code 2.1.296 asks for each folder inside it anyway.
+// It answers the screens the agent shows before its prompt box (agent.
+// startupKey), Claude's folder-trust dialog among them. Every worktree is a
+// directory Claude has never seen, so without this the first prompt would be
+// typed into the dialog. Choosing the repository or folder in Outrunner is the
+// user's trust decision. A Runtime Computer's seeded config trusts its
+// workspaces folder, but Claude Code 2.1.296 asks for each folder inside it
+// anyway.
 //
-// A Claude that exits meanwhile (an option its version lacks, a crash, a
-// "No" to that dialog) takes its session with it: that is errClaudeExited,
+// An agent that exits meanwhile (an option its version lacks, a crash, a
+// "No" to that dialog) takes its session with it: that is errExitedAtStart,
 // rather than a session reported ready that the first prompt then finds gone
 // ("tmux paste: no session").
-func (s *Service) waitClaudeReady(ctx context.Context, name string) error {
+func (s *Service) waitReady(ctx context.Context, a agent, name string) error {
 	const minWait = 2 * time.Second
 	// Room for a first run's screens (theme, security notes) and the trust
 	// dialog, a second apart, on a Claude Code still starting up.
@@ -441,20 +496,16 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string) error {
 	var lastAnswer time.Time
 	for ctx.Err() == nil && time.Since(launched) < maxWait {
 		if !s.tmux.HasSession(ctx, name) {
-			return errClaudeExited
+			return errExitedAtStart
 		}
 		pane, err := s.tmux.CapturePane(ctx, name)
-		if err == nil && isComposer(pane) && time.Since(launched) >= minWait {
+		if err == nil && a.isComposer(pane) && time.Since(launched) >= minWait {
 			break
 		}
 		// Re-press only after a beat: a just-launched TUI can drop a key, and
 		// the pane must show where the last one moved the selection.
 		if err == nil && time.Since(lastAnswer) >= time.Second {
-			key := firstRunKey(pane)
-			if key == "" && isTrustDialog(pane) {
-				key = trustKey(pane)
-			}
-			if key != "" {
+			if key := a.startupKey(pane); key != "" {
 				_ = s.tmux.SendKey(ctx, name, key)
 				lastAnswer = time.Now()
 			}
@@ -465,112 +516,9 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string) error {
 		}
 	}
 	if ctx.Err() == nil && !s.tmux.HasSession(ctx, name) {
-		return errClaudeExited
+		return errExitedAtStart
 	}
 	return nil
-}
-
-var errClaudeExited = errors.New("Claude Code exited as soon as it started")
-
-// claudeExited says where to look. What Claude printed as it exited is gone
-// with its session: tmux can't keep it (on macOS a pty drops what an
-// instantly exiting process wrote last), so its own terminal is the way to
-// see it.
-func claudeExited(err error, folder string) error {
-	return fmt.Errorf("%w. To see why, run `claude` in a terminal in %s", err, folder)
-}
-
-// isComposer reports whether a pane shows Claude's prompt box, ready for
-// input: a line starting with its prompt (❯ in 2.1, > in 2.0) right under a
-// horizontal rule. The theme picker, the trust dialog and permission questions
-// show ❯ too, as an indented selection, and never under a rule; taking any ❯
-// for the prompt once typed a user's first message into the theme picker
-// ("prompt not confirmed delivered after 20 attempts").
-func isComposer(pane string) bool {
-	previous := ""
-	for _, line := range strings.Split(pane, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if (strings.HasPrefix(line, "❯") || strings.HasPrefix(line, ">")) && isRule(previous) {
-			return true
-		}
-		previous = line
-	}
-	return false
-}
-
-func isRule(line string) bool {
-	line = strings.TrimSpace(line)
-	return utf8.RuneCountInString(line) >= 10 && strings.Trim(line, "─") == ""
-}
-
-// awaitsAnswer reports whether Claude is showing a menu instead of its prompt
-// box: a question, a permission prompt, a first-run screen. Typing a prompt
-// there would be read as a choice ("1", Enter: Yes), so it waits for the user.
-func awaitsAnswer(pane string) bool {
-	if isComposer(pane) {
-		return false
-	}
-	if firstRunKey(pane) != "" {
-		return true
-	}
-	for _, line := range strings.Split(pane, "\n") {
-		// A menu's selection is indented (or boxed); the prompt starts the line.
-		if i := strings.Index(line, "❯"); i > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// firstRunKey answers the screens Claude Code shows the first time it runs on
-// a Mac, before any session can start: logging in through Outrunner doesn't
-// get past them. The theme picker takes the theme it preselects, the security
-// notes need Enter. Login isn't one: Outrunner asks for it before a session.
-func firstRunKey(pane string) string {
-	switch {
-	case strings.Contains(pane, "Choose the text style"):
-		return "Enter"
-	case strings.Contains(pane, "Security notes:") && strings.Contains(pane, "to continue"):
-		return "Enter"
-	}
-	return ""
-}
-
-// isTrustDialog reports whether a pane shows Claude Code's folder-trust prompt,
-// in either of the wordings it has shipped with.
-func isTrustDialog(pane string) bool {
-	return strings.Contains(pane, "trust this folder") ||
-		strings.Contains(pane, "trust the files in this folder")
-}
-
-// trustKey is the key that takes Claude's folder-trust dialog toward "Yes":
-// Enter once "Yes" is the selected option (❯), else the arrow toward it.
-// Which option comes first, and which is selected, changed between Claude
-// Code versions: 2.1.247 lists and preselects "Yes", 2.1.287 lists "No, exit"
-// first and preselects it, so a plain Enter would close the session. Empty
-// when the pane doesn't show both, since any key could then mean "No".
-func trustKey(pane string) string {
-	selected, yes := -1, -1
-	for i, line := range strings.Split(pane, "\n") {
-		if selected < 0 && strings.Contains(line, "❯") {
-			selected = i
-		}
-		if strings.Contains(line, "Yes, I trust this folder") || strings.Contains(line, "Yes, proceed") {
-			yes = i
-		}
-	}
-	switch {
-	case selected < 0 || yes < 0:
-		return ""
-	case selected == yes:
-		return "Enter"
-	case yes > selected:
-		return "Down"
-	default:
-		return "Up"
-	}
 }
 
 // Resume re-launches Claude with --continue after an exit or box restart.
@@ -585,6 +533,9 @@ var (
 	ErrUnknownWorkspace = errors.New("unknown workspace")
 	// ErrModelUnsupported is a model switch on an engine that has none (jcode).
 	ErrModelUnsupported = errors.New("this engine cannot switch models")
+	// ErrGatewayUnsupported is a gateway asked of a Codex session: gateways
+	// serve Claude's API, and Codex speaks OpenAI's.
+	ErrGatewayUnsupported = errors.New("a Codex session runs on OpenAI's models directly and can't use a gateway")
 	// ErrSessionBusy is a switch asked for while Claude is mid-turn: the
 	// relaunch would cut the turn off.
 	ErrSessionBusy = errors.New("Claude is mid-turn; switch models once it has finished")
@@ -626,6 +577,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if !ok {
 		return ErrUnknownWorkspace // never write facts for a workspace never created
 	}
+	if f.Agent == AgentCodex && choice.Gateway != claude.NoGateway {
+		return ErrGatewayUnsupported
+	}
 	env := ""
 	if choice.Gateway != claude.NoGateway {
 		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
@@ -664,16 +618,16 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 				return fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionUnchecked, err)
 			}
 			running = false
-		} else if claudeIsBusy(pane) {
+		} else if s.agentFor(workspaceID).isBusy(pane) {
 			return ErrSessionBusy
 		}
 	}
-	if err := s.putGatewayEnv(workspaceID, env); err != nil {
+	if err := s.gatewayFiles().put(workspaceID, env); err != nil {
 		return err
 	}
-	prior := f
-	f.Model, f.Gateway = choice.Model, choice.Gateway
-	s.setFacts(workspaceID, f)
+	// Only the model and gateway change: a Codex session's tail may record its
+	// rollout meanwhile.
+	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Model, f.Gateway = choice.Model, choice.Gateway })
 	if !running {
 		return nil // the next Start launches on it
 	}
@@ -685,8 +639,8 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, resume, lock); err != nil {
 		// Not applied, so not recorded: a retry of the same choice tries again
 		// rather than finding it already set, and the next Start uses the old.
-		_ = s.putGatewayEnv(workspaceID, priorEnv)
-		s.setFacts(workspaceID, prior)
+		_ = s.gatewayFiles().put(workspaceID, priorEnv)
+		s.updateFacts(workspaceID, func(now *workspaceFacts) { now.Model, now.Gateway = f.Model, f.Gateway })
 		// The old session was killed before the new one failed to start, so
 		// bring Claude back on the model it had: a failed switch must not end
 		// a session that was working.
@@ -698,12 +652,6 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		return err
 	}
 	return nil
-}
-
-// claudeIsBusy reports whether Claude's screen shows a turn in progress: its
-// footer offers "esc to interrupt" only then.
-func claudeIsBusy(pane string) bool {
-	return strings.Contains(pane, "esc to interrupt")
 }
 
 // relaunch replaces a workspace's Claude session. Callers hold its lifecycle
@@ -733,49 +681,27 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	if err := s.requireWorktree(workspaceID); err != nil {
 		return "", err
 	}
-	if err := s.requireGatewayEnv(workspaceID); err != nil {
+	if err := s.requireKeys(workspaceID); err != nil {
 		return "", err // before the kill: the running session is left as it is
+	}
+	a := s.agentFor(workspaceID)
+	if err := a.prepare(ctx, workspaceID); err != nil {
+		return "", err // likewise
 	}
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := claude.SessionEnv(s.env, anthropicToken)
+	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
 	s.continueRecorder(ctx, workspaceID)
-	if err := s.waitClaudeReady(ctx, name); err != nil {
-		return "", claudeExited(err, worktree)
+	if err := s.waitReady(ctx, a, name); err != nil {
+		return "", a.exited(worktree)
 	}
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
-}
-
-// launchCommand is Claude's argv for (re)launching a workspace's session,
-// continuing its conversation when resume is set. An in-place session's
-// conversation is named by id: it starts under that id and is resumed by it,
-// once its transcript exists, whatever else shares the folder. Any other
-// session continues the newest conversation in its own worktree.
-func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []string {
-	mode, orientation := s.permissionMode(workspaceID), s.orientation(workspaceID, worktree)
-	f, _ := s.getFacts(workspaceID)
-	var argv []string
-	switch {
-	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
-		argv = claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
-	case f.ClaudeSessionID != "":
-		argv = claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
-	case resume:
-		argv = claude.ContinueCommand(mode, orientation)
-	default:
-		argv = claude.Command(mode, orientation)
-	}
-	if f.Gateway != claude.NoGateway {
-		// The model rides in the gateway file: --model refuses a gateway's names.
-		return claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
-	}
-	return claude.WithModel(argv, f.Model)
 }
 
 // orientation builds Claude's orientation prompt for a workspace. It uses the
@@ -862,6 +788,31 @@ func (s *Service) setFacts(workspaceID string, f workspaceFacts) {
 	}
 }
 
+// updateFacts changes a workspace's recorded facts in place, reading and
+// writing them under one lock, so two changes made at once (a credential set
+// while a transcript is found) never undo each other. A workspace with no
+// facts is left without: false.
+func (s *Service) updateFacts(workspaceID string, change func(*workspaceFacts)) bool {
+	s.factsWriteMu.Lock()
+	defer s.factsWriteMu.Unlock()
+	f, ok := s.getFacts(workspaceID)
+	if !ok {
+		return false
+	}
+	change(&f)
+	s.setFacts(workspaceID, f)
+	return true
+}
+
+// requireKeys refuses to launch a session whose gateway key or own
+// credential was recorded but whose file is gone.
+func (s *Service) requireKeys(workspaceID string) error {
+	if err := s.requireGatewayEnv(workspaceID); err != nil {
+		return err
+	}
+	return s.requireAuthEnv(workspaceID)
+}
+
 func (s *Service) getFacts(workspaceID string) (workspaceFacts, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -935,7 +886,7 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 		return nil // the earlier copy landed after that send gave up
 	case !retry:
 		before = s.userTurns(workspaceID)
-		if s.awaitingAnswer(ctx, name) {
+		if s.awaitingAnswer(ctx, workspaceID, name) {
 			return errAwaitsAnswer
 		}
 		if err := s.tmux.Paste(ctx, name, content); err != nil {
@@ -944,7 +895,7 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	}
 	var lastErr error
 	for attempt := 0; attempt < submitAttempts && ctx.Err() == nil; attempt++ {
-		if s.awaitingAnswer(ctx, name) {
+		if s.awaitingAnswer(ctx, workspaceID, name) {
 			// Keep watching for the turn, which may have landed just before the
 			// menu came up, but press nothing into it.
 			lastErr = errAwaitsAnswer
@@ -970,12 +921,12 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 // errAwaitsAnswer is a send held back from a menu Claude is showing.
 var errAwaitsAnswer = errors.New("Claude is waiting for an answer in the terminal (a question or a permission prompt). Answer it there, then send again")
 
-// awaitingAnswer reports whether the session shows a menu rather than Claude's
-// prompt box. A pane that can't be read doesn't block: the send goes ahead as
-// it always did.
-func (s *Service) awaitingAnswer(ctx context.Context, name string) bool {
+// awaitingAnswer reports whether the session shows a menu rather than the
+// agent's prompt box. A pane that can't be read doesn't block: the send goes
+// ahead as it always did.
+func (s *Service) awaitingAnswer(ctx context.Context, workspaceID, name string) bool {
 	pane, err := s.tmux.CapturePane(ctx, name)
-	return err == nil && awaitsAnswer(pane)
+	return err == nil && s.agentFor(workspaceID).awaitsAnswer(pane)
 }
 
 const (
@@ -1022,72 +973,6 @@ func (s *Service) forgetStagedPrompt(workspaceID string) {
 	lock.Lock()
 	lock.staged = nil
 	lock.Unlock()
-}
-
-// claudeConvDir is where Claude writes this workspace's conversation JSONL:
-// $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + claudeProjectDir —
-// the same derivation as SessionLog and conversationDest — rather than s.Root,
-// so it stays correct when HOME and Root differ.
-func (s *Service) claudeConvDir(workspaceID string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = s.Root // best-effort fallback if HOME is unavailable
-	}
-	return claudeProjectDir(home, s.worktreePath(workspaceID))
-}
-
-// userTurnCount totals the user messages Claude has recorded across the *.jsonl
-// files in dir (0 if it doesn't exist yet). We count user turns specifically
-// rather than total bytes so an in-flight assistant reply — which also grows the
-// log — can't be mistaken for our prompt being accepted. Each conversation entry
-// is one JSON line; parse its `type` field (rather than substring-matching
-// `"type":"user"`, which can appear inside an assistant turn's content).
-func userTurnCount(dir string) int {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		count += fileUserTurns(filepath.Join(dir, e.Name()))
-	}
-	return count
-}
-
-// fileUserTurns counts the user messages in one conversation file (0 if it
-// doesn't exist yet).
-func fileUserTurns(path string) int {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		var rec struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
-			count++
-		}
-	}
-	return count
-}
-
-// userTurns counts the user messages in a workspace's conversation: its own
-// transcript when the conversation is named by id (an in-place session, whose
-// folder other conversations may share), else every transcript in its worktree's
-// project directory.
-func (s *Service) userTurns(workspaceID string) int {
-	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
-		return fileUserTurns(filepath.Join(s.claudeConvDir(workspaceID), f.ClaudeSessionID+".jsonl"))
-	}
-	return userTurnCount(s.claudeConvDir(workspaceID))
 }
 
 // lockLifecycle takes the workspace's lifecycle lock and returns its release,
@@ -1137,12 +1022,14 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	summary := s.SummaryOf(ctx, workspaceID)
 	summary.State = "archived" // the Snapshot captures the archived session
 
+	f, _ := s.getFacts(workspaceID)
 	return snapshot.Produce(ctx, snapshot.Input{
 		WorkspaceID:      workspaceID,
 		Worktree:         s.worktreePath(workspaceID),
 		CastPath:         s.castPath(workspaceID),
 		ConversationPath: s.SessionLog(workspaceID),
 		SessionID:        s.sessionID(workspaceID),
+		RolloutPath:      f.CodexRollout, // a Codex session's, raw
 		Summary:          summary,
 		ArchivedAt:       req.ArchivedAt,
 		Uploads:          req.Uploads,
@@ -1150,38 +1037,93 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	})
 }
 
-// Restore rebuilds an archived Session from its Snapshot and relaunches Claude
-// with `claude --continue`. The agent materializes + VERIFIES the worktree
-// before booting Claude (M4 invariant #4); a verification failure returns an
-// error and Claude is never started. The box need not be the original one —
-// everything is rebuilt from the Snapshot's tree + conversation (portability).
+// Restore rebuilds an archived Session from its Snapshot and relaunches its
+// agent on it: Claude with its conversation; Codex resumed by its rollout when
+// the Snapshot has one, else afresh, its translated history restored. The
+// agent materializes + VERIFIES the worktree before booting the agent (M4
+// invariant #4); a verification failure returns an error and the agent is
+// never started. The box need not be the original one — everything is
+// rebuilt from the Snapshot's tree + conversation (portability).
+//
+// The session's agent and its credential, which a fresh box has no record
+// of, come with the request and are recorded first: where a rollout goes, and
+// the launch after, depend on both.
 func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.RestoreWorkspaceRequest) (string, error) {
-	if req.SessionID == nil || *req.SessionID == "" {
-		return "", fmt.Errorf("cannot restore: snapshot has no Claude session id")
+	codexSession := req.Agent == AgentCodex
+	rollout := downloadFor(req.Downloads, "rollout") != ""
+	sessionID := ""
+	if req.SessionID != nil {
+		sessionID = *req.SessionID
 	}
-	// The session id becomes a filename under ~/.claude/projects/<slug>/; reject
-	// anything that could escape that directory (path separators, traversal).
-	if !validSessionID(*req.SessionID) {
-		return "", fmt.Errorf("cannot restore: invalid session id %q", *req.SessionID)
+	if sessionID == "" && (!codexSession || rollout) {
+		return "", fmt.Errorf("cannot restore: snapshot has no session id")
+	}
+	// The session id becomes a filename (under ~/.claude/projects/<slug>/, or
+	// a Codex sessions folder); reject anything that could escape that
+	// directory (path separators, traversal).
+	if sessionID != "" && !validSessionID(sessionID) {
+		return "", fmt.Errorf("cannot restore: invalid session id %q", sessionID)
+	}
+	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent})
+	if req.Auth != nil && req.Auth.Kind != AuthNone {
+		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
+			return "", err
+		}
 	}
 	worktree := s.worktreePath(workspaceID)
-	convDest, err := s.conversationDest(worktree, *req.SessionID)
-	if err != nil {
+	in := snapshot.MaterializeInput{
+		MirrorPath:   s.mirrorPath(),
+		WorktreePath: worktree,
+		Branch:       req.Branch,
+		Downloads:    req.Downloads,
+	}
+	switch {
+	case codexSession:
+		// No session id: Codex never recorded a conversation to restore.
+		if sessionID != "" {
+			in.ConversationDest = conversationPath(s.Root, workspaceID)
+		}
+		if rollout {
+			in.RolloutDest = restoredRolloutPath(filepath.Join(s.codexHomeFor(workspaceID), "sessions"), sessionID)
+		}
+	default:
+		convDest, err := s.conversationDest(worktree, sessionID)
+		if err != nil {
+			return "", err
+		}
+		in.ConversationDest = convDest
+	}
+	if err := snapshot.Materialize(ctx, in); err != nil {
 		return "", err
 	}
-	if err := snapshot.Materialize(ctx, snapshot.MaterializeInput{
-		MirrorPath:       s.mirrorPath(),
-		WorktreePath:     worktree,
-		Branch:           req.Branch,
-		ConversationDest: convDest,
-		Downloads:        req.Downloads,
-	}); err != nil {
-		return "", err
+	if in.RolloutDest != "" {
+		// `codex resume` finds it by the id its first line names.
+		meta, err := readRolloutMeta(in.RolloutDest)
+		if err != nil || meta.ID != sessionID {
+			return "", fmt.Errorf("cannot restore: the snapshot's rollout is not session %s", sessionID)
+		}
+		s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexRollout, f.CodexSessionID = in.RolloutDest, sessionID })
 	}
-	// Verified — safe to boot Claude. Record the facts the orientation prompt
-	// needs, then relaunch with --continue against the restored session.
-	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch})
+	// Verified — safe to boot the agent, continuing the restored session.
 	return s.Resume(ctx, workspaceID, "")
+}
+
+// downloadFor is the download URL a restore gave for an artifact, or "".
+func downloadFor(downloads []protocol.RestoreDownload, artifact string) string {
+	for _, d := range downloads {
+		if d.Artifact == artifact {
+			return d.URL
+		}
+	}
+	return ""
+}
+
+// restoredRolloutPath is where a restored rollout is filed in a Codex home:
+// today's folder, named as Codex names one (rollout-<time>-<id>.jsonl).
+func restoredRolloutPath(sessions, sessionID string) string {
+	now := time.Now()
+	return filepath.Join(sessions, now.Format("2006"), now.Format("01"), now.Format("02"),
+		"rollout-"+now.Format("2006-01-02T15-04-05")+"-"+sessionID+".jsonl")
 }
 
 // validSessionID guards the session id before it is used as a path segment. A
@@ -1206,9 +1148,16 @@ func (s *Service) conversationDest(worktree, sessionID string) (string, error) {
 	return filepath.Join(claudeProjectDir(home, worktree), sessionID+".jsonl"), nil
 }
 
-// sessionID returns the Claude session id for `claude --continue` on Restore —
-// the JSONL basename without extension — or nil when Claude never wrote a log.
+// sessionID returns the session id Restore resumes by: a Codex session's
+// (its rollout's), else Claude's — the JSONL basename without extension — or
+// nil when the agent never recorded a conversation.
 func (s *Service) sessionID(workspaceID string) *string {
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
+		if f.CodexSessionID == "" {
+			return nil
+		}
+		return &f.CodexSessionID
+	}
 	log := s.SessionLog(workspaceID)
 	if log == "" {
 		return nil
@@ -1307,11 +1256,18 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 }
 
 func (s *Service) forgetWorkspace(workspaceID string) {
+	s.stopCodexTail(workspaceID)
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
+		_ = os.Remove(conversationPath(s.Root, workspaceID)) // its translation
+	}
 	s.mu.Lock()
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
-	s.removeGatewayFiles(workspaceID)
+	s.gatewayFiles().remove(workspaceID)
+	s.authFiles().remove(workspaceID)
+	// A session's own Codex home holds a copy of its key (auth.json).
+	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()
@@ -1319,92 +1275,6 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	delete(s.recorders, workspaceID)
 	s.recordersMu.Unlock()
 }
-
-// SessionLog returns the current Claude JSONL path for a workspace, or "" if
-// Claude hasn't written anything yet. Claude Code stores per-project logs at
-// ~/.claude/projects/<slug>/<sessionId>.jsonl (see claudeSlug). A worktree is
-// the session's own, and --continue reuses its file, so "newest jsonl" ==
-// "current session"; an in-place session's conversation is named by id.
-func (s *Service) SessionLog(workspaceID string) string {
-	if s.jcode != nil {
-		return s.jcode.ConversationLog(workspaceID)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	dir := claudeProjectDir(home, s.worktreePath(workspaceID))
-	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
-		path := filepath.Join(dir, f.ClaudeSessionID+".jsonl")
-		if _, err := os.Stat(path); err != nil {
-			return ""
-		}
-		return path
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	var newest string
-	var newestMod time.Time
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(newestMod) {
-			newestMod = info.ModTime()
-			newest = filepath.Join(dir, e.Name())
-		}
-	}
-	return newest
-}
-
-// claudeProjectDir is the directory Claude Code keeps a working directory's
-// conversation logs in. Claude names it after its real working directory, so
-// symlinks are resolved first: on macOS /var and /tmp live under /private, and
-// a symlinked checkout or home is common. A path that does not exist yet is
-// used as given.
-func claudeProjectDir(home, worktree string) string {
-	if resolved, err := filepath.EvalSymlinks(worktree); err == nil {
-		worktree = resolved
-	}
-	return filepath.Join(home, ".claude", "projects", claudeSlug(worktree))
-}
-
-// claudeSlug encodes a filesystem path the way Claude Code names its
-// per-project JSONL directory (read from Claude Code 2.1's bundle). It runs
-// `path.replace(/[^a-zA-Z0-9]/g, "-")` on a JavaScript string, so the unit is a
-// UTF-16 code unit, not a byte or a rune: "é" becomes one '-', an emoji two.
-// A slug over claudeSlugMax units is cut there and suffixed with '-' and the
-// base-36 absolute value of the path's 32-bit Java-style string hash.
-func claudeSlug(path string) string {
-	units := utf16.Encode([]rune(path))
-	b := make([]byte, len(units))
-	var hash int32 // (h<<5)-h+c|0 in JavaScript: wraps exactly like int32
-	for i, u := range units {
-		hash = hash*31 + int32(u)
-		if u >= 'a' && u <= 'z' || u >= 'A' && u <= 'Z' || u >= '0' && u <= '9' {
-			b[i] = byte(u)
-		} else {
-			b[i] = '-'
-		}
-	}
-	if len(b) <= claudeSlugMax {
-		return string(b)
-	}
-	abs := int64(hash)
-	if abs < 0 {
-		abs = -abs
-	}
-	return string(b[:claudeSlugMax]) + "-" + strconv.FormatInt(abs, 36)
-}
-
-// claudeSlugMax is the longest slug Claude Code keeps whole.
-const claudeSlugMax = 200
 
 // Activity reports the most recent activity in any session on this box, and
 // whether Claude is mid-turn in any of them; zero time when no session has a
@@ -1437,12 +1307,17 @@ func (s *Service) beginSummary(workspaceID, worktree string) {
 		s.summaries[workspaceID] = sum
 	}
 	s.summariesMu.Unlock()
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex && s.jcode == nil {
+		// Before the collector, which reads what the tail writes.
+		s.startCodexTail(workspaceID)
+	}
 	sum.start(func() string { return s.SessionLog(workspaceID) })
 }
 
 // endSummary stops the collector and marks the session as ended. The Summary
 // stays in the map so post-stop SummaryOf still returns the last-known state.
 func (s *Service) endSummary(workspaceID string) {
+	s.stopCodexTail(workspaceID)
 	s.summariesMu.Lock()
 	sum, ok := s.summaries[workspaceID]
 	s.summariesMu.Unlock()

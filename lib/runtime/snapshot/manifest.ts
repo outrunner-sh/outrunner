@@ -38,6 +38,20 @@ export const SNAPSHOT_ARTIFACTS = {
 
 export type SnapshotArtifact = keyof typeof SNAPSHOT_ARTIFACTS;
 
+/**
+ * Artifacts only some Snapshots have: a Codex session's raw rollout, next to
+ * its translated conversation, so Restore can resume Codex itself. Kept out of
+ * SNAPSHOT_ARTIFACTS, whose every key is minted for every archive: an agent
+ * from before an optional artifact refuses an upload URL it doesn't know, so
+ * one is asked for only of an agent that can make it. The agent uploads one
+ * only when the session has it, and the manifest names only those uploaded.
+ */
+export const OPTIONAL_SNAPSHOT_ARTIFACTS = {
+  rollout: "rollout.jsonl",
+} as const;
+
+export type OptionalSnapshotArtifact = keyof typeof OPTIONAL_SNAPSHOT_ARTIFACTS;
+
 /** sha256 digest, formatted `sha256:<hex>` (matches the manifest's own notation). */
 const Sha256 = z
   .string()
@@ -90,6 +104,8 @@ export const SnapshotManifest = z
     cast: z.literal(SNAPSHOT_ARTIFACTS.cast),
     tree: SnapshotTree,
     summary: z.literal(SNAPSHOT_ARTIFACTS.summary),
+    /** The raw Codex rollout, when the Snapshot has one. */
+    rollout: z.literal(OPTIONAL_SNAPSHOT_ARTIFACTS.rollout).optional(),
 
     // Integrity — keyed by artifact filename.
     checksums: z.record(z.string(), Sha256),

@@ -49,6 +49,7 @@ func (s *Service) LocalSessions(ctx context.Context) []protocol.LocalSession {
 			Running:      s.SessionAlive(ctx, id),
 			Model:        f.Model,
 			Gateway:      string(f.Gateway),
+			Agent:        f.Agent,
 		})
 	}
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
@@ -79,5 +80,5 @@ func (s *Service) lastActiveAt(workspaceID string, f workspaceFacts) string {
 // sessions (and the user's own Claude Code), where "the newest log" may be
 // anyone's.
 func (s *Service) ownsTranscript(f workspaceFacts) bool {
-	return s.jcode != nil || f.ClaudeSessionID != "" || !f.InPlace
+	return s.jcode != nil || f.Agent == AgentCodex || f.ClaudeSessionID != "" || !f.InPlace
 }
