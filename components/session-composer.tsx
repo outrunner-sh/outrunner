@@ -21,6 +21,7 @@ import {
   rememberCustomModel,
   rememberedCustomModels,
   takesTypedModels,
+  typedModelOwner,
   type TypedModelProvider,
 } from "@/lib/runtime/custom-models";
 import { loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
@@ -395,6 +396,18 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
           {searching && flat.length === 0 ? (
             <p className="px-2 py-1.5 text-sm text-muted-foreground">No model matches “{query.trim()}”.</p>
           ) : null}
+          {/* Without the groups, their way to type a model in stays here. */}
+          {!showGroups && groups.some((group) => group.own) ? <DropdownMenuSeparator /> : null}
+          {!showGroups
+            ? groups.flatMap((group) =>
+                group.own ? (
+                  <DropdownMenuItem key={`other:${group.provider}`} onSelect={() => setCustomFor(group.own)}>
+                    <ModelIcon provider={group.provider} />
+                    <span className="text-muted-foreground">Other {typedModelOwner(group.own).label} model…</span>
+                  </DropdownMenuItem>
+                ) : [],
+              )
+            : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem asChild>
             <Link href="/settings/models" className="text-muted-foreground">
