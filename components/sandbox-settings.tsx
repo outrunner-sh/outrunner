@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Lock, Pencil, SquareTerminal, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { DaytonaIcon, ModalIcon } from "@/components/brand-icons";
 import { type OptionCard, OptionCards } from "@/components/option-cards";
@@ -66,28 +66,41 @@ export function SandboxSettingsForm({
   const [shown, setShown] = useState<SandboxChoice>(initial.sandbox);
   const [status, setStatus] = useState<ActionStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  // Changes go out one at a time, in the order made: a save that is still
+  // checking a key mustn't land after, and undo, a switch made since. Each
+  // names the sandbox in use as it is when it goes out, not when it was made.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const inUseNow = useRef(initial.sandbox);
+  const busy = status === "pending";
 
-  /** Send a change; the answer is the settings as the server has them. */
-  async function send(method: "PUT" | "DELETE", body?: object, query = ""): Promise<boolean> {
+  /** Send a change, after any before it; the answer is the settings as the
+   *  server has them. `body` is made as it goes out. */
+  function send(method: "PUT" | "DELETE", body?: () => object, query = ""): Promise<boolean> {
     setStatus("pending");
     setError(null);
-    try {
-      const res = await fetch(`/api/settings/sandbox${query}`, {
-        method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
-      const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
-      if (!res.ok || !data?.sandbox) throw new Error(data?.error ?? "Couldn't save that. Try again.");
-      setSettings(data);
-      setStatus("success");
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't save that.");
-      setStatus("error");
-      return false;
-    }
+    const run = queue.current.then(async () => {
+      try {
+        const payload = body?.();
+        const res = await fetch(`/api/settings/sandbox${query}`, {
+          method,
+          headers: payload ? { "Content-Type": "application/json" } : undefined,
+          body: payload ? JSON.stringify(payload) : undefined,
+        });
+        // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
+        const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
+        if (!res.ok || !data?.sandbox) throw new Error(data?.error ?? "Couldn't save that. Try again.");
+        inUseNow.current = data.sandbox;
+        setSettings(data);
+        setStatus("success");
+        return true;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't save that.");
+        setStatus("error");
+        return false;
+      }
+    });
+    queue.current = run;
+    return run;
   }
 
   const inUse = settings.sandbox;
@@ -118,21 +131,26 @@ export function SandboxSettingsForm({
           shown={shown}
           onSelect={(id) => {
             setShown(id);
-            setStatus("idle");
+            // A save still under way keeps saying so.
+            if (!busy) setStatus("idle");
             setError(null);
           }}
           label="Sandbox"
+          chosenLabel="in use"
         />
         <p className="text-sm text-muted-foreground">{SANDBOXES[shown].detail}</p>
       </div>
 
       {shown !== "outrunner" ? (
         <SandboxCredential
+          // Its own drafts per provider: a Modal secret typed in mustn't
+          // turn up in Daytona's field.
+          key={shown}
           sandbox={shown}
           stored={settings[shown]}
           inUse={inUse === shown}
-          busy={status === "pending"}
-          onSave={(credential) => send("PUT", { sandbox: inUse, ...credential })}
+          busy={busy}
+          onSave={(credential) => send("PUT", () => ({ sandbox: inUseNow.current, ...credential }))}
           onRemove={() => void send("DELETE", undefined, `?key=${shown}`)}
         />
       ) : null}
@@ -140,7 +158,9 @@ export function SandboxSettingsForm({
       {inUse === shown && sized(shown) ? (
         <BoxSizePicker
           value={size}
-          onChange={(next) => void send("PUT", { sandbox: inUse, boxSize: next })}
+          onChange={(next) => {
+            if (!busy) void send("PUT", () => ({ sandbox: inUseNow.current, boxSize: next }));
+          }}
           plan={shown === "outrunner" ? plan : undefined}
         />
       ) : null}
@@ -154,10 +174,13 @@ export function SandboxSettingsForm({
           </p>
           <LoadingButton
             variant="outline"
-            status={status === "pending" ? "pending" : "idle"}
-            labels={{ idle: `Use ${SANDBOXES[shown].label} for new sessions`, pending: "Switching" }}
-            disabled={!ready(shown)}
-            onClick={() => void send("PUT", { sandbox: shown })}
+            status={busy ? "pending" : "idle"}
+            labels={{ idle: `Use ${SANDBOXES[shown].label} for new sessions`, pending: "Saving" }}
+            disabled={!ready(shown) || busy}
+            onClick={() => {
+              const next = shown;
+              void send("PUT", () => ({ sandbox: next }));
+            }}
           />
         </div>
       ) : (
