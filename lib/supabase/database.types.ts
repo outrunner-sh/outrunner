@@ -136,6 +136,7 @@ type ComputeIntervalRow = {
   started_at: string;
   last_seen_at: string;
   ended_at: string | null;
+  activity_unknown_since: string | null;
 };
 
 type BillingCustomerRow = {

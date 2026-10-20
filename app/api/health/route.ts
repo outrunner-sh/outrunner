@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { billingMode } from "@/lib/billing/mode";
 import { optionalEnv, providerName } from "@/lib/env";
 import { keySource } from "@/lib/openrouter/keys";
+import { unsupervisedBoxes } from "@/lib/billing/metering-store";
 import {
   probeRuntimeDatabase,
   RUNTIME_TABLES,
@@ -88,12 +89,30 @@ export async function GET() {
         ? "Apply the pending supabase/migrations (pnpm db:migrate, or the Supabase SQL editor), then reload."
         : null;
 
+  // Operational signal only: the deploy/health-check status remains based on
+  // the existing configuration and database checks above. A failed count is
+  // reported here rather than changing the endpoint's 200/503 behavior.
+  let reconciler = { ok: false, unsupervisedBoxes: null as number | null };
+  if (configured.supabaseServiceRole && database.ok) {
+    try {
+      const count = await unsupervisedBoxes();
+      reconciler = {
+        ok: configured.billingCron && count === 0,
+        unsupervisedBoxes: count,
+      };
+    } catch {
+      // This diagnostic must not turn a previously healthy app into a failed
+      // deploy health check. A null count makes the missing signal explicit.
+    }
+  }
+
   return NextResponse.json(
     {
       ok,
       provider: providerName(),
       configured,
       database,
+      reconciler,
       ...(nextStep ? { nextStep } : {}),
       time: new Date().toISOString(),
     },

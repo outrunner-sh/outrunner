@@ -11,7 +11,14 @@ import type { ProviderName } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** An interval still open: its box is running, as far as anyone has seen. */
-export type OpenInterval = { id: string; sandboxId: string; startedAt: Date; lastSeenAt: Date };
+export type OpenInterval = {
+  id: string;
+  sandboxId: string;
+  startedAt: Date;
+  lastSeenAt: Date;
+  /** Since when its agent hasn't given a usable answer; null while it does. */
+  activityUnknownSince: Date | null;
+};
 
 /** A ready computer on one of Outrunner's boxes, with what reaching its agent
  *  takes. */
@@ -80,7 +87,7 @@ export async function openIntervals(): Promise<OpenInterval[]> {
   const rows = await allRows((from, to) =>
     supabase
       .from("compute_intervals")
-      .select("id, sandbox_id, started_at, last_seen_at")
+      .select("id, sandbox_id, started_at, last_seen_at, activity_unknown_since")
       .is("ended_at", null)
       .order("id")
       .range(from, to),
@@ -90,6 +97,7 @@ export async function openIntervals(): Promise<OpenInterval[]> {
     sandboxId: row.sandbox_id,
     startedAt: new Date(row.started_at),
     lastSeenAt: new Date(row.last_seen_at),
+    activityUnknownSince: row.activity_unknown_since ? new Date(row.activity_unknown_since) : null,
   }));
 }
 
@@ -103,6 +111,33 @@ export async function touchIntervals(ids: string[], at: Date): Promise<void> {
     .in("id", ids)
     .is("ended_at", null);
   if (error) throw error;
+}
+
+/** Since when the box's agent hasn't given a usable answer; null once it does. */
+export async function markActivityUnknown(id: string, since: Date | null): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("compute_intervals")
+    .update({ activity_unknown_since: since?.toISOString() ?? null })
+    .eq("id", id)
+    .is("ended_at", null);
+  if (error) throw error;
+}
+
+/** A metered box nobody has seen for this long (five missed reconciler
+ *  runs) is running unsupervised: the cron is down, or failing on it. */
+export const UNSUPERVISED_AFTER_MS = 10 * 60_000;
+
+/** How many metered boxes are running unsupervised at `now`. */
+export async function unsupervisedBoxes(now: Date = new Date()): Promise<number> {
+  const supabase = createSupabaseAdminClient();
+  const { count, error } = await supabase
+    .from("compute_intervals")
+    .select("id", { count: "exact", head: true })
+    .is("ended_at", null)
+    .lt("last_seen_at", new Date(now.getTime() - UNSUPERVISED_AFTER_MS).toISOString());
+  if (error) throw error;
+  return count ?? 0;
 }
 
 /** End an open interval at `at`. */

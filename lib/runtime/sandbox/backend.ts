@@ -34,6 +34,15 @@ export interface SandboxBox {
   readonly cpu?: number;
 }
 
+/**
+ * The provider's own idle stop on Outrunner's boxes: a backstop, renewed by
+ * every reconciler run that keeps the box up (SandboxBackend.keepAlive). It
+ * fires only when the reconciler stops looking (the cron down, a row it no
+ * longer reads), stopping the box with its disk kept, for the next session to
+ * restore. Long enough that a missed run or two never stops a busy box.
+ */
+export const IDLE_BACKSTOP_SECONDS = 2 * 60 * 60;
+
 /** CPU and memory a new box boots with. */
 export type BoxResources = { cpu: number; memoryGb: number };
 
@@ -55,6 +64,8 @@ export interface SandboxBackend {
   /** Stop a box but keep its disk, for {@link restore} to bring back: how an
    *  idle box stops costing compute. Only on providers that can. */
   pause?(id: string): Promise<void>;
+  /** Renew the box's {@link IDLE_BACKSTOP_SECONDS} backstop, where it has one. */
+  keepAlive?(id: string): Promise<void>;
   get(id: string): Promise<SandboxBox>;
   /** Whether it is up and able to host sessions. False when it is gone or
    *  stopped; a throw when the provider couldn't be asked. */

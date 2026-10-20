@@ -107,6 +107,11 @@ function readJcodeCreds(): { authJson: Buffer; refreshJson?: Buffer } {
 
 const DEFAULT_BINARY_PATH = ".context/build/runtime-agent-linux-amd64";
 
+/** Whether the reconciler can pause and later restore this engine's boxes. */
+export function reconcilerPausesBoxes(): boolean {
+  return optionalEnv("RUNTIME_ENGINE") !== "jcode";
+}
+
 /** Everything the control plane needs to reach a freshly provisioned box. */
 export type ProvisionedComputer = {
   sandboxId: string;
@@ -472,16 +477,17 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
    *  jcode engine, whose provision always makes a new box: a paused one would
    *  be left behind with its sessions. */
   get pausesBoxes(): boolean {
-    return (
-      this.backend.pause !== undefined &&
-      this.backend.restore !== undefined &&
-      optionalEnv("RUNTIME_ENGINE") !== "jcode"
-    );
+    return this.backend.pause !== undefined && this.backend.restore !== undefined && reconcilerPausesBoxes();
   }
 
   /** The box's vCPUs, where the provider says. */
   async computerCpu(sandboxId: string): Promise<number | undefined> {
     return (await this.backend.get(sandboxId)).cpu;
+  }
+
+  /** Renew the box's provider idle backstop, where it has one. */
+  async keepComputerAlive(sandboxId: string): Promise<void> {
+    await this.backend.keepAlive?.(sandboxId);
   }
 
   /** Pause the box, keeping its disk for the next session to resume. */

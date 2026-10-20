@@ -1,6 +1,7 @@
 import {
   claimLease,
   closeInterval,
+  markActivityUnknown,
   type MeteredComputer,
   meteredReadyComputers,
   markStoppedIfReady,
@@ -34,6 +35,8 @@ export async function runReconcile(): Promise<ReconcileReport> {
       if (!(await provider.computerRunning(computer.sandboxId))) return { running: false };
       return { running: true, activity: await activityOf(provider, computer) };
     },
+    markActivityUnknown,
+    keepAlive: (computer) => provider.keepComputerAlive(computer.sandboxId),
     pause: (computer) => provider.pauseComputer(computer.sandboxId),
     markStopped: (computer, reason) => markStoppedIfReady(computer.id, computer.sandboxId, reason),
     // A provision opens its box's interval; this is for a box from before
@@ -52,7 +55,8 @@ export async function runReconcile(): Promise<ReconcileReport> {
 }
 
 /** What the box's agent reports, or null when it can't say: one from before
- *  /activity (404) or one that can't be reached. Its box is then not paused. */
+ *  /activity (404) or one that can't be reached. Its box is paused only after
+ *  the unknown-answer grace period in the reconciler. */
 async function activityOf(provider: ComputerRuntimeProvider, computer: MeteredComputer): Promise<Activity | null> {
   try {
     const target = await provider.agentTarget(computer.sandboxId, computer.agentSecret);

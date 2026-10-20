@@ -8,6 +8,7 @@ import type { GitExec } from "@/lib/runtime/git";
 import {
   asUserArgs,
   BOX_USER,
+  IDLE_BACKSTOP_SECONDS,
   type AgentEndpoint,
   type BoxResources,
   type SandboxBackend,
@@ -75,6 +76,23 @@ const PAUSING_POLL_MS = 1_000;
 
 export class NeevBackend implements SandboxBackend {
   private client: Neev | null = null;
+  /** Neev's idle window on the box, in seconds: 0, none. */
+  private readonly idleTimeoutSeconds: number;
+
+  /** `idleBackstop`: Neev pauses the box if the reconciler stops renewing it. */
+  constructor(options: { idleBackstop?: boolean } = {}) {
+    this.idleTimeoutSeconds = options.idleBackstop ? IDLE_BACKSTOP_SECONDS : 0;
+  }
+
+  /** Renew the backstop, first arming it on a box made before it existed. */
+  async keepAlive(id: string): Promise<void> {
+    if (this.idleTimeoutSeconds === 0) return;
+    const sandbox = await this.neev().sandboxes.get(id);
+    if (sandbox.data.idle_timeout_seconds !== this.idleTimeoutSeconds) {
+      await this.neev().sandboxes.updateTimeout(id, { idle_timeout_seconds: this.idleTimeoutSeconds, on_idle: "pause" });
+    }
+    await this.neev().sandboxes.keepalive(id);
+  }
 
   /** Lazy so constructing the backend (e.g. in a test) needs no credentials. */
   private neev(): Neev {
@@ -96,13 +114,15 @@ export class NeevBackend implements SandboxBackend {
       // Deny-all by default; the box clones from GitHub and Claude reaches its
       // model provider.
       allowInternet: true,
-      // Never paused or deleted by Neev for being idle: Outrunner pauses an
-      // idle box itself (lib/billing/reconcile.ts), by what its sessions are
-      // doing. A paused one is kept PAUSED_RETENTION_SECONDS, then deleted.
+      // Outrunner pauses an idle box itself (lib/billing/reconcile.ts), by
+      // what its sessions are doing. Neev's idle window is only a backstop the
+      // reconciler renews, pausing (never deleting) a box it stops looking
+      // at. A paused one is kept PAUSED_RETENTION_SECONDS, then deleted.
       lifecycle: {
-        idle_timeout_seconds: 0,
+        idle_timeout_seconds: this.idleTimeoutSeconds,
         max_lifetime_seconds: 0,
         paused_retention_seconds: PAUSED_RETENTION_SECONDS,
+        ...(this.idleTimeoutSeconds > 0 && { on_idle: "pause" as const }),
       },
       // Otherwise the template's own (2 vCPU, 2 GB for the default).
       ...(size && { resources: neevResources(size) }),

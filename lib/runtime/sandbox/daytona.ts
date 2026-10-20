@@ -5,6 +5,7 @@ import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import {
   homeOf,
+  IDLE_BACKSTOP_SECONDS,
   type AgentEndpoint,
   type SandboxBackend,
   type SandboxBox,
@@ -26,9 +27,13 @@ let launchSeq = 0;
 export class DaytonaBackend implements SandboxBackend {
   private client: Promise<Daytona> | null = null;
   private readonly apiKey: (() => Promise<string>) | undefined;
+  /** Daytona's auto-stop on the box, in minutes: 0, none. */
+  private readonly autoStopMinutes: number;
 
-  constructor(options: { apiKey?: () => Promise<string> } = {}) {
+  /** `idleBackstop`: Daytona stops the box if the reconciler stops renewing it. */
+  constructor(options: { apiKey?: () => Promise<string>; idleBackstop?: boolean } = {}) {
     this.apiKey = options.apiKey;
+    this.autoStopMinutes = options.idleBackstop ? IDLE_BACKSTOP_SECONDS / 60 : 0;
   }
 
   /** Lazy so constructing the backend (e.g. in a test) needs no credentials. */
@@ -52,13 +57,25 @@ export class DaytonaBackend implements SandboxBackend {
   // building it from a full image, which makes its first start slow.
   async create(labels: Record<string, string>): Promise<SandboxBox> {
     const sandbox = await (await this.daytona()).create(
-      // Never auto-stopped or auto-deleted by Daytona: Outrunner stops an
-      // idle box itself (lib/billing/reconcile.ts), by what its sessions are
-      // doing. Base image (no snapshot): claude + node ship with it.
-      { autoStopInterval: 0, autoDeleteInterval: -1, labels },
+      // Never auto-deleted. Outrunner stops an idle box itself
+      // (lib/billing/reconcile.ts), by what its sessions are doing; Daytona
+      // can't see that (only SDK calls count as activity, not the preview
+      // traffic sessions run on). So on Outrunner's own boxes its auto-stop
+      // is only a backstop the reconciler renews, for when it stops looking.
+      // A user's own box isn't reconciled, so it gets none. Base image (no
+      // snapshot): claude + node ship with it.
+      { autoStopInterval: this.autoStopMinutes, autoDeleteInterval: -1, labels },
       { timeout: CREATE_TIMEOUT_SECONDS },
     );
     return box(sandbox);
+  }
+
+  /** Renew the backstop, first arming it on a box made before it existed. */
+  async keepAlive(id: string): Promise<void> {
+    if (this.autoStopMinutes === 0) return;
+    const sandbox = await (await this.daytona()).get(id);
+    if (sandbox.autoStopInterval !== this.autoStopMinutes) await sandbox.setAutostopInterval(this.autoStopMinutes);
+    await sandbox.refreshActivity();
   }
 
   async get(id: string): Promise<SandboxBox> {

@@ -9,6 +9,8 @@ import {
   reconcile,
   RUN_DEADLINE_MS,
   STUCK_TURN_AFTER_MS,
+  trustedActivity,
+  UNKNOWN_ACTIVITY_AFTER_MS,
 } from "@/lib/billing/reconcile";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
@@ -19,7 +21,13 @@ function computer(id: string): MeteredComputer {
   return { id, ownerId: "u-1", projectId: `p-${id}`, sandboxId: `sb-${id}`, agentSecret: "s" };
 }
 function interval(id: string, sandboxId: string, lastSeenMinutesAgo = 2): OpenInterval {
-  return { id, sandboxId, startedAt: new Date(ago(60 * MIN)), lastSeenAt: new Date(ago(lastSeenMinutesAgo * MIN)) };
+  return {
+    id,
+    sandboxId,
+    startedAt: new Date(ago(60 * MIN)),
+    lastSeenAt: new Date(ago(lastSeenMinutesAgo * MIN)),
+    activityUnknownSince: null,
+  };
 }
 const active: BoxState = { running: true, activity: { lastActivity: ago(1 * MIN), turnInProgress: false } };
 const idle: BoxState = { running: true, activity: { lastActivity: ago(20 * MIN), turnInProgress: false } };
@@ -33,6 +41,7 @@ function world(opts: {
   lease?: boolean;
   now?: () => Date;
   pauses?: boolean;
+  keepAliveFails?: boolean;
 }) {
   const log: string[] = [];
   const deps = {
@@ -53,11 +62,18 @@ function world(opts: {
     openInterval: async (c: MeteredComputer, at: Date) => void log.push(`open ${c.sandboxId} at ${at.toISOString()}`),
     touchIntervals: async (ids: string[]) => void (ids.length && log.push(`seen ${ids.sort().join(",")}`)),
     closeInterval: async (id: string, at: Date) => void log.push(`close ${id} at ${at.toISOString()}`),
+    markActivityUnknown: async (id: string, since: Date | null) =>
+      void log.push(since ? `unknown ${id} since ${since.toISOString()}` : `known ${id}`),
+    keepAlive: async (c: MeteredComputer) => {
+      log.push(`keep ${c.sandboxId}`);
+      if (opts.keepAliveFails) throw new Error("provider refused");
+    },
     log: () => {},
   };
-  // What was done, without the looks.
-  const writes = () => log.filter((line) => !line.startsWith("look "));
-  return { deps, log: { writes, all: log } };
+  // What was done, without the looks or the provider renewals.
+  const writes = () => log.filter((line) => !line.startsWith("look ") && !line.startsWith("keep "));
+  const kept = () => log.filter((line) => line.startsWith("keep ")).sort();
+  return { deps, log: { writes, kept, all: log } };
 }
 
 test("idle is 15 quiet minutes, or 2 hours with a turn that never ended", () => {
@@ -121,14 +137,111 @@ test("one box failing doesn't stop the others, and its interval is left as it wa
   assert.equal(report.seen, 1);
 });
 
-test("an agent that can't report activity keeps its box running and metered", async () => {
+test("an agent that can't report activity keeps its box running and metered, and the run remembers when it went quiet", async () => {
   const { deps, log: logs } = world({
     computers: [computer("a")],
     states: { a: { running: true, activity: null } },
     open: [interval("i-a", "sb-a")],
   });
-  await reconcile(deps);
+  const report = await reconcile(deps);
+  assert.deepEqual(logs.writes(), [`unknown i-a since ${NOW.toISOString()}`, "seen i-a"]);
+  assert.equal(report.paused, 0);
+});
+
+test("an agent that can't report activity for 15 minutes is taken as idle, and its box paused", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: { running: true, activity: null } },
+    open: [{ ...interval("i-a", "sb-a"), activityUnknownSince: new Date(ago(UNKNOWN_ACTIVITY_AFTER_MS)) }],
+  });
+  const report = await reconcile(deps);
+  assert.deepEqual(logs.writes(), ["pause sb-a", `close i-a at ${NOW.toISOString()}`, "stopped a"]);
+  assert.equal(report.paused, 1);
+});
+
+test("an agent quiet for less than 15 minutes is left running", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: { running: true, activity: null } },
+    open: [{ ...interval("i-a", "sb-a"), activityUnknownSince: new Date(ago(UNKNOWN_ACTIVITY_AFTER_MS - MIN)) }],
+  });
+  const report = await reconcile(deps);
   assert.deepEqual(logs.writes(), ["seen i-a"]);
+  assert.equal(report.paused, 0);
+});
+
+test("an agent that answers again clears the mark, so one network blip never adds up to a pause", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: active },
+    open: [{ ...interval("i-a", "sb-a"), activityUnknownSince: new Date(ago(10 * MIN)) }],
+  });
+  await reconcile(deps);
+  assert.deepEqual(logs.writes(), ["known i-a", "seen i-a"]);
+});
+
+test("an agent that answers just before the pause keeps its box", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: [{ running: true, activity: null }, active] },
+    open: [{ ...interval("i-a", "sb-a"), activityUnknownSince: new Date(ago(UNKNOWN_ACTIVITY_AFTER_MS)) }],
+  });
+  const report = await reconcile(deps);
+  assert.equal(report.paused, 0);
+  assert.ok(!logs.writes().includes("pause sb-a"));
+});
+
+test("a lastActivity in the future is not trusted: the box counts as unknown, not busy", async () => {
+  const future: BoxState = { running: true, activity: { lastActivity: ago(-2 * 60 * MIN), turnInProgress: false } };
+  assert.equal(trustedActivity(future.running ? future.activity : null, NOW), null);
+  // Within a minute is clock skew, not a lie.
+  const skewed = { lastActivity: ago(-30_000), turnInProgress: false };
+  assert.deepEqual(trustedActivity(skewed, NOW), skewed);
+
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: future },
+    open: [{ ...interval("i-a", "sb-a"), activityUnknownSince: new Date(ago(UNKNOWN_ACTIVITY_AFTER_MS)) }],
+  });
+  const report = await reconcile(deps);
+  assert.equal(report.paused, 1);
+  assert.ok(logs.writes().includes("pause sb-a"));
+});
+
+test("every box the run keeps up has its provider backstop renewed; paused and lost ones don't", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a"), computer("b"), computer("c"), computer("d")],
+    states: { a: active, b: idle, c: { running: false }, d: { running: true, activity: null } },
+    open: [interval("i-a", "sb-a"), interval("i-b", "sb-b"), interval("i-c", "sb-c")],
+  });
+  await reconcile(deps);
+  // d has no interval yet and an unknown agent: kept for now, so renewed.
+  assert.deepEqual(logs.kept(), ["keep sb-a", "keep sb-d"]);
+});
+
+test("a renewal the provider refuses doesn't fail the box or the run", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: active },
+    open: [interval("i-a", "sb-a")],
+    keepAliveFails: true,
+  });
+  const report = await reconcile(deps);
+  assert.equal(report.failed, 0);
+  assert.equal(report.seen, 1);
+  assert.deepEqual(logs.writes(), ["seen i-a"]);
+});
+
+test("where paused boxes can't come back (jcode), nothing is renewed and no unknown agent is paused", async () => {
+  const { deps, log: logs } = world({
+    computers: [computer("a")],
+    states: { a: { running: true, activity: null } },
+    open: [{ ...interval("i-a", "sb-a"), activityUnknownSince: new Date(ago(UNKNOWN_ACTIVITY_AFTER_MS)) }],
+    pauses: false,
+  });
+  const report = await reconcile(deps);
+  assert.equal(report.paused, 0);
+  assert.deepEqual(logs.kept(), []);
 });
 
 test("with the lease held elsewhere, the run does nothing", async () => {

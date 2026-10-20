@@ -10,6 +10,11 @@
  *     seen now;
  *   - an idle one is paused, keeping its disk, and its interval ends now. The
  *     next session brings it back (lib/runtime/sandbox-choice.ts, restore).
+ *     A box whose agent can't say what it's doing (or says something
+ *     impossible) for UNKNOWN_ACTIVITY_AFTER_MS counts as idle;
+ *   - one kept up has its provider's idle backstop renewed, so a box the
+ *     reconciler stops looking at (the cron down, its row gone wrong) stops
+ *     on its own within IDLE_BACKSTOP_SECONDS (lib/runtime/sandbox/backend.ts).
  * And an interval left open for a box no ready computer has ends where it was
  * last seen.
  *
@@ -27,6 +32,24 @@ export const IDLE_AFTER_MS = 15 * 60_000;
  * longer keeps the box up. Long enough for any quiet tool run.
  */
 export const STUCK_TURN_AFTER_MS = 2 * 60 * 60_000;
+/**
+ * An agent that hasn't given a usable answer for this long (crashed, killed,
+ * too old to have /activity) leaves its box idle as far as anyone can tell:
+ * paused. A box without a reachable agent can't host a session anyway.
+ */
+export const UNKNOWN_ACTIVITY_AFTER_MS = 15 * 60_000;
+/** How far ahead of ours a box's clock may be before its lastActivity is a
+ *  lie rather than skew: a time in the future would never go quiet. */
+const FUTURE_SKEW_MS = 60_000;
+
+/** `activity` if it can be believed at `now`; null when the agent gave no
+ *  answer, an unreadable one, or one from the future. */
+export function trustedActivity(activity: Activity | null, now: Date): Activity | null {
+  if (!activity) return null;
+  const last = Date.parse(activity.lastActivity);
+  if (!Number.isFinite(last) || last - now.getTime() > FUTURE_SKEW_MS) return null;
+  return activity;
+}
 /** Shorter than the cron's period. */
 export const LEASE_SECONDS = 90;
 /**
@@ -40,7 +63,8 @@ export const RUN_DEADLINE_MS = (LEASE_SECONDS - 30) * 1000;
 const CONCURRENCY = 5;
 
 /** What the reconciler found a box doing. `activity` is null when its agent
- *  couldn't say (one from before /activity, or unreachable): never paused. */
+ *  couldn't say (one from before /activity, or unreachable): paused only once
+ *  that has lasted UNKNOWN_ACTIVITY_AFTER_MS. */
 export type BoxState = { running: false } | { running: true; activity: Activity | null };
 
 export type ReconcileDeps = {
@@ -57,6 +81,11 @@ export type ReconcileDeps = {
   openInterval(computer: MeteredComputer, at: Date): Promise<void>;
   touchIntervals(ids: string[], at: Date): Promise<void>;
   closeInterval(id: string, at: Date): Promise<void>;
+  /** Since when the box's agent hasn't given a usable answer; null once it
+   *  does again. Kept on the interval, which no user can write. */
+  markActivityUnknown(intervalId: string, since: Date | null): Promise<void>;
+  /** Renew the provider's idle backstop for a box being kept up. */
+  keepAlive(computer: MeteredComputer): Promise<void>;
   log(message: string, error?: unknown): void;
 };
 
@@ -120,10 +149,21 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
         return;
       }
       report.seen += 1;
+      const activity = trustedActivity(state.activity, now);
+      // With no interval yet there's nowhere to keep it: the clock starts on
+      // the next run, which has one.
+      const unknownSince = activity ? null : (interval?.activityUnknownSince ?? now);
+      if (interval && (interval.activityUnknownSince === null) !== (unknownSince === null)) {
+        await deps.markActivityUnknown(interval.id, unknownSince);
+      }
       // Asked again just before pausing: someone may have started work since.
       // What's left of that window heals itself: a session that attached in it
       // finds the box paused on its next request and resumes it.
-      if (deps.pausesIdleBoxes && isIdle(state.activity, now) && (await stillIdle(deps, computer))) {
+      if (
+        deps.pausesIdleBoxes &&
+        pausable(activity, unknownSince, now) &&
+        (await stillPausable(deps, computer, unknownSince))
+      ) {
         await deps.pause(computer);
         if (interval) await deps.closeInterval(interval.id, now);
         await deps.markStopped(computer, "Paused while idle; it resumes with the next session.");
@@ -132,6 +172,12 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
       }
       if (interval) seenIds.push(interval.id);
       else await deps.openInterval(computer, now);
+      // Where boxes can't pause (jcode), they have no backstop to renew.
+      if (deps.pausesIdleBoxes) {
+        await deps.keepAlive(computer).catch((error: unknown) =>
+          deps.log(`Reconcile: could not renew box ${computer.sandboxId}'s idle backstop`, error),
+        );
+      }
     } catch (error) {
       // One box's trouble mustn't stop the rest; its interval stays open, and
       // is counted no further than it was last seen.
@@ -151,10 +197,24 @@ export async function reconcile(deps: ReconcileDeps): Promise<ReconcileReport> {
   return report;
 }
 
-/** Whether the box is still running and idle, asked now. */
-async function stillIdle(deps: ReconcileDeps, computer: MeteredComputer): Promise<boolean> {
+/** Whether a box doing `activity` (null: unknown since `unknownSince`) is
+ *  due a pause at `now`. */
+function pausable(activity: Activity | null, unknownSince: Date | null, now: Date): boolean {
+  if (activity) return isIdle(activity, now);
+  return unknownSince !== null && now.getTime() - unknownSince.getTime() >= UNKNOWN_ACTIVITY_AFTER_MS;
+}
+
+/** Whether the box is still running and due a pause, asked now. */
+async function stillPausable(
+  deps: ReconcileDeps,
+  computer: MeteredComputer,
+  unknownSince: Date | null,
+): Promise<boolean> {
   const state = await deps.observe(computer);
-  return state.running && isIdle(state.activity, deps.now());
+  if (!state.running) return false;
+  const now = deps.now();
+  const activity = trustedActivity(state.activity, now);
+  return pausable(activity, activity ? null : unknownSince, now);
 }
 
 /** Run `work` over `items`, at most `limit` at a time. */
