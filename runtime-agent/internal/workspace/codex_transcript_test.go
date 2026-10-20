@@ -396,3 +396,27 @@ func TestATailKeepsWhatItCouldNotWriteAndWritesItInOrder(t *testing.T) {
 		t.Errorf("uuids = %q\nwant every record once, in order: %q", uuids, translatedUUIDs(t, data))
 	}
 }
+
+func TestARunningCodexIsLookedForInTheHomeItLaunchedIn(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.setFacts("ws-home", workspaceFacts{Agent: AgentCodex, Auth: AuthOpenAIAPIKey, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	if err := s.prepareRollout("ws-home"); err != nil { // its launch, in a home of its own
+		t.Fatal(err)
+	}
+	own := s.codexHome("ws-home")
+	// Its key is taken away while it runs: that applies at its next launch,
+	// and until then its Codex still writes in its own home.
+	s.updateFacts("ws-home", func(f *workspaceFacts) { f.Auth = "" })
+	if got := s.codexHomeFor("ws-home"); got != own {
+		t.Fatalf("codexHomeFor = %q, want the home it launched in, %q", got, own)
+	}
+	if got := s.launchCodexHome("ws-home"); got == own {
+		t.Errorf("the next launch would still use its own home %q", got)
+	}
+	if err := s.prepareRollout("ws-home"); err != nil { // relaunched
+		t.Fatal(err)
+	}
+	if got := s.codexHomeFor("ws-home"); got == own {
+		t.Errorf("codexHomeFor after the relaunch = %q, still its old home", got)
+	}
+}

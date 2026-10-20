@@ -38,9 +38,19 @@ const codexTailInterval = 250 * time.Millisecond
 // off clocks of different precision.
 const rolloutFindSlack = 2 * time.Second
 
-// codexHomeFor is the Codex home a session runs in: its own, with an OpenAI
-// key (codex_auth.go), else the user's: CODEX_HOME, or ~/.codex.
+// codexHomeFor is the Codex home a session runs in: the one its Codex last
+// launched in, which a credential given since doesn't change until the next
+// launch; before any, the one it would launch in (launchCodexHome).
 func (s *Service) codexHomeFor(workspaceID string) string {
+	if f, _ := s.getFacts(workspaceID); f.CodexHome != "" {
+		return f.CodexHome
+	}
+	return s.launchCodexHome(workspaceID)
+}
+
+// launchCodexHome is the Codex home a session's next launch runs in: its own,
+// with an OpenAI key (codex_auth.go), else the user's: CODEX_HOME, or ~/.codex.
+func (s *Service) launchCodexHome(workspaceID string) string {
 	if s.ownCodexHome(workspaceID) {
 		return s.codexHome(workspaceID)
 	}
@@ -76,7 +86,7 @@ func (s *Service) codexRollout(workspaceID string) string {
 	sessions := filepath.Join(s.codexHomeFor(workspaceID), "sessions")
 	var found string
 	var meta rolloutMeta
-	if s.ownCodexHome(workspaceID) {
+	if s.codexHomeFor(workspaceID) == s.codexHome(workspaceID) {
 		found = newestRollout(sessions)
 		meta, _ = readRolloutMeta(found)
 	} else {
@@ -253,8 +263,12 @@ func countUserMessages(path string) int {
 // conversation, its translated history kept), and one in another Codex home
 // than the session now runs in (its credential changed) is copied into this
 // one, where `codex resume` looks. With none recorded, the launch time is, to
-// find the rollout this launch begins.
+// find the rollout this launch begins. Either way the home this launch runs
+// in is recorded: the running Codex writes there until its next launch.
 func (s *Service) prepareRollout(workspaceID string) error {
+	// From this launch on, Codex writes in this home.
+	home := s.launchCodexHome(workspaceID)
+	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.CodexHome = home })
 	f, _ := s.getFacts(workspaceID)
 	if f.CodexRollout == "" {
 		at := time.Now().UTC().Format(time.RFC3339Nano)
@@ -268,7 +282,7 @@ func (s *Service) prepareRollout(workspaceID string) error {
 		})
 		return nil
 	}
-	sessions := filepath.Join(s.codexHomeFor(workspaceID), "sessions")
+	sessions := filepath.Join(s.launchCodexHome(workspaceID), "sessions")
 	if strings.HasPrefix(f.CodexRollout, sessions+string(filepath.Separator)) {
 		return nil
 	}
