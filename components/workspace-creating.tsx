@@ -4,6 +4,7 @@ import { Check, Clock, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { DotMatrix, Spinner } from "@/components/ui/loaders";
+import type { FirstPrompt } from "@/lib/session/first-prompt";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,6 +29,22 @@ const STAGES = [
 
 const ESTIMATE_SECONDS = 45;
 
+function QueuedPrompt({ first }: { first: FirstPrompt }) {
+  const files = first.attachmentIds.length;
+  const text = first.prompt.trim() || `${files} ${files === 1 ? "file" : "files"}`;
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="line-clamp-4 max-w-[90%] whitespace-pre-wrap break-words rounded-3xl bg-foreground/[0.07] px-4 py-2 text-[0.8125rem] leading-relaxed text-foreground">
+        {text}
+      </div>
+      <span className="text-muted-foreground flex items-center gap-1 px-2 text-[11px]">
+        <Clock className="size-3" aria-hidden />
+        Sends when ready{first.prompt.trim() && files > 0 ? ` · ${files} ${files === 1 ? "file" : "files"}` : ""}
+      </span>
+    </div>
+  );
+}
+
 function clock(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -39,6 +56,7 @@ export function WorkspaceCreating({
   branch,
   startedAt,
   stalled,
+  queued,
 }: {
   projectName: string;
   branch: string;
@@ -48,6 +66,8 @@ export function WorkspaceCreating({
   /** When setup began (the session's creation), so a session opened midway
    *  shows the time it has really taken. */
   startedAt: string;
+  /** The first prompt waiting for the box, shown as the message it will be. */
+  queued?: FirstPrompt | null;
 }) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -70,6 +90,7 @@ export function WorkspaceCreating({
   return (
     <div className="flex h-full items-center justify-center px-6">
       <div className="w-full max-w-sm space-y-7">
+        {queued && <QueuedPrompt first={queued} />}
         <DotMatrix rows={6} cols={10} />
 
         <div className="space-y-1.5">

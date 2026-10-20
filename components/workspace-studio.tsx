@@ -9,6 +9,7 @@ import { SetupStalled } from "@/components/setup-stalled";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { WorkspaceSession } from "@/components/workspace-session";
+import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -61,6 +62,7 @@ export function WorkspaceStudio({
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
   const offline = offlineCopy({ workspace, isReady });
+  const queued = useQueuedFirstPrompt(workspace.id, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] });
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
@@ -118,6 +120,7 @@ export function WorkspaceStudio({
                   branch={workspace.baseBranch}
                   startedAt={workspace.createdAt}
                   stalled={setup === "stalled" && <SetupStalled workspace={workspace} onKeepWaiting={keepWaiting} />}
+                  queued={queued}
                 />
               </div>
               <SessionComposer
@@ -126,7 +129,9 @@ export function WorkspaceStudio({
                 disabledPlaceholder={
                   setup === "stalled"
                     ? "Start over to try again"
-                    : "Claude starts here, with your first message, once the session is ready"
+                    : queued
+                      ? "Your message sends as soon as the session is ready"
+                      : "Claude starts here, with your first message, once the session is ready"
                 }
               />
             </div>
