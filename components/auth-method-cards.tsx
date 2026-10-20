@@ -1,15 +1,18 @@
 "use client";
 
-import { Check, KeyRound, MessageCircle, Sparkles, SquareTerminal, type LucideIcon } from "lucide-react";
-import { useRef } from "react";
+import { Check, KeyRound, Terminal } from "lucide-react";
+import { type ComponentType, useRef } from "react";
 
+import { ClaudeIcon, OpenAIIcon } from "@/components/brand-icons";
 import type { AuthMethod, AuthMethodId } from "@/lib/agents/registry";
 import { cn } from "@/lib/utils";
 
-const ICONS: Record<AuthMethodId, LucideIcon> = {
-  subscription: Sparkles,
-  chatgpt: MessageCircle,
-  local: SquareTerminal,
+/** Each way's mark: the plan's brand for a subscription, a terminal for the
+ *  Mac's own CLI, a key for an API key. */
+const ICONS: Record<AuthMethodId, ComponentType<{ className?: string; "aria-hidden"?: boolean }>> = {
+  subscription: ClaudeIcon,
+  chatgpt: OpenAIIcon,
+  local: Terminal,
   "api-key": KeyRound,
 };
 

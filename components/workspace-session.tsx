@@ -25,6 +25,7 @@ import {
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { isProviderId } from "@/lib/providers/registry";
+import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
 import { defaultModel, modelGroups, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
@@ -166,7 +167,13 @@ export function WorkspaceSession({
   const [switching, setSwitching] = useState(false);
   // What the model menu offers: Outrunner's models, the user's own keys
   // (Settings → Providers), and their Claude.
-  const [menu, setMenu] = useState<OutrunnerModels>({ outrunner: true, allowance: false, keys: [], available: true });
+  const [menu, setMenu] = useState<OutrunnerModels>({
+    outrunner: true,
+    allowance: false,
+    keys: [],
+    available: true,
+    loadout: EMPTY_LOADOUT,
+  });
   useEffect(() => {
     let live = true;
     void outrunnerModels().then((answer) => {
@@ -193,6 +200,7 @@ export function WorkspaceSession({
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
+    loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
     disabledReason: !canSend

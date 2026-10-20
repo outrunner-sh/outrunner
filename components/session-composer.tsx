@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUp, Check, ChevronDown, FileText, Plus, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, FileText, Plus, Search, Settings2, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -14,13 +15,16 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
+import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
 import {
   rememberCustomModel,
   rememberedCustomModels,
   takesTypedModels,
+  typedModelOwner,
   type TypedModelProvider,
 } from "@/lib/runtime/custom-models";
+import { loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
 import { matchModel, modelLabel, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { cn } from "@/lib/utils";
@@ -45,6 +49,9 @@ export type ModelChoice = {
   switching: boolean;
   /** Whose entry is the current one, for a model offered by two. */
   preferredProvider?: ModelProvider;
+  /** The user's loadout (Settings → Default models): shown first, in place of
+   *  the groups, where it has a model the menu offers. */
+  loadout?: ModelLoadout;
 };
 
 export function SessionComposer({
@@ -286,11 +293,21 @@ export function SessionComposer({
   );
 }
 
-/** The footer's model, as a menu of the models the session can switch to. */
+/** A model's mark: its agent's for Claude Code's and Codex's own, its
+ *  provider's for one on a key. */
+function ModelIcon({ provider }: { provider: ModelProvider }) {
+  if (provider === "claude" || provider === "codex") return <AgentIcon agent={provider} />;
+  return <ProviderIcon provider={provider === "outrunner" ? "openrouter" : provider} />;
+}
+
+/** The footer's model, as a menu of the models the session can switch to:
+ *  the user's loadout where they have one, else every group, and a search
+ *  across all of them either way. */
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
   // A group on the user's own key offers the ids they typed in before, and
   // takes another (CustomModelDialog).
   const [customFor, setCustomFor] = useState<TypedModelProvider | null>(null);
+  const [query, setQuery] = useState("");
   const groups = choice.groups.map((group) => {
     const own = group.custom && takesTypedModels(group.provider) ? group.provider : null;
     if (!own) return { ...group, own };
@@ -300,9 +317,27 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
   const current = matchModel(groups, model, choice.preferredProvider);
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
   const label = choice.switching ? "Switching model" : name;
+  const loadout = choice.loadout ? loadoutModels(choice.loadout, groups) : [];
+  const searching = query.trim() !== "";
+  // Searching looks through everything; otherwise the loadout, where there is
+  // one, stands in for the groups.
+  const flat = searching ? searchModels(groups.flatMap((g) => g.models), query) : loadout;
+  const showGroups = !searching && loadout.length === 0;
+  const item = (m: SessionModel) => (
+    <DropdownMenuItem
+      key={`${m.provider}:${m.id}`}
+      // Always sent, even for the ticked family: the session may run an
+      // older model of it, and the agent ignores a switch to what it has.
+      onSelect={() => choice.onChange(m)}
+    >
+      <ModelIcon provider={m.provider} />
+      <span className="flex-1 truncate">{m.label}</span>
+      <Check className={m.id === current?.id && m.provider === current.provider ? "opacity-100" : "opacity-0"} />
+    </DropdownMenuItem>
+  );
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => !open && setQuery("")}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
@@ -325,32 +360,60 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
             <ChevronDown />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" className="w-56">
-          {groups.map((group, i) => (
-            <div key={group.label}>
-              {i > 0 && <DropdownMenuSeparator />}
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                {group.label}
-              </DropdownMenuLabel>
-              {group.models.map((m) => (
-                <DropdownMenuItem
-                  key={`${m.provider}:${m.id}`}
-                  // Always sent, even for the ticked family: the session may run an
-                  // older model of it, and the agent ignores a switch to what it has.
-                  onSelect={() => choice.onChange(m)}
-                >
-                  <Check className={m.id === current?.id && m.provider === current.provider ? "opacity-100" : "opacity-0"} />
-                  <span className="truncate">{m.label}</span>
-                </DropdownMenuItem>
-              ))}
-              {group.own ? (
-                <DropdownMenuItem onSelect={() => setCustomFor(group.own)}>
-                  <Check className="opacity-0" />
-                  <span className="text-muted-foreground">Other model…</span>
-                </DropdownMenuItem>
-              ) : null}
-            </div>
-          ))}
+        <DropdownMenuContent align="start" side="top" className="w-64">
+          <div className="flex items-center gap-2 px-2 pb-1.5 pt-1">
+            <Search className="size-3.5 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              // The menu's own typeahead would take the letters typed here.
+              onKeyDown={(event) => event.stopPropagation()}
+              placeholder="Search models"
+              aria-label="Search models"
+              autoFocus
+              spellCheck={false}
+              className="h-7 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <DropdownMenuSeparator />
+          {showGroups
+            ? groups.map((group, i) => (
+                <div key={group.label}>
+                  {i > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    {group.label}
+                  </DropdownMenuLabel>
+                  {group.models.map(item)}
+                  {group.own ? (
+                    <DropdownMenuItem onSelect={() => setCustomFor(group.own)}>
+                      <Check className="opacity-0" />
+                      <span className="text-muted-foreground">Other model…</span>
+                    </DropdownMenuItem>
+                  ) : null}
+                </div>
+              ))
+            : flat.map(item)}
+          {searching && flat.length === 0 ? (
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">No model matches “{query.trim()}”.</p>
+          ) : null}
+          {/* Without the groups, their way to type a model in stays here. */}
+          {!showGroups && groups.some((group) => group.own) ? <DropdownMenuSeparator /> : null}
+          {!showGroups
+            ? groups.flatMap((group) =>
+                group.own ? (
+                  <DropdownMenuItem key={`other:${group.provider}`} onSelect={() => setCustomFor(group.own)}>
+                    <ModelIcon provider={group.provider} />
+                    <span className="text-muted-foreground">Other {typedModelOwner(group.own).label} model…</span>
+                  </DropdownMenuItem>
+                ) : [],
+              )
+            : null}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem asChild>
+            <Link href="/settings/models" className="text-muted-foreground">
+              <Settings2 /> Edit models
+            </Link>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <CustomModelDialog

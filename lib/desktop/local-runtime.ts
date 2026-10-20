@@ -2,6 +2,7 @@ import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
+import { EMPTY_LOADOUT, type ModelLoadout, parseLoadout } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
   type KeyHolder,
@@ -274,8 +275,10 @@ export async function putOnDefaultModel(workspaceId: string): Promise<void> {
 /** What the user's model menu offers (GET /api/outrunner-models), and whether
  *  a session can start without their Claude; asked once per page load, or
  *  again after Settings → Providers changes a key. */
-export type OutrunnerModels = ModelMenu & { available: boolean };
-const NO_MODELS: OutrunnerModels = { outrunner: false, allowance: false, keys: [], available: false };
+/** The model menu, whether a session can start without the user's Claude,
+ *  and the user's loadout (Settings → Default models). */
+export type OutrunnerModels = ModelMenu & { available: boolean; loadout: ModelLoadout };
+const NO_MODELS: OutrunnerModels = { outrunner: false, allowance: false, keys: [], available: false, loadout: EMPTY_LOADOUT };
 let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
 export function outrunnerModels(): Promise<OutrunnerModels> {
   outrunnerModelsAnswer ??= fetch("/api/outrunner-models")
@@ -288,7 +291,14 @@ export function outrunnerModels(): Promise<OutrunnerModels> {
           ? (["openrouter"] as ProviderId[])
           : [];
       const outrunner = typeof data.outrunner === "boolean" ? data.outrunner : data.serverModels === true;
-      return { outrunner, allowance: data.allowance === true, keys, available: data.available === true };
+      return {
+        outrunner,
+        allowance: data.allowance === true,
+        keys,
+        available: data.available === true,
+        // A server from before loadouts sends none.
+        loadout: parseLoadout(data.loadout),
+      };
     })
     .catch(() => {
       outrunnerModelsAnswer = null; // a failed look is asked again next time
@@ -302,7 +312,8 @@ export function outrunnerModelsAvailable(): Promise<boolean> {
   return outrunnerModels().then((answer) => answer.available);
 }
 
-/** Ask again next time: one of the user's keys has just changed. */
+/** Ask again next time: one of the user's keys, or their loadout, has just
+ *  changed. */
 export function forgetOutrunnerModels(): void {
   outrunnerModelsAnswer = null;
 }
