@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -25,10 +26,12 @@ func (a codexAgent) prepare(ctx context.Context, workspaceID string) error {
 	if _, err := a.s.lookPath("codex"); err != nil {
 		return ErrCodexMissing
 	}
-	if !a.s.ownCodexHome(workspaceID) {
-		return nil
+	if a.s.ownCodexHome(workspaceID) {
+		if err := a.s.prepareCodexHome(ctx, workspaceID); err != nil {
+			return err
+		}
 	}
-	return a.s.prepareCodexHome(ctx, workspaceID)
+	return a.s.prepareRollout(workspaceID)
 }
 
 // command launches Codex with the session's orientation, model and mode, and
@@ -65,8 +68,23 @@ func (codexAgent) startupKey(pane string) string {
 	return keyToward(pane, codexChoice.MatchString, yes)
 }
 
-func (codexAgent) sessionLog(string) string { return "" }
-func (codexAgent) userTurns(string) int     { return 0 }
+// sessionLog is the session's translated conversation, once it has a record.
+func (a codexAgent) sessionLog(workspaceID string) string {
+	path := conversationPath(a.s.Root, workspaceID)
+	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+		return ""
+	}
+	return path
+}
+
+// userTurns counts the prompts in the session's rollout itself, not its
+// translation: a send then sees its prompt land as soon as Codex records it.
+func (a codexAgent) userTurns(workspaceID string) int {
+	if rollout := a.s.codexRollout(workspaceID); rollout != "" {
+		return countUserMessages(rollout)
+	}
+	return 0
+}
 
 var errCodexExited = errors.New("Codex exited as soon as it started")
 

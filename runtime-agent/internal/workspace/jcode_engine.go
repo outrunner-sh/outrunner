@@ -61,7 +61,7 @@ func newJcodeEngine(client *jcode.Client, root string) *jcodeEngine {
 // conversationPath is where a workspace's assembled conversation log lives —
 // outside any worktree, keyed by workspace id.
 func (e *jcodeEngine) conversationPath(workspaceID string) string {
-	return filepath.Join(e.root, "conversations", workspaceID+".jsonl")
+	return conversationPath(e.root, workspaceID)
 }
 
 // StartSession opens a jcode session rooted at worktree and begins writing its

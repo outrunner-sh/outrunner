@@ -95,6 +95,10 @@ type Service struct {
 
 	// factsWriteMu serializes updateFacts' read-modify-writes.
 	factsWriteMu sync.Mutex
+
+	// codexTails translate the running Codex sessions' rollouts.
+	codexTailsMu sync.Mutex
+	codexTails   map[string]*codexTail
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -133,6 +137,12 @@ type workspaceFacts struct {
 	// CodexSessionID names a Codex session's conversation once Codex has
 	// recorded one: it is resumed by it (`codex resume <id>`).
 	CodexSessionID string `json:"codexSessionId,omitempty"`
+	// CodexRollout is the file Codex records that conversation in, found
+	// once (codexRollout) and translated from then on.
+	CodexRollout string `json:"codexRollout,omitempty"`
+	// CodexLaunchedAt is when a Codex session whose rollout isn't found yet
+	// was launched: the rollout it begins is no older.
+	CodexLaunchedAt string `json:"codexLaunchedAt,omitempty"`
 	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
 	// Gateway, when set, runs the session through it on a key of its own (in
@@ -182,6 +192,7 @@ func NewService(root string) *Service {
 		recorders:  map[string]*cast.Recorder{},
 		lookPath:   exec.LookPath,
 		runCommand: runCommand,
+		codexTails: map[string]*codexTail{},
 	}
 }
 
@@ -299,7 +310,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if existed {
 		facts.Agent = prior.Agent
 	}
-	facts.CodexSessionID = prior.CodexSessionID
+	facts.CodexSessionID, facts.CodexRollout = prior.CodexSessionID, prior.CodexRollout
+	facts.CodexLaunchedAt, facts.Auth = prior.CodexLaunchedAt, prior.Auth
 	// A repeated Create (after an agent restart) never switches the model:
 	// that is SetModel's, which relaunches the session to match. A session on a
 	// gateway keeps it, key file and all — dropping it here would run the
@@ -605,9 +617,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if err := s.gatewayFiles().put(workspaceID, env); err != nil {
 		return err
 	}
-	prior := f
-	f.Model, f.Gateway = choice.Model, choice.Gateway
-	s.setFacts(workspaceID, f)
+	// Only the model and gateway change: a Codex session's tail may record its
+	// rollout meanwhile.
+	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Model, f.Gateway = choice.Model, choice.Gateway })
 	if !running {
 		return nil // the next Start launches on it
 	}
@@ -620,7 +632,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		// Not applied, so not recorded: a retry of the same choice tries again
 		// rather than finding it already set, and the next Start uses the old.
 		_ = s.gatewayFiles().put(workspaceID, priorEnv)
-		s.setFacts(workspaceID, prior)
+		s.updateFacts(workspaceID, func(now *workspaceFacts) { now.Model, now.Gateway = f.Model, f.Gateway })
 		// The old session was killed before the new one failed to start, so
 		// bring Claude back on the model it had: a failed switch must not end
 		// a session that was working.
@@ -1172,6 +1184,10 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 }
 
 func (s *Service) forgetWorkspace(workspaceID string) {
+	s.stopCodexTail(workspaceID)
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
+		_ = os.Remove(conversationPath(s.Root, workspaceID)) // its translation
+	}
 	s.mu.Lock()
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
@@ -1219,12 +1235,17 @@ func (s *Service) beginSummary(workspaceID, worktree string) {
 		s.summaries[workspaceID] = sum
 	}
 	s.summariesMu.Unlock()
+	if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex && s.jcode == nil {
+		// Before the collector, which reads what the tail writes.
+		s.startCodexTail(workspaceID)
+	}
 	sum.start(func() string { return s.SessionLog(workspaceID) })
 }
 
 // endSummary stops the collector and marks the session as ended. The Summary
 // stays in the map so post-stop SummaryOf still returns the last-known state.
 func (s *Service) endSummary(workspaceID string) {
+	s.stopCodexTail(workspaceID)
 	s.summariesMu.Lock()
 	sum, ok := s.summaries[workspaceID]
 	s.summariesMu.Unlock()

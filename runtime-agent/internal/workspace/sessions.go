@@ -80,5 +80,5 @@ func (s *Service) lastActiveAt(workspaceID string, f workspaceFacts) string {
 // sessions (and the user's own Claude Code), where "the newest log" may be
 // anyone's.
 func (s *Service) ownsTranscript(f workspaceFacts) bool {
-	return s.jcode != nil || f.ClaudeSessionID != "" || !f.InPlace
+	return s.jcode != nil || f.Agent == AgentCodex || f.ClaudeSessionID != "" || !f.InPlace
 }
