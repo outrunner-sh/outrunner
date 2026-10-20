@@ -90,7 +90,7 @@ export const AGENTS: Record<AgentId, Agent> = {
         id: "chatgpt",
         label: "ChatGPT",
         description:
-          "Your ChatGPT plan, signed in with `codex login` on your Mac. For local sessions only: sessions here need an API key.",
+          "Your ChatGPT plan, through Codex's own ChatGPT sign-in on your Mac. For local sessions only: sessions here need an API key.",
         targets: ["local"],
         credential: { kind: "own-login" },
       },
