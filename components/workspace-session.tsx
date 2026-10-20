@@ -66,7 +66,7 @@ export function WorkspaceSession({
 }) {
   const router = useRouter();
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
-  const attachment = useSessionAttachment(workspaceId, local);
+  const attachment = useSessionAttachment(workspaceId, local, agent);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
   const conversation = useConversationStream(attachment);
 

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { AgentId } from "@/lib/agents/registry";
+import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import {
   localAgentRequest,
   localSocketUrl,
@@ -43,9 +45,11 @@ export type SessionAttachment = {
 /**
  * A local session's URLs, from the Outrunner app rather than the server. Start
  * is called first and is idempotent: it leaves a live session alone and
- * continues the conversation of one that is gone (the Mac restarted).
+ * continues the conversation of one that is gone (the Mac restarted), signed
+ * in as the user picks now.
  */
-async function localSessionUrls(target: LocalTarget): Promise<SessionUrls> {
+async function localSessionUrls(target: LocalTarget, agent: AgentId): Promise<SessionUrls> {
+  await deliverLocalAgentAuth(target.workspaceId, agent);
   await localAgentRequest(target, "POST", `/workspaces/${target.workspaceId}/start`);
   let summary: WorkspaceSummary | undefined;
   try {
@@ -64,9 +68,10 @@ async function localSessionUrls(target: LocalTarget): Promise<SessionUrls> {
 
 /**
  * `local` marks a session run by the Outrunner app on this Mac; otherwise the
- * URLs come from the server as for any cloud session.
+ * URLs come from the server as for any cloud session. `agent` is the coding
+ * agent the session runs.
  */
-export function useSessionAttachment(workspaceId: string, local = false): SessionAttachment {
+export function useSessionAttachment(workspaceId: string, local = false, agent: AgentId = "claude"): SessionAttachment {
   const [urls, setUrls] = useState<SessionUrls | null>(null);
   const [status, setStatus] = useState<SessionAttachmentStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +94,7 @@ export function useSessionAttachment(workspaceId: string, local = false): Sessio
     (async () => {
       try {
         if (local) {
-          const urls = await localSessionUrls(localTarget(workspaceId));
+          const urls = await localSessionUrls(localTarget(workspaceId), agent);
           if (controller.signal.aborted) return;
           setUrls(urls);
           setAttachId((n) => n + 1);
@@ -122,7 +127,7 @@ export function useSessionAttachment(workspaceId: string, local = false): Sessio
         inflight.current = null;
       }
     })();
-  }, [workspaceId, local]);
+  }, [workspaceId, local, agent]);
 
   const reconnect = useCallback(() => {
     // Both browser projections can notice the same network close. The

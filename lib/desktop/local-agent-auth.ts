@@ -49,33 +49,47 @@ async function resolveLocal(agent: AgentId): Promise<ResolvedAuth> {
 }
 
 /**
- * Sign the agent of local session `workspaceId` in, before it launches. A
- * credential goes to the agent on this Mac; a pick of the Mac's own login
- * needs this Mac's CLI installed and signed in. Claude Code's own login is
- * checked where it always was (the new-session page), so only Codex's here.
- * `status` is what the Mac app last reported.
+ * Hand local session `workspaceId`'s agent its credential, as the user picks
+ * now, before it (re)launches: so a key replaced since is the one it runs on.
+ * A pick with no credential (the Mac's own login) takes a saved one away. An
+ * app from before session credentials can't relay that, and has none saved
+ * to take away, so that refusal is no failure; it is for a credential, which
+ * the session would otherwise run without.
+ */
+export async function deliverLocalAgentAuth(workspaceId: string, agent: AgentId): Promise<ResolvedAuth> {
+  const auth = await resolveLocal(agent);
+  const target = localTarget(workspaceId);
+  const path = `/workspaces/${workspaceId}/auth`;
+  if (auth.credential) {
+    await localAgentRequest(target, "POST", path, auth.credential);
+  } else {
+    await localAgentRequest(target, "POST", path, { kind: "none" }).catch(() => {});
+  }
+  return auth;
+}
+
+/**
+ * Sign a new local session's agent in. Codex must be on this Mac whichever way
+ * it signs in, and signed in there when the pick is the Mac's own login.
+ * Claude Code's own login is checked where it always was (the new-session
+ * page). `status` is what the Mac app last reported.
  */
 export async function signInLocalAgent(workspaceId: string, agent: AgentId, status: LocalStatus | null): Promise<void> {
-  const auth = await resolveLocal(agent);
-  if (auth.credential) {
-    await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/auth`, auth.credential);
-    return;
-  }
-  if (agent === "claude" || !status) return;
-  const href = providerSettingsHref(agent, auth.method ?? undefined);
-  const { label } = AGENTS[agent];
-  if (!status.agents) {
-    throw new LocalAgentAuthError(`Update the Outrunner app to run ${label} on this Mac.`, href);
-  }
-  switch (localAgentState(status, agent)) {
-    case "missing":
+  if (agent === "codex" && status) {
+    const href = providerSettingsHref(agent);
+    if (!status.agents) throw new LocalAgentAuthError("Update the Outrunner app to run Codex on this Mac.", href);
+    if (localAgentState(status, agent) === "missing") {
       throw new LocalAgentAuthError(
-        `Install ${label} to run it on this Mac: run \`${CODEX_INSTALL_COMMAND}\` in Terminal, then try again.`,
+        `Install Codex to run it on this Mac: run \`${CODEX_INSTALL_COMMAND}\` in Terminal, then try again.`,
         href,
       );
-    case "logged-out":
-      throw new LocalAgentAuthError(`Sign ${label} in on this Mac first, in Settings → Providers → ${label}.`, href);
-    case "ready":
-      return;
+    }
+  }
+  const auth = await deliverLocalAgentAuth(workspaceId, agent);
+  if (agent === "codex" && !auth.credential && status && localAgentState(status, agent) === "logged-out") {
+    throw new LocalAgentAuthError(
+      `Sign ${AGENTS[agent].label} in on this Mac first, in Settings → Providers → ${AGENTS[agent].label}.`,
+      providerSettingsHref(agent, auth.method ?? undefined),
+    );
   }
 }
