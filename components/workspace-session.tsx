@@ -2,7 +2,7 @@
 
 import "@xterm/xterm/css/xterm.css";
 
-import { ChevronRight, RefreshCw, TerminalSquare, Users } from "lucide-react";
+import { ChevronRight, Loader2, RefreshCw, RotateCw, TerminalSquare, TriangleAlert, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -79,11 +79,14 @@ export function WorkspaceSession({
   // A broken connection outranks a failed send: reconnecting is the way out of
   // it. A failed send or model switch is only dismissed — the composer already
   // has the prompt back to send again.
-  const connectionError = conversation.error ?? attachment.error;
+  // A dropped stream gets its own notice (retrying, then lost) instead of the
+  // strip, so a handshake failure mid-retry doesn't flash red.
+  const streamDropped = conversation.reconnecting !== null || conversation.lost;
+  const connectionError = streamDropped ? null : (conversation.error ?? attachment.error);
   const error = connectionError ?? sendError;
   const refresh = () => {
     setSendError(null);
-    attachment.refresh();
+    conversation.refresh();
   };
   const canSend = attachment.status === "attached";
 
@@ -295,6 +298,20 @@ export function WorkspaceSession({
 
   return (
     <div className="studio-live-session" data-testid="workspace-session">
+      {conversation.lost ? (
+        <div className="studio-session-notice is-warning" role="alert">
+          <TriangleAlert className="studio-session-notice-icon" />
+          <div className="studio-session-notice-text">
+            <strong>Lost connection to this session</strong>
+            <span>It&apos;s still running on its box, so nothing is lost.</span>
+          </div>
+          <button type="button" onClick={refresh}>
+            <RotateCw /> Reconnect
+          </button>
+        </div>
+      ) : (
+        conversation.reconnecting && <ReconnectingNotice {...conversation.reconnecting} />
+      )}
       {error && (
         <div className="studio-session-error" role="alert">
           <span>{error}</span>
@@ -368,6 +385,29 @@ export function WorkspaceSession({
         modelChoice={modelChoice}
         allowAttachments={!local}
       />
+    </div>
+  );
+}
+
+function ReconnectingNotice({ attempt, max, since }: { attempt: number; max: number; since: number }) {
+  const [now, setNow] = useState(since);
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.floor((now - since) / 1000));
+  const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  return (
+    <div className="studio-session-notice" role="status">
+      <Loader2 className="studio-session-notice-icon animate-spin" />
+      <div className="studio-session-notice-text">
+        <strong>Reconnecting to this session…</strong>
+        <span className="studio-session-notice-meta">
+          {attempt > 0 ? `attempt ${Math.min(attempt, max)} of ${max} · ` : ""}
+          {elapsed}
+        </span>
+      </div>
     </div>
   );
 }

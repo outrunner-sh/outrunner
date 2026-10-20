@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { reconnectPlan } from "@/lib/runtime/reconnect";
+import { MAX_RECONNECT_ATTEMPTS, reconnectPlan } from "@/lib/runtime/reconnect";
 import { subscribeEventsWs } from "@/lib/runtime/session-client";
 
 import type { SessionAttachment } from "./use-session-attachment";
@@ -13,6 +13,11 @@ export type ConversationStreamState = {
   events: AgentEvent[];
   status: "loading" | "connecting" | "connected" | "disconnected" | "error";
   error: string | null;
+  /** Set while the automatic reconnect loop is running after a drop. `attempt`
+   *  is 0 for a retry re-armed by focus/visibility/online, before it is counted. */
+  reconnecting: { attempt: number; max: number; since: number } | null;
+  /** Automatic retry gave up; the session itself is untouched on its box. */
+  lost: boolean;
   /** Force a full URL refresh + re-subscribe. Preserves the resume cursor. */
   refresh: () => void;
 };
@@ -25,19 +30,35 @@ export type ConversationStreamState = {
 
 // A single {error, closed} slice: reducer keeps effect body free of setState,
 // and both signals update from the same subscribe callbacks.
-type WsStatus = { error: string | null; closed: boolean };
+type WsStatus = {
+  error: string | null;
+  closed: boolean;
+  /** Consecutive failed reconnects, mirrored from the ref for rendering. */
+  attempt: number;
+  /** When the current run of drops began (ms), for the elapsed time shown. */
+  since: number | null;
+  gaveUp: boolean;
+};
 type WsAction =
   | { kind: "frame-received" }
-  | { kind: "closed" }
+  | { kind: "closed"; attempt: number; at: number }
+  | { kind: "gave-up" }
+  | { kind: "rearm" }
   | { kind: "error"; message: string };
+
+const OPEN: WsStatus = { error: null, closed: false, attempt: 0, since: null, gaveUp: false };
 
 function wsReducer(state: WsStatus, action: WsAction): WsStatus {
   switch (action.kind) {
     case "frame-received":
       // First frame after connect implicitly means we're open again.
-      return { error: null, closed: false };
+      return OPEN;
     case "closed":
-      return { ...state, closed: true };
+      return { ...state, closed: true, attempt: action.attempt, since: state.since ?? action.at };
+    case "gave-up":
+      return { ...state, gaveUp: true };
+    case "rearm":
+      return { ...state, attempt: 0, gaveUp: false };
     case "error":
       return { ...state, error: action.message };
   }
@@ -95,17 +116,15 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
         lastEventId: lastEventIdRef.current,
         onClose: () => {
           if (!active) return;
-          dispatch({ kind: "closed" });
           const attempt = (reconnectAttemptsRef.current += 1);
+          dispatch({ kind: "closed", attempt, at: Date.now() });
           const plan = reconnectPlan(attempt);
           if (!plan.retry) {
             // Automatic retry is exhausted (e.g. endpoint permanently down). Not
             // a dead end: the visibility/focus/online effect re-arms this when
             // the app becomes active again, and the user can refresh to retry.
-            dispatch({
-              kind: "error",
-              message: "Lost the conversation stream. Refresh to reconnect.",
-            });
+            dispatch({ kind: "gave-up" });
+            dispatch({ kind: "error", message: "Lost connection to this session." });
             return;
           }
           // Back off, then let the shared attachment refetch URLs (coalescing
@@ -148,6 +167,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       reconnectAttemptsRef.current = 0;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      dispatch({ kind: "rearm" });
       reconnect();
     };
     document.addEventListener("visibilitychange", rearm);
@@ -158,7 +178,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
       window.removeEventListener("focus", rearm);
       window.removeEventListener("online", rearm);
     };
-  }, [attachmentStatus, transportLost, reconnect]);
+  }, [attachmentStatus, transportLost, reconnect, dispatch]);
 
   const status = useMemo<ConversationStreamState["status"]>(() => {
     if (attachmentStatus === "loading") return "loading";
@@ -171,20 +191,36 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
     return events.length > 0 ? "connected" : "connecting";
   }, [attachmentStatus, ws.error, ws.closed, events.length]);
 
+  // A failed /session refetch is its own error with its own message, so the
+  // reconnect notices give way to it.
+  const dropped = ws.closed && attachmentStatus !== "error";
+  const reconnecting =
+    dropped && !ws.gaveUp && ws.since !== null
+      ? { attempt: ws.attempt, max: MAX_RECONNECT_ATTEMPTS, since: ws.since }
+      : null;
+
+  // A manual reconnect starts a fresh retry budget, as the idle re-arm does;
+  // otherwise the next drop after giving up would give up at once.
+  const refreshStream = useCallback(() => {
+    reconnectAttemptsRef.current = 0;
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    dispatch({ kind: "rearm" });
+    refresh();
+  }, [dispatch, refresh]);
+
   return {
     events,
     status,
     error: ws.error ?? attachmentError,
-    refresh,
+    reconnecting,
+    lost: dropped && ws.gaveUp,
+    refresh: refreshStream,
   };
 }
 
 // Small helper to hide useReducer typing; keeps the hook readable.
 function useReducerState() {
-  const [state, setState] = useState<WsStatus>({
-    error: null,
-    closed: false,
-  });
+  const [state, setState] = useState<WsStatus>(OPEN);
   const dispatch = useMemo(
     () => (action: WsAction) => setState((s) => wsReducer(s, action)),
     [],
