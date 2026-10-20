@@ -91,9 +91,9 @@ function needsSandbox(error: string) {
 
 function safeErrorMessage(error: unknown): string {
   if (error && typeof error === "object" && "code" in error && error.code === "23505") {
-    return "A live workspace already uses that branch for this project.";
+    return "Another session is already working on that branch. Pick another branch, or open that session from the sidebar.";
   }
-  return "Could not create the workspace. Check Outrunner's setup and try again.";
+  return "Couldn't create the session. Try again in a moment.";
 }
 
 /** Create one local worktree from a Runtime project. */
@@ -146,7 +146,7 @@ export async function POST(request: Request, context: RouteContext) {
   const hasClaude = agentId === "claude" && (Object.keys(sessionEnv).length > 0 || auth.credential !== null);
   const menu = await modelMenu(owner.id);
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
-    return needsClaude("Connect Claude in Settings before creating a workspace.");
+    return needsClaude("Connect Claude, or add a model provider's key, to start a session.");
   }
   if (project.private && !githubToken) {
     return NextResponse.json(
@@ -160,7 +160,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   // Said before a box is set up for it, not after.
   if (chosenModel?.provider === "claude" && !hasClaude) {
-    return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
+    return needsClaude("Connect Claude to start a session on your Claude account.");
   }
   if (chosenModel && isProviderId(chosenModel.provider) && !menu.keys.includes(chosenModel.provider)) {
     return modelKeyErrorResponse(new NoProviderKeyError(chosenModel.provider), "");
@@ -198,7 +198,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
   if (agentId === "claude" && !hasClaude && !isComputerProvider(provider)) {
-    return needsClaude("Connect Claude in Settings before creating a workspace.");
+    return needsClaude("Connect Claude to start a session.");
   }
 
   let workspace;

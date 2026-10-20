@@ -1,12 +1,12 @@
 "use client";
 
 import { GitBranch, GitFork } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
+import { Notice } from "@/components/ui/notice";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
@@ -138,20 +138,14 @@ export function NewSessionForm({
 
       <div className="shrink-0">
         {message && (
-          <div
-            aria-live="polite"
-            className="border-destructive/30 bg-destructive/10 mx-auto w-[calc(100%-32px)] max-w-[720px] rounded-lg border px-4 py-3 text-center"
-          >
-            <p className="text-destructive text-sm">{message}</p>
-            {messageHref && (
-              <Link
-                href={messageHref}
-                className="mt-2 inline-block text-sm font-medium underline underline-offset-4"
-              >
-                Open settings
-              </Link>
-            )}
-          </div>
+          // A failure settings can fix is a step to take first, not an error.
+          <Notice
+            className="mx-auto w-[calc(100%-32px)] max-w-[720px]"
+            tone={messageHref ? "info" : "error"}
+            title={messageHref ? "One step before this session starts" : "Couldn't start the session"}
+            detail={message}
+            actions={messageHref ? [{ label: "Open settings", href: messageHref, primary: true }] : undefined}
+          />
         )}
         <SessionComposer
           onSend={(text, attachmentIds) =>
