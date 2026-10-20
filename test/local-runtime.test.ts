@@ -6,6 +6,9 @@ import {
   claudeSetupNeeded,
   claudeSetupText,
   CODEX_INSTALL_COMMAND,
+  LOCAL_RUNNER_LOG,
+  localAgentRequest,
+  LocalRuntimeError,
   type LocalStatus,
   LocalSocket,
   localAgentState,
@@ -15,6 +18,7 @@ import {
   missingTools,
   needsClaudeLogin,
   needsCodexLogin,
+  runnerDidNotStartDetail,
   runsOnOutrunnerModel,
   toolsToInstall,
   openSocket,
@@ -163,6 +167,47 @@ test("Codex's login errors name Codex, and a missing one says how to install it"
   };
   await assert.rejects(logInToCodex(), { message: "Codex couldn't log in. It said: Error: access denied" });
   assert.deepEqual(sent, ["local_codex_login"]);
+});
+
+test("a runner that didn't start says why, what still works, and where its log is", async () => {
+  assert.equal(
+    messageForLocalError("agent-did-not-start: listen tcp: address already in use"),
+    "This Mac's session runner didn't start. It stopped with: listen tcp: address already in use. Cloud sessions still work. Its log is ~/.outrunner/agent.log.",
+  );
+  // One that never answered has no reason to give.
+  assert.equal(
+    messageForLocalError("agent-did-not-start"),
+    "This Mac's session runner didn't start. Cloud sessions still work. Its log is ~/.outrunner/agent.log.",
+  );
+  assert.match(messageForLocalError("agent-spawn-failed: Permission denied (os error 13)"), /It stopped with: Permission denied \(os error 13\)\. Cloud/);
+  assert.equal(runnerDidNotStartDetail("it exited with code 7"), "It stopped with: it exited with code 7. Cloud sessions still work.");
+  assert.equal(runnerDidNotStartDetail("panic: boom!"), "It stopped with: panic: boom! Cloud sessions still work.");
+  assert.equal(runnerDidNotStartDetail(null), "Cloud sessions still work.");
+
+  // Through the app, the code and reason stay with the sentence, so the page
+  // can show the reason and the log apart.
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: {
+      core: { invoke: () => Promise.reject("agent-did-not-start: it exited with code 7"), Channel: class {} },
+    },
+  };
+  const error = await localAgentRequest(target, "GET", "/workspaces").catch((e: unknown) => e);
+  assert.ok(error instanceof LocalRuntimeError);
+  assert.equal(error.code, "agent-did-not-start");
+  assert.equal(error.reason, "it exited with code 7");
+  assert.equal(LOCAL_RUNNER_LOG, "~/.outrunner/agent.log");
+  assert.match(error.message, /^This Mac's session runner didn't start\./);
+
+  // An agent's own message carries no reason to split out.
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: { core: { invoke: () => Promise.reject("folder-missing"), Channel: class {} } },
+  };
+  const missing = await localAgentRequest(target, "GET", "/workspaces").catch((e: unknown) => e);
+  assert.ok(missing instanceof LocalRuntimeError);
+  assert.equal(missing.code, "folder-missing");
+  assert.equal(missing.reason, null);
 });
 
 test("a session the agent has no folder for reads as deleted, not 'unknown workspace'", () => {

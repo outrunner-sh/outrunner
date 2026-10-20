@@ -7,6 +7,7 @@ import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import {
   localAgentRequest,
   localSocketUrl,
+  LocalRuntimeError,
   localTarget,
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
@@ -34,6 +35,9 @@ export type SessionAttachment = {
   /** What the server said went wrong, when it names it: "box-restore-failed"
    *  (the box didn't come back; its disk is kept) or "box-gone" (it can't). */
   errorCode: string | null;
+  /** What followed the code, for a local session: the reason the Mac app gave
+   *  ("agent-did-not-start: <the runner's last log line>"). */
+  errorReason: string | null;
   /** Increments every time `urls` changes (new fetch succeeded). */
   attachId: number;
   /** Fetch fresh URLs. Idempotent while a fetch is in flight. */
@@ -77,7 +81,7 @@ async function localSessionUrls(target: LocalTarget, agent: AgentId): Promise<Se
 export function useSessionAttachment(workspaceId: string, local = false, agent: AgentId = "claude"): SessionAttachment {
   const [urls, setUrls] = useState<SessionUrls | null>(null);
   const [status, setStatus] = useState<SessionAttachmentStatus>("idle");
-  const [error, setError] = useState<{ message: string; code: string | null } | null>(null);
+  const [error, setError] = useState<{ message: string; code: string | null; reason: string | null } | null>(null);
   const [attachId, setAttachId] = useState(0);
 
   const inflight = useRef<AbortController | null>(null);
@@ -92,7 +96,8 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     const controller = new AbortController();
     inflight.current = controller;
     setStatus("loading");
-    setError(null);
+    // The last failure stays until this attempt has its own answer, so its
+    // notice doesn't blink away and back on a retry that fails again.
 
     (async () => {
       try {
@@ -102,6 +107,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           setUrls(urls);
           setAttachId((n) => n + 1);
           setStatus("attached");
+          setError(null);
           return;
         }
         const res = await fetch(`/api/workspaces/${workspaceId}/session`, {
@@ -122,12 +128,14 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         setUrls(parsed.data);
         setAttachId((n) => n + 1);
         setStatus("attached");
+        setError(null);
       } catch (err) {
         if (controller.signal.aborted) return;
         setStatus("error");
         setError({
           message: err instanceof Error ? err.message : String(err),
-          code: err instanceof AttachError ? err.code : null,
+          code: err instanceof AttachError || err instanceof LocalRuntimeError ? err.code : null,
+          reason: err instanceof LocalRuntimeError ? err.reason : null,
         });
       } finally {
         inflight.current = null;
@@ -161,6 +169,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     status,
     error: error?.message ?? null,
     errorCode: error?.code ?? null,
+    errorReason: error?.reason ?? null,
     attachId,
     refresh,
     reconnect,

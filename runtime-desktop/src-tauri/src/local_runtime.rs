@@ -203,11 +203,13 @@ fn spawn_agent() -> Result<Agent, String> {
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     // Sessions run the `claude` linked here; make sure it is the one that works.
     let _ = find_claude();
+    let log_path = root.join("agent.log");
     let log = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(root.join("agent.log"))
+        .open(&log_path)
         .map_err(|error| error.to_string())?;
+    let log_start = log.metadata().map(|meta| meta.len()).unwrap_or(0);
     let secret = random_hex(32);
 
     // The agent passes its environment on to every Claude session.
@@ -246,11 +248,31 @@ fn spawn_agent() -> Result<Agent, String> {
     match address.recv_timeout(Duration::from_secs(10)) {
         Ok(addr) if addr.starts_with("127.0.0.1:") => Ok(Agent { child, addr, secret }),
         _ => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err("agent-did-not-start".into())
+            // An agent that exited closed stdout, so the wait ended early; give
+            // it a moment to be reaped, then say why it stopped.
+            let exited = exit_within(&mut child, Duration::from_millis(500));
+            let status = if exited { child.wait().ok() } else { None };
+            let reason = status.map(|status| {
+                last_line_since(&log_path, log_start).unwrap_or_else(|| match status.code() {
+                    Some(code) => format!("it exited with code {code}"),
+                    None => format!("it was stopped ({status})"),
+                })
+            });
+            Err(match reason {
+                Some(reason) => format!("agent-did-not-start: {reason}"),
+                None => "agent-did-not-start".into(),
+            })
         }
     }
+}
+
+/// The last non-empty line written to `path` after byte `from`, cut to a
+/// sentence's length: what a failed start said, not an older run's output.
+fn last_line_since(path: &Path, from: u64) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let new = bytes.get(usize::try_from(from).ok()?..)?;
+    let line = String::from_utf8_lossy(new).lines().map(str::trim).filter(|line| !line.is_empty()).next_back()?.to_string();
+    Some(if line.chars().count() > 200 { format!("{}…", line.chars().take(200).collect::<String>()) } else { line })
 }
 
 /// A command with only what a terminal session would have: the user's identity
@@ -1566,6 +1588,26 @@ mod tests {
         git(&dir, &["init", "-q", "-b", "main"]);
         git(&dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
         dir
+    }
+
+    #[test]
+    fn a_failed_start_reports_its_own_last_log_line_not_an_older_runs() {
+        let dir = scratch("agent-log");
+        let log = dir.join("agent.log");
+        std::fs::write(&log, "older run: listening\n").unwrap();
+        let from = std::fs::metadata(&log).unwrap().len();
+        assert_eq!(last_line_since(&log, from), None);
+
+        let mut file = OpenOptions::new().append(true).open(&log).unwrap();
+        std::io::Write::write_all(&mut file, b"starting\n  listen tcp: address already in use  \n\n").unwrap();
+        assert_eq!(last_line_since(&log, from).as_deref(), Some("listen tcp: address already in use"));
+
+        std::io::Write::write_all(&mut file, "x".repeat(300).as_bytes()).unwrap();
+        let long = last_line_since(&log, from).unwrap();
+        assert_eq!(long.chars().count(), 201);
+        assert!(long.ends_with('…'));
+
+        assert_eq!(last_line_since(&dir.join("missing.log"), 0), None);
     }
 
     #[test]

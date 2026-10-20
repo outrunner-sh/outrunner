@@ -132,13 +132,38 @@ function requireCore(): TauriCore {
   return core;
 }
 
+/** Where the Mac app's session runner (the local agent) writes its log. */
+export const LOCAL_RUNNER_LOG = "~/.outrunner/agent.log";
+
+/** An error the Mac app returned, as a sentence; `code` is the app's own code
+ *  ("agent-did-not-start"), when it gave one, and `reason` what followed it. */
+export class LocalRuntimeError extends Error {
+  readonly code: string | null;
+  readonly reason: string | null;
+  constructor(message: string, code: string | null, reason: string | null) {
+    super(message);
+    this.name = "LocalRuntimeError";
+    this.code = code;
+    this.reason = reason;
+  }
+}
+
 /** `agent` names the CLI a login error is about. */
 async function call<T>(cmd: string, args?: Record<string, unknown>, agent: AgentId = "claude"): Promise<T> {
   try {
     return (await requireCore().invoke(cmd, args)) as T;
   } catch (error) {
-    throw new Error(messageForLocalError(error, agent));
+    const raw = error instanceof Error ? error.message : String(error ?? "");
+    const code = /^[a-z][a-z-]*(?=:|$)/.exec(raw)?.[0] ?? null;
+    const reason = code ? raw.slice(code.length).replace(/^:\s*/, "").trim() || null : null;
+    throw new LocalRuntimeError(messageForLocalError(error, agent), code, reason);
   }
+}
+
+/** What the runner said as it stopped, as a sentence, then what still works. */
+export function runnerDidNotStartDetail(reason: string | null): string {
+  const said = reason ? `It stopped with: ${/[.!?…]$/.test(reason) ? reason : `${reason}.`} ` : "";
+  return `${said}Cloud sessions still work.`;
 }
 
 /** What this Mac has for local sessions; null outside the desktop app. */
@@ -427,8 +452,10 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
     case "agent-missing":
       return "This build of the Outrunner app has no local agent. Update the app to run sessions locally.";
     case "agent-did-not-start":
-    case "agent-spawn-failed":
-      return "The local agent didn't start. Its log is ~/.outrunner/agent.log.";
+    case "agent-spawn-failed": {
+      const reason = raw.slice(code.length).replace(/^:\s*/, "").trim() || null;
+      return `This Mac's session runner didn't start. ${runnerDidNotStartDetail(reason)} Its log is ${LOCAL_RUNNER_LOG}.`;
+    }
     case "agent-unreachable":
       return "Lost contact with the local agent. Try again.";
     case "folder-missing":

@@ -12,7 +12,14 @@ import { ConversationTimeline, claudeIsWorking } from "@/components/conversation
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { ErrorRef, Notice } from "@/components/ui/notice";
 import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
-import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
+import {
+  LOCAL_RUNNER_LOG,
+  localAgentRequest,
+  localTarget,
+  messageForLocalError,
+  putOnModel,
+  runnerDidNotStartDetail,
+} from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import {
@@ -87,6 +94,8 @@ export function WorkspaceSession({
   // strip, so a handshake failure mid-retry doesn't flash red.
   const streamDropped = conversation.reconnecting !== null || conversation.lost;
   const connectionError = streamDropped ? null : (conversation.error ?? attachment.error);
+  // The stream reports the attachment's error as its own until it has one.
+  const fromBox = attachment.error !== null && connectionError === attachment.error;
   const refresh = () => {
     setSendError(null);
     conversation.refresh();
@@ -338,8 +347,10 @@ export function WorkspaceSession({
       {connectionError && (
         <ConnectionNotice
           // The server's sentence about the box; a stream error is internal.
-          message={attachment.status === "error" ? connectionError : null}
-          code={attachment.status === "error" ? attachment.errorCode : null}
+          message={fromBox ? attachment.error : null}
+          code={fromBox ? attachment.errorCode : null}
+          reason={fromBox ? attachment.errorReason : null}
+          retrying={attachment.status === "loading"}
           projectId={projectId}
           onRetry={refresh}
         />
@@ -407,6 +418,11 @@ export function WorkspaceSession({
       <SessionComposer
         onSend={send}
         canSend={canSend}
+        // Sending waits on the connection alone, so say that, not the
+        // composer's default (another viewer holding the keyboard).
+        disabledPlaceholder={
+          attachment.status === "error" ? "You can send once this session is back." : "Connecting to this session…"
+        }
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
@@ -421,14 +437,38 @@ export function WorkspaceSession({
 function ConnectionNotice({
   message,
   code,
+  reason,
+  retrying,
   projectId,
   onRetry,
 }: {
   message: string | null;
   code: string | null;
+  reason: string | null;
+  /** A retry is under way: its button turns rather than the notice going. */
+  retrying: boolean;
   projectId?: string;
   onRetry: () => void;
 }) {
+  const retry = (label: string) => ({
+    label,
+    icon: <RotateCw className={retrying ? "is-working" : undefined} />,
+    primary: true,
+    disabled: retrying,
+    onClick: onRetry,
+  });
+  if (code === "agent-did-not-start" || code === "agent-spawn-failed") {
+    // Trying again starts the runner afresh: the app restarts one that died.
+    return (
+      <Notice
+        tone="error"
+        title="This Mac's session runner didn't start"
+        detail={runnerDidNotStartDetail(reason)}
+        meta={<ErrorRef label="log" value={LOCAL_RUNNER_LOG} />}
+        actions={[retry("Try again")]}
+      />
+    );
+  }
   if (code === "box-gone") {
     return (
       <Notice
@@ -447,7 +487,7 @@ function ConnectionNotice({
         tone="warning"
         title="Couldn't restart this session's box"
         detail="Its files are kept on the box's disk. This is usually brief."
-        actions={[{ label: "Try again", icon: <RotateCw />, primary: true, onClick: onRetry }]}
+        actions={[retry("Try again")]}
       />
     );
   }
@@ -456,7 +496,7 @@ function ConnectionNotice({
       tone="warning"
       title="Can't show this session live"
       detail={message ? `It may still be running. ${message}` : "It may still be running on its box."}
-      actions={[{ label: "Retry", icon: <RotateCw />, primary: true, onClick: onRetry }]}
+      actions={[retry("Retry")]}
     />
   );
 }
