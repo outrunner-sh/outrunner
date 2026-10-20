@@ -493,7 +493,8 @@ func (t *codexTail) write(recs []codex.Record) {
 }
 
 // appendRecords appends whole lines to a conversation log, ending a last line
-// a crash cut short first.
+// a crash cut short first. All or nothing: a write cut short (a full disk) is
+// undone, so trying the same lines again never repeats the ones that landed.
 func appendRecords(path string, out []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -502,17 +503,23 @@ func appendRecords(path string, out []byte) error {
 	if err != nil {
 		return err
 	}
-	if info, err := file.Stat(); err == nil && info.Size() > 0 {
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	size := info.Size()
+	if size > 0 {
 		last := make([]byte, 1)
-		if _, err := file.ReadAt(last, info.Size()-1); err == nil && last[0] != '\n' {
+		if _, err := file.ReadAt(last, size-1); err == nil && last[0] != '\n' {
 			out = append([]byte("\n"), out...)
 		}
 	}
-	_, err = file.Write(out)
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
+	if _, err := file.Write(out); err != nil {
+		_ = file.Truncate(size)
+		return err
 	}
-	return err
+	return nil
 }
 
 // lastWrittenRecord is the session and rollout line of the last translated
