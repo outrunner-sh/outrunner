@@ -1,0 +1,76 @@
+package workspace
+
+import "errors"
+
+// agent is the coding agent a workspace's tmux session runs. The engine around
+// it — the worktree, tmux, the readiness wait, prompt delivery, model switches
+// — is the same for every agent; what differs is here: how the agent is
+// launched, how its screen reads, and where it keeps its conversation.
+type agent interface {
+	// command is the argv that (re)launches a workspace's session in its
+	// worktree, continuing its conversation when resume is set.
+	command(workspaceID, worktree string, resume bool) []string
+	// env is the session's environment: the agent's own (Service.env) and
+	// whatever the agent needs on top of it.
+	env(anthropicToken string) []string
+	// isComposer reports whether a pane shows the agent's prompt box, ready
+	// for a prompt.
+	isComposer(pane string) bool
+	// startupKey is the key that moves a screen shown before the prompt box
+	// (a first run's, a folder-trust question) toward it, or "" to press
+	// nothing: a key pressed into a screen not understood could mean "No".
+	startupKey(pane string) string
+	// isBusy reports whether a pane shows a turn in progress, which a
+	// relaunch would cut off.
+	isBusy(pane string) bool
+	// awaitsAnswer reports whether a pane shows a menu instead of the prompt
+	// box (a question, a permission prompt), where a typed prompt would be
+	// read as a choice.
+	awaitsAnswer(pane string) bool
+	// sessionLog is the session's conversation in Claude's JSONL record shape
+	// (what conversation.Watcher reads), or "" until there is one.
+	sessionLog(workspaceID string) string
+	// userTurns counts the prompts the agent has recorded, so a send can tell
+	// that its prompt landed.
+	userTurns(workspaceID string) int
+	// exited is the error for a session that ended as soon as it started,
+	// saying where to see why.
+	exited(folder string) error
+}
+
+// errExitedAtStart is waitReady's report of a session gone before its prompt
+// box showed; the agent's exited turns it into what the user is told.
+var errExitedAtStart = errors.New("the agent exited as soon as it started")
+
+// The agents a session can run, as its facts (and the protocol) name them.
+const AgentClaude = "claude"
+
+// agentFor is the agent a workspace's session runs: the one its facts record,
+// and Claude for a session from before there was a choice.
+func (s *Service) agentFor(workspaceID string) agent {
+	f, _ := s.getFacts(workspaceID)
+	switch f.Agent {
+	default: // AgentClaude, or "" for a session recorded before agents
+		return claudeAgent{s}
+	}
+}
+
+// launchCommand is the argv for (re)launching a workspace's session.
+func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []string {
+	return s.agentFor(workspaceID).command(workspaceID, worktree, resume)
+}
+
+// SessionLog returns the path of a workspace's conversation log, in Claude's
+// record shape, or "" while there is none yet: the file the conversation
+// stream, the Summary and Archive read.
+func (s *Service) SessionLog(workspaceID string) string {
+	if s.jcode != nil {
+		return s.jcode.ConversationLog(workspaceID)
+	}
+	return s.agentFor(workspaceID).sessionLog(workspaceID)
+}
+
+// userTurns counts the user prompts a workspace's agent has recorded.
+func (s *Service) userTurns(workspaceID string) int {
+	return s.agentFor(workspaceID).userTurns(workspaceID)
+}

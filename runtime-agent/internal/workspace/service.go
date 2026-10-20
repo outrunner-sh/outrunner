@@ -13,12 +13,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
@@ -120,6 +117,9 @@ type workspaceFacts struct {
 	// Claude Code's — and "the newest log" could be any of them. The session is
 	// launched with this id and found by it instead.
 	ClaudeSessionID string `json:"claudeSessionId,omitempty"`
+	// Agent is the coding agent the session runs (see agentFor); empty is
+	// Claude, which every session ran before there was a choice.
+	Agent string `json:"agent,omitempty"`
 	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
 	// Gateway, when set, runs the session through it on a key of its own (in
@@ -399,7 +399,8 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		return "", err
 	}
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := claude.SessionEnv(s.env, anthropicToken)
+	a := s.agentFor(workspaceID)
+	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
@@ -408,31 +409,33 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
 	s.startRecorder(ctx, workspaceID)
-	if err := s.waitClaudeReady(ctx, name); err != nil {
-		return "", claudeExited(err, worktree)
+	if err := s.waitReady(ctx, a, name); err != nil {
+		return "", a.exited(worktree)
 	}
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
 }
 
-// waitClaudeReady blocks until Claude's TUI has mounted and can accept a
+// waitReady blocks until the agent's TUI has mounted and can accept a
 // submitted prompt, so the workspace isn't reported ready while input is still
 // silently dropped during startup. It waits for the composer prompt to render
 // and enforces a short floor (the measured input-ready point after launch),
 // capped so a slow or unexpected launch can never wedge Start. Returns early if
 // ctx is cancelled (the start request disconnected or shutdown began).
 //
-// It answers Claude's folder-trust dialog. Every worktree is a directory
-// Claude has never seen, so without this the first prompt would be typed into
-// the dialog. Choosing the repository or folder in Outrunner is the user's
-// trust decision. A Runtime Computer's seeded config trusts its workspaces
-// folder, but Claude Code 2.1.296 asks for each folder inside it anyway.
+// It answers the screens the agent shows before its prompt box (agent.
+// startupKey), Claude's folder-trust dialog among them. Every worktree is a
+// directory Claude has never seen, so without this the first prompt would be
+// typed into the dialog. Choosing the repository or folder in Outrunner is the
+// user's trust decision. A Runtime Computer's seeded config trusts its
+// workspaces folder, but Claude Code 2.1.296 asks for each folder inside it
+// anyway.
 //
-// A Claude that exits meanwhile (an option its version lacks, a crash, a
-// "No" to that dialog) takes its session with it: that is errClaudeExited,
+// An agent that exits meanwhile (an option its version lacks, a crash, a
+// "No" to that dialog) takes its session with it: that is errExitedAtStart,
 // rather than a session reported ready that the first prompt then finds gone
 // ("tmux paste: no session").
-func (s *Service) waitClaudeReady(ctx context.Context, name string) error {
+func (s *Service) waitReady(ctx context.Context, a agent, name string) error {
 	const minWait = 2 * time.Second
 	// Room for a first run's screens (theme, security notes) and the trust
 	// dialog, a second apart, on a Claude Code still starting up.
@@ -441,20 +444,16 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string) error {
 	var lastAnswer time.Time
 	for ctx.Err() == nil && time.Since(launched) < maxWait {
 		if !s.tmux.HasSession(ctx, name) {
-			return errClaudeExited
+			return errExitedAtStart
 		}
 		pane, err := s.tmux.CapturePane(ctx, name)
-		if err == nil && isComposer(pane) && time.Since(launched) >= minWait {
+		if err == nil && a.isComposer(pane) && time.Since(launched) >= minWait {
 			break
 		}
 		// Re-press only after a beat: a just-launched TUI can drop a key, and
 		// the pane must show where the last one moved the selection.
 		if err == nil && time.Since(lastAnswer) >= time.Second {
-			key := firstRunKey(pane)
-			if key == "" && isTrustDialog(pane) {
-				key = trustKey(pane)
-			}
-			if key != "" {
+			if key := a.startupKey(pane); key != "" {
 				_ = s.tmux.SendKey(ctx, name, key)
 				lastAnswer = time.Now()
 			}
@@ -465,112 +464,9 @@ func (s *Service) waitClaudeReady(ctx context.Context, name string) error {
 		}
 	}
 	if ctx.Err() == nil && !s.tmux.HasSession(ctx, name) {
-		return errClaudeExited
+		return errExitedAtStart
 	}
 	return nil
-}
-
-var errClaudeExited = errors.New("Claude Code exited as soon as it started")
-
-// claudeExited says where to look. What Claude printed as it exited is gone
-// with its session: tmux can't keep it (on macOS a pty drops what an
-// instantly exiting process wrote last), so its own terminal is the way to
-// see it.
-func claudeExited(err error, folder string) error {
-	return fmt.Errorf("%w. To see why, run `claude` in a terminal in %s", err, folder)
-}
-
-// isComposer reports whether a pane shows Claude's prompt box, ready for
-// input: a line starting with its prompt (❯ in 2.1, > in 2.0) right under a
-// horizontal rule. The theme picker, the trust dialog and permission questions
-// show ❯ too, as an indented selection, and never under a rule; taking any ❯
-// for the prompt once typed a user's first message into the theme picker
-// ("prompt not confirmed delivered after 20 attempts").
-func isComposer(pane string) bool {
-	previous := ""
-	for _, line := range strings.Split(pane, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if (strings.HasPrefix(line, "❯") || strings.HasPrefix(line, ">")) && isRule(previous) {
-			return true
-		}
-		previous = line
-	}
-	return false
-}
-
-func isRule(line string) bool {
-	line = strings.TrimSpace(line)
-	return utf8.RuneCountInString(line) >= 10 && strings.Trim(line, "─") == ""
-}
-
-// awaitsAnswer reports whether Claude is showing a menu instead of its prompt
-// box: a question, a permission prompt, a first-run screen. Typing a prompt
-// there would be read as a choice ("1", Enter: Yes), so it waits for the user.
-func awaitsAnswer(pane string) bool {
-	if isComposer(pane) {
-		return false
-	}
-	if firstRunKey(pane) != "" {
-		return true
-	}
-	for _, line := range strings.Split(pane, "\n") {
-		// A menu's selection is indented (or boxed); the prompt starts the line.
-		if i := strings.Index(line, "❯"); i > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// firstRunKey answers the screens Claude Code shows the first time it runs on
-// a Mac, before any session can start: logging in through Outrunner doesn't
-// get past them. The theme picker takes the theme it preselects, the security
-// notes need Enter. Login isn't one: Outrunner asks for it before a session.
-func firstRunKey(pane string) string {
-	switch {
-	case strings.Contains(pane, "Choose the text style"):
-		return "Enter"
-	case strings.Contains(pane, "Security notes:") && strings.Contains(pane, "to continue"):
-		return "Enter"
-	}
-	return ""
-}
-
-// isTrustDialog reports whether a pane shows Claude Code's folder-trust prompt,
-// in either of the wordings it has shipped with.
-func isTrustDialog(pane string) bool {
-	return strings.Contains(pane, "trust this folder") ||
-		strings.Contains(pane, "trust the files in this folder")
-}
-
-// trustKey is the key that takes Claude's folder-trust dialog toward "Yes":
-// Enter once "Yes" is the selected option (❯), else the arrow toward it.
-// Which option comes first, and which is selected, changed between Claude
-// Code versions: 2.1.247 lists and preselects "Yes", 2.1.287 lists "No, exit"
-// first and preselects it, so a plain Enter would close the session. Empty
-// when the pane doesn't show both, since any key could then mean "No".
-func trustKey(pane string) string {
-	selected, yes := -1, -1
-	for i, line := range strings.Split(pane, "\n") {
-		if selected < 0 && strings.Contains(line, "❯") {
-			selected = i
-		}
-		if strings.Contains(line, "Yes, I trust this folder") || strings.Contains(line, "Yes, proceed") {
-			yes = i
-		}
-	}
-	switch {
-	case selected < 0 || yes < 0:
-		return ""
-	case selected == yes:
-		return "Enter"
-	case yes > selected:
-		return "Down"
-	default:
-		return "Up"
-	}
 }
 
 // Resume re-launches Claude with --continue after an exit or box restart.
@@ -664,7 +560,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 				return fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionUnchecked, err)
 			}
 			running = false
-		} else if claudeIsBusy(pane) {
+		} else if s.agentFor(workspaceID).isBusy(pane) {
 			return ErrSessionBusy
 		}
 	}
@@ -700,12 +596,6 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	return nil
 }
 
-// claudeIsBusy reports whether Claude's screen shows a turn in progress: its
-// footer offers "esc to interrupt" only then.
-func claudeIsBusy(pane string) bool {
-	return strings.Contains(pane, "esc to interrupt")
-}
-
 // relaunch replaces a workspace's Claude session. Callers hold its lifecycle
 // lock.
 func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken string, resume bool) (string, error) {
@@ -739,43 +629,18 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := claude.SessionEnv(s.env, anthropicToken)
+	a := s.agentFor(workspaceID)
+	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
 	s.continueRecorder(ctx, workspaceID)
-	if err := s.waitClaudeReady(ctx, name); err != nil {
-		return "", claudeExited(err, worktree)
+	if err := s.waitReady(ctx, a, name); err != nil {
+		return "", a.exited(worktree)
 	}
 	s.beginSummary(workspaceID, worktree)
 	return name, nil
-}
-
-// launchCommand is Claude's argv for (re)launching a workspace's session,
-// continuing its conversation when resume is set. An in-place session's
-// conversation is named by id: it starts under that id and is resumed by it,
-// once its transcript exists, whatever else shares the folder. Any other
-// session continues the newest conversation in its own worktree.
-func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []string {
-	mode, orientation := s.permissionMode(workspaceID), s.orientation(workspaceID, worktree)
-	f, _ := s.getFacts(workspaceID)
-	var argv []string
-	switch {
-	case f.ClaudeSessionID != "" && s.SessionLog(workspaceID) != "":
-		argv = claude.ResumeCommand(mode, f.ClaudeSessionID, orientation)
-	case f.ClaudeSessionID != "":
-		argv = claude.SessionCommand(mode, f.ClaudeSessionID, orientation)
-	case resume:
-		argv = claude.ContinueCommand(mode, orientation)
-	default:
-		argv = claude.Command(mode, orientation)
-	}
-	if f.Gateway != claude.NoGateway {
-		// The model rides in the gateway file: --model refuses a gateway's names.
-		return claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
-	}
-	return claude.WithModel(argv, f.Model)
 }
 
 // orientation builds Claude's orientation prompt for a workspace. It uses the
@@ -935,7 +800,7 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 		return nil // the earlier copy landed after that send gave up
 	case !retry:
 		before = s.userTurns(workspaceID)
-		if s.awaitingAnswer(ctx, name) {
+		if s.awaitingAnswer(ctx, workspaceID, name) {
 			return errAwaitsAnswer
 		}
 		if err := s.tmux.Paste(ctx, name, content); err != nil {
@@ -944,7 +809,7 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	}
 	var lastErr error
 	for attempt := 0; attempt < submitAttempts && ctx.Err() == nil; attempt++ {
-		if s.awaitingAnswer(ctx, name) {
+		if s.awaitingAnswer(ctx, workspaceID, name) {
 			// Keep watching for the turn, which may have landed just before the
 			// menu came up, but press nothing into it.
 			lastErr = errAwaitsAnswer
@@ -970,12 +835,12 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 // errAwaitsAnswer is a send held back from a menu Claude is showing.
 var errAwaitsAnswer = errors.New("Claude is waiting for an answer in the terminal (a question or a permission prompt). Answer it there, then send again")
 
-// awaitingAnswer reports whether the session shows a menu rather than Claude's
-// prompt box. A pane that can't be read doesn't block: the send goes ahead as
-// it always did.
-func (s *Service) awaitingAnswer(ctx context.Context, name string) bool {
+// awaitingAnswer reports whether the session shows a menu rather than the
+// agent's prompt box. A pane that can't be read doesn't block: the send goes
+// ahead as it always did.
+func (s *Service) awaitingAnswer(ctx context.Context, workspaceID, name string) bool {
 	pane, err := s.tmux.CapturePane(ctx, name)
-	return err == nil && awaitsAnswer(pane)
+	return err == nil && s.agentFor(workspaceID).awaitsAnswer(pane)
 }
 
 const (
@@ -1022,72 +887,6 @@ func (s *Service) forgetStagedPrompt(workspaceID string) {
 	lock.Lock()
 	lock.staged = nil
 	lock.Unlock()
-}
-
-// claudeConvDir is where Claude writes this workspace's conversation JSONL:
-// $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + claudeProjectDir —
-// the same derivation as SessionLog and conversationDest — rather than s.Root,
-// so it stays correct when HOME and Root differ.
-func (s *Service) claudeConvDir(workspaceID string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = s.Root // best-effort fallback if HOME is unavailable
-	}
-	return claudeProjectDir(home, s.worktreePath(workspaceID))
-}
-
-// userTurnCount totals the user messages Claude has recorded across the *.jsonl
-// files in dir (0 if it doesn't exist yet). We count user turns specifically
-// rather than total bytes so an in-flight assistant reply — which also grows the
-// log — can't be mistaken for our prompt being accepted. Each conversation entry
-// is one JSON line; parse its `type` field (rather than substring-matching
-// `"type":"user"`, which can appear inside an assistant turn's content).
-func userTurnCount(dir string) int {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		count += fileUserTurns(filepath.Join(dir, e.Name()))
-	}
-	return count
-}
-
-// fileUserTurns counts the user messages in one conversation file (0 if it
-// doesn't exist yet).
-func fileUserTurns(path string) int {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	count := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		var rec struct {
-			Type string `json:"type"`
-		}
-		if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
-			count++
-		}
-	}
-	return count
-}
-
-// userTurns counts the user messages in a workspace's conversation: its own
-// transcript when the conversation is named by id (an in-place session, whose
-// folder other conversations may share), else every transcript in its worktree's
-// project directory.
-func (s *Service) userTurns(workspaceID string) int {
-	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
-		return fileUserTurns(filepath.Join(s.claudeConvDir(workspaceID), f.ClaudeSessionID+".jsonl"))
-	}
-	return userTurnCount(s.claudeConvDir(workspaceID))
 }
 
 // lockLifecycle takes the workspace's lifecycle lock and returns its release,
@@ -1319,92 +1118,6 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	delete(s.recorders, workspaceID)
 	s.recordersMu.Unlock()
 }
-
-// SessionLog returns the current Claude JSONL path for a workspace, or "" if
-// Claude hasn't written anything yet. Claude Code stores per-project logs at
-// ~/.claude/projects/<slug>/<sessionId>.jsonl (see claudeSlug). A worktree is
-// the session's own, and --continue reuses its file, so "newest jsonl" ==
-// "current session"; an in-place session's conversation is named by id.
-func (s *Service) SessionLog(workspaceID string) string {
-	if s.jcode != nil {
-		return s.jcode.ConversationLog(workspaceID)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	dir := claudeProjectDir(home, s.worktreePath(workspaceID))
-	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
-		path := filepath.Join(dir, f.ClaudeSessionID+".jsonl")
-		if _, err := os.Stat(path); err != nil {
-			return ""
-		}
-		return path
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	var newest string
-	var newestMod time.Time
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".jsonl" {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(newestMod) {
-			newestMod = info.ModTime()
-			newest = filepath.Join(dir, e.Name())
-		}
-	}
-	return newest
-}
-
-// claudeProjectDir is the directory Claude Code keeps a working directory's
-// conversation logs in. Claude names it after its real working directory, so
-// symlinks are resolved first: on macOS /var and /tmp live under /private, and
-// a symlinked checkout or home is common. A path that does not exist yet is
-// used as given.
-func claudeProjectDir(home, worktree string) string {
-	if resolved, err := filepath.EvalSymlinks(worktree); err == nil {
-		worktree = resolved
-	}
-	return filepath.Join(home, ".claude", "projects", claudeSlug(worktree))
-}
-
-// claudeSlug encodes a filesystem path the way Claude Code names its
-// per-project JSONL directory (read from Claude Code 2.1's bundle). It runs
-// `path.replace(/[^a-zA-Z0-9]/g, "-")` on a JavaScript string, so the unit is a
-// UTF-16 code unit, not a byte or a rune: "é" becomes one '-', an emoji two.
-// A slug over claudeSlugMax units is cut there and suffixed with '-' and the
-// base-36 absolute value of the path's 32-bit Java-style string hash.
-func claudeSlug(path string) string {
-	units := utf16.Encode([]rune(path))
-	b := make([]byte, len(units))
-	var hash int32 // (h<<5)-h+c|0 in JavaScript: wraps exactly like int32
-	for i, u := range units {
-		hash = hash*31 + int32(u)
-		if u >= 'a' && u <= 'z' || u >= 'A' && u <= 'Z' || u >= '0' && u <= '9' {
-			b[i] = byte(u)
-		} else {
-			b[i] = '-'
-		}
-	}
-	if len(b) <= claudeSlugMax {
-		return string(b)
-	}
-	abs := int64(hash)
-	if abs < 0 {
-		abs = -abs
-	}
-	return string(b[:claudeSlugMax]) + "-" + strconv.FormatInt(abs, 36)
-}
-
-// claudeSlugMax is the longest slug Claude Code keeps whole.
-const claudeSlugMax = 200
 
 // Activity reports the most recent activity in any session on this box, and
 // whether Claude is mid-turn in any of them; zero time when no session has a
