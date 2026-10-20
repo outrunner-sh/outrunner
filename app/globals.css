@@ -93,6 +93,13 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* An app, not a page: a panel scrolled to its end mustn't hand the scroll
+     on to the document, which in the Mac app's webview bounces the whole
+     window, sidebar and all. Each panel scrolls on its own. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
 }
 
 /* The app's dark surface palette. Defined app-wide, not on the studio alone:
