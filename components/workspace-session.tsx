@@ -11,7 +11,7 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { Notice } from "@/components/ui/notice";
-import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
+import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
@@ -77,6 +77,8 @@ export function WorkspaceSession({
   // from the session attachment + conversation stream, not the terminal (which
   // stays available only as an optional shell panel).
   const [sendError, setSendError] = useState<string | null>(null);
+  // A model switch that didn't happen: which model, why, and where to fix it.
+  const [switchError, setSwitchError] = useState<{ label: string; message: string; href?: string } | null>(null);
   // A broken connection outranks a failed send: reconnecting is the way out of
   // it. A failed send or model switch is only dismissed — the composer already
   // has the prompt back to send again.
@@ -207,6 +209,7 @@ export function WorkspaceSession({
     onChange: (model) => {
       setSwitching(true);
       setSendError(null);
+      setSwitchError(null);
       // A local switch relaunches the session on this Mac: signed in as the
       // user picks now first, as the server does for a cloud one.
       (local
@@ -218,9 +221,12 @@ export function WorkspaceSession({
           rememberPickedProvider(workspaceId, model.provider);
         })
         .catch((error: unknown) =>
-          setSendError(
-            local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't switch models.",
-          ),
+          setSwitchError({
+            label: model.label,
+            message: local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't switch models.",
+            href:
+              error instanceof ModelSwitchError || error instanceof LocalAgentAuthError ? error.settingsHref : undefined,
+          }),
         )
         .finally(() => setSwitching(false));
     },
@@ -308,6 +314,17 @@ export function WorkspaceSession({
         />
       ) : (
         conversation.reconnecting && <ReconnectingNotice {...conversation.reconnecting} />
+      )}
+      {switchError && !connectionError && !streamDropped && (
+        <Notice
+          tone="error"
+          title={`Couldn't switch to ${switchError.label}`}
+          detail={`${switchError.message} The session stays on its current model.`}
+          actions={[
+            ...(switchError.href ? [{ label: "Open settings", href: switchError.href }] : []),
+            { label: "Dismiss", onClick: () => setSwitchError(null) },
+          ]}
+        />
       )}
       {error && (
         <div className="studio-session-error" role="alert">
@@ -413,8 +430,18 @@ async function switchCloudModel(workspaceId: string, model: SessionModel): Promi
     body: JSON.stringify({ provider: model.provider, model: model.id }),
   });
   if (res.ok) return;
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  throw new Error(data.error ?? "Couldn't switch models. Please try again.");
+  const data = (await res.json().catch(() => ({}))) as { error?: string; settingsHref?: string };
+  throw new ModelSwitchError(data.error ?? "Couldn't switch models. Please try again.", data.settingsHref);
+}
+
+/** A refused switch, with the settings page that fixes it when one does. */
+class ModelSwitchError extends Error {
+  readonly settingsHref?: string;
+  constructor(message: string, settingsHref?: string) {
+    super(message);
+    this.name = "ModelSwitchError";
+    this.settingsHref = settingsHref;
+  }
 }
 
 /** Who served a session's model when it was last picked here (a convenience:
