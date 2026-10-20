@@ -29,7 +29,8 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::PageLoadEvent,
-    Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
+    window::Color,
+    Manager, RunEvent, Theme, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -137,6 +138,10 @@ fn deliver_callback(app: &tauri::AppHandle, site: &str, query: &str) {
 /// and can route sign-in through the system browser.
 const INIT_JS: &str = "window.__RUNTIME_DESKTOP__ = true;";
 
+/// The app's background (globals.css `--background`, #0A0A0A), for the window
+/// behind the page and its title bar.
+const APP_BACKGROUND: Color = Color(10, 10, 10, 255);
+
 /// Reveal + focus the main window (from the tray, dock, or a second launch).
 fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -202,8 +207,16 @@ pub fn run() {
             // off-site navigations (OAuth) bounced to the system browser.
             let site = site();
             let site_host = site_host(&site);
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::External(site.parse().unwrap()))
+            let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(site.parse().unwrap()))
                 .title("Outrunner")
+                // Dark, like the app: what shows before the page has painted,
+                // and on a Mac the title bar, take its background, not the
+                // system grey.
+                .theme(Some(Theme::Dark))
+                .background_color(APP_BACKGROUND);
+            #[cfg(target_os = "macos")]
+            let builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
+            builder
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
                 .initialization_script(INIT_JS)
