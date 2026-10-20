@@ -67,6 +67,10 @@ type Service struct {
 	lifeMu    sync.Mutex
 	lifeLocks map[string]*sync.Mutex
 
+	// rolloutClaimMu makes finding a Codex session's rollout and claiming it
+	// (codexRollout) one step across sessions.
+	rolloutClaimMu sync.Mutex
+
 	summariesMu sync.Mutex
 	summaries   map[string]*Summary
 

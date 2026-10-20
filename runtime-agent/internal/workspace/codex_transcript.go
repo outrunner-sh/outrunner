@@ -83,6 +83,14 @@ func (s *Service) codexRollout(workspaceID string) string {
 	if f.CodexRollout != "" {
 		return f.CodexRollout
 	}
+	// Finding and claiming are one step for every session on this computer:
+	// two sessions started together in one folder must not both take the
+	// earliest rollout as theirs.
+	s.rolloutClaimMu.Lock()
+	defer s.rolloutClaimMu.Unlock()
+	if f, _ = s.getFacts(workspaceID); f.CodexRollout != "" {
+		return f.CodexRollout // claimed while this one waited
+	}
 	sessions := filepath.Join(s.codexHomeFor(workspaceID), "sessions")
 	var found string
 	var meta rolloutMeta
