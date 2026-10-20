@@ -255,7 +255,7 @@
 .studio-terminal-role { display:inline-flex; align-items:center; gap:6px; color:#9a9a9a; font:10px var(--font-geist-mono); }.studio-terminal-role svg { width:12px; }
 .studio-term-reconnect { display:grid; width:22px; height:22px; margin-left:4px; place-items:center; border:1px solid rgba(255,255,255,.12); border-radius:6px; color:#b9b9b9; background:transparent; cursor:pointer; }.studio-term-reconnect:hover { color:#fff; background:rgba(255,255,255,.08); }.studio-term-reconnect svg { width:12px; }
 .studio-live-terminal { flex:1; min-height:0; padding:7px 4px 4px 8px; overflow:hidden; background:#080808; }.studio-live-terminal .xterm { height:100%; }
-.studio-terminal-exit { margin:0; padding:8px 11px; border-top:1px solid rgba(210,153,34,.3); color:var(--studio-amber); background:#1c1a12; font-size:10px; }
+.studio-terminal-exit { margin:8px; }
 
 /* Markdown chat rendering — dark palette. */
 .md-body { color: #c9c9c9; font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }

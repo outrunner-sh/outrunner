@@ -382,10 +382,14 @@ export function WorkspaceSession({
             </div>
             <div ref={setTerminalContainer} className="studio-live-terminal" hidden={!showTerminal} />
             {showTerminal && terminal.exitCode !== null && (
-              <p className="studio-terminal-exit">
-                Claude exited with code {terminal.exitCode}. Reconnect or start a new
-                workspace to begin another session.
-              </p>
+              <Notice
+                tone="warning"
+                className="studio-terminal-exit"
+                title={`${AGENTS[agent].label} stopped`}
+                detail="This session and its files are kept."
+                meta={`exit code ${terminal.exitCode}`}
+                actions={[{ label: "Reconnect", icon: <RotateCw />, primary: true, onClick: refresh }]}
+              />
             )}
           </section>,
           terminalSlot,
