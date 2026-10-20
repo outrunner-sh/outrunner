@@ -228,6 +228,11 @@
 .notice-text span { color:rgba(255,255,255,.55); }
 .notice-text .notice-meta { font:11px var(--font-geist-mono); }
 .notice-actions { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; gap:6px; }
+/* Actions on their own row, lined up with the text, for a notice with more
+   buttons than fit beside a sentence. */
+.notice.is-stacked { flex-wrap:wrap; row-gap:8px; }
+.notice.is-stacked > .notice-text { flex-basis:calc(100% - 24px); }
+.notice.is-stacked > .notice-actions { flex-basis:100%; padding-left:24px; }
 .notice-action { display:inline-flex; height:26px; align-items:center; gap:6px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:6px; color:var(--foreground); background:transparent; font-size:12px; font-weight:500; cursor:pointer; transition:background-color .15s; }
 .notice-action:hover { background:rgba(255,255,255,.06); }
 .notice-action.is-primary { border-color:transparent; color:#111; background:#f2f2f2; }

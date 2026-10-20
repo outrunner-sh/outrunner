@@ -5,7 +5,8 @@ import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
-import { InlineMessage } from "@/components/ui/notice";
+import { InlineMessage, Notice } from "@/components/ui/notice";
+import { useNow } from "@/hooks/use-now";
 import {
   cancelClaudeLogin,
   pollClaudeLogin,
@@ -16,6 +17,9 @@ import { isDesktopApp } from "@/lib/is-desktop";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 
 const noopSubscribe = () => () => {};
+
+/** How long `claude setup-token` is given to hear back from the browser. */
+const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 
 /**
  * Claude Code's Subscription card in Settings → Providers: connect the
@@ -48,6 +52,11 @@ export function ClaudeConnection({
   // URL while we wait for the user to return with it.
   const [pending, setPending] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  // When the CLI stops waiting, for the countdown; and whether the user asked
+  // for the code field, which only matters if Claude falls back to one.
+  const [deadline, setDeadline] = useState<number | null>(null);
+  const [pasting, setPasting] = useState(false);
+  const [expired, setExpired] = useState(false);
 
   /** Store a freshly minted token and clear the in-progress state. */
   const save = useCallback(async (token: string) => {
@@ -90,6 +99,7 @@ export function ClaudeConnection({
     const current = () => attempt.current === mine;
     setBusy(true);
     setError(null);
+    setExpired(false);
     let url: string;
     try {
       url = await startClaudeLogin();
@@ -100,6 +110,9 @@ export function ClaudeConnection({
       setBusy(false);
     }
     if (!current()) return;
+    const deadline = Date.now() + LOGIN_WINDOW_MS;
+    setDeadline(deadline);
+    setPasting(false);
     setPending(url);
     // The shell bounces off-site navigations to the system browser, which is
     // where this has to happen: Claude blocks embedded webviews, and the URL
@@ -111,7 +124,6 @@ export function ClaudeConnection({
     // field stays on screen meanwhile, for the CLI's fallback prompt.
     setWaiting(true);
     try {
-      const deadline = Date.now() + 5 * 60 * 1000;
       while (Date.now() < deadline) {
         // Don't swallow a rejection here. A silent catch once hid a missing ACL
         // grant: every poll was rejected, the loop gave up on the first tick,
@@ -125,7 +137,7 @@ export function ClaudeConnection({
       }
       void cancelClaudeLogin();
       setPending(null);
-      setError("No answer from the browser after five minutes. Start again.");
+      setExpired(true);
     } catch (e) {
       if (!current()) return;
       setPending(null);
@@ -157,6 +169,7 @@ export function ClaudeConnection({
     void cancelClaudeLogin();
     setPending(null);
     setWaiting(false);
+    setPasting(false);
     setCode("");
   }, []);
 
@@ -201,7 +214,43 @@ export function ClaudeConnection({
         </Details>
       </div>
 
-      {connected ? (
+      {desktop && pending && deadline ? (
+        <div className="space-y-3">
+          <Notice
+            tone="progress"
+            className="is-stacked"
+            title="Approve in your browser"
+            detail={<ApprovalWindow url={pending} until={deadline} />}
+            actions={[
+              { label: "Open again", href: pending, external: true },
+              ...(pasting ? [] : [{ label: "Paste a code instead", onClick: () => setPasting(true) }]),
+              { label: "Cancel", onClick: abandon, disabled: busy },
+            ]}
+          />
+          {pasting ? (
+            <div className="flex items-center gap-2">
+              <input
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && code.trim() && !busy) void finish();
+                }}
+                placeholder="Paste the code Claude showed you…"
+                aria-label="Authorization code"
+                autoFocus
+                spellCheck={false}
+                className="border-border bg-background/60 h-9 flex-1 rounded-md border px-3 text-sm"
+              />
+              <LoadingButton
+                status={busy ? "pending" : "idle"}
+                labels={{ idle: "Connect", pending: "Connecting" }}
+                disabled={!code.trim()}
+                onClick={() => void finish()}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : connected ? (
         <div className="flex gap-2">
           {desktop ? (
             <LoadingButton
@@ -214,52 +263,6 @@ export function ClaudeConnection({
           <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
             Disconnect
           </Button>
-        </div>
-      ) : desktop && pending ? (
-        <div className="space-y-3">
-          <p className="text-sm text-foreground">
-            {waiting
-              ? "Waiting for you to authorize in the browser…"
-              : "Authorize in your browser to finish."}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            This finishes on its own once you approve. Only paste a code below
-            if Claude asks you for one.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Didn&apos;t open?{" "}
-            <a
-              href={pending}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-4"
-            >
-              Open the sign-in page
-            </a>
-          </p>
-          <div className="flex items-center gap-2">
-            <input
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && code.trim() && !busy) void finish();
-              }}
-              placeholder="Paste the code…"
-              aria-label="Authorization code"
-              autoFocus
-              spellCheck={false}
-              className="border-border bg-background/60 h-9 flex-1 rounded-md border px-3 text-sm"
-            />
-            <LoadingButton
-              status={busy ? "pending" : "idle"}
-              labels={{ idle: "Connect", pending: "Connecting" }}
-              disabled={!code.trim()}
-              onClick={() => void finish()}
-            />
-            <Button variant="ghost" size="sm" disabled={busy} onClick={abandon}>
-              Cancel
-            </Button>
-          </div>
         </div>
       ) : desktop ? (
         <div className="space-y-2">
@@ -279,9 +282,34 @@ export function ClaudeConnection({
         </p>
       )}
 
-      {error ? (
+      {expired ? (
+        <InlineMessage tone="warning">
+          The approval window closed after five minutes.{" "}
+          {connected ? "Your connection is unchanged." : "Nothing was connected."}
+        </InlineMessage>
+      ) : error ? (
         <InlineMessage>{error}</InlineMessage>
       ) : null}
     </div>
   );
+}
+
+/** How long the CLI keeps waiting for the browser, counted down to the second. */
+function ApprovalWindow({ url, until }: { url: string; until: number }) {
+  const now = useNow(1000);
+  const seconds = Math.max(0, Math.ceil((until - now) / 1000));
+  const left = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  return (
+    <>
+      A tab opened on {hostOf(url)}. This window stays open for <span className="text-foreground tabular-nums">{left}</span>.
+    </>
+  );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "Claude";
+  }
 }
