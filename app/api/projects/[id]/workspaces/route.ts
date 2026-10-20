@@ -420,7 +420,7 @@ async function provisionWorkspace({
     const errorMessage =
       error instanceof NoStartingModelError || error instanceof OutdatedComputerError
         ? error.message
-        : "Provisioning failed. Check Outrunner's setup and try again.";
+        : "Its box couldn't be set up. Nothing was lost; try again to start a fresh one.";
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );

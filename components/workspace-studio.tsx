@@ -4,6 +4,7 @@ import { MessageSquarePlus, PanelRight, PanelRightClose, TerminalSquare } from "
 import { useState } from "react";
 
 import { SessionComposer } from "@/components/session-composer";
+import { SessionDidntStart } from "@/components/session-didnt-start";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { WorkspaceSession } from "@/components/workspace-session";
@@ -122,6 +123,14 @@ export function WorkspaceStudio({
                 disabledPlaceholder="Claude starts here, with your first message, once the session is ready"
               />
             </div>
+          ) : workspace.status === "failed" && !isLocal ? (
+            <div className="studio-offline">
+              <SessionDidntStart
+                workspace={workspace}
+                detail={workspace.errorMessage ?? "Its box couldn't be set up. Nothing was lost; try again to start a fresh one."}
+              />
+              <SessionComposer onSend={() => {}} canSend={false} disabledPlaceholder="Try again to start a fresh session" />
+            </div>
           ) : (
             <div className="studio-offline">
               <div className="studio-empty-chat">
@@ -172,10 +181,11 @@ function offlineCopy({
       placeholder: "Start a new session to try again",
     };
   }
+  // A cloud one gets SessionDidntStart instead; this is a local one's.
   if (workspace.status === "failed") {
     return {
-      title: "This workspace didn't start",
-      detail: workspace.errorMessage ?? "Provisioning failed. Start a new session to try again.",
+      title: "This session didn't start",
+      detail: workspace.errorMessage ?? "Its setup stopped before it finished. Start a new session to try again.",
       placeholder: "Start a new session to try again",
     };
   }
