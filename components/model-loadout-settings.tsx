@@ -39,30 +39,37 @@ function columnLabel(group: ModelGroup): string {
 export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]; initial: ModelLoadout }) {
   const [loadout, setLoadout] = useState(initial);
   const [error, setError] = useState<string | null>(null);
-  // The latest save wins: an older one answering late mustn't undo it.
-  const saving = useRef(0);
+  // Saves go out one at a time, in the order the changes were made, so the
+  // last one made is the one kept: two sent at once could land the other way.
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  // The latest change: only its save's answer, or failure, updates the page.
+  const latest = useRef(0);
+  // What the server last kept, to go back to if a save fails.
+  const saved = useRef(initial);
 
-  async function change(next: ModelLoadout) {
-    const previous = loadout;
+  function change(next: ModelLoadout) {
     setLoadout(next);
     setError(null);
-    const mine = ++saving.current;
-    try {
-      const res = await fetch("/api/settings/models", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      });
-      const data = (await res.json().catch(() => null)) as (ModelLoadout & { error?: string }) | null;
-      if (!res.ok || !data?.models) throw new Error(data?.error ?? "Couldn't save that. Try again.");
-      if (saving.current === mine) setLoadout({ models: data.models, default: data.default });
-      // The picker's menu carries the loadout: let it ask again.
-      forgetOutrunnerModels();
-    } catch (e) {
-      if (saving.current !== mine) return;
-      setLoadout(previous);
-      setError(e instanceof Error ? e.message : "Couldn't save that.");
-    }
+    const mine = ++latest.current;
+    queue.current = queue.current.then(async () => {
+      try {
+        const res = await fetch("/api/settings/models", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(next),
+        });
+        const data = (await res.json().catch(() => null)) as (ModelLoadout & { error?: string }) | null;
+        if (!res.ok || !data?.models) throw new Error(data?.error ?? "Couldn't save that. Try again.");
+        saved.current = { models: data.models, default: data.default };
+        if (latest.current === mine) setLoadout(saved.current);
+        // The picker's menu carries the loadout: let it ask again.
+        forgetOutrunnerModels();
+      } catch (e) {
+        if (latest.current !== mine) return;
+        setLoadout(saved.current);
+        setError(e instanceof Error ? e.message : "Couldn't save that.");
+      }
+    });
   }
 
   const picked = loadoutModels(loadout, groups);
@@ -105,7 +112,7 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
                 <li key={`${m.provider}:${m.id}`} className="group relative bg-background">
                   <button
                     type="button"
-                    onClick={() => void change({ ...loadout, default: { provider: m.provider, id: m.id } })}
+                    onClick={() => change({ ...loadout, default: { provider: m.provider, id: m.id } })}
                     aria-pressed={isDefault}
                     title={isDefault ? "The default" : "Make it the default"}
                     className="flex h-24 w-full cursor-pointer flex-col justify-between p-3 text-left transition-colors hover:bg-muted/30"
@@ -121,17 +128,17 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
                     <span className="truncate font-mono text-[13px] text-foreground">{m.label}</span>
                   </button>
                   <span className="absolute right-1.5 bottom-1.5 hidden gap-0.5 group-focus-within:flex group-hover:flex">
-                    <IconButton label={`Move ${m.label} earlier`} disabled={i === 0} onClick={() => void change(moveEntry(loadout, m, -1))}>
+                    <IconButton label={`Move ${m.label} earlier`} disabled={i === 0} onClick={() => change(moveEntry(loadout, m, -1, picked))}>
                       <ChevronLeft />
                     </IconButton>
                     <IconButton
                       label={`Move ${m.label} later`}
                       disabled={i === picked.length - 1}
-                      onClick={() => void change(moveEntry(loadout, m, 1))}
+                      onClick={() => change(moveEntry(loadout, m, 1, picked))}
                     >
                       <ChevronRight />
                     </IconButton>
-                    <IconButton label={`Remove ${m.label}`} onClick={() => void change(toggleEntry(loadout, m))}>
+                    <IconButton label={`Remove ${m.label}`} onClick={() => change(toggleEntry(loadout, m))}>
                       <X />
                     </IconButton>
                   </span>
@@ -139,7 +146,7 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
               );
             })}
             {hidden.map((entry) => (
-              <HiddenEntry key={`${entry.provider}:${entry.id}`} entry={entry} onRemove={() => void change(toggleEntry(loadout, entry))} />
+              <HiddenEntry key={`${entry.provider}:${entry.id}`} entry={entry} onRemove={() => change(toggleEntry(loadout, entry))} />
             ))}
           </ul>
         )}
@@ -167,7 +174,7 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
                       role="checkbox"
                       aria-checked={on}
                       disabled={!on && full}
-                      onClick={() => void change(toggleEntry(loadout, m))}
+                      onClick={() => change(toggleEntry(loadout, m))}
                       className={cn(
                         "flex w-full cursor-pointer items-center justify-between gap-2 border-t border-border/40 px-3 py-2.5 text-left text-[13px] transition-colors hover:bg-muted/30 disabled:cursor-not-allowed disabled:opacity-50",
                         on ? "text-foreground" : "text-muted-foreground",
