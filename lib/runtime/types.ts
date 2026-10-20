@@ -62,12 +62,15 @@ export type ProvisionPhase =
   | "claude_ready";
 
 /**
- * Backend that owns a workspace's compute. `local`/`modal` are the workspace-per-
- * sandbox model; `daytona` and `neev` are Runtime's real model (Project → Runtime
- * Computer → Workspace) where many workspaces share one always-on box.
- * `user-daytona` and `user-modal` are that model in the session owner's own
- * Daytona or Modal account, on their key (Settings → Sandbox); the others are
- * the deployment's.
+ * Backend that owns a workspace's compute. `local` is the workspace-per-sandbox
+ * model on this machine (development); `daytona` and `neev` are Runtime's real
+ * model (Project → Runtime Computer → Workspace) where many workspaces share
+ * one always-on box. `user-daytona` and `user-modal` are that model in the
+ * session owner's own Daytona or Modal account, on their key (Settings →
+ * Sandbox); the others are the deployment's. `modal` is historical only — the
+ * legacy workspace-per-sandbox cloud backend, removed because nothing metered
+ * its boxes: rows from deployments that ran it still name it, but it can no
+ * longer be selected (lib/env.ts).
  */
 export type ProviderName = "local" | "modal" | "daytona" | "neev" | "user-daytona" | "user-modal";
 

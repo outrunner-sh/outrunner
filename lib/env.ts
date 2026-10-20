@@ -25,10 +25,6 @@ type EnvKey =
   | "RUNTIME_OWNER_GITHUB_LOGIN"
   // Optional GitHub logins exempt from plan limits only (not an access allowlist).
   | "RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN"
-  // Modal
-  | "MODAL_TOKEN_ID"
-  | "MODAL_TOKEN_SECRET"
-  | "MODAL_APP_NAME"
   // Daytona (Runtime Computer backend)
   | "DAYTONA_API_KEY"
   | "DAYTONA_API_URL"
@@ -76,11 +72,15 @@ export function requireEnv(key: EnvKey): string {
 
 /** Which RuntimeProvider implementation to use. */
 export function providerName(): ProviderName {
+  // Every selectable provider runs Runtime Computers (or nothing, on local), so
+  // the boxes it runs are metered and the plan's limits hold. The legacy
+  // "modal" workspace-per-sandbox backend was removed: nothing metered its
+  // boxes, so a deployment on it billed and enforced nothing.
   const provider = optionalEnv("RUNTIME_PROVIDER") ?? "local";
-  if (provider === "local" || provider === "modal" || provider === "daytona" || provider === "neev") {
+  if (provider === "local" || provider === "daytona" || provider === "neev") {
     return provider;
   }
   throw new Error(
-    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "modal", "daytona" or "neev".`,
+    `Invalid RUNTIME_PROVIDER "${provider}". Expected "local", "daytona" or "neev". The legacy "modal" provider was removed: its boxes could not be metered.`,
   );
 }

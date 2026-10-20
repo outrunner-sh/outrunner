@@ -33,9 +33,6 @@ export async function GET() {
       Boolean(optionalEnv("NEEV_API_KEY")) &&
       Boolean(optionalEnv("NEEV_ORG_ID")) &&
       Boolean(optionalEnv("NEEV_PROJECT_ID")),
-    modal:
-      Boolean(optionalEnv("MODAL_TOKEN_ID")) &&
-      Boolean(optionalEnv("MODAL_TOKEN_SECRET")),
     // Blank means open sign-up, which is a valid state — this reports whether
     // access is restricted, not whether something is missing.
     accessRestricted: Boolean(optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN")),

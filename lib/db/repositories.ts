@@ -295,36 +295,6 @@ export async function runtimeComputersForOwner(ownerId: string): Promise<Runtime
 }
 
 /**
- * Claim the single Runtime Computer slot for a project. The
- * `unique (project_id)` constraint makes this the concurrency gate for lazy
- * provisioning: two "New Workspace" clicks race here and exactly one insert
- * wins. The loser gets a unique-violation, catches it, and reads the existing
- * row via {@link getRuntimeComputerByProject}.
- */
-export async function createRuntimeComputer(input: {
-  ownerId: string;
-  projectId: string;
-  agentSecret: string;
-  imageVersion?: string;
-}): Promise<RuntimeComputer> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("runtime_computers")
-    .insert({
-      owner_id: input.ownerId,
-      project_id: input.projectId,
-      agent_secret: input.agentSecret,
-      status: "provisioning",
-      ...(input.imageVersion && { image_version: input.imageVersion }),
-    })
-    .select("*")
-    .single();
-
-  if (error) throw error;
-  return toRuntimeComputer(data);
-}
-
-/**
  * Atomically claim the per-project Runtime Computer slot. The SQL function
  * takes a transaction-scoped advisory lock before reading/inserting, while the
  * `unique (project_id)` constraint remains the durable backstop.
