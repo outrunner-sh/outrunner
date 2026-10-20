@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -63,13 +64,32 @@ func ValidAgent(name string) bool {
 
 // Agents lists the agents this computer can run a session on: Claude always
 // (a computer without it says so when a session starts), Codex when its CLI
-// is installed.
+// is installed and the engine is the one that runs it: the jcode engine runs
+// its own sessions, whatever agent a create names.
 func (s *Service) Agents() []string {
 	agents := []string{AgentClaude}
-	if _, err := s.lookPath("codex"); err == nil {
+	if _, err := s.lookPath("codex"); err == nil && s.jcode == nil {
 		agents = append(agents, AgentCodex)
 	}
 	return agents
+}
+
+// ErrAgentUnsupported is a session asked for on an agent this computer's
+// engine can't run: made anyway, it would run another agent instead.
+var ErrAgentUnsupported = errors.New("this computer's engine can't run that agent")
+
+// CheckAgent refuses an agent a create or restore names that this computer
+// can't run: one there is no such agent as, or Codex on the jcode engine.
+// Empty is Claude. A Codex CLI that is missing is left to Start, which says
+// how to install it.
+func (s *Service) CheckAgent(name string) error {
+	switch {
+	case !ValidAgent(name):
+		return fmt.Errorf("unknown agent %q", name)
+	case name == AgentCodex && s.jcode != nil:
+		return ErrAgentUnsupported
+	}
+	return nil
 }
 
 // agentFor is the agent a workspace's session runs: the one its facts record,
