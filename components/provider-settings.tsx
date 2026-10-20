@@ -96,7 +96,7 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
               keys={keys}
               claude={claude}
               initialMethod={place?.tab === id ? place.method : undefined}
-              onChoices={setChoices}
+              onChoice={(agent, method) => setChoices((current) => ({ ...current, [agent]: method }))}
               onKeys={changeKeys}
               onClaude={setClaude}
             />
