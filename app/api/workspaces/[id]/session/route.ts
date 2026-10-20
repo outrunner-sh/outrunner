@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
-import { getSandboxSettings } from "@/lib/db/credentials";
+import { agentAuthStore, getSandboxSettings } from "@/lib/db/credentials";
 import {
   getProject,
   getRuntimeComputerByProject,
@@ -18,6 +18,7 @@ import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
+import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer } from "@/lib/runtime/types";
 
@@ -122,8 +123,12 @@ export async function POST(request: Request, context: RouteContext) {
   // running: start it (continuing its conversation), or leave it be if it is.
   if (provider.restoresBoxes) {
     try {
+      // Signed in as the user picks now, before it launches.
+      await signInSession(sessionAuthClient(agent, identity), workspace.agent, agentAuthStore(owner.id));
       await agent.startWorkspace(identity);
     } catch (error) {
+      const failure = signInFailure(error);
+      if (failure) return NextResponse.json(failure, { status: 409 });
       if (error instanceof AgentRequestError && error.status === 404) {
         return NextResponse.json(
           {

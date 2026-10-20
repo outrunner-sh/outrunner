@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { resolveAgentAuth } from "@/lib/agents/resolve";
 import { getOwner } from "@/lib/auth/owner";
+import { agentAuthStore } from "@/lib/db/credentials";
 import { optionalGithubToken } from "@/lib/github/token";
 import {
   createWorkspaceSnapshot,
@@ -17,6 +19,7 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
+import { restoreCredential, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
@@ -291,7 +294,8 @@ async function restoreDaytonaWorkspace(
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
     const sessionEnv = await runtimeSessionEnvironment(userId);
-    if (Object.keys(sessionEnv).length === 0) {
+    // Codex signs in per session (below); Claude Code needs the box's own.
+    if (workspace.agent === "claude" && Object.keys(sessionEnv).length === 0) {
       throw new Error(
         "Connect Claude in Settings before restoring a workspace.",
       );
@@ -320,11 +324,23 @@ async function restoreDaytonaWorkspace(
       computerId: computer.id,
       userId,
     };
-    await new AgentClient(target).restoreWorkspace(identity, {
+    const agent = new AgentClient(target);
+    // The restore relaunches the session at once, so its credential rides
+    // with it, as the user picks now; checked before, as is that the box
+    // runs the session's agent (an agent too old for Codex would make a
+    // Claude Code session of it).
+    const credential = await restoreCredential(
+      sessionAuthClient(agent, identity),
+      workspace.agent,
+      await resolveAgentAuth(agentAuthStore(userId), workspace.agent, "cloud"),
+    );
+    await agent.restoreWorkspace(identity, {
       branch: workspace.branch,
       baseBranch: project.defaultBranch,
       sessionId: manifest.sessionId,
       downloads,
+      ...(workspace.agent !== "claude" && { agent: workspace.agent }),
+      ...(credential && { auth: credential }),
     });
 
     // Persist the (possibly new) box + session linkage now that the agent has
@@ -335,11 +351,13 @@ async function restoreDaytonaWorkspace(
       agentWorkspaceId: workspace.id,
     });
   } catch (error) {
-    console.error(`Workspace ${workspace.id} restore failed`, error);
-    await restoreAfterFailure(workspace, "restoring", lifecycleError("restore")).catch(
+    const failure = signInFailure(error);
+    if (!failure) console.error(`Workspace ${workspace.id} restore failed`, error);
+    const message = failure?.error ?? lifecycleError("restore");
+    await restoreAfterFailure(workspace, "restoring", message).catch(
       (updateError: unknown) => console.error("Could not persist restore failure", updateError),
     );
-    return NextResponse.json({ error: lifecycleError("restore") }, { status: 502 });
+    return NextResponse.json(failure ?? { error: message }, { status: failure ? 409 : 502 });
   }
 
   const completed = await completeTransition({
@@ -390,13 +408,17 @@ async function resumeDaytonaWorkspace(
   if (!transitioned) return lifecycleConflict();
   try {
     const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    // Signed in as the user picks now, before it relaunches.
+    await signInSession(sessionAuthClient(agent, identity), workspace.agent, agentAuthStore(userId));
     await agent.resumeWorkspace(identity);
   } catch (error) {
-    console.error(`Workspace ${workspace.id} resume failed`, error);
-    await restoreAfterFailure(workspace, "resuming", lifecycleError("resume")).catch(
+    const failure = signInFailure(error);
+    if (!failure) console.error(`Workspace ${workspace.id} resume failed`, error);
+    const message = failure?.error ?? lifecycleError("resume");
+    await restoreAfterFailure(workspace, "resuming", message).catch(
       (updateError: unknown) => console.error("Could not persist resume failure", updateError),
     );
-    return NextResponse.json({ error: lifecycleError("resume") }, { status: 502 });
+    return NextResponse.json(failure ?? { error: message }, { status: failure ? 409 : 502 });
   }
   const completed = await completeTransition({
     id: workspace.id,

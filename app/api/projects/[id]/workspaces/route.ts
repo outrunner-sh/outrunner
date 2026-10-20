@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { after, NextResponse } from "next/server";
 
+import type { AgentId } from "@/lib/agents/registry";
+import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import {
+  agentAuthStore,
   getSandboxSettings,
   modelKey,
   modelMenu,
@@ -27,7 +30,13 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
-import { defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
+import { agentOf, defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  deliverSessionAuth,
+  OutdatedComputerError,
+  requireAgentOnBox,
+  sessionAuthClient,
+} from "@/lib/runtime/session-auth";
 import {
   boxSizeOn,
   computerMadeBy,
@@ -106,14 +115,37 @@ export async function POST(request: Request, context: RouteContext) {
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
+  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  // The model chosen on the new-session screen; none, the menu's default.
+  const chosenModel = requestedModel(body);
+  if (chosenModel === null) {
+    return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+  }
+  // Codex for Codex's models, Claude Code for every other, and for none.
+  const agentId = agentOf(chosenModel?.provider ?? "claude");
+  // How it signs in, said before a box is set up for it, not after.
+  let auth: ResolvedAuth;
+  try {
+    auth = await resolveAgentAuth(agentAuthStore(owner.id), agentId, "cloud");
+  } catch (error) {
+    if (!(error instanceof AgentAuthError)) throw error;
+    return NextResponse.json({ error: error.message, settingsHref: error.settingsHref }, { status: 409 });
+  }
+
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  // Either credential kind is fine; an empty env means none was set. Sessions
-  // start on Outrunner's models (on the user's own OpenRouter key, or the
-  // server's), so only without those is Claude a must.
-  const hasClaude = Object.keys(sessionEnv).length > 0;
+  // Either credential kind is fine; an empty env means none was set, unless
+  // the session gets one of its own. Sessions start on Outrunner's models (on
+  // the user's own OpenRouter key, or the server's), so only without those is
+  // Claude a must. Codex runs on its own sign-in, resolved above.
+  const hasClaude = agentId === "claude" && (Object.keys(sessionEnv).length > 0 || auth.credential !== null);
   const menu = await modelMenu(owner.id);
-  if (!hasClaude && !offersModels(menu)) {
+  if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
   if (project.private && !githubToken) {
@@ -126,17 +158,6 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-  }
-  // The model chosen on the new-session screen; none, the menu's default.
-  const chosenModel = requestedModel(body);
-  if (chosenModel === null) {
-    return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
-  }
   // Said before a box is set up for it, not after.
   if (chosenModel?.provider === "claude" && !hasClaude) {
     return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
@@ -168,8 +189,15 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 503 },
     );
   }
-  // Only a Runtime Computer's agent can put a session on another model.
-  if (!hasClaude && !isComputerProvider(provider)) {
+  // Only a Runtime Computer's agent can put a session on another model, or
+  // run Codex.
+  if (agentId === "codex" && !isComputerProvider(provider)) {
+    return NextResponse.json(
+      { error: "Codex runs on Outrunner's cloud computers. Choose one under Settings → Sandbox.", settingsHref: "/settings/sandbox" },
+      { status: 409 },
+    );
+  }
+  if (agentId === "claude" && !hasClaude && !isComputerProvider(provider)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
 
@@ -181,6 +209,7 @@ export async function POST(request: Request, context: RouteContext) {
       branch: requestedBranch || generatedBranch(),
       baseBranch: project.defaultBranch,
       provider: provider.name,
+      agent: agentId,
     });
   } catch (error) {
     const message = safeErrorMessage(error);
@@ -207,6 +236,8 @@ export async function POST(request: Request, context: RouteContext) {
       hasClaude,
       menu,
       chosenModel,
+      agentId,
+      auth,
     }),
   );
   return NextResponse.json({ workspace: { id: workspace.id } }, { status: 202 });
@@ -231,6 +262,8 @@ async function provisionWorkspace({
   hasClaude,
   menu,
   chosenModel,
+  agentId,
+  auth,
 }: {
   workspace: Workspace;
   project: Project;
@@ -244,6 +277,9 @@ async function provisionWorkspace({
   menu: Awaited<ReturnType<typeof modelMenu>>;
   /** Checked by the request: an offered model, or none for the default. */
   chosenModel: SessionModel | undefined;
+  /** The agent the session runs, and what it signs in with. */
+  agentId: AgentId;
+  auth: ResolvedAuth;
 }): Promise<void> {
   const settle = async (patch: Parameters<typeof transitionWorkspace>[0]["patch"]) => {
     const moved = await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch });
@@ -311,15 +347,23 @@ async function provisionWorkspace({
         userId: owner.id,
       };
       const agent = new AgentClient(target);
+      const signIn = sessionAuthClient(agent, identity);
+      // Before the session is made: an agent too old for Codex would make a
+      // Claude Code session of it.
+      await requireAgentOnBox(signIn, agentId);
       const created = await agent.createWorkspace(
         {
           workspaceId: workspace.id,
           repoFullName: project.fullName,
           baseBranch: project.defaultBranch,
           branch: workspace.branch,
+          // Named only for Codex: Claude Code is every agent's default.
+          ...(agentId !== "claude" && { agent: agentId }),
         },
         identity,
       );
+      // Before the first launch, so the agent starts signed in.
+      await deliverSessionAuth(signIn, agentId, auth);
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
@@ -374,7 +418,7 @@ async function provisionWorkspace({
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
     // The session page shows this: say what to do where the user can fix it.
     const errorMessage =
-      error instanceof NoStartingModelError
+      error instanceof NoStartingModelError || error instanceof OutdatedComputerError
         ? error.message
         : "Provisioning failed. Check Outrunner's setup and try again.";
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
