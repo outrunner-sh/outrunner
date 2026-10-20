@@ -37,7 +37,18 @@ const SIGNED_IN_WITH = { chatgpt: "ChatGPT", "api-key": "An API key" } as const;
  * as it is. So this reads the CLI's state from the Mac app, and signs it in
  * there; outside the app there's nothing to show.
  */
-export function LocalAgentConnection({ agent, chatgpt = false }: { agent: AgentId; chatgpt?: boolean }) {
+export function LocalAgentConnection({
+  agent,
+  chatgpt = false,
+  shown = true,
+}: {
+  agent: AgentId;
+  chatgpt?: boolean;
+  /** Whether its card is the one shown. Each time it comes into view it asks
+   *  the Mac again: another card (ChatGPT's, say) may have signed the CLI in
+   *  meanwhile. */
+  shown?: boolean;
+}) {
   const { label, command } = AGENTS[agent];
   const desktop = useSyncExternalStore(noopSubscribe, isDesktopApp, () => false);
   const [cli, setCli] = useState<AgentCliStatus | null | undefined>(undefined);
@@ -64,8 +75,8 @@ export function LocalAgentConnection({ agent, chatgpt = false }: { agent: AgentI
     // Reading the Mac's state is what this panel is for: there's no other
     // source to render it from, so it's asked for once shown.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (desktop) void refresh();
-  }, [desktop, refresh]);
+    if (desktop && shown) void refresh();
+  }, [desktop, shown, refresh]);
 
   async function signIn() {
     setSigningIn(true);

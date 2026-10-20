@@ -122,7 +122,7 @@ export function AgentAuthPanel({
               onChange={(next) => onKeys(next, credential.provider)}
             />
           ) : (
-            <LocalAgentConnection agent={agent} chatgpt={id === "chatgpt"} />
+            <LocalAgentConnection agent={agent} chatgpt={id === "chatgpt"} shown={id === shown} />
           )}
         </div>
       ))}
