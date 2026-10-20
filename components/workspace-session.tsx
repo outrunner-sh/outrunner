@@ -200,6 +200,7 @@ export function WorkspaceSession({
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
+    loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
     disabledReason: !canSend
