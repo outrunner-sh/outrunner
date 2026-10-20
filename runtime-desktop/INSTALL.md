@@ -32,7 +32,7 @@ identifier changed (`ai.zerotrail.runtime` → `ai.neev.outrunner`).
    the app window. That is deliberate: GitHub blocks embedded webviews, and the
    browser's URL bar is your anti-phishing signal. The app listens on
    `127.0.0.1:47823` for the redirect (RFC 8252).
-2. **Settings → Claude → Connect Claude** — runs `claude setup-token` on your
+2. **Settings → Providers (BYOK) → Claude subscription → Connect Claude** — runs `claude setup-token` on your
    own machine and stores the result encrypted. Approve in the browser and it
    finishes by itself; you never handle the token.
    Requires Claude Code installed locally (`claude` on your PATH).

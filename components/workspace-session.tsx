@@ -10,10 +10,20 @@ import { createPortal } from "react-dom";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { localAgentRequest, localTarget, messageForLocalError, outrunnerKey } from "@/lib/desktop/local-runtime";
+import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
-import { modelGroups, type ModelSource, setModelRequest, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  forgetFirstPrompt,
+  hasFirstPrompt,
+  rememberedFirstPrompt,
+  sendFirstPromptOnce,
+  tabStorage,
+  withoutFirstPrompt,
+  type FirstPrompt,
+} from "@/lib/session/first-prompt";
+import { isProviderId } from "@/lib/providers/registry";
+import { defaultModel, modelGroups, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
@@ -148,26 +158,21 @@ export function WorkspaceSession({
   // conversation continued. The pick shows until a reply reports the model it
   // actually ran.
   const [switching, setSwitching] = useState(false);
-  // Which OpenRouter keys the model menu offers Outrunner's models on: the
-  // user's own (Settings → Providers), Outrunner's, or both.
-  const [openRouter, setOpenRouter] = useState<OutrunnerModels>({
-    available: true,
-    ownKey: false,
-    serverModels: true,
-    allowance: false,
-  });
+  // What the model menu offers: Outrunner's models, the user's own keys
+  // (Settings → Providers), and their Claude.
+  const [menu, setMenu] = useState<OutrunnerModels>({ outrunner: true, allowance: false, keys: [], available: true });
   useEffect(() => {
     let live = true;
     void outrunnerModels().then((answer) => {
-      if (live) setOpenRouter(answer);
+      if (live) setMenu(answer);
     });
     return () => {
       live = false;
     };
   }, []);
-  // Which key's entry the menu ticks when a model is offered on both: the one
-  // last picked here, else the one a new session starts on (theirs, if saved).
-  const [keyPicked, setKeyPicked] = useState<ModelSource | null>(() => pickedKey(workspaceId));
+  // Whose entry the menu ticks when a model is offered by two: the one last
+  // picked here, else the one a new session starts on.
+  const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
   const repliedSincePick =
     picked !== null &&
@@ -181,8 +186,8 @@ export function WorkspaceSession({
   const working =
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(openRouter),
-    preferredSource: keyPicked ?? (openRouter.ownKey ? "own" : "neev"),
+    groups: modelGroups(menu),
+    preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
     disabledReason: !canSend
       ? "Waiting for the session to connect"
@@ -192,11 +197,11 @@ export function WorkspaceSession({
     onChange: (model) => {
       setSwitching(true);
       setSendError(null);
-      (local ? switchLocalModel(workspaceId, model) : switchCloudModel(workspaceId, model))
+      (local ? putOnModel(workspaceId, model) : switchCloudModel(workspaceId, model))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });
-          setKeyPicked(model.source);
-          rememberPickedKey(workspaceId, model.source);
+          setProviderPicked(model.provider);
+          rememberPickedProvider(workspaceId, model.provider);
         })
         .catch((error: unknown) =>
           setSendError(
@@ -245,28 +250,35 @@ export function WorkspaceSession({
       });
   }, [firstPrompt, workspaceId, router]);
 
-  // Fire the /new first prompt exactly once, as soon as we hold the keyboard.
+  // Fire the new session's first prompt exactly once, as soon as we hold the
+  // keyboard: the one the URL carries, else the one kept for this session
+  // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
   useEffect(() => {
-    if (sentInitial.current) return;
-    if ((!initialPrompt && !initialAttachmentIds?.length) || !canSend) return;
+    if (sentInitial.current || !canSend) return;
+    const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
+    const first = hasFirstPrompt(fromUrl)
+      ? fromUrl
+      : local
+        ? null
+        : rememberedFirstPrompt(tabStorage(), workspaceId);
+    if (!first) return;
     sentInitial.current = true;
     // send() queues an optimistic bubble (setState); this is a one-time guarded
-    // fire on ready, not a render cascade.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void send(initialPrompt ?? "", initialAttachmentIds ?? [])
-      .then((delivered) => {
-        // Strip only after the POST is accepted, so a failed delivery leaves
-        // ?prompt= in place for a refresh to retry. Remove just the prompt param
-        // (preserving any history state), not the whole query string.
-        if (!delivered) return;
-        const url = new URL(window.location.href);
-        url.searchParams.delete("prompt");
-        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-      })
-      .catch(() => {
-        /* network failure — leave ?prompt= so a refresh can retry */
-      });
+    // fire on ready, not a render cascade. Another mount of this session may be
+    // sending it still: sendFirstPromptOnce waits on that one instead.
+    const sessionPath = window.location.pathname;
+    void sendFirstPromptOnce(workspaceId, () => send(first.prompt, first.attachmentIds)).then((outcome) => {
+      // Forget it only once the POST is accepted, so a failed delivery leaves
+      // it in place for a reload to retry. Remove just the first prompt's
+      // params (preserving any history state), not the whole query string,
+      // and only while this session is still the page: a send that lands
+      // after the user moved on must not rewrite another page's URL.
+      if (outcome === "failed") return;
+      if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
+      const url = new URL(window.location.href);
+      if (url.pathname === sessionPath) window.history.replaceState(window.history.state, "", withoutFirstPrompt(url));
+    });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canSend, initialPrompt, initialAttachmentIds]);
@@ -350,43 +362,38 @@ export function WorkspaceSession({
   );
 }
 
-/** Switch a local session's model: a Neev AI model runs through OpenRouter on
- *  the user's own capped key, which the server hands over (creating it the
- *  first time); a Claude account model runs on the Mac's own Claude login. */
-async function switchLocalModel(workspaceId: string, model: SessionModel): Promise<void> {
-  const body = await setModelRequest(model.id, () => outrunnerKey(model.source === "own" ? "own" : "outrunner"));
-  if (!body) throw new Error(`${model.label} isn't one of the offered models.`);
-  await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
-}
-
-/** Switch a cloud session's model. The server adds the key a Neev AI model
- *  needs and calls the session's agent, so the key stays off the browser. */
+/** Switch a cloud session's model. The server adds the key the model needs
+ *  and calls the session's agent, so the key stays off the browser. */
 async function switchCloudModel(workspaceId: string, model: SessionModel): Promise<void> {
   const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: model.id, ...(model.source !== "claude" && { key: model.source === "own" ? "own" : "outrunner" }) }),
+    body: JSON.stringify({ provider: model.provider, model: model.id }),
   });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't switch models. Please try again.");
 }
 
-/** Which key a session's model was last picked on, here (a convenience: the
- *  reply names only the model, the same on either key). */
-function pickedKey(workspaceId: string): ModelSource | null {
+/** Who served a session's model when it was last picked here (a convenience:
+ *  the reply names only the model, the same from either provider). */
+function pickedProvider(workspaceId: string): ModelProvider | null {
   try {
     const saved = window.localStorage.getItem(`outrunner:model-key:${workspaceId}`);
-    return saved === "own" || saved === "neev" || saved === "claude" ? saved : null;
+    // Saved before providers: "own" was the user's OpenRouter key, and
+    // "neev" Outrunner's, before the rename.
+    if (saved === "own") return "openrouter";
+    if (saved === "neev") return "outrunner";
+    return saved === "outrunner" || saved === "claude" || isProviderId(saved) ? saved : null;
   } catch {
     return null;
   }
 }
 
-function rememberPickedKey(workspaceId: string, source: ModelSource): void {
+function rememberPickedProvider(workspaceId: string, provider: ModelProvider): void {
   try {
-    window.localStorage.setItem(`outrunner:model-key:${workspaceId}`, source);
+    window.localStorage.setItem(`outrunner:model-key:${workspaceId}`, provider);
   } catch {
-    // Blocked storage only costs the tick going back to the default key.
+    // Blocked storage only costs the tick going back to the default.
   }
 }

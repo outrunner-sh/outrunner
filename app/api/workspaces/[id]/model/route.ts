@@ -1,20 +1,19 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { neevAiKey, NoOwnOpenRouterKeyError, type OpenRouterKeyUse } from "@/lib/db/credentials";
+import { modelKey } from "@/lib/db/credentials";
 import {
   getRuntimeComputerByProject,
   getWorkspace,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { ModelKeyRefusedError, NeevAiUnavailableError } from "@/lib/openrouter/keys";
-import { StoredKeyUnreadableError } from "@/lib/openrouter/user-key";
+import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { offeredModel, setModelRequest } from "@/lib/runtime/session-models";
+import { requestedModel, setModelRequest } from "@/lib/runtime/session-models";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +21,8 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 /**
  * Switch a cloud session to another model from the menu. The agent relaunches
- * Claude on it with the conversation continued. A Neev AI model runs through
- * OpenRouter on the user's key, which is fetched here and goes from this server
+ * Claude on it with the conversation continued. One of Outrunner's models runs
+ * through OpenRouter on the user's key, which is fetched here and goes from this server
  * to the box: it never reaches the browser.
  */
 export async function POST(request: Request, context: RouteContext) {
@@ -35,10 +34,9 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in to switch models." }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as { model?: unknown; key?: unknown } | null;
-  // Which key an OpenRouter model runs on: the user's own, or Outrunner's.
-  const use: OpenRouterKeyUse = body?.key === "own" || body?.key === "outrunner" ? body.key : "auto";
-  if (!offeredModel(body?.model)) {
+  const body = (await request.json().catch(() => null)) as { provider?: unknown; model?: unknown; key?: unknown } | null;
+  const model = requestedModel(body);
+  if (!model) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
   }
 
@@ -68,24 +66,13 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Runtime Computer secret missing." }, { status: 500 });
   }
 
-  // The key last: the user's first one is created on OpenRouter, so only for a
-  // switch that can go ahead.
+  // The key last: a user's first key for Outrunner's models is created on
+  // OpenRouter, so only for a switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(body?.model, () => neevAiKey(owner.id, use));
+    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder));
   } catch (error) {
-    if (error instanceof NeevAiUnavailableError || error instanceof StoredKeyUnreadableError) {
-      return NextResponse.json({ error: error.message }, { status: 503 });
-    }
-    // Nothing to retry: the user has to change something (their messages say what).
-    if (error instanceof NoOwnOpenRouterKeyError || error instanceof ModelKeyRefusedError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    console.error(`Model: could not get a Neev AI key for ${owner.id}`, error);
-    return NextResponse.json({ error: "Outrunner's models are unavailable right now. Please try again." }, { status: 502 });
-  }
-  if (!req) {
-    return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+    return modelKeyErrorResponse(error, `Model: could not get the ${model.provider} key of ${owner.id}`);
   }
 
   let target;
@@ -106,7 +93,7 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     await new AgentClient(target).setModel(identity, req);
   } catch (error) {
-    const { status, message } = switchFailure(error);
+    const { status, message } = switchFailure(error, model);
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);
     return NextResponse.json({ error: message }, { status });
   }

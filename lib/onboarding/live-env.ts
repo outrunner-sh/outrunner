@@ -11,7 +11,7 @@ import {
   logInToClaude,
   needsClaudeLogin,
   pickLocalFolder,
-  putOnOutrunnerModel,
+  putOnDefaultModel,
   rememberFolder,
   runsOnOutrunnerModel,
   setsUpClaude,
@@ -31,7 +31,7 @@ const LOGIN_CHECK_MS = 3000;
 /**
  * Onboarding on the real thing: the Mac app's bridge for this Mac, and the
  * app's own APIs for the cloud. Each action is the same one the rest of the app
- * uses (Settings → Claude, the new-session form), not a parallel copy.
+ * uses (Settings → Providers → Claude subscription, the new-session form), not a parallel copy.
  */
 export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
   let loginStopped = false;
@@ -185,7 +185,7 @@ async function startOnMac({ prompt = "", folder }: FirstSession, outrunnerModels
   const status = outrunnerModels ? await localStatus().catch(() => null) : null;
   if (status && runsOnOutrunnerModel(status, outrunnerModels)) {
     try {
-      await putOnOutrunnerModel(workspaceId);
+      await putOnDefaultModel(workspaceId);
     } catch (error) {
       // Not left to open on Claude Code's login screen.
       void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});

@@ -12,8 +12,9 @@ import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessions";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
-import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+import type { Workspace } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
+import { canDestroy } from "@/lib/session/provisioning";
 
 /** Whether the sidebar is collapsed: a cookie, so the layout reads it on the
  *  server and the first render already has the sidebar as it was left (kept in
@@ -81,10 +82,6 @@ export type SidebarSession = {
   deletion: SessionDeletion | null;
 };
 
-/** Cloud statuses a session can be deleted from: the server's own list (the
- *  lifecycle route's `destroyable`). */
-const DELETABLE: readonly WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
-
 /** What the delete confirmation says will happen. */
 export function deletionConsequence(deletion: SessionDeletion): string {
   switch (deletion.kind) {
@@ -119,7 +116,14 @@ export function buildSidebarGroups(
   localSessions: LocalSession[],
   /** Whether a Mac folder can start a new session (lib/session/local-sessions.ts);
    *  its sessions are listed either way. */
-  { startLocal = LOCAL_SESSIONS }: { startLocal?: boolean } = {},
+  {
+    startLocal = LOCAL_SESSIONS,
+    now = Date.now(),
+  }: {
+    startLocal?: boolean;
+    /** When deletability is judged: a stalled setup becomes deletable. */
+    now?: number;
+  } = {},
 ): SidebarGroup[] {
   const known = new Set(projects.map((p) => p.id));
   const cloud: SidebarGroup[] = buildNavGroups(projects, workspaces).map(({ project, items }) => ({
@@ -135,7 +139,8 @@ export function buildSidebarGroups(
       href: `/workspaces/${w.id}`,
       title: workspaceLabel(w),
       at: recency(w),
-      deletion: DELETABLE.includes(w.status) ? { kind: "cloud" } : null,
+      // The server's own rule (the lifecycle route's destroy).
+      deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
     })),
   }));
   const local: SidebarGroup[] = groupLocalSessions(localSessions).map((group) => ({

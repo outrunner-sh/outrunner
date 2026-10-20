@@ -1,7 +1,10 @@
 package claude
 
 import (
+	_ "embed"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -12,14 +15,66 @@ type Gateway string
 const (
 	// NoGateway runs on the user's own Claude credential.
 	NoGateway Gateway = ""
-	// OpenRouter serves Claude, GLM and other models behind one key.
+	// OpenRouter serves Claude, GLM and other models behind one key: the
+	// gateway Outrunner's own models run through.
 	OpenRouter Gateway = "openrouter"
 )
 
-// gatewayBaseURLs is fixed per gateway, never taken from a request: a page that
-// could choose the URL could have Claude send the user's code anywhere.
-var gatewayBaseURLs = map[Gateway]string{
-	OpenRouter: "https://openrouter.ai/api",
+// The variables Claude reads a gateway's key from: a bearer token for most,
+// an API key for Anthropic's own API.
+const (
+	authTokenEnv = "ANTHROPIC_AUTH_TOKEN"
+	apiKeyEnv    = "ANTHROPIC_API_KEY"
+)
+
+// gateway is one entry of providers.json.
+type gateway struct {
+	BaseURL string `json:"baseURL"`
+	KeyEnv  string `json:"keyEnv"`
+}
+
+// providers.json is the one list of gateways, shared with the web app, which
+// imports it for the providers a user can bring a key for. Compiled in, and
+// never taken from a request: a page that could choose the URL could have
+// Claude send the user's code anywhere.
+//
+//go:embed providers.json
+var providersJSON []byte
+
+var gateways = mustParseGateways(providersJSON)
+
+// mustParseGateways reads providers.json, refusing anything but https
+// endpoints and the two key variables: a mistake there is a build that
+// mustn't ship, so it panics at start (and fails the tests) rather than at a
+// session's launch.
+func mustParseGateways(data []byte) map[Gateway]gateway {
+	var parsed map[Gateway]gateway
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		panic(fmt.Sprintf("providers.json: %v", err))
+	}
+	for id, g := range parsed {
+		if id == NoGateway || !strings.HasPrefix(g.BaseURL, "https://") || (g.KeyEnv != authTokenEnv && g.KeyEnv != apiKeyEnv) {
+			panic(fmt.Sprintf("providers.json: bad gateway %q: %+v", id, g))
+		}
+	}
+	return parsed
+}
+
+// Gateways lists the gateways this agent can run a session through, sorted,
+// for the web app to offer only what it supports.
+func Gateways() []Gateway {
+	ids := make([]Gateway, 0, len(gateways))
+	for id := range gateways {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+// GatewayKeyEnvs are the variables any gateway's key can be in, for finding
+// keys to redact.
+func GatewayKeyEnvs() []string {
+	return []string{authTokenEnv, apiKeyEnv}
 }
 
 // ParseGateway validates a requested gateway; empty is none.
@@ -28,7 +83,7 @@ func ParseGateway(raw string) (Gateway, error) {
 	if g == NoGateway {
 		return g, nil
 	}
-	if _, ok := gatewayBaseURLs[g]; !ok {
+	if _, ok := gateways[g]; !ok {
 		return "", fmt.Errorf("unknown gateway %q", raw)
 	}
 	return g, nil
@@ -60,21 +115,36 @@ func ValidGatewayToken(token string) bool {
 //
 // The model is named through ANTHROPIC_MODEL, not --model: Claude refuses a
 // name it does not know on the flag, and ANTHROPIC_CUSTOM_MODEL_OPTION makes
-// the gateway's name one it knows. ANTHROPIC_API_KEY is set empty, as
-// OpenRouter requires: a key left in the environment would win over the token.
-// A Claude login token is unset for the same reason.
+// the gateway's name one it knows. The key goes in the gateway's own variable,
+// and the other one can't compete with it: a bearer-token gateway gets
+// ANTHROPIC_API_KEY set empty, as OpenRouter requires (a key left in the
+// environment would win over the token), and an API-key gateway gets
+// ANTHROPIC_AUTH_TOKEN unset. A Claude login token is unset for the same
+// reason.
+//
+// What the key reaches: Claude's environment, and so every command Claude runs
+// (a Bash tool call that prints its environment shows it). Terminal output is
+// redacted of it (RedactionSecrets), but the conversation stream and the
+// archived conversation are not, the same as for a Claude login token.
 func GatewayEnv(g Gateway, token, model string) (set map[string]string, unset []string) {
-	return map[string]string{
-		"ANTHROPIC_BASE_URL":             gatewayBaseURLs[g],
-		"ANTHROPIC_AUTH_TOKEN":           token,
-		"ANTHROPIC_API_KEY":              "",
+	gw := gateways[g]
+	set = map[string]string{
+		"ANTHROPIC_BASE_URL":             gw.BaseURL,
+		gw.KeyEnv:                        token,
 		"ANTHROPIC_MODEL":                model,
 		"ANTHROPIC_CUSTOM_MODEL_OPTION":  model,
 		"ANTHROPIC_DEFAULT_OPUS_MODEL":   model,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL": model,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL":  model,
 		"CLAUDE_CODE_SUBAGENT_MODEL":     model,
-	}, []string{"CLAUDE_CODE_OAUTH_TOKEN"}
+	}
+	unset = []string{"CLAUDE_CODE_OAUTH_TOKEN"}
+	if gw.KeyEnv == authTokenEnv {
+		set[apiKeyEnv] = ""
+	} else {
+		unset = append(unset, authTokenEnv)
+	}
+	return set, unset
 }
 
 // WithEnvFile runs argv after sourcing a shell file of exports, so a gateway

@@ -175,42 +175,47 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
   return (data ?? []).length > 0;
 }
 
-export async function updateWorkspace(
-  id: string,
-  patch: {
-    status?: WorkspaceStatus;
-    phase?: ProvisionPhase | null;
-    sandboxId?: string | null;
-    volumeName?: string | null;
-    computerId?: string | null;
-    tmuxSession?: string | null;
-    agentWorkspaceId?: string | null;
-    worktreePath?: string | null;
-    errorMessage?: string | null;
-    touchActive?: boolean;
-  },
-): Promise<void> {
+/** Fields a workspace update may set, by their Workspace names. */
+type WorkspacePatch = {
+  status?: WorkspaceStatus;
+  phase?: ProvisionPhase | null;
+  sandboxId?: string | null;
+  volumeName?: string | null;
+  computerId?: string | null;
+  tmuxSession?: string | null;
+  agentWorkspaceId?: string | null;
+  worktreePath?: string | null;
+  errorMessage?: string | null;
+  touchActive?: boolean;
+};
+
+/** The columns a patch sets: only the fields it names. */
+function workspaceColumns(patch: WorkspacePatch) {
+  return {
+    ...(patch.status !== undefined && { status: patch.status }),
+    ...(patch.phase !== undefined && { phase: patch.phase }),
+    ...(patch.sandboxId !== undefined && { sandbox_id: patch.sandboxId }),
+    ...(patch.volumeName !== undefined && { volume_name: patch.volumeName }),
+    ...(patch.computerId !== undefined && { computer_id: patch.computerId }),
+    ...(patch.tmuxSession !== undefined && { tmux_session: patch.tmuxSession }),
+    ...(patch.agentWorkspaceId !== undefined && {
+      agent_workspace_id: patch.agentWorkspaceId,
+    }),
+    ...(patch.worktreePath !== undefined && {
+      worktree_path: patch.worktreePath,
+    }),
+    ...(patch.errorMessage !== undefined && {
+      error_message: patch.errorMessage,
+    }),
+    ...(patch.touchActive && { last_active_at: new Date().toISOString() }),
+  };
+}
+
+export async function updateWorkspace(id: string, patch: WorkspacePatch): Promise<void> {
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase
     .from("workspaces")
-    .update({
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.phase !== undefined && { phase: patch.phase }),
-      ...(patch.sandboxId !== undefined && { sandbox_id: patch.sandboxId }),
-      ...(patch.volumeName !== undefined && { volume_name: patch.volumeName }),
-      ...(patch.computerId !== undefined && { computer_id: patch.computerId }),
-      ...(patch.tmuxSession !== undefined && { tmux_session: patch.tmuxSession }),
-      ...(patch.agentWorkspaceId !== undefined && {
-        agent_workspace_id: patch.agentWorkspaceId,
-      }),
-      ...(patch.worktreePath !== undefined && {
-        worktree_path: patch.worktreePath,
-      }),
-      ...(patch.errorMessage !== undefined && {
-        error_message: patch.errorMessage,
-      }),
-      ...(patch.touchActive && { last_active_at: new Date().toISOString() }),
-    })
+    .update(workspaceColumns(patch))
     .eq("id", id);
 
   if (error) throw error;
@@ -224,36 +229,12 @@ export async function updateWorkspace(
 export async function transitionWorkspace(input: {
   id: string;
   from: WorkspaceStatus[];
-  patch: {
-    status: WorkspaceStatus;
-    phase?: ProvisionPhase | null;
-    sandboxId?: string | null;
-    volumeName?: string | null;
-    worktreePath?: string | null;
-    errorMessage?: string | null;
-    touchActive?: boolean;
-  };
+  patch: WorkspacePatch & { status: WorkspaceStatus };
 }): Promise<Workspace | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("workspaces")
-    .update({
-      status: input.patch.status,
-      ...(input.patch.phase !== undefined && { phase: input.patch.phase }),
-      ...(input.patch.sandboxId !== undefined && {
-        sandbox_id: input.patch.sandboxId,
-      }),
-      ...(input.patch.volumeName !== undefined && {
-        volume_name: input.patch.volumeName,
-      }),
-      ...(input.patch.worktreePath !== undefined && {
-        worktree_path: input.patch.worktreePath,
-      }),
-      ...(input.patch.errorMessage !== undefined && {
-        error_message: input.patch.errorMessage,
-      }),
-      ...(input.patch.touchActive && { last_active_at: new Date().toISOString() }),
-    })
+    .update(workspaceColumns(input.patch))
     .eq("id", input.id)
     .in("status", input.from)
     .select("*")

@@ -11,8 +11,8 @@ type Connect = { state: "idle" } | { state: "waiting" } | { state: "error"; mess
 /**
  * The one Claude connection a user makes: their Claude subscription, approved
  * once in the browser and stored with their account. The same connection
- * Settings → Claude shows, on both onboarding paths, so connecting here reads
- * as connected there.
+ * Settings → Providers → Claude subscription shows, on both onboarding paths,
+ * so connecting here reads as connected there.
  *
  * Where a session can start without it, `onSkip` offers Skip; a skipped row
  * still offers Connect Claude, for a user who changes their mind.

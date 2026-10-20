@@ -32,6 +32,7 @@ export default async function WorkspacePage({
   return (
     <WorkspaceStudio
       workspace={workspace}
+      projectName={project.fullName}
       pullRequest={pullRequest}
       initialPrompt={prompt}
       initialAttachmentIds={initialAttachmentIds}

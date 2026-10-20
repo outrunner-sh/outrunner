@@ -8,11 +8,10 @@ import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
-import { WorkspaceCreating } from "@/components/workspace-creating";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
-import { DEFAULT_CLOUD_MODEL, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
+import { defaultModel, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
@@ -27,7 +26,7 @@ const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foregr
  * its branch, and whether it gets a worktree), and the composer pinned to the
  * bottom, where the session's own composer sits once it opens. Submitting
  * creates a workspace and opens it, carrying the first prompt so the session
- * starts on that instruction.
+ * starts on that instruction once its box is ready.
  */
 export function NewSessionForm({
   projects: listed,
@@ -50,46 +49,35 @@ export function NewSessionForm({
   );
 
   // The model the session starts on, picked in the composer as in a session;
-  // none picked, what it starts on anyway: Outrunner's default on the cloud
-  // (on the user's own key when saved), and on a Mac whose Claude Code isn't
-  // logged in; otherwise that Mac's Claude Code default.
-  const [openRouter, setOpenRouter] = useState<OutrunnerModels | null>(null);
+  // none picked, what it starts on anyway: the menu's default on the cloud,
+  // and on a Mac whose Claude Code isn't logged in; otherwise that Mac's
+  // Claude Code default.
+  const [menu, setMenu] = useState<OutrunnerModels | null>(null);
   useEffect(() => {
     let live = true;
     void outrunnerModels().then((answer) => {
-      if (live) setOpenRouter(answer);
+      if (live) setMenu(answer);
     });
     return () => {
       live = false;
     };
   }, []);
   const [picked, setPicked] = useState<SessionModel | null>(null);
-  const groups = openRouter
-    ? modelGroups(openRouter).filter(
+  const groups = menu
+    ? modelGroups(menu).filter(
         // A Mac whose Claude Code isn't logged in has no Claude account to run.
-        (group) => !(local && where.outrunnerModel && group.models.every((m) => m.source === "claude")),
+        (group) => !(local && where.outrunnerModel && group.provider === "claude"),
       )
     : [];
-  const defaultSource = openRouter?.ownKey ? "own" : "neev";
-  const onOutrunnersDefault = local ? where.outrunnerModel : openRouter?.available === true;
-  const startsOn = picked ?? (onOutrunnersDefault ? { ...DEFAULT_CLOUD_MODEL, source: defaultSource } : null);
+  const onDefault = local ? where.outrunnerModel : menu?.available === true;
+  const startsOn = picked ?? (onDefault && menu ? defaultModel(menu) : null);
 
-  // A local session opens in about a second, so it gets no progress screen.
-  // The cloud one covers the form rather than replacing it: the composer stays
-  // mounted underneath, so a creation that fails hands its prompt back.
-  const showProgress = isCreating && !local && selected;
-
+  // Either kind of session opens in about a second (a cloud one shows its
+  // setup progress on its own page), so the form only waits, disabled; one
+  // that fails hands its prompt back.
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      {showProgress && (
-        <div className="absolute inset-0 z-20 bg-background">
-          <WorkspaceCreating projectName={selected.fullName} branch={selected.defaultBranch} />
-        </div>
-      )}
-      <div
-        inert={Boolean(showProgress)}
-        className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10"
-      >
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 py-10">
         <p
           aria-hidden
           className="pointer-events-none mb-10 select-none text-center font-display text-[13vw] leading-none text-foreground/20 sm:text-[112px]"
@@ -146,7 +134,7 @@ export function NewSessionForm({
         <LocalBlocker state={where} className="mt-4 text-center" />
       </div>
 
-      <div inert={Boolean(showProgress)} className="shrink-0">
+      <div className="shrink-0">
         {message && (
           <div
             aria-live="polite"
@@ -177,7 +165,7 @@ export function NewSessionForm({
                   onChange: setPicked,
                   switching: false,
                   disabledReason: isCreating ? "Starting the session" : null,
-                  preferredSource: startsOn?.source,
+                  preferredProvider: startsOn?.provider,
                 }
               : undefined
           }

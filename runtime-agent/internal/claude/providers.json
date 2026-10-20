@@ -1,0 +1,7 @@
+{
+  "openrouter": { "baseURL": "https://openrouter.ai/api", "keyEnv": "ANTHROPIC_AUTH_TOKEN" },
+  "anthropic": { "baseURL": "https://api.anthropic.com", "keyEnv": "ANTHROPIC_API_KEY" },
+  "zai": { "baseURL": "https://api.z.ai/api/anthropic", "keyEnv": "ANTHROPIC_AUTH_TOKEN" },
+  "moonshot": { "baseURL": "https://api.moonshot.ai/anthropic", "keyEnv": "ANTHROPIC_AUTH_TOKEN" },
+  "deepseek": { "baseURL": "https://api.deepseek.com/anthropic", "keyEnv": "ANTHROPIC_AUTH_TOKEN" }
+}

@@ -10,7 +10,7 @@
  * (`getUser()`), never a value taken from a request body, path, or query.
  *
  * Nothing here returns a decrypted secret to a browser-facing payload, with one
- * exception: {@link neevAiKey}, the user's own capped Neev AI key, which a local
+ * exception: {@link outrunnerModelKey}, the user's own capped key for Outrunner's models, which a local
  * session's page hands to the agent on the user's Mac (see that function). The
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
@@ -34,11 +34,15 @@ import {
   disableUserKey,
   keySource,
   keyUsage,
-  NeevAiUnavailableError,
+  OutrunnerModelsUnavailableError,
   setKeyLimit,
   sharedApiKey,
 } from "@/lib/openrouter/keys";
 import { ensureUserKey } from "@/lib/openrouter/user-key";
+import { moveApiKeyFromClaudeSlot } from "@/lib/providers/claude-slot";
+import { NoProviderKeyError } from "@/lib/providers/errors";
+import { isProviderId, PROVIDER_IDS, type ProviderId, usableProviders } from "@/lib/providers/registry";
+import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
 import type { Database } from "@/lib/supabase/database.types";
@@ -386,7 +390,7 @@ async function forgetSandboxKey(
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic" | "daytona" | "modal" | "openrouter",
+  which: "github" | "anthropic" | "daytona" | "modal" | ProviderId,
 ): string | null {
   if (!ciphertext) return null;
   try {
@@ -401,18 +405,105 @@ function openOrNull(
 }
 
 // ---------------------------------------------------------------------------
-// The user's own OpenRouter key (Settings → Providers): when saved, Outrunner's
-// models run on it, and OpenRouter bills them, instead of on the server's.
+// The user's own keys for model providers (Settings → Providers), one row per
+// provider in user_provider_keys (lib/providers/registry.ts). Saved for
+// OpenRouter, Outrunner's models run on it, and OpenRouter bills them,
+// instead of on the server's key.
 // ---------------------------------------------------------------------------
 
-/** Whether the user has saved their own OpenRouter key, and its last 4. */
-export async function getOpenRouterKeyStatus(userId: string): Promise<StoredKey> {
+const NO_KEY: StoredKey = { connected: false, hint: null, updatedAt: null };
+
+/** Whether a read failed only because the table isn't there yet. */
+function beforeProviderKeys(error: { code?: string }): boolean {
+  return probeStatus(error) === "missing";
+}
+
+/**
+ * Which providers the user has a key for, and each one's last 4. Until
+ * 20261019120000_user_provider_keys.sql is applied, the OpenRouter key is
+ * read from where it was before, and there are no others.
+ */
+export async function getProviderKeyStatuses(userId: string): Promise<Record<ProviderId, StoredKey>> {
+  const statuses = Object.fromEntries(PROVIDER_IDS.map((id) => [id, NO_KEY])) as Record<ProviderId, StoredKey>;
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_provider_keys")
+    .select("provider, key_hint, updated_at")
+    .eq("user_id", userId);
+  if (error && beforeProviderKeys(error)) {
+    statuses.openrouter = await legacyOpenRouterKeyStatus(userId);
+    return statuses;
+  }
+  if (error) throw error;
+  for (const row of data) {
+    if (isProviderId(row.provider)) {
+      statuses[row.provider] = { connected: true, hint: row.key_hint, updatedAt: row.updated_at };
+    }
+  }
+  return statuses;
+}
+
+/** The user's key for `provider`, or null when unset or unreadable. */
+export async function getProviderKey(userId: string, provider: ProviderId): Promise<string | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_provider_keys")
+    .select("key_ciphertext")
+    .eq("user_id", userId)
+    .eq("provider", provider)
+    .maybeSingle();
+  if (error && beforeProviderKeys(error)) {
+    return provider === "openrouter" ? legacyOpenRouterKey(userId) : null;
+  }
+  if (error) throw error;
+  return openOrNull(data?.key_ciphertext, userId, provider);
+}
+
+/** Store the user's key for `provider`; the hint is its last 4 characters. */
+export async function setProviderKey(userId: string, provider: ProviderId, apiKey: string): Promise<void> {
+  const key = apiKey.trim();
+  if (!key) throw new Error(`${provider} key cannot be empty`);
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("user_provider_keys").upsert(
+    {
+      user_id: userId,
+      provider,
+      key_ciphertext: seal(key),
+      key_hint: key.slice(-4),
+    },
+    // A replaced key's updated_at is the table's trigger's to set.
+    { onConflict: "user_id,provider" },
+  );
+  if (error) throw error;
+}
+
+/** Forget the user's key for `provider`. */
+export async function clearProviderKey(userId: string, provider: ProviderId): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase.from("user_provider_keys").delete().eq("user_id", userId).eq("provider", provider);
+  if (error) throw error;
+  // An OpenRouter key is also where it was before user_provider_keys, until
+  // a later release drops those columns: left there, the migration's second
+  // run would copy a removed key back.
+  if (provider === "openrouter") {
+    const { error: legacyError } = await supabase
+      .from("user_credentials")
+      .update({ openrouter_key_ciphertext: null, openrouter_key_hint: null, openrouter_key_updated_at: null })
+      .eq("user_id", userId);
+    if (legacyError && probeStatus(legacyError) !== "outdated") throw legacyError;
+  }
+}
+
+/** The OpenRouter key's status where it was stored before
+ *  user_provider_keys; none on a database older still. */
+async function legacyOpenRouterKeyStatus(userId: string): Promise<StoredKey> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_credentials")
     .select("openrouter_key_ciphertext, openrouter_key_hint, openrouter_key_updated_at")
     .eq("user_id", userId)
     .maybeSingle();
+  if (error && probeStatus(error) === "outdated") return NO_KEY;
   if (error) throw error;
   return {
     connected: Boolean(data?.openrouter_key_ciphertext),
@@ -421,61 +512,115 @@ export async function getOpenRouterKeyStatus(userId: string): Promise<StoredKey>
   };
 }
 
-/** The user's own OpenRouter key, or null when unset or unreadable. */
-export async function getOwnOpenRouterKey(userId: string): Promise<string | null> {
+async function legacyOpenRouterKey(userId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_credentials")
     .select("openrouter_key_ciphertext")
     .eq("user_id", userId)
     .maybeSingle();
+  if (error && probeStatus(error) === "outdated") return null;
   if (error) throw error;
   return openOrNull(data?.openrouter_key_ciphertext, userId, "openrouter");
 }
 
-/** Store the user's own OpenRouter key; the hint is its last 4 characters. */
-export async function setOpenRouterKey(userId: string, apiKey: string): Promise<void> {
-  const key = apiKey.trim();
-  if (!key) throw new Error("OpenRouter key cannot be empty");
+/**
+ * Move an Anthropic API key out of the Claude slot to the Anthropic provider
+ * (lib/providers/claude-slot.ts). Run before either is read. A database
+ * without user_provider_keys keeps the key where it is.
+ */
+export async function settleClaudeSlot(userId: string): Promise<void> {
   const supabase = createSupabaseAdminClient();
-  const { error } = await supabase.from("user_credentials").upsert(
-    {
-      user_id: userId,
-      openrouter_key_ciphertext: seal(key),
-      openrouter_key_hint: key.slice(-4),
-      openrouter_key_updated_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" },
-  );
-  if (error) throw error;
-}
-
-/** Forget the user's own OpenRouter key: Outrunner's models go back to the
- *  server's key, where it has one. */
-export async function clearOpenRouterKey(userId: string): Promise<void> {
-  const supabase = createSupabaseAdminClient();
-  const { error } = await supabase
-    .from("user_credentials")
-    .update({ openrouter_key_ciphertext: null, openrouter_key_hint: null, openrouter_key_updated_at: null })
-    .eq("user_id", userId);
-  if (error) throw error;
-}
-
-/** Whether the user runs Outrunner's models on a key of their own. A database
- *  from before the key's column says no. */
-export async function hasOwnOpenRouterKey(userId: string): Promise<boolean> {
   try {
-    return (await getOpenRouterKeyStatus(userId)).connected;
+    await moveApiKeyFromClaudeSlot(
+      {
+        async readSlot() {
+          const { data, error } = await supabase
+            .from("user_credentials")
+            .select("anthropic_key_ciphertext")
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (error) throw error;
+          return data?.anthropic_key_ciphertext ?? null;
+        },
+        async moveFromSlot(ciphertext, hint) {
+          // One statement in the database (20261019130000_move_claude_slot_key.sql).
+          const { data, error } = await supabase.rpc("move_claude_slot_key", {
+            mover: userId,
+            sealed: ciphertext,
+            hint,
+          });
+          if (error) throw error;
+          return data === true;
+        },
+      },
+      open,
+    );
   } catch (error) {
-    if (probeStatus(error as { code?: string }) === "outdated") return false;
+    // Before the migrations: the key stays in the slot, where sessions still
+    // read it (getClaudeCredential).
+    const code = (error as { code?: string }).code;
+    if (beforeProviderKeys(error as { code?: string }) || code === "PGRST202" || code === "42883") return;
     throw error;
   }
 }
 
-/** Whether Outrunner's models are there for this user: on their own key, or
- *  on the server's. */
-export async function outrunnerModelsFor(userId: string): Promise<boolean> {
-  return keySource() !== null || (await hasOwnOpenRouterKey(userId));
+/**
+ * The credential a session runs the user's own Claude on: their subscription
+ * token from the Claude slot, else (as before the Anthropic key had a place of
+ * its own) their Anthropic API key. Null with neither.
+ */
+export async function getClaudeCredential(userId: string): Promise<string | null> {
+  await settleClaudeSlot(userId);
+  return (await getAnthropicKey(userId)) ?? (await getProviderKey(userId, "anthropic"));
+}
+
+/** What the user's model menu offers (lib/runtime/session-models.ts):
+ *  Outrunner's models where the server has a key for them, and each provider
+ *  the user has a key for that can be used. */
+export async function modelMenu(userId: string): Promise<ModelMenu> {
+  const source = keySource();
+  return {
+    outrunner: source !== null,
+    allowance: source === "per-user",
+    keys: await usableProviderKeys(userId),
+  };
+}
+
+/**
+ * The providers whose saved key opens. One that doesn't (the encryption key
+ * changed) stays listed in Settings → Providers, but isn't offered: picked,
+ * or made a new session's default, it could only fail, where without it the
+ * default falls to a key that works. Saving it again brings it back.
+ */
+async function usableProviderKeys(userId: string): Promise<ProviderId[]> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("user_provider_keys")
+    .select("provider, key_ciphertext")
+    .eq("user_id", userId);
+  if (error && beforeProviderKeys(error)) {
+    return (await legacyOpenRouterKey(userId)) ? ["openrouter"] : [];
+  }
+  if (error) throw error;
+  return usableProviders(data, (row, provider) => openOrNull(row.key_ciphertext, userId, provider) !== null);
+}
+
+/** Whether the menu offers anything but the user's Claude: a session can
+ *  start without it. */
+export function offersModels(menu: ModelMenu): boolean {
+  return menu.outrunner || menu.keys.length > 0;
+}
+
+/**
+ * The key a model runs on: Outrunner's, for Outrunner's models; the user's
+ * own for a provider's, or a NoProviderKeyError saying where to add one.
+ */
+export async function modelKey(userId: string, holder: KeyHolder): Promise<string> {
+  if (holder === "outrunner") return outrunnerModelKey(userId);
+  const key = await getProviderKey(userId, holder);
+  if (!key) throw new NoProviderKeyError(holder);
+  return key;
 }
 
 /**
@@ -485,7 +630,7 @@ export async function outrunnerModelsFor(userId: string): Promise<boolean> {
  * key exists, nothing is spent of their plan's allowance. A user with their
  * own key too still has this one, for the models they run on it.
  */
-export async function neevAiAllowance(userId: string): Promise<Allowance | null> {
+export async function outrunnerModelAllowance(userId: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
   return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await planFor(userId)).models.usd };
 }
@@ -576,21 +721,8 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
   return renewed;
 }
 
-/** Which key Outrunner's models run on: the user's own, Outrunner's, or
- *  (auto, for a new session) theirs when they have one. */
-export type OpenRouterKeyUse = "auto" | "own" | "outrunner";
-
-/** Their own key was asked for and they have none saved. */
-export class NoOwnOpenRouterKeyError extends Error {
-  constructor() {
-    super("Save your OpenRouter key in Settings → Providers to run models on it.");
-    this.name = "NoOwnOpenRouterKeyError";
-  }
-}
-
 /**
- * The OpenRouter key this user's sessions run Outrunner's models on: the key
- * they saved themselves, when `use` allows it and they have one; else the
+ * The OpenRouter key this user's sessions run Outrunner's models on: the
  * shared API key when the server has only that, otherwise a key the server
  * made them, capped by OpenRouter at their plan's allowance, created the first
  * time they pick one of the models and then kept (OpenRouter tracks the
@@ -602,18 +734,9 @@ export class NoOwnOpenRouterKeyError extends Error {
  * It is returned in plaintext because a local session runs on the user's Mac,
  * where only the page can hand it to the agent.
  */
-export async function neevAiKey(userId: string, use: OpenRouterKeyUse = "auto"): Promise<string> {
-  if (use !== "outrunner") {
-    const own = await getOwnOpenRouterKey(userId).catch((error: unknown) => {
-      // A database from before the key's column has none to give.
-      if (probeStatus(error as { code?: string }) === "outdated") return null;
-      throw error;
-    });
-    if (own) return own;
-    if (use === "own") throw new NoOwnOpenRouterKeyError();
-  }
+export async function outrunnerModelKey(userId: string): Promise<string> {
   const source = keySource();
-  if (source === null) throw new NeevAiUnavailableError();
+  if (source === null) throw new OutrunnerModelsUnavailableError();
   if (source === "shared") return sharedApiKey() as string; // see lib/openrouter/keys.ts
 
   const supabase = createSupabaseAdminClient();

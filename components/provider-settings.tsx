@@ -1,54 +1,195 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
-import { KeyInput, SavedKey } from "@/components/stored-key";
+import { ClaudeConnection } from "@/components/claude-connection";
+import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
+import { KeyInput } from "@/components/stored-key";
 import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import type { StoredKey } from "@/lib/db/credentials";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
+import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
+import { PROVIDERS, type ProviderId } from "@/lib/providers/registry";
+import { PROVIDER_TABS, type ProviderTab } from "@/lib/settings-links";
+import { cn } from "@/lib/utils";
 
 /** What Settings → Providers shows (GET /api/settings/providers). */
-export type ProviderSettings = {
-  openrouter: StoredKey;
-  /** Whether the server runs Outrunner's models on a key of its own. */
-  serverModels: boolean;
-};
+export type ProviderSettings = { keys: Record<ProviderId, StoredKey> };
 
 /**
- * Settings → Providers: the user's own keys for the providers their models
- * run on. OpenRouter's, for now: saved, Outrunner's models run on it and
- * OpenRouter bills the user, with no allowance; without it they run on the
- * server's key, where it has one. The server checks a key with OpenRouter
- * before keeping it.
+ * Settings → Providers (BYOK): the user's Claude subscription and their own
+ * keys for model providers, a tab each (lib/providers/registry.ts). Models on
+ * them are billed by the provider, not counted against the user's Outrunner
+ * plan. The server checks a key with its provider before keeping it.
  */
-export function ProviderSettingsForm({ initial }: { initial: ProviderSettings }) {
-  const [settings, setSettings] = useState(initial);
+export function ProviderSettingsForm({
+  initial,
+  claude: initialClaude,
+  tab,
+}: {
+  initial: ProviderSettings;
+  claude: ClaudeTokenMeta;
+  /** The tab a link asked for, if any. */
+  tab?: ProviderTab;
+}) {
+  const [keys, setKeys] = useState(initial.keys);
+  const [claude, setClaude] = useState(initialClaude);
+  const connected = (id: ProviderTab) => (id === "claude" ? claude.connected : keys[id].connected);
+  // Without a link's tab, opens on the first one connected, so a returning
+  // user lands on it.
+  const [active, setActive] = useState<ProviderTab>(
+    () => tab ?? PROVIDER_TABS.find(connected) ?? PROVIDER_TABS[0],
+  );
+  const tabs = useRef<Partial<Record<ProviderTab, HTMLButtonElement | null>>>({});
+
+  function open(next: ProviderTab) {
+    setActive(next);
+    // A reload, or a link copied from the address bar, comes back here.
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", next);
+    window.history.replaceState(window.history.state, "", url);
+  }
+
+  // Arrow keys move between tabs, as in any tablist.
+  function onTabKeyDown(event: React.KeyboardEvent) {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+    const index = PROVIDER_TABS.indexOf(active);
+    const next =
+      step !== undefined
+        ? PROVIDER_TABS[(index + step + PROVIDER_TABS.length) % PROVIDER_TABS.length]
+        : event.key === "Home"
+          ? PROVIDER_TABS[0]
+          : event.key === "End"
+            ? PROVIDER_TABS[PROVIDER_TABS.length - 1]
+            : null;
+    if (!next) return;
+    event.preventDefault();
+    open(next);
+    tabs.current[next]?.focus();
+  }
+
+  return (
+    <section className="space-y-6">
+      <div className="space-y-1">
+        <h1 className="text-xl font-semibold text-foreground">Providers (BYOK)</h1>
+        <p className="text-sm text-muted-foreground">
+          Your own Claude subscription and API keys. Models on them are billed by each provider, not counted against
+          your Outrunner plan.
+        </p>
+      </div>
+
+      <div
+        role="tablist"
+        aria-label="Providers"
+        onKeyDown={onTabKeyDown}
+        className="flex gap-5 overflow-x-auto border-b border-border/60"
+      >
+        {PROVIDER_TABS.map((id) => {
+          const selected = id === active;
+          return (
+            <button
+              key={id}
+              ref={(el) => {
+                tabs.current[id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`provider-tab-${id}`}
+              aria-selected={selected}
+              aria-controls={`provider-panel-${id}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => open(id)}
+              className={cn(
+                "-mb-px flex shrink-0 cursor-pointer items-center gap-2 border-b-2 pb-2.5 text-sm whitespace-nowrap transition-colors",
+                selected
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {id === "claude" ? "Claude subscription" : PROVIDERS[id].label}
+              {connected(id) ? (
+                <>
+                  <span aria-hidden className="size-1.5 rounded-full bg-positive" />
+                  <span className="sr-only">(connected)</span>
+                </>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Every panel stays mounted, so a key half typed or a save in flight
+          survives a look at another tab. */}
+      {PROVIDER_TABS.map((id) => (
+        <div
+          key={id}
+          role="tabpanel"
+          id={`provider-panel-${id}`}
+          aria-labelledby={`provider-tab-${id}`}
+          hidden={id !== active}
+        >
+          {id === "claude" ? (
+            <ClaudeConnection meta={claude} onChange={setClaude} />
+          ) : (
+            <ProviderPanel
+              provider={id}
+              stored={keys[id]}
+              onChange={(next) => {
+                // This panel's own provider only: another panel's reply, sent
+                // before a change there landed, mustn't undo it here.
+                setKeys((current) => ({ ...current, [id]: next.keys[id] }));
+                // The model menu offers what keys the user has: let it ask again.
+                forgetOutrunnerModels();
+              }}
+            />
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function ProviderPanel({
+  provider,
+  stored,
+  onChange,
+}: {
+  provider: ProviderId;
+  stored: StoredKey;
+  onChange: (next: ProviderSettings) => void;
+}) {
+  const { label, description, keyPlaceholder, keysUrl, keysPage, models } = PROVIDERS[provider];
   const [key, setKey] = useState("");
   // A saved key is only replaced on purpose.
   const [replacing, setReplacing] = useState(false);
   const [status, setStatus] = useState<ActionStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
 
-  const own = settings.openrouter.connected;
-  const asking = !own || replacing;
+  const asking = !stored.connected || replacing;
   const canSave = asking && key.trim() !== "" && status !== "pending";
 
-  async function send(method: "PUT" | "DELETE", body?: object): Promise<void> {
+  async function send(method: "PUT" | "DELETE"): Promise<void> {
     setStatus("pending");
     setError(null);
+    setWarning(null);
     try {
-      const res = await fetch("/api/settings/providers", {
-        method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
+      const res = await fetch(
+        method === "PUT" ? "/api/settings/providers" : `/api/settings/providers?provider=${provider}`,
+        {
+          method,
+          headers: method === "PUT" ? { "Content-Type": "application/json" } : undefined,
+          body: method === "PUT" ? JSON.stringify({ provider, key: key.trim() }) : undefined,
+        },
+      );
       // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
-      const data = (await res.json().catch(() => null)) as (ProviderSettings & { error?: string }) | null;
-      if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Try again.");
-      setSettings(data);
-      // The model menu names the key it runs on: let it ask again.
-      forgetOutrunnerModels();
+      const data = (await res.json().catch(() => null)) as
+        | (ProviderSettings & { error?: string; warning?: string | null })
+        | null;
+      if (!res.ok || !data?.keys) throw new Error(data?.error ?? "Couldn't save that. Try again.");
+      onChange(data);
+      setWarning(data.warning ?? null);
       setKey("");
       setReplacing(false);
       setStatus("success");
@@ -58,78 +199,85 @@ export function ProviderSettingsForm({ initial }: { initial: ProviderSettings })
     }
   }
 
-  const save = () => void send("PUT", { openrouterKey: key.trim() });
+  const save = () => void send("PUT");
 
   return (
-    <section className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold text-foreground">Providers</h1>
-        <p className="text-sm text-muted-foreground">Your own keys for the providers your models run on.</p>
+    <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">{description}</p>
+
+      <div className="space-y-3">
+        <SectionHeader title="API key" link={{ href: keysUrl, label: keysPage }} />
+        <ConnectionStatus connected={stored.connected} />
+        <Details>
+          <DetailRow term="Key">
+            {stored.connected ? (
+              <span className="font-mono">····{stored.hint ?? "····"}</span>
+            ) : (
+              <span className="text-muted-foreground">None saved</span>
+            )}
+          </DetailRow>
+          {stored.connected && stored.updatedAt ? (
+            <DetailRow term="Saved">
+              {/* The browser's own locale and time zone, which the server's
+                  render can't know. */}
+              <span suppressHydrationWarning>
+                {new Date(stored.updatedAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+              </span>
+            </DetailRow>
+          ) : null}
+          <DetailRow term="Billing">Your {label} account</DetailRow>
+          <DetailRow term="Models">{models.map((model) => model.label).join(", ")}</DetailRow>
+        </Details>
       </div>
 
-      <div className="space-y-4 rounded-lg border border-border/60 p-4">
-        <div className="space-y-1">
-          <p className="text-sm font-medium text-foreground">OpenRouter</p>
-          <p className="text-sm text-muted-foreground">
-            {own
-              ? "Outrunner's models run on your key, and OpenRouter bills you for them."
-              : settings.serverModels
-                ? "Outrunner's models run on Outrunner's key, up to your plan's included usage. Add your own to run them on your OpenRouter account instead, with no limit but yours."
-                : "Add your key to use Outrunner's models: this server has no key of its own for them."}
+      {asking ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <KeyInput
+              value={key}
+              onChange={(value) => {
+                setKey(value);
+                setStatus("idle");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && canSave) save();
+              }}
+              placeholder={keyPlaceholder}
+              label={`${label} API key`}
+            />
+            {replacing ? (
+              <Button variant="ghost" size="sm" onClick={() => setReplacing(false)}>
+                Cancel
+              </Button>
+            ) : null}
+            <LoadingButton
+              status={status}
+              labels={{ idle: "Save", pending: "Checking", success: "Saved" }}
+              disabled={!canSave}
+              onClick={save}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            It&apos;s checked with {label}, then stored encrypted.
           </p>
         </div>
+      ) : (
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setReplacing(true)}>
+            Replace key
+          </Button>
+          <Button variant="ghost" size="sm" disabled={status === "pending"} onClick={() => void send("DELETE")}>
+            Remove key
+          </Button>
+        </div>
+      )}
 
-        {asking ? (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <KeyInput
-                value={key}
-                onChange={(value) => {
-                  setKey(value);
-                  setStatus("idle");
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && canSave) save();
-                }}
-                placeholder="Paste your OpenRouter API key (sk-or-…)"
-                label="OpenRouter API key"
-              />
-              {replacing ? (
-                <Button variant="ghost" size="sm" onClick={() => setReplacing(false)}>
-                  Cancel
-                </Button>
-              ) : null}
-              <LoadingButton
-                status={status}
-                labels={{ idle: "Save", pending: "Checking", success: "Saved" }}
-                disabled={!canSave}
-                onClick={save}
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Create one in{" "}
-              <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noreferrer" className="underline underline-offset-4">
-                OpenRouter → Keys
-              </a>
-              . It&apos;s checked with OpenRouter, then stored encrypted. New sessions on Outrunner&apos;s models use it.
-            </p>
-          </div>
-        ) : (
-          <SavedKey
-            what="Key"
-            stored={settings.openrouter}
-            busy={status === "pending"}
-            onReplace={() => setReplacing(true)}
-            onRemove={() => void send("DELETE")}
-          />
-        )}
-      </div>
-
+      {warning ? <p className="text-sm text-warning">{warning}</p> : null}
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }

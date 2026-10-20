@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { OnboardingLive } from "@/components/onboarding/onboarding-live";
 import { OnboardingPreview } from "@/components/onboarding/onboarding-preview";
 import { getOwner } from "@/lib/auth/owner";
-import { outrunnerModelsFor } from "@/lib/db/credentials";
+import { modelMenu, offersModels } from "@/lib/db/credentials";
 import { getOnboardingUser } from "@/lib/onboarding/server";
 
 export const dynamic = "force-dynamic";
@@ -30,9 +30,10 @@ export default async function OnboardingPage() {
   return (
     <OnboardingLive
       user={{ name: user.name, login: user.login, avatarUrl: user.avatarUrl }}
-      // A cloud session starts without the user's Claude only on Outrunner's
-      // models, which need an OpenRouter key: the user's own, or this server's.
-      outrunnerModels={owner ? await outrunnerModelsFor(owner.id) : false}
+      // A cloud session starts without the user's Claude only on a model the
+      // menu offers: Outrunner's, where this server has them, or on a key of
+      // the user's own.
+      outrunnerModels={owner ? offersModels(await modelMenu(owner.id)) : false}
     />
   );
 }

@@ -66,6 +66,14 @@ export async function PUT(request: Request) {
     );
   }
 
+  // An API key is the Anthropic provider's (lib/providers/claude-slot.ts).
+  if (token.startsWith("sk-ant-api")) {
+    return NextResponse.json(
+      { error: "That's an Anthropic API key. Add it in Settings → Providers → Anthropic; this is for your Claude subscription." },
+      { status: 400 },
+    );
+  }
+
   await setClaudeToken(owner.id, token);
   return NextResponse.json(await getClaudeTokenMeta(owner.id));
 }

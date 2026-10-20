@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import type { AllowanceView } from "@/lib/openrouter/allowance";
+import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,7 +23,7 @@ export function OutrunnerAllowance() {
     let cancelled = false;
     const read = async () => {
       try {
-        const res = await fetch("/api/neev-ai/usage", { cache: "no-store" });
+        const res = await fetch("/api/outrunner-models/usage", { cache: "no-store" });
         if (!res.ok) return; // keep what's shown; the next read may work
         const data = (await res.json()) as { allowance: AllowanceView | null };
         if (!cancelled) setView(data.allowance);
@@ -67,7 +68,7 @@ export function OutrunnerAllowance() {
       {view.state === "out" ? (
         <p className="text-xs text-muted-foreground">
           You&apos;ve used your included usage.{" "}
-          <Link href="/settings/claude" className="text-foreground underline underline-offset-4">
+          <Link href={providerSettingsHref("claude")} className="text-foreground underline underline-offset-4">
             Connect Claude
           </Link>{" "}
           to keep going.

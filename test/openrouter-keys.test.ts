@@ -8,7 +8,7 @@ import {
   keySource,
   keyUsage,
   managementKey,
-  NeevAiUnavailableError,
+  OutrunnerModelsUnavailableError,
   openRouterAcceptsKey,
 } from "@/lib/openrouter/keys";
 
@@ -62,18 +62,18 @@ test("a user's key is created capped at the allowance it is given", async () => 
   });
 });
 
-test("without a management key Neev AI is unavailable, and nothing is sent", async () => {
+test("without a management key Outrunner's models are unavailable, and nothing is sent", async () => {
   delete process.env.OPENROUTER_MANAGEMENT_KEY;
   const seen = stubFetch(new Response("{}", { status: 201 }));
   assert.equal(managementKey(), null);
-  await assert.rejects(createUserKey("x", 5), NeevAiUnavailableError);
+  await assert.rejects(createUserKey("x", 5), OutrunnerModelsUnavailableError);
   assert.equal(seen.length, 0);
 });
 
 test("a refused management key means Outrunner's models are not set up", async () => {
   for (const status of [401, 403]) {
     stubFetch(new Response("{}", { status }));
-    await assert.rejects(createUserKey("x", 5), NeevAiUnavailableError);
+    await assert.rejects(createUserKey("x", 5), OutrunnerModelsUnavailableError);
   }
 });
 
@@ -181,7 +181,7 @@ test("every call to OpenRouter gives up after a timeout, so a hung one can't han
 
 test("without a management key there is no usage to read", async () => {
   delete process.env.OPENROUTER_MANAGEMENT_KEY;
-  await assert.rejects(keyUsage("h"), NeevAiUnavailableError);
+  await assert.rejects(keyUsage("h"), OutrunnerModelsUnavailableError);
 });
 
 test("a user's own key is checked with OpenRouter on its own authority", async () => {

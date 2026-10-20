@@ -98,8 +98,12 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
+// health answers unauthenticated, so it says nothing but that the agent is up
+// and which gateways it can run a session through (public: they're in the
+// source), for the web app to offer only those. An agent from before this
+// field supports OpenRouter alone.
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "gateways": claude.Gateways()})
 }
 
 // authed verifies the Bearer Runtime token before invoking a control handler.

@@ -24,6 +24,7 @@ import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-ser
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+import { canDestroy } from "@/lib/session/provisioning";
 
 export const dynamic = "force-dynamic";
 
@@ -468,14 +469,14 @@ async function destroyDaytonaWorkspace(
  * row itself, marked destroyed.
  */
 async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>) {
-  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
-  if (!destroyable.includes(workspace.status)) {
+  if (!canDestroy(workspace, Date.now())) {
     return NextResponse.json(
       { error: "This workspace cannot be destroyed while another lifecycle action is running." },
       { status: 409 },
     );
   }
-  const transitioned = await startTransition(workspace, destroyable, "destroying");
+  // Only from the status just checked: one that moved since is another change.
+  const transitioned = await startTransition(workspace, [workspace.status], "destroying");
   if (!transitioned) return lifecycleConflict();
 
   // Best-effort worktree teardown: destroy is terminal, and the shared box may
@@ -603,8 +604,7 @@ async function suspendWorkspace(workspace: Workspace, provider: RuntimeProvider)
 }
 
 async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider) {
-  const destroyable: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived", "failed"];
-  if (!destroyable.includes(workspace.status)) {
+  if (!canDestroy(workspace, Date.now())) {
     return NextResponse.json(
       { error: "This workspace cannot be destroyed while another lifecycle action is running." },
       { status: 409 },
@@ -612,7 +612,7 @@ async function destroyWorkspace(workspace: Workspace, provider: RuntimeProvider)
   }
   // Legacy batch job rows are intentionally ignored here too — runtime-agent, not
   // the jobs table, owns active-execution state (see suspendWorkspace).
-  const transitioned = await startTransition(workspace, destroyable, "destroying");
+  const transitioned = await startTransition(workspace, [workspace.status], "destroying");
   if (!transitioned) return lifecycleConflict();
 
   try {

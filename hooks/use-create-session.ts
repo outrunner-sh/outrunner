@@ -7,11 +7,12 @@ import {
   localAgentRequest,
   localTarget,
   putOnModel,
-  putOnOutrunnerModel,
+  putOnDefaultModel,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
 import type { SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
+import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
 type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string };
@@ -53,7 +54,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     router.refresh();
   }
 
-  /** Create a cloud session and open it. Resolves false when it could not be
+  /** Create a cloud session and open it: at once, on its setup progress, which
+   *  the server runs after answering. Resolves false when it could not be
    *  created (the message says why), so the composer keeps the prompt. */
   function create(prompt: string, attachmentIds: string[] = [], model?: SessionModel): Promise<boolean> {
     if (!selected) return Promise.resolve(false);
@@ -65,15 +67,12 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         response = await fetch(`/api/projects/${selected.id}/workspaces`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // Attachments are not sent here: the workspace has no box yet. They
-          // ride the redirect and are delivered with the first prompt.
-          // The model picked on this screen, and for an OpenRouter one its key;
-          // none, the server starts it on Outrunner's default.
-          body: JSON.stringify({
-            branch: "",
-            ...(model && { model: model.id }),
-            ...(model && model.source !== "claude" && { key: model.source === "own" ? "own" : "outrunner" }),
-          }),
+          // The prompt and attachments are not sent here: the workspace has no
+          // box yet. They ride the redirect, and wait in this tab for the
+          // session to be ready (lib/session/first-prompt.ts).
+          // The model picked on this screen, and who serves it; none, the
+          // server starts it on the menu's default.
+          body: JSON.stringify({ branch: "", ...(model && { provider: model.provider, model: model.id }) }),
         });
       } catch {
         setMessage("Could not reach Outrunner. Please try again.");
@@ -89,11 +88,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         resolve(false);
         return;
       }
-      const params = new URLSearchParams();
-      if (prompt.trim()) params.set("prompt", prompt.trim());
-      for (const id of attachmentIds) params.append("attachment", id);
-      const query = params.size > 0 ? `?${params}` : "";
-      router.push(`/workspaces/${result.workspace.id}${query}`);
+      const first = { prompt, attachmentIds };
+      rememberFirstPrompt(tabStorage(), result.workspace.id, first);
+      router.push(`/workspaces/${result.workspace.id}${firstPromptQuery(first)}`);
       router.refresh();
       resolve(true);
     }));
@@ -139,7 +136,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       // Mac's Claude Code isn't logged in.
       if (model || onOutrunnerModel) {
         try {
-          await (model ? putOnModel(workspaceId, model) : putOnOutrunnerModel(workspaceId));
+          await (model ? putOnModel(workspaceId, model) : putOnDefaultModel(workspaceId));
         } catch (error) {
           void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
           setMessage(error instanceof Error ? error.message : "Outrunner's models are unavailable right now.");
@@ -147,8 +144,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           return;
         }
       }
-      const query = prompt.trim() ? `?${new URLSearchParams({ prompt: prompt.trim() })}` : "";
-      router.push(`/local/${workspaceId}${query}`);
+      router.push(`/local/${workspaceId}${firstPromptQuery({ prompt, attachmentIds: [] })}`);
       resolve(true);
     }));
   }

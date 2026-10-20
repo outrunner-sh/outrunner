@@ -1,16 +1,15 @@
 import { randomUUID } from "node:crypto";
 
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
-import { getOwner } from "@/lib/auth/owner";
+import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
-import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
+import { cloudBoxStartGate, isPlanLimitError } from "@/lib/billing/limits";
 import {
   getSandboxSettings,
-  hasOwnOpenRouterKey,
-  neevAiKey,
-  type OpenRouterKeyUse,
-  outrunnerModelsFor,
+  modelKey,
+  modelMenu,
+  offersModels,
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
@@ -19,14 +18,17 @@ import {
   getProject,
   getRuntimeComputerByProject,
   markRuntimeComputerStoppedIfReady,
-  updateWorkspace,
+  transitionWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
+import { NoProviderKeyError } from "@/lib/providers/errors";
+import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
-import { offeredModel } from "@/lib/runtime/session-models";
+import { defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
 import {
   boxSizeOn,
   computerMadeBy,
@@ -37,15 +39,18 @@ import {
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
-import type { ProvisionPhase, RuntimeProvider } from "@/lib/runtime/types";
+import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
+import { SETTING_UP } from "@/lib/session/provisioning";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
+import { providerSettingsHref } from "@/lib/settings-links";
 
 export const dynamic = "force-dynamic";
 
-// Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror.
-// maxDuration caps the per-request wall-clock on serverless hosts (a no-op on a
-// long-running server like Railway); 60s covers provisioning with headroom.
+// Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror, in
+// after() once the response has gone. maxDuration caps the per-request
+// wall-clock, after() included, on serverless hosts (a no-op on a long-running
+// server like Railway); 60s covers provisioning with headroom.
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -69,7 +74,7 @@ function generatedBranch(): string {
 
 /** The session can't run without the user's Claude: say so, and where to fix it. */
 function needsClaude(error: string) {
-  return NextResponse.json({ error, settingsHref: "/settings/claude" }, { status: 409 });
+  return NextResponse.json({ error, settingsHref: providerSettingsHref("claude") }, { status: 409 });
 }
 
 function needsSandbox(error: string) {
@@ -108,7 +113,8 @@ export async function POST(request: Request, context: RouteContext) {
   // start on Outrunner's models (on the user's own OpenRouter key, or the
   // server's), so only without those is Claude a must.
   const hasClaude = Object.keys(sessionEnv).length > 0;
-  if (!hasClaude && !(await outrunnerModelsFor(owner.id))) {
+  const menu = await modelMenu(owner.id);
+  if (!hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
   if (project.private && !githubToken) {
@@ -121,29 +127,23 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { branch?: unknown; model?: unknown; key?: unknown };
+  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
-  // The model chosen on the new-session screen, and for an OpenRouter one which
-  // key it runs on; none, Outrunner's default on the user's own key or the
-  // server's.
-  const chosenModel = body.model === undefined ? undefined : offeredModel(body.model);
-  if (body.model !== undefined && !chosenModel) {
+  // The model chosen on the new-session screen; none, the menu's default.
+  const chosenModel = requestedModel(body);
+  if (chosenModel === null) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
   }
-  const keyUse: OpenRouterKeyUse = body.key === "own" || body.key === "outrunner" ? body.key : "auto";
   // Said before a box is set up for it, not after.
-  if (chosenModel?.source === "claude" && !hasClaude) {
+  if (chosenModel?.provider === "claude" && !hasClaude) {
     return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
   }
-  if (keyUse === "own" && !(await hasOwnOpenRouterKey(owner.id))) {
-    return NextResponse.json(
-      { error: "Save your OpenRouter key in Settings → Providers to run models on it.", settingsHref: "/settings/providers" },
-      { status: 409 },
-    );
+  if (chosenModel && isProviderId(chosenModel.provider) && !menu.keys.includes(chosenModel.provider)) {
+    return modelKeyErrorResponse(new NoProviderKeyError(chosenModel.provider), "");
   }
 
   const requestedBranch = typeof body.branch === "string" ? body.branch.trim() : "";
@@ -196,12 +196,74 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  // The session opens now, on its setup progress, and its box is set up after
+  // this response. A request held open for the whole setup tied the session to
+  // the page that asked: leaving it lost the session's prompt and redirect, and
+  // every other navigation waited on it.
+  after(() =>
+    provisionWorkspace({
+      workspace,
+      project,
+      owner,
+      provider,
+      keys,
+      sandboxSettings,
+      githubToken,
+      sessionEnv,
+      hasClaude,
+      menu,
+      chosenModel,
+      maxLiveComputers: gate.cap,
+    }),
+  );
+  return NextResponse.json({ workspace: { id: workspace.id } }, { status: 202 });
+}
+
+/**
+ * Set up a new session's box and start Claude in it, then mark the session
+ * ready, or failed with why. It runs after the create request has answered, so
+ * it never throws: the session's row is all that hears how it went. Each
+ * outcome lands only on a session still setting up, so one deleted meanwhile
+ * (a stalled setup may be) stays deleted.
+ */
+async function provisionWorkspace({
+  workspace,
+  project,
+  owner,
+  provider,
+  keys,
+  sandboxSettings,
+  githubToken,
+  sessionEnv,
+  hasClaude,
+  menu,
+  chosenModel,
+  maxLiveComputers,
+}: {
+  workspace: Workspace;
+  project: Project;
+  owner: Owner;
+  provider: RuntimeProvider;
+  keys: ReturnType<typeof ownSandboxKeys>;
+  sandboxSettings: SandboxSettings;
+  githubToken: string | undefined;
+  sessionEnv: Record<string, string>;
+  hasClaude: boolean;
+  menu: Awaited<ReturnType<typeof modelMenu>>;
+  /** Checked by the request: an offered model, or none for the default. */
+  chosenModel: SessionModel | undefined;
+  /** The plan's box cap, enforced by the claim in the database; null when none applies. */
+  maxLiveComputers: number | null;
+}): Promise<void> {
+  const settle = async (patch: Parameters<typeof transitionWorkspace>[0]["patch"]) => {
+    const moved = await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch });
+    if (!moved) console.warn(`Workspace ${workspace.id} left setup before it finished (${patch.status})`);
+    return moved !== null;
+  };
+  // Phases only: even the last stays "provisioning", so the ready below, with
+  // the box's details, still finds the session setting up.
   const setPhase = async (phase: ProvisionPhase) => {
-    await updateWorkspace(workspace.id, {
-      status: phase === "claude_ready" ? "ready" : "provisioning",
-      phase,
-      touchActive: phase === "claude_ready",
-    });
+    await settle({ status: "provisioning", phase });
   };
 
   try {
@@ -235,8 +297,7 @@ export async function POST(request: Request, context: RouteContext) {
         githubToken,
         sessionEnv,
         size: boxSizeOn(sandboxSettings.sandbox, sandboxSettings.boxSize, await planFor(owner.id)),
-        // The plan's box cap, enforced by the claim in the database.
-        maxLiveComputers: gate.cap,
+        maxLiveComputers,
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
@@ -273,13 +334,14 @@ export async function POST(request: Request, context: RouteContext) {
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
-        neevKey: () => neevAiKey(owner.id, keyUse),
+        keyFor: (holder) => modelKey(owner.id, holder),
         hasClaude,
         model: chosenModel,
+        fallback: defaultModel(menu),
       });
       await agent.startWorkspace(identity);
 
-      await updateWorkspace(workspace.id, {
+      const ready = await settle({
         status: "ready",
         phase: "claude_ready",
         computerId: computer.id,
@@ -289,7 +351,14 @@ export async function POST(request: Request, context: RouteContext) {
         errorMessage: null,
         touchActive: true,
       });
-      return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
+      // Deleted while it set up: take down the worktree and Claude it no
+      // longer has, as its delete would have.
+      if (!ready) {
+        await agent.destroyWorkspace(identity).catch((error: unknown) =>
+          console.warn(`Workspace ${workspace.id} teardown after delete failed`, error),
+        );
+      }
+      return;
     }
 
     const result = await provider.createWorkspace({
@@ -301,7 +370,7 @@ export async function POST(request: Request, context: RouteContext) {
       onPhase: setPhase,
     });
 
-    await updateWorkspace(workspace.id, {
+    await settle({
       status: "ready",
       phase: "claude_ready",
       sandboxId: result.sandboxId,
@@ -312,30 +381,20 @@ export async function POST(request: Request, context: RouteContext) {
         : null,
       touchActive: true,
     });
-    return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
-    const noModel = error instanceof NoStartingModelError;
+    // The session page shows this: say what to do where the user can fix it.
     // The plan's cap can refuse a start mid-flight (a simultaneous start won
     // the slot first): say so, rather than blame the setup.
     const refused = isPlanLimitError(error);
-    try {
-      await updateWorkspace(workspace.id, {
-        status: "failed",
-        errorMessage: noModel
-          ? error.message
-          : refused
-            ? refused.message
-            : "Provisioning failed. Check Outrunner's setup and try again.",
-      });
-    } catch (updateError) {
-      console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
-    }
-    if (noModel) return needsClaude(error.message);
-    if (refused) return NextResponse.json({ error: refused.message, settingsHref: UPGRADE_HREF }, { status: 403 });
-    return NextResponse.json(
-      { error: "Could not create the workspace. Check Outrunner's setup and try again." },
-      { status: 500 },
+    const errorMessage =
+      error instanceof NoStartingModelError
+        ? error.message
+        : refused
+          ? refused.message
+          : "Provisioning failed. Check Outrunner's setup and try again.";
+    await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
+      console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );
   }
 }
