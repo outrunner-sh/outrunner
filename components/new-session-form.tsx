@@ -154,7 +154,13 @@ export function NewSessionForm({
         <SessionComposer
           onSend={(text, attachmentIds) =>
             where.localFolder
-              ? createLocal(text, where.localFolder, where.outrunnerModel, picked ?? undefined)
+              ? createLocal(
+                  text,
+                  where.localFolder,
+                  where.outrunnerModel,
+                  picked ?? undefined,
+                  where.runtime.state === "ready" ? where.runtime.status : null,
+                )
               : create(text, attachmentIds, picked ?? undefined)
           }
           model={startsOn?.id}
