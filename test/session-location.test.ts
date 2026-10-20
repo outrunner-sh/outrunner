@@ -22,3 +22,11 @@ test("a Codex session on this Mac isn't held back by Claude Code", () => {
   // The folder matters to either.
   assert.match(localBlocker(runtime(null, null), { state: "none" }, false, "codex") ?? "", /Choose a repository/);
 });
+
+test("a Claude Code session on a subscription or key needs no login on this Mac", () => {
+  const loggedOut = runtime("/bin/claude", false);
+  assert.equal(localBlocker(loggedOut, FOLDER, false, "claude", false), null);
+  assert.match(localBlocker(loggedOut, FOLDER, false, "claude", true) ?? "", /Log in to Claude Code/);
+  // Claude Code itself is still needed: the session runs it.
+  assert.notEqual(localBlocker(runtime(null, null), FOLDER, false, "claude", false), null);
+});
