@@ -86,7 +86,9 @@ const CredentialToken = z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,400}
  * next launch. claude-oauth-token and anthropic-api-key are a Claude
  * session's, openai-api-key a Codex session's (another agent's is refused);
  * none takes the credential away and carries no token. An unknown session is
- * 404 with the NOT_FOUND envelope (an agent without the route: a bare 404).
+ * 404 with the NOT_FOUND envelope (an agent without the route: a bare 404);
+ * a credential on an engine that runs sessions on its own login (jcode),
+ * 409 UNSUPPORTED.
  */
 export const SetAuthRequest = z
   .object({

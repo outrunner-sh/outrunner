@@ -67,6 +67,10 @@ type Service struct {
 	lifeMu    sync.Mutex
 	lifeLocks map[string]*sync.Mutex
 
+	// rolloutClaimMu makes finding a Codex session's rollout and claiming it
+	// (codexRollout) one step across sessions.
+	rolloutClaimMu sync.Mutex
+
 	summariesMu sync.Mutex
 	summaries   map[string]*Summary
 
@@ -140,6 +144,10 @@ type workspaceFacts struct {
 	// CodexRollout is the file Codex records that conversation in, found
 	// once (codexRollout) and translated from then on.
 	CodexRollout string `json:"codexRollout,omitempty"`
+	// CodexHome is the Codex home the session last launched in: where its
+	// running Codex writes, whatever credential it has been given since
+	// (SetAuth applies at the next launch). Empty before its first launch.
+	CodexHome string `json:"codexHome,omitempty"`
 	// CodexLaunchedAt is when a Codex session whose rollout isn't found yet
 	// was launched: the rollout it begins is no older.
 	CodexLaunchedAt string `json:"codexLaunchedAt,omitempty"`
@@ -311,7 +319,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		facts.Agent = prior.Agent
 	}
 	facts.CodexSessionID, facts.CodexRollout = prior.CodexSessionID, prior.CodexRollout
-	facts.CodexLaunchedAt, facts.Auth = prior.CodexLaunchedAt, prior.Auth
+	facts.CodexLaunchedAt, facts.Auth, facts.CodexHome = prior.CodexLaunchedAt, prior.Auth, prior.CodexHome
 	// A repeated Create (after an agent restart) never switches the model:
 	// that is SetModel's, which relaunches the session to match. A session on a
 	// gateway keeps it, key file and all — dropping it here would run the

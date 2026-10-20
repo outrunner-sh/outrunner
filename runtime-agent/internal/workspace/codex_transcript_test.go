@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"strings"
 	"testing"
 	"time"
@@ -394,5 +395,54 @@ func TestATailKeepsWhatItCouldNotWriteAndWritesItInOrder(t *testing.T) {
 	got, _ := os.ReadFile(conversationPath(s.Root, id))
 	if uuids := logUUIDs(t, got); !slices.Equal(uuids, translatedUUIDs(t, data)) {
 		t.Errorf("uuids = %q\nwant every record once, in order: %q", uuids, translatedUUIDs(t, data))
+	}
+}
+
+func TestARunningCodexIsLookedForInTheHomeItLaunchedIn(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.setFacts("ws-home", workspaceFacts{Agent: AgentCodex, Auth: AuthOpenAIAPIKey, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	if err := s.prepareRollout("ws-home"); err != nil { // its launch, in a home of its own
+		t.Fatal(err)
+	}
+	own := s.codexHome("ws-home")
+	// Its key is taken away while it runs: that applies at its next launch,
+	// and until then its Codex still writes in its own home.
+	s.updateFacts("ws-home", func(f *workspaceFacts) { f.Auth = "" })
+	if got := s.codexHomeFor("ws-home"); got != own {
+		t.Fatalf("codexHomeFor = %q, want the home it launched in, %q", got, own)
+	}
+	if got := s.launchCodexHome("ws-home"); got == own {
+		t.Errorf("the next launch would still use its own home %q", got)
+	}
+	if err := s.prepareRollout("ws-home"); err != nil { // relaunched
+		t.Fatal(err)
+	}
+	if got := s.codexHomeFor("ws-home"); got == own {
+		t.Errorf("codexHomeFor after the relaunch = %q, still its old home", got)
+	}
+}
+
+func TestTwoSessionsInOneFolderNeverClaimTheSameRollout(t *testing.T) {
+	s, id, link, sessions := localCodexSession(t)
+	resolved, _ := filepath.EvalSymlinks(link)
+	// A second session in the same folder, launched at the same time.
+	f, _ := s.getFacts(id)
+	f.CodexRollout, f.CodexSessionID = "", ""
+	s.setFacts("ws-twin", f)
+	now := time.Now()
+	writeRollout(t, sessions, now, "rollout-2026-10-20T10-00-00-a.jsonl", fixtureRollout(t, resolved), now)
+	writeRollout(t, sessions, now, "rollout-2026-10-20T10-00-01-b.jsonl", beganAt(fixtureRollout(t, resolved), now.Add(time.Second)), now)
+	var wg sync.WaitGroup
+	got := make([]string, 2)
+	for i, ws := range []string{id, "ws-twin"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got[i] = s.codexRollout(ws)
+		}()
+	}
+	wg.Wait()
+	if got[0] == "" || got[1] == "" || got[0] == got[1] {
+		t.Errorf("rollouts = %q, want one each, never the same", got)
 	}
 }

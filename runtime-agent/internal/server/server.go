@@ -247,6 +247,10 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 			return
 		}
+		if err := s.ws.CheckAuth(req.Auth.Kind); err != nil {
+			writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+			return
+		}
 	}
 	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req)
 	if errors.Is(err, workspace.ErrAuthMismatch) {
@@ -446,6 +450,10 @@ func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
 	err := s.ws.SetAuth(r.Context(), r.PathValue("id"), req.Kind, req.Token)
 	if errors.Is(err, workspace.ErrAuthMismatch) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if errors.Is(err, workspace.ErrAuthUnsupported) {
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
 		return
 	}
 	respond(w, req.Kind, err)
