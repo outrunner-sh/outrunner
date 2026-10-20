@@ -147,8 +147,8 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
 		return
 	}
-	if !workspace.ValidAgent(req.Agent) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("unknown agent %q", req.Agent))
+	if err := s.ws.CheckAgent(req.Agent); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
@@ -238,8 +238,8 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "restore requires a branch and download URLs")
 		return
 	}
-	if !workspace.ValidAgent(req.Agent) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("unknown agent %q", req.Agent))
+	if err := s.ws.CheckAgent(req.Agent); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	if req.Auth != nil {

@@ -24,7 +24,8 @@ func fixtureRollout(t *testing.T, folder string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return bytes.ReplaceAll(data, []byte(`"/work/repo`), []byte(`"`+folder))
+	// Begun now: as a session just launched has it.
+	return beganAt(bytes.ReplaceAll(data, []byte(`"/work/repo`), []byte(`"`+folder)), time.Now())
 }
 
 // translatedUUIDs are the uuids of a rollout translated whole, in order:
@@ -60,7 +61,8 @@ func logUUIDs(t *testing.T, data []byte) []string {
 	return uuids
 }
 
-// writeRollout files a rollout under a sessions folder's date folders.
+// writeRollout files a rollout under a sessions folder's date folders, last
+// written at mod.
 func writeRollout(t *testing.T, sessions string, day time.Time, name string, data []byte, mod time.Time) string {
 	t.Helper()
 	dir := filepath.Join(sessions, day.Format("2006"), day.Format("01"), day.Format("02"))
@@ -75,6 +77,18 @@ func writeRollout(t *testing.T, sessions string, day time.Time, name string, dat
 		t.Fatal(err)
 	}
 	return path
+}
+
+// beganAt sets when a rollout's conversation began, in its session_meta.
+func beganAt(data []byte, at time.Time) []byte {
+	first, rest, _ := bytes.Cut(data, []byte("\n"))
+	var line map[string]any
+	if json.Unmarshal(first, &line) != nil || line["type"] != "session_meta" {
+		return data
+	}
+	line["payload"].(map[string]any)["timestamp"] = at.UTC().Format(time.RFC3339Nano)
+	first, _ = json.Marshal(line)
+	return append(append(first, '\n'), rest...)
 }
 
 // localCodexSession is a Codex session on the user's own Codex login, in a
@@ -107,7 +121,7 @@ func TestARolloutIsFoundByItsFolderAndRemembered(t *testing.T) {
 	resolved, _ := filepath.EvalSymlinks(link)
 	now := time.Now()
 	// Begun before this session launched, in the same folder: not its.
-	writeRollout(t, sessions, now, "rollout-2026-10-20T08-00-00-old.jsonl", fixtureRollout(t, resolved), now.Add(-time.Hour))
+	writeRollout(t, sessions, now, "rollout-2026-10-20T08-00-00-old.jsonl", beganAt(fixtureRollout(t, resolved), now.Add(-time.Hour)), now.Add(-time.Hour))
 	// Another folder's.
 	writeRollout(t, sessions, now, "rollout-2026-10-20T09-00-00-elsewhere.jsonl", fixtureRollout(t, "/somewhere/else"), now)
 	// Claimed by another session (in the same folder).
@@ -334,5 +348,51 @@ func TestARunningCodexSessionsConversationIsStreamed(t *testing.T) {
 	s.forgetWorkspace(id)
 	if _, err := os.Stat(conversationPath(s.Root, id)); !os.IsNotExist(err) {
 		t.Errorf("a forgotten Codex session's translation remains: %v", err)
+	}
+}
+
+func TestARolloutIsTheOneBegunSinceLaunchNotOneWrittenSince(t *testing.T) {
+	s, id, link, sessions := localCodexSession(t)
+	resolved, _ := filepath.EvalSymlinks(link)
+	now := time.Now()
+	// A Codex the user already had running in this folder: begun an hour ago,
+	// written to just now.
+	writeRollout(t, sessions, now, "rollout-2026-10-20T08-00-00-users.jsonl", beganAt(fixtureRollout(t, resolved), now.Add(-time.Hour)), now)
+	if got := s.codexRollout(id); got != "" {
+		t.Fatalf("took %q, a conversation begun before the session launched", got)
+	}
+	own := writeRollout(t, sessions, now, "rollout-2026-10-20T10-00-00-own.jsonl", fixtureRollout(t, resolved), now)
+	if got := s.codexRollout(id); got != own {
+		t.Fatalf("codexRollout = %q, want %q", got, own)
+	}
+}
+
+func TestATailKeepsWhatItCouldNotWriteAndWritesItInOrder(t *testing.T) {
+	s, id, link, sessions := localCodexSession(t)
+	resolved, _ := filepath.EvalSymlinks(link)
+	data := fixtureRollout(t, resolved)
+	half := bytes.LastIndexByte(data[:len(data)/2], '\n') + 1
+	path := writeRollout(t, sessions, time.Now(), "rollout-full-disk.jsonl", data[:half], time.Now())
+	// The log can't be written: its folder is taken by a file.
+	blocked := filepath.Dir(conversationPath(s.Root, id))
+	if err := os.WriteFile(blocked, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tail := &codexTail{s: s, workspaceID: id}
+	drain(tail)
+	if len(tail.pending) == 0 {
+		t.Fatal("nothing kept of what couldn't be written")
+	}
+	// The rest arrives, and the log can be written again.
+	file, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	_, _ = file.Write(data[half:])
+	file.Close()
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	drain(tail)
+	got, _ := os.ReadFile(conversationPath(s.Root, id))
+	if uuids := logUUIDs(t, got); !slices.Equal(uuids, translatedUUIDs(t, data)) {
+		t.Errorf("uuids = %q\nwant every record once, in order: %q", uuids, translatedUUIDs(t, data))
 	}
 }

@@ -255,3 +255,30 @@ func TestARepeatedCreateNeverChangesTheAgent(t *testing.T) {
 		t.Error("ValidAgent accepts the wrong names")
 	}
 }
+
+func TestTheJcodeEngineNeitherOffersNorTakesCodex(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.lookPath = func(string) (string, error) { return "/usr/local/bin/codex", nil }
+	if err := s.CheckAgent(AgentCodex); err != nil {
+		t.Fatalf("CheckAgent(codex) on the tmux engine = %v", err)
+	}
+	if !slices.Contains(s.Agents(), AgentCodex) {
+		t.Fatalf("Agents = %q, want codex offered where it's installed", s.Agents())
+	}
+	// The jcode engine runs its own sessions: a Codex one would run jcode.
+	s.jcode = &jcodeEngine{}
+	if slices.Contains(s.Agents(), AgentCodex) {
+		t.Errorf("Agents on jcode = %q, want no codex", s.Agents())
+	}
+	if err := s.CheckAgent(AgentCodex); !errors.Is(err, ErrAgentUnsupported) {
+		t.Errorf("CheckAgent(codex) on jcode = %v, want ErrAgentUnsupported", err)
+	}
+	for _, name := range []string{"", AgentClaude} {
+		if err := s.CheckAgent(name); err != nil {
+			t.Errorf("CheckAgent(%q) on jcode = %v", name, err)
+		}
+	}
+	if err := s.CheckAgent("gemini"); err == nil {
+		t.Error("an unknown agent was taken")
+	}
+}
