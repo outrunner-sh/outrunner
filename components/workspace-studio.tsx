@@ -4,8 +4,10 @@ import { MessageSquarePlus, PanelRight, PanelRightClose, TerminalSquare } from "
 import { useState } from "react";
 
 import { SessionComposer } from "@/components/session-composer";
+import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { WorkspaceSession } from "@/components/workspace-session";
+import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
@@ -17,12 +19,15 @@ import { cn } from "@/lib/utils";
  *  to the layout (app/(app)/layout.tsx). */
 export function WorkspaceStudio({
   workspace,
+  projectName,
   local,
   pullRequest,
   initialPrompt,
   initialAttachmentIds,
 }: {
   workspace: Workspace;
+  /** The repository's name, shown while a new cloud session's box is set up. */
+  projectName?: string;
   /** Set for a local session, which runs on this Mac and is driven through the
    *  Outrunner app rather than the server. */
   local?: LocalSession;
@@ -50,9 +55,10 @@ export function WorkspaceStudio({
     }
   };
   const isLocal = local !== undefined;
+  const setup = useWorkspaceSetup(workspace, !isLocal);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
-  const offline = offlineCopy({ workspace, isReady });
+  const offline = offlineCopy({ workspace, isReady, stalled: setup === "stalled" });
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
@@ -100,6 +106,21 @@ export function WorkspaceStudio({
               initialPrompt={initialPrompt}
               initialAttachmentIds={initialAttachmentIds}
             />
+          ) : setup === "running" ? (
+            <div className="studio-offline">
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <WorkspaceCreating
+                  projectName={projectName ?? workspaceLabel(workspace)}
+                  branch={workspace.baseBranch}
+                  startedAt={workspace.createdAt}
+                />
+              </div>
+              <SessionComposer
+                onSend={() => {}}
+                canSend={false}
+                disabledPlaceholder="Claude starts here, with your first message, once the session is ready"
+              />
+            </div>
           ) : (
             <div className="studio-offline">
               <div className="studio-empty-chat">
@@ -136,10 +157,20 @@ export function WorkspaceStudio({
 function offlineCopy({
   workspace,
   isReady,
+  stalled,
 }: {
   workspace: Workspace;
   isReady: boolean;
+  /** Set up for so long it never will (lib/session/provisioning.ts). */
+  stalled: boolean;
 }): { title: string; detail: string; placeholder: string } {
+  if (stalled) {
+    return {
+      title: "This workspace didn't start",
+      detail: "Its setup stopped before it finished. Delete it and start a new session to try again.",
+      placeholder: "Start a new session to try again",
+    };
+  }
   if (workspace.status === "failed") {
     return {
       title: "This workspace didn't start",

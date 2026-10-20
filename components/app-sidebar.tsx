@@ -84,8 +84,9 @@ export function AppSidebar({
   }, [pathname, refreshLocal]);
 
   const groups = useMemo(
-    () => buildSidebarGroups(projects, workspaces, local.sessions),
-    [projects, workspaces, local.sessions],
+    // `now` too: a setup that stalls becomes deletable as the clock passes it.
+    () => buildSidebarGroups(projects, workspaces, local.sessions, { now }),
+    [projects, workspaces, local.sessions, now],
   );
   const shown = filterSidebarGroups(groups, query);
 

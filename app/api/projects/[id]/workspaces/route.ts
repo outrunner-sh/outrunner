@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
-import { getOwner } from "@/lib/auth/owner";
+import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import {
   getSandboxSettings,
@@ -17,7 +17,7 @@ import {
   getProject,
   getRuntimeComputerByProject,
   markRuntimeComputerStoppedIfReady,
-  updateWorkspace,
+  transitionWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
@@ -27,7 +27,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
-import { defaultModel, requestedModel } from "@/lib/runtime/session-models";
+import { defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
 import {
   boxSizeOn,
   computerMadeBy,
@@ -38,16 +38,18 @@ import {
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
-import type { ProvisionPhase, RuntimeProvider } from "@/lib/runtime/types";
+import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
+import { SETTING_UP } from "@/lib/session/provisioning";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { providerSettingsHref } from "@/lib/settings-links";
 
 export const dynamic = "force-dynamic";
 
-// Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror.
-// maxDuration caps the per-request wall-clock on serverless hosts (a no-op on a
-// long-running server like Railway); 60s covers provisioning with headroom.
+// Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror, in
+// after() once the response has gone. maxDuration caps the per-request
+// wall-clock, after() included, on serverless hosts (a no-op on a long-running
+// server like Railway); 60s covers provisioning with headroom.
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -188,12 +190,70 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  // The session opens now, on its setup progress, and its box is set up after
+  // this response. A request held open for the whole setup tied the session to
+  // the page that asked: leaving it lost the session's prompt and redirect, and
+  // every other navigation waited on it.
+  after(() =>
+    provisionWorkspace({
+      workspace,
+      project,
+      owner,
+      provider,
+      keys,
+      sandboxSettings,
+      githubToken,
+      sessionEnv,
+      hasClaude,
+      menu,
+      chosenModel,
+    }),
+  );
+  return NextResponse.json({ workspace: { id: workspace.id } }, { status: 202 });
+}
+
+/**
+ * Set up a new session's box and start Claude in it, then mark the session
+ * ready, or failed with why. It runs after the create request has answered, so
+ * it never throws: the session's row is all that hears how it went. Each
+ * outcome lands only on a session still setting up, so one deleted meanwhile
+ * (a stalled setup may be) stays deleted.
+ */
+async function provisionWorkspace({
+  workspace,
+  project,
+  owner,
+  provider,
+  keys,
+  sandboxSettings,
+  githubToken,
+  sessionEnv,
+  hasClaude,
+  menu,
+  chosenModel,
+}: {
+  workspace: Workspace;
+  project: Project;
+  owner: Owner;
+  provider: RuntimeProvider;
+  keys: ReturnType<typeof ownSandboxKeys>;
+  sandboxSettings: SandboxSettings;
+  githubToken: string | undefined;
+  sessionEnv: Record<string, string>;
+  hasClaude: boolean;
+  menu: Awaited<ReturnType<typeof modelMenu>>;
+  /** Checked by the request: an offered model, or none for the default. */
+  chosenModel: SessionModel | undefined;
+}): Promise<void> {
+  const settle = async (patch: Parameters<typeof transitionWorkspace>[0]["patch"]) => {
+    const moved = await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch });
+    if (!moved) console.warn(`Workspace ${workspace.id} left setup before it finished (${patch.status})`);
+    return moved !== null;
+  };
+  // Phases only: even the last stays "provisioning", so the ready below, with
+  // the box's details, still finds the session setting up.
   const setPhase = async (phase: ProvisionPhase) => {
-    await updateWorkspace(workspace.id, {
-      status: phase === "claude_ready" ? "ready" : "provisioning",
-      phase,
-      touchActive: phase === "claude_ready",
-    });
+    await settle({ status: "provisioning", phase });
   };
 
   try {
@@ -270,7 +330,7 @@ export async function POST(request: Request, context: RouteContext) {
       });
       await agent.startWorkspace(identity);
 
-      await updateWorkspace(workspace.id, {
+      const ready = await settle({
         status: "ready",
         phase: "claude_ready",
         computerId: computer.id,
@@ -280,7 +340,14 @@ export async function POST(request: Request, context: RouteContext) {
         errorMessage: null,
         touchActive: true,
       });
-      return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
+      // Deleted while it set up: take down the worktree and Claude it no
+      // longer has, as its delete would have.
+      if (!ready) {
+        await agent.destroyWorkspace(identity).catch((error: unknown) =>
+          console.warn(`Workspace ${workspace.id} teardown after delete failed`, error),
+        );
+      }
+      return;
     }
 
     const result = await provider.createWorkspace({
@@ -292,7 +359,7 @@ export async function POST(request: Request, context: RouteContext) {
       onPhase: setPhase,
     });
 
-    await updateWorkspace(workspace.id, {
+    await settle({
       status: "ready",
       phase: "claude_ready",
       sandboxId: result.sandboxId,
@@ -303,22 +370,15 @@ export async function POST(request: Request, context: RouteContext) {
         : null,
       touchActive: true,
     });
-    return NextResponse.json({ workspace: { id: workspace.id } }, { status: 201 });
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
-    const noModel = error instanceof NoStartingModelError;
-    try {
-      await updateWorkspace(workspace.id, {
-        status: "failed",
-        errorMessage: noModel ? error.message : "Provisioning failed. Check Outrunner's setup and try again.",
-      });
-    } catch (updateError) {
-      console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
-    }
-    if (noModel) return needsClaude(error.message);
-    return NextResponse.json(
-      { error: "Could not create the workspace. Check Outrunner's setup and try again." },
-      { status: 500 },
+    // The session page shows this: say what to do where the user can fix it.
+    const errorMessage =
+      error instanceof NoStartingModelError
+        ? error.message
+        : "Provisioning failed. Check Outrunner's setup and try again.";
+    await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
+      console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );
   }
 }
