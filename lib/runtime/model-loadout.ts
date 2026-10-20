@@ -84,11 +84,24 @@ export function toggleEntry(loadout: ModelLoadout, entry: LoadoutEntry): ModelLo
   return { models: [...loadout.models, entry], default: loadout.default ?? entry };
 }
 
-/** `entry` moved one place toward the start (`-1`) or the end (`1`). */
-export function moveEntry(loadout: ModelLoadout, entry: LoadoutEntry, step: -1 | 1): ModelLoadout {
+/**
+ * `entry` moved past its neighbour toward the start (`-1`) or the end (`1`):
+ * the nearest one `visible` (those the picker shows now) where given, so one
+ * not offered now (its key removed) never takes a move.
+ */
+export function moveEntry(
+  loadout: ModelLoadout,
+  entry: LoadoutEntry,
+  step: -1 | 1,
+  visible?: LoadoutEntry[],
+): ModelLoadout {
   const from = loadout.models.findIndex((e) => sameEntry(e, entry));
-  const to = from + step;
-  if (from < 0 || to < 0 || to >= loadout.models.length) return loadout;
+  if (from < 0) return loadout;
+  let to = from + step;
+  while (to >= 0 && to < loadout.models.length && visible && !visible.some((v) => sameEntry(v, loadout.models[to]))) {
+    to += step;
+  }
+  if (to < 0 || to >= loadout.models.length) return loadout;
   const models = [...loadout.models];
   [models[from], models[to]] = [models[to], models[from]];
   return { ...loadout, models };
