@@ -282,3 +282,16 @@ func TestTheJcodeEngineNeitherOffersNorTakesCodex(t *testing.T) {
 		t.Error("an unknown agent was taken")
 	}
 }
+
+func TestTheJcodeEngineTakesNoSessionCredential(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.setFacts("ws-j", workspaceFacts{Agent: AgentClaude})
+	s.jcode = &jcodeEngine{}
+	err := s.SetAuth(context.Background(), "ws-j", AuthAnthropicAPIKey, "sk-ant-api03-"+strings.Repeat("a", 30))
+	if !errors.Is(err, ErrAuthUnsupported) {
+		t.Fatalf("SetAuth on jcode = %v, want ErrAuthUnsupported", err)
+	}
+	if err := s.SetAuth(context.Background(), "ws-j", AuthNone, ""); err != nil {
+		t.Errorf("taking a credential away on jcode = %v", err)
+	}
+}
