@@ -31,6 +31,9 @@ export type SessionAttachment = {
   urls: SessionUrls | null;
   status: SessionAttachmentStatus;
   error: string | null;
+  /** What the server said went wrong, when it names it: "box-restore-failed"
+   *  (the box didn't come back; its disk is kept) or "box-gone" (it can't). */
+  errorCode: string | null;
   /** Increments every time `urls` changes (new fetch succeeded). */
   attachId: number;
   /** Fetch fresh URLs. Idempotent while a fetch is in flight. */
@@ -74,7 +77,7 @@ async function localSessionUrls(target: LocalTarget, agent: AgentId): Promise<Se
 export function useSessionAttachment(workspaceId: string, local = false, agent: AgentId = "claude"): SessionAttachment {
   const [urls, setUrls] = useState<SessionUrls | null>(null);
   const [status, setStatus] = useState<SessionAttachmentStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; code: string | null } | null>(null);
   const [attachId, setAttachId] = useState(0);
 
   const inflight = useRef<AbortController | null>(null);
@@ -107,9 +110,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         });
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as
-            | { error?: string }
+            | { error?: string; code?: string }
             | null;
-          throw new Error(body?.error ?? `Session attach failed (${res.status})`);
+          throw new AttachError(body?.error ?? "Couldn't reach this session's box.", body?.code ?? null);
         }
         const raw = (await res.json()) as unknown;
         const parsed = SessionUrls.safeParse(raw);
@@ -122,7 +125,10 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
       } catch (err) {
         if (controller.signal.aborted) return;
         setStatus("error");
-        setError(err instanceof Error ? err.message : String(err));
+        setError({
+          message: err instanceof Error ? err.message : String(err),
+          code: err instanceof AttachError ? err.code : null,
+        });
       } finally {
         inflight.current = null;
       }
@@ -150,5 +156,22 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     };
   }, [refresh]);
 
-  return { urls, status, error, attachId, refresh, reconnect };
+  return {
+    urls,
+    status,
+    error: error?.message ?? null,
+    errorCode: error?.code ?? null,
+    attachId,
+    refresh,
+    reconnect,
+  };
+}
+
+class AttachError extends Error {
+  readonly code: string | null;
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = "AttachError";
+    this.code = code;
+  }
 }

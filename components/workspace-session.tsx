@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 
 export function WorkspaceSession({
   workspaceId,
+  projectId,
   agent = "claude",
   local = false,
   showTerminal,
@@ -45,6 +46,8 @@ export function WorkspaceSession({
   initialAttachmentIds,
 }: {
   workspaceId: string;
+  /** Its repository, so a session whose box is gone can continue in a new one there. */
+  projectId?: string;
   /** The coding agent the session runs: its model menu offers only models
    *  that agent runs. */
   agent?: AgentId;
@@ -324,10 +327,13 @@ export function WorkspaceSession({
         />
       )}
       {connectionError && (
-        <div className="studio-session-error" role="alert">
-          <span>{connectionError}</span>
-          <button type="button" onClick={refresh}>Reconnect</button>
-        </div>
+        <ConnectionNotice
+          // The server's sentence about the box; a stream error is internal.
+          message={attachment.status === "error" ? connectionError : null}
+          code={attachment.status === "error" ? attachment.errorCode : null}
+          projectId={projectId}
+          onRetry={refresh}
+        />
       )}
 
       <section className="studio-convo-panel" aria-label="Claude conversation">
@@ -395,6 +401,50 @@ export function WorkspaceSession({
         onDismissSendError={() => setSendError(null)}
       />
     </div>
+  );
+}
+
+/** Why the live session can't be shown, by what the server said of its box. */
+function ConnectionNotice({
+  message,
+  code,
+  projectId,
+  onRetry,
+}: {
+  message: string | null;
+  code: string | null;
+  projectId?: string;
+  onRetry: () => void;
+}) {
+  if (code === "box-gone") {
+    return (
+      <Notice
+        tone="warning"
+        title="This session's box ended"
+        detail="It couldn't be restored, so its uncommitted files are gone. Anything pushed to GitHub is kept."
+        actions={[
+          { label: "Continue in a new session", primary: true, href: projectId ? `/new?project=${projectId}` : "/new" },
+        ]}
+      />
+    );
+  }
+  if (code === "box-restore-failed") {
+    return (
+      <Notice
+        tone="warning"
+        title="Couldn't restart this session's box"
+        detail="Its files are kept on the box's disk. This is usually brief."
+        actions={[{ label: "Try again", icon: <RotateCw />, primary: true, onClick: onRetry }]}
+      />
+    );
+  }
+  return (
+    <Notice
+      tone="warning"
+      title="Can't show this session live"
+      detail={message ? `It may still be running. ${message}` : "It may still be running on its box."}
+      actions={[{ label: "Retry", icon: <RotateCw />, primary: true, onClick: onRetry }]}
+    />
   );
 }
 

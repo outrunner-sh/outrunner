@@ -99,6 +99,7 @@ export function WorkspaceStudio({
           {hasLiveSession ? (
             <WorkspaceSession
               workspaceId={workspace.id}
+              projectId={isLocal ? undefined : workspace.projectId}
               agent={workspace.agent}
               local={isLocal}
               showTerminal={showTerminal}

@@ -77,7 +77,7 @@ export async function POST(request: Request, context: RouteContext) {
     } catch (error) {
       console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
       return NextResponse.json(
-        { error: "Could not restart this session's sandbox. Try again." },
+        { error: "Couldn't restart this session's box. Try again.", code: "box-restore-failed" },
         { status: 503 },
       );
     }
@@ -90,7 +90,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
   if (computer.status !== "ready") {
     return NextResponse.json(
-      { error: `Runtime Computer is ${computer.status}; try again shortly.` },
+      { error: `Its box is ${computer.status}, so it can't be shown yet.` },
       { status: 409 },
     );
   }
@@ -106,7 +106,7 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Session attach: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(
-      { error: "Could not reach the Runtime Computer. Try again." },
+      { error: "Outrunner couldn't reach its box." },
       { status: 503 },
     );
   }
@@ -133,7 +133,8 @@ export async function POST(request: Request, context: RouteContext) {
         return NextResponse.json(
           {
             error:
-              "This session's sandbox ended and couldn't be restored, so its files are gone. Start a new session.",
+              "This session's box ended and couldn't be restored, so its uncommitted files are gone. Start a new session.",
+            code: "box-gone",
           },
           { status: 410 },
         );
