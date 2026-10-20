@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useClaudeLocalLogin, useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
+import type { AgentId } from "@/lib/agents/registry";
 import {
   checkLocalFolder,
   cloneLocalRepository,
@@ -47,7 +48,7 @@ function savedLocation(): SessionLocation {
  * last local session used (re-checked, since it may have moved), and the one
  * reason, if any, a local session cannot start yet.
  */
-export function useSessionLocation() {
+export function useSessionLocation(agent: AgentId = "claude") {
   const { runtime, recheck } = useLocalRuntime();
   const claudeLogin = useClaudeLocalLogin(recheck);
   // The last choice sticks. It only takes effect where local is possible, so
@@ -173,7 +174,7 @@ export function useSessionLocation() {
       : remembered
         ? { state: "checking" }
         : { state: "none" };
-  const blocker = location === "local" ? localBlocker(runtime, folder, outrunnerModels) : null;
+  const blocker = location === "local" ? localBlocker(runtime, folder, outrunnerModels, agent) : null;
 
   return {
     location,
@@ -186,7 +187,11 @@ export function useSessionLocation() {
     blocker,
     /** The blocker is Claude Code needing a login, which the page can start. */
     needsClaudeLogin:
-      location === "local" && runtime.state === "ready" && needsClaudeLogin(runtime.status) && !onOutrunnerModel,
+      agent === "claude" &&
+      location === "local" &&
+      runtime.state === "ready" &&
+      needsClaudeLogin(runtime.status) &&
+      !onOutrunnerModel,
     /** Claude Code isn't logged in here, so a new session runs on Outrunner's
      *  model; logging in (which the page can start) switches back to Claude. */
     outrunnerModel: onOutrunnerModel,
@@ -225,16 +230,24 @@ function saveLocation(location: SessionLocation): void {
   }
 }
 
-function localBlocker(runtime: LocalRuntime, folder: FolderChoice, outrunnerModels: boolean): string | null {
+/** Why a local session can't start yet. Claude Code's install and login
+ *  matter only for a session that runs it: Codex's are checked as a Codex
+ *  session is made (lib/desktop/local-agent-auth.ts), by how it signs in. */
+export function localBlocker(
+  runtime: LocalRuntime,
+  folder: FolderChoice,
+  outrunnerModels: boolean,
+  agent: AgentId,
+): string | null {
   if (runtime.state === "error") return runtime.message;
   if (runtime.state !== "ready") return "Local sessions run in the Outrunner Mac app.";
-  const install = toolsToInstall(runtime.status);
+  const install = toolsToInstall(runtime.status).filter((tool) => agent === "claude" || tool !== "Claude Code");
   if (install.length > 0) {
     const tmux = install.includes("tmux") ? " (brew install tmux)" : "";
     return `Install ${install.join(", ")}${tmux} to run sessions on this Mac.`;
   }
-  if (!runtime.status.claude) return claudeSetupText(runtime.status.claudeSetup);
-  if (needsClaudeLogin(runtime.status) && !runsOnOutrunnerModel(runtime.status, outrunnerModels)) {
+  if (agent === "claude" && !runtime.status.claude) return claudeSetupText(runtime.status.claudeSetup);
+  if (agent === "claude" && needsClaudeLogin(runtime.status) && !runsOnOutrunnerModel(runtime.status, outrunnerModels)) {
     return "Log in to Claude Code to run sessions on this Mac.";
   }
   switch (folder.state) {

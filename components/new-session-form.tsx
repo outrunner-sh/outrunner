@@ -11,7 +11,7 @@ import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/comp
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
-import { defaultModel, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
+import { agentOf, defaultModel, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
@@ -38,7 +38,10 @@ export function NewSessionForm({
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal } =
     useCreateSession(listed, initialProjectId);
-  const where = useSessionLocation();
+  // The model picked in the composer; its agent decides what this Mac needs
+  // for a local session (Claude Code, or Codex).
+  const [picked, setPicked] = useState<SessionModel | null>(null);
+  const where = useSessionLocation(agentOf(picked?.provider ?? "claude"));
   const local = where.location === "local";
   // No repositories only blocks the cloud; a local session needs none.
   const noRepositories = !local && projects.length === 0;
@@ -62,7 +65,6 @@ export function NewSessionForm({
       live = false;
     };
   }, []);
-  const [picked, setPicked] = useState<SessionModel | null>(null);
   const groups = menu
     ? modelGroups(menu).filter(
         // A Mac whose Claude Code isn't logged in has no Claude account to run.
