@@ -16,6 +16,7 @@ import {
 import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { gitFailureOutput } from "@/lib/runtime/git";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
 export const dynamic = "force-dynamic";
@@ -170,7 +171,11 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Workspace ${id} commit/push failed`, error);
     return NextResponse.json(
-      { error: "Could not commit and push this workspace. Check Outrunner's setup and try again." },
+      {
+        error: "Couldn't commit and push this session's changes.",
+        // git's own words (a rejected push says why), for Details.
+        detail: gitFailureOutput(error, [githubToken]),
+      },
       { status: 502 },
     );
   }

@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { Textarea } from "@/components/ui/textarea";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
 
@@ -31,7 +32,8 @@ export function WorkspacePublishPanel({
   // the generated branch name does not.
   const [title, setTitle] = useState(defaultTitle ?? branch);
   const [body, setBody] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
+  // Why it didn't publish, and git's own words when it was git that refused.
+  const [message, setMessage] = useState<{ text: string; detail: string | null } | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [created, setCreated] = useState<WorkspacePullRequest | null>(pullRequest);
 
@@ -68,15 +70,16 @@ export function WorkspacePublishPanel({
         const result = (await response.json().catch(() => ({}))) as {
           pullRequest?: WorkspacePullRequest;
           error?: string;
+          detail?: string | null;
         };
         if (!response.ok || !result.pullRequest) {
-          setMessage(result.error ?? "Could not publish this workspace. Please try again.");
+          setMessage({ text: result.error ?? "Couldn't publish this session.", detail: result.detail ?? null });
           return;
         }
         setCreated(result.pullRequest);
         router.refresh();
       } catch {
-        setMessage("Could not reach Outrunner. Please try again.");
+        setMessage({ text: "Couldn't reach Outrunner. Check your connection.", detail: null });
       } finally {
         setPublishing(false);
       }
@@ -127,12 +130,8 @@ export function WorkspacePublishPanel({
           icon={<GitPullRequest />}
           disabled={!active || title.trim().length === 0}
         />
-        {message && (
-          <p aria-live="polite" className="text-destructive text-xs">
-            {message}
-          </p>
-        )}
       </div>
+      {message && <InlineMessage details={message.detail}>{message.text}</InlineMessage>}
       {!active && (
         <p className="text-muted-foreground text-xs">
           Publishing is available once the workspace is ready.
