@@ -6,6 +6,7 @@ import Link from "next/link";
 import { RouteLoading } from "@/components/route-states";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
+import { isAgentId } from "@/lib/agents/registry";
 import { LOCAL_PROJECT, type LocalSession } from "@/lib/desktop/local-runtime";
 import type { Workspace } from "@/lib/runtime/types";
 
@@ -71,6 +72,7 @@ function asWorkspace(session: LocalSession): Workspace {
     // Not a row of anyone's: it lives on this Mac, outside the database.
     ownerId: "",
     provider: "local",
+    agent: isAgentId(session.agent) ? session.agent : "claude",
     // A local session is always openable: attaching starts (or continues) it.
     status: "ready",
     phase: "claude_ready",

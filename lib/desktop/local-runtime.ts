@@ -115,6 +115,9 @@ export type LocalSession = {
    *  createdAt. Absent from agents bundled before it existed. */
   lastActiveAt?: string;
   running: boolean;
+  /** The coding agent it runs; absent from an agent from before Codex, and
+   *  for any session that runs Claude Code. */
+  agent?: AgentId;
 };
 
 export function tauriCore(): TauriCore | null {

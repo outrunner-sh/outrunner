@@ -6,6 +6,8 @@
  * production, a local directory in development).
  */
 
+import type { AgentId } from "@/lib/agents/registry";
+
 // ---------------------------------------------------------------------------
 // Domain model (mirrors the `projects`, `workspaces`, `jobs` tables)
 // ---------------------------------------------------------------------------
@@ -104,6 +106,9 @@ export type Workspace = {
   tmuxSession: string | null;
   /** Agent-side workspace identifier, as known to the runtime-agent. */
   agentWorkspaceId: string | null;
+  /** The coding agent the session runs, for good: its model can change only
+   *  to another this agent runs. */
+  agent: AgentId;
   lastActiveAt: string | null;
   errorMessage: string | null;
   createdAt: string;
