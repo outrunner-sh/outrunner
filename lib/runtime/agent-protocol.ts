@@ -222,6 +222,8 @@ export const ErrorCode = z.enum([
   // A model switch: an unknown session, or one that can't switch right now.
   "NOT_FOUND",
   "CONFLICT",
+  // A session credential on an engine that runs sessions on its own login.
+  "UNSUPPORTED",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
