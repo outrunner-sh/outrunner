@@ -224,15 +224,21 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
   }
 });
 
+test("claudeInstallScript installs the pinned Codex, after the tools", () => {
+  const s = claudeInstallScript();
+  assert.ok(s.includes("sudo npm install -g @openai/codex@"), "installs Codex");
+  assert.ok(s.indexOf("apt-get install") < s.indexOf("npm install"), "tools first");
+});
+
 test("claudeInstallScript skips the install when the box already has the tools", async () => {
   const { execFileSync } = await import("node:child_process");
   const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  // A PATH with tmux and jq present, and a sudo that records being called.
+  // A PATH with tmux, jq and codex present, and a sudo that records being called.
   const bin = mkdtempSync(join(tmpdir(), "install-"));
   const called = join(bin, "sudo-called");
-  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["codex", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   }

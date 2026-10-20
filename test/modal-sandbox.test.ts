@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { InvalidError, NotFoundError, SnapshotCreationError, TimeoutError } from "modal";
 
+import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 import { AGENT_PORT } from "@/lib/runtime/daytona/deploy";
 import { box, MODAL_IMAGE_SETUP, noSnapshot, sandboxParams } from "@/lib/runtime/sandbox/modal";
 
@@ -31,6 +32,8 @@ test("the image has what the agent needs, and the user Claude runs as", () => {
   }
   // Installed by the box user, so Claude Code can update itself.
   assert.match(setup, /su - runtime -c '[^']*install\.sh/);
+  // Codex at the version the agent reads, for every user.
+  assert.ok(setup.includes(`RUN npm install -g ${CODEX_PACKAGE}`), "the image lacks the pinned Codex");
 });
 
 test("only a missing, never-taken or failed snapshot means there's no disk to restore", () => {
