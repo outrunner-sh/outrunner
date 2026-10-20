@@ -31,7 +31,7 @@ export function AgentAuthPanel({
   keys,
   claude,
   initialMethod,
-  onChoices,
+  onChoice,
   onKeys,
   onClaude,
 }: {
@@ -41,7 +41,8 @@ export function AgentAuthPanel({
   claude: ClaudeTokenMeta;
   /** The card a link asked to show, if any. */
   initialMethod?: AuthMethodId;
-  onChoices: (choices: AgentAuthChoices) => void;
+  /** A pick's reply: this agent's pick as the server now has it. */
+  onChoice: (agent: AgentId, method: AuthMethodId | null) => void;
   /** A key card's reply: every key's status, and whose key it changed. */
   onKeys: (keys: ProviderKeys, provider: KeyProviderId) => void;
   onClaude: (meta: ClaudeTokenMeta) => void;
@@ -73,7 +74,9 @@ export function AgentAuthPanel({
       });
       const data = (await res.json().catch(() => null)) as { choices?: AgentAuthChoices; error?: string } | null;
       if (!res.ok || !data?.choices) throw new Error(data?.error ?? "Couldn't save that. Try again.");
-      onChoices(data.choices);
+      // This agent's only: another tab's reply, sent before a pick there
+      // landed, mustn't undo it.
+      onChoice(agent, data.choices[agent]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that.");
     } finally {
