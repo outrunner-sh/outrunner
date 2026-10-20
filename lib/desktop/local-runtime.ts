@@ -1,3 +1,4 @@
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
@@ -55,11 +56,8 @@ export type LocalStatus = {
   claudeSetup?: ClaudeSetup | null;
   /** Each agent CLI a local session can run, on this Mac's own login of it.
    *  Absent from an app built before Codex: read it through `agentCli`. */
-  agents?: Record<AgentCliId, AgentCliStatus>;
+  agents?: Record<AgentId, AgentCliStatus>;
 };
-
-/** An agent CLI a local session can run. */
-export type AgentCliId = "claude" | "codex";
 
 /** One agent CLI on this Mac, as the app reports it. */
 export type AgentCliStatus = {
@@ -74,10 +72,10 @@ export type AgentCliStatus = {
 /** How to install Codex on a Mac; the app has no copy of its own to set up. */
 export const CODEX_INSTALL_COMMAND = "npm i -g @openai/codex";
 
-/** What the page calls each agent CLI, and how to log it in by hand. */
-const AGENT_CLI_TEXT: Record<AgentCliId, { name: string; manualLogin: string }> = {
-  claude: { name: "Claude Code", manualLogin: "Run `claude` in Terminal and type /login." },
-  codex: { name: "Codex", manualLogin: "Run `codex login` in Terminal." },
+/** How to log each agent CLI in by hand. */
+const MANUAL_LOGIN: Record<AgentId, string> = {
+  claude: "Run `claude` in Terminal and type /login.",
+  codex: "Run `codex login` in Terminal.",
 };
 
 /**
@@ -132,7 +130,7 @@ function requireCore(): TauriCore {
 }
 
 /** `agent` names the CLI a login error is about. */
-async function call<T>(cmd: string, args?: Record<string, unknown>, agent: AgentCliId = "claude"): Promise<T> {
+async function call<T>(cmd: string, args?: Record<string, unknown>, agent: AgentId = "claude"): Promise<T> {
   try {
     return (await requireCore().invoke(cmd, args)) as T;
   } catch (error) {
@@ -194,7 +192,7 @@ export function setUpClaudeCode(): Promise<void> {
  * One agent CLI on this Mac. An app built before `agents` reports Claude Code
  * alone, in its own fields, and cannot log Codex in: it has none.
  */
-export function agentCli(status: LocalStatus, agent: AgentCliId): AgentCliStatus {
+export function agentCli(status: LocalStatus, agent: AgentId): AgentCliStatus {
   if (status.agents) return status.agents[agent];
   if (agent === "codex") return { path: null, loggedIn: null, method: null };
   return { path: status.claude, loggedIn: status.claudeLoggedIn ?? null, method: null };
@@ -205,7 +203,7 @@ export function agentCli(status: LocalStatus, agent: AgentCliId): AgentCliStatus
  * `missing` when it isn't installed, `logged-out` on a clear no, else `ready`.
  * A login the app cannot read counts as ready: the CLI asks in the session.
  */
-export function localAgentState(status: LocalStatus, agent: AgentCliId): "missing" | "logged-out" | "ready" {
+export function localAgentState(status: LocalStatus, agent: AgentId): "missing" | "logged-out" | "ready" {
   const cli = agentCli(status, agent);
   if (cli.path === null) return "missing";
   return cli.loggedIn === false ? "logged-out" : "ready";
@@ -414,7 +412,7 @@ const NEEDS_NEWER_APP: Record<string, string> = {
 
 /** Human-readable message for an error the app returned; `agent` is the CLI a
  *  login error is about. */
-export function messageForLocalError(error: unknown, agent: AgentCliId = "claude"): string {
+export function messageForLocalError(error: unknown, agent: AgentId = "claude"): string {
   const raw = error instanceof Error ? error.message : String(error ?? "");
   // Tauri's refusal of a command the app doesn't have.
   const missing = /^(\w+) not allowed\. Command not found$/.exec(raw);
@@ -453,13 +451,13 @@ export function messageForLocalError(error: unknown, agent: AgentCliId = "claude
     case "codex-missing":
       return `Install Codex to run Codex sessions on this Mac: run \`${CODEX_INSTALL_COMMAND}\` (or \`brew install --cask codex\`) in Terminal, then try again.`;
     case "login-cancelled":
-      return `The ${AGENT_CLI_TEXT[agent].name} login was stopped. Try again.`;
+      return `The ${AGENTS[agent].label} login was stopped. Try again.`;
     case "login-timed-out":
       return "No approval came from the browser. Try again.";
     case "login-failed": {
-      const { name, manualLogin } = AGENT_CLI_TEXT[agent];
+      const name = AGENTS[agent].label;
       const said = cliReason(raw.slice("login-failed:".length));
-      return said ? `${name} couldn't log in. It said: ${said}` : `${name} couldn't log in. ${manualLogin}`;
+      return said ? `${name} couldn't log in. It said: ${said}` : `${name} couldn't log in. ${MANUAL_LOGIN[agent]}`;
     }
     case "agent": {
       // The agent's own message, e.g. a worktree that could not be created.
