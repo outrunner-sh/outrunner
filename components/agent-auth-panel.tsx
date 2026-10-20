@@ -85,7 +85,6 @@ export function AgentAuthPanel({
   }
 
   const way = authMethod(agent, shown)!;
-  const keyProvider = way.credential.kind === "provider-key" ? way.credential.provider : null;
 
   return (
     <div className="space-y-6">
@@ -109,13 +108,24 @@ export function AgentAuthPanel({
         ) : null}
       </div>
 
-      {way.credential.kind === "claude-slot" ? (
-        <ClaudeConnection meta={claude} onChange={onClaude} />
-      ) : keyProvider ? (
-        <ApiKeyCard provider={keyProvider} stored={keys[keyProvider]} onChange={(next) => onKeys(next, keyProvider)} />
-      ) : (
-        <LocalAgentConnection agent={agent} chatgpt={shown === "chatgpt"} />
-      )}
+      {/* Every card's details stay mounted, so a sign-in under way (a login
+          the Mac app is running, a code being pasted) keeps its controls
+          through a look at another card. */}
+      {methods.map(({ id, credential }) => (
+        <div key={id} hidden={id !== shown}>
+          {credential.kind === "claude-slot" ? (
+            <ClaudeConnection meta={claude} onChange={onClaude} />
+          ) : credential.kind === "provider-key" ? (
+            <ApiKeyCard
+              provider={credential.provider}
+              stored={keys[credential.provider]}
+              onChange={(next) => onKeys(next, credential.provider)}
+            />
+          ) : (
+            <LocalAgentConnection agent={agent} chatgpt={id === "chatgpt"} />
+          )}
+        </div>
+      ))}
     </div>
   );
 }
