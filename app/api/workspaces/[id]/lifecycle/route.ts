@@ -194,6 +194,9 @@ async function archiveDaytonaWorkspace(
       userId,
       workspace.id,
       archivedAt,
+      // A Codex session's raw rollout too, so a restore resumes Codex itself
+      // (only an agent that runs Codex is asked: an older one refuses it).
+      workspace.agent === "codex" ? ["rollout"] : [],
     );
     const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
 
@@ -268,6 +271,8 @@ async function restoreDaytonaWorkspace(
           { artifact: "bundle", file: manifest.tree.bundle },
           { artifact: "patch", file: manifest.tree.patch },
           { artifact: "conversation", file: manifest.conversation },
+          // A Codex session's raw rollout, when its Snapshot has one.
+          ...(manifest.rollout ? [{ artifact: "rollout" as const, file: manifest.rollout }] : []),
         ] as const
       ).map(async ({ artifact, file }) => ({
         artifact,
