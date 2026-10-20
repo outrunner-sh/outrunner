@@ -33,6 +33,9 @@ func TestCodexPaneReaders(t *testing.T) {
 		{"trust.txt", false, true, false, "Enter"},
 		{"composer.txt", true, false, false, ""},
 		{"ready-trusted.txt", true, false, false, ""},
+		// A Codex home of the session's own, logged in with a key and
+		// trusting the folder in its config.toml: no trust question at all.
+		{"own-home-ready.txt", true, false, false, ""},
 		{"typed.txt", true, false, false, ""},
 		{"run-1.txt", true, false, true, ""},
 		{"run-8.txt", true, false, true, ""}, // reconnecting after a rate limit
