@@ -4,7 +4,7 @@
  */
 
 import { openRouterAcceptsKey } from "@/lib/openrouter/keys";
-import { PROVIDERS, type ProviderId } from "@/lib/providers/registry";
+import { type KeyProviderId, PROVIDERS } from "@/lib/providers/registry";
 
 /** Accepted, perhaps with something the user should know (no credit left);
  *  or refused. A provider that can't be asked throws instead. */
@@ -14,7 +14,7 @@ export type KeyCheckResult = { accepted: true; warning?: string } | { accepted: 
  *  the Save button on "Checking" for good. */
 const TIMEOUT_MS = 10_000;
 
-export async function checkProviderKey(provider: ProviderId, key: string): Promise<KeyCheckResult> {
+export async function checkProviderKey(provider: KeyProviderId, key: string): Promise<KeyCheckResult> {
   // OpenRouter also takes a management key, which can make keys but not run
   // a model: its own check refuses one.
   if (provider === "openrouter") return { accepted: await openRouterAcceptsKey(key) };
@@ -31,6 +31,14 @@ export async function checkProviderKey(provider: ProviderId, key: string): Promi
   // The key is good; the account can't pay for anything yet.
   if (response.status === 402) {
     return { accepted: true, warning: `${label} accepted the key, but its account has no credit left.` };
+  }
+  // Only a key it knows is rate limited: the key is good, the account is busy
+  // or out of quota.
+  if (response.status === 429) {
+    return {
+      accepted: true,
+      warning: `${label} accepted the key, but is limiting its requests: its account may be out of quota.`,
+    };
   }
   // The body is never read into the error: it could echo the key back.
   if (!response.ok) throw new Error(`${label} answered ${response.status} checking a key`);

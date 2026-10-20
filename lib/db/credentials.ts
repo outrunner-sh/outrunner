@@ -15,6 +15,8 @@
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
+import { AGENT_IDS, AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
+import type { AgentAuthStore } from "@/lib/agents/resolve";
 import { dueForRenewal } from "@/lib/billing/allowance-renewal";
 import { entitlingSubscriptions } from "@/lib/billing/billing-store";
 import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
@@ -41,7 +43,13 @@ import {
 import { ensureUserKey } from "@/lib/openrouter/user-key";
 import { moveApiKeyFromClaudeSlot } from "@/lib/providers/claude-slot";
 import { NoProviderKeyError } from "@/lib/providers/errors";
-import { isProviderId, PROVIDER_IDS, type ProviderId, usableProviders } from "@/lib/providers/registry";
+import {
+  isKeyProviderId,
+  KEY_PROVIDER_IDS,
+  type KeyProviderId,
+  type ProviderId,
+  usableProviders,
+} from "@/lib/providers/registry";
 import type { KeyHolder, ModelMenu } from "@/lib/runtime/session-models";
 import { DEFAULT_BOX_SIZE, isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import type { ModalToken } from "@/lib/runtime/sandbox/modal";
@@ -390,7 +398,7 @@ async function forgetSandboxKey(
 function openOrNull(
   ciphertext: string | null | undefined,
   userId: string,
-  which: "github" | "anthropic" | "daytona" | "modal" | ProviderId,
+  which: "github" | "anthropic" | "daytona" | "modal" | KeyProviderId,
 ): string | null {
   if (!ciphertext) return null;
   try {
@@ -406,7 +414,8 @@ function openOrNull(
 
 // ---------------------------------------------------------------------------
 // The user's own keys for model providers (Settings → Providers), one row per
-// provider in user_provider_keys (lib/providers/registry.ts). Saved for
+// provider in user_provider_keys (lib/providers/registry.ts): the gateways,
+// and OpenAI for Codex. Saved for
 // OpenRouter, Outrunner's models run on it, and OpenRouter bills them,
 // instead of on the server's key.
 // ---------------------------------------------------------------------------
@@ -423,8 +432,8 @@ function beforeProviderKeys(error: { code?: string }): boolean {
  * 20261019120000_user_provider_keys.sql is applied, the OpenRouter key is
  * read from where it was before, and there are no others.
  */
-export async function getProviderKeyStatuses(userId: string): Promise<Record<ProviderId, StoredKey>> {
-  const statuses = Object.fromEntries(PROVIDER_IDS.map((id) => [id, NO_KEY])) as Record<ProviderId, StoredKey>;
+export async function getProviderKeyStatuses(userId: string): Promise<Record<KeyProviderId, StoredKey>> {
+  const statuses = Object.fromEntries(KEY_PROVIDER_IDS.map((id) => [id, NO_KEY])) as Record<KeyProviderId, StoredKey>;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_provider_keys")
@@ -436,7 +445,7 @@ export async function getProviderKeyStatuses(userId: string): Promise<Record<Pro
   }
   if (error) throw error;
   for (const row of data) {
-    if (isProviderId(row.provider)) {
+    if (isKeyProviderId(row.provider)) {
       statuses[row.provider] = { connected: true, hint: row.key_hint, updatedAt: row.updated_at };
     }
   }
@@ -444,7 +453,7 @@ export async function getProviderKeyStatuses(userId: string): Promise<Record<Pro
 }
 
 /** The user's key for `provider`, or null when unset or unreadable. */
-export async function getProviderKey(userId: string, provider: ProviderId): Promise<string | null> {
+export async function getProviderKey(userId: string, provider: KeyProviderId): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("user_provider_keys")
@@ -460,7 +469,7 @@ export async function getProviderKey(userId: string, provider: ProviderId): Prom
 }
 
 /** Store the user's key for `provider`; the hint is its last 4 characters. */
-export async function setProviderKey(userId: string, provider: ProviderId, apiKey: string): Promise<void> {
+export async function setProviderKey(userId: string, provider: KeyProviderId, apiKey: string): Promise<void> {
   const key = apiKey.trim();
   if (!key) throw new Error(`${provider} key cannot be empty`);
   const supabase = createSupabaseAdminClient();
@@ -478,7 +487,7 @@ export async function setProviderKey(userId: string, provider: ProviderId, apiKe
 }
 
 /** Forget the user's key for `provider`. */
-export async function clearProviderKey(userId: string, provider: ProviderId): Promise<void> {
+export async function clearProviderKey(userId: string, provider: KeyProviderId): Promise<void> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase.from("user_provider_keys").delete().eq("user_id", userId).eq("provider", provider);
   if (error) throw error;
@@ -573,6 +582,91 @@ export async function settleClaudeSlot(userId: string): Promise<void> {
 export async function getClaudeCredential(userId: string): Promise<string | null> {
   await settleClaudeSlot(userId);
   return (await getAnthropicKey(userId)) ?? (await getProviderKey(userId, "anthropic"));
+}
+
+// ---------------------------------------------------------------------------
+// How each of the user's agents signs in (Settings → Providers), one row per
+// agent in user_agent_auth: the pick only, never a credential.
+// ---------------------------------------------------------------------------
+
+export type AgentAuthChoices = Record<AgentId, AuthMethodId | null>;
+
+/** The way the user picked for each agent; null where they've picked none,
+ *  or picked one this release doesn't know. Before
+ *  20261020120000_user_agent_auth.sql is applied, none. */
+export async function getAgentAuthChoices(userId: string): Promise<AgentAuthChoices> {
+  const choices = Object.fromEntries(AGENT_IDS.map((agent) => [agent, null])) as AgentAuthChoices;
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.from("user_agent_auth").select("agent, method").eq("user_id", userId);
+  if (error && probeStatus(error) === "missing") return choices;
+  if (error) throw error;
+  for (const row of data) {
+    const agent = AGENT_IDS.find((id) => id === row.agent);
+    if (agent && authMethod(agent, row.method)) choices[agent] = row.method as AuthMethodId;
+  }
+  return choices;
+}
+
+/** Pick `method` for `agent`. Callers check it is one of the agent's. */
+export async function setAgentAuthChoice(userId: string, agent: AgentId, method: AuthMethodId): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("user_agent_auth")
+    .upsert({ user_id: userId, agent, method }, { onConflict: "user_id,agent" });
+  if (error) throw error;
+}
+
+/**
+ * The user's agent sign-ins, for lib/agents/resolve.ts. Loading an agent reads
+ * its pick and every credential it could run on at once, sealed; a credential
+ * is opened only when asked for, once.
+ */
+export function agentAuthStore(userId: string): AgentAuthStore {
+  return {
+    async load(agent) {
+      const credentials = AGENTS[agent].methods.map((method) => method.credential);
+      const usesSlot = credentials.some((credential) => credential.kind === "claude-slot");
+      const providers = credentials.flatMap((credential) =>
+        credential.kind === "provider-key" ? [credential.provider] : [],
+      );
+      // An Anthropic API key still in the Claude slot is the provider's.
+      if (usesSlot) await settleClaudeSlot(userId);
+      const supabase = createSupabaseAdminClient();
+      const [choices, slot, keys] = await Promise.all([
+        getAgentAuthChoices(userId),
+        usesSlot
+          ? supabase.from("user_credentials").select("anthropic_key_ciphertext").eq("user_id", userId).maybeSingle()
+          : null,
+        providers.length > 0
+          ? supabase
+              .from("user_provider_keys")
+              .select("provider, key_ciphertext")
+              .eq("user_id", userId)
+              .in("provider", providers)
+          : null,
+      ]);
+      if (slot?.error) throw slot.error;
+      if (keys?.error && !beforeProviderKeys(keys.error)) throw keys.error;
+      const sealed = new Map<string, string | null>();
+      if (slot) sealed.set("claude-slot", slot.data?.anthropic_key_ciphertext ?? null);
+      for (const row of keys?.data ?? []) sealed.set(row.provider, row.key_ciphertext);
+
+      const opened = new Map<string, string | null>();
+      return {
+        choice: choices[agent],
+        open(credential: AuthCredential) {
+          if (credential.kind === "own-login") return null;
+          const which = credential.kind === "claude-slot" ? "claude-slot" : credential.provider;
+          if (!opened.has(which)) {
+            // The slot is logged as "anthropic", as getAnthropicKey does.
+            const label = credential.kind === "claude-slot" ? "anthropic" : credential.provider;
+            opened.set(which, openOrNull(sealed.get(which), userId, label));
+          }
+          return opened.get(which) ?? null;
+        },
+      };
+    },
+  };
 }
 
 /** What the user's model menu offers (lib/runtime/session-models.ts):

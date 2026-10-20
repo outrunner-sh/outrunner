@@ -17,8 +17,8 @@ import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentia
 const noopSubscribe = () => () => {};
 
 /**
- * The Claude tab of Settings → Providers: connect the user's Claude
- * subscription.
+ * Claude Code's Subscription card in Settings → Providers: connect the
+ * user's Claude subscription. The card above says what it is.
  *
  * Desktop-only: one click runs `claude setup-token` natively (logging in via the
  * browser if needed), then stores the minted token server-side. Sandboxes the
@@ -185,10 +185,6 @@ export function ClaudeConnection({
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-muted-foreground">
-        Your Claude Pro or Max subscription. Sessions run on your own account, within your plan&apos;s limits.
-      </p>
-
       <div className="space-y-3">
         <SectionHeader title="Subscription" />
         <ConnectionStatus connected={connected} />

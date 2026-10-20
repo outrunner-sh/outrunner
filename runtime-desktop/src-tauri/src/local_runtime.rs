@@ -47,9 +47,11 @@ const TOKEN_TTL_SECONDS: u64 = 300;
 /// Covers the slowest relayed call: create (a base-branch fetch, capped at 30s
 /// by the agent) and start (Claude's TUI, capped at 15s).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
-/// How long a `claude auth login` may wait for the user to approve in the
+/// How long an agent CLI's login may wait for the user to approve in the
 /// browser before it is stopped.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// How long an agent CLI may take to say whether it is logged in.
+const LOGIN_STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Managed state: the agent process, the open relayed sockets, and the folders
 /// the user picked in this run.
@@ -63,8 +65,12 @@ pub struct LocalRuntime {
     /// `repos_dir`, these are the only ones the page may name.
     picked: Mutex<HashSet<PathBuf>>,
     /// `claude auth login` in progress, with a number for the attempt, so a
-    /// retry, a cancel or quitting the app can stop it.
+    /// retry, a cancel or quitting the app can stop it. Each agent CLI has its
+    /// own ([`LocalRuntime::login_slot`]), so one's login never stops another's.
     login: Mutex<Option<(u32, Child)>>,
+    /// `codex login` in progress, the same way.
+    codex_login: Mutex<Option<(u32, Child)>>,
+    /// Attempt numbers, shared by every agent CLI's logins.
     next_login: AtomicU32,
 }
 
@@ -113,7 +119,9 @@ impl LocalRuntime {
     /// so work carries on and the next launch reattaches.
     pub fn shutdown(&self) {
         self.close_all_sockets();
-        self.stop_claude_login();
+        for cli in AGENT_CLIS {
+            self.stop_login(cli);
+        }
         if let Ok(mut guard) = self.agent.try_lock() {
             if let Some(mut agent) = guard.take() {
                 let _ = agent.child.kill();
@@ -122,10 +130,18 @@ impl LocalRuntime {
         }
     }
 
-    /// Stop a `claude auth login` in progress, if any. It holds a localhost
-    /// port open for the browser's redirect until it ends.
-    fn stop_claude_login(&self) {
-        let mut login = self.login.lock().unwrap_or_else(PoisonError::into_inner);
+    /// Where `cli`'s login in progress is kept.
+    fn login_slot(&self, cli: &AgentCli) -> &Mutex<Option<(u32, Child)>> {
+        match cli.id {
+            AgentCliId::Claude => &self.login,
+            AgentCliId::Codex => &self.codex_login,
+        }
+    }
+
+    /// Stop `cli`'s login in progress, if any. It holds a localhost port open
+    /// for the browser's redirect until it ends.
+    fn stop_login(&self, cli: &AgentCli) {
+        let mut login = self.login_slot(cli).lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((_, mut child)) = login.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -277,28 +293,64 @@ fn exit_within(child: &mut Child, limit: Duration) -> bool {
     }
 }
 
-/// Whether Claude Code on this Mac is logged in, as `claude auth status` says.
-/// None when it cannot tell: a Claude Code too old to have `auth status`, or
-/// one that did not answer in time. The page blocks only on a clear no.
-fn claude_logged_in(claude: &str) -> Option<bool> {
-    let mut child = user_command(claude)
-        .args(["auth", "status", "--json"])
+/// Whether the agent CLI at `path` is logged in, as its status command says.
+/// None when it cannot tell: a CLI too old to have that command, or one that
+/// did not answer in time. The page blocks only on a clear no.
+fn login_status(cli: &AgentCli, path: &Path) -> Option<CliLogin> {
+    let stderr = match cli.status_output {
+        StatusOutput::Stdout => Stdio::null(),
+        StatusOutput::StdoutAndStderr => Stdio::piped(),
+    };
+    let mut child = user_command(path)
+        .args(cli.status_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(stderr)
         .spawn()
         .ok()?;
-    if !exit_within(&mut child, Duration::from_secs(10)) {
+    if !exit_within(&mut child, LOGIN_STATUS_TIMEOUT) {
         return None;
     }
-    let mut out = String::new();
-    child.stdout.take()?.read_to_string(&mut out).ok()?;
-    // It exits 1 when logged out, so read the answer, not the status.
-    parse_logged_in(&out)
+    let mut out = Vec::new();
+    child.stdout.take()?.read_to_end(&mut out).ok()?;
+    if let Some(mut stderr) = child.stderr.take() {
+        out.push(b'\n');
+        stderr.read_to_end(&mut out).ok()?;
+    }
+    // Logged out is an unsuccessful exit, so read the answer, not the status.
+    // Lossily: a stray byte that isn't UTF-8 must not hide the answer.
+    (cli.parse_status)(&String::from_utf8_lossy(&out))
+}
+
+/// Claude Code's `auth status --json`.
+fn parse_claude_status(out: &str) -> Option<CliLogin> {
+    parse_logged_in(out).map(|logged_in| CliLogin { logged_in, method: None })
 }
 
 fn parse_logged_in(out: &str) -> Option<bool> {
     serde_json::from_str::<serde_json::Value>(out).ok()?.get("loggedIn")?.as_bool()
+}
+
+/// Codex's `login status` (0.146), which answers on stderr: "Logged in using
+/// ChatGPT", "Logged in using an API key - sk-proj-***abcde", "Logged in using
+/// access token" and the like, or "Not logged in", sometimes after a warning
+/// line. Anything else ("Error checking login status: …", usage) is None.
+fn parse_codex_status(out: &str) -> Option<CliLogin> {
+    out.lines().map(str::trim).find_map(|line| {
+        if line == "Not logged in" {
+            return Some(CliLogin { logged_in: false, method: None });
+        }
+        let how = line.strip_prefix("Logged in using ")?;
+        let method = if how == "ChatGPT" {
+            Some(LoginMethod::ChatGpt)
+        } else if how == "an API key" || how.starts_with("an API key - ") {
+            Some(LoginMethod::ApiKey)
+        } else {
+            // Logged in some other way (an access token, Bedrock): still in.
+            None
+        };
+        Some(CliLogin { logged_in: true, method })
+    })
 }
 
 fn utf8_locale() -> String {
@@ -489,6 +541,123 @@ fn link_claude(dir: &Path, claude: &Path) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Agent CLIs — the coding agents local sessions run, each on this Mac's own
+// login of it.
+// ---------------------------------------------------------------------------
+
+/// Which agent CLI: names its login slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentCliId {
+    Claude,
+    Codex,
+}
+
+/// How the shell finds the agent CLI sessions run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lookup {
+    /// [`find_claude`]: the first that runs and is new enough, else
+    /// Outrunner's own copy, linked where sessions run it.
+    Claude,
+    /// The first `binary` on [`session_path`], as for git; sessions run that
+    /// one by the same PATH. There is no copy of Outrunner's own to fall back
+    /// on: the page names the install command instead.
+    SessionPath,
+}
+
+/// Where a CLI's status command writes its answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusOutput {
+    /// Only stdout: stderr's warnings would spoil Claude Code's JSON.
+    Stdout,
+    /// Either: Codex 0.146 answers on stderr; a later one may not.
+    StdoutAndStderr,
+}
+
+/// An agent CLI's own login, as its status command reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CliLogin {
+    logged_in: bool,
+    /// How, when it says so in a way the page names.
+    method: Option<LoginMethod>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+enum LoginMethod {
+    #[serde(rename = "chatgpt")]
+    ChatGpt,
+    #[serde(rename = "api-key")]
+    ApiKey,
+}
+
+/// What differs between the agent CLIs when the shell checks or makes their
+/// login. Finding one stays its own code ([`Lookup`]): Claude Code's version
+/// check, link and managed copy are Claude's alone.
+struct AgentCli {
+    id: AgentCliId,
+    /// Its executable's name, as on PATH.
+    binary: &'static str,
+    lookup: Lookup,
+    /// What its commands answer when this Mac has none that runs.
+    missing: &'static str,
+    /// Logs it in: opens the browser, and exits 0 once the user has approved.
+    login_args: &'static [&'static str],
+    /// Reports its login without changing it.
+    status_args: &'static [&'static str],
+    status_output: StatusOutput,
+    /// Reads that report; None when it cannot tell.
+    parse_status: fn(&str) -> Option<CliLogin>,
+}
+
+static CLAUDE: AgentCli = AgentCli {
+    id: AgentCliId::Claude,
+    binary: "claude",
+    lookup: Lookup::Claude,
+    missing: "claude-missing",
+    login_args: &["auth", "login"],
+    status_args: &["auth", "status", "--json"],
+    status_output: StatusOutput::Stdout,
+    parse_status: parse_claude_status,
+};
+
+/// OpenAI's Codex CLI (`npm i -g @openai/codex`, or `brew install --cask
+/// codex`). `codex login` signs in with ChatGPT in the browser, through a
+/// local callback, and exits 0 when done.
+static CODEX: AgentCli = AgentCli {
+    id: AgentCliId::Codex,
+    binary: "codex",
+    lookup: Lookup::SessionPath,
+    missing: "codex-missing",
+    login_args: &["login"],
+    status_args: &["login", "status"],
+    status_output: StatusOutput::StdoutAndStderr,
+    parse_status: parse_codex_status,
+};
+
+static AGENT_CLIS: [&AgentCli; 2] = [&CLAUDE, &CODEX];
+
+impl AgentCli {
+    /// The one sessions run, if this Mac has one.
+    fn find(&self) -> Option<PathBuf> {
+        match self.lookup {
+            Lookup::Claude => find_claude().ok(),
+            Lookup::SessionPath => which(self.binary).map(PathBuf::from),
+        }
+    }
+
+    /// Where it is and whether it is logged in. Can take seconds: up to
+    /// [`LOGIN_STATUS_TIMEOUT`] for a CLI that never answers.
+    fn status(&self) -> AgentStatus {
+        let path = self.find();
+        let login = path.as_deref().and_then(|path| login_status(self, path));
+        AgentStatus {
+            path: path.map(|path| path.to_string_lossy().into_owned()),
+            logged_in: login.map(|login| login.logged_in),
+            method: login.and_then(|login| login.method),
+        }
+    }
+}
+
 /// Stable id for this Mac, recorded on each local workspace so another device
 /// can tell the session is not here.
 fn device_id(app: &AppHandle) -> Result<String, String> {
@@ -569,13 +738,35 @@ pub struct LocalStatus {
     agent_bundled: bool,
     git: Option<String>,
     tmux: Option<String>,
+    /// `agents.claude.path`, for pages from before `agents`. Drop it, and
+    /// `claude_logged_in`, a release after the page reads `agents`.
     claude: Option<String>,
-    /// Whether that Claude Code is logged in; None when it cannot tell.
+    /// `agents.claude.logged_in`, for pages from before `agents`.
     claude_logged_in: Option<bool>,
     /// Outrunner setting up its own Claude Code (`local_claude_setup`), while
     /// there is none that runs; a setup that failed before one turned up is
     /// over.
     claude_setup: Option<managed_claude::Setup>,
+    /// Each agent CLI a local session can run, on this Mac's own login of it.
+    agents: AgentsStatus,
+}
+
+#[derive(Serialize)]
+pub struct AgentsStatus {
+    claude: AgentStatus,
+    codex: AgentStatus,
+}
+
+/// One agent CLI on this Mac.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentStatus {
+    /// The one sessions run; None when this Mac has none.
+    path: Option<String>,
+    /// Whether it is logged in; None when it cannot tell, or there is none.
+    logged_in: Option<bool>,
+    /// How it is logged in, when it says (only Codex does); None otherwise.
+    method: Option<LoginMethod>,
 }
 
 /// What local sessions need on this Mac and whether it is there, so the UI can
@@ -584,7 +775,11 @@ pub struct LocalStatus {
 pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
     let device_id = device_id(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let claude = find_claude().ok().map(|path| path.to_string_lossy().into_owned());
+        // A CLI that never answers holds its check for seconds: ask both at once.
+        let (claude, codex) = std::thread::scope(|scope| {
+            let codex = scope.spawn(|| CODEX.status());
+            (CLAUDE.status(), codex.join().unwrap_or_default())
+        });
         Ok(LocalStatus {
             device_id,
             root: root_dir()?.to_string_lossy().into_owned(),
@@ -594,9 +789,10 @@ pub async fn local_status(app: AppHandle) -> Result<LocalStatus, String> {
             tmux: bundled_tmux()
                 .map(|path| path.to_string_lossy().into_owned())
                 .or_else(|| which("tmux")),
-            claude_logged_in: claude.as_deref().and_then(claude_logged_in),
-            claude_setup: claude.is_none().then(managed_claude::setup_status).flatten(),
-            claude,
+            claude: claude.path.clone(),
+            claude_logged_in: claude.logged_in,
+            claude_setup: claude.path.is_none().then(managed_claude::setup_status).flatten(),
+            agents: AgentsStatus { claude, codex },
         })
     })
     .await
@@ -631,18 +827,26 @@ pub async fn local_claude_setup() -> Result<(), String> {
 /// failure says why instead of leaving the page waiting.
 #[tauri::command]
 pub async fn local_claude_login(state: State<'_, LocalRuntime>) -> Result<(), String> {
-    let claude = tauri::async_runtime::spawn_blocking(find_claude)
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|_| "claude-missing")?;
-    run_claude_login(&state, &claude).await
+    log_in(&state, &CLAUDE).await
 }
 
-/// `local_claude_login` with the binary given, so a test can stand in for it.
-async fn run_claude_login(state: &LocalRuntime, claude: &Path) -> Result<(), String> {
-    state.stop_claude_login();
-    let mut child = user_command(claude)
-        .args(["auth", "login"])
+/// Log `cli` in, if this Mac has one; else its `missing` error.
+async fn log_in(state: &LocalRuntime, cli: &'static AgentCli) -> Result<(), String> {
+    let path = tauri::async_runtime::spawn_blocking(move || cli.find())
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or(cli.missing)?;
+    run_login(state, cli, &path).await
+}
+
+/// Run `cli`'s login at `path` to its end: resolved when it exits cleanly.
+/// Starting one stops an earlier one of the same CLI, never another CLI's.
+/// Takes the binary, so a test can stand in for it.
+async fn run_login(state: &LocalRuntime, cli: &AgentCli, path: &Path) -> Result<(), String> {
+    state.stop_login(cli);
+    let slot = state.login_slot(cli);
+    let mut child = user_command(path)
+        .args(cli.login_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -668,12 +872,12 @@ async fn run_claude_login(state: &LocalRuntime, claude: &Path) -> Result<(), Str
         });
     }
     let attempt = state.next_login.fetch_add(1, Ordering::Relaxed);
-    *state.login.lock().unwrap_or_else(PoisonError::into_inner) = Some((attempt, child));
+    *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((attempt, child));
 
     let deadline = Instant::now() + LOGIN_TIMEOUT;
     loop {
         let exited = {
-            let mut login = state.login.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut login = slot.lock().unwrap_or_else(PoisonError::into_inner);
             let Some((_, child)) = login.as_mut().filter(|(id, _)| *id == attempt) else {
                 return Err("login-cancelled".into());
             };
@@ -695,7 +899,7 @@ async fn run_claude_login(state: &LocalRuntime, claude: &Path) -> Result<(), Str
             return Err(format!("login-failed: {}", last_lines(&output, 4)));
         }
         if Instant::now() >= deadline {
-            state.stop_claude_login();
+            state.stop_login(cli);
             return Err("login-timed-out".into());
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -705,7 +909,26 @@ async fn run_claude_login(state: &LocalRuntime, claude: &Path) -> Result<(), Str
 /// Stop a `local_claude_login` in progress; the page's Cancel.
 #[tauri::command]
 pub async fn local_claude_login_cancel(state: State<'_, LocalRuntime>) -> Result<(), String> {
-    state.stop_claude_login();
+    state.stop_login(&CLAUDE);
+    Ok(())
+}
+
+/// Log Codex in on this Mac, as `local_claude_login` does Claude Code: `codex
+/// login` opens the browser to sign in with ChatGPT and finishes on its own
+/// local callback. The login lands in `~/.codex`, for every local Codex
+/// session and the user's own terminal alike. A Claude Code login under way
+/// carries on.
+///
+/// Errors: `codex-missing`, else as `local_claude_login`'s.
+#[tauri::command]
+pub async fn local_codex_login(state: State<'_, LocalRuntime>) -> Result<(), String> {
+    log_in(&state, &CODEX).await
+}
+
+/// Stop a `local_codex_login` in progress; the page's Cancel.
+#[tauri::command]
+pub async fn local_codex_login_cancel(state: State<'_, LocalRuntime>) -> Result<(), String> {
+    state.stop_login(&CODEX);
     Ok(())
 }
 
@@ -1053,7 +1276,8 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
 
 /// The agent routes the page may call, each bound to the workspace its token is
 /// for. Archive/restore are absent: local workspaces have no snapshots. Only the
-/// change set takes a query (`?path=` for one file's diff).
+/// change set takes a query (`?path=` for one file's diff). `auth` sets which
+/// credential the session's agent CLI runs on, like `model` sets its model.
 fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest::Method, String> {
     let (route, query) = match path.split_once('?') {
         Some((route, query)) => (route, Some(query)),
@@ -1062,7 +1286,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
     let segments: Vec<&str> = route.trim_start_matches('/').split('/').collect();
     match (method, segments.as_slice(), query) {
         ("POST", ["workspaces"], None) => Ok(reqwest::Method::POST),
-        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model"], None)
+        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model" | "auth"], None)
             if *id == workspace_id =>
         {
             Ok(reqwest::Method::POST)
@@ -1298,6 +1522,22 @@ async fn relay(url: String, mut commands: mpsc::UnboundedReceiver<Outbound>, eve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The Claude-only entry points the tests below were written against,
+    // before Claude Code became one of the [`AgentCli`]s.
+    fn claude_logged_in(claude: &str) -> Option<bool> {
+        login_status(&CLAUDE, Path::new(claude)).map(|login| login.logged_in)
+    }
+
+    async fn run_claude_login(state: &LocalRuntime, claude: &Path) -> Result<(), String> {
+        run_login(state, &CLAUDE, claude).await
+    }
+
+    impl LocalRuntime {
+        fn stop_claude_login(&self) {
+            self.stop_login(&CLAUDE);
+        }
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("outrunner-{name}-{}", random_hex(4)));
@@ -1548,13 +1788,177 @@ mod tests {
 
     /// A stand-in `claude` whose `auth login` runs `body`.
     fn fake_claude(name: &str, body: &str) -> (PathBuf, PathBuf) {
+        fake_cli(name, "claude", body)
+    }
+
+    /// A stand-in agent CLI `binary` that runs `body`, in a directory of its own.
+    fn fake_cli(name: &str, binary: &str, body: &str) -> (PathBuf, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("outrunner-{name}-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();
-        let claude = dir.join("claude");
-        std::fs::write(&claude, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
-        (dir, claude)
+        let cli = dir.join(binary);
+        std::fs::write(&cli, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (dir, cli)
+    }
+
+    /// Wait for `cli`'s login to be under way: finding the login-shell PATH
+    /// first can take seconds.
+    fn wait_for_login(runtime: &LocalRuntime, cli: &AgentCli) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while runtime.login_slot(cli).lock().unwrap().is_none() {
+            assert!(Instant::now() < deadline, "the login never started");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn the_agent_clis_differ_only_where_they_must() {
+        let ids: Vec<_> = AGENT_CLIS.iter().map(|cli| cli.id).collect();
+        assert_eq!(ids, [AgentCliId::Claude, AgentCliId::Codex]);
+        assert_eq!(AGENT_CLIS.map(|cli| cli.binary), ["claude", "codex"]);
+        assert_eq!(AGENT_CLIS.map(|cli| cli.missing), ["claude-missing", "codex-missing"]);
+        // Claude Code's lookup keeps its version check, link and managed copy.
+        assert_eq!(CLAUDE.lookup, Lookup::Claude);
+        assert_eq!(CODEX.lookup, Lookup::SessionPath);
+        assert_eq!(CLAUDE.login_args, ["auth", "login"]);
+        assert_eq!(CLAUDE.status_args, ["auth", "status", "--json"]);
+        assert_eq!(CODEX.login_args, ["login"]);
+        assert_eq!(CODEX.status_args, ["login", "status"]);
+        // Each has a login slot of its own.
+        let runtime = LocalRuntime::default();
+        assert!(!std::ptr::eq(runtime.login_slot(&CLAUDE), runtime.login_slot(&CODEX)));
+    }
+
+    #[test]
+    fn reads_codex_login_status() {
+        let chatgpt = Some(CliLogin { logged_in: true, method: Some(LoginMethod::ChatGpt) });
+        let api_key = Some(CliLogin { logged_in: true, method: Some(LoginMethod::ApiKey) });
+        let out = Some(CliLogin { logged_in: false, method: None });
+        assert_eq!(parse_codex_status("Logged in using ChatGPT\n"), chatgpt);
+        assert_eq!(parse_codex_status("Logged in using an API key - sk-proj-***bAYIA\n"), api_key);
+        assert_eq!(parse_codex_status("Not logged in\n"), out);
+        // After a warning, as when it cannot make its PATH aliases.
+        assert_eq!(
+            parse_codex_status("WARNING: proceeding, even though we could not create PATH aliases\nLogged in using ChatGPT\n"),
+            chatgpt,
+        );
+        // Logged in a way the page has no name for.
+        for other in ["Logged in using access token", "Logged in using Amazon Bedrock API key"] {
+            assert_eq!(parse_codex_status(other), Some(CliLogin { logged_in: true, method: None }), "{other}");
+        }
+        // No answer: an error, usage from a codex without `login status`, nothing.
+        for unknown in [
+            "Error checking login status: permission denied",
+            "error: unrecognized subcommand 'status'",
+            "Not logged in to the VPN",
+            "",
+        ] {
+            assert_eq!(parse_codex_status(unknown), None, "{unknown}");
+        }
+    }
+
+    #[test]
+    fn the_codex_login_check_reads_stderr_and_bytes_that_are_not_utf8() {
+        // As codex 0.146 answers: on stderr, here after a byte that is not UTF-8.
+        let (dir, codex) = fake_cli(
+            "codex-status",
+            "codex",
+            r#"[ "$*" = "login status" ] || exit 2
+printf 'WARNING: \377\n' >&2
+echo 'Logged in using ChatGPT' >&2"#,
+        );
+        let login = login_status(&CODEX, &codex);
+        assert_eq!(login, Some(CliLogin { logged_in: true, method: Some(LoginMethod::ChatGpt) }));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let (dir, codex) = fake_cli("codex-logged-out", "codex", "echo 'Not logged in' >&2\nexit 1");
+        assert_eq!(login_status(&CODEX, &codex), Some(CliLogin { logged_in: false, method: None }));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_login_check_that_never_answers_is_unknown() {
+        let (dir, codex) = fake_cli("codex-hangs", "codex", "exec sleep 60");
+        let started = Instant::now();
+        assert_eq!(login_status(&CODEX, &codex), None);
+        assert!(started.elapsed() < LOGIN_STATUS_TIMEOUT + Duration::from_secs(5), "it waited past the limit");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "asks this Mac's real Codex"]
+    fn the_login_check_gets_an_answer_from_the_real_codex() {
+        let status = CODEX.status();
+        assert!(status.path.is_some(), "no codex on the login-shell PATH");
+        assert!(status.logged_in.is_some(), "no clear answer from {:?}", status.path);
+    }
+
+    #[test]
+    fn agent_status_has_the_pages_shape() {
+        let agents = AgentsStatus {
+            claude: AgentStatus { path: Some("/c".into()), logged_in: Some(true), method: None },
+            codex: AgentStatus { path: Some("/x".into()), logged_in: Some(true), method: Some(LoginMethod::ApiKey) },
+        };
+        assert_eq!(
+            serde_json::to_value(&agents).unwrap(),
+            serde_json::json!({
+                "claude": { "path": "/c", "loggedIn": true, "method": null },
+                "codex": { "path": "/x", "loggedIn": true, "method": "api-key" },
+            })
+        );
+        assert_eq!(serde_json::to_value(LoginMethod::ChatGpt).unwrap(), "chatgpt");
+        assert_eq!(
+            serde_json::to_value(AgentStatus::default()).unwrap(),
+            serde_json::json!({ "path": null, "loggedIn": null, "method": null })
+        );
+    }
+
+    #[test]
+    fn a_codex_login_runs_codex_login() {
+        let (dir, codex) = fake_cli("codex-login", "codex", r#"[ "$*" = "login" ] || { echo "ran: $*" >&2; exit 2; }"#);
+        let runtime = LocalRuntime::default();
+        assert_eq!(tauri::async_runtime::block_on(run_login(&runtime, &CODEX, &codex)), Ok(()));
+        assert!(runtime.codex_login.lock().unwrap().is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let (dir, codex) = fake_cli("codex-login-fail", "codex", "echo 'Error: port 1455 is in use' >&2\nexit 1");
+        let err = tauri::async_runtime::block_on(run_login(&runtime, &CODEX, &codex)).unwrap_err();
+        assert_eq!(err, "login-failed: Error: port 1455 is in use");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_login_stops_an_earlier_one_of_its_own_cli_never_another_clis() {
+        let (claude_dir, slow_claude) = fake_cli("slow-claude", "claude", "exec sleep 30");
+        let (codex_dir, slow_codex) = fake_cli("slow-codex", "codex", "exec sleep 30");
+        let (quick_dir, quick_codex) = fake_cli("quick-codex", "codex", "exit 0");
+        let runtime = Arc::new(LocalRuntime::default());
+        let login = |cli: &'static AgentCli, path: PathBuf| {
+            let runtime = Arc::clone(&runtime);
+            std::thread::spawn(move || tauri::async_runtime::block_on(run_login(&runtime, cli, &path)))
+        };
+        let claude = login(&CLAUDE, slow_claude);
+        wait_for_login(&runtime, &CLAUDE);
+        let first_codex = login(&CODEX, slow_codex);
+        wait_for_login(&runtime, &CODEX);
+
+        // Codex again: it replaces the first Codex login, and leaves Claude's be.
+        let started = Instant::now();
+        let again = tauri::async_runtime::block_on(run_login(&runtime, &CODEX, &quick_codex));
+        assert_eq!(again, Ok(()));
+        assert_eq!(first_codex.join().unwrap(), Err("login-cancelled".to_string()));
+        assert!(runtime.login.lock().unwrap().is_some(), "Claude Code's login was stopped");
+
+        // Cancelling Codex now stops nothing of Claude's either.
+        runtime.stop_login(&CODEX);
+        assert!(runtime.login.lock().unwrap().is_some(), "Claude Code's login was stopped");
+        runtime.stop_login(&CLAUDE);
+        assert_eq!(claude.join().unwrap(), Err("login-cancelled".to_string()));
+        assert!(started.elapsed() < Duration::from_secs(20), "a CLI ran to its end");
+        for dir in [claude_dir, codex_dir, quick_dir] {
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
     }
 
     #[test]
@@ -1664,6 +2068,20 @@ mod tests {
         assert!(allowed_route("POST", "/workspaces/ws-1/archive", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/destroy", "ws-1").is_err());
         assert!(allowed_route("GET", "/health/../workspaces", "ws-1").is_err());
+    }
+
+    #[test]
+    fn a_sessions_credential_is_set_only_through_its_own_workspace() {
+        assert_eq!(allowed_route("POST", "/workspaces/ws-1/auth", "ws-1"), Ok(reqwest::Method::POST));
+        for (method, path) in [
+            ("POST", "/workspaces/ws-2/auth"),
+            ("GET", "/workspaces/ws-1/auth"),
+            ("POST", "/workspaces/ws-1/auth?kind=none"),
+            ("POST", "/workspaces/ws-1/auth/extra"),
+            ("POST", "/workspaces/auth"),
+        ] {
+            assert!(allowed_route(method, path, "ws-1").is_err(), "{method} {path}");
+        }
     }
 
     #[test]

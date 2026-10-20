@@ -21,6 +21,8 @@ fn main() {
                 "local_status",
                 "local_claude_login",
                 "local_claude_login_cancel",
+                "local_codex_login",
+                "local_codex_login_cancel",
                 "local_claude_setup",
                 "local_pick_folder",
                 "local_check_folder",

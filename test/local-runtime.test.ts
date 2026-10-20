@@ -2,13 +2,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  agentCli,
   claudeSetupNeeded,
   claudeSetupText,
+  CODEX_INSTALL_COMMAND,
+  type LocalStatus,
   LocalSocket,
+  localAgentState,
   localSocketUrl,
+  logInToCodex,
   messageForLocalError,
   missingTools,
   needsClaudeLogin,
+  needsCodexLogin,
   runsOnOutrunnerModel,
   toolsToInstall,
   openSocket,
@@ -91,6 +97,33 @@ test("only a clear no from the app asks for a Claude Code login", () => {
   assert.equal(needsClaudeLogin({ ...status, claude: null, claudeLoggedIn: false }), false);
 });
 
+test("each agent CLI reads as missing, logged out or ready, from any app", () => {
+  const base: LocalStatus = { deviceId: "d", root: "/r", agentBundled: true, git: "/g", tmux: "/t", claude: "/c" };
+  const cli = (path: string | null, loggedIn: boolean | null) => ({ path, loggedIn, method: null });
+  const withAgents = (codex: ReturnType<typeof cli>): LocalStatus => ({
+    ...base,
+    claudeLoggedIn: true,
+    agents: { claude: cli("/c", true), codex },
+  });
+  assert.equal(localAgentState(withAgents(cli(null, null)), "codex"), "missing");
+  assert.equal(localAgentState(withAgents(cli("/x", false)), "codex"), "logged-out");
+  assert.equal(localAgentState(withAgents(cli("/x", true)), "codex"), "ready");
+  // A login the app can't read is left to the CLI in the session.
+  assert.equal(localAgentState(withAgents(cli("/x", null)), "codex"), "ready");
+  assert.equal(needsCodexLogin(withAgents(cli("/x", false))), true);
+  assert.equal(needsCodexLogin(withAgents(cli("/x", null))), false);
+  // Not installed is a missing tool, not a login.
+  assert.equal(needsCodexLogin(withAgents(cli(null, false))), false);
+  assert.equal(localAgentState(withAgents(cli(null, null)), "claude"), "ready");
+
+  // An app from before `agents`: Claude Code from its own fields, no Codex.
+  assert.deepEqual(agentCli({ ...base, claudeLoggedIn: false }, "claude"), cli("/c", false));
+  assert.equal(localAgentState({ ...base, claudeLoggedIn: false }, "claude"), "logged-out");
+  assert.equal(localAgentState(base, "claude"), "ready");
+  assert.equal(localAgentState(base, "codex"), "missing");
+  assert.equal(needsCodexLogin(base), false);
+});
+
 test("a failed login says what Claude Code said", () => {
   assert.equal(
     messageForLocalError("login-failed: OAuth error | Request failed"),
@@ -98,6 +131,38 @@ test("a failed login says what Claude Code said", () => {
   );
   assert.match(messageForLocalError("login-failed: "), /type \/login/);
   assert.match(messageForLocalError("login-timed-out"), /Try again/);
+});
+
+test("Codex's login errors name Codex, and a missing one says how to install it", async () => {
+  assert.equal(
+    messageForLocalError("login-failed: Starting local login server | Error: port 1455 is in use", "codex"),
+    "Codex couldn't log in. It said: Error: port 1455 is in use",
+  );
+  assert.match(messageForLocalError("login-failed: ", "codex"), /Run `codex login` in Terminal/);
+  assert.equal(messageForLocalError("login-cancelled", "codex"), "The Codex login was stopped. Try again.");
+  assert.equal(messageForLocalError("login-cancelled"), "The Claude Code login was stopped. Try again.");
+  assert.ok(messageForLocalError("codex-missing").includes(`\`${CODEX_INSTALL_COMMAND}\``));
+  assert.match(
+    messageForLocalError(new Error("local_codex_login not allowed. Command not found"), "codex"),
+    /can't log Codex in\. Update the app/,
+  );
+
+  // Through the app: the command it runs, and the error worded for Codex.
+  const sent: string[] = [];
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: {
+      core: {
+        invoke: (cmd: string) => {
+          sent.push(cmd);
+          return Promise.reject("login-failed: Error: access denied");
+        },
+        Channel: class {},
+      },
+    },
+  };
+  await assert.rejects(logInToCodex(), { message: "Codex couldn't log in. It said: Error: access denied" });
+  assert.deepEqual(sent, ["local_codex_login"]);
 });
 
 test("a session the agent has no folder for reads as deleted, not 'unknown workspace'", () => {
