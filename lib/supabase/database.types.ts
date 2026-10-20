@@ -273,6 +273,16 @@ type UserProviderKeyRow = {
   updated_at: string;
 };
 
+// How a user's coding agent signs in (Settings → Providers). Service-role-only
+// (RLS on, no policies); see supabase/migrations/20261020120000_user_agent_auth.sql.
+type UserAgentAuthRow = {
+  user_id: string;
+  agent: string;
+  method: string;
+  created_at: string;
+  updated_at: string;
+};
+
 // Per-user Claude Code credentials. Service-role-only (RLS on, no policies);
 // see supabase/migrations/20260807000000_user_claude_credentials.sql.
 type UserClaudeCredentialsRow = {
@@ -425,6 +435,12 @@ export type Database = {
         Row: UserProviderKeyRow;
         Insert: Insert<UserProviderKeyRow, "user_id" | "provider" | "key_ciphertext">;
         Update: Partial<UserProviderKeyRow>;
+        Relationships: [];
+      };
+      user_agent_auth: {
+        Row: UserAgentAuthRow;
+        Insert: Insert<UserAgentAuthRow, "user_id" | "agent" | "method">;
+        Update: Partial<UserAgentAuthRow>;
         Relationships: [];
       };
       compute_intervals: {

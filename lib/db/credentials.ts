@@ -15,6 +15,7 @@
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
+import { AGENT_IDS, type AgentId, type AuthMethodId, authMethod } from "@/lib/agents/registry";
 import { dueForRenewal } from "@/lib/billing/allowance-renewal";
 import { entitlingSubscriptions } from "@/lib/billing/billing-store";
 import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
@@ -580,6 +581,38 @@ export async function settleClaudeSlot(userId: string): Promise<void> {
 export async function getClaudeCredential(userId: string): Promise<string | null> {
   await settleClaudeSlot(userId);
   return (await getAnthropicKey(userId)) ?? (await getProviderKey(userId, "anthropic"));
+}
+
+// ---------------------------------------------------------------------------
+// How each of the user's agents signs in (Settings → Providers), one row per
+// agent in user_agent_auth: the pick only, never a credential.
+// ---------------------------------------------------------------------------
+
+export type AgentAuthChoices = Record<AgentId, AuthMethodId | null>;
+
+/** The way the user picked for each agent; null where they've picked none,
+ *  or picked one this release doesn't know. Before
+ *  20261020120000_user_agent_auth.sql is applied, none. */
+export async function getAgentAuthChoices(userId: string): Promise<AgentAuthChoices> {
+  const choices = Object.fromEntries(AGENT_IDS.map((agent) => [agent, null])) as AgentAuthChoices;
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.from("user_agent_auth").select("agent, method").eq("user_id", userId);
+  if (error && probeStatus(error) === "missing") return choices;
+  if (error) throw error;
+  for (const row of data) {
+    const agent = AGENT_IDS.find((id) => id === row.agent);
+    if (agent && authMethod(agent, row.method)) choices[agent] = row.method as AuthMethodId;
+  }
+  return choices;
+}
+
+/** Pick `method` for `agent`. Callers check it is one of the agent's. */
+export async function setAgentAuthChoice(userId: string, agent: AgentId, method: AuthMethodId): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("user_agent_auth")
+    .upsert({ user_id: userId, agent, method }, { onConflict: "user_id,agent" });
+  if (error) throw error;
 }
 
 /** What the user's model menu offers (lib/runtime/session-models.ts):
