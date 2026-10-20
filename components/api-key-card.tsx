@@ -42,9 +42,9 @@ export function ApiKeyCard({
   const canSave = asking && key.trim() !== "" && status !== "pending";
 
   async function send(method: "PUT" | "DELETE"): Promise<void> {
+    // The last answer stays until this one's arrives, so a retry that fails
+    // at once doesn't blink it off and on.
     setStatus("pending");
-    setError(null);
-    setWarning(null);
     try {
       const res = await fetch(
         method === "PUT" ? "/api/settings/providers" : `/api/settings/providers?provider=${provider}`,
@@ -60,12 +60,14 @@ export function ApiKeyCard({
         | null;
       if (!res.ok || !data?.keys) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
       onChange(data.keys);
+      setError(null);
       setWarning(data.warning ?? null);
       setKey("");
       setReplacing(false);
       setStatus("success");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that.");
+      setWarning(null);
       setStatus("error");
     }
   }

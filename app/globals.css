@@ -379,7 +379,10 @@
 .loading-button-faces { display: grid; place-items: center; }
 .loading-button-face { grid-area: 1 / 1; display: inline-flex; align-items: center; gap: 6px; opacity: 0; transform: translateY(3px); filter: blur(3px); transition: opacity .3s cubic-bezier(.23, 1, .32, 1), transform .3s cubic-bezier(.23, 1, .32, 1), filter .3s cubic-bezier(.23, 1, .32, 1); }
 .loading-button-face.is-current { opacity: 1; transform: none; filter: none; }
-.loading-button.is-pending { cursor: progress; opacity: .85; }
+.loading-button.is-pending { cursor: progress; opacity: .85; transition-delay: .15s; }
+/* Pending shows only once an action has taken 150ms: an instant answer goes
+   straight from idle to its result without flashing the busy face. */
+.loading-button.is-pending .loading-button-face { transition-delay: .15s; }
 .loading-button.is-success .loading-button-face.is-current { color: var(--color-positive); }
 .loading-button:active:not(.is-pending):not(:disabled) { transform: translateY(1px); }
 @media (prefers-reduced-motion: reduce) {

@@ -139,7 +139,6 @@ export function ClaudeConnection({
   const finish = useCallback(async () => {
     const mine = attempt.current;
     setBusy(true);
-    setError(null);
     try {
       await complete(mine, await submitClaudeCode(code));
     } catch (e) {
@@ -170,11 +169,11 @@ export function ClaudeConnection({
     // A Reconnect still waiting must not save a token after this.
     stopLogin();
     setBusy(true);
-    setError(null);
     try {
       const res = await fetch("/api/settings/claude", { method: "DELETE" });
       if (!res.ok) throw new Error("Could not disconnect.");
       onChange((await res.json()) as ClaudeTokenMeta);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Disconnecting failed.");
     } finally {

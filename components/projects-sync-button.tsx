@@ -35,7 +35,6 @@ export function ProjectsSyncButton({
 
   async function sync() {
     setStatus("pending");
-    setMessage(null);
     let response: Response;
     try {
       response = await fetch("/api/projects/sync", { method: "POST" });

@@ -66,7 +66,6 @@ export function AgentAuthPanel({
     setShown(method);
     if (method === chosen) return;
     setSaving(true);
-    setError(null);
     try {
       const res = await fetch("/api/settings/agents", {
         method: "PUT",
@@ -78,6 +77,7 @@ export function AgentAuthPanel({
       // This agent's only: another tab's reply, sent before a pick there
       // landed, mustn't undo it.
       onChoice(agent, data.choices[agent]);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that.");
     } finally {

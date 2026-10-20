@@ -78,8 +78,6 @@ export function BillingSettings({
    *  the Mac app opens it in the browser). */
   async function go(action: string, path: string, body?: object) {
     setPending(action);
-    setFailed(null);
-    setError(null);
     try {
       const res = await fetch(path, {
         method: "POST",
@@ -88,6 +86,8 @@ export function BillingSettings({
       });
       const data = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
       if (!res.ok || !data?.url) throw new Error(data?.error ?? "Stripe's page didn't open.");
+      setFailed(null);
+      setError(null);
       window.location.assign(data.url);
       if (isDesktopApp()) {
         setInBrowser(true);

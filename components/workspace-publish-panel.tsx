@@ -59,7 +59,6 @@ export function WorkspacePublishPanel({
     event.preventDefault();
     if (publishing || !active) return;
     setPublishing(true);
-    setMessage(null);
     void (async () => {
       try {
         const response = await fetch(`/api/workspaces/${workspaceId}/publish`, {
@@ -76,6 +75,7 @@ export function WorkspacePublishPanel({
           setMessage({ text: result.error ?? "Couldn't publish this session.", detail: result.detail ?? null });
           return;
         }
+        setMessage(null);
         setCreated(result.pullRequest);
         router.refresh();
       } catch {

@@ -64,7 +64,6 @@ export function SandboxSettingsForm({
 
   async function send(method: "PUT" | "DELETE", body?: object, query = ""): Promise<void> {
     setStatus("pending");
-    setError(null);
     try {
       const res = await fetch(`/api/settings/sandbox${query}`, {
         method,
@@ -74,6 +73,7 @@ export function SandboxSettingsForm({
       // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
       const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
       if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
+      setError(null);
       setSettings(data);
       setChoice(data.sandbox);
       setSize(effectiveSize(data.sandbox, data.boxSize));

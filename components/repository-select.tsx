@@ -82,7 +82,6 @@ export function RepositorySelect({
   async function load(force = false) {
     if (loading || (listing && !force)) return;
     setLoading(true);
-    setError(null);
     try {
       const res = await fetch("/api/github/repositories", {
         cache: force ? "no-store" : "default",
@@ -90,6 +89,7 @@ export function RepositorySelect({
       const data = (await res.json()) as Partial<Listing> & { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Couldn't load your repositories from GitHub.");
       setListing({ repositories: data.repositories ?? [], connected: data.connected ?? [] });
+      setError(null);
     } catch (err) {
       setError({ message: err instanceof Error ? err.message : "Couldn't load your repositories from GitHub." });
     } finally {
@@ -156,7 +156,6 @@ export function RepositorySelect({
     }
     // Not connected yet — connect just this one, then select it.
     setConnectingId(repo.githubRepoId);
-    setError(null);
     try {
       const res = await fetch("/api/projects/sync", {
         method: "POST",
@@ -177,6 +176,7 @@ export function RepositorySelect({
         setError({ message: "Connected it, but Outrunner couldn't find it afterwards. Refresh the list.", repo: repo.fullName });
         return;
       }
+      setError(null);
       onSelect?.(created);
       setOpen(false);
       triggerRef.current?.focus();

@@ -47,7 +47,10 @@ export function LoadingButton({
     { key: "error", text: labels.error ?? labels.idle, icon: icon ?? <RotateCw /> },
   ];
   const pending = status === "pending";
-  const current = faces.find((face) => face.key === status) ?? faces[0];
+  // A failure that reads exactly like idle shows the idle face itself: two
+  // identical faces crossfading would blur the label for nothing.
+  const face: ActionStatus = status === "error" && labels.error === undefined && icon !== undefined ? "idle" : status;
+  const current = faces.find((f) => f.key === face) ?? faces[0];
   return (
     <>
       <button
@@ -66,10 +69,10 @@ export function LoadingButton({
         className={cn(buttonVariants({ size, variant }), "loading-button", `is-${status}`, className)}
       >
         <span aria-hidden className="loading-button-faces">
-          {faces.map((face) => (
-            <span key={face.key} className={cn("loading-button-face", face.key === status && "is-current")}>
-              {face.icon}
-              {face.text}
+          {faces.map((f) => (
+            <span key={f.key} className={cn("loading-button-face", f.key === face && "is-current")}>
+              {f.icon}
+              {f.text}
             </span>
           ))}
         </span>
