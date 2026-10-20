@@ -15,7 +15,8 @@
  * UI otherwise gets {@link credentialStatus}: presence and a masked hint only.
  */
 
-import { AGENT_IDS, type AgentId, type AuthMethodId, authMethod } from "@/lib/agents/registry";
+import { AGENT_IDS, AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
+import type { AgentAuthStore } from "@/lib/agents/resolve";
 import { dueForRenewal } from "@/lib/billing/allowance-renewal";
 import { entitlingSubscriptions } from "@/lib/billing/billing-store";
 import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
@@ -613,6 +614,59 @@ export async function setAgentAuthChoice(userId: string, agent: AgentId, method:
     .from("user_agent_auth")
     .upsert({ user_id: userId, agent, method }, { onConflict: "user_id,agent" });
   if (error) throw error;
+}
+
+/**
+ * The user's agent sign-ins, for lib/agents/resolve.ts. Loading an agent reads
+ * its pick and every credential it could run on at once, sealed; a credential
+ * is opened only when asked for, once.
+ */
+export function agentAuthStore(userId: string): AgentAuthStore {
+  return {
+    async load(agent) {
+      const credentials = AGENTS[agent].methods.map((method) => method.credential);
+      const usesSlot = credentials.some((credential) => credential.kind === "claude-slot");
+      const providers = credentials.flatMap((credential) =>
+        credential.kind === "provider-key" ? [credential.provider] : [],
+      );
+      // An Anthropic API key still in the Claude slot is the provider's.
+      if (usesSlot) await settleClaudeSlot(userId);
+      const supabase = createSupabaseAdminClient();
+      const [choices, slot, keys] = await Promise.all([
+        getAgentAuthChoices(userId),
+        usesSlot
+          ? supabase.from("user_credentials").select("anthropic_key_ciphertext").eq("user_id", userId).maybeSingle()
+          : null,
+        providers.length > 0
+          ? supabase
+              .from("user_provider_keys")
+              .select("provider, key_ciphertext")
+              .eq("user_id", userId)
+              .in("provider", providers)
+          : null,
+      ]);
+      if (slot?.error) throw slot.error;
+      if (keys?.error && !beforeProviderKeys(keys.error)) throw keys.error;
+      const sealed = new Map<string, string | null>();
+      if (slot) sealed.set("claude-slot", slot.data?.anthropic_key_ciphertext ?? null);
+      for (const row of keys?.data ?? []) sealed.set(row.provider, row.key_ciphertext);
+
+      const opened = new Map<string, string | null>();
+      return {
+        choice: choices[agent],
+        open(credential: AuthCredential) {
+          if (credential.kind === "own-login") return null;
+          const which = credential.kind === "claude-slot" ? "claude-slot" : credential.provider;
+          if (!opened.has(which)) {
+            // The slot is logged as "anthropic", as getAnthropicKey does.
+            const label = credential.kind === "claude-slot" ? "anthropic" : credential.provider;
+            opened.set(which, openOrNull(sealed.get(which), userId, label));
+          }
+          return opened.get(which) ?? null;
+        },
+      };
+    },
+  };
 }
 
 /** What the user's model menu offers (lib/runtime/session-models.ts):
