@@ -1,6 +1,7 @@
 # Keep immadsahin/outrunner an exact git mirror of this repo.
 # On every branch/tag push or delete, force-sync all heads and tags downstream.
-# Requires repo secret MIRROR_PAT: a token with Contents:write on immadsahin/outrunner.
+# Requires repo secret MIRROR_SSH_KEY: the private half of a write deploy key
+# on immadsahin/outrunner, so the job can push there and nowhere else.
 name: Mirror to immadsahin/outrunner
 
 on:
@@ -23,11 +24,22 @@ jobs:
       - name: Mirror outrunner -> immadsahin/outrunner
         env:
           GH_TOKEN: ${{ github.token }}
-          MIRROR_PAT: ${{ secrets.MIRROR_PAT }}
+          MIRROR_SSH_KEY: ${{ secrets.MIRROR_SSH_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "$MIRROR_SSH_KEY" ]; then
+            echo "::error::MIRROR_SSH_KEY is not set: add a write deploy key to immadsahin/outrunner and its private key as this secret."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/mirror_key"
+          hosts="$RUNNER_TEMP/known_hosts"
+          printf '%s\n' "$MIRROR_SSH_KEY" > "$key"
+          chmod 600 "$key"
+          # GitHub's published host key (api.github.com/meta), pinned rather
+          # than trusted on first use.
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$hosts -o StrictHostKeyChecking=yes"
           git clone --mirror "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" src
           cd src
-          git push --force --prune \
-            "https://x-access-token:${MIRROR_PAT}@github.com/immadsahin/outrunner.git" \
+          git push --force --prune git@github.com:immadsahin/outrunner.git \
             'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
