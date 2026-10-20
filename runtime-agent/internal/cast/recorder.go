@@ -1,7 +1,9 @@
 package cast
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -64,7 +66,10 @@ func NewSessionRecorder(sessionName, dir string, opts Options) *Recorder {
 }
 
 // Start opens the cast file and FIFO, begins draining, and arms the pane pipe.
-// Idempotent: a second call while recording is a no-op.
+// Idempotent: a second call while recording is a no-op. A cast already in the
+// file (a recorder before this one, gone with an agent restarted or upgraded
+// while the session carried on in tmux) is continued, not started over: the
+// session's terminal is one recording, however many recorders it took.
 func (r *Recorder) Start(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -80,13 +85,8 @@ func (r *Recorder) Start(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(r.castPath), 0o755); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(r.castPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	file, cw, err := openCast(r.castPath, opts)
 	if err != nil {
-		return err
-	}
-	cw, err := NewWriter(file, opts)
-	if err != nil {
-		file.Close()
 		return err
 	}
 
@@ -263,3 +263,54 @@ func (r *Recorder) Err() error {
 }
 
 var _ io.Writer = (*Writer)(nil)
+
+// openCast opens a cast for recording: the one at path continued, when it has
+// a header to go on from (its last line ended first, if a crash cut it
+// short), else a new one in its place.
+func openCast(path string, opts Options) (*os.File, *Writer, error) {
+	if started, ok := castStarted(path); ok {
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
+		if err != nil {
+			return nil, nil, err
+		}
+		if info, err := file.Stat(); err == nil && info.Size() > 0 {
+			last := make([]byte, 1)
+			if _, err := file.ReadAt(last, info.Size()-1); err == nil && last[0] != '\n' {
+				if _, err := file.Write([]byte("\n")); err != nil {
+					file.Close()
+					return nil, nil, err
+				}
+			}
+		}
+		return file, ResumeWriter(file, started, opts), nil
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return nil, nil, err
+	}
+	cw, err := NewWriter(file, opts)
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	return file, cw, nil
+}
+
+// castStarted is when the cast at path began, from its header; false when
+// there is no cast there, or its first line isn't a header.
+func castStarted(path string) (time.Time, bool) {
+	file, err := os.Open(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer file.Close()
+	line, err := bufio.NewReader(file).ReadBytes('\n')
+	if err != nil {
+		return time.Time{}, false
+	}
+	var header castHeader
+	if json.Unmarshal(line, &header) != nil || header.Version != 2 || header.Timestamp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(header.Timestamp, 0), true
+}

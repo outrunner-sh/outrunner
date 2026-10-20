@@ -276,3 +276,24 @@ func TestASendTypesNothingIntoAMenu(t *testing.T) {
 		t.Errorf("typed into the menu: %d pastes, %d Enters", fake.pastes, fake.enters)
 	}
 }
+
+func TestStartRecordsASessionThatOutlivedItsAgent(t *testing.T) {
+	s, fake, id, _ := stoppedSession(t)
+	// The session runs in tmux; the agent that recorded it is gone (restarted,
+	// upgraded), so this one has no recorder for it.
+	fake.mu.Lock()
+	fake.running[sessionName(id)] = true
+	fake.mu.Unlock()
+	if _, err := s.Start(context.Background(), id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	s.recordersMu.Lock()
+	_, recording := s.recorders[id]
+	s.recordersMu.Unlock()
+	if !recording {
+		t.Error("a running session was left unrecorded")
+	}
+	if len(fake.launches) != 0 {
+		t.Errorf("a running session was launched again: %q", fake.launches)
+	}
+}
