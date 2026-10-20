@@ -502,6 +502,32 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   }
 
   /** Build the {@link AgentTarget} an {@link AgentClient} needs for one box. */
+  /** Upgrades under way, by box, so requests that find the same box outdated
+   *  share one instead of restarting its agent under each other. */
+  private readonly upgrading = new Map<string, Promise<void>>();
+
+  /**
+   * Bring a running box's agent up to this release's, in place: the tools it
+   * runs (Codex among them) installed, the agent replaced and restarted on
+   * the same secret and port. A box's sessions run in tmux, not in the agent,
+   * so they carry on through it; their streams reconnect. For a box that
+   * predates what a session needs, instead of waiting for it to pause and
+   * restart. Not for the jcode engine, whose boxes are replaced, not redeployed.
+   */
+  async upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void> {
+    if (optionalEnv("RUNTIME_ENGINE") === "jcode") {
+      throw new Error("A jcode computer's agent is replaced with its box, not upgraded in place.");
+    }
+    const running = this.upgrading.get(sandboxId);
+    if (running) return running;
+    const upgrade = (async () => {
+      const box = await this.backend.get(sandboxId);
+      await deployClaude(box.io, await this.binary(), secret, { root: await box.home(), sessionEnv });
+    })().finally(() => this.upgrading.delete(sandboxId));
+    this.upgrading.set(sandboxId, upgrade);
+    return upgrade;
+  }
+
   async agentTarget(sandboxId: string, secret: string): Promise<AgentTarget> {
     const box = await this.backend.get(sandboxId);
     return { ...(await box.agentEndpoint(AGENT_PORT)), secret };
