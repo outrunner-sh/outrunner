@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
+import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
@@ -202,7 +203,11 @@ export function WorkspaceSession({
     onChange: (model) => {
       setSwitching(true);
       setSendError(null);
-      (local ? putOnModel(workspaceId, model) : switchCloudModel(workspaceId, model))
+      // A local switch relaunches the session on this Mac: signed in as the
+      // user picks now first, as the server does for a cloud one.
+      (local
+        ? deliverLocalAgentAuth(workspaceId, agent).then(() => putOnModel(workspaceId, model))
+        : switchCloudModel(workspaceId, model))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });
           setProviderPicked(model.provider);
