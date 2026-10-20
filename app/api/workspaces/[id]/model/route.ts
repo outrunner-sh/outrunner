@@ -14,6 +14,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import { agentOf, requestedModel, setModelRequest } from "@/lib/runtime/session-models";
 
@@ -103,7 +104,8 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     // The switch relaunches the session: signed in as the user picks now, so
     // a key replaced since is the one it relaunches on.
-    await signInSession(sessionAuthClient(agent, identity), workspace.agent, agentAuthStore(owner.id));
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+    await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(owner.id));
   } catch (error) {
     const failure = signInFailure(error);
     if (failure) return NextResponse.json(failure, { status: 409 });
