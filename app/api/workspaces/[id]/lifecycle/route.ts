@@ -291,6 +291,10 @@ async function restoreDaytonaWorkspace(
       );
     }
 
+    // How the session's agent signs in, as the user picks now: before a box
+    // is started for it, so a pick that can't run starts nothing.
+    const auth = await resolveAgentAuth(agentAuthStore(userId), workspace.agent, "cloud");
+
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
     const sessionEnv = await runtimeSessionEnvironment(userId);
@@ -326,14 +330,9 @@ async function restoreDaytonaWorkspace(
     };
     const agent = new AgentClient(target);
     // The restore relaunches the session at once, so its credential rides
-    // with it, as the user picks now; checked before, as is that the box
-    // runs the session's agent (an agent too old for Codex would make a
-    // Claude Code session of it).
-    const credential = await restoreCredential(
-      sessionAuthClient(agent, identity),
-      workspace.agent,
-      await resolveAgentAuth(agentAuthStore(userId), workspace.agent, "cloud"),
-    );
+    // with it; checked first, as is that the box runs the session's agent
+    // (an agent too old for Codex would make a Claude Code session of it).
+    const credential = await restoreCredential(sessionAuthClient(agent, identity), workspace.agent, auth);
     await agent.restoreWorkspace(identity, {
       branch: workspace.branch,
       baseBranch: project.defaultBranch,
