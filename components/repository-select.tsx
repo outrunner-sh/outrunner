@@ -5,6 +5,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
+import { InlineMessage } from "@/components/ui/notice";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +17,12 @@ type Repo = {
 };
 
 type Listing = { repositories: Repo[]; connected: number[] };
+
+/** What went wrong, and for a repository GitHub withheld, which one. */
+type PickerError = { message: string; repo?: string; noAccess?: boolean };
+
+// Where a user reviews which organizations an OAuth app may see.
+const GITHUB_APP_ACCESS_URL = "https://github.com/settings/applications";
 
 /**
  * Pick the repository a session runs in — from everything on the user's GitHub,
@@ -60,7 +67,7 @@ export function RepositorySelect({
   const [open, setOpen] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PickerError | null>(null);
   const [query, setQuery] = useState("");
   const [connectingId, setConnectingId] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -81,10 +88,10 @@ export function RepositorySelect({
         cache: force ? "no-store" : "default",
       });
       const data = (await res.json()) as Partial<Listing> & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not load repositories.");
+      if (!res.ok) throw new Error(data.error ?? "Couldn't load your repositories from GitHub.");
       setListing({ repositories: data.repositories ?? [], connected: data.connected ?? [] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load repositories.");
+      setError({ message: err instanceof Error ? err.message : "Couldn't load your repositories from GitHub." });
     } finally {
       setLoading(false);
     }
@@ -156,15 +163,25 @@ export function RepositorySelect({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repoIds: [repo.githubRepoId] }),
       });
-      const data = (await res.json()) as { projects?: Project[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not connect that repository.");
+      const data = (await res.json()) as { projects?: Project[]; error?: string; code?: string };
+      if (!res.ok) {
+        setError({
+          message: data.error ?? "Couldn't connect this repository. Try again.",
+          repo: repo.fullName,
+          noAccess: data.code === "repo-no-access",
+        });
+        return;
+      }
       const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
-      if (!created) throw new Error("Connected, but the project did not come back.");
+      if (!created) {
+        setError({ message: "Connected it, but Outrunner couldn't find it afterwards. Refresh the list.", repo: repo.fullName });
+        return;
+      }
       onSelect?.(created);
       setOpen(false);
       triggerRef.current?.focus();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not connect that repository.");
+      setError({ message: err instanceof Error ? err.message : "Couldn't connect this repository. Try again.", repo: repo.fullName });
     } finally {
       setConnectingId(null);
     }
@@ -271,7 +288,21 @@ export function RepositorySelect({
           </div>
 
           {error && (
-            <p className="text-destructive border-border border-t px-3 py-2 text-xs">{error}</p>
+            <div className="border-border border-t px-3 py-2">
+              {error.repo && <p className="mb-1 truncate font-mono text-xs">{error.repo}</p>}
+              <InlineMessage
+                tone={error.noAccess ? "warning" : "error"}
+                actions={
+                  error.noAccess
+                    ? [{ label: "Grant access on GitHub", href: GITHUB_APP_ACCESS_URL, external: true }]
+                    : undefined
+                }
+              >
+                {error.noAccess
+                  ? "GitHub isn't giving Outrunner access to it. If an organization owns it, an owner may need to approve Outrunner."
+                  : error.message}
+              </InlineMessage>
+            </div>
           )}
 
           <div className="border-border relative border-t">

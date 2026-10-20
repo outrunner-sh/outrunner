@@ -68,6 +68,17 @@ export async function POST(request: Request) {
     const repositories = selection
       ? all.filter((r) => selection.has(r.githubRepoId))
       : all;
+    // Asked for specific repositories and the token can see none of them: an
+    // organization that hasn't approved Outrunner, or access since removed.
+    if (selection && repositories.length === 0) {
+      return NextResponse.json(
+        {
+          error: "GitHub isn't giving Outrunner access to this repository.",
+          code: "repo-no-access",
+        },
+        { status: 403 },
+      );
+    }
     const synced = await upsertProjects(owner.id, repositories);
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
@@ -82,7 +93,7 @@ export async function POST(request: Request) {
 
     console.error("Repository sync failed", error);
     return NextResponse.json(
-      { error: "Could not save repositories. Check Outrunner's setup and try again." },
+      { error: "GitHub listed the repositories, but Outrunner couldn't save them. Try again." },
       { status: 500 },
     );
   }

@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/repositories";
 import {
   findOrCreatePullRequest,
+  GITHUB_REJECTED_SIGN_IN,
   GitHubSyncError,
   verifyTokenOwner,
 } from "@/lib/github/client";
@@ -103,7 +104,7 @@ export async function POST(request: Request, context: RouteContext) {
         error:
           error instanceof GitHubSyncError
             ? error.message
-            : "GitHub could not authorize the configured token.",
+            : GITHUB_REJECTED_SIGN_IN,
       },
       { status: 502 },
     );

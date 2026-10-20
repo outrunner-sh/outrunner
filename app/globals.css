@@ -240,7 +240,10 @@
 .inline-message.is-warning { color:#e3b341; }
 .inline-message-row { display:flex; align-items:flex-start; gap:6px; }
 .inline-message-row > .notice-icon { margin-top:2px; }
-.inline-message-text { flex:1; min-width:0; }
+/* Text and actions share a wrapping body: in a narrow menu the actions drop
+   under the text, aligned with it, rather than squeezing it to a column. */
+.inline-message-body { display:flex; flex:1; min-width:0; flex-wrap:wrap; align-items:flex-start; gap:2px 8px; }
+.inline-message-text { flex:1 1 160px; min-width:0; }
 .inline-message-details { margin:4px 0 0 20px; color:rgba(255,255,255,.5); }
 .inline-message-details summary { cursor:pointer; font-size:11px; }
 .inline-message-details pre { margin:4px 0 0; padding:8px 10px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:6px; background:#111; font:11px/1.5 var(--font-geist-mono); white-space:pre-wrap; }

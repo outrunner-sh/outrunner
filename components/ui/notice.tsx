@@ -19,6 +19,8 @@ export type NoticeAction = {
   onClick?: () => void;
   /** A link instead of a button. */
   href?: string;
+  /** `href` leaves Outrunner (GitHub, Stripe): opens in a new tab. */
+  external?: boolean;
   icon?: React.ReactNode;
   primary?: boolean;
   disabled?: boolean;
@@ -43,6 +45,13 @@ export function NoticeActions({ actions, className }: { actions?: NoticeAction[]
           </>
         );
         const cls = cn("notice-action", action.primary && "is-primary");
+        if (action.href && action.external) {
+          return (
+            <a key={action.label} href={action.href} target="_blank" rel="noreferrer" className={cls} onClick={action.onClick}>
+              {content}
+            </a>
+          );
+        }
         return action.href ? (
           <Link key={action.label} href={action.href} className={cls} onClick={action.onClick}>
             {content}
@@ -115,8 +124,10 @@ export function InlineMessage({
         <span className="notice-icon" aria-hidden>
           {ICONS[tone]}
         </span>
-        <span className="inline-message-text">{children}</span>
-        <NoticeActions actions={actions} className="is-inline" />
+        <div className="inline-message-body">
+          <span className="inline-message-text">{children}</span>
+          <NoticeActions actions={actions} className="is-inline" />
+        </div>
       </div>
       {details && (
         <details className="inline-message-details">

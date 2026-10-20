@@ -40,6 +40,11 @@ export class GitHubSyncError extends Error {
   }
 }
 
+/** GitHub answered 401/403: the user's saved OAuth token no longer works. */
+export const GITHUB_REJECTED_SIGN_IN =
+  "GitHub turned down your saved sign-in. Sign out and back in to reconnect GitHub.";
+const GITHUB_UNREADABLE = "GitHub sent back a reply Outrunner couldn't read. Try again.";
+
 const GITHUB_API_URL = "https://api.github.com";
 const PER_PAGE = 100;
 const MAX_PAGES = 100;
@@ -92,7 +97,7 @@ async function fetchTokenLogin(token: string): Promise<string> {
     console.error("GitHub token identity request was rejected", {
       status: identity.status,
     });
-    throw new GitHubSyncError("GitHub could not authorize the configured token.");
+    throw new GitHubSyncError(GITHUB_REJECTED_SIGN_IN);
   }
 
   let login: unknown;
@@ -100,11 +105,11 @@ async function fetchTokenLogin(token: string): Promise<string> {
     login = ((await identity.json()) as { login?: unknown }).login;
   } catch (error) {
     console.error("GitHub returned an unreadable token identity", error);
-    throw new GitHubSyncError("GitHub returned an invalid response.");
+    throw new GitHubSyncError(GITHUB_UNREADABLE);
   }
 
   if (typeof login !== "string") {
-    throw new GitHubSyncError("GitHub returned an invalid response.");
+    throw new GitHubSyncError(GITHUB_UNREADABLE);
   }
   return login;
 }
@@ -167,7 +172,7 @@ export async function listGitHubRepositories(
       });
       throw new GitHubSyncError(
         response.status === 401 || response.status === 403
-          ? "GitHub could not authorize the configured token."
+          ? GITHUB_REJECTED_SIGN_IN
           : "GitHub could not list repositories. Please try again.",
         response.status,
       );
@@ -178,11 +183,11 @@ export async function listGitHubRepositories(
       pageRepositories = (await response.json()) as GitHubApiRepository[];
     } catch (error) {
       console.error("GitHub returned an unreadable repository response", error);
-      throw new GitHubSyncError("GitHub returned an invalid response.");
+      throw new GitHubSyncError(GITHUB_UNREADABLE);
     }
 
     if (!Array.isArray(pageRepositories)) {
-      throw new GitHubSyncError("GitHub returned an invalid response.");
+      throw new GitHubSyncError(GITHUB_UNREADABLE);
     }
 
     repositories.push(...pageRepositories.map(normalizeRepository));
@@ -191,7 +196,7 @@ export async function listGitHubRepositories(
   }
 
   throw new GitHubSyncError(
-    "Repository sync stopped after 10,000 repositories. Narrow your GitHub app's repository access and try again.",
+    "Outrunner stopped after 10,000 repositories. On GitHub, narrow which organizations Outrunner can see, then try again.",
   );
 }
 
@@ -268,7 +273,7 @@ export async function findOrCreatePullRequest(input: {
     });
     throw new GitHubSyncError(
       response.status === 401 || response.status === 403
-        ? "GitHub could not authorize the configured token."
+        ? GITHUB_REJECTED_SIGN_IN
         : "GitHub could not open a pull request. Please try again.",
       response.status,
     );
@@ -306,7 +311,7 @@ async function readJson(response: Response): Promise<unknown> {
     return await response.json();
   } catch (error) {
     console.error("GitHub returned an unreadable response", error);
-    throw new GitHubSyncError("GitHub returned an invalid response.");
+    throw new GitHubSyncError(GITHUB_UNREADABLE);
   }
 }
 
