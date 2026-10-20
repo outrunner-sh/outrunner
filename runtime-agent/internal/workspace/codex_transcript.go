@@ -103,7 +103,12 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 	since = since.Add(-rolloutFindSlack)
 	worktree := realPath(s.worktreePath(workspaceID))
 	claimed := s.claimedRollouts(workspaceID)
-	var candidates []string
+	type candidate struct {
+		file    string
+		meta    rolloutMeta
+		started time.Time
+	}
+	var candidates []candidate
 	now := time.Now()
 	seen := map[string]bool{}
 	for _, day := range []time.Time{now, now.UTC(), now.AddDate(0, 0, -1), now.UTC().AddDate(0, 0, -1)} {
@@ -114,22 +119,32 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 		seen[dir] = true
 		files, _ := filepath.Glob(filepath.Join(dir, "rollout-*.jsonl"))
 		for _, file := range files {
-			if info, err := os.Stat(file); err == nil && !info.ModTime().Before(since) && !claimed[file] {
-				candidates = append(candidates, file)
+			if claimed[file] {
+				continue
+			}
+			meta, err := readRolloutMeta(file)
+			if err != nil || meta.ID == "" || realPath(meta.Cwd) != worktree {
+				continue
+			}
+			// When its conversation began, not when its file last changed: a
+			// Codex the user already had running in this folder writes to its
+			// older rollout too.
+			started, ok := meta.started()
+			if !ok {
+				continue
+			}
+			if !started.Before(since) {
+				candidates = append(candidates, candidate{file, meta, started})
 			}
 		}
 	}
-	// Names begin with their time: the earliest begun since the launch is
-	// the likeliest the session's, should the user have run Codex in the same
-	// folder since.
-	sort.Slice(candidates, func(i, j int) bool { return filepath.Base(candidates[i]) < filepath.Base(candidates[j]) })
-	for _, file := range candidates {
-		meta, err := readRolloutMeta(file)
-		if err == nil && meta.ID != "" && realPath(meta.Cwd) == worktree {
-			return file, meta
-		}
+	if len(candidates) == 0 {
+		return "", rolloutMeta{}
 	}
-	return "", rolloutMeta{}
+	// The earliest begun since the launch is the likeliest the session's,
+	// should the user have started Codex in the same folder since.
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].started.Before(candidates[j].started) })
+	return candidates[0].file, candidates[0].meta
 }
 
 // claimedRollouts are the rollouts other sessions have found as theirs.
@@ -168,6 +183,15 @@ func newestRollout(sessions string) string {
 type rolloutMeta struct {
 	ID  string `json:"id"`
 	Cwd string `json:"cwd"`
+	// Timestamp is when the conversation began (RFC 3339).
+	Timestamp string `json:"timestamp"`
+}
+
+// started is when the rollout's conversation began; false when its
+// session_meta doesn't say, which leaves no way to tell it from an older one.
+func (m rolloutMeta) started() (time.Time, bool) {
+	t, err := time.Parse(time.RFC3339Nano, m.Timestamp)
+	return t, err == nil
 }
 
 func readRolloutMeta(path string) (rolloutMeta, error) {
