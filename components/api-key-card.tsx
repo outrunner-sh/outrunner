@@ -7,6 +7,7 @@ import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/component
 import { KeyInput } from "@/components/stored-key";
 import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import type { StoredKey } from "@/lib/db/credentials";
 import { type KeyProviderId, PROVIDERS } from "@/lib/providers/registry";
 
@@ -57,7 +58,7 @@ export function ApiKeyCard({
       const data = (await res.json().catch(() => null)) as
         | { keys?: ProviderKeys; error?: string; warning?: string | null }
         | null;
-      if (!res.ok || !data?.keys) throw new Error(data?.error ?? "Couldn't save that. Try again.");
+      if (!res.ok || !data?.keys) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
       onChange(data.keys);
       setWarning(data.warning ?? null);
       setKey("");
@@ -148,11 +149,9 @@ export function ApiKeyCard({
         </div>
       )}
 
-      {warning ? <p className="text-sm text-warning">{warning}</p> : null}
+      {warning ? <InlineMessage tone="warning">{warning}</InlineMessage> : null}
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+        <InlineMessage>{error}</InlineMessage>
       ) : null}
     </div>
   );

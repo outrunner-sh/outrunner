@@ -6,6 +6,7 @@ import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { KeyInput, SavedKey } from "@/components/stored-key";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { allowsBoxSize, boxSizeWithin, type Plan } from "@/lib/billing/plans";
 import type { SandboxChoice, SandboxSettings } from "@/lib/db/credentials";
 import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
@@ -72,7 +73,7 @@ export function SandboxSettingsForm({
       });
       // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
       const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
-      if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Try again.");
+      if (!res.ok || !data) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
       setSettings(data);
       setChoice(data.sandbox);
       setSize(effectiveSize(data.sandbox, data.boxSize));
@@ -251,9 +252,7 @@ export function SandboxSettingsForm({
         />
       </div>
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+        <InlineMessage>{error}</InlineMessage>
       ) : null}
     </section>
   );

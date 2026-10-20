@@ -5,6 +5,7 @@ import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import {
   cancelClaudeLogin,
   pollClaudeLogin,
@@ -280,9 +281,7 @@ export function ClaudeConnection({
       )}
 
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+        <InlineMessage>{error}</InlineMessage>
       ) : null}
     </div>
   );

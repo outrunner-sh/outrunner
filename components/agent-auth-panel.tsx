@@ -7,6 +7,7 @@ import { AuthMethodCards } from "@/components/auth-method-cards";
 import { ClaudeConnection } from "@/components/claude-connection";
 import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
+import { InlineMessage } from "@/components/ui/notice";
 import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import type { KeyProviderId } from "@/lib/providers/registry";
@@ -73,7 +74,7 @@ export function AgentAuthPanel({
         body: JSON.stringify({ agent, method }),
       });
       const data = (await res.json().catch(() => null)) as { choices?: AgentAuthChoices; error?: string } | null;
-      if (!res.ok || !data?.choices) throw new Error(data?.error ?? "Couldn't save that. Try again.");
+      if (!res.ok || !data?.choices) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
       // This agent's only: another tab's reply, sent before a pick there
       // landed, mustn't undo it.
       onChoice(agent, data.choices[agent]);
@@ -102,9 +103,7 @@ export function AgentAuthPanel({
           {chosen ? way.description : `Choose how ${label} signs in for your sessions. ${way.description}`}
         </p>
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+          <InlineMessage>{error}</InlineMessage>
         ) : null}
       </div>
 
