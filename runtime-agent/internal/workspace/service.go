@@ -438,6 +438,9 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		// A session started before the status line was hidden loses it on its
 		// next attach rather than its next restart.
 		s.tmux.HideStatus(ctx, name)
+		// One that outlived the agent that recorded it (a restart, an
+		// upgrade) is recorded again, its cast continued.
+		s.ensureRecorder(ctx, workspaceID)
 		s.beginSummary(workspaceID, worktree)
 		return name, nil // already running
 	}
@@ -1182,6 +1185,18 @@ func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()
 	_ = rec.Start(ctx)
+}
+
+// ensureRecorder records a running session that has no recorder in this
+// agent: one that outlived the agent that recorded it. Its cast is continued
+// (cast.Recorder.Start), not started over.
+func (s *Service) ensureRecorder(ctx context.Context, workspaceID string) {
+	s.recordersMu.Lock()
+	_, recording := s.recorders[workspaceID]
+	s.recordersMu.Unlock()
+	if !recording {
+		s.startRecorder(ctx, workspaceID)
+	}
 }
 
 // continueRecorder keeps a workspace's cast going across a relaunch: a recorder

@@ -3,23 +3,23 @@
 import { useState } from "react";
 
 import { AgentAuthPanel, savedCredential } from "@/components/agent-auth-panel";
+import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { ApiKeyCard, type ProviderKeys } from "@/components/api-key-card";
 import { SettingsTabs } from "@/components/settings-tabs";
-import { AGENT_IDS, AGENTS, type AgentId, isAgentId } from "@/lib/agents/registry";
+import { AGENTS, type AgentId, isAgentId } from "@/lib/agents/registry";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 import { PROVIDERS } from "@/lib/providers/registry";
-import { GATEWAY_TABS, type GatewayTab, type ProviderPlace, type ProviderTab } from "@/lib/settings-links";
+import { type ProviderPlace, PROVIDER_TABS, type ProviderTab } from "@/lib/settings-links";
 
 /** What Settings → Providers shows. */
 export type ProviderSettings = { keys: ProviderKeys; choices: AgentAuthChoices; claude: ClaudeTokenMeta };
 
 /**
- * Settings → Providers (BYOK): how each coding agent signs in, a tab per agent
- * with a card per way (lib/agents/registry.ts), then the user's own keys for
- * the model providers Claude Code runs through, a tab each
- * (lib/providers/registry.ts). Models on them are billed by the provider, not
+ * Settings → Providers (BYOK), one row of tabs: how each coding agent signs
+ * in, a card per way (lib/agents/registry.ts), then the user's own keys for
+ * the model providers Claude Code runs through (lib/providers/registry.ts). Models on them are billed by the provider, not
  * counted against the user's Outrunner plan.
  */
 export function ProviderSettingsForm({ initial, place }: { initial: ProviderSettings; place?: ProviderPlace }) {
@@ -34,17 +34,10 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
     return methods.some((method) => savedCredential(method.credential, keys, claude));
   };
 
-  // Without a link's tab, each row opens on its first one connected, so a
+  // Without a link's tab, it opens on the first one connected, so a
   // returning user lands on it.
-  const [agent, setAgent] = useState<AgentId>(
-    () => (place && isAgentId(place.tab) ? place.tab : (AGENT_IDS.find(agentConnected) ?? AGENT_IDS[0])),
-  );
-  const [gateway, setGateway] = useState<GatewayTab>(
-    () =>
-      (place && !isAgentId(place.tab) ? place.tab : null) ??
-      GATEWAY_TABS.find((id) => keys[id].connected) ??
-      GATEWAY_TABS[0],
-  );
+  const connected = (id: ProviderTab) => (isAgentId(id) ? agentConnected(id) : keys[id].connected);
+  const [active, setActive] = useState<ProviderTab>(() => place?.tab ?? PROVIDER_TABS.find(connected) ?? PROVIDER_TABS[0]);
 
   function remember(tab: ProviderTab) {
     // A reload, or a link copied from the address bar, comes back here.
@@ -73,60 +66,46 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
       </div>
 
       <div className="space-y-5">
-        <h2 className="text-base font-medium text-foreground">Agents</h2>
         <SettingsTabs
-          ids={AGENT_IDS}
-          active={agent}
+          ids={PROVIDER_TABS}
+          active={active}
           onOpen={(next) => {
-            setAgent(next);
+            setActive(next);
             remember(next);
           }}
-          label="Agents"
-          idPrefix="agent"
-          tabLabel={(id) => AGENTS[id].label}
-          connected={agentConnected}
+          label="Agents and model providers"
+          idPrefix="provider"
+          tabLabel={(id) => (
+            <>
+              {isAgentId(id) ? <AgentIcon agent={id} /> : <ProviderIcon provider={id} />}
+              {isAgentId(id) ? AGENTS[id].label : PROVIDERS[id].label}
+            </>
+          )}
+          connected={connected}
         />
         {/* Every panel stays mounted, so a key half typed or a save in flight
             survives a look at another tab. */}
-        {AGENT_IDS.map((id) => (
-          <div key={id} role="tabpanel" id={`agent-panel-${id}`} aria-labelledby={`agent-tab-${id}`} hidden={id !== agent}>
-            <AgentAuthPanel
-              agent={id}
-              choices={choices}
-              keys={keys}
-              claude={claude}
-              initialMethod={place?.tab === id ? place.method : undefined}
-              onChoice={(agent, method) => setChoices((current) => ({ ...current, [agent]: method }))}
-              onKeys={changeKeys}
-              onClaude={setClaude}
-            />
-          </div>
-        ))}
-      </div>
-
-      <div className="space-y-5">
-        <div className="space-y-1">
-          <h2 className="text-base font-medium text-foreground">Model providers</h2>
-          <p className="text-sm text-muted-foreground">Other models for Claude Code, on your own key.</p>
-        </div>
-        <SettingsTabs
-          ids={GATEWAY_TABS}
-          active={gateway}
-          onOpen={(next) => {
-            setGateway(next);
-            remember(next);
-          }}
-          label="Model providers"
-          idPrefix="provider"
-          tabLabel={(id) => PROVIDERS[id].label}
-          connected={(id) => keys[id].connected}
-        />
-        {GATEWAY_TABS.map((id) => (
-          <div key={id} role="tabpanel" id={`provider-panel-${id}`} aria-labelledby={`provider-tab-${id}`} hidden={id !== gateway}>
-            <div className="space-y-6">
-              <p className="text-sm text-muted-foreground">{PROVIDERS[id].description}</p>
-              <ApiKeyCard provider={id} stored={keys[id]} onChange={(next) => changeKeys(next, id)} />
-            </div>
+        {PROVIDER_TABS.map((id) => (
+          <div key={id} role="tabpanel" id={`provider-panel-${id}`} aria-labelledby={`provider-tab-${id}`} hidden={id !== active}>
+            {isAgentId(id) ? (
+              <AgentAuthPanel
+                agent={id}
+                choices={choices}
+                keys={keys}
+                claude={claude}
+                initialMethod={place?.tab === id ? place.method : undefined}
+                onChoice={(agent, method) => setChoices((current) => ({ ...current, [agent]: method }))}
+                onKeys={changeKeys}
+                onClaude={setClaude}
+              />
+            ) : (
+              <div className="space-y-6">
+                <p className="text-sm text-muted-foreground">
+                  {PROVIDERS[id].description} Its models run in Claude Code.
+                </p>
+                <ApiKeyCard provider={id} stored={keys[id]} onChange={(next) => changeKeys(next, id)} />
+              </div>
+            )}
           </div>
         ))}
       </div>

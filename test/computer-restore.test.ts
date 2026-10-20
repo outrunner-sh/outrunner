@@ -138,3 +138,53 @@ test("a provider whose boxes don't end makes a new one, whatever came before", a
   assert.equal(made.sandboxId, "sb-new");
   assert.deepEqual(log, ["created", "sb-new: agent launched", "sb-new: mirror cloned"]);
 });
+
+test("a running box's agent is upgraded in place, once however many ask at once", async () => {
+  const log: string[] = [];
+  const commands: string[] = [];
+  const backend = restoringBackend(log, null);
+  backend.get = async (id) => {
+    const box = fakeBox(id, log);
+    const exec = box.io.exec;
+    box.io.exec = async (command) => {
+      commands.push(command);
+      return exec(command);
+    };
+    return box;
+  };
+  const provider = new ComputerRuntimeProvider("daytona", backend);
+  await Promise.all([
+    provider.upgradeAgent("sb-live", "s3cret", {}),
+    provider.upgradeAgent("sb-live", "s3cret", {}),
+  ]);
+  // The same box, not a new one: its tools (Codex) installed, its agent
+  // stopped and launched again.
+  assert.deepEqual(log, ["sb-live: agent launched"]);
+  assert.ok(commands.some((c) => c.includes("@openai/codex@")), "Codex installed");
+  assert.ok(commands.some((c) => c.includes("pkill -x runtime-agent")), "the old agent stopped first");
+  // Done, a later ask upgrades again.
+  await provider.upgradeAgent("sb-live", "s3cret", {});
+  assert.equal(log.length, 2);
+});
+
+test("two providers for one box share its upgrade; a jcode engine upgrades none", async () => {
+  const log: string[] = [];
+  const backend = restoringBackend(log, null);
+  // One provider per request, as for a user's own sandbox.
+  await Promise.all([
+    new ComputerRuntimeProvider("user-daytona", backend).upgradeAgent("sb-shared", "s3cret", {}),
+    new ComputerRuntimeProvider("user-daytona", backend).upgradeAgent("sb-shared", "s3cret", {}),
+  ]);
+  assert.deepEqual(log, ["sb-shared: agent launched"]);
+
+  const saved = process.env.RUNTIME_ENGINE;
+  process.env.RUNTIME_ENGINE = "jcode";
+  try {
+    const jcode = new ComputerRuntimeProvider("daytona", backend);
+    assert.equal(jcode.upgradesAgents, false);
+    await assert.rejects(jcode.upgradeAgent("sb-j", "s3cret", {}));
+  } finally {
+    if (saved === undefined) delete process.env.RUNTIME_ENGINE;
+    else process.env.RUNTIME_ENGINE = saved;
+  }
+});

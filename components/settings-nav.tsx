@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Box, ChevronLeft, CreditCard, Info, KeyRound, User } from "lucide-react";
+import { Box, ChevronLeft, CreditCard, Info, KeyRound, Layers, User } from "lucide-react";
 
 import { PROVIDERS_SETTINGS_HREF } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,8 @@ const sections = [
   // (lib/settings-links.ts): a failed workspace create points here when it
   // has no Claude.
   { href: PROVIDERS_SETTINGS_HREF, label: "Providers (BYOK)", icon: KeyRound },
+  // The models the chat picker shows first, and the one new sessions start on.
+  { href: "/settings/models", label: "Default models", icon: Layers },
 ];
 
 /** The settings-nav column: a Back link home, then the section links with the

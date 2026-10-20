@@ -11,6 +11,7 @@ import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/comp
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
+import { loadoutDefault } from "@/lib/runtime/model-loadout";
 import { agentOf, defaultModel, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
@@ -38,19 +39,6 @@ export function NewSessionForm({
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal } =
     useCreateSession(listed, initialProjectId);
-  // The model picked in the composer; its agent decides what this Mac needs
-  // for a local session (Claude Code, or Codex).
-  const [picked, setPicked] = useState<SessionModel | null>(null);
-  const where = useSessionLocation(agentOf(picked?.provider ?? "claude"));
-  const local = where.location === "local";
-  // No repositories only blocks the cloud; a local session needs none.
-  const noRepositories = !local && projects.length === 0;
-  const details = newSessionDetails(
-    local
-      ? { kind: "local", folder: where.folder.state === "ok" ? where.folder.folder : null }
-      : { kind: "cloud", project: selected },
-  );
-
   // The model the session starts on, picked in the composer as in a session;
   // none picked, what it starts on anyway: the menu's default on the cloud,
   // and on a Mac whose Claude Code isn't logged in; otherwise that Mac's
@@ -65,6 +53,19 @@ export function NewSessionForm({
       live = false;
     };
   }, []);
+  // The model picked in the composer, else the loadout's default: its agent
+  // decides what this Mac needs for a local session (Claude Code, or Codex).
+  const [picked, setPicked] = useState<SessionModel | null>(null);
+  const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
+  const local = where.location === "local";
+  // No repositories only blocks the cloud; a local session needs none.
+  const noRepositories = !local && projects.length === 0;
+  const details = newSessionDetails(
+    local
+      ? { kind: "local", folder: where.folder.state === "ok" ? where.folder.folder : null }
+      : { kind: "cloud", project: selected },
+  );
+
   const groups = menu
     ? modelGroups(menu).filter(
         // A Mac whose Claude Code isn't logged in has no Claude account to run.
@@ -72,7 +73,11 @@ export function NewSessionForm({
       )
     : [];
   const onDefault = local ? where.outrunnerModel : menu?.available === true;
-  const startsOn = picked ?? (onDefault && menu ? defaultModel(menu) : null);
+  // The loadout's default (Settings → Default models) where the menu offers
+  // it here; else what a session starts on without one.
+  const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
+  const startsOn = picked ?? chosenDefault ?? (onDefault && menu ? defaultModel(menu) : null);
+  const startModel = picked ?? chosenDefault ?? undefined;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one
@@ -154,10 +159,10 @@ export function NewSessionForm({
                   text,
                   where.localFolder,
                   where.outrunnerModel,
-                  picked ?? undefined,
+                  startModel,
                   where.runtime.state === "ready" ? where.runtime.status : null,
                 )
-              : create(text, attachmentIds, picked ?? undefined)
+              : create(text, attachmentIds, startModel)
           }
           model={startsOn?.id}
           modelChoice={
@@ -168,6 +173,7 @@ export function NewSessionForm({
                   switching: false,
                   disabledReason: isCreating ? "Starting the session" : null,
                   preferredProvider: startsOn?.provider,
+                  loadout: menu?.loadout,
                 }
               : undefined
           }

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { AgentId } from "@/lib/agents/registry";
 import type { ResolvedAuth } from "@/lib/agents/resolve";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import {
   deliverSessionAuth,
   OutdatedComputerError,
-  requireAgentOnBox,
+  readyBox,
   restoreSignedIn,
   type SessionAuthClient,
 } from "@/lib/runtime/session-auth";
@@ -41,7 +42,8 @@ test("a credential goes to the session; none sends nothing", async () => {
 });
 
 test("an agent from before session credentials: fine for the box's own, refused for a pick", async () => {
-  const { c } = client(missingRoute);
+  // An agent that old lists no agents, and can't be upgraded here.
+  const { c } = client(missingRoute, async () => null);
   // Not picked: the box was set up with this same credential.
   await deliverSessionAuth(c, "claude", { method: "subscription", credential: TOKEN, picked: false });
   // Picked: running on the box's credential instead would bill another account.
@@ -62,13 +64,53 @@ test("any other refusal is the agent's to tell", async () => {
   await assert.rejects(deliverSessionAuth(c, "claude", { method: "subscription", credential: TOKEN, picked: false }), refused);
 });
 
-test("a box that can't run Codex is refused before a session is made on it", async () => {
-  await requireAgentOnBox(client(ok, async () => ["claude", "codex"]).c, "codex");
-  await requireAgentOnBox(client(ok, async () => null).c, "claude");
+test("a box that can't run Codex is upgraded in place, and refused only if it still can't", async () => {
+  const codexKey: ResolvedAuth = { method: "api-key", credential: KEY, picked: true };
+  await readyBox(client(ok, async () => ["claude", "codex"]).c, "codex", codexKey);
+  await readyBox(client(ok, async () => null).c, "claude", { method: null, credential: null, picked: false });
+
+  // Upgraded: its agent then runs Codex.
+  let upgraded = 0;
+  let agents: Awaited<ReturnType<SessionAuthClient["agents"]>> = ["claude"];
+  const box = client(ok, async () => agents).c;
+  box.upgrade = async () => {
+    upgraded++;
+    agents = ["claude", "codex"];
+  };
+  await readyBox(box, "codex", codexKey);
+  assert.equal(upgraded, 1);
+  await readyBox(box, "codex", codexKey);
+  assert.equal(upgraded, 1, "an up-to-date box isn't upgraded again");
+
+  // No upgrade here (a provider that can't), or one that didn't take.
   await assert.rejects(
-    requireAgentOnBox(client(ok, async () => ["claude"]).c, "codex"),
+    readyBox(client(ok, async () => ["claude"]).c, "codex", codexKey),
     (error: Error) => error instanceof OutdatedComputerError && /can't run Codex/.test(error.message),
   );
+  const stuck = client(ok, async () => ["claude"]).c;
+  stuck.upgrade = async () => {};
+  await assert.rejects(readyBox(stuck, "codex", codexKey), /can't run Codex/);
+});
+
+test("an agent from before session credentials is upgraded for a credential the session must have", async () => {
+  let agents: AgentId[] | null = null;
+  const sent: unknown[] = [];
+  const c: SessionAuthClient = {
+    agents: async () => agents,
+    setAuth: async (credential) => {
+      if (agents === null) throw new AgentRequestError(404);
+      sent.push(credential);
+    },
+    upgrade: async () => {
+      agents = ["claude", "codex"];
+    },
+  };
+  // Unpicked: the box's own setup holds it; nothing is upgraded for it.
+  await deliverSessionAuth(c, "claude", { method: "subscription", credential: TOKEN, picked: false });
+  assert.equal(agents, null);
+  // Picked: upgraded, then handed over.
+  await deliverSessionAuth(c, "claude", { method: "api-key", credential: TOKEN, picked: true });
+  assert.deepEqual(sent, [TOKEN]);
 });
 
 test("a restore carries the credential to an agent that takes one, picked or not", async () => {
