@@ -203,7 +203,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
-	return append(append([]string(nil), s.secrets...), s.gatewayTokens()...)
+	return append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -591,7 +591,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 			return ErrSessionBusy
 		}
 	}
-	if err := s.putGatewayEnv(workspaceID, env); err != nil {
+	if err := s.gatewayFiles().put(workspaceID, env); err != nil {
 		return err
 	}
 	prior := f
@@ -608,7 +608,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if _, err := s.relaunchHeld(relaunchCtx, workspaceID, anthropicToken, resume, lock); err != nil {
 		// Not applied, so not recorded: a retry of the same choice tries again
 		// rather than finding it already set, and the next Start uses the old.
-		_ = s.putGatewayEnv(workspaceID, priorEnv)
+		_ = s.gatewayFiles().put(workspaceID, priorEnv)
 		s.setFacts(workspaceID, prior)
 		// The old session was killed before the new one failed to start, so
 		// bring Claude back on the model it had: a failed switch must not end
@@ -1140,7 +1140,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	delete(s.facts, workspaceID)
 	s.mu.Unlock()
 	_ = os.Remove(s.factsPath(workspaceID))
-	s.removeGatewayFiles(workspaceID)
+	s.gatewayFiles().remove(workspaceID)
 	s.summariesMu.Lock()
 	delete(s.summaries, workspaceID)
 	s.summariesMu.Unlock()
