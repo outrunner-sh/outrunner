@@ -63,3 +63,12 @@ test("search finds a model by its name or its id", () => {
   assert.deepEqual(searchModels(all, "OPUS").map((m) => m.id), ["opus"]);
   assert.equal(searchModels(all, "  ").length, all.length);
 });
+
+test("a move passes over models the picker doesn't show now", () => {
+  // GLM's key is gone: Opus and Luna are next to each other as the user sees them.
+  const loadout = parseLoadout({ models: [OPUS, GLM, LUNA] });
+  const visible = [OPUS, LUNA];
+  assert.deepEqual(moveEntry(loadout, OPUS, 1, visible).models, [LUNA, GLM, OPUS]);
+  assert.deepEqual(moveEntry(loadout, LUNA, -1, visible).models, [LUNA, GLM, OPUS]);
+  assert.deepEqual(moveEntry(loadout, LUNA, 1, visible), loadout, "nothing shown after the last");
+});
