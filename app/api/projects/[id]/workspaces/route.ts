@@ -34,7 +34,7 @@ import { agentOf, defaultModel, requestedModel, type SessionModel } from "@/lib/
 import {
   deliverSessionAuth,
   OutdatedComputerError,
-  requireAgentOnBox,
+  readyBox,
   sessionAuthClient,
 } from "@/lib/runtime/session-auth";
 import {
@@ -45,7 +45,7 @@ import {
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
-import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
@@ -347,10 +347,14 @@ async function provisionWorkspace({
         userId: owner.id,
       };
       const agent = new AgentClient(target);
-      const signIn = sessionAuthClient(agent, identity);
+      const signIn = sessionAuthClient(
+        agent,
+        identity,
+        boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id),
+      );
       // Before the session is made: an agent too old for Codex would make a
-      // Claude Code session of it.
-      await requireAgentOnBox(signIn, agentId);
+      // Claude Code session of it. One that is, is upgraded in place.
+      await readyBox(signIn, agentId, auth);
       const created = await agent.createWorkspace(
         {
           workspaceId: workspace.id,

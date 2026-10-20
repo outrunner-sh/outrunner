@@ -19,7 +19,7 @@ import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
-import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
@@ -124,7 +124,8 @@ export async function POST(request: Request, context: RouteContext) {
   if (provider.restoresBoxes) {
     try {
       // Signed in as the user picks now, before it launches.
-      await signInSession(sessionAuthClient(agent, identity), workspace.agent, agentAuthStore(owner.id));
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+      await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(owner.id));
       await agent.startWorkspace(identity);
     } catch (error) {
       const failure = signInFailure(error);

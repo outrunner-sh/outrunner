@@ -34,3 +34,16 @@ export async function runtimeSessionEnvironment(
 }
 
 export { anthropicEnvVar };
+
+/**
+ * A box's agent upgrade (ComputerRuntimeProvider.upgradeAgent) for a session
+ * of `userId`'s, its agent booted again with their environment as it is now.
+ */
+export function boxUpgrade(
+  provider: { upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void> },
+  sandboxId: string,
+  secret: string,
+  userId: string,
+): () => Promise<void> {
+  return async () => provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId));
+}

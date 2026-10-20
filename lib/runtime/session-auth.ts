@@ -3,7 +3,9 @@
  * before it launches. A box's own setup holds the Claude credential the user
  * had when it was made; a session whose agent runs on anything else gets its
  * credential here, per session, so a key replaced since takes effect at the
- * session's next launch.
+ * session's next launch. A box whose agent predates what the session needs
+ * (Codex, or a credential of its own) has its agent upgraded in place first,
+ * where the provider can.
  */
 
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
@@ -23,13 +25,22 @@ export type SessionAuthClient = {
    *  before the list, which runs Claude Code alone and takes no per-session
    *  credential. */
   agents(): Promise<AgentId[] | null>;
+  /** Bring the box's agent up to this release's, in place; absent where the
+   *  provider can't. */
+  upgrade?(): Promise<void>;
 };
 
-/** The session's view of its box's agent. */
-export function sessionAuthClient(client: AgentClient, identity: WorkspaceIdentity): SessionAuthClient {
+/** The session's view of its box's agent; `upgrade` brings its agent up to
+ *  date (ComputerRuntimeProvider.upgradeAgent). */
+export function sessionAuthClient(
+  client: AgentClient,
+  identity: WorkspaceIdentity,
+  upgrade?: () => Promise<void>,
+): SessionAuthClient {
   return {
     setAuth: (credential) => client.setAuth(identity, credential),
     agents: async () => (await client.health(identity)).agents ?? null,
+    ...(upgrade && { upgrade }),
   };
 }
 
@@ -42,18 +53,48 @@ export class OutdatedComputerError extends Error {
   }
 }
 
-/** What to say: the box takes the new Outrunner when it next starts, which
- *  it does after being paused for idling. */
+/** What to say of a box whose agent is too old, and couldn't be upgraded
+ *  here: it takes the new Outrunner when it next starts, which it does after
+ *  being paused for idling. */
 function outdated(what: string): OutdatedComputerError {
   return new OutdatedComputerError(
     `This project's cloud computer runs an older Outrunner that ${what}. It updates the next time it starts, after it has been paused for being idle; try again then.`,
   );
 }
 
-/** Refuse a box that can't run `agent`. Claude Code runs on every one. */
-export async function requireAgentOnBox(client: SessionAuthClient, agent: AgentId): Promise<void> {
-  if (agent === "claude") return;
-  if (!((await client.agents()) ?? ["claude"]).includes(agent)) throw outdated(`can't run ${AGENTS[agent].label}`);
+/** Whether a box whose agent says `agents` runs `agent`, and, when `mustTake`,
+ *  takes a session's own credential (an agent from before the list doesn't). */
+function fits(agents: AgentId[] | null, agent: AgentId, mustTake: boolean): boolean {
+  return (agents ?? ["claude"]).includes(agent) && !(agents === null && mustTake);
+}
+
+/**
+ * What the box's agent runs, upgraded in place first when it can't run
+ * `agent` or (`mustTake`) take a credential the session must have, and the
+ * provider can upgrade it. Still unfit after that: an
+ * {@link OutdatedComputerError}.
+ */
+async function readyAgents(client: SessionAuthClient, agent: AgentId, mustTake: boolean): Promise<AgentId[] | null> {
+  let agents = await client.agents();
+  if (!fits(agents, agent, mustTake) && client.upgrade) {
+    await client.upgrade();
+    agents = await client.agents();
+  }
+  if (!(agents ?? ["claude"]).includes(agent)) throw outdated(`can't run ${AGENTS[agent].label}`);
+  if (!fits(agents, agent, mustTake)) throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
+  return agents;
+}
+
+/** Whether a session can't do without its credential: any of Codex's, and a
+ *  Claude one the user picked (an unpicked one is the box's own). */
+function mustTake(agent: AgentId, auth: ResolvedAuth): boolean {
+  return auth.credential !== null && (agent !== "claude" || auth.picked);
+}
+
+/** Make sure the box runs `agent`, and takes the session's credential when it
+ *  must, upgrading its agent in place where it can. */
+export async function readyBox(client: SessionAuthClient, agent: AgentId, auth: ResolvedAuth): Promise<void> {
+  await readyAgents(client, agent, mustTake(agent, auth));
 }
 
 /**
@@ -72,14 +113,12 @@ export async function restoreSignedIn(
   auth: ResolvedAuth,
   restore: (credential?: SessionCredential) => Promise<unknown>,
 ): Promise<void> {
-  const agents = await client.agents();
-  if (!(agents ?? ["claude"]).includes(agent)) throw outdated(`can't run ${AGENTS[agent].label}`);
+  const agents = await readyAgents(client, agent, mustTake(agent, auth));
   const fallsBack = agent === "claude" && !auth.picked;
   if (!auth.credential || (agents === null && fallsBack)) {
     await restore();
     return;
   }
-  if (agents === null) throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
   try {
     await restore(auth.credential);
   } catch (error) {
@@ -120,9 +159,12 @@ export async function deliverSessionAuth(client: SessionAuthClient, agent: Agent
     await client.setAuth(auth.credential);
   } catch (error) {
     if (!takesNoSessionAuth(error)) throw error;
-    if (agent === "claude" && !auth.picked) return;
+    if (!mustTake(agent, auth)) return;
     if (error instanceof AgentRequestError && error.status === 409) throw cantTake(agent);
-    throw outdated(`can't sign ${AGENTS[agent].label} in the way you chose`);
+    // An agent from before session credentials: upgraded, if it can be, to
+    // one that takes it.
+    await readyAgents(client, agent, true);
+    await client.setAuth(auth.credential);
   }
 }
 
@@ -132,7 +174,9 @@ export async function deliverSessionAuth(client: SessionAuthClient, agent: Agent
  * a pick changed, since it was made takes effect.
  */
 export async function signInSession(client: SessionAuthClient, agent: AgentId, store: AgentAuthStore): Promise<void> {
-  await deliverSessionAuth(client, agent, await resolveAgentAuth(store, agent, "cloud"));
+  const auth = await resolveAgentAuth(store, agent, "cloud");
+  await readyBox(client, agent, auth);
+  await deliverSessionAuth(client, agent, auth);
 }
 
 /** What a route answers when a session's agent can't sign in: the message,

@@ -20,7 +20,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { restoreSignedIn, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
-import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
@@ -337,7 +337,8 @@ async function restoreDaytonaWorkspace(
     // The restore relaunches the session at once, so its credential rides
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
-    await restoreSignedIn(sessionAuthClient(agent, identity), workspace.agent, auth, (credential) =>
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, userId);
+    await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, (credential) =>
       agent.restoreWorkspace(identity, {
         branch: workspace.branch,
         baseBranch: project.defaultBranch,
@@ -379,7 +380,7 @@ async function daytonaAgent(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   userId: string,
-): Promise<{ agent: AgentClient; identity: WorkspaceIdentity }> {
+): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade: () => Promise<void> }> {
   const computer = await getRuntimeComputerByProject(workspace.projectId);
   if (!computer?.daytonaSandboxId || computer.status !== "ready") {
     throw new Error("Runtime Computer is not available.");
@@ -388,6 +389,7 @@ async function daytonaAgent(
   if (!secret) throw new Error("Runtime Computer secret is missing.");
   const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
   return {
+    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, userId),
     agent: new AgentClient(target),
     identity: {
       workspaceId: workspace.id,
@@ -412,9 +414,9 @@ async function resumeDaytonaWorkspace(
   const transitioned = await startTransition(workspace, ["suspended"], "resuming");
   if (!transitioned) return lifecycleConflict();
   try {
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, userId);
     // Signed in as the user picks now, before it relaunches.
-    await signInSession(sessionAuthClient(agent, identity), workspace.agent, agentAuthStore(userId));
+    await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(userId));
     await agent.resumeWorkspace(identity);
   } catch (error) {
     const failure = signInFailure(error);
