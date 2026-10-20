@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, ChevronDown, FileText, Plus, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, CircleAlert, FileText, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -201,10 +201,15 @@ export function SessionComposer({
           {attachments.items.map((item) => (
             <li
               key={item.key}
-              className="border-border bg-background/60 flex max-w-52 items-center gap-2 rounded-md border px-2 py-1.5 text-xs"
+              className={cn(
+                "bg-background/60 flex max-w-52 items-center gap-2 rounded-md border px-2 py-1.5 text-xs",
+                item.status === "error" ? "border-destructive/50" : "border-border",
+              )}
               title={item.error ?? item.filename}
             >
-              {item.previewUrl ? (
+              {item.status === "error" ? (
+                <CircleAlert className="text-destructive size-4 shrink-0" />
+              ) : item.previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={item.previewUrl}
@@ -214,11 +219,7 @@ export function SessionComposer({
               ) : (
                 <FileText className="text-muted-foreground size-4 shrink-0" />
               )}
-              <span
-                className={`truncate ${item.status === "error" ? "text-destructive" : ""}`}
-              >
-                {item.status === "error" ? (item.error ?? "Failed") : item.filename}
-              </span>
+              <span className="truncate">{item.filename}</span>
               {item.status === "uploading" && (
                 <Spinner className="size-3 shrink-0" />
               )}
@@ -234,6 +235,17 @@ export function SessionComposer({
           ))}
         </ul>
       )}
+      {attachments.items
+        .filter((item) => item.status === "error")
+        .map((item) => (
+          <InlineMessage
+            key={item.key}
+            className="studio-composer-message"
+            actions={[{ label: "Remove", onClick: () => attachments.remove(item.key) }]}
+          >
+            {item.filename}: {item.error ?? "Couldn't attach this file."}
+          </InlineMessage>
+        ))}
 
       <textarea
         ref={textareaRef}
