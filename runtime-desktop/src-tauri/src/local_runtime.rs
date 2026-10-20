@@ -1276,7 +1276,8 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
 
 /// The agent routes the page may call, each bound to the workspace its token is
 /// for. Archive/restore are absent: local workspaces have no snapshots. Only the
-/// change set takes a query (`?path=` for one file's diff).
+/// change set takes a query (`?path=` for one file's diff). `auth` sets which
+/// credential the session's agent CLI runs on, like `model` sets its model.
 fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest::Method, String> {
     let (route, query) = match path.split_once('?') {
         Some((route, query)) => (route, Some(query)),
@@ -1285,7 +1286,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
     let segments: Vec<&str> = route.trim_start_matches('/').split('/').collect();
     match (method, segments.as_slice(), query) {
         ("POST", ["workspaces"], None) => Ok(reqwest::Method::POST),
-        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model"], None)
+        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model" | "auth"], None)
             if *id == workspace_id =>
         {
             Ok(reqwest::Method::POST)
@@ -2067,6 +2068,20 @@ echo 'Logged in using ChatGPT' >&2"#,
         assert!(allowed_route("POST", "/workspaces/ws-1/archive", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/destroy", "ws-1").is_err());
         assert!(allowed_route("GET", "/health/../workspaces", "ws-1").is_err());
+    }
+
+    #[test]
+    fn a_sessions_credential_is_set_only_through_its_own_workspace() {
+        assert_eq!(allowed_route("POST", "/workspaces/ws-1/auth", "ws-1"), Ok(reqwest::Method::POST));
+        for (method, path) in [
+            ("POST", "/workspaces/ws-2/auth"),
+            ("GET", "/workspaces/ws-1/auth"),
+            ("POST", "/workspaces/ws-1/auth?kind=none"),
+            ("POST", "/workspaces/ws-1/auth/extra"),
+            ("POST", "/workspaces/auth"),
+        ] {
+            assert!(allowed_route(method, path, "ws-1").is_err(), "{method} {path}");
+        }
     }
 
     #[test]
