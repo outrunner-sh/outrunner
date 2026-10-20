@@ -61,6 +61,10 @@ type Translator struct {
 	// assistant records, then the results of the tools they called.
 	held     []held
 	heldTool bool // held includes a tool result
+	// late is usage that came after its call's records were given up (a tool
+	// that ran, or waited for approval, longer than the caller waits): it
+	// goes on the next assistant record, so the session's totals keep it.
+	late *Usage
 }
 
 type held struct {
@@ -238,6 +242,7 @@ func (t *Translator) responseItem(offset int64, at string, p responseItem) []Rec
 	}
 	rec := t.newRecord(offset, at, "assistant", mustJSON(blocks))
 	rec.Message.Model = t.model
+	rec.Message.Usage, t.late = t.late, nil
 	var out []Record
 	if t.heldTool {
 		out = t.Flush() // a new model call began without the last one's usage
@@ -248,24 +253,37 @@ func (t *Translator) responseItem(offset int64, at string, p responseItem) []Rec
 
 // usage puts a model call's usage on its last assistant record and releases
 // the call's records. A token_count with nothing held (its records were given
-// up already) is dropped.
+// up already) is kept for the next assistant record instead.
 func (t *Translator) usage(p tokenCount) []Record {
 	if p.Info == nil || p.Info.Last == nil {
 		return t.Flush()
 	}
 	last := p.Info.Last
+	u := Usage{
+		InputTokens:              max(last.Input-last.Cached-last.CacheWrite, 0),
+		OutputTokens:             last.Output,
+		CacheCreationInputTokens: last.CacheWrite,
+		CacheReadInputTokens:     last.Cached,
+	}
 	for i := len(t.held) - 1; i >= 0; i-- {
 		if t.held[i].rec.Message.Role == "assistant" {
-			t.held[i].rec.Message.Usage = &Usage{
-				InputTokens:              max(last.Input-last.Cached-last.CacheWrite, 0),
-				OutputTokens:             last.Output,
-				CacheCreationInputTokens: last.CacheWrite,
-				CacheReadInputTokens:     last.Cached,
-			}
-			break
+			t.held[i].rec.Message.Usage = u.plus(t.held[i].rec.Message.Usage)
+			return t.Flush()
 		}
 	}
+	t.late = u.plus(t.late)
 	return t.Flush()
+}
+
+// plus is u and other added together; other may be nil.
+func (u Usage) plus(other *Usage) *Usage {
+	if other != nil {
+		u.InputTokens += other.InputTokens
+		u.OutputTokens += other.OutputTokens
+		u.CacheCreationInputTokens += other.CacheCreationInputTokens
+		u.CacheReadInputTokens += other.CacheReadInputTokens
+	}
+	return &u
 }
 
 // SessionID is the rollout's Codex session id, once its session_meta is read.

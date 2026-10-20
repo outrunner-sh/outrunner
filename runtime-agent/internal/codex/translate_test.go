@@ -226,3 +226,34 @@ func TestRecordUUIDsReadBack(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageThatComesLateGoesOnTheNextReply(t *testing.T) {
+	const (
+		call   = `{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{}","call_id":"c1"}}` + "\n"
+		output = `{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}` + "\n"
+		usage  = `{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":60,"output_tokens":7}}}}` + "\n"
+		reply  = `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}` + "\n"
+	)
+	tr := NewTranslator()
+	tr.Line(0, []byte(call))
+	// The tool runs long: the caller gives the call up to show it.
+	if out := tr.Flush(); len(out) != 1 {
+		t.Fatalf("flush released %d records, want the call", len(out))
+	}
+	tr.Line(100, []byte(output))
+	tr.Line(200, []byte(usage)) // the call's usage, after its records went
+	tr.Line(300, []byte(reply))
+	out := tr.Line(400, []byte(usage)) // the reply's own
+	var rec struct {
+		Message struct {
+			Usage Usage `json:"usage"`
+		} `json:"message"`
+	}
+	if len(out) != 1 || json.Unmarshal(out[0].Line, &rec) != nil {
+		t.Fatalf("the reply's usage released %q", out)
+	}
+	want := Usage{InputTokens: 80, OutputTokens: 14, CacheReadInputTokens: 120}
+	if rec.Message.Usage != want {
+		t.Errorf("reply usage = %+v, want both calls' %+v", rec.Message.Usage, want)
+	}
+}
