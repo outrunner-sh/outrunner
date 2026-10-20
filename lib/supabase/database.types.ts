@@ -285,6 +285,16 @@ type UserAgentAuthRow = {
   updated_at: string;
 };
 
+// A user's model loadout (Settings → Default models). Service-role-only (RLS
+// on, no policies); see supabase/migrations/20261020140000_user_model_loadout.sql.
+type UserModelLoadoutRow = {
+  user_id: string;
+  models: Json;
+  default_model: Json | null;
+  created_at: string;
+  updated_at: string;
+};
+
 // Per-user Claude Code credentials. Service-role-only (RLS on, no policies);
 // see supabase/migrations/20260807000000_user_claude_credentials.sql.
 type UserClaudeCredentialsRow = {
@@ -437,6 +447,12 @@ export type Database = {
         Row: UserProviderKeyRow;
         Insert: Insert<UserProviderKeyRow, "user_id" | "provider" | "key_ciphertext">;
         Update: Partial<UserProviderKeyRow>;
+        Relationships: [];
+      };
+      user_model_loadout: {
+        Row: UserModelLoadoutRow;
+        Insert: Insert<UserModelLoadoutRow, "user_id">;
+        Update: Partial<UserModelLoadoutRow>;
         Relationships: [];
       };
       user_agent_auth: {
