@@ -22,6 +22,7 @@ import {
   withoutFirstPrompt,
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { isProviderId } from "@/lib/providers/registry";
 import { defaultModel, modelGroups, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
@@ -32,6 +33,7 @@ import { cn } from "@/lib/utils";
 
 export function WorkspaceSession({
   workspaceId,
+  agent = "claude",
   local = false,
   showTerminal,
   onToggleTerminal,
@@ -41,6 +43,9 @@ export function WorkspaceSession({
   initialAttachmentIds,
 }: {
   workspaceId: string;
+  /** The coding agent the session runs: its model menu offers only models
+   *  that agent runs. */
+  agent?: AgentId;
   /** A local session: everything then goes through the Outrunner app to the
    *  agent on this Mac, instead of through the server. */
   local?: boolean;
@@ -186,13 +191,13 @@ export function WorkspaceSession({
   const working =
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(menu),
+    groups: modelGroups(menu, agent),
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
     disabledReason: !canSend
       ? "Waiting for the session to connect"
       : working
-        ? "Switch models once Claude has finished this turn"
+        ? `Switch models once ${AGENTS[agent].label} has finished this turn`
         : null,
     onChange: (model) => {
       setSwitching(true);
@@ -384,7 +389,7 @@ function pickedProvider(workspaceId: string): ModelProvider | null {
     // "neev" Outrunner's, before the rename.
     if (saved === "own") return "openrouter";
     if (saved === "neev") return "outrunner";
-    return saved === "outrunner" || saved === "claude" || isProviderId(saved) ? saved : null;
+    return saved === "outrunner" || saved === "claude" || saved === "codex" || isProviderId(saved) ? saved : null;
   } catch {
     return null;
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { AGENTS } from "@/lib/agents/registry";
 import { getOwner } from "@/lib/auth/owner";
 import { modelKey } from "@/lib/db/credentials";
 import {
@@ -13,7 +14,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { requestedModel, setModelRequest } from "@/lib/runtime/session-models";
+import { agentOf, requestedModel, setModelRequest } from "@/lib/runtime/session-models";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +45,13 @@ export async function POST(request: Request, context: RouteContext) {
   const workspace = await getWorkspace(id);
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
+  }
+  // A session keeps its agent: its conversation is that agent's.
+  if (agentOf(model.provider) !== workspace.agent) {
+    return NextResponse.json(
+      { error: `This session runs ${AGENTS[workspace.agent].label}. Start a new session to use ${AGENTS[agentOf(model.provider)].label}.` },
+      { status: 409 },
+    );
   }
 
   const resolution = resolveProvider(workspace);
