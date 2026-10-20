@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,9 @@ import (
 // claudeAgent runs Claude Code: the agent every session ran before there was
 // a choice, and still the default.
 type claudeAgent struct{ s *Service }
+
+// prepare has nothing to ready: Claude needs only its argv and environment.
+func (claudeAgent) prepare(context.Context, string) error { return nil }
 
 func (a claudeAgent) env(anthropicToken string) []string {
 	return claude.SessionEnv(a.s.env, anthropicToken)
@@ -120,25 +124,11 @@ func isTrustDialog(pane string) bool {
 // first and preselects it, so a plain Enter would close the session. Empty
 // when the pane doesn't show both, since any key could then mean "No".
 func trustKey(pane string) string {
-	selected, yes := -1, -1
-	for i, line := range strings.Split(pane, "\n") {
-		if selected < 0 && strings.Contains(line, "❯") {
-			selected = i
-		}
-		if strings.Contains(line, "Yes, I trust this folder") || strings.Contains(line, "Yes, proceed") {
-			yes = i
-		}
+	selected := func(line string) bool { return strings.Contains(line, "❯") }
+	yes := func(line string) bool {
+		return strings.Contains(line, "Yes, I trust this folder") || strings.Contains(line, "Yes, proceed")
 	}
-	switch {
-	case selected < 0 || yes < 0:
-		return ""
-	case selected == yes:
-		return "Enter"
-	case yes > selected:
-		return "Down"
-	default:
-		return "Up"
-	}
+	return keyToward(pane, selected, yes)
 }
 
 // claudeIsBusy reports whether Claude's screen shows a turn in progress: its

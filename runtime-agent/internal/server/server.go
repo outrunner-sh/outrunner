@@ -141,6 +141,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
 		return
 	}
+	if !workspace.ValidAgent(req.Agent) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", fmt.Sprintf("unknown agent %q", req.Agent))
+		return
+	}
 	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
 		WorkspaceID:    req.WorkspaceID,
 		Branch:         req.Branch,
@@ -149,6 +153,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		PermissionMode: mode,
 		Title:          req.Title,
 		Model:          req.Model,
+		Agent:          req.Agent,
 	})
 	switch {
 	case errors.Is(err, workspace.ErrBypassInFolder):
@@ -392,6 +397,8 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+	case errors.Is(err, workspace.ErrGatewayUnsupported):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrSessionUnchecked),
 		errors.Is(err, workspace.ErrModelUnsupported):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())

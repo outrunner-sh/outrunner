@@ -49,6 +49,7 @@ func (s *Service) LocalSessions(ctx context.Context) []protocol.LocalSession {
 			Running:      s.SessionAlive(ctx, id),
 			Model:        f.Model,
 			Gateway:      string(f.Gateway),
+			Agent:        f.Agent,
 		})
 	}
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })

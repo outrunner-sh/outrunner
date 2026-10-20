@@ -1,12 +1,20 @@
 package workspace
 
-import "errors"
+import (
+	"context"
+	"errors"
+	"strings"
+)
 
 // agent is the coding agent a workspace's tmux session runs. The engine around
 // it — the worktree, tmux, the readiness wait, prompt delivery, model switches
 // — is the same for every agent; what differs is here: how the agent is
 // launched, how its screen reads, and where it keeps its conversation.
 type agent interface {
+	// prepare readies what a launch needs beyond its argv, or says why the
+	// session can't launch at all. It runs before a relaunch kills the old
+	// session, so a launch bound to fail leaves a running one as it was.
+	prepare(ctx context.Context, workspaceID string) error
 	// command is the argv that (re)launches a workspace's session in its
 	// worktree, continuing its conversation when resume is set.
 	command(workspaceID, worktree string, resume bool) []string
@@ -43,13 +51,23 @@ type agent interface {
 var errExitedAtStart = errors.New("the agent exited as soon as it started")
 
 // The agents a session can run, as its facts (and the protocol) name them.
-const AgentClaude = "claude"
+const (
+	AgentClaude = "claude"
+	AgentCodex  = "codex"
+)
+
+// ValidAgent accepts an agent a create may name; empty is Claude.
+func ValidAgent(name string) bool {
+	return name == "" || name == AgentClaude || name == AgentCodex
+}
 
 // agentFor is the agent a workspace's session runs: the one its facts record,
 // and Claude for a session from before there was a choice.
 func (s *Service) agentFor(workspaceID string) agent {
 	f, _ := s.getFacts(workspaceID)
 	switch f.Agent {
+	case AgentCodex:
+		return codexAgent{s}
 	default: // AgentClaude, or "" for a session recorded before agents
 		return claudeAgent{s}
 	}
@@ -73,4 +91,30 @@ func (s *Service) SessionLog(workspaceID string) string {
 // userTurns counts the user prompts a workspace's agent has recorded.
 func (s *Service) userTurns(workspaceID string) int {
 	return s.agentFor(workspaceID).userTurns(workspaceID)
+}
+
+// keyToward is the key that takes a menu's selection toward the option yes
+// picks out: Enter once that option is the selected one (the first line
+// selected matches), else the arrow toward it. Empty when the pane doesn't
+// show both, since any key could then mean "No".
+func keyToward(pane string, selected, yes func(line string) bool) string {
+	sel, want := -1, -1
+	for i, line := range strings.Split(pane, "\n") {
+		if sel < 0 && selected(line) {
+			sel = i
+		}
+		if yes(line) {
+			want = i
+		}
+	}
+	switch {
+	case sel < 0 || want < 0:
+		return ""
+	case sel == want:
+		return "Enter"
+	case want > sel:
+		return "Down"
+	default:
+		return "Up"
+	}
 }

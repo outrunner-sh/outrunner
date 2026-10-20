@@ -73,6 +73,9 @@ type CreateWorkspaceRequest struct {
 	// Model is Claude's --model for the session: an alias, a full model name,
 	// or a gateway slug. Empty keeps Claude's default.
 	Model string `json:"model,omitempty"`
+	// Agent is the coding agent the session runs: "claude" or "codex"; empty
+	// is Claude. Recorded by the first create; a repeated one never changes it.
+	Agent string `json:"agent,omitempty"`
 }
 
 // SetModelRequest switches a workspace's session to another model. With a
@@ -124,6 +127,8 @@ type LocalSession struct {
 	// Gateway is what it runs through ("openrouter"); empty for the user's
 	// own Claude. The key is never listed.
 	Gateway string `json:"gateway,omitempty"`
+	// Agent is the coding agent it runs ("claude", "codex"); empty is Claude.
+	Agent string `json:"agent,omitempty"`
 }
 
 // WorkspaceActionRequest addresses one workspace (start/stop/archive/...).

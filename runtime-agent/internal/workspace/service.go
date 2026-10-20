@@ -85,6 +85,10 @@ type Service struct {
 	// desktop shell sets it so that gap can never widen a local session to
 	// bypassPermissions on the user's own machine.
 	DefaultPermissionMode claude.PermissionMode
+
+	// lookPath finds an agent's binary (exec.LookPath); tests stand in for a
+	// computer with or without it.
+	lookPath func(file string) (string, error)
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -120,6 +124,9 @@ type workspaceFacts struct {
 	// Agent is the coding agent the session runs (see agentFor); empty is
 	// Claude, which every session ran before there was a choice.
 	Agent string `json:"agent,omitempty"`
+	// CodexSessionID names a Codex session's conversation once Codex has
+	// recorded one: it is resumed by it (`codex resume <id>`).
+	CodexSessionID string `json:"codexSessionId,omitempty"`
 	// Model is the model the session runs; empty is Claude's own default.
 	Model string `json:"model,omitempty"`
 	// Gateway, when set, runs the session through it on a key of its own (in
@@ -147,6 +154,9 @@ type CreateInput struct {
 	// Model is the session's --model; empty keeps Claude's default. Callers
 	// validate it (claude.ValidModel).
 	Model string
+	// Agent is the coding agent the session runs (ValidAgent); empty is
+	// Claude. Recorded at the first Create only.
+	Agent string
 }
 
 func NewService(root string) *Service {
@@ -161,6 +171,7 @@ func NewService(root string) *Service {
 		lifeLocks: map[string]*sync.Mutex{},
 		summaries: map[string]*Summary{},
 		recorders: map[string]*cast.Recorder{},
+		lookPath:  exec.LookPath,
 	}
 }
 
@@ -263,6 +274,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		PermissionMode: in.PermissionMode,
 		Title:          in.Title,
 		Model:          in.Model,
+		Agent:          in.Agent,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 	}
 	// A repeated Create (after a restart) keeps the session's original age, and
@@ -271,6 +283,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.CreatedAt != "" {
 		facts.CreatedAt = prior.CreatedAt
 	}
+	// Nor does it ever switch the agent: the session's conversation and
+	// credentials are that agent's. A session recorded without one is Claude's.
+	if existed {
+		facts.Agent = prior.Agent
+	}
+	facts.CodexSessionID = prior.CodexSessionID
 	// A repeated Create (after an agent restart) never switches the model:
 	// that is SetModel's, which relaunches the session to match. A session on a
 	// gateway keeps it, key file and all — dropping it here would run the
@@ -294,7 +312,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 			// with no transcript behind it would start it afresh, cut off from
 			// its history.
 			facts.ClaudeSessionID = prior.ClaudeSessionID
-			if !existed {
+			if !existed && facts.Agent != AgentCodex {
 				facts.ClaudeSessionID = newSessionID()
 			}
 		}
@@ -398,8 +416,11 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.requireGatewayEnv(workspaceID); err != nil {
 		return "", err
 	}
-	s.makeContextDir(ctx, workspaceID, worktree)
 	a := s.agentFor(workspaceID)
+	if err := a.prepare(ctx, workspaceID); err != nil {
+		return "", err
+	}
+	s.makeContextDir(ctx, workspaceID, worktree)
 	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
@@ -481,6 +502,9 @@ var (
 	ErrUnknownWorkspace = errors.New("unknown workspace")
 	// ErrModelUnsupported is a model switch on an engine that has none (jcode).
 	ErrModelUnsupported = errors.New("this engine cannot switch models")
+	// ErrGatewayUnsupported is a gateway asked of a Codex session: gateways
+	// serve Claude's API, and Codex speaks OpenAI's.
+	ErrGatewayUnsupported = errors.New("a Codex session runs on OpenAI's models directly and can't use a gateway")
 	// ErrSessionBusy is a switch asked for while Claude is mid-turn: the
 	// relaunch would cut the turn off.
 	ErrSessionBusy = errors.New("Claude is mid-turn; switch models once it has finished")
@@ -521,6 +545,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	f, ok := s.getFacts(workspaceID)
 	if !ok {
 		return ErrUnknownWorkspace // never write facts for a workspace never created
+	}
+	if f.Agent == AgentCodex && choice.Gateway != claude.NoGateway {
+		return ErrGatewayUnsupported
 	}
 	env := ""
 	if choice.Gateway != claude.NoGateway {
@@ -626,10 +653,13 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	if err := s.requireGatewayEnv(workspaceID); err != nil {
 		return "", err // before the kill: the running session is left as it is
 	}
+	a := s.agentFor(workspaceID)
+	if err := a.prepare(ctx, workspaceID); err != nil {
+		return "", err // likewise
+	}
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	s.makeContextDir(ctx, workspaceID, worktree)
-	a := s.agentFor(workspaceID)
 	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
