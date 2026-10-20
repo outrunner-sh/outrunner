@@ -1,4 +1,5 @@
 import type { AgentId } from "@/lib/agents/registry";
+import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -49,6 +50,7 @@ export async function listProjects(): Promise<Project[]> {
 }
 
 export async function getProject(id: string): Promise<Project | null> {
+  if (!isUuid(id)) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("projects")
@@ -122,6 +124,7 @@ export async function listWorkspaces(
 }
 
 export async function getWorkspace(id: string): Promise<Workspace | null> {
+  if (!isUuid(id)) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("workspaces")

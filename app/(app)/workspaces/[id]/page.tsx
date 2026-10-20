@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
+import { SessionDeleted } from "@/components/session-deleted";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
@@ -23,8 +24,12 @@ export default async function WorkspacePage({
   const initialAttachmentIds =
     attachment === undefined ? [] : Array.isArray(attachment) ? attachment : [attachment];
   const workspace = await getWorkspace(id);
-  // A deleted session keeps its row, marked destroyed: it is gone all the same.
-  if (!workspace || workspace.status === "destroyed") notFound();
+  if (!workspace) notFound();
+  // A deleted session keeps its row, marked destroyed: say so, rather than
+  // leaving the user to wonder whether the link was wrong.
+  if (workspace.status === "destroyed") {
+    return <SessionDeleted workspace={workspace} pullRequest={await getWorkspacePullRequest(workspace.id)} />;
+  }
   const project = await getProjectOnce(workspace.projectId);
   if (!project) notFound();
   const pullRequest = await getWorkspacePullRequest(workspace.id);
