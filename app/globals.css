@@ -215,18 +215,38 @@
 .studio-offline .studio-empty-chat { margin:auto; }
 
 .studio-session-error { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px auto 0; max-width:820px; width:calc(100% - 32px); padding:9px 12px; border:1px solid rgba(248,81,73,.32); border-radius:9px; color:#f5847e; background:rgba(248,81,73,.1); font-size:11px; }.studio-session-error button { border:0; color:#f5847e; background:transparent; font-size:11px; text-decoration:underline; cursor:pointer; }
-/* Connection notices: a retry or a lost stream isn't a failure, so neutral or amber, never red. */
-.studio-session-notice { display:flex; align-items:flex-start; gap:10px; margin:10px auto 0; max-width:820px; width:calc(100% - 32px); padding:10px 12px; border:1px solid rgba(255,255,255,.1); border-radius:9px; color:var(--studio-text); background:rgba(255,255,255,.03); font-size:12px; }
-.studio-session-notice.is-warning { border-color:rgba(210,153,34,.32); background:rgba(210,153,34,.07); }
-.studio-session-notice-icon { flex-shrink:0; width:15px; height:15px; margin-top:1px; color:rgba(255,255,255,.55); }
-.studio-session-notice.is-warning .studio-session-notice-icon { color:var(--studio-amber); }
-.studio-session-notice-text { display:flex; flex:1; min-width:0; flex-direction:column; gap:2px; }
-.studio-session-notice-text strong { font-weight:500; }
-.studio-session-notice-text span { color:rgba(255,255,255,.55); }
-.studio-session-notice-meta { font:11px var(--font-geist-mono); }
-.studio-session-notice button { display:inline-flex; flex-shrink:0; align-items:center; gap:6px; padding:4px 10px; border:0; border-radius:6px; color:#111; background:#f2f2f2; font-size:12px; font-weight:500; cursor:pointer; }
-.studio-session-notice button:hover { background:#fff; }
-.studio-session-notice button svg { width:13px; height:13px; }
+/* Notices and inline messages (components/ui/notice.tsx). Red is for what did
+   not happen; a retry is neutral and a recoverable stop amber. */
+.notice { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid rgba(255,255,255,.1); border-radius:9px; color:var(--foreground); background:rgba(255,255,255,.03); font-size:12px; line-height:1.5; }
+.notice.is-warning { border-color:rgba(210,153,34,.32); background:rgba(210,153,34,.07); }
+.notice.is-error { border-color:rgba(248,81,73,.32); background:rgba(248,81,73,.08); }
+.notice-icon { display:inline-flex; flex-shrink:0; margin-top:2px; color:rgba(255,255,255,.55); }
+.notice-icon svg { width:14px; height:14px; }
+.is-warning > .notice-icon, .is-warning .inline-message-row > .notice-icon { color:#d29922; }
+.is-error > .notice-icon, .is-error .inline-message-row > .notice-icon { color:#f5847e; }
+.notice-text { display:flex; flex:1; min-width:0; flex-direction:column; gap:2px; }
+.notice-text strong { font-weight:500; }
+.notice-text span { color:rgba(255,255,255,.55); }
+.notice-text .notice-meta { font:11px var(--font-geist-mono); }
+.notice-actions { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; gap:6px; }
+.notice-action { display:inline-flex; height:26px; align-items:center; gap:6px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:6px; color:var(--foreground); background:transparent; font-size:12px; font-weight:500; cursor:pointer; transition:background-color .15s; }
+.notice-action:hover { background:rgba(255,255,255,.06); }
+.notice-action.is-primary { border-color:transparent; color:#111; background:#f2f2f2; }
+.notice-action.is-primary:hover { background:#fff; }
+.notice-action:disabled { opacity:.5; cursor:default; }
+.notice-action svg { width:13px; height:13px; }
+.notice-actions.is-inline .notice-action { height:auto; padding:0; border:0; background:transparent; color:inherit; text-decoration:underline; text-underline-offset:2px; }
+.inline-message { font-size:12px; line-height:1.5; color:rgba(255,255,255,.6); }
+.inline-message.is-error { color:#f5847e; }
+.inline-message.is-warning { color:#e3b341; }
+.inline-message-row { display:flex; align-items:flex-start; gap:6px; }
+.inline-message-row > .notice-icon { margin-top:2px; }
+.inline-message-text { flex:1; min-width:0; }
+.inline-message-details { margin:4px 0 0 20px; color:rgba(255,255,255,.5); }
+.inline-message-details summary { cursor:pointer; font-size:11px; }
+.inline-message-details pre { margin:4px 0 0; padding:8px 10px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:6px; background:#111; font:11px/1.5 var(--font-geist-mono); white-space:pre-wrap; }
+/* In the session column, a notice sits where the error strip does. */
+.studio-live-session > .notice { margin:10px auto 0; max-width:820px; width:calc(100% - 32px); }
 
 .studio-convo-panel { display:flex; flex:1; min-height:0; flex-direction:column; }
 .studio-convo-body { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
@@ -361,6 +381,7 @@
 .route-state-button:hover { background: rgba(255,255,255,.05); }
 .route-state-button.is-primary { border-color: transparent; color: var(--background); background: var(--foreground); }
 .route-state-button.is-primary:hover { background: color-mix(in oklab, var(--foreground) 88%, transparent); }
+.route-state-actions .notice-action { height:32px; padding:0 12px; border-radius:8px; font-size:13px; }
 .dot-matrix.is-still .dot-matrix-cell { animation: none; }
 @media (prefers-reduced-motion: reduce) { .route-state { animation: none; } }
 /* Hold to Confirm (interior.dev): a fill crosses the button while it is held;

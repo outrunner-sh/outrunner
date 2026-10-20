@@ -2,7 +2,7 @@
 
 import "@xterm/xterm/css/xterm.css";
 
-import { ChevronRight, Loader2, RefreshCw, RotateCw, TerminalSquare, TriangleAlert, Users } from "lucide-react";
+import { ChevronRight, RefreshCw, RotateCw, TerminalSquare, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
+import { Notice } from "@/components/ui/notice";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
@@ -299,16 +300,12 @@ export function WorkspaceSession({
   return (
     <div className="studio-live-session" data-testid="workspace-session">
       {conversation.lost ? (
-        <div className="studio-session-notice is-warning" role="alert">
-          <TriangleAlert className="studio-session-notice-icon" />
-          <div className="studio-session-notice-text">
-            <strong>Lost connection to this session</strong>
-            <span>It&apos;s still running on its box, so nothing is lost.</span>
-          </div>
-          <button type="button" onClick={refresh}>
-            <RotateCw /> Reconnect
-          </button>
-        </div>
+        <Notice
+          tone="warning"
+          title="Lost connection to this session"
+          detail="It's still running on its box, so nothing is lost."
+          actions={[{ label: "Reconnect", icon: <RotateCw />, primary: true, onClick: refresh }]}
+        />
       ) : (
         conversation.reconnecting && <ReconnectingNotice {...conversation.reconnecting} />
       )}
@@ -399,16 +396,11 @@ function ReconnectingNotice({ attempt, max, since }: { attempt: number; max: num
   const seconds = Math.max(0, Math.floor((now - since) / 1000));
   const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   return (
-    <div className="studio-session-notice" role="status">
-      <Loader2 className="studio-session-notice-icon animate-spin" />
-      <div className="studio-session-notice-text">
-        <strong>Reconnecting to this session…</strong>
-        <span className="studio-session-notice-meta">
-          {attempt > 0 ? `attempt ${Math.min(attempt, max)} of ${max} · ` : ""}
-          {elapsed}
-        </span>
-      </div>
-    </div>
+    <Notice
+      tone="progress"
+      title="Reconnecting to this session…"
+      meta={`${attempt > 0 ? `attempt ${Math.min(attempt, max)} of ${max} · ` : ""}${elapsed}`}
+    />
   );
 }
 
