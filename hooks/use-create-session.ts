@@ -3,14 +3,16 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 
+import { LocalAgentAuthError, signInLocalAgent } from "@/lib/desktop/local-agent-auth";
 import {
   localAgentRequest,
   localTarget,
   putOnModel,
   putOnDefaultModel,
   type LocalFolder,
+  type LocalStatus,
 } from "@/lib/desktop/local-runtime";
-import type { SessionModel } from "@/lib/runtime/session-models";
+import { agentOf, type SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
@@ -106,18 +108,29 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    * Outrunner's model before then, so Claude starts on that with no login. A
    * session that can't be is removed again rather than left to open on a
    * login screen.
+   *
+   * Its agent is its model's (Codex for Codex's), signed in the way the user
+   * picked for it (Settings → Providers); `status` is what the Mac app last
+   * said of its agent CLIs.
    */
   function createLocal(
     prompt: string,
     folder: LocalFolder,
     onOutrunnerModel = false,
     model?: SessionModel,
+    status: LocalStatus | null = null,
   ): Promise<boolean> {
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
       const workspaceId = crypto.randomUUID();
       const target = localTarget(workspaceId);
+      const agent = agentOf(model?.provider ?? "claude");
+      const fail = (error: unknown, fallback: string) => {
+        setMessage(error instanceof Error ? error.message : fallback);
+        if (error instanceof LocalAgentAuthError) setMessageHref(error.settingsHref);
+        resolve(false);
+      };
       try {
         await localAgentRequest(target, "POST", "/workspaces", {
           workspaceId,
@@ -126,10 +139,18 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           repoPath: folder.path,
           // By character, so the cut never splits an emoji's surrogate pair.
           title: Array.from(prompt.trim()).slice(0, 120).join(""),
+          // Named only for Codex: Claude Code is every agent's default.
+          ...(agent !== "claude" && { agent }),
         });
       } catch (error) {
-        setMessage(error instanceof Error ? error.message : "Could not start the local session.");
-        resolve(false);
+        fail(error, "Could not start the local session.");
+        return;
+      }
+      try {
+        await signInLocalAgent(workspaceId, agent, status);
+      } catch (error) {
+        void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
+        fail(error, "Could not sign the session's agent in.");
         return;
       }
       // The model picked on this screen; without one, Outrunner's where this
@@ -139,8 +160,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           await (model ? putOnModel(workspaceId, model) : putOnDefaultModel(workspaceId));
         } catch (error) {
           void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
-          setMessage(error instanceof Error ? error.message : "Outrunner's models are unavailable right now.");
-          resolve(false);
+          fail(error, "Outrunner's models are unavailable right now.");
           return;
         }
       }

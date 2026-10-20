@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { AGENTS } from "@/lib/agents/registry";
 import { getOwner } from "@/lib/auth/owner";
-import { modelKey } from "@/lib/db/credentials";
+import { agentAuthStore, modelKey } from "@/lib/db/credentials";
 import {
   getRuntimeComputerByProject,
   getWorkspace,
@@ -13,7 +14,8 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { requestedModel, setModelRequest } from "@/lib/runtime/session-models";
+import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
+import { agentOf, requestedModel, setModelRequest } from "@/lib/runtime/session-models";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +46,13 @@ export async function POST(request: Request, context: RouteContext) {
   const workspace = await getWorkspace(id);
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
+  }
+  // A session keeps its agent: its conversation is that agent's.
+  if (agentOf(model.provider) !== workspace.agent) {
+    return NextResponse.json(
+      { error: `This session runs ${AGENTS[workspace.agent].label}. Start a new session to use ${AGENTS[agentOf(model.provider)].label}.` },
+      { status: 409 },
+    );
   }
 
   const resolution = resolveProvider(workspace);
@@ -90,8 +99,20 @@ export async function POST(request: Request, context: RouteContext) {
     userId: owner.id,
   };
 
+  const agent = new AgentClient(target);
   try {
-    await new AgentClient(target).setModel(identity, req);
+    // The switch relaunches the session: signed in as the user picks now, so
+    // a key replaced since is the one it relaunches on.
+    await signInSession(sessionAuthClient(agent, identity), workspace.agent, agentAuthStore(owner.id));
+  } catch (error) {
+    const failure = signInFailure(error);
+    if (failure) return NextResponse.json(failure, { status: 409 });
+    console.error(`Model: signing ${workspace.id} in failed`, error);
+    return NextResponse.json({ error: "Couldn't switch models. Please try again." }, { status: 502 });
+  }
+
+  try {
+    await agent.setModel(identity, req);
   } catch (error) {
     const { status, message } = switchFailure(error, model);
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);

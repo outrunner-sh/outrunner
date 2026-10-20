@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  agentOf,
   defaultModel,
   matchModel,
   modelChoice,
@@ -41,22 +42,27 @@ test("the label drops Claude's release date only", () => {
   assert.equal(modelLabel("z-ai/glm-5.3"), "z-ai/glm-5.3");
 });
 
-test("the menu: Outrunner's where the server has them, each provider the user has a key for, Claude last", () => {
+test("the menu: Outrunner's where the server has them, each provider the user has a key for, Claude, then Codex", () => {
   const labels = (menu: ModelMenu) => modelGroups(menu).map((g) => g.label);
-  assert.deepEqual(labels(OUTRUNNER_ONLY), ["Outrunner · included", "Claude account"]);
-  assert.deepEqual(labels({ ...OUTRUNNER_ONLY, allowance: false }), ["Outrunner", "Claude account"]);
+  assert.deepEqual(labels(OUTRUNNER_ONLY), ["Outrunner · included", "Claude account", "Codex"]);
+  assert.deepEqual(labels({ ...OUTRUNNER_ONLY, allowance: false }), ["Outrunner", "Claude account", "Codex"]);
   // In the registry's order, whatever order the keys come in.
   assert.deepEqual(labels({ outrunner: true, allowance: true, keys: ["deepseek", "openrouter"] }), [
     "Outrunner · included",
     "OpenRouter · your key",
     "DeepSeek · your key",
     "Claude account",
+    "Codex",
   ]);
   // No server key: Outrunner's models aren't offered, so nothing on the menu 503s.
-  assert.deepEqual(labels({ outrunner: false, allowance: false, keys: [] }), ["Claude account"]);
+  assert.deepEqual(labels({ outrunner: false, allowance: false, keys: [] }), ["Claude account", "Codex"]);
 
   const groups = modelGroups({ outrunner: true, allowance: false, keys: ["zai"] });
-  assert.deepEqual(groups.map((g) => g.custom), [false, true, false], "only a provider on the user's key takes typed ids");
+  assert.deepEqual(
+    groups.map((g) => g.custom),
+    [false, true, false, true],
+    "only a provider on the user's key, and Codex, take typed ids",
+  );
   assert.ok(groups[1].models.every((m) => m.provider === "zai"));
 });
 
@@ -147,4 +153,32 @@ test("a saved key that can't be opened isn't offered, so it's never a new sessio
   assert.deepEqual(keys, ["zai", "deepseek"], "the registry's order; unknown and unreadable dropped");
   // The unreadable OpenRouter key no longer wins over the server's key.
   assert.equal(defaultModel({ outrunner: true, allowance: true, keys })?.provider, "outrunner");
+});
+
+test("a running session's menu offers only what its agent runs", () => {
+  const menu: ModelMenu = { outrunner: true, allowance: false, keys: ["zai"] };
+  assert.deepEqual(
+    modelGroups(menu, "claude").map((g) => g.provider),
+    ["outrunner", "zai", "claude"],
+  );
+  assert.deepEqual(
+    modelGroups(menu, "codex").map((g) => g.provider),
+    ["codex"],
+  );
+  assert.equal(agentOf("codex"), "codex");
+  for (const provider of ["outrunner", "claude", "openrouter", "anthropic"] as const) {
+    assert.equal(agentOf(provider), "claude", provider);
+  }
+});
+
+test("Codex takes its listed models and any id the agent takes, and switches with no key", async () => {
+  assert.deepEqual(modelChoice("codex", "gpt-6-luna"), { id: "gpt-6-luna", label: "GPT-6 Luna", provider: "codex" });
+  assert.deepEqual(modelChoice("codex", "gpt-7"), { id: "gpt-7", label: "gpt-7", provider: "codex" });
+  assert.equal(modelChoice("codex", "--dangerously-bypass-approvals-and-sandbox"), null);
+  assert.deepEqual(requestedModel({ provider: "codex", model: "gpt-6-sol" })?.provider, "codex");
+  // A key for Codex is its sign-in's (Settings → Providers → Codex), never a model's.
+  const req = await setModelRequest(modelChoice("codex", "gpt-6-sol")!, () => {
+    throw new Error("no key is asked for");
+  });
+  assert.deepEqual(req, { model: "gpt-6-sol" });
 });

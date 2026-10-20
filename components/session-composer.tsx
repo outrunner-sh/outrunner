@@ -15,8 +15,12 @@ import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
-import { isProviderId, type ProviderId } from "@/lib/providers/registry";
-import { rememberCustomModel, rememberedCustomModels } from "@/lib/runtime/custom-models";
+import {
+  rememberCustomModel,
+  rememberedCustomModels,
+  takesTypedModels,
+  type TypedModelProvider,
+} from "@/lib/runtime/custom-models";
 import { matchModel, modelLabel, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { cn } from "@/lib/utils";
@@ -286,9 +290,9 @@ export function SessionComposer({
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
   // A group on the user's own key offers the ids they typed in before, and
   // takes another (CustomModelDialog).
-  const [customFor, setCustomFor] = useState<ProviderId | null>(null);
+  const [customFor, setCustomFor] = useState<TypedModelProvider | null>(null);
   const groups = choice.groups.map((group) => {
-    const own = group.custom && isProviderId(group.provider) ? group.provider : null;
+    const own = group.custom && takesTypedModels(group.provider) ? group.provider : null;
     if (!own) return { ...group, own };
     const typed = rememberedCustomModels(own).filter((m) => !group.models.some((listed) => listed.id === m.id));
     return { ...group, own, models: [...group.models, ...typed] };

@@ -1,3 +1,4 @@
+import type { AgentId } from "@/lib/agents/registry";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -138,6 +139,8 @@ export async function createWorkspaceRow(input: {
   branch: string;
   baseBranch: string;
   provider: ProviderName;
+  /** Claude Code when not named. */
+  agent?: AgentId;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -148,6 +151,9 @@ export async function createWorkspaceRow(input: {
       branch: input.branch,
       base_branch: input.baseBranch,
       provider: input.provider,
+      // Named only for Codex, so a database before 20261020130000 still
+      // makes Claude Code sessions (its default) and refuses only Codex's.
+      ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
       status: "creating",
     })
     .select("*")

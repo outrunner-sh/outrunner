@@ -47,6 +47,7 @@ function workspace(
     computerId: null,
     tmuxSession: null,
     agentWorkspaceId: null,
+    agent: "claude",
     lastActiveAt,
     errorMessage: null,
     createdAt: "2026-01-01T00:00:00Z",

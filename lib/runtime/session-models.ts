@@ -1,15 +1,18 @@
 /**
  * The models a session can run, and who serves each: Outrunner (its models,
- * on Outrunner's key and the user's allowance), the user's own Claude, or a
- * provider on a key of the user's own (Settings → Providers). A choice is
- * always both, a provider and a model, from the menu to the agent. Imports
- * only the provider registry, so it unit-tests without React or a session.
+ * on Outrunner's key and the user's allowance), the user's own Claude, a
+ * provider on a key of the user's own (Settings → Providers), or Codex. A
+ * choice is always both, a provider and a model, from the menu to the agent,
+ * and the provider says which agent runs it: Codex runs Codex's models, and
+ * Claude Code every other. Imports only the registries, so it unit-tests
+ * without React or a session.
  */
 
+import type { AgentId } from "@/lib/agents/registry";
 import { isProviderId, PROVIDER_IDS, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
 
 /** Who serves a model. */
-export type ModelProvider = "outrunner" | "claude" | ProviderId;
+export type ModelProvider = "outrunner" | "claude" | "codex" | ProviderId;
 
 /** `id` is the provider's name for the model: a Claude alias, an OpenRouter
  *  slug, or a provider's own. */
@@ -35,6 +38,16 @@ export const CLAUDE_MODELS: SessionModel[] = [
   { id: "haiku", label: "Haiku", provider: "claude" },
 ];
 
+/** Codex's models, on however the user signs Codex in (Settings → Providers →
+ *  Codex): OpenAI's names, as on its API. */
+export const CODEX_MODELS: SessionModel[] = PROVIDERS.openai.models.map((m) => ({ ...m, provider: "codex" }));
+
+/** The agent that runs a provider's models. A session keeps its agent: its
+ *  model can change only to another the same agent runs. */
+export function agentOf(provider: ModelProvider): AgentId {
+  return provider === "codex" ? "codex" : "claude";
+}
+
 /** The listed models on the user's key for `provider`. */
 export function providerModels(provider: ProviderId): SessionModel[] {
   return PROVIDERS[provider].models.map((m) => ({ ...m, provider }));
@@ -46,8 +59,9 @@ export function providerModels(provider: ProviderId): SessionModel[] {
 export type ModelMenu = { outrunner: boolean; allowance: boolean; keys: ProviderId[] };
 
 /** The menu: Outrunner's models first, where the server has them; then each
- *  provider the user has a key for; the user's Claude last. */
-export function modelGroups(menu: ModelMenu): ModelGroup[] {
+ *  provider the user has a key for; the user's Claude; Codex last. With
+ *  `agent` (a running session's), only what that agent runs. */
+export function modelGroups(menu: ModelMenu, agent?: AgentId): ModelGroup[] {
   const groups: ModelGroup[] = [];
   if (menu.outrunner) {
     groups.push({
@@ -67,7 +81,8 @@ export function modelGroups(menu: ModelMenu): ModelGroup[] {
     });
   }
   groups.push({ label: "Claude account", provider: "claude", models: CLAUDE_MODELS, custom: false });
-  return groups;
+  groups.push({ label: "Codex", provider: "codex", models: CODEX_MODELS, custom: true });
+  return agent ? groups.filter((group) => agentOf(group.provider) === agent) : groups;
 }
 
 /**
@@ -93,20 +108,22 @@ export function validModelId(id: string): boolean {
 }
 
 function isModelProvider(value: unknown): value is ModelProvider {
-  return value === "outrunner" || value === "claude" || isProviderId(value);
+  return value === "outrunner" || value === "claude" || value === "codex" || isProviderId(value);
 }
 
 /**
  * A choice from a request, checked: Outrunner's must be one of its models (the
  * allowance pays for them), the user's Claude one of its aliases, and a model
- * on the user's own key any id the agent takes. Null for anything else.
+ * on the user's own key, or Codex's, any id the agent takes. Null for
+ * anything else.
  */
 export function modelChoice(provider: unknown, model: unknown): SessionModel | null {
   if (!isModelProvider(provider) || typeof model !== "string") return null;
   if (provider === "outrunner") return OUTRUNNER_MODELS.find((m) => m.id === model) ?? null;
   if (provider === "claude") return CLAUDE_MODELS.find((m) => m.id === model) ?? null;
   if (!validModelId(model)) return null;
-  return providerModels(provider).find((m) => m.id === model) ?? { id: model, label: model, provider };
+  const listed = provider === "codex" ? CODEX_MODELS : providerModels(provider);
+  return listed.find((m) => m.id === model) ?? { id: model, label: model, provider };
 }
 
 /**
@@ -153,19 +170,19 @@ export function matchModel(
 export type SetModelRequest = { model: string; gateway?: ProviderId; token?: string };
 
 /** Who holds the key a model runs on: Outrunner, or one of the user's own. */
-export type KeyHolder = Exclude<ModelProvider, "claude">;
+export type KeyHolder = Exclude<ModelProvider, "claude" | "codex">;
 
 /**
  * The agent request that puts a session on `model`: Outrunner's through
  * OpenRouter on Outrunner's key, a provider's through that provider on the
- * user's key (both from `keyFor`), and the user's Claude on the session's own
- * Claude login, with no key asked for.
+ * user's key (both from `keyFor`), and the user's Claude, or Codex, on how
+ * the session's agent signs in, with no key asked for.
  */
 export async function setModelRequest(
   model: SessionModel,
   keyFor: (holder: KeyHolder) => Promise<string>,
 ): Promise<SetModelRequest> {
-  if (model.provider === "claude") return { model: model.id };
+  if (model.provider === "claude" || model.provider === "codex") return { model: model.id };
   const gateway: ProviderId = model.provider === "outrunner" ? "openrouter" : model.provider;
   return { model: model.id, gateway, token: await keyFor(model.provider) };
 }
@@ -177,6 +194,9 @@ export function predatesProvider(message: string | undefined): boolean {
 
 /** What to tell the user when the agent predates a provider. */
 export function predatesProviderMessage(model: SessionModel): string {
-  const name = model.provider === "outrunner" || model.provider === "claude" ? model.label : PROVIDERS[model.provider].label;
+  const name =
+    model.provider === "outrunner" || model.provider === "claude" || model.provider === "codex"
+      ? model.label
+      : PROVIDERS[model.provider].label;
   return `This session's Outrunner is too old to run ${name} models. Update Outrunner and try again.`;
 }

@@ -98,6 +98,7 @@ export function WorkspaceStudio({
           {hasLiveSession ? (
             <WorkspaceSession
               workspaceId={workspace.id}
+              agent={workspace.agent}
               local={isLocal}
               showTerminal={showTerminal}
               onToggleTerminal={() => setShowTerminal((open) => !open)}

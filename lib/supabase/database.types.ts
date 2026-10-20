@@ -103,6 +103,8 @@ type WorkspaceRow = {
   computer_id: string | null;
   tmux_session: string | null;
   agent_workspace_id: string | null;
+  /** The coding agent it runs: "claude" or "codex". */
+  agent: string;
   last_active_at: string | null;
   created_at: string;
   updated_at: string;

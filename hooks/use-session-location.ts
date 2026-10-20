@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useClaudeLocalLogin, useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
+import type { AgentId, AuthMethodId } from "@/lib/agents/registry";
 import {
   checkLocalFolder,
   cloneLocalRepository,
@@ -18,6 +19,7 @@ import {
   toolsToInstall,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
+import type { AgentAuthChoices } from "@/lib/db/credentials";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 export type SessionLocation = "cloud" | "local";
@@ -47,7 +49,7 @@ function savedLocation(): SessionLocation {
  * last local session used (re-checked, since it may have moved), and the one
  * reason, if any, a local session cannot start yet.
  */
-export function useSessionLocation() {
+export function useSessionLocation(agent: AgentId = "claude") {
   const { runtime, recheck } = useLocalRuntime();
   const claudeLogin = useClaudeLocalLogin(recheck);
   // The last choice sticks. It only takes effect where local is possible, so
@@ -75,8 +77,29 @@ export function useSessionLocation() {
       live = false;
     };
   }, []);
+  // How Claude Code signs in (Settings → Providers): this Mac's own Claude
+  // login matters only when that is the pick, or nothing is picked yet. A
+  // subscription or an API key is handed to the session instead.
+  const [claudePick, setClaudePick] = useState<AuthMethodId | null>(null);
+  useEffect(() => {
+    let live = true;
+    void fetch("/api/settings/agents")
+      .then((res) => (res.ok ? (res.json() as Promise<{ choices?: AgentAuthChoices }>) : null))
+      .then((data) => {
+        if (live) setClaudePick(data?.choices?.claude ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  const onMacLogin = claudePick === null || claudePick === "local";
+
   const onOutrunnerModel =
-    location === "local" && runtime.state === "ready" && runsOnOutrunnerModel(runtime.status, outrunnerModels);
+    onMacLogin &&
+    location === "local" &&
+    runtime.state === "ready" &&
+    runsOnOutrunnerModel(runtime.status, outrunnerModels);
 
   // Choosing This Mac on a Mac with no Claude Code a session can run (none,
   // a broken one, one too old) sets up the app's own; nothing to install. A
@@ -173,7 +196,7 @@ export function useSessionLocation() {
       : remembered
         ? { state: "checking" }
         : { state: "none" };
-  const blocker = location === "local" ? localBlocker(runtime, folder, outrunnerModels) : null;
+  const blocker = location === "local" ? localBlocker(runtime, folder, outrunnerModels, agent, onMacLogin) : null;
 
   return {
     location,
@@ -186,7 +209,12 @@ export function useSessionLocation() {
     blocker,
     /** The blocker is Claude Code needing a login, which the page can start. */
     needsClaudeLogin:
-      location === "local" && runtime.state === "ready" && needsClaudeLogin(runtime.status) && !onOutrunnerModel,
+      agent === "claude" &&
+      onMacLogin &&
+      location === "local" &&
+      runtime.state === "ready" &&
+      needsClaudeLogin(runtime.status) &&
+      !onOutrunnerModel,
     /** Claude Code isn't logged in here, so a new session runs on Outrunner's
      *  model; logging in (which the page can start) switches back to Claude. */
     outrunnerModel: onOutrunnerModel,
@@ -225,16 +253,31 @@ function saveLocation(location: SessionLocation): void {
   }
 }
 
-function localBlocker(runtime: LocalRuntime, folder: FolderChoice, outrunnerModels: boolean): string | null {
+/** Why a local session can't start yet. Claude Code's install and login
+ *  matter only for a session that runs it, and its login only when it signs
+ *  in with this Mac's own (`onMacLogin`): Codex's are checked as a Codex
+ *  session is made (lib/desktop/local-agent-auth.ts), by how it signs in. */
+export function localBlocker(
+  runtime: LocalRuntime,
+  folder: FolderChoice,
+  outrunnerModels: boolean,
+  agent: AgentId,
+  onMacLogin = true,
+): string | null {
   if (runtime.state === "error") return runtime.message;
   if (runtime.state !== "ready") return "Local sessions run in the Outrunner Mac app.";
-  const install = toolsToInstall(runtime.status);
+  const install = toolsToInstall(runtime.status).filter((tool) => agent === "claude" || tool !== "Claude Code");
   if (install.length > 0) {
     const tmux = install.includes("tmux") ? " (brew install tmux)" : "";
     return `Install ${install.join(", ")}${tmux} to run sessions on this Mac.`;
   }
-  if (!runtime.status.claude) return claudeSetupText(runtime.status.claudeSetup);
-  if (needsClaudeLogin(runtime.status) && !runsOnOutrunnerModel(runtime.status, outrunnerModels)) {
+  if (agent === "claude" && !runtime.status.claude) return claudeSetupText(runtime.status.claudeSetup);
+  if (
+    agent === "claude" &&
+    onMacLogin &&
+    needsClaudeLogin(runtime.status) &&
+    !runsOnOutrunnerModel(runtime.status, outrunnerModels)
+  ) {
     return "Log in to Claude Code to run sessions on this Mac.";
   }
   switch (folder.state) {

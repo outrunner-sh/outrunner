@@ -13,6 +13,8 @@
  * `supabase-adapter.ts`.
  */
 import {
+  OPTIONAL_SNAPSHOT_ARTIFACTS,
+  type OptionalSnapshotArtifact,
   SNAPSHOT_ARTIFACTS,
   type SnapshotArtifact,
 } from "@/lib/runtime/snapshot/manifest";
@@ -41,7 +43,7 @@ export interface SnapshotStorage {
   ): Promise<{ signedUrl: string }>;
 }
 
-export type SnapshotUploadTarget = { artifact: SnapshotArtifact; path: string };
+export type SnapshotUploadTarget = { artifact: SnapshotArtifact | OptionalSnapshotArtifact; path: string };
 export type SnapshotUploadPlan = {
   prefix: string;
   targets: SnapshotUploadTarget[];
@@ -59,13 +61,19 @@ export function planSnapshotUpload(
   ownerId: string,
   workspaceId: string,
   archivedAt: string,
+  /** Optional artifacts the session may have (a Codex session's rollout):
+   *  asked for only of an agent that makes them. */
+  optional: OptionalSnapshotArtifact[] = [],
 ): SnapshotUploadPlan {
   const prefix = snapshotPrefix(ownerId, workspaceId, archivedAt);
   const paths = snapshotArtifactPaths(prefix);
-  const targets = (Object.keys(paths) as SnapshotArtifact[]).map((artifact) => ({
+  const targets: SnapshotUploadTarget[] = (Object.keys(paths) as SnapshotArtifact[]).map((artifact) => ({
     artifact,
     path: paths[artifact],
   }));
+  for (const artifact of optional) {
+    targets.push({ artifact, path: `${prefix}${OPTIONAL_SNAPSHOT_ARTIFACTS[artifact]}` });
+  }
   return { prefix, targets };
 }
 
@@ -111,8 +119,9 @@ export async function mintSnapshotUpload(
   ownerId: string,
   workspaceId: string,
   archivedAt: string,
+  optional: OptionalSnapshotArtifact[] = [],
 ): Promise<{ prefix: string; urls: SnapshotUploadUrl[] }> {
-  const plan = planSnapshotUpload(ownerId, workspaceId, archivedAt);
+  const plan = planSnapshotUpload(ownerId, workspaceId, archivedAt, optional);
   const urls = await mintSnapshotUploadUrls(storage, plan);
   return { prefix: plan.prefix, urls };
 }

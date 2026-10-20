@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { rememberCustomModel, rememberedCustomModels } from "@/lib/runtime/custom-models";
+import { rememberCustomModel, rememberedCustomModels, takesTypedModels } from "@/lib/runtime/custom-models";
 
 afterEach(() => {
   delete (globalThis as Record<string, unknown>).window;
@@ -25,4 +25,19 @@ test("ids typed in are remembered per provider, newest first, valid only, five a
   assert.deepEqual(rememberedCustomModels("deepseek").map((m) => m.id), ["ok-id"]);
   store.set("outrunner:custom-models:deepseek", "{not json");
   assert.deepEqual(rememberedCustomModels("deepseek"), []);
+});
+
+test("Codex takes typed ids too, remembered apart from any provider's", () => {
+  const store = new Map<string, string>();
+  (globalThis as Record<string, unknown>).window = {
+    localStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) },
+  };
+  assert.equal(takesTypedModels("codex"), true);
+  assert.equal(takesTypedModels("zai"), true);
+  assert.equal(takesTypedModels("claude"), false);
+  assert.equal(takesTypedModels("outrunner"), false);
+  rememberCustomModel("codex", "gpt-7-preview");
+  rememberCustomModel("codex", "gpt-6-luna"); // listed already
+  assert.deepEqual(rememberedCustomModels("codex"), [{ id: "gpt-7-preview", label: "gpt-7-preview", provider: "codex" }]);
+  assert.deepEqual(rememberedCustomModels("openrouter"), []);
 });

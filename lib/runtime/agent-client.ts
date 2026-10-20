@@ -9,12 +9,14 @@
 
 import {
   Activity,
+  AgentHealth,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   ErrorResponse,
   LISTING_WORKSPACE_ID,
   RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
+  SetAuthRequest,
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
@@ -127,6 +129,19 @@ export class AgentClient {
       undefined,
       AGENT_START_TIMEOUT_MS,
     );
+  }
+
+  /** Give the workspace's session its own credential, applied at its next
+   *  launch. An agent from before per-session credentials answers 404 with no
+   *  error envelope; one that doesn't know the session, 404 NOT_FOUND. */
+  setAuth(identity: WorkspaceIdentity, req: SetAuthRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/auth`, identity, SetAuthRequest.parse(req));
+  }
+
+  /** What the box's agent can run (GET /health, which needs no token; the
+   *  identity's is sent anyway). */
+  async health(identity: WorkspaceIdentity): Promise<AgentHealth> {
+    return AgentHealth.parse(await this.get("/health", identity));
   }
 
   /** Switch the workspace's session to another model; the agent relaunches
