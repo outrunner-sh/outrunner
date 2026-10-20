@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { LoadingButton } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -92,7 +93,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
         onClick={() => void signIn()}
         className="w-full"
       />
-      {error && <p className="text-destructive text-xs">{error}</p>}
+      {error && <InlineMessage>{error}</InlineMessage>}
     </div>
   );
 }

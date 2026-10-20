@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 
 type SyncResponse = { synced?: number; discovered?: number; error?: string };
 
-/** How long "Synced" / "Try again" stays on the button before it settles. */
+/** How long "Synced" stays on the button before it settles. */
 const SETTLE_MS = 1400;
 
 /**
@@ -24,7 +25,7 @@ export function ProjectsSyncButton({
 }) {
   const router = useRouter();
   const [status, setStatus] = useState<ActionStatus>("idle");
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; failed: boolean } | null>(null);
 
   useEffect(() => {
     if (status !== "success" && status !== "error") return;
@@ -40,18 +41,21 @@ export function ProjectsSyncButton({
       response = await fetch("/api/projects/sync", { method: "POST" });
     } catch {
       setStatus("error");
-      setMessage("Could not reach Outrunner. Please try again.");
+      setMessage({ text: "Couldn't reach Outrunner. Check your connection.", failed: true });
       return;
     }
     const result = (await response.json().catch(() => ({}))) as SyncResponse;
     if (!response.ok) {
       setStatus("error");
-      setMessage(result.error ?? "Repository sync failed. Please try again.");
+      setMessage({ text: result.error ?? "Couldn't sync repositories.", failed: true });
       return;
     }
     const discovered = result.discovered ?? 0;
     setStatus("success");
-    setMessage(discovered === 1 ? "1 repository synchronized." : `${discovered} repositories synchronized.`);
+    setMessage({
+      text: discovered === 1 ? "1 repository synchronized." : `${discovered} repositories synchronized.`,
+      failed: false,
+    });
     router.refresh();
   }
 
@@ -66,13 +70,17 @@ export function ProjectsSyncButton({
     <div className={cn("flex flex-col gap-1.5", alignment)}>
       <LoadingButton
         status={status}
-        labels={{ idle: "Sync repositories", pending: "Syncing", success: "Synced", error: "Try again" }}
+        labels={{ idle: "Sync repositories", pending: "Syncing", success: "Synced" }}
         icon={<RefreshCw />}
         onClick={() => void sync()}
       />
-      <p aria-live="polite" className="text-muted-foreground min-h-4 max-w-64 text-xs">
-        {message}
-      </p>
+      {message?.failed ? (
+        <InlineMessage className="min-h-4 max-w-64">{message.text}</InlineMessage>
+      ) : (
+        <p aria-live="polite" className="text-muted-foreground min-h-4 max-w-64 text-xs">
+          {message?.text}
+        </p>
+      )}
     </div>
   );
 }

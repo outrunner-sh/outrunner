@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleAlert, Check } from "lucide-react";
+import { Check, RotateCw } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loaders";
@@ -28,7 +28,8 @@ export function LoadingButton({
 }: {
   status: ActionStatus;
   /** `idle` is also the accessible name; the rest default to it, "Done" and
-   *  "Try again" (the next action, not the diagnosis). */
+   *  the idle label again. A failed button keeps its label rather than turning
+   *  red: the caller shows the reason beside it (InlineMessage). */
   labels: { idle: string; pending?: string; success?: string; error?: string };
   /** Shown beside the idle label. */
   icon?: React.ReactNode;
@@ -43,7 +44,7 @@ export function LoadingButton({
     { key: "idle", text: labels.idle, icon },
     { key: "pending", text: labels.pending ?? labels.idle, icon: <Spinner /> },
     { key: "success", text: labels.success ?? "Done", icon: <Check /> },
-    { key: "error", text: labels.error ?? "Try again", icon: <CircleAlert /> },
+    { key: "error", text: labels.error ?? labels.idle, icon: icon ?? <RotateCw /> },
   ];
   const pending = status === "pending";
   const current = faces.find((face) => face.key === status) ?? faces[0];

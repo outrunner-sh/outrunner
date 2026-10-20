@@ -367,7 +367,6 @@
 .loading-button-face.is-current { opacity: 1; transform: none; filter: none; }
 .loading-button.is-pending { cursor: progress; opacity: .85; }
 .loading-button.is-success .loading-button-face.is-current { color: var(--color-positive); }
-.loading-button.is-error .loading-button-face.is-current { color: var(--destructive); }
 .loading-button:active:not(.is-pending):not(:disabled) { transform: translateY(1px); }
 @media (prefers-reduced-motion: reduce) {
   .loading-button-face { transition: none; transform: none; filter: none; }
