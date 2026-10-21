@@ -948,6 +948,9 @@ pub struct LocalFolder {
     /// A repository with a commit to branch from: sessions get a worktree.
     /// Otherwise Claude works in the folder itself.
     git: bool,
+    /// In a git repository at all, even one with no commit yet (so it can't
+    /// be made one again).
+    repo: bool,
     /// The checked-out branch, when there is one.
     branch: Option<String>,
 }
@@ -1009,10 +1012,10 @@ async fn check_chosen(app: &AppHandle, state: &LocalRuntime, path: &str) -> Resu
     if repos_dir().ok().and_then(|repos| std::fs::canonicalize(repos).ok()).is_some_and(|repos| real.starts_with(repos)) {
         return Ok(());
     }
-    // Or one cloned into the location the user chose for clones: only its
-    // clones, the folders directly in it, not everything beneath it (a home
-    // folder chosen as the location must not open all of home to the page).
-    if saved_clone_location(app).is_some_and(|location| real.parent() == Some(location.as_path())) {
+    // Or one Outrunner cloned into a location the user chose, in an earlier
+    // run: each clone is recorded, so nothing else in that location counts (a
+    // home folder chosen as the location must not open ~/.ssh to the page).
+    if recorded_clone(app, &real) {
         return Ok(());
     }
     Err("folder-not-chosen".into())
@@ -1068,15 +1071,17 @@ fn inspect_folder(path: &Path) -> Result<LocalFolder, String> {
     let name_of = |p: &str| {
         Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string())
     };
-    let git = git_output(path, &["rev-parse", "--show-toplevel"])
+    let top = git_output(path, &["rev-parse", "--show-toplevel"]);
+    let repo = top.is_some();
+    let git = top
         .filter(|top| git_output(Path::new(top), &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).is_some());
     Ok(match git {
         Some(top) => {
             let branch = git_output(Path::new(&top), &["rev-parse", "--abbrev-ref", "HEAD"])
                 .filter(|branch| branch != "HEAD" && !branch.is_empty());
-            LocalFolder { name: name_of(&top), path: top, git: true, branch }
+            LocalFolder { name: name_of(&top), path: top, git: true, repo, branch }
         }
-        None => LocalFolder { name: name_of(&as_given), path: as_given, git: false, branch: None },
+        None => LocalFolder { name: name_of(&as_given), path: as_given, git: false, repo, branch: None },
     })
 }
 
@@ -1262,6 +1267,7 @@ pub async fn local_clone_repo(
     .await
     .map_err(|error| error.to_string())??;
     if let Ok(real) = std::fs::canonicalize(&folder.path) {
+        record_clone(&app, &real);
         state.picked.lock().unwrap_or_else(PoisonError::into_inner).insert(real);
     }
     Ok(folder)
@@ -1292,6 +1298,50 @@ fn saved_clone_location(app: &AppHandle) -> Option<PathBuf> {
 /// chose, else `~/outrunner/repos`.
 fn clone_location(app: &AppHandle) -> Result<PathBuf, String> {
     saved_clone_location(app).map_or_else(repos_dir, Ok)
+}
+
+/// The file listing every folder Outrunner cloned a repository into, one
+/// canonical path a line: the clones in a chosen location that later runs may
+/// name, and nothing else there.
+fn cloned_folders_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_config_dir().map_err(|error| error.to_string())?.join("cloned-folders"))
+}
+
+/// Whether `list` (the file's contents) names `real`.
+fn clone_list_has(list: &str, real: &Path) -> bool {
+    list.lines().any(|line| Path::new(line.trim()) == real)
+}
+
+/// `list` with `real` added, if it wasn't there.
+fn clone_list_with(list: &str, real: &Path) -> String {
+    if clone_list_has(list, real) {
+        return list.to_string();
+    }
+    let mut next = list.trim_end().to_string();
+    if !next.is_empty() {
+        next.push('\n');
+    }
+    next.push_str(&real.to_string_lossy());
+    next.push('\n');
+    next
+}
+
+fn recorded_clone(app: &AppHandle, real: &Path) -> bool {
+    cloned_folders_file(app)
+        .ok()
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .is_some_and(|list| clone_list_has(&list, real))
+}
+
+/// Record a clone so a later run lets the page name it. Best effort: if the
+/// file can't be written, the clone works this run and is picked again later.
+fn record_clone(app: &AppHandle, real: &Path) {
+    let Ok(file) = cloned_folders_file(app) else { return };
+    let list = std::fs::read_to_string(&file).unwrap_or_default();
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&file, clone_list_with(&list, real));
 }
 
 #[derive(Serialize)]
@@ -1354,17 +1404,6 @@ fn valid_branch(branch: &str) -> bool {
         && !branch.ends_with(".lock")
 }
 
-/// Whether `dir` holds anything worth a first commit: any entry but `.git`
-/// itself and Finder's `.DS_Store`.
-fn has_files(dir: &Path) -> bool {
-    std::fs::read_dir(dir).is_ok_and(|entries| {
-        entries.flatten().any(|entry| {
-            let name = entry.file_name();
-            name != ".git" && name != ".DS_Store"
-        })
-    })
-}
-
 /// git in `dir`, its failure as `git-failed:<what git said>`, or
 /// `git-identity` when a commit needs the user's name and email set first.
 fn run_git(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<(), String> {
@@ -1388,8 +1427,9 @@ fn run_git(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<(), String
     Err(format!("git-failed:{}", last_line(&out.stderr)))
 }
 
-/// Make `dir` a git repository on `branch`, with its files (if it has any) as
-/// the first commit, so sessions there get worktrees. A folder already in a
+/// Make `dir` a git repository on `branch`, with its files (if it has any git
+/// would track: an empty folder or Finder's `.DS_Store` doesn't count) as the
+/// first commit, so sessions there get worktrees. A folder already in a
 /// repository is refused rather than nested in another. If the first commit
 /// fails, the new `.git` is removed again, so trying again starts clean.
 fn git_init(dir: &Path, branch: &str, env: &[(&str, &str)]) -> Result<LocalFolder, String> {
@@ -1403,13 +1443,18 @@ fn git_init(dir: &Path, branch: &str, env: &[(&str, &str)]) -> Result<LocalFolde
         return Err("already-git".into());
     }
     run_git(dir, &["init", "-q", "-b", branch], env)?;
-    if has_files(dir) {
-        let committed = run_git(dir, &["add", "-A"], env)
-            .and_then(|()| run_git(dir, &["commit", "-q", "-m", "Initial commit"], env));
-        if let Err(error) = committed {
-            let _ = std::fs::remove_dir_all(dir.join(".git"));
-            return Err(error);
+    let committed = run_git(dir, &["add", "-A", "--", ".", ":(exclude,glob)**/.DS_Store"], env).and_then(|()| {
+        // Only with something staged: a commit of nothing would fail.
+        let staged = git_output(dir, &["ls-files"]).is_some_and(|files| !files.is_empty());
+        if staged {
+            run_git(dir, &["commit", "-q", "-m", "Initial commit"], env)
+        } else {
+            Ok(())
         }
+    });
+    if let Err(error) = committed {
+        let _ = std::fs::remove_dir_all(dir.join(".git"));
+        return Err(error);
     }
     inspect_folder(dir)
 }
@@ -1791,22 +1836,40 @@ mod tests {
     #[test]
     fn an_empty_folder_becomes_a_repository_on_main_without_a_commit() {
         let dir = scratch("init-empty");
+        // Neither Finder's file nor an empty folder is anything to commit.
         std::fs::write(dir.join(".DS_Store"), "").unwrap();
+        std::fs::create_dir_all(dir.join("empty")).unwrap();
         let folder = git_init(&dir, "main", &TEST_IDENTITY).unwrap();
         assert!(dir.join(".git").is_dir());
         assert!(!folder.git, "nothing to commit, so no worktrees yet");
+        assert!(folder.repo, "but a repository all the same");
         assert_eq!(git_output(&dir, &["symbolic-ref", "--short", "HEAD"]).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn only_folders_outrunner_cloned_are_recorded_as_its_clones() {
+        let a = Path::new("/Users/me/code/app");
+        let list = clone_list_with("", a);
+        assert!(clone_list_has(&list, a));
+        assert!(!clone_list_has(&list, Path::new("/Users/me/code/.ssh")));
+        assert!(!clone_list_has(&list, Path::new("/Users/me/code")));
+        // Recording one twice keeps one line; another adds its own.
+        assert_eq!(clone_list_with(&list, a), list);
+        let both = clone_list_with(&list, Path::new("/Users/me/code/api"));
+        assert_eq!(both.lines().count(), 2);
     }
 
     #[test]
     fn a_folder_with_files_gets_them_as_its_first_commit() {
         let dir = scratch("init-files");
         std::fs::write(dir.join("README.md"), "hello").unwrap();
+        std::fs::write(dir.join(".DS_Store"), "").unwrap();
         let folder = git_init(&dir, "trunk", &TEST_IDENTITY).unwrap();
         assert!(folder.git);
+        assert_eq!(git_output(&dir, &["ls-files"]).as_deref(), Some("README.md"), "Finder's file stays out");
         assert_eq!(folder.branch.as_deref(), Some("trunk"));
         assert_eq!(git_output(&dir, &["rev-list", "--count", "HEAD"]).as_deref(), Some("1"));
-        assert_eq!(git_output(&dir, &["status", "--porcelain"]).as_deref(), Some(""));
+        assert_eq!(git_output(&dir, &["status", "--porcelain"]).as_deref(), Some("?? .DS_Store"));
     }
 
     #[test]
