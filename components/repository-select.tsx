@@ -9,7 +9,14 @@ import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
-type Listing = { repositories: RepositoryListing[]; connected: number[] };
+type Listing = {
+  repositories: RepositoryListing[];
+  connected: number[];
+  /** False when GitHub may have more than the list holds. */
+  complete: boolean;
+  /** Organizations whose repositories single sign-on held back. */
+  ssoPartialOrgIds: number[];
+};
 
 /**
  * Pick the repository a session runs in — from everything on the user's GitHub,
@@ -76,7 +83,12 @@ export function RepositorySelect({
       const res = await fetch(force ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
       const data = (await res.json()) as Partial<Listing> & { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Could not load repositories.");
-      setListing({ repositories: data.repositories ?? [], connected: data.connected ?? [] });
+      setListing({
+        repositories: data.repositories ?? [],
+        connected: data.connected ?? [],
+        complete: data.complete ?? true,
+        ssoPartialOrgIds: data.ssoPartialOrgIds ?? [],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load repositories.");
     } finally {
@@ -232,6 +244,16 @@ export function RepositorySelect({
               </button>
             ))}
           </div>
+
+          {/* The list may be short: say why rather than let a missing
+              repository look like one that isn't there. */}
+          {listing && (listing.ssoPartialOrgIds.length > 0 || !listing.complete) && (
+            <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
+              {listing.ssoPartialOrgIds.length > 0
+                ? "Some organizations' repositories are hidden until you authorize Outrunner for their single sign-on on GitHub."
+                : "GitHub may have more repositories than this list shows."}
+            </p>
+          )}
 
           {extra && (
             <div className="border-border border-t">
