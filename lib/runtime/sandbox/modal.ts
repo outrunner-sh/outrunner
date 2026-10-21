@@ -23,6 +23,7 @@ import {
   type SandboxBackend,
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
+import type { ModalToken } from "@/lib/runtime/sandbox/modal-token";
 
 /**
  * Modal sandboxes, in a user's own Modal account on their token (Settings →
@@ -68,8 +69,7 @@ export const MODAL_IMAGE_SETUP = [
   `RUN ${ghInstallCommand({ sudo: false })}`,
 ];
 
-/** A Modal token: Settings → API Tokens in Modal. */
-export type ModalToken = { tokenId: string; tokenSecret: string };
+export type { ModalToken };
 
 /** Keeps a file where a box can download it: a signed URL, and the file's
  *  sha256 for the box to check it by (lib/runtime/storage/box-uploads.ts). */
