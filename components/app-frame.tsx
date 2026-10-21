@@ -14,8 +14,14 @@ import { cn } from "@/lib/utils";
 /** Where the choice was kept before the cookie, read once to carry it over. */
 const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
 
-/** The collapsed sidebar, for whichever header shows its buttons. */
-const CollapsedSidebar = createContext<{ collapsed: boolean; expand: () => void } | null>(null);
+/** The collapsed sidebar, for whichever header shows its buttons. `railless`
+ *  is the stronger case: the rail has stepped aside for a session's header, so
+ *  a page that shows no header must put the buttons up itself. */
+const CollapsedSidebar = createContext<{
+  collapsed: boolean;
+  railless: boolean;
+  expand: () => void;
+} | null>(null);
 
 /**
  * Sidebar + page. Collapsing leaves a narrow rail (expand, new session) rather
@@ -92,7 +98,7 @@ export function AppFrame({
   }, []);
 
   return (
-    <CollapsedSidebar.Provider value={{ collapsed, expand: () => setAndRemember(false) }}>
+    <CollapsedSidebar.Provider value={{ collapsed, railless, expand: () => setAndRemember(false) }}>
       <div
         className={cn(
           "grid h-dvh grid-cols-1 overflow-hidden bg-background",
@@ -136,11 +142,33 @@ export function AppFrame({
 export function CollapsedSidebarButtons({ className }: { className?: string }) {
   const sidebar = useContext(CollapsedSidebar);
   if (!sidebar?.collapsed) return null;
+  return <SidebarButtons className={className} expand={sidebar.expand} />;
+}
+
+/**
+ * The same buttons for a session path's full-page states — opening, missing,
+ * failed, or a local session this Mac doesn't have — which have no header of
+ * their own. The rail has already stepped aside for the path, so without these
+ * there would be no way back to the sidebar (route-states.tsx: there is always
+ * a way on, and the Mac app has no browser back button).
+ */
+export function RaillessSidebarButtons() {
+  const sidebar = useContext(CollapsedSidebar);
+  if (!sidebar?.railless) return null;
+  return (
+    <SidebarButtons
+      className="absolute top-2.5 left-3 z-10 flex items-center gap-0.5"
+      expand={sidebar.expand}
+    />
+  );
+}
+
+function SidebarButtons({ className, expand }: { className?: string; expand: () => void }) {
   return (
     <div className={cn("max-sm:hidden", className)}>
       <button
         type="button"
-        onClick={sidebar.expand}
+        onClick={expand}
         aria-label="Expand sidebar"
         title="Expand sidebar"
         className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

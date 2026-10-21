@@ -262,7 +262,7 @@
 .studio-terminal-exit { margin:0; padding:8px 11px; border-top:1px solid rgba(210,153,34,.3); color:var(--studio-amber); background:#1c1a12; font-size:10px; }
 
 /* Markdown chat rendering — dark palette. */
-.md-body { color: #c9c9c9; font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.md-body { color: #e4e2e1; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .md-body > :first-child { margin-top: 0; }
 .md-body > :last-child { margin-bottom: 0; }
 .md-body p { margin: 0 0 12px; }
@@ -279,8 +279,8 @@
 .md-body strong { color: #f0f0f0; font-weight: 650; }
 .md-body blockquote { margin: 0 0 12px; padding: 2px 0 2px 13px; border-left: 2px solid #333; color: #9a9a9a; }
 .md-body hr { margin: 20px 0; border: 0; border-top: 1px solid rgba(255,255,255,.1); }
-/* Inline code: subtle chip. */
-.md-body :not(pre) > code { padding: 1px 5px; border-radius: 5px; color: #e6e6e6; background: #262626; font: 0.86em var(--font-geist-mono); }
+/* Inline code: a dark chip with a hairline edge. */
+.md-body :not(pre) > code { padding: 2px 5px; border: 1px solid #1d1a18; border-radius: 4px; color: #fdfcfb; background: #151311; font: 0.9em var(--font-geist-mono); }
 /* Fenced blocks: framed panel on a dark field. */
 .md-body pre { margin: 0 0 14px; padding: 13px 15px; overflow-x: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: #161616; }
 .md-body pre code { padding: 0; border-radius: 0; color: #e6e6e6; background: transparent; font: 12.5px/1.65 var(--font-geist-mono); }
@@ -406,3 +406,20 @@
 /* Conversation rows off screen skip layout and paint; each remembers its last
    rendered height, so the scrollbar and auto-follow stay true. */
 .timeline-row { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 60px; }
+/* A prompt stays pinned at the top while its turn scrolls beneath it, until
+   the next prompt takes its place. Always rendered: a pinned row is on screen
+   wherever it sits in the list. Capped and scrolling on its own, so a long
+   prompt (a pasted log, a file) cannot pin over the whole turn. */
+.timeline-row.is-prompt { position: sticky; top: 0; z-index: 1; content-visibility: visible; }
+.timeline-prompt { max-height: 30vh; padding: 10px 16px; overflow: auto; border-radius: 4px; color: #d8d4d2; background: #282523; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Claude's steps: a thought as a quiet line, a tool call as a bordered row. */
+.timeline-thought { padding: 2px 8px; color: #a69996; font-size: 14px; }
+.timeline-tool { min-width: 0; border: 1px solid var(--studio-border); border-radius: 3px; }
+.timeline-tool > summary { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 3px 9px; color: #a69996; font-size: 13.5px; line-height: 20px; list-style: none; cursor: pointer; transition: color .15s; }
+.timeline-tool > summary::-webkit-details-marker { display: none; }
+.timeline-tool > summary:hover, .timeline-tool[open] > summary { color: var(--studio-text); }
+.timeline-tool > summary:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+.timeline-tool > summary > svg { width: 15px; height: 15px; flex-shrink: 0; color: #8a7e7b; }
+.timeline-tool-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px 10px; border-top: 1px solid var(--studio-border); }
+.timeline-tool-body pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 3px; color: #b9b1ae; background: #0d0b0a; font: 11.5px/1.6 var(--font-geist-mono); }
+.timeline-tool-heading { display: flex; justify-content: space-between; margin-top: 4px; color: #8a7e7b; font-size: 11px; }
