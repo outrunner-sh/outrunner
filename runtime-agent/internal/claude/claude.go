@@ -76,6 +76,31 @@ func WithModel(argv []string, model string) []string {
 	return append(argv, "--model", model)
 }
 
+// Efforts are the reasoning efforts a session can run at, lowest first: Claude
+// Code's --effort levels, which Codex's model_reasoning_effort takes as well.
+var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+// ValidEffort accepts one of Efforts. Empty is not one: it means no effort was
+// asked for, and callers check for it first.
+func ValidEffort(effort string) bool {
+	for _, e := range Efforts {
+		if effort == e {
+			return true
+		}
+	}
+	return false
+}
+
+// WithEffort adds --effort, so the session thinks as hard as was picked
+// without touching the user's default (as WithModel). An empty effort keeps
+// the model's own.
+func WithEffort(argv []string, effort string) []string {
+	if effort == "" {
+		return argv
+	}
+	return append(argv, "--effort", effort)
+}
+
 // ValidModel accepts a model as Claude's --model takes it: an alias ("opus"),
 // a full name ("claude-opus-4-5-20250101", "claude-opus-4-5[1m]"), or a
 // gateway's slug ("z-ai/glm-5.3"). Nothing that could read as another flag.

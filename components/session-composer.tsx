@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, ChevronDown, FileText, Plus, Search, Settings2, X } from "lucide-react";
+import { ArrowUp, Check, FileText, Plus, Search, Settings2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -24,8 +24,19 @@ import {
   typedModelOwner,
   type TypedModelProvider,
 } from "@/lib/runtime/custom-models";
-import { loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
-import { matchModel, modelLabel, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
+import { EffortMeter, effortName } from "@/components/effort-meter";
+import { loadoutEffort, loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
+import {
+  type Effort,
+  EFFORT_LABELS,
+  EFFORTS,
+  matchModel,
+  modelLabel,
+  type ModelGroup,
+  type ModelProvider,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { cn } from "@/lib/utils";
 
@@ -39,10 +50,14 @@ import { cn } from "@/lib/utils";
  * `onSend` receives their ids to attach server-side.
  */
 
-/** Switching the session's model from the footer, where the session allows it. */
+/** Switching the session's model, and the effort it runs at, from the footer,
+ *  where the session allows it. */
 export type ModelChoice = {
   groups: ModelGroup[];
-  onChange: (model: SessionModel) => void;
+  /** `effort` null runs the model at its own. */
+  onChange: (model: SessionModel, effort: Effort | null) => void;
+  /** The effort the session runs at; null for the model's own. */
+  effort: Effort | null;
   /** Why it can't switch right now (mid-turn, not at the keyboard); null when
    *  it can. */
   disabledReason: string | null;
@@ -316,23 +331,33 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
   });
   const current = matchModel(groups, model, choice.preferredProvider);
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
-  const label = choice.switching ? "Switching model" : name;
+  // The effort shows only where it does something.
+  const effort = current && takesEffort(current) ? choice.effort : undefined;
+  const label = choice.switching
+    ? "Switching model"
+    : effort === undefined
+      ? name
+      : `${name}, ${effortName(effort)} effort`;
   const loadout = choice.loadout ? loadoutModels(choice.loadout, groups) : [];
   const searching = query.trim() !== "";
   // Searching looks through everything; otherwise the loadout, where there is
   // one, stands in for the groups.
   const flat = searching ? searchModels(groups.flatMap((g) => g.models), query) : loadout;
   const showGroups = !searching && loadout.length === 0;
+  const isCurrent = (m: SessionModel) => m.id === current?.id && m.provider === current.provider;
   const item = (m: SessionModel) => (
     <DropdownMenuItem
       key={`${m.provider}:${m.id}`}
       // Always sent, even for the ticked family: the session may run an
       // older model of it, and the agent ignores a switch to what it has.
-      onSelect={() => choice.onChange(m)}
+      // The same model keeps its effort; another runs at the loadout's for it.
+      onSelect={() =>
+        choice.onChange(m, isCurrent(m) ? choice.effort : (choice.loadout && loadoutEffort(choice.loadout, m)) ?? null)
+      }
     >
       <ModelIcon provider={m.provider} />
       <span className="flex-1 truncate">{m.label}</span>
-      <Check className={m.id === current?.id && m.provider === current.provider ? "opacity-100" : "opacity-0"} />
+      <Check className={isCurrent(m) ? "opacity-100" : "opacity-0"} />
     </DropdownMenuItem>
   );
   return (
@@ -349,7 +374,10 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
             {/* Both labels share one cell, so the footer holds still while the
                 name gives way to "Switching" and back. */}
             <span className="grid place-items-center">
-              <span className={cn("col-start-1 row-start-1", choice.switching && "invisible")}>{name}</span>
+              <span className={cn("col-start-1 row-start-1 inline-flex items-center gap-2", choice.switching && "invisible")}>
+                {name}
+                {effort !== undefined && <EffortMeter effort={effort} />}
+              </span>
               <span
                 aria-hidden
                 className={cn("col-start-1 row-start-1 inline-flex items-center gap-1", !choice.switching && "invisible")}
@@ -357,7 +385,6 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                 <Spinner /> Switching
               </span>
             </span>
-            <ChevronDown />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="top" className="w-64">
@@ -408,6 +435,21 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                 ) : [],
               )
             : null}
+          {current && effort !== undefined ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                {current.label} effort
+              </DropdownMenuLabel>
+              {[null, ...EFFORTS].map((level) => (
+                <DropdownMenuItem key={level ?? "default"} onSelect={() => choice.onChange(current, level)}>
+                  <EffortMeter effort={level} />
+                  <span className="flex-1 truncate">{level ? EFFORT_LABELS[level] : effortName(null)}</span>
+                  <Check className={level === effort ? "opacity-100" : "opacity-0"} />
+                </DropdownMenuItem>
+              ))}
+            </>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem asChild>
             <Link href="/settings/models" className="text-muted-foreground">
@@ -423,7 +465,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
         }}
         onChoose={(provider, id) => {
           rememberCustomModel(provider, id);
-          choice.onChange({ id, label: id, provider });
+          choice.onChange({ id, label: id, provider }, null);
         }}
       />
     </>

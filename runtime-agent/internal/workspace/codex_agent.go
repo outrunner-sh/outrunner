@@ -34,13 +34,14 @@ func (a codexAgent) prepare(ctx context.Context, workspaceID string) error {
 	return a.s.prepareRollout(workspaceID)
 }
 
-// command launches Codex with the session's orientation, model and mode, and
+// command launches Codex with the session's orientation, model, effort and
+// mode, and
 // resumes its conversation by id once Codex has recorded one: in a folder
 // other Codex sessions may share, "the latest" could be any of them.
 func (a codexAgent) command(workspaceID, worktree string, _ bool) []string {
 	s := a.s
 	f, _ := s.getFacts(workspaceID)
-	argv := codex.Command(s.permissionMode(workspaceID), f.CodexSessionID, f.Model, s.orientation(workspaceID, worktree))
+	argv := codex.Command(s.permissionMode(workspaceID), f.CodexSessionID, f.Model, f.Effort, s.orientation(workspaceID, worktree))
 	return append(s.codexLaunchEnv(workspaceID), argv...)
 }
 

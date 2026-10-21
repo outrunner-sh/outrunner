@@ -205,6 +205,12 @@ export function activeSessionId(pathname: string): string | undefined {
   return /^\/(?:workspaces|local)\/([^/]+)/.exec(pathname)?.[1];
 }
 
+/** Whether an app path opens a session's studio (not its replay), whose header
+ *  carries the collapsed sidebar's buttons in place of the rail. */
+export function isStudioPath(pathname: string): boolean {
+  return /^\/(?:workspaces|local)\/[^/]+\/?$/.test(pathname);
+}
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;

@@ -157,6 +157,51 @@ func TestASwitchRelaunchesARunningSessionOnTheNewModel(t *testing.T) {
 	}
 }
 
+func launchedAt(argv []string, effort string) bool {
+	i := slices.Index(argv, "--effort")
+	if effort == "" {
+		return i < 0
+	}
+	return i >= 0 && i+1 < len(argv) && argv[i+1] == effort
+}
+
+// The effort is part of the choice: a switch of it alone relaunches, and a
+// switch that names none drops the one the session had.
+func TestASwitchOfEffortRelaunchesAndANewModelReplacesIt(t *testing.T) {
+	t.Parallel()
+	s, fake, id := runningSession(t, "opus")
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus", Effort: "max"}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if got := fake.lastLaunch(); !launchedOn(got, "opus") || !launchedAt(got, "max") {
+		t.Fatalf("relaunch = %q, want opus at max", got)
+	}
+	if f, _ := s.getFacts(id); f.Effort != "max" {
+		t.Errorf("recorded effort = %q, want max", f.Effort)
+	}
+	launches := len(fake.launches)
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus", Effort: "max"}, ""); err != nil || len(fake.launches) != launches {
+		t.Errorf("the same choice again = %v with %d launches, want no relaunch", err, len(fake.launches)-launches)
+	}
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "sonnet"}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if got := fake.lastLaunch(); !launchedOn(got, "sonnet") || !launchedAt(got, "") {
+		t.Errorf("relaunch = %q, want sonnet at its own effort", got)
+	}
+	// A repeated Create (an agent restart) keeps it, as it keeps the model.
+	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "sonnet", Effort: "low"}, ""); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	f, _ := s.getFacts(id)
+	if _, err := s.Create(context.Background(), CreateInput{WorkspaceID: id, Branch: "b", BaseBranch: "main", RepoPath: f.RepoPath}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if f, _ := s.getFacts(id); f.Effort != "low" || f.Model != "sonnet" {
+		t.Errorf("after a repeated Create: %q at %q, want sonnet at low", f.Model, f.Effort)
+	}
+}
+
 func TestASwitchMidTurnIsRefusedAndRecordsNothing(t *testing.T) {
 	t.Parallel()
 	s, fake, id := runningSession(t, "sonnet")
@@ -201,18 +246,19 @@ func TestAFailedSwitchBringsClaudeBackOnItsOldModel(t *testing.T) {
 	s, fake, id := runningSession(t, "sonnet")
 	startErr := errors.New("tmux new-session: no space left")
 	fake.newErrs = []error{startErr}
-	err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, "")
+	err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus", Effort: "high"}, "")
 	if !errors.Is(err, startErr) {
 		t.Fatalf("SetModel = %v, want the start error", err)
 	}
-	if len(fake.launches) != 2 || !launchedOn(fake.launches[0], "opus") || !launchedOn(fake.launches[1], "sonnet") {
+	if len(fake.launches) != 2 || !launchedOn(fake.launches[0], "opus") || !launchedOn(fake.launches[1], "sonnet") ||
+		!launchedAt(fake.launches[1], "") {
 		t.Fatalf("launches = %q, want opus then sonnet", fake.launches)
 	}
 	if !fake.HasSession(context.Background(), sessionName(id)) {
 		t.Error("a failed switch left no session running")
 	}
-	if f, _ := s.getFacts(id); f.Model != "sonnet" {
-		t.Errorf("recorded %q, want the old model kept", f.Model)
+	if f, _ := s.getFacts(id); f.Model != "sonnet" || f.Effort != "" {
+		t.Errorf("recorded %q at %q, want the old model kept, at its own effort", f.Model, f.Effort)
 	}
 	// Not recorded, so a retry of the same model really tries again.
 	if err := s.SetModel(context.Background(), id, ModelChoice{Model: "opus"}, ""); err != nil {

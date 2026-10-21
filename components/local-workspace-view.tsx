@@ -3,6 +3,7 @@
 import { Laptop } from "lucide-react";
 import Link from "next/link";
 
+import { RaillessSidebarButtons } from "@/components/app-frame";
 import { RouteLoading } from "@/components/route-states";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
@@ -60,7 +61,10 @@ export function LocalWorkspaceView({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">{children}</div>
+    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
+      <RaillessSidebarButtons />
+      {children}
+    </div>
   );
 }
 
