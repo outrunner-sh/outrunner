@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isSafeRelativePath, parseChangedFiles } from "@/lib/runtime/git";
+import {
+  isSafeRelativePath,
+  parseChangedFiles,
+  parseLineCounts,
+} from "@/lib/runtime/git";
 
 test("isSafeRelativePath accepts ordinary repository paths", () => {
   assert.equal(isSafeRelativePath("src/index.ts"), true);
@@ -45,6 +49,18 @@ test("parseChangedFiles joins -z name-status, numstat and untracked output", () 
       ["modified", "link", 1, 1],
       ["modified", "tab\there.ts", 5, 0],
       ["untracked", "notes.txt", 0, 0],
+    ],
+  );
+});
+
+test("parseLineCounts reads git grep -c -z, whose paths may hold a newline", () => {
+  const counts = parseLineCounts("a.txt\x002\nsub/new\nline.txt\x003\ntab\there.txt\x001\n");
+  assert.deepEqual(
+    [...counts],
+    [
+      ["a.txt", 2],
+      ["sub/new\nline.txt", 3],
+      ["tab\there.txt", 1],
     ],
   );
 });

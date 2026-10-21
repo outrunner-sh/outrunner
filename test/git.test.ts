@@ -169,9 +169,11 @@ test("the change set spans the branch's commits and its working tree", async (t)
   await writeFile(join(worktree, "new.ts"), "a\nb\nc\nD\n");
   await sh(worktree, "add", ".");
   await sh(worktree, "commit", "--quiet", "-m", "work");
-  // Not committed: an edit and an untracked file.
+  // Not committed: an edit, an untracked text file counted by its lines, and
+  // an untracked binary, which stays at 0.
   await writeFile(join(worktree, "README.md"), "one\n");
-  await writeFile(join(worktree, "notes.txt"), "n\n");
+  await writeFile(join(worktree, "notes.txt"), "n\no\n");
+  await writeFile(join(worktree, "blob.bin"), Buffer.from([0, 10, 0, 10]));
 
   const rows = (files: Awaited<ReturnType<typeof listChangedFiles>>) =>
     files.map((f) => [f.path, f.status, f.additions, f.deletions]);
@@ -182,7 +184,8 @@ test("the change set spans the branch's commits and its working tree", async (t)
     ["committed.ts", "added", 3, 0],
     ["logo.png", "added", 0, 0],
     ["new.ts", "renamed", 1, 1],
-    ["notes.txt", "untracked", 0, 0],
+    ["blob.bin", "untracked", 0, 0],
+    ["notes.txt", "untracked", 2, 0],
   ]);
   // A file only the branch's commits changed still has a diff.
   const diff = await readFileDiff(realGit, {
@@ -199,7 +202,8 @@ test("the change set spans the branch's commits and its working tree", async (t)
   });
   assert.deepEqual(rows(uncommitted), [
     ["README.md", "modified", 0, 1],
-    ["notes.txt", "untracked", 0, 0],
+    ["blob.bin", "untracked", 0, 0],
+    ["notes.txt", "untracked", 2, 0],
   ]);
   await assert.rejects(
     readFileDiff(realGit, { worktree, path: "committed.ts", baseBranch: "no-such-branch" }),

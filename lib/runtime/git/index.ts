@@ -336,7 +336,59 @@ async function readChangeSet(
       "-z",
     ]),
   ]);
-  return { base, files: parseChangedFiles({ nameStatus, numstat, untracked }) };
+  const files = parseChangedFiles({ nameStatus, numstat, untracked });
+  await countUntrackedLines(exec, input.worktree, files);
+  return { base, files };
+}
+
+/**
+ * Sets each untracked file's additions to its line count, as a diff against
+ * nothing would. One `git grep` counts them all: the empty pattern matches
+ * every line and `-I` skips binaries, which stay at 0. The counts are a
+ * nicety, so a grep that fails or matches nothing leaves them at 0.
+ */
+async function countUntrackedLines(
+  exec: GitExec,
+  worktree: string,
+  files: ChangedFile[],
+): Promise<void> {
+  const untracked = files.filter((file) => file.status === "untracked");
+  if (untracked.length === 0) return;
+  const result = await exec([
+    "git",
+    "-C",
+    worktree,
+    "--literal-pathspecs",
+    "grep",
+    "--untracked",
+    "--no-color",
+    "-I",
+    "-c",
+    "-z",
+    "-e",
+    "",
+    "--",
+    ...untracked.map((file) => file.path),
+  ]);
+  if (result.exitCode !== 0) return;
+  const counts = parseLineCounts(result.stdout);
+  for (const file of untracked) file.additions = counts.get(file.path) ?? 0;
+}
+
+/** Line counts by path from `git grep -c -z`, which prints `path\0count\n`
+ * per file. A path may hold a newline but a count cannot, so the first
+ * newline after each count starts the next path. */
+export function parseLineCounts(output: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  const fields = output.split("\0");
+  let filePath = fields[0];
+  for (const field of fields.slice(1)) {
+    const newline = field.indexOf("\n");
+    const count = newline === -1 ? field : field.slice(0, newline);
+    if (filePath && /^\d+$/.test(count)) counts.set(filePath, Number(count));
+    filePath = newline === -1 ? "" : field.slice(newline + 1);
+  }
+  return counts;
 }
 
 /** Changed files in a worktree since it left `baseBranch`, untracked included.
