@@ -210,6 +210,11 @@ type RestoreWorkspaceRequest struct {
 	// OriginWorktree is the folder an imported session worked in on its Mac:
 	// the conversation's working directories under it move to the worktree.
 	OriginWorktree string `json:"originWorktree,omitempty"`
+	// Model is the model the session was on, with its gateway and key when it
+	// runs through one, recorded before it relaunches (validated like POST
+	// /workspaces/{id}/model): a fresh box has no record of it. Absent, the
+	// session relaunches on its agent's own default.
+	Model *SetModelRequest `json:"model,omitempty"`
 }
 
 // Health is what the unauthenticated GET /health says: that the agent is up,
@@ -257,6 +262,11 @@ const FeatureEnvironment = "session-environment"
 // FeatureImports is restoring an imported session: compressed downloads, a
 // bundle's branch under another name, and the conversation's folder moved.
 const FeatureImports = "restore-imports"
+
+// FeatureRestoreModel is a restore that puts the session back on its model
+// (RestoreWorkspaceRequest.Model). An older agent ignores the field, and
+// relaunches the session on Claude's own default.
+const FeatureRestoreModel = "restore-model"
 
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
