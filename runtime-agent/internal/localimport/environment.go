@@ -105,14 +105,24 @@ type conductorEnvVar struct {
 
 // projectEnvs finds each repository's environment: from Conductor's
 // repositories, and from the checkouts sessions ran in. Values are not kept.
-func projectEnvs(ctx context.Context, opts Options, sessions []Session) []ProjectEnv {
+// With only set, just that repository's — a capture wants one, and reading
+// every checkout's .env files to answer for one is work for nothing.
+func projectEnvs(ctx context.Context, opts Options, sessions []Session, only string) []ProjectEnv {
+	wanted := func(repo string) bool { return only == "" || strings.EqualFold(repo, only) }
 	byRepo := map[string]*ProjectEnv{}
+	// A variable by name, per repository: Conductor can set a shared one and
+	// a repository's own of the same name, and two of its repositories can
+	// point at one GitHub remote, so the same name reaches this more than
+	// once. It is offered once, the repository's own winning over a shared
+	// one, as CaptureEnv reads it.
+	varsByRepo := map[string]map[string]EnvVar{}
 	add := func(repo, root string) *ProjectEnv {
 		key := strings.ToLower(repo)
 		p, ok := byRepo[key]
 		if !ok {
 			p = &ProjectEnv{Repo: repo, Vars: []EnvVar{}, Files: []EnvFile{}}
 			byRepo[key] = p
+			varsByRepo[key] = map[string]EnvVar{}
 		}
 		if p.Root == "" && root != "" {
 			p.Root = root
@@ -123,25 +133,35 @@ func projectEnvs(ctx context.Context, opts Options, sessions []Session) []Projec
 	repos, vars := readConductorEnv(ctx, opts.ConductorDB, false)
 	for _, r := range repos {
 		repo := parseGitHubRemote(str(r.RemoteURL))
-		if repo == "" {
+		if repo == "" || !wanted(repo) {
 			continue
 		}
 		p := add(repo, str(r.RootPath))
-		p.Scripts = conductorScripts(r)
+		if scripts := conductorScripts(r); scripts != nil {
+			p.Scripts = scripts
+		}
+		named := varsByRepo[strings.ToLower(repo)]
 		for _, v := range vars {
-			if shared, ok := varApplies(v, str(r.ID)); ok {
-				p.Vars = append(p.Vars, EnvVar{Name: str(v.Key), Shared: shared})
+			shared, ok := varApplies(v, str(r.ID))
+			if !ok {
+				continue
+			}
+			if was, seen := named[str(v.Key)]; !seen || (was.Shared && !shared) {
+				named[str(v.Key)] = EnvVar{Name: str(v.Key), Shared: shared}
 			}
 		}
 	}
 	for _, s := range sessions {
-		if s.Skip == nil && s.Repo != "" {
+		if s.Skip == nil && s.Repo != "" && wanted(s.Repo) {
 			add(s.Repo, s.Worktree)
 		}
 	}
 
 	envs := make([]ProjectEnv, 0, len(byRepo))
-	for _, p := range byRepo {
+	for key, p := range byRepo {
+		for _, v := range varsByRepo[key] {
+			p.Vars = append(p.Vars, v)
+		}
 		if p.Root != "" {
 			p.Files = envFiles(ctx, p.Root)
 		}
@@ -157,12 +177,17 @@ func projectEnvs(ctx context.Context, opts Options, sessions []Session) []Projec
 // CaptureEnv reads the values of what the user picked of a repository's
 // environment, found again the way the scan found it.
 func CaptureEnv(ctx context.Context, opts Options, repo string, pick EnvPick) (EnvCapture, error) {
-	sessions, _ := discover(ctx, opts, "")
-	var project *ProjectEnv
-	for _, p := range projectEnvs(ctx, opts, sessions) {
-		if strings.EqualFold(p.Repo, repo) {
-			project = &p
-			break
+	// Conductor's own record first, which needs no session scan: the picker
+	// is called once per repository, and reading every transcript and
+	// inspecting every checkout each time costs more than the capture. The
+	// sessions are scanned only for what that can't answer — a repository
+	// Conductor doesn't know, and a checkout only a session names (Conductor
+	// keeps no root_path for it), whose files are read from there.
+	project := findProjectEnv(projectEnvs(ctx, opts, nil, repo), repo)
+	if project == nil || (len(pick.Files) > 0 && project.Root == "") {
+		sessions, _ := discover(ctx, opts, "")
+		if found := findProjectEnv(projectEnvs(ctx, opts, sessions, repo), repo); found != nil {
+			project = found
 		}
 	}
 	if project == nil {
@@ -204,6 +229,16 @@ func CaptureEnv(ctx context.Context, opts Options, repo string, pick EnvPick) (E
 		out.Scripts = project.Scripts
 	}
 	return out, nil
+}
+
+// findProjectEnv is the environment of repo among envs, or nil.
+func findProjectEnv(envs []ProjectEnv, repo string) *ProjectEnv {
+	for i := range envs {
+		if strings.EqualFold(envs[i].Repo, repo) {
+			return &envs[i]
+		}
+	}
+	return nil
 }
 
 func offered(files []EnvFile, path string) bool {
