@@ -938,7 +938,7 @@ fn last_lines(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join(" | ")
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalFolder {
     /// The repository's top level for a git folder (even if a subfolder was
@@ -1007,6 +1007,12 @@ async fn check_chosen(app: &AppHandle, state: &LocalRuntime, path: &str) -> Resu
     }
     // A repository Outrunner cloned for the user, in an earlier run.
     if repos_dir().ok().and_then(|repos| std::fs::canonicalize(repos).ok()).is_some_and(|repos| real.starts_with(repos)) {
+        return Ok(());
+    }
+    // Or one cloned into the location the user chose for clones: only its
+    // clones, the folders directly in it, not everything beneath it (a home
+    // folder chosen as the location must not open all of home to the page).
+    if saved_clone_location(app).is_some_and(|location| real.parent() == Some(location.as_path())) {
         return Ok(());
     }
     Err("folder-not-chosen".into())
@@ -1237,17 +1243,19 @@ fn ensure_clone(repos: &Path, name: &str, url: &str, token: Option<&str>) -> Res
     inspect_folder(&dir)
 }
 
-/// Clone a repository the user picked from GitHub into `~/outrunner/repos`
-/// (or use the clone made before), as the folder a local session works in.
-/// `token` is the user's GitHub token, from the page, for this clone only.
+/// Clone a repository the user picked from GitHub into the clone location
+/// ([`clone_location`]: the one they chose, else `~/outrunner/repos`), or use
+/// the clone made before, as the folder a local session works in. `token` is
+/// the user's GitHub token, from the page, for this clone only.
 #[tauri::command]
 pub async fn local_clone_repo(
+    app: AppHandle,
     state: State<'_, LocalRuntime>,
     full_name: String,
     token: Option<String>,
 ) -> Result<LocalFolder, String> {
     let (owner, name) = github_repo(&full_name).ok_or("repo-invalid")?;
-    let repos = repos_dir()?;
+    let repos = clone_location(&app)?;
     let folder = tauri::async_runtime::spawn_blocking(move || {
         ensure_clone(&repos, &name, &github_url(&owner, &name), token.as_deref())
     })
@@ -1257,6 +1265,169 @@ pub async fn local_clone_repo(
         state.picked.lock().unwrap_or_else(PoisonError::into_inner).insert(real);
     }
     Ok(folder)
+}
+
+// ---------------------------------------------------------------------------
+// Where repositories are cloned: a folder the user chose in the dialog.
+// ---------------------------------------------------------------------------
+
+/// The file that remembers the clone location the user chose. Only
+/// [`local_pick_clone_location`] writes it, from the native dialog, so the page
+/// can never point clones somewhere of its own.
+fn clone_location_file(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_config_dir().map_err(|error| error.to_string())?.join("clone-location"))
+}
+
+/// The clone location the user chose, if they did and it is still a folder.
+fn saved_clone_location(app: &AppHandle) -> Option<PathBuf> {
+    let saved = std::fs::read_to_string(clone_location_file(app).ok()?).ok()?;
+    let path = PathBuf::from(saved.trim());
+    if !path.is_absolute() {
+        return None;
+    }
+    std::fs::canonicalize(path).ok().filter(|path| path.is_dir())
+}
+
+/// Where repositories picked from GitHub are cloned: the location the user
+/// chose, else `~/outrunner/repos`.
+fn clone_location(app: &AppHandle) -> Result<PathBuf, String> {
+    saved_clone_location(app).map_or_else(repos_dir, Ok)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneLocation {
+    path: String,
+    /// Chosen by the user, rather than the default.
+    chosen: bool,
+}
+
+/// Where the next clone goes, for the page to show.
+#[tauri::command]
+pub async fn local_clone_location(app: AppHandle) -> Result<CloneLocation, String> {
+    Ok(match saved_clone_location(&app) {
+        Some(path) => CloneLocation { path: path.to_string_lossy().into_owned(), chosen: true },
+        None => CloneLocation { path: repos_dir()?.to_string_lossy().into_owned(), chosen: false },
+    })
+}
+
+/// Ask the user where to clone repositories, and remember it. `None` means
+/// they cancelled.
+#[tauri::command]
+pub async fn local_pick_clone_location(app: AppHandle) -> Result<Option<CloneLocation>, String> {
+    let (picked, folder) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose where to clone repositories")
+        .pick_folder(move |choice| {
+            let _ = picked.send(choice);
+        });
+    let Some(folder) = folder.await.map_err(|error| error.to_string())? else {
+        return Ok(None);
+    };
+    let path = folder.into_path().map_err(|error| error.to_string())?;
+    let real = std::fs::canonicalize(&path).map_err(|_| "folder-missing".to_string())?;
+    let file = clone_location_file(&app)?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(&file, real.to_string_lossy().as_bytes()).map_err(|error| error.to_string())?;
+    Ok(Some(CloneLocation { path: real.to_string_lossy().into_owned(), chosen: true }))
+}
+
+// ---------------------------------------------------------------------------
+// Making a folder a git repository.
+// ---------------------------------------------------------------------------
+
+/// A branch name to start a repository on: letters, digits, `.`, `_`, `-`
+/// and `/`, as git allows them (no `..`, `//`, or a trailing `/`, `.` or
+/// `.lock`), so nothing the page sends can read as an option.
+fn valid_branch(branch: &str) -> bool {
+    let mut chars = branch.chars();
+    (1..=100).contains(&branch.len())
+        && chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && branch.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '/'))
+        && !branch.contains("..")
+        && !branch.contains("//")
+        && !branch.ends_with('/')
+        && !branch.ends_with('.')
+        && !branch.ends_with(".lock")
+}
+
+/// Whether `dir` holds anything worth a first commit: any entry but `.git`
+/// itself and Finder's `.DS_Store`.
+fn has_files(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let name = entry.file_name();
+            name != ".git" && name != ".DS_Store"
+        })
+    })
+}
+
+/// git in `dir`, its failure as `git-failed:<what git said>`, or
+/// `git-identity` when a commit needs the user's name and email set first.
+fn run_git(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<(), String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("PATH", session_path())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .envs(env.iter().copied())
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("git-missing:{error}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&out.stderr).to_ascii_lowercase();
+    if said.contains("identity unknown") || said.contains("tell me who you are") {
+        return Err("git-identity".into());
+    }
+    Err(format!("git-failed:{}", last_line(&out.stderr)))
+}
+
+/// Make `dir` a git repository on `branch`, with its files (if it has any) as
+/// the first commit, so sessions there get worktrees. A folder already in a
+/// repository is refused rather than nested in another. If the first commit
+/// fails, the new `.git` is removed again, so trying again starts clean.
+fn git_init(dir: &Path, branch: &str, env: &[(&str, &str)]) -> Result<LocalFolder, String> {
+    if !dir.is_dir() {
+        return Err("folder-missing".into());
+    }
+    if !valid_branch(branch) {
+        return Err("branch-invalid".into());
+    }
+    if git_output(dir, &["rev-parse", "--show-toplevel"]).is_some() {
+        return Err("already-git".into());
+    }
+    run_git(dir, &["init", "-q", "-b", branch], env)?;
+    if has_files(dir) {
+        let committed = run_git(dir, &["add", "-A"], env)
+            .and_then(|()| run_git(dir, &["commit", "-q", "-m", "Initial commit"], env));
+        if let Err(error) = committed {
+            let _ = std::fs::remove_dir_all(dir.join(".git"));
+            return Err(error);
+        }
+    }
+    inspect_folder(dir)
+}
+
+/// Make a folder the user chose a git repository, starting on `branch` (`main`
+/// unless said otherwise).
+#[tauri::command]
+pub async fn local_git_init(
+    app: AppHandle,
+    state: State<'_, LocalRuntime>,
+    path: String,
+    branch: Option<String>,
+) -> Result<LocalFolder, String> {
+    check_chosen(&app, &state, &path).await?;
+    let branch = branch.unwrap_or_else(|| "main".into());
+    tauri::async_runtime::spawn_blocking(move || git_init(Path::new(&path), &branch, &[]))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
@@ -1605,6 +1776,76 @@ mod tests {
             clone_target(&repos, "Notes", "https://github.com/a/Notes").unwrap(),
             (repos.join("Notes-2"), false)
         );
+    }
+
+    /// Who commits in the tests below, whatever this machine's git config.
+    const TEST_IDENTITY: [(&str, &str); 6] = [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+
+    #[test]
+    fn an_empty_folder_becomes_a_repository_on_main_without_a_commit() {
+        let dir = scratch("init-empty");
+        std::fs::write(dir.join(".DS_Store"), "").unwrap();
+        let folder = git_init(&dir, "main", &TEST_IDENTITY).unwrap();
+        assert!(dir.join(".git").is_dir());
+        assert!(!folder.git, "nothing to commit, so no worktrees yet");
+        assert_eq!(git_output(&dir, &["symbolic-ref", "--short", "HEAD"]).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn a_folder_with_files_gets_them_as_its_first_commit() {
+        let dir = scratch("init-files");
+        std::fs::write(dir.join("README.md"), "hello").unwrap();
+        let folder = git_init(&dir, "trunk", &TEST_IDENTITY).unwrap();
+        assert!(folder.git);
+        assert_eq!(folder.branch.as_deref(), Some("trunk"));
+        assert_eq!(git_output(&dir, &["rev-list", "--count", "HEAD"]).as_deref(), Some("1"));
+        assert_eq!(git_output(&dir, &["status", "--porcelain"]).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_folder_already_in_a_repository_is_left_alone() {
+        let repo = upstream();
+        assert_eq!(git_init(&repo, "main", &TEST_IDENTITY).unwrap_err(), "already-git");
+        let inside = repo.join("sub");
+        std::fs::create_dir_all(&inside).unwrap();
+        assert_eq!(git_init(&inside, "main", &TEST_IDENTITY).unwrap_err(), "already-git");
+        assert!(!inside.join(".git").exists());
+    }
+
+    #[test]
+    fn a_first_commit_that_fails_leaves_no_repository_behind() {
+        let dir = scratch("init-no-identity");
+        std::fs::write(dir.join("notes.txt"), "x").unwrap();
+        // No name or email anywhere, and git told not to guess them.
+        let anonymous = [
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "user.useConfigOnly"),
+            ("GIT_CONFIG_VALUE_0", "true"),
+        ];
+        assert_eq!(git_init(&dir, "main", &anonymous).unwrap_err(), "git-identity");
+        assert!(!dir.join(".git").exists());
+    }
+
+    #[test]
+    fn only_a_plain_branch_name_starts_a_repository() {
+        for good in ["main", "trunk", "release/1.0", "feature_x-2"] {
+            assert!(valid_branch(good), "{good:?} was refused");
+        }
+        for bad in ["", "-x", "--upload-pack=x", "a..b", "a//b", "a/", "a.", "a.lock", "a b", "a~1", "/a", ".a"] {
+            assert!(!valid_branch(bad), "{bad:?} was allowed");
+        }
+        let dir = scratch("init-bad-branch");
+        assert_eq!(git_init(&dir, "-x", &TEST_IDENTITY).unwrap_err(), "branch-invalid");
+        assert!(!dir.join(".git").exists());
     }
 
     #[test]
