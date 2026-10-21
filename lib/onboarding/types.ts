@@ -52,7 +52,7 @@ export type OnboardingUser = {
 
 export type OnboardingEnv = {
   user: OnboardingUser;
-  /** Inside the Outrunner Mac app, where This Mac and Connect Claude work. */
+  /** Inside the Outrunner Mac app, where This Mac works. */
   desktop: boolean;
   /** Whether a cloud session may start on Outrunner's models without Claude. */
   outrunnerModels: boolean;
@@ -66,12 +66,6 @@ export type OnboardingEnv = {
   pickFolder(): Promise<OnboardingFolder | null>;
   /** Whether a Claude credential is already stored for cloud sessions. */
   claudeConnected(): Promise<boolean>;
-  /** Whether Claude Code is logged in on this Mac, a sign the user has Claude
-   *  to connect; false outside the Mac app, or when it can't tell. */
-  claudeOnMac(): Promise<boolean>;
-  /** Connect Claude (`claude setup-token`); resolves once the token is saved. */
-  connectClaude(): Promise<void>;
-  cancelConnectClaude(): void;
   listRepos(): Promise<OnboardingRepo[]>;
   /** What the Mac app's scan found to bring over from this Mac; null outside
    *  the app, with nothing to import, or when the scan fails. */

@@ -36,7 +36,6 @@ type Scenario = {
   tools: "all" | "no-tmux" | "no-claude" | "claude-setup-fails";
   claudeCode: "logged-in" | "logged-out" | "login-fails";
   claudeConnected: "no" | "yes";
-  connect: "succeeds" | "no-subscription";
   repos: "many" | "few" | "none";
   imports: "some" | "none";
   outrunnerModels: "yes" | "no";
@@ -47,7 +46,6 @@ const DEFAULT_SCENARIO: Scenario = {
   tools: "all",
   claudeCode: "logged-out",
   claudeConnected: "no",
-  connect: "succeeds",
   repos: "many",
   imports: "some",
   outrunnerModels: "yes",
@@ -69,7 +67,6 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
     values: [["logged-in", "Logged in"], ["logged-out", "Logged out"], ["login-fails", "Login fails"]],
   },
   claudeConnected: { label: "Claude for cloud", values: [["no", "Not connected"], ["yes", "Connected"]] },
-  connect: { label: "Connect Claude", values: [["succeeds", "Succeeds"], ["no-subscription", "No subscription"]] },
   repos: { label: "GitHub repos", values: [["many", "Many"], ["few", "Two"], ["none", "None"]] },
   imports: { label: "Work to import", values: [["some", "Found"], ["none", "None"]] },
   outrunnerModels: { label: "Outrunner models", values: [["yes", "On the server"], ["no", "Not set up"]] },
@@ -154,23 +151,6 @@ function mockEnv(s: Scenario): OnboardingEnv {
     async claudeConnected() {
       await wait(400);
       return s.claudeConnected === "yes";
-    },
-    async claudeOnMac() {
-      await wait(900);
-      return s.surface === "desktop" && !noClaude && s.claudeCode === "logged-in";
-    },
-    async connectClaude() {
-      cancelled = false;
-      await wait(3000);
-      if (cancelled) throw new Error("Cancelled.");
-      if (s.connect === "no-subscription") {
-        throw new Error(
-          "Claude Code stopped without issuing a token. Connecting needs a Claude Pro or Max subscription on the account you approve with.",
-        );
-      }
-    },
-    cancelConnectClaude() {
-      cancelled = true;
     },
     async listRepos() {
       await wait(800);
