@@ -6,8 +6,10 @@
  * the real desktop bridge and APIs.
  */
 
+import type { BillingInterval } from "@/lib/billing/plans";
 import type { ClaudeSetup } from "@/lib/desktop/local-runtime";
-import type { ImportFound } from "@/lib/onboarding/import-offer";
+import type { ImportProgress } from "@/lib/imports/client";
+import type { ImportScan, ScannedSession } from "@/lib/runtime/import-scan";
 
 /** Where the user's sessions run. */
 export type RunTarget = "mac" | "cloud";
@@ -36,14 +38,6 @@ export type OnboardingFolder = {
   branch: string | null;
 };
 
-export type OnboardingRepo = {
-  id: string;
-  fullName: string;
-  private: boolean;
-  /** When it was last pushed to, for ordering and a hint. */
-  pushedAt: string;
-};
-
 export type OnboardingUser = {
   name: string;
   login: string;
@@ -56,6 +50,8 @@ export type OnboardingEnv = {
   desktop: boolean;
   /** Whether a cloud session may start on Outrunner's models without Claude. */
   outrunnerModels: boolean;
+  /** Plan prices in USD by Stripe lookup key; null where plans aren't sold. */
+  prices: Record<string, number> | null;
   checkMac(): Promise<MacStatus>;
   /** Start setting up the app's own Claude Code; `checkMac` follows it. */
   setUpClaudeCode(): Promise<void>;
@@ -64,12 +60,13 @@ export type OnboardingEnv = {
   cancelClaudeCodeLogin(): void;
   /** The folder dialog; null when cancelled. */
   pickFolder(): Promise<OnboardingFolder | null>;
-  /** Whether a Claude credential is already stored for cloud sessions. */
-  claudeConnected(): Promise<boolean>;
-  listRepos(): Promise<OnboardingRepo[]>;
-  /** What the Mac app's scan found to bring over from this Mac; null outside
-   *  the app, with nothing to import, or when the scan fails. */
-  findImports(): Promise<ImportFound | null>;
+  /** The Mac app's scan of what could come over from this Mac; null outside
+   *  the app, or when the scan fails. */
+  findImports(): Promise<ImportScan | null>;
+  /** Import `sessions` to the cloud, their repositories connected as
+   *  projects, reporting each one's progress. Rejects only when none could
+   *  start; each session's own failure is its progress. */
+  importSessions(sessions: ScannedSession[], onProgress: (progress: ImportProgress) => void): Promise<void>;
   /** Finish onboarding; resolves with where to go next, or null to stay. */
   finish(input: OnboardingFinish): Promise<string | null>;
   /** Leave onboarding without a session; absent where there is nothing to skip to. */
@@ -78,8 +75,8 @@ export type OnboardingEnv = {
 
 /**
  * How onboarding ends. On this Mac, in the first session there. In the cloud,
- * with the chosen repositories connected and then, as the user picked, a
- * first session in one of them, the import of this Mac's work, or home.
+ * where the user chose on the plans step: home on the free plan, Settings →
+ * Providers to bring their own models, or Stripe's checkout for a plan.
  */
 export type OnboardingFinish =
   | {
@@ -88,21 +85,9 @@ export type OnboardingFinish =
       /** A first message to send; onboarding opens the session without one. */
       prompt?: string;
     }
-  | {
-      target: "cloud";
-      /** The repositories to connect, by GitHub id; none is fine. */
-      repoIds: string[];
-      /** A first session, in one of `repoIds`; none, onboarding ends without one. */
-      session?: CloudSession;
-      /** Where to go without a session; home when unset. */
-      next?: "home" | "import";
-    };
+  | { target: "cloud"; next: CloudNext };
 
-export type CloudSession = {
-  /** Its repository's GitHub id. */
-  repoId: string;
-  /** The user's own Claude, or Outrunner's models. */
-  model: "claude" | "outrunner";
-  /** A first message to send; onboarding opens the session without one. */
-  prompt?: string;
-};
+export type CloudNext =
+  | { to: "home" }
+  | { to: "providers" }
+  | { to: "plan"; plan: "pro" | "max"; interval: BillingInterval };
