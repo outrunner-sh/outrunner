@@ -3,15 +3,21 @@
 import { Badge } from "@/components/ui/badge";
 import type { ConfigPick, EnvironmentPick } from "@/lib/imports/client";
 import { skipText } from "@/lib/imports/client";
-import type { ScannedAgentConfig, ScannedProjectEnv } from "@/lib/runtime/import-scan";
-
-/** Whether anything picked carries secrets, so the user must agree first. */
-export function picksSecrets(envs: EnvironmentPick[], config: ConfigPick): boolean {
-  return envs.some((e) => e.vars.length > 0 || e.files.length > 0) || config.mcp.length > 0;
-}
+import type { ProjectScripts, ScannedAgentConfig, ScannedProjectEnv } from "@/lib/runtime/import-scan";
 
 export function emptyEnvPick(repo: string): EnvironmentPick {
   return { repo, vars: [], files: [], scripts: false };
+}
+
+/** A repository's scripts as one listing, each under its name. */
+function scriptsText(scripts: ProjectScripts): string {
+  return [
+    scripts.setup && `# setup\n${scripts.setup}`,
+    scripts.run && `# run\n${scripts.run}`,
+    scripts.archive && `# archive\n${scripts.archive}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function toggled(list: string[], value: string): string[] {
@@ -92,25 +98,23 @@ export function EnvironmentPicker({
                 </Check>
               ))}
               {p.scripts && (
-                <Check
-                  checked={pick.scripts}
-                  onChange={() => onChange({ ...pick, scripts: !pick.scripts })}
-                  disabled={disabled}
-                >
-                  Conductor&apos;s scripts{" "}
-                  <span className="text-xs text-muted-foreground">
-                    (the setup script runs as each cloud session starts)
-                  </span>
-                  <pre className="mt-1 max-h-32 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
-                    {[
-                      p.scripts.setup && `# setup\n${p.scripts.setup}`,
-                      p.scripts.run && `# run\n${p.scripts.run}`,
-                      p.scripts.archive && `# archive\n${p.scripts.archive}`,
-                    ]
-                      .filter(Boolean)
-                      .join("\n\n")}
+                // The listing sits outside the label: it scrolls, and a
+                // click in it to read or scroll must not toggle the pick.
+                <div className="space-y-1">
+                  <Check
+                    checked={pick.scripts}
+                    onChange={() => onChange({ ...pick, scripts: !pick.scripts })}
+                    disabled={disabled}
+                  >
+                    Conductor&apos;s scripts{" "}
+                    <span className="text-xs text-muted-foreground">
+                      (the setup script runs as each cloud session starts)
+                    </span>
+                  </Check>
+                  <pre className="ml-6 max-h-32 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
+                    {scriptsText(p.scripts)}
                   </pre>
-                </Check>
+                </div>
               )}
             </li>
           );

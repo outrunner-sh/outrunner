@@ -143,3 +143,54 @@ test("the picked setup is archived to the planned place and committed with it", 
   );
   assert.deepEqual([mcpOnly, planned], [{ ok: true }, 0]);
 });
+
+test("a pick a rescan no longer offers is not imported, and a skipped one never is", async () => {
+  const { picksInScan } = await import("@/lib/imports/client");
+  const scan = {
+    projects: [{ repo: "ada/app", vars: [], files: [] }],
+    config: {
+      items: [
+        { id: "claude-md", kind: "claude-md" as const, name: "CLAUDE.md", path: "", bytes: 0 },
+        { id: "skill:huge", kind: "skill" as const, name: "huge", path: "", bytes: 0, skip: { reason: "too-large" as const } },
+      ],
+      mcpServers: [
+        { name: "tracker", transport: "http", envNames: [], headerNames: [] },
+        { name: "onlyhere", transport: "stdio", envNames: [], headerNames: [], skip: { reason: "unportable-mcp" as const } },
+      ],
+      plugins: [],
+    },
+  };
+  const picks = {
+    "ada/app": { repo: "ada/app", vars: ["APP_TOKEN"], files: [], scripts: false },
+    // The last scan had it; this one doesn't.
+    "ada/gone": { repo: "ada/gone", vars: ["GONE"], files: ["api/.env"], scripts: true },
+  };
+  const config = { items: ["claude-md", "skill:huge", "skill:vanished"], mcp: ["tracker", "onlyhere"], plugins: true };
+
+  assert.deepEqual(picksInScan(picks, config, scan), {
+    envs: [{ repo: "ada/app", vars: ["APP_TOKEN"], files: [], scripts: false }],
+    // No plugins in this scan, so a plugins pick from an earlier one is dropped.
+    config: { items: ["claude-md"], mcp: ["tracker"], plugins: false },
+  });
+  // Before the first scan lands nothing is picked, so Import stays disabled.
+  assert.deepEqual(picksInScan(picks, config, null), {
+    envs: [],
+    config: { items: [], mcp: [], plugins: false },
+  });
+});
+
+test("secrets need agreement; scripts, items and plugins alone don't", async () => {
+  const { picksSecrets, hasEnvironmentPick, hasConfigPick } = await import("@/lib/imports/client");
+  const none = { items: [], mcp: [], plugins: false };
+  const scriptsOnly = { repo: "ada/app", vars: [], files: [], scripts: true };
+  assert.equal(picksSecrets([scriptsOnly], none), false);
+  assert.equal(picksSecrets([scriptsOnly], { ...none, items: ["claude-md"], plugins: true }), false);
+  assert.equal(picksSecrets([{ ...scriptsOnly, vars: ["APP_TOKEN"] }], none), true);
+  assert.equal(picksSecrets([{ ...scriptsOnly, files: ["api/.env"] }], none), true);
+  assert.equal(picksSecrets([], { ...none, mcp: ["tracker"] }), true);
+  // Still something to import, though it needs no agreement.
+  assert.equal(hasEnvironmentPick(scriptsOnly), true);
+  assert.equal(hasEnvironmentPick({ ...scriptsOnly, scripts: false }), false);
+  assert.equal(hasConfigPick({ ...none, plugins: true }), true);
+  assert.equal(hasConfigPick(none), false);
+});

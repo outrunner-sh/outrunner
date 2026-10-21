@@ -17,6 +17,8 @@ import type {
   ImportPlanItem,
   ImportPlanRequest,
   ImportSkip,
+  ScannedAgentConfig,
+  ScannedProjectEnv,
   ScannedSession,
   SkipReason,
 } from "@/lib/runtime/import-scan";
@@ -149,6 +151,48 @@ export function skipText(skip: ImportSkip): string {
 /** What of a repository's environment the user picked. */
 export type EnvironmentPick = { repo: string; vars: string[]; files: string[]; scripts: boolean };
 
+/** Whether a repository's pick asks for anything. */
+export function hasEnvironmentPick(pick: { vars: string[]; files: string[]; scripts: boolean }): boolean {
+  return pick.vars.length > 0 || pick.files.length > 0 || pick.scripts;
+}
+
+/** Whether a setup pick asks for anything. */
+export function hasConfigPick(pick: ConfigPick): boolean {
+  return pick.items.length > 0 || pick.mcp.length > 0 || pick.plugins;
+}
+
+/** Whether anything picked carries secrets, so the user must agree first:
+ *  variables and the files out of git hold them, and an MCP server's settings
+ *  carry its keys. Scripts, items and plugin names don't. */
+export function picksSecrets(envs: EnvironmentPick[], config: ConfigPick): boolean {
+  return envs.some((e) => e.vars.length > 0 || e.files.length > 0) || config.mcp.length > 0;
+}
+
+/**
+ * The picks a scan still offers. "Scan again" can drop a project or an item —
+ * its pick stays in state but stops rendering, so without this the Import
+ * button stays enabled with nothing visibly checked and a repository that is
+ * gone is still read off the Mac.
+ */
+export function picksInScan(
+  picks: Record<string, EnvironmentPick>,
+  config: ConfigPick,
+  scan: { projects: ScannedProjectEnv[]; config: ScannedAgentConfig } | null,
+): { envs: EnvironmentPick[]; config: ConfigPick } {
+  if (!scan) return { envs: [], config: { items: [], mcp: [], plugins: false } };
+  const repos = new Set(scan.projects.map((p) => p.repo));
+  const items = new Set(scan.config.items.filter((i) => !i.skip).map((i) => i.id));
+  const servers = new Set(scan.config.mcpServers.filter((s) => !s.skip).map((s) => s.name));
+  return {
+    envs: Object.values(picks).filter((p) => repos.has(p.repo)),
+    config: {
+      items: config.items.filter((id) => items.has(id)),
+      mcp: config.mcp.filter((name) => servers.has(name)),
+      plugins: config.plugins && scan.config.plugins.length > 0,
+    },
+  };
+}
+
 export type EnvironmentDeps = {
   /** The desktop app's read of the picked values. */
   read(repo: string, pick: Omit<EnvironmentPick, "repo">): Promise<ImportEnvCapture>;
@@ -162,7 +206,7 @@ export type EnvironmentResult = { repo: string; ok: boolean; message?: string };
 export async function importEnvironments(picks: EnvironmentPick[], deps: EnvironmentDeps): Promise<EnvironmentResult[]> {
   const results: EnvironmentResult[] = [];
   for (const { repo, ...pick } of picks) {
-    if (pick.vars.length === 0 && pick.files.length === 0 && !pick.scripts) continue;
+    if (!hasEnvironmentPick(pick)) continue;
     try {
       const { refused } = await deps.save(await deps.read(repo, pick));
       results.push({
@@ -190,7 +234,7 @@ export type ConfigDeps = {
 
 /** Import the user's picked setup; it replaces any imported before. */
 export async function importAgentConfig(pick: ConfigPick, deps: ConfigDeps): Promise<{ ok: boolean; message?: string }> {
-  if (pick.items.length === 0 && pick.mcp.length === 0 && !pick.plugins) return { ok: true };
+  if (!hasConfigPick(pick)) return { ok: true };
   try {
     const upload = pick.items.length > 0 ? await deps.plan() : null;
     const captured = await deps.capture({ ...pick, upload: upload?.url ?? null });

@@ -4,7 +4,7 @@ import { CloudUpload, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
-import { AgentSetupPicker, EnvironmentPicker, picksSecrets } from "@/components/import-setup-picker";
+import { AgentSetupPicker, EnvironmentPicker } from "@/components/import-setup-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,10 +12,14 @@ import { importConfig, importEnvironment, importScan, importSession } from "@/li
 import {
   type ConfigPick,
   type EnvironmentPick,
+  hasConfigPick,
+  hasEnvironmentPick,
   importAgentConfig,
   importEnvironments,
   importSessions,
   type ImportProgress,
+  picksInScan,
+  picksSecrets,
   skipText,
 } from "@/lib/imports/client";
 import { isDesktopApp } from "@/lib/is-desktop";
@@ -77,7 +81,7 @@ export function LocalImport() {
   const [branchAs, setBranchAs] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<Record<string, ImportProgress>>({});
   const [envPicks, setEnvPicks] = useState<Record<string, EnvironmentPick>>({});
-  const [configPick, setConfigPick] = useState<ConfigPick>({ items: [], mcp: [], plugins: false });
+  const [rawConfigPick, setConfigPick] = useState<ConfigPick>({ items: [], mcp: [], plugins: false });
   const [consent, setConsent] = useState(false);
   const [setupNotes, setSetupNotes] = useState<Array<{ ok: boolean; text: string }>>([]);
   const [importing, setImporting] = useState(false);
@@ -114,12 +118,14 @@ export function LocalImport() {
       return next;
     });
 
-  const envList = Object.values(envPicks);
+  // Only what this scan still offers: a pick the last scan had but this one
+  // doesn't no longer shows, so it must not be imported either.
+  const { envs: envList, config: configPick } = useMemo(
+    () => picksInScan(envPicks, rawConfigPick, scan),
+    [envPicks, rawConfigPick, scan],
+  );
   const secrets = picksSecrets(envList, configPick);
-  const pickedSetup =
-    envList.some((e) => e.vars.length + e.files.length > 0 || e.scripts) ||
-    configPick.items.length + configPick.mcp.length > 0 ||
-    configPick.plugins;
+  const pickedSetup = envList.some(hasEnvironmentPick) || hasConfigPick(configPick);
   const canImport = (picked.size > 0 || pickedSetup) && (!secrets || consent) && !scanning && !importing;
 
   const importSetup = async () => {
@@ -131,7 +137,7 @@ export function LocalImport() {
     for (const r of envs) {
       notes.push({ ok: r.ok, text: `${r.repo}'s environment: ${r.ok ? "kept" : "not imported"}${r.message ? `. ${r.message}` : ""}` });
     }
-    if (configPick.items.length + configPick.mcp.length > 0 || configPick.plugins) {
+    if (hasConfigPick(configPick)) {
       const config = await importAgentConfig(configPick, {
         plan: async () => (await postJson<{ upload: { path: string; url: string } }>("/api/imports/config", {})).upload,
         capture: importConfig,
@@ -143,6 +149,9 @@ export function LocalImport() {
     if (notes.every((n) => n.ok)) {
       setEnvPicks({});
       setConfigPick({ items: [], mcp: [], plugins: false });
+      // With the picks gone, the agreement they were made under goes too:
+      // the next secret picked has to be agreed to on its own.
+      setConsent(false);
     }
   };
 
