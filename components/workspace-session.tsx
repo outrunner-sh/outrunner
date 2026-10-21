@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
+import { QuestionCard } from "@/components/question-card";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import {
@@ -19,6 +20,12 @@ import {
   putOnModel,
 } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
+import {
+  type AskAnswer,
+  isExpiredQuestionError,
+  pendingQuestion,
+  type PendingQuestion,
+} from "@/lib/runtime/pending-question";
 import {
   livePrompts,
   pendingShows,
@@ -274,12 +281,44 @@ export function WorkspaceSession({
   // The prompts recorded when a turn was last stopped: the turn is over until
   // the next, even where the agent records nothing of the stop (Codex).
   const [stoppedAt, setStoppedAt] = useState<number | null>(null);
+  // The questions the agent is waiting on the user to answer: the composer
+  // gives way to their card. One answered or dismissed here is put away at
+  // once, kept hidden while its answer is on the way (and offered again if
+  // that fails), until its result reaches the stream.
+  const question = useMemo(() => pendingQuestion(conversation.events), [conversation.events]);
+  const [answeredHere, setAnsweredHere] = useState<ReadonlySet<string>>(() => new Set());
+  const waitingOnUser = question !== null && !answeredHere.has(question.toolUseId);
+  const answer = (asked: PendingQuestion, reply: { answers: AskAnswer[] } | { dismissed: true }) => {
+    setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
+    setSendError(null);
+    const body = { questions: asked.raw, ...reply };
+    (local
+      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/answer`, body)
+      : answerCloudQuestion(workspaceId, body)
+    ).catch((error: unknown) => {
+      const raw = error instanceof Error ? error.message : String(error ?? "");
+      if (isExpiredQuestionError(raw)) {
+        // Over already (the session restarted, or it was answered elsewhere):
+        // it stays put away.
+        setSendError(`${AGENTS[agent].label} isn't waiting on that question any more. Reply in the chat instead.`);
+        return;
+      }
+      setAnsweredHere((prev) => {
+        const next = new Set(prev);
+        next.delete(asked.toolUseId);
+        return next;
+      });
+      setSendError(local ? messageForLocalError(error, agent) : raw || "Couldn't send your answer.");
+    });
+  };
   // A prompt the stream hasn't recorded yet is a turn starting. The agent
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
+  // A turn waiting on the user's answer is theirs, not the agent's at work.
   const delivered = userPromptCount(conversation.events);
   const working =
-    pending.some((p) => pendingShows(p, delivered)) ||
-    (claudeIsWorking(conversation.events) && stoppedAt !== delivered);
+    !waitingOnUser &&
+    (pending.some((p) => pendingShows(p, delivered)) ||
+      (claudeIsWorking(conversation.events) && stoppedAt !== delivered));
   const stop = () => {
     setStopping(true);
     setSendError(null);
@@ -308,9 +347,11 @@ export function WorkspaceSession({
     switching,
     disabledReason: !attached
       ? "Waiting for the session to connect"
-      : working
-        ? `Switch models once ${AGENTS[agent].label} has finished this turn`
-        : null,
+      : waitingOnUser
+        ? `Answer ${AGENTS[agent].label}'s question first`
+        : working
+          ? `Switch models once ${AGENTS[agent].label} has finished this turn`
+          : null,
     onChange: (model, pickedEffort) => {
       // What the agent is told: an effort goes only with a model that takes one.
       const next = takesEffort(model) ? pickedEffort : null;
@@ -477,15 +518,27 @@ export function WorkspaceSession({
           terminalSlot,
         )}
 
-      <SessionComposer
-        onSend={send}
-        canSend={canSend}
-        disabledPlaceholder="Couldn't connect to the session: reconnect to send"
-        model={shownModel}
-        modelChoice={modelChoice}
-        allowAttachments={!local}
-        stop={attached && working ? { onStop: stop, stopping } : undefined}
-      />
+      {question && (
+        <QuestionCard
+          key={question.toolUseId}
+          question={question}
+          agentLabel={AGENTS[agent].label}
+          hidden={!waitingOnUser}
+          onAnswer={(answers) => answer(question, { answers })}
+          onDismiss={() => answer(question, { dismissed: true })}
+        />
+      )}
+      {!waitingOnUser && (
+        <SessionComposer
+          onSend={send}
+          canSend={canSend}
+          disabledPlaceholder="Couldn't connect to the session: reconnect to send"
+          model={shownModel}
+          modelChoice={modelChoice}
+          allowAttachments={!local}
+          stop={attached && working ? { onStop: stop, stopping } : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -530,6 +583,19 @@ async function switchCloudModel(workspaceId: string, model: SessionModel, effort
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't switch models. Please try again.");
+}
+
+/** Answer the questions a cloud session's agent is waiting on. The server
+ *  reaches the session's agent, as for a prompt. */
+async function answerCloudQuestion(workspaceId: string, body: unknown): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/answer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't send your answer. Please try again.");
 }
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as

@@ -7,6 +7,8 @@
  * structured AgentEvent payloads (see agent-protocol.ts) for display.
  */
 
+import { ASK_TOOL } from "@/lib/runtime/pending-question";
+
 /** Read a string field off an unknown tool-input object without throwing. */
 function field(input: unknown, key: string): string | null {
   if (input && typeof input === "object" && key in input) {
@@ -116,7 +118,17 @@ export function formatTokens(value: number | undefined | null): string {
 }
 
 /** What kind of step a tool call is, for its row's icon. */
-export type ToolKind = "command" | "create" | "edit" | "read" | "search" | "web" | "agent" | "todo" | "other";
+export type ToolKind =
+  | "command"
+  | "create"
+  | "edit"
+  | "read"
+  | "search"
+  | "web"
+  | "agent"
+  | "todo"
+  | "question"
+  | "other";
 
 export interface ToolRowSummary {
   kind: ToolKind;
@@ -166,6 +178,8 @@ export function toolRow(name: string, input: unknown): ToolRowSummary {
       return file("edit");
     case "Read":
       return file("read");
+    case ASK_TOOL:
+      return { kind: "question", label: askedLabel(input), mono: false, title: null, stats: null };
   }
   const summary = describeToolUse(name, input);
   const kind: ToolKind =
@@ -186,6 +200,15 @@ export function toolRow(name: string, input: unknown): ToolRowSummary {
     title: null,
     stats: null,
   };
+}
+
+/** An ask_user call by what it asked: its question, or how many. */
+function askedLabel(input: unknown): string {
+  const questions =
+    input && typeof input === "object" ? (input as Record<string, unknown>).questions : undefined;
+  if (!Array.isArray(questions) || questions.length === 0) return "Asked you";
+  if (questions.length > 1) return `Asked you ${questions.length} questions`;
+  return field(questions[0], "question") ?? "Asked you";
 }
 
 /** A path's last segment (either separator), or the path when it has none. */
