@@ -1,4 +1,4 @@
-import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { type AgentConnection, AGENTS, type AgentId } from "@/lib/agents/registry";
 import { sharedResource } from "@/lib/client/shared-resource";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
@@ -14,10 +14,12 @@ import {
 import { EMPTY_LOADOUT, type ModelLoadout, parseLoadout } from "@/lib/runtime/model-loadout";
 import {
   checkEffortApplied,
+  connectedAccounts,
   defaultModel,
   type Effort,
   type KeyHolder,
   type ModelMenu,
+  parseAgentConnections,
   predatesProvider,
   predatesProviderMessage,
   setModelRequest,
@@ -279,6 +281,19 @@ export function needsCodexLogin(status: LocalStatus): boolean {
   return localAgentState(status, "codex") === "logged-out";
 }
 
+/** The agents whose own accounts a session runs on, in the cloud or on this
+ *  Mac (`local`), whose app last said `status`: a CLI not yet known to be
+ *  logged out counts as logged in, as only a clear no does elsewhere. */
+export function accountsHere(
+  connections: Record<AgentId, AgentConnection>,
+  local: boolean,
+  status: LocalStatus | null,
+): AgentId[] {
+  return connectedAccounts(connections, local ? "local" : "cloud", (agent) =>
+    status === null ? true : localAgentState(status, agent) === "ready",
+  );
+}
+
 /**
  * Whether a new local session runs on Outrunner's model instead of this Mac's
  * Claude Code login: only on a clear "not logged in" from the app, and only
@@ -326,8 +341,20 @@ export async function putOnDefaultModel(workspaceId: string): Promise<void> {
 
 /** The model menu, whether a session can start without the user's Claude,
  *  and the user's loadout (Settings → Default models). */
-export type OutrunnerModels = ModelMenu & { available: boolean; loadout: ModelLoadout };
-const NO_MODELS: OutrunnerModels = { outrunner: false, allowance: false, keys: [], available: false, loadout: EMPTY_LOADOUT };
+export type OutrunnerModels = ModelMenu & {
+  available: boolean;
+  loadout: ModelLoadout;
+  /** Where sessions can run on the user's own Claude, and Codex. */
+  agents: Record<AgentId, AgentConnection>;
+};
+const NO_MODELS: OutrunnerModels = {
+  outrunner: false,
+  allowance: false,
+  keys: [],
+  available: false,
+  loadout: EMPTY_LOADOUT,
+  agents: parseAgentConnections(undefined),
+};
 
 /** What the user's model menu offers (GET /api/outrunner-models), and whether
  *  a session can start without their Claude; asked once per page load, or
@@ -357,6 +384,8 @@ function parseOutrunnerModels(data: Record<string, unknown>): OutrunnerModels {
     available: data.available === true,
     // A server from before loadouts sends none.
     loadout: parseLoadout(data.loadout),
+    // A server from before connections sends none: all are assumed.
+    agents: parseAgentConnections(data.agents),
   };
 }
 

@@ -8,7 +8,7 @@
  * without React or a session.
  */
 
-import type { AgentId } from "@/lib/agents/registry";
+import { type AgentConnection, type AgentId, AGENT_IDS, type RunTarget } from "@/lib/agents/registry";
 import { isProviderId, PROVIDER_IDS, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
 
 /** Who serves a model. */
@@ -56,6 +56,38 @@ export function agentOf(provider: ModelProvider): AgentId {
  *  Claude, or Codex's sign-in), rather than on a key Claude Code is pointed at. */
 export function runsOnOwnAccount(model: { provider: ModelProvider }): boolean {
   return model.provider === "claude" || model.provider === "codex";
+}
+
+/** Connected everywhere: what a menu assumes of a server from before it
+ *  said, or one it couldn't reach, so it offers what it always did. */
+const ASSUMED_CONNECTED: AgentConnection = { cloud: true, local: true };
+
+/** The server's `agents` (GET /api/outrunner-models), each made sound; an
+ *  agent it says nothing sound of is assumed connected. */
+export function parseAgentConnections(raw: unknown): Record<AgentId, AgentConnection> {
+  const parse = (value: unknown): AgentConnection => {
+    if (!value || typeof value !== "object") return ASSUMED_CONNECTED;
+    const { cloud, local } = value as { cloud?: unknown; local?: unknown };
+    if (typeof cloud !== "boolean" || (typeof local !== "boolean" && local !== "mac-login")) return ASSUMED_CONNECTED;
+    return { cloud, local };
+  };
+  const agents = raw && typeof raw === "object" ? (raw as Partial<Record<AgentId, unknown>>) : {};
+  return { claude: parse(agents.claude), codex: parse(agents.codex) };
+}
+
+/** The agents whose own accounts sessions on `target` can run on: where
+ *  they are connected, and on the Mac, through its own login, where
+ *  `macLoggedIn` says the agent's CLI is logged in there. */
+export function connectedAccounts(
+  connections: Record<AgentId, AgentConnection>,
+  target: RunTarget,
+  macLoggedIn: (agent: AgentId) => boolean,
+): AgentId[] {
+  return AGENT_IDS.filter((agent) => {
+    const connection = connections[agent];
+    if (target === "cloud") return connection.cloud;
+    return connection.local === "mac-login" ? macLoggedIn(agent) : connection.local;
+  });
 }
 
 /** The listed models on the user's key for `provider`. */

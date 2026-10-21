@@ -37,6 +37,7 @@ import {
   type Effort,
   modelGroups,
   type ModelProvider,
+  parseAgentConnections,
   runsOnOwnAccount,
   type SessionModel,
   takesEffort,
@@ -55,6 +56,7 @@ const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   keys: [],
   available: true,
   loadout: EMPTY_LOADOUT,
+  agents: parseAgentConnections(undefined),
 };
 
 /** Sends a prompt into the session as the composer does, resolving whether it
