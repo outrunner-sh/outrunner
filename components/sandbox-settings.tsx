@@ -201,7 +201,7 @@ export function SandboxSettingsForm({
             disabled={!ready(shown) || busy}
             onClick={() => {
               const next = shown;
-              void send(`the switch to ${SANDBOXES[next].label}`, "PUT", () => ({ sandbox: next }));
+              void send("the sandbox for new sessions", "PUT", () => ({ sandbox: next }));
             }}
           />
         </div>
