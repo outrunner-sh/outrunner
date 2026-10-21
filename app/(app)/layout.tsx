@@ -2,11 +2,11 @@ import { cookies } from "next/headers";
 
 import { AppFrame } from "@/components/app-frame";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProjects } from "@/lib/db/repositories";
+import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
-import type { Project, Workspace } from "@/lib/runtime/types";
+import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +14,9 @@ export const dynamic = "force-dynamic";
  * Every app page (home, new session, a cloud or local session) under one
  * sidebar. A layout rather than a component on each page, so the sidebar is
  * rendered once and stays put (scroll, search, collapse) as you move between
- * sessions; router.refresh() re-reads its data after a change.
+ * sessions; router.refresh() re-reads its data after a change. The pages
+ * render from the same data (components/app-data.tsx), so a click in the
+ * sidebar shows its session without asking the server first.
  *
  * Signed out, it renders the page alone: each page redirects to sign-in with
  * its own `next`, which a layout redirect would lose.
@@ -35,7 +37,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       return [];
     }),
   ]);
-  const projects = await withSessionProjects(listed, workspaces);
+  const [projects, pullRequests] = await Promise.all([
+    withSessionProjects(listed, workspaces),
+    listWorkspacePullRequests(workspaces.map((w) => w.id)).catch((error: unknown): WorkspacePullRequest[] => {
+      console.error("Sidebar: could not load pull requests", error);
+      return [];
+    }),
+  ]);
   const jar = await cookies();
   const collapsed = jar.get(SIDEBAR_COOKIE)?.value === "1";
   const folded = readFoldedProjects(jar.get(FOLDED_PROJECTS_COOKIE)?.value);
@@ -44,6 +52,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <AppFrame
       projects={projects}
       workspaces={workspaces}
+      pullRequests={Object.fromEntries(pullRequests.map((pr) => [pr.workspaceId, pr]))}
       ownerLogin={owner.githubLogin}
       ownerAvatarUrl={owner.avatarUrl}
       initialCollapsed={collapsed}

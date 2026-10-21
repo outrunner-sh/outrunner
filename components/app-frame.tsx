@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { PanelLeftOpen, Plus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
 import { SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
-import type { Workspace } from "@/lib/runtime/types";
+import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** Where the choice was kept before the cookie, read once to carry it over. */
@@ -22,6 +23,7 @@ const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
 export function AppFrame({
   projects,
   workspaces,
+  pullRequests,
   ownerLogin,
   ownerAvatarUrl,
   initialCollapsed = false,
@@ -30,6 +32,8 @@ export function AppFrame({
 }: {
   projects: NavProject[];
   workspaces: Workspace[];
+  /** Each session's pull request, by workspace id. */
+  pullRequests: Record<string, WorkspacePullRequest>;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
   /** From the cookie, read by the layout on the server. */
@@ -39,6 +43,8 @@ export function AppFrame({
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+  // The pages render from what the sidebar has: a click shows its session at once.
+  const appData = useMemo(() => ({ projects, workspaces, pullRequests }), [projects, workspaces, pullRequests]);
   const router = useRouter();
   // Bumped by ⌘K: the sidebar opens its search field on each change.
   const [searchSignal, setSearchSignal] = useState(0);
@@ -121,7 +127,9 @@ export function AppFrame({
           />
         )}
       </div>
-      <main className="relative min-h-0 min-w-0 overflow-y-auto">{children}</main>
+      <main className="relative min-h-0 min-w-0 overflow-y-auto">
+        <AppDataProvider value={appData}>{children}</AppDataProvider>
+      </main>
     </div>
   );
 }
