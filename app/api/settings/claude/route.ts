@@ -6,6 +6,7 @@ import {
   deleteClaudeToken,
   getClaudeTokenMeta,
   setClaudeToken,
+  type ClaudeTokenMeta,
 } from "@/lib/runtime/credentials/claude-credentials";
 
 /**
@@ -81,7 +82,6 @@ export async function PUT(request: Request) {
 
   try {
     await setClaudeToken(owner.id, token);
-    return NextResponse.json(await getClaudeTokenMeta(owner.id));
   } catch (error) {
     console.error("Could not save the Claude token", error);
     return NextResponse.json(
@@ -89,6 +89,13 @@ export async function PUT(request: Request) {
       { status: 500 },
     );
   }
+  // Saved: a failed re-read must not say otherwise. What was just stored is
+  // its own answer.
+  const meta: ClaudeTokenMeta = await getClaudeTokenMeta(owner.id).catch((error: unknown) => {
+    console.error("Could not re-read the Claude token after saving it", error);
+    return { connected: true, last4: token.slice(-4) };
+  });
+  return NextResponse.json(meta);
 }
 
 export async function DELETE(request: Request) {

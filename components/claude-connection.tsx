@@ -88,7 +88,18 @@ export function ClaudeConnection({
     async (mine: number, token: string) => {
       if (attempt.current !== mine || claimed.current === mine) return;
       claimed.current = mine;
-      await save(token);
+      try {
+        await save(token);
+      } catch (e) {
+        // The login finished but its token isn't stored, so this attempt is
+        // over and says why. Moving it on stops its poll, which would otherwise
+        // run the window out as if no approval had come.
+        attempt.current++;
+        setPending(null);
+        setWaiting(false);
+        setError(e instanceof Error ? e.message : "Could not save the token.");
+        return;
+      }
       // A pasted code may have lost the race and shown an error meanwhile.
       setError(null);
     },
