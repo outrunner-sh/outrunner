@@ -14,6 +14,7 @@
  * so it unit-tests without Supabase or the network.
  */
 import { createHash } from "node:crypto";
+import { gunzipSync } from "node:zlib";
 
 import { WorkspaceSummary } from "@/lib/runtime/agent-protocol";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
@@ -32,7 +33,8 @@ import {
 
 export type ReplayPayload = {
   manifest: SnapshotManifest;
-  cast: Cast;
+  /** Null for a Snapshot with no terminal recording (an imported session). */
+  cast: Cast | null;
   events: AgentEvent[];
   patch: string;
   summary: WorkspaceSummary | null;
@@ -58,14 +60,15 @@ export async function assembleReplay(input: {
   // The manifest is the contract; read the canonical object, not the db cache.
   const manifest = parseManifest(JSON.parse(decode(await readBytes(SNAPSHOT_ARTIFACTS.manifest))));
 
-  // Fetch each pointed-at artifact and verify integrity BEFORE parsing.
+  // Fetch each pointed-at artifact and verify integrity BEFORE parsing — of
+  // the bytes as stored, then decompressed if they were stored compressed.
   const readVerified = async (filename: string): Promise<Uint8Array> => {
     const bytes = await readBytes(filename);
     verifyIntegrity(filename, bytes, manifest);
-    return bytes;
+    return manifest.encodings?.[filename] === "gzip" ? gunzipSync(bytes) : bytes;
   };
   const [castBytes, conversationBytes, patchBytes, summaryBytes] = await Promise.all([
-    readVerified(manifest.cast),
+    manifest.cast ? readVerified(manifest.cast) : null,
     readVerified(manifest.conversation),
     readVerified(manifest.tree.patch),
     readVerified(manifest.summary),
@@ -75,7 +78,7 @@ export async function assembleReplay(input: {
 
   return {
     manifest,
-    cast: parseCast(decode(castBytes)),
+    cast: castBytes ? parseCast(decode(castBytes)) : null,
     events: parseConversation(decode(conversationBytes)),
     patch: decode(patchBytes),
     summary: parsedSummary.success ? parsedSummary.data : null,
