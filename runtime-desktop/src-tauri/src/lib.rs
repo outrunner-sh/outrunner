@@ -217,7 +217,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
             builder
-                .inner_size(1280.0, 860.0)
+                // The size Droid's window opens at.
+                .inner_size(1200.0, 800.0)
                 .min_inner_size(720.0, 480.0)
                 .initialization_script(INIT_JS)
                 // A reload drops the page's ends of any relayed local-session
