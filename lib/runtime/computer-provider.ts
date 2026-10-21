@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { optionalEnv } from "@/lib/env";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
+import { AgentEndpointCache } from "@/lib/runtime/agent-endpoint-cache";
 import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
 import {
   AGENT_PORT,
@@ -168,6 +169,10 @@ export type ProvisionComputerInput = {
  *  provider and box, across every provider instance in this server. */
 const UPGRADING = new Map<string, Promise<void>>();
 
+/** Each box's agent endpoint, by provider and box, across every provider
+ *  instance in this server (a route makes a new provider per request). */
+const AGENT_ENDPOINTS = new AgentEndpointCache();
+
 export class ComputerRuntimeProvider implements RuntimeProvider {
   readonly name: ProviderName;
   private readonly backend: SandboxBackend;
@@ -310,6 +315,8 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   ): Promise<SandboxBox | null> {
     const previous = input.previousSandboxId;
     if (!previous || !this.backend.restore) return null;
+    // A paused box comes back as the same one, maybe reached somewhere new.
+    this.forgetEndpoint(previous);
     const restore = this.backend.restore.bind(this.backend);
     return timer.stage("sandbox_restore", () => restore(previous, labels, input.size));
   }
@@ -491,12 +498,14 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   /** Pause the box, keeping its disk for the next session to resume. */
   async pauseComputer(sandboxId: string): Promise<void> {
     if (!this.backend.pause) throw new Error(`${this.name} can't pause a box`);
+    this.forgetEndpoint(sandboxId);
     await this.backend.pause(sandboxId);
   }
 
   /** Tear the box down (destroys all worktrees/sessions inside it). */
   async destroyComputer(sandboxId: string): Promise<void> {
     if (!sandboxId) return;
+    this.forgetEndpoint(sandboxId);
     try {
       await this.backend.delete(sandboxId);
     } catch (error) {
@@ -505,7 +514,6 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     }
   }
 
-  /** Build the {@link AgentTarget} an {@link AgentClient} needs for one box. */
   /** Whether a box's agent can be upgraded in place (upgradeAgent): not on
    *  the jcode engine, whose boxes are replaced, not redeployed. */
   get upgradesAgents(): boolean {
@@ -537,9 +545,26 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return upgrade;
   }
 
-  async agentTarget(sandboxId: string, secret: string): Promise<AgentTarget> {
-    const box = await this.backend.get(sandboxId);
-    return { ...(await box.agentEndpoint(AGENT_PORT)), secret };
+  /**
+   * Build the {@link AgentTarget} an {@link AgentClient} needs for one box. Its
+   * endpoint is kept a few minutes (lib/runtime/agent-endpoint-cache.ts);
+   * `fresh` looks it up again, for a caller whose connection to it failed.
+   */
+  async agentTarget(sandboxId: string, secret: string, options: { fresh?: boolean } = {}): Promise<AgentTarget> {
+    const endpoint = await AGENT_ENDPOINTS.get(
+      this.endpointKey(sandboxId),
+      async () => (await this.backend.get(sandboxId)).agentEndpoint(AGENT_PORT),
+      options,
+    );
+    return { ...endpoint, secret };
+  }
+
+  private endpointKey(sandboxId: string): string {
+    return `${this.name}:${sandboxId}`;
+  }
+
+  private forgetEndpoint(sandboxId: string): void {
+    AGENT_ENDPOINTS.forget(this.endpointKey(sandboxId));
   }
 
   // --- RuntimeProvider interface --------------------------------------------
