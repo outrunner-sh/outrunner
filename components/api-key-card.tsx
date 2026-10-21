@@ -109,7 +109,7 @@ export function ApiKeyCard({
             ) : null}
             <LoadingButton
               status={status}
-              labels={{ idle: "Save", success: "Saved" }}
+              labels={{ idle: "Save", pending: "Checking", success: "Saved" }}
               disabled={!canSave}
               onClick={save}
             />

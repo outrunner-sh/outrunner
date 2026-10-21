@@ -309,7 +309,7 @@ function SandboxCredential({
             ) : null}
             <LoadingButton
               status={busy ? "pending" : "idle"}
-              labels={{ idle: "Save" }}
+              labels={{ idle: "Save", pending: "Checking" }}
               disabled={!typed}
               onClick={() => void save()}
             />
