@@ -56,10 +56,18 @@ export function messageText(event: AgentEvent): string {
     .trim();
 }
 
-/** How many text-bearing user prompts the stream has recorded. Excludes Claude's
+/** The text-bearing user prompts the stream has recorded, in order, each as
+ *  typed (without the header naming its attachments). Excludes Claude's
  *  tool-result turns, which are logged as role:"user" but carry no prompt text. */
+export function userPrompts(events: AgentEvent[]): string[] {
+  return events
+    .filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "")
+    .map((e) => promptWithoutAttachments(messageText(e)));
+}
+
+/** How many text-bearing user prompts the stream has recorded (userPrompts). */
 export function userPromptCount(events: AgentEvent[]): number {
-  return events.filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "").length;
+  return userPrompts(events).length;
 }
 
 /** The first prompt the user typed in this conversation, without the header

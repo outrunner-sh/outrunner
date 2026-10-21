@@ -12,11 +12,11 @@ import { ConversationTimeline, claudeIsWorking } from "@/components/conversation
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
-import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
+import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import {
-  anchorPending,
   livePrompts,
   pendingShows,
+  settlePending,
   type PendingPrompt,
 } from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
@@ -140,10 +140,11 @@ export function WorkspaceSession({
     eventsRef.current = conversation.events;
   }, [conversation.events]);
 
-  /** The prompt has reached the session: hold its bubble until the stream has
-   *  recorded one more prompt than the history it answered with. */
-  const anchor = (pendingId: string) =>
-    setPending((prev) => anchorPending(prev, pendingId, userPromptCount(eventsRef.current)));
+  /** The prompt has reached the session, handed over at `sentAt` recorded
+   *  prompts: drop its bubble if the stream already has it, else hold it until
+   *  the stream records one more prompt than the history it answered with. */
+  const anchor = (pendingId: string, sentAt: number) =>
+    setPending((prev) => settlePending(prev, pendingId, userPrompts(eventsRef.current), sentAt));
 
   const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
@@ -180,6 +181,8 @@ export function WorkspaceSession({
     pendingId: string,
     failed: (message: string) => boolean,
   ) => {
+    // The stream may record the prompt before the session answers.
+    const sentAt = userPromptCount(eventsRef.current);
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -188,7 +191,7 @@ export function WorkspaceSession({
         { content: text },
       ).then(
         () => {
-          anchor(pendingId);
+          anchor(pendingId, sentAt);
           return true;
         },
         (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
@@ -202,7 +205,7 @@ export function WorkspaceSession({
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.");
-        anchor(pendingId);
+        anchor(pendingId, sentAt);
         // The first prompt just named this session: re-read the sidebar.
         if (body.titled) router.refresh();
         return true;
