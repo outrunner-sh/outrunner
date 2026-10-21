@@ -1,13 +1,16 @@
 "use client";
 
 import { MessageSquarePlus, PanelRight, PanelRightClose, TerminalSquare } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
 import { SessionComposer } from "@/components/session-composer";
+import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
+import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -60,6 +63,8 @@ export function WorkspaceStudio({
   };
   const isLocal = local !== undefined;
   const setup = useWorkspaceSetup(workspace, !isLocal);
+  // An archived session (one imported from a Mac) comes back as it opens.
+  const restore = useRestoreOnOpen(workspace, !isLocal);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
   const offline = offlineCopy({ workspace, isReady, stalled: setup.state === "stalled" });
@@ -133,6 +138,43 @@ export function WorkspaceStudio({
               disabledPlaceholder="Claude starts here, with your first message, once the session is ready"
             />
           </div>
+        ) : restore.state === "restoring" ? (
+          <div className="studio-offline">
+            <div className="studio-empty-chat" role="status">
+              <div className="studio-empty-icon"><Spinner /></div>
+              <h3>Restoring this session</h3>
+              <p>
+                Bringing back its conversation, commits and changes on a cloud computer. It takes a minute or two
+                when the project&apos;s computer has to start.
+              </p>
+            </div>
+            <SessionComposer
+              onSend={() => {}}
+              canSend={false}
+              disabledPlaceholder="The session picks up where it left off once it's restored"
+            />
+          </div>
+        ) : restore.state === "failed" ? (
+          <div className="studio-offline">
+            <div className="studio-empty-chat" role="alert">
+              <div className="studio-empty-icon"><MessageSquarePlus /></div>
+              <h3>This session didn&apos;t restore</h3>
+              <p>{restore.error}</p>
+              <p className="flex justify-center gap-4">
+                {restore.settingsHref && (
+                  <Link href={restore.settingsHref} className="text-(--studio-text) underline underline-offset-4">
+                    Open settings
+                  </Link>
+                )}
+                {restore.retry && (
+                  <button type="button" onClick={restore.retry} className="text-(--studio-text) underline underline-offset-4">
+                    Try again
+                  </button>
+                )}
+              </p>
+            </div>
+            <SessionComposer onSend={() => {}} canSend={false} disabledPlaceholder="Restore the session to continue it" />
+          </div>
         ) : (
           <div className="studio-offline">
             <div className="studio-empty-chat">
@@ -189,6 +231,15 @@ function offlineCopy({
       title: "This workspace didn't start",
       detail: workspace.errorMessage ?? "Provisioning failed. Start a new session to try again.",
       placeholder: "Start a new session to try again",
+    };
+  }
+  if (workspace.status === "archived") {
+    // Restored as it opens (useRestoreOnOpen) on a Runtime Computer; this is
+    // one on a sandbox that can't.
+    return {
+      title: "Session archived",
+      detail: "Restoring it needs a cloud computer, which this session's sandbox is not.",
+      placeholder: "Archived sessions restore on a cloud computer",
     };
   }
   if (isReady) {
