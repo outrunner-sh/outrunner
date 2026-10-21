@@ -278,3 +278,16 @@ test("loadRepositoryBrowse keeps the listing when orgs and invitations can't be 
   assert.equal(browse.memberships, null);
   assert.deepEqual(browse.invitations, []);
 });
+
+test("loadRepositoryBrowse doesn't wait on slow orgs or invitations past its budget", async () => {
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    // Orgs and invitations never answer.
+    return url.pathname === "/user/repos" ? Promise.resolve(reposPage([apiRepo(1, null)])) : new Promise(() => {});
+  }) as typeof fetch;
+
+  const browse = await loadRepositoryBrowse("t", 20);
+  assert.equal(browse.list.repositories.length, 1);
+  assert.equal(browse.memberships, null);
+  assert.deepEqual(browse.invitations, []);
+});
