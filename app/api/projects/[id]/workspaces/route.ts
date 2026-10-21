@@ -29,6 +29,7 @@ import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
+import { isValidBranchName } from "@/lib/runtime/git";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import { agentOf, defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
 import {
@@ -62,19 +63,6 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-function isValidBranchName(branch: string): boolean {
-  return (
-    branch.length >= 1 &&
-    branch.length <= 128 &&
-    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch) &&
-    !branch.includes("..") &&
-    !branch.includes("//") &&
-    !branch.endsWith(".") &&
-    !branch.endsWith("/") &&
-    !branch.endsWith(".lock")
-  );
-}
 
 function generatedBranch(): string {
   return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
