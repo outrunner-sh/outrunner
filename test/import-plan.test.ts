@@ -103,3 +103,22 @@ test("a branch name Outrunner doesn't take is cleaned up", () => {
   assert.equal(chooseBranch("-x..y.lock", new Set(), false), "x.y-imported");
   assert.equal(chooseBranch("ok", new Set(), false), "ok");
 });
+
+test("a key named twice is planned once, and every key sent gets an item", async () => {
+  const d = deps([]);
+  const items = await planImports(
+    OWNER,
+    { sessions: [session("claude:s-1"), session("claude:s-1", { branchAs: "other" }), session("claude:s-2")] },
+    d,
+  );
+  // One item per key, and one for each: a key with no item leaves the picker
+  // showing "Waiting" for it forever.
+  assert.deepEqual(
+    items.map((i) => i.key),
+    ["claude:s-1", "claude:s-2"],
+  );
+  // The repeat is ignored, not preferred: the first occurrence is planned.
+  assert.equal(items[0].status === "ready" && items[0].branch, "feature");
+  // And it didn't take a second workspace's worth of upload URLs.
+  assert.equal(d.minted.length, 6);
+});
