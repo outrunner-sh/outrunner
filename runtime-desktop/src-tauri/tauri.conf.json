@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Outrunner",
+  "productName": "outrunner",
   "version": "0.1.0",
   "identifier": "ai.neev.outrunner",
   "build": {
