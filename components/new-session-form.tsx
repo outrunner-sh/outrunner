@@ -37,7 +37,7 @@ export function NewSessionForm({
   /** Repo to preselect (the last-used project). Falls back to the first. */
   initialProjectId?: string;
 }) {
-  const { projects, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal } =
+  const { projects, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal } =
     useCreateSession(listed, initialProjectId);
   // The model the session starts on, picked in the composer as in a session;
   // none picked, what it starts on anyway: the menu's default on the cloud,
@@ -143,13 +143,13 @@ export function NewSessionForm({
 
       <div className="shrink-0">
         {message && (
-          // A failure settings can fix is a step to take first, not an error.
+          // A failure with a way out is a step to take first, not an error.
           <Notice
             className="mx-auto w-[calc(100%-32px)] max-w-[720px]"
-            tone={messageHref ? "info" : "error"}
-            title={messageHref ? "One step before this session starts" : "Couldn't start the session"}
+            tone={messageAction ? "info" : "error"}
+            title={messageAction ? "One step before this session starts" : "Couldn't start the session"}
             detail={message}
-            actions={messageHref ? [{ label: "Open settings", href: messageHref, primary: true }] : undefined}
+            actions={messageAction ? [{ ...messageAction, primary: true }] : undefined}
           />
         )}
         <SessionComposer

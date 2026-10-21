@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
+import { branchTakenResponse, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
 
 /** The error Supabase returns when the live-branch index refuses the insert. */
 function branchTaken(): { code: string; message: string } {
@@ -10,6 +10,17 @@ function branchTaken(): { code: string; message: string } {
     message: 'duplicate key value violates unique constraint "workspaces_active_branch_unique"',
   };
 }
+
+test("a taken branch names the session that holds it, and links to it", async () => {
+  const response = branchTakenResponse({ id: "w-1", label: "Fix the flaky test" });
+  const body = (await response.json()) as { error: string; sessionHref: string };
+  assert.equal(response.status, 409);
+  assert.equal(
+    body.error,
+    "“Fix the flaky test” is already working on that branch. Open that session, or pick another branch.",
+  );
+  assert.equal(body.sessionHref, "/workspaces/w-1");
+});
 
 test("a branch another session holds answers 409, saying what to do about it", async () => {
   const response = workspaceCreateErrorResponse(branchTaken(), "context");

@@ -167,6 +167,31 @@ export async function createWorkspaceRow(input: {
 }
 
 /**
+ * The live session already on `branch`, when one is: the one a new session on
+ * the same branch is refused for, named in the refusal. The index allows one
+ * session per branch while it isn't destroyed.
+ */
+export async function liveWorkspaceOnBranch(
+  ownerId: string,
+  projectId: string,
+  branch: string,
+): Promise<Workspace | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .select("*")
+    .eq("owner_id", ownerId)
+    .eq("project_id", projectId)
+    .eq("branch", branch)
+    .neq("status", "destroyed")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toWorkspace(data) : null;
+}
+/**
  * Give a workspace its title, unless it already has one: the first prompt
  * names the session for good. Conditional in the database (`title is null`),
  * so two first prompts racing cannot overwrite each other. True when this call

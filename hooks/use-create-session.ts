@@ -17,7 +17,7 @@ import type { Project } from "@/lib/runtime/types";
 import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 
-type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string };
+type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string; sessionHref?: string };
 
 /** Same shape as the server's generated branches (runtime/<time>-<id>). */
 function localBranch(workspaceId: string): string {
@@ -36,9 +36,11 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
   // has them only after it reloads.
   const [connected, setConnected] = useState<Project[]>([]);
   const [message, setMessage] = useState<string | null>(null);
-  // Set when the failure is something the user fixes in settings, so the error
-  // can offer the way out instead of only naming the problem.
-  const [messageHref, setMessageHref] = useState<string | null>(null);
+  // The way out of the failure, when one page holds it: the page's label and
+  // link (settings for a missing key, the session that already holds a
+  // branch), so the error can offer the way out instead of only naming the
+  // problem.
+  const [messageAction, setMessageAction] = useState<{ label: string; href: string } | null>(null);
   const [isCreating, startCreating] = useTransition();
 
   const known = useMemo(
@@ -63,7 +65,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     if (!selected) return Promise.resolve(false);
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
-      setMessageHref(null);
+      setMessageAction(null);
       let response: Response;
       try {
         response = await fetch(`/api/projects/${selected.id}/workspaces`, {
@@ -85,8 +87,10 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       if (!response.ok || !result.workspace) {
         setMessage(result.error ?? "Could not start the session. Please try again.");
         // The server names the page that fixes it, when one does (a missing
-        // GitHub grant is fixed by signing in again, not in Settings).
-        if (result.settingsHref) setMessageHref(result.settingsHref);
+        // GitHub grant is fixed by signing in again; a taken branch, by
+        // opening the session that holds it).
+        if (result.settingsHref) setMessageAction({ label: "Open settings", href: result.settingsHref });
+        else if (result.sessionHref) setMessageAction({ label: "Open that session", href: result.sessionHref });
         resolve(false);
         return;
       }
@@ -122,13 +126,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
   ): Promise<boolean> {
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
-      setMessageHref(null);
+      setMessageAction(null);
       const workspaceId = crypto.randomUUID();
       const target = localTarget(workspaceId);
       const agent = agentOf(model?.provider ?? "claude");
       const fail = (error: unknown, fallback: string) => {
         setMessage(error instanceof Error ? error.message : fallback);
-        if (error instanceof LocalAgentAuthError) setMessageHref(error.settingsHref);
+        if (error instanceof LocalAgentAuthError) setMessageAction({ label: "Open settings", href: error.settingsHref });
         resolve(false);
       };
       try {
@@ -169,5 +173,5 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     }));
   }
 
-  return { projects: known, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal };
+  return { projects: known, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal };
 }

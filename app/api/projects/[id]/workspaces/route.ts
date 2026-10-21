@@ -19,12 +19,14 @@ import {
   createWorkspaceRow,
   getProject,
   getRuntimeComputerByProject,
+  liveWorkspaceOnBranch,
   markRuntimeComputerStoppedIfReady,
   transitionWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
-import { workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
+import { branchTakenResponse, isUniqueViolation, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
+import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
@@ -206,6 +208,13 @@ export async function POST(request: Request, context: RouteContext) {
       agent: agentId,
     });
   } catch (error) {
+    // A requested branch can be one a live session already works on: name that
+    // session and offer its page, rather than only saying one is there.
+    // (Generated branches can't collide.)
+    if (requestedBranch && isUniqueViolation(error)) {
+      const holder = await liveWorkspaceOnBranch(owner.id, project.id, requestedBranch);
+      if (holder) return branchTakenResponse({ id: holder.id, label: workspaceLabel(holder) });
+    }
     return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
   }
 

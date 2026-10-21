@@ -1,3 +1,22 @@
+/** Postgres' unique_violation, which here is the live-branch index: another
+ * session already holds the branch. */
+export function isUniqueViolation(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "23505");
+}
+
+/** The answer when another session holds the requested branch: that session's
+ * name, and its page, so the user can go to it rather than only being told
+ * that one exists. */
+export function branchTakenResponse(holder: { id: string; label: string }): Response {
+  return Response.json(
+    {
+      error: `“${holder.label}” is already working on that branch. Open that session, or pick another branch.`,
+      sessionHref: `/workspaces/${holder.id}`,
+    },
+    { status: 409 },
+  );
+}
+
 /**
  * The answer to a failure to create a session's row. The index that keeps one
  * live session per branch answers Postgres' unique_violation: a conflict the
@@ -7,7 +26,7 @@
  * it tests without Next.
  */
 export function workspaceCreateErrorResponse(error: unknown, context: string): Response {
-  if (error && typeof error === "object" && "code" in error && error.code === "23505") {
+  if (isUniqueViolation(error)) {
     return Response.json(
       {
         error:
