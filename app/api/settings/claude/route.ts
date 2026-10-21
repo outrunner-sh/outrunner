@@ -35,8 +35,15 @@ export async function GET() {
   const owner = await getOwner();
   if (!owner) return unauthorized();
 
-  const meta = await getClaudeTokenMeta(owner.id);
-  return NextResponse.json(meta);
+  try {
+    return NextResponse.json(await getClaudeTokenMeta(owner.id));
+  } catch (error) {
+    console.error("Could not read the Claude token", error);
+    return NextResponse.json(
+      { error: "Couldn't check whether Claude is connected. Reload to try again." },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PUT(request: Request) {
@@ -74,8 +81,16 @@ export async function PUT(request: Request) {
     );
   }
 
-  await setClaudeToken(owner.id, token);
-  return NextResponse.json(await getClaudeTokenMeta(owner.id));
+  try {
+    await setClaudeToken(owner.id, token);
+    return NextResponse.json(await getClaudeTokenMeta(owner.id));
+  } catch (error) {
+    console.error("Could not save the Claude token", error);
+    return NextResponse.json(
+      { error: "Couldn't save your Claude token. Try again in a moment." },
+      { status: 500 },
+    );
+  }
 }
 
 export async function DELETE(request: Request) {
@@ -85,6 +100,14 @@ export async function DELETE(request: Request) {
   const owner = await getOwner();
   if (!owner) return unauthorized();
 
-  await deleteClaudeToken(owner.id);
+  try {
+    await deleteClaudeToken(owner.id);
+  } catch (error) {
+    console.error("Could not delete the Claude token", error);
+    return NextResponse.json(
+      { error: "Couldn't disconnect Claude. It's still connected; try again in a moment." },
+      { status: 500 },
+    );
+  }
   return NextResponse.json({ connected: false, last4: null });
 }

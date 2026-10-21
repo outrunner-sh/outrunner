@@ -189,7 +189,10 @@ export function ClaudeConnection({
     setBusy(true);
     try {
       const res = await fetch("/api/settings/claude", { method: "DELETE" });
-      if (!res.ok) throw new Error("Could not disconnect.");
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Could not disconnect.");
+      }
       onChange((await res.json()) as ClaudeTokenMeta);
       setError(null);
     } catch (e) {
