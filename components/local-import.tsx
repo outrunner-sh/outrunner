@@ -25,6 +25,7 @@ import {
   offeredSessions,
   sessionFacts,
   skipText,
+  withoutUnstarted,
 } from "@/lib/imports/client";
 import { liveImportDeps } from "@/lib/imports/live";
 import { isDesktopApp } from "@/lib/is-desktop";
@@ -133,6 +134,9 @@ export function LocalImport() {
       setPicked(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // The error is the only thing to say: without this the sessions it never
+      // reached stay on "Waiting", and the summary on "Importing…".
+      setProgress(withoutUnstarted);
     } finally {
       setImporting(false);
       // The sidebar is the layout's, read on the server: without this the

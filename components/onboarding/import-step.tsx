@@ -11,6 +11,7 @@ import {
   type ImportProgress,
   importSummary,
   sessionFacts,
+  withoutUnstarted,
 } from "@/lib/imports/client";
 import { relativeTime } from "@/lib/nav/sidebar";
 import { type ImportProject, projectSources, shownSessions } from "@/lib/onboarding/import-projects";
@@ -82,6 +83,9 @@ export function ImportStep({
       setPicked(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // The error is the only thing to say: without this the sessions it never
+      // reached stay on "Waiting", under a project still reading "Importing…".
+      setProgress(withoutUnstarted);
     } finally {
       setImporting(false);
       onImporting(false);

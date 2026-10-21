@@ -65,6 +65,17 @@ export function sessionFacts(s: ScannedSession): string[] {
 }
 
 /**
+ * What is left of `progress` once a run has ended: the sessions that never
+ * started are dropped. {@link importSessions} reports every picked session as
+ * "waiting" before it plans them, so a plan that fails leaves them all on
+ * "Waiting", reading as an import still under way. Nothing is waiting once
+ * the run is over, so the state only ever means that.
+ */
+export function withoutUnstarted(progress: Record<string, ImportProgress>): Record<string, ImportProgress> {
+  return Object.fromEntries(Object.entries(progress).filter(([, p]) => p.state !== "waiting"));
+}
+
+/**
  * How an import went, in a few words: "2 imported, 1 failed". Sessions still
  * under way read as "Importing… 1 of 3 done". Empty with nothing to say.
  */

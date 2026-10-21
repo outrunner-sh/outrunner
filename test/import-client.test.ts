@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { importSessions, importSummary, type ImportProgress } from "@/lib/imports/client";
+import { importSessions, importSummary, type ImportProgress, withoutUnstarted } from "@/lib/imports/client";
 import { ImportCapture, ImportCommitRequest, type ScannedSession } from "@/lib/runtime/import-scan";
 
 const fixtures = JSON.parse(readFileSync(path.join(process.cwd(), "lib/runtime/import-scan.fixtures.json"), "utf8"));
@@ -237,4 +237,26 @@ test("an import's summary counts how it went, or how far it has got", () => {
   assert.equal(importSummary([p("a", "done"), p("b", "uploading"), p("c", "waiting")]), "Importing… 1 of 3 done");
   assert.equal(importSummary([p("a", "done"), p("b", "done"), p("c", "failed")]), "2 imported, 1 failed");
   assert.equal(importSummary([p("a", "skipped")]), "1 skipped");
+});
+
+test("a plan that fails leaves its sessions waiting, and dropping those says nothing is under way", async () => {
+  const progress: Record<string, ImportProgress> = { "claude:before": { key: "claude:before", state: "done" } };
+  await assert.rejects(
+    importSessions([session("claude:a"), session("claude:b")], {}, {
+      plan: async () => {
+        throw new Error("Could not plan the import. Please try again.");
+      },
+      capture: async () => assert.fail("nothing to capture"),
+      commit: async () => assert.fail("nothing to commit"),
+      onProgress: (p) => void (progress[p.key] = p),
+    }),
+    /Could not plan the import/,
+  );
+  // Reported before the plan was asked for, so they read as still running.
+  assert.deepEqual(Object.keys(progress), ["claude:before", "claude:a", "claude:b"]);
+  assert.equal(importSummary(Object.values(progress)), "Importing… 1 of 3 done");
+  // Only the import before it survives: the error is all there is to say.
+  const left = withoutUnstarted(progress);
+  assert.deepEqual(Object.keys(left), ["claude:before"]);
+  assert.equal(importSummary(Object.values(left)), "1 imported");
 });
