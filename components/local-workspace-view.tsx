@@ -4,10 +4,11 @@ import { Laptop } from "lucide-react";
 import Link from "next/link";
 
 import { RouteLoading } from "@/components/route-states";
+import { ErrorRef, Notice } from "@/components/ui/notice";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { isAgentId } from "@/lib/agents/registry";
-import { LOCAL_PROJECT, type LocalSession } from "@/lib/desktop/local-runtime";
+import { LOCAL_PROJECT, LOCAL_RUNNER_LOG, runnerDidNotStartDetail, type LocalSession } from "@/lib/desktop/local-runtime";
 import type { Workspace } from "@/lib/runtime/types";
 
 /**
@@ -37,6 +38,26 @@ export function LocalWorkspaceView({
   }
   if (local.state === "loading") {
     return <RouteLoading label="Looking for this session on your Mac" />;
+  }
+  // The runner is what failed, not the session being missing: say it the way
+  // the session page does, with its log to quote and a way to try again.
+  if (local.state === "error" && (local.code === "agent-did-not-start" || local.code === "agent-spawn-failed")) {
+    return (
+      <Centered>
+        <div className="w-full max-w-md text-left">
+          <Notice
+            tone="error"
+            title="This Mac's session runner didn't start"
+            detail={runnerDidNotStartDetail(local.reason)}
+            meta={<ErrorRef label="log" value={LOCAL_RUNNER_LOG} />}
+            actions={[{ label: "Try again", primary: true, onClick: local.refresh }]}
+          />
+        </div>
+        <Link href="/" className="text-sm underline underline-offset-4">
+          Back home
+        </Link>
+      </Centered>
+    );
   }
   return (
     <Centered>
