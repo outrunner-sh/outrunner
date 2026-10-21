@@ -246,8 +246,9 @@
 .studio-env-pr-link { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--studio-text); font-variant-numeric: tabular-nums; }
 .studio-env-pr-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .studio-env-pr-link svg { width: 14px; height: 14px; color: rgba(255,255,255,.45); }
-.studio-env-merge { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--color-positive); font-size: 13px; font-weight: 500; cursor: pointer; transition: filter .15s; }
-.studio-env-merge:hover { filter: brightness(1.1); }
+.studio-env-merge { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid color-mix(in oklab, var(--color-positive) 40%, transparent); border-radius: 4px; color: var(--color-positive); background: color-mix(in oklab, var(--color-positive) 8%, transparent); font-size: 12px; cursor: pointer; transition: background-color .15s, border-color .15s; }
+.studio-env-merge:hover { border-color: color-mix(in oklab, var(--color-positive) 65%, transparent); background: color-mix(in oklab, var(--color-positive) 16%, transparent); }
+.studio-env-merge svg { width: 13px; height: 13px; }
 .studio-env-merge:focus-visible { outline: 2px solid color-mix(in oklab, var(--color-positive) 60%, transparent); outline-offset: 2px; }
 .studio-env-merge[aria-busy="true"] { cursor: progress; }
 .studio-env-terminal-slot { display: contents; }
