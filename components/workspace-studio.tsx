@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageSquarePlus, PanelRight, PanelRightClose, TerminalSquare } from "lucide-react";
+import { MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -19,7 +19,7 @@ import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
- *  Environment (changes, branch, pull request, terminal) on the right. The app
+ *  Environment (changes, branch, pull request) on the right. The app
  *  sidebar to its left belongs to the layout (app/(app)/layout.tsx); collapsed,
  *  its buttons sit at the start of this header. */
 export function WorkspaceStudio({
@@ -44,23 +44,8 @@ export function WorkspaceStudio({
   initialAttachmentIds?: string[];
 }) {
   const [rightOpen, setRightOpen] = useState(true);
-  // The live terminal is tucked away by default; it is where Claude's own
-  // prompts are answered — in a local session, every shell-command approval.
-  // (Collapsed also keeps its socket closed: see useSessionTerminal.)
-  const [showTerminal, setShowTerminal] = useState(false);
-  // The bottom of the Environment panel, where the session docks its terminal.
-  const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
   // How the Environment panel's Create PR sends into the session, while it can.
   const [sender, setSender] = useState<SessionSender | null>(null);
-  // The header's terminal button shows it even with the panel closed.
-  const toggleTerminalFromHeader = () => {
-    if (showTerminal && rightOpen) {
-      setShowTerminal(false);
-    } else {
-      setRightOpen(true);
-      setShowTerminal(true);
-    }
-  };
   const isLocal = local !== undefined;
   const setup = useWorkspaceSetup(workspace, !isLocal);
   // An archived session (one imported from a Mac) comes back as it opens.
@@ -86,16 +71,6 @@ export function WorkspaceStudio({
           {place && <span className="studio-title-place">{place}</span>}
         </div>
         <div className="studio-header-actions">
-          {hasLiveSession && (
-            <button
-              className={cn("studio-icon-button", showTerminal && rightOpen && "is-active")}
-              onClick={toggleTerminalFromHeader}
-              title={showTerminal && rightOpen ? "Hide terminal" : "Show terminal"}
-              aria-pressed={showTerminal && rightOpen}
-            >
-              <TerminalSquare />
-            </button>
-          )}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}
@@ -113,9 +88,6 @@ export function WorkspaceStudio({
             workspaceId={workspace.id}
             agent={workspace.agent}
             local={isLocal}
-            showTerminal={showTerminal}
-            onToggleTerminal={() => setShowTerminal((open) => !open)}
-            terminalSlot={terminalSlot}
             untitled={!isLocal && !workspace.title}
             initialPrompt={initialPrompt}
             initialAttachmentIds={initialAttachmentIds}
@@ -187,9 +159,7 @@ export function WorkspaceStudio({
         )}
       </section>
 
-      {/* Hidden rather than unmounted when closed: the terminal docked at its
-          foot keeps its scrollback. The rows above poll for changes, so they
-          mount only while it is open. */}
+      {/* The rows poll for changes, so they mount only while it is open. */}
       <aside className="studio-inspector studio-env" hidden={!rightOpen} aria-label="Environment">
         {rightOpen && (
           <WorkspaceEnvironment
@@ -198,11 +168,9 @@ export function WorkspaceStudio({
             pullRequest={pullRequest}
             isReady={isReady}
             sender={sender}
-            terminalOpen={hasLiveSession && showTerminal}
             onClose={() => setRightOpen(false)}
           />
         )}
-        <div ref={setTerminalSlot} className="studio-env-terminal-slot" />
       </aside>
     </div>
   );
