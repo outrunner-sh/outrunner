@@ -33,7 +33,8 @@ export type SessionAttachment = {
   error: string | null;
   /** Increments every time `urls` changes (new fetch succeeded). */
   attachId: number;
-  /** Fetch fresh URLs. Idempotent while a fetch is in flight. */
+  /** Fetch fresh URLs, the box's endpoint looked up again too. Idempotent
+   *  while a fetch is in flight. */
   refresh: () => void;
   /**
    * Ask the shared attachment owner to refresh after a transient transport
@@ -80,7 +81,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
   const inflight = useRef<AbortController | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refresh = useCallback(() => {
+  // `fresh` for every attach after the first: something failed, and the box's
+  // endpoint the server keeps may be what did (POST …/session?fresh=1).
+  const attach = useCallback((fresh: boolean) => {
     if (reconnectTimer.current) {
       clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
@@ -101,7 +104,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           setStatus("attached");
           return;
         }
-        const res = await fetch(`/api/workspaces/${workspaceId}/session`, {
+        const res = await fetch(`/api/workspaces/${workspaceId}/session${fresh ? "?fresh=1" : ""}`, {
           method: "POST",
           signal: controller.signal,
         });
@@ -128,6 +131,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
       }
     })();
   }, [workspaceId, local, agent]);
+  const refresh = useCallback(() => attach(true), [attach]);
 
   const reconnect = useCallback(() => {
     // Both browser projections can notice the same network close. The
@@ -141,14 +145,14 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
   }, [refresh]);
 
   useEffect(() => {
-    refresh();
+    attach(false);
     return () => {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
       inflight.current?.abort();
       inflight.current = null;
     };
-  }, [refresh]);
+  }, [attach]);
 
   return { urls, status, error, attachId, refresh, reconnect };
 }

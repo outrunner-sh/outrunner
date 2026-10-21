@@ -25,9 +25,11 @@ export default async function WorkspacePage({
   const workspace = await getWorkspace(id);
   // A deleted session keeps its row, marked destroyed: it is gone all the same.
   if (!workspace || workspace.status === "destroyed") notFound();
-  const project = await getProjectOnce(workspace.projectId);
+  const [project, pullRequest] = await Promise.all([
+    getProjectOnce(workspace.projectId),
+    getWorkspacePullRequest(workspace.id),
+  ]);
   if (!project) notFound();
-  const pullRequest = await getWorkspacePullRequest(workspace.id);
 
   return (
     <WorkspaceStudio

@@ -1,4 +1,7 @@
 
+import type { User } from "@supabase/supabase-js";
+import { cache } from "react";
+
 import { githubLogin, isOwner } from "@/lib/auth/allowlist";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -11,13 +14,23 @@ export type Owner = {
   avatarUrl: string | null;
 };
 
-
-/** The signed-in owner, or null when signed out or not the allowlisted user. */
-export async function getOwner(): Promise<Owner | null> {
+/**
+ * The signed-in Supabase user, checked with Supabase Auth (getUser(), not the
+ * cookie's own say-so), or null. Asked once per server render however many
+ * readers there are (the layout, the page, onboarding): React `cache`. A route
+ * handler asks once anyway.
+ */
+export const getAuthUser = cache(async (): Promise<User | null> => {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  return user;
+});
+
+/** The signed-in owner, or null when signed out or not the allowlisted user. */
+export async function getOwner(): Promise<Owner | null> {
+  const user = await getAuthUser();
 
   if (!user || !isOwner(user)) return null;
 

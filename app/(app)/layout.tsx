@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 
 import { AppFrame } from "@/components/app-frame";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProjectOnce, listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { getProjects } from "@/lib/db/repositories";
+import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Project, Workspace } from "@/lib/runtime/types";
@@ -56,11 +57,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 /**
  * The listed projects, plus any a session belongs to that the list hides (a
  * hidden repository), so that session's group is named rather than shown under
- * a placeholder. Usually adds nothing.
+ * a placeholder. Usually adds nothing; one query when it does.
  */
 async function withSessionProjects(listed: Project[], workspaces: Workspace[]): Promise<NavProject[]> {
   const known = new Set(listed.map((p) => p.id));
   const missing = [...new Set(workspaces.map((w) => w.projectId))].filter((id) => !known.has(id));
-  const found = await Promise.all(missing.map((id) => getProjectOnce(id).catch(() => null)));
-  return [...listed, ...found.filter((p): p is Project => p !== null)];
+  const found = await getProjects(missing).catch((error: unknown): Project[] => {
+    console.error("Sidebar: could not load hidden repositories", error);
+    return [];
+  });
+  return [...listed, ...found];
 }
