@@ -53,7 +53,7 @@ import {
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
-import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
@@ -152,11 +152,11 @@ export async function POST(request: Request, context: RouteContext) {
 
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  // Either credential kind is fine; an empty env means none was set, unless
+  // Either credential kind is fine; without one none was set, unless
   // the session gets one of its own. Sessions start on Outrunner's models (on
   // the user's own OpenRouter key, or the server's), so only without those is
   // Claude a must. Codex runs on its own sign-in, resolved above.
-  const hasClaude = agentId === "claude" && (Object.keys(sessionEnv).length > 0 || auth.credential !== null);
+  const hasClaude = agentId === "claude" && (hasClaudeCredential(sessionEnv) || auth.credential !== null);
   const menu = await modelMenu(owner.id);
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
