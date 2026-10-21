@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
+import { workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
@@ -87,13 +88,6 @@ function needsClaude(error: string) {
 
 function needsSandbox(error: string) {
   return NextResponse.json({ error, settingsHref: "/settings/sandbox" }, { status: 409 });
-}
-
-function safeErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "code" in error && error.code === "23505") {
-    return "Another session is already working on that branch. Pick another branch, or open that session from the sidebar.";
-  }
-  return "Couldn't create the session. Try again in a moment.";
 }
 
 /** Create one local worktree from a Runtime project. */
@@ -212,11 +206,7 @@ export async function POST(request: Request, context: RouteContext) {
       agent: agentId,
     });
   } catch (error) {
-    const message = safeErrorMessage(error);
-    return NextResponse.json(
-      { error: message },
-      { status: message.startsWith("A live") ? 409 : 500 },
-    );
+    return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
   }
 
   // The session opens now, on its setup progress, and its box is set up after
