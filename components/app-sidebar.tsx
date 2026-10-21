@@ -41,6 +41,7 @@ import {
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import { startNewSession } from "@/lib/session/new-session-reset";
 import { cn } from "@/lib/utils";
 
 /**
@@ -145,6 +146,7 @@ export function AppSidebar({
         {/* Home is the new-session screen too. */}
         <NavLink
           href="/new"
+          onClick={startNewSession}
           icon={<Plus />}
           label="New Session"
           hint="⌘N"
@@ -166,6 +168,7 @@ export function AppSidebar({
               picked: the way to start in a project not listed yet. */}
           <Link
             href="/new"
+            onClick={startNewSession}
             aria-label="Start a session in another project"
             title="Start a session in another project"
             className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -252,12 +255,13 @@ function WorkspaceGroup({
   const router = useRouter();
   const { start } = group;
   // Set the form's cloud/Mac choice, then open a fresh form for this target
-  // (newSessionHref: a new key each click, even for the URL already open).
+  // (startNewSession: a new form each click, even for the URL already open).
   const startHere = () => {
     if (!start) return;
     if (start.kind === "local") startNextSessionIn(start.folder);
     else startNextSessionInCloud();
-    router.push(newSessionHref(start, Date.now().toString(36)));
+    startNewSession();
+    router.push(newSessionHref(start));
   };
   const Icon = group.local ? Laptop : Folder;
   return (
@@ -378,12 +382,14 @@ const rowClass =
 
 function NavLink({
   href,
+  onClick,
   icon,
   label,
   hint,
   active,
 }: {
   href: string;
+  onClick?: () => void;
   icon: React.ReactNode;
   label: string;
   /** Its keyboard shortcut, shown at the row's end on hover. */
@@ -393,6 +399,7 @@ function NavLink({
   return (
     <Link
       href={href}
+      onClick={onClick}
       aria-current={active ? "page" : undefined}
       aria-keyshortcuts={hint ? keyShortcut(hint) : undefined}
       className={cn(

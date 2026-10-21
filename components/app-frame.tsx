@@ -8,8 +8,8 @@ import { useEffect, useMemo, useState } from "react";
 import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
 import { SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
-import type { NavProject } from "@/lib/nav/workspace-nav-groups";
-import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import { startNewSession } from "@/lib/session/new-session-reset";
+import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** Where the choice was kept before the cookie, read once to carry it over. */
@@ -22,6 +22,7 @@ const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
  */
 export function AppFrame({
   projects,
+  hiddenProjects,
   workspaces,
   pullRequests,
   ownerLogin,
@@ -30,7 +31,10 @@ export function AppFrame({
   initialFolded = [],
   children,
 }: {
-  projects: NavProject[];
+  /** The repositories listed to start sessions in. */
+  projects: Project[];
+  /** Hidden ones a session belongs to, for naming it. */
+  hiddenProjects: Project[];
   workspaces: Workspace[];
   /** Each session's pull request, by workspace id. */
   pullRequests: Record<string, WorkspacePullRequest>;
@@ -44,7 +48,11 @@ export function AppFrame({
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   // The pages render from what the sidebar has: a click shows its session at once.
-  const appData = useMemo(() => ({ projects, workspaces, pullRequests }), [projects, workspaces, pullRequests]);
+  const appData = useMemo(
+    () => ({ projects, hiddenProjects, workspaces, pullRequests }),
+    [projects, hiddenProjects, workspaces, pullRequests],
+  );
+  const sidebarProjects = useMemo(() => [...projects, ...hiddenProjects], [projects, hiddenProjects]);
   const router = useRouter();
   // Bumped by ⌘K: the sidebar opens its search field on each change.
   const [searchSignal, setSearchSignal] = useState(0);
@@ -63,7 +71,8 @@ export function AppFrame({
       const key = event.key.toLowerCase();
       if (key === "n") {
         event.preventDefault();
-        router.push(`/new?start=${Date.now().toString(36)}`);
+        startNewSession();
+        router.push("/new");
       } else if (key === "k") {
         event.preventDefault();
         setCollapsed(false);
@@ -108,6 +117,7 @@ export function AppFrame({
             </button>
             <Link
               href="/new"
+              onClick={startNewSession}
               aria-label="New session"
               title="New session (⌘N)"
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -117,7 +127,7 @@ export function AppFrame({
           </div>
         ) : (
           <AppSidebar
-            projects={projects}
+            projects={sidebarProjects}
             workspaces={workspaces}
             ownerLogin={ownerLogin}
             ownerAvatarUrl={ownerAvatarUrl}

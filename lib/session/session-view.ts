@@ -1,10 +1,12 @@
-import type { NavProject } from "@/lib/nav/workspace-nav-groups";
-import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 
 /** What the app layout loaded for the sidebar, shared with the pages under it
  *  (components/app-data.tsx). */
 export type AppData = {
-  projects: NavProject[];
+  /** The repositories listed to start sessions in. */
+  projects: Project[];
+  /** Hidden ones a session belongs to, only for naming it. */
+  hiddenProjects: Project[];
   workspaces: Workspace[];
   /** By workspace id. */
   pullRequests: Record<string, WorkspacePullRequest>;
@@ -28,7 +30,7 @@ export function resolveSessionView(id: string, data: AppData | null): SessionVie
   if (!data || !workspace || workspace.status === "destroyed") return null;
   return {
     workspace,
-    projectName: data.projects.find((p) => p.id === workspace.projectId)?.fullName,
+    projectName: [...data.projects, ...data.hiddenProjects].find((p) => p.id === workspace.projectId)?.fullName,
     pullRequest: data.pullRequests[workspace.id] ?? null,
   };
 }

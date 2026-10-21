@@ -285,16 +285,13 @@ test("a missing, unparseable or future time is handled", () => {
   assert.equal(relativeTime("2026-10-07T12:05:00Z", now), "now");
 });
 
-test("a workspace's + opens /new on that repository or folder, unique per click", () => {
-  assert.equal(newSessionHref({ kind: "cloud", projectId: "p1" }, "a1"), "/new?project=p1&start=a1");
+test("a workspace's + opens /new on that repository or folder, the same URL each time", () => {
+  assert.equal(newSessionHref({ kind: "cloud", projectId: "p1" }), "/new?project=p1");
   // A folder path is encoded, spaces and all.
-  assert.equal(
-    newSessionHref({ kind: "local", folder: "/Users/ada/my app" }, "a2"),
-    "/new?folder=%2FUsers%2Fada%2Fmy+app&start=a2",
-  );
-  // Two clicks on the same + differ, so the form is rebuilt even on the same target.
+  assert.equal(newSessionHref({ kind: "local", folder: "/Users/ada/my app" }), "/new?folder=%2FUsers%2Fada%2Fmy+app");
+  // Stable, so it can be prefetched; the fresh form per click is startNewSession's.
   const start = { kind: "cloud", projectId: "p1" } as const;
-  assert.notEqual(newSessionHref(start, "x"), newSessionHref(start, "y"));
+  assert.equal(newSessionHref(start), newSessionHref(start));
 });
 
 test("a cloud session can be deleted from a settled status, or a setup that stalled", () => {
