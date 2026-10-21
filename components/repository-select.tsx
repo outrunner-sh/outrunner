@@ -5,17 +5,11 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
+import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
-type Repo = {
-  githubRepoId: number;
-  fullName: string;
-  name: string;
-  private: boolean;
-};
-
-type Listing = { repositories: Repo[]; connected: number[] };
+type Listing = { repositories: RepositoryListing[]; connected: number[] };
 
 /**
  * Pick the repository a session runs in — from everything on the user's GitHub,
@@ -48,7 +42,7 @@ export function RepositorySelect({
   onSelect?: (project: Project) => void;
   /** Instead of connecting it as a project, what picking a repository does
    *  (a session on this Mac clones it). The menu closes as it starts. */
-  onPick?: (repo: Repo) => void;
+  onPick?: (repo: RepositoryListing) => void;
   /** What the trigger shows in place of the selected project. */
   label?: { text: string; title?: string; icon: React.ReactNode };
   /** One more row under the list, such as choosing a folder instead. */
@@ -123,17 +117,12 @@ export function RepositorySelect({
       listing?.repositories ??
       // Before the live list arrives, offer what is already connected so the
       // menu is never empty.
-      projects.map((p) => ({
-        githubRepoId: p.githubRepoId,
-        fullName: p.fullName,
-        name: p.name,
-        private: false,
-      }));
+      projects.map(projectToListing);
     const q = query.trim().toLowerCase();
     return q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos;
   }, [listing, projects, query]);
 
-  async function choose(repo: Repo) {
+  async function choose(repo: RepositoryListing) {
     if (onPick) {
       setOpen(false);
       triggerRef.current?.focus();
