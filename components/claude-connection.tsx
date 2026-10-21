@@ -72,6 +72,8 @@ export function ClaudeConnection({
     onChange((await res.json()) as ClaudeTokenMeta);
     setPending(null);
     setCode("");
+    // A save means the login finished, whatever the approval window was doing.
+    setExpired(false);
   }, [onChange]);
 
   // The login attempt the page is following. Cancel, Disconnect and a new
@@ -181,6 +183,9 @@ export function ClaudeConnection({
   const disconnect = useCallback(async () => {
     // A Reconnect still waiting must not save a token after this.
     stopLogin();
+    // The window's line is this login's story, not whatever comes next: a
+    // failed Disconnect has to be the one on screen, not talked over.
+    setExpired(false);
     setBusy(true);
     try {
       const res = await fetch("/api/settings/claude", { method: "DELETE" });
