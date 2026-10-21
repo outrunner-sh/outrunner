@@ -19,6 +19,7 @@ export function LoadingButton({
   status,
   labels,
   icon,
+  trailingIcon,
   type = "button",
   onClick,
   disabled,
@@ -32,6 +33,8 @@ export function LoadingButton({
   labels: { idle: string; pending?: string; success?: string; error?: string };
   /** Shown beside the idle label. */
   icon?: React.ReactNode;
+  /** Shown after the idle label: an arrow, say. */
+  trailingIcon?: React.ReactNode;
   type?: "button" | "submit";
   onClick?: () => void;
   disabled?: boolean;
@@ -69,6 +72,7 @@ export function LoadingButton({
             <span key={face.key} className={cn("loading-button-face", face.key === status && "is-current")}>
               {face.icon}
               {face.text}
+              {face.key === "idle" && trailingIcon}
             </span>
           ))}
         </span>

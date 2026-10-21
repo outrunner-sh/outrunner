@@ -22,6 +22,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AppUpdate } from "@/components/app-update";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
+import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
 import { Spinner } from "@/components/ui/loaders";
@@ -61,6 +62,7 @@ export function AppSidebar({
   onCollapse,
   searchSignal = 0,
   initialFolded = [],
+  getStartedSkipped = null,
 }: {
   /** What it lists hasn't arrived yet (a cold start): rows held by a skeleton. */
   loading?: boolean;
@@ -73,6 +75,8 @@ export function AppSidebar({
   searchSignal?: number;
   /** The projects folded shut, by group key (from their cookie). */
   initialFolded?: string[];
+  /** The "Get started" checklist skipped (from its cookie); null until read. */
+  getStartedSkipped?: boolean | null;
 }) {
   const pathname = usePathname();
   const active = activeSessionId(pathname);
@@ -225,6 +229,14 @@ export function AppSidebar({
         onDeleted={onDeleted}
       />
 
+      {/* Counted once both lists are in, so no step reads undone as they land. */}
+      {!loading && local.state !== "loading" && (
+        <GetStarted
+          projects={projects.length}
+          sessions={workspaces.length + local.sessions.length}
+          skipped={getStartedSkipped}
+        />
+      )}
       <OutrunnerAllowance />
       <AppUpdate />
       <div className="flex items-center gap-1 border-t border-border/60 pt-3">
