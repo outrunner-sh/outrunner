@@ -221,7 +221,14 @@ export function useSessionLocation(agent: AgentId = "claude") {
       : remembered
         ? { state: "checking" }
         : { state: "none" };
-  const blocker = location === "local" ? localBlocker(runtime, folder, outrunnerModels, agent, onMacLogin) : null;
+  const blocker =
+    location !== "local"
+      ? null
+      : gitInit.state === "running"
+        ? // A session started now would work in the folder as it is, not in a
+          // worktree of the repository it is about to become.
+          "Making the folder a git repository…"
+        : localBlocker(runtime, folder, outrunnerModels, agent, onMacLogin);
 
   return {
     location,
