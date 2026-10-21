@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { requestJson, UNREACHABLE } from "@/lib/http/request-json";
+import { reachOutrunner, requestJson, UNREACHABLE } from "@/lib/http/request-json";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -45,4 +45,13 @@ test("an answer comes back as sent, with its JSON body", async () => {
   assert.equal(sent?.method, "PUT");
   assert.equal(sent?.body, '{"a":1}');
   assert.deepEqual(sent?.headers, { "Content-Type": "application/json" });
+});
+
+test("reachOutrunner answers as fetch does, and says so when it can't get there", async () => {
+  reply(() => new Response("ok", { status: 201 }));
+  assert.equal((await reachOutrunner("/x", { method: "POST" })).status, 201);
+  globalThis.fetch = (async () => {
+    throw new TypeError("Failed to fetch");
+  }) as typeof fetch;
+  await assert.rejects(reachOutrunner("/x"), { message: UNREACHABLE });
 });

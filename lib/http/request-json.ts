@@ -2,6 +2,15 @@
  *  it ("Load failed", "Failed to fetch") name nothing a user can act on. */
 export const UNREACHABLE = "Couldn't reach Outrunner. Check your connection.";
 
+/** `fetch`, but a request that never got there fails with {@link UNREACHABLE}
+ *  rather than the browser's own words. For callers that read the reply
+ *  themselves; requestJson does this too. */
+export function reachOutrunner(url: string, init?: RequestInit): Promise<Response> {
+  return fetch(url, init).catch(() => {
+    throw new Error(UNREACHABLE);
+  });
+}
+
 /**
  * A settings call: JSON in, JSON out, and on failure an Error whose message is
  * a sentence for the page. That is the route's own `error` when it gave one,

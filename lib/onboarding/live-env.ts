@@ -13,6 +13,7 @@ import {
   setsUpClaude,
   setUpClaudeCode,
 } from "@/lib/desktop/local-runtime";
+import { reachOutrunner } from "@/lib/http/request-json";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { importFound } from "@/lib/onboarding/import-offer";
 import type {
@@ -101,7 +102,7 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
     },
 
     async listRepos() {
-      const res = await fetch("/api/github/repositories");
+      const res = await reachOutrunner("/api/github/repositories");
       const data = (await res.json().catch(() => ({}))) as {
         repositories?: { githubRepoId: number; fullName: string; private: boolean; pushedAt: string | null }[];
         error?: string;
@@ -190,7 +191,7 @@ async function finishInCloud({
 }
 
 async function connectRepos(repoIds: string[]): Promise<Project[]> {
-  const synced = await fetch("/api/projects/sync", {
+  const synced = await reachOutrunner("/api/projects/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ repoIds: repoIds.map(Number) }),
@@ -201,7 +202,7 @@ async function connectRepos(repoIds: string[]): Promise<Project[]> {
 }
 
 async function startInCloud(project: Project, { prompt = "", model }: CloudSession): Promise<string> {
-  const created = await fetch(`/api/projects/${project.id}/workspaces`, {
+  const created = await reachOutrunner(`/api/projects/${project.id}/workspaces`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     // Claude, when the user has it: the first of its models. Otherwise none,

@@ -31,6 +31,7 @@ import {
 } from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { SEND_FAILED, sendFailureMessage } from "@/lib/session/send-failure";
+import { reachOutrunner } from "@/lib/http/request-json";
 import {
   forgetFirstPrompt,
   hasFirstPrompt,
@@ -725,7 +726,7 @@ function useWhenAttached(
 /** Switch a cloud session's model. The server adds the key the model needs
  *  and calls the session's agent, so the key stays off the browser. */
 async function switchCloudModel(workspaceId: string, model: SessionModel, effort: Effort | null): Promise<void> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
+  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/model`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ provider: model.provider, model: model.id, ...(effort && { effort }) }),
@@ -748,7 +749,7 @@ class ModelSwitchError extends Error {
 /** Stop a cloud session's turn. The server reaches the session's agent, as
  *  for a prompt. */
 async function stopCloudTurn(workspaceId: string): Promise<void> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
+  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
