@@ -102,7 +102,9 @@ export function ConversationTimeline({
             <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
           </div>
         )}
-        {conversationNodes(events).map((node) => (
+        {/* Under a placeholder there is only the session's state to show,
+            which the placeholder already speaks for. */}
+        {!placeholder && conversationNodes(events).map((node) => (
           <div key={node.key} className={cn("timeline-row", node.kind === "prompt" && "is-prompt")}>
             <NodeRow node={node} />
           </div>

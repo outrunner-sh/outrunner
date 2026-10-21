@@ -64,7 +64,9 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
  *
  * The conversation is kept for the page (lib/session/conversation-cache.ts):
  * a session opened before, or warmed up from the sidebar, shows at once and
- * its stream resumes from the kept cursor.
+ * its stream resumes from the kept cursor. One kept from before a reload
+ * (lib/session/kept-conversations.ts) shows at once too, its stream replaying
+ * from the start.
  */
 export function useConversationStream(attachment: SessionAttachment, workspaceId: string): ConversationStreamState {
   const {

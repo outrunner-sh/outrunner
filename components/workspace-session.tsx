@@ -413,7 +413,7 @@ export function WorkspaceSession({
             events={timelineEvents}
             working={working}
             placeholder={conversationPlaceholder({
-              events: timelineEvents.length,
+              events: timelineEvents,
               attachment: attachment.status,
               stream: conversation.status,
             })}
