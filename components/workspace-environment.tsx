@@ -17,10 +17,13 @@ import { useEffect, useRef, useState } from "react";
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceChanges } from "@/components/workspace-changes";
+import type { SessionSender } from "@/components/workspace-session";
+import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
+import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,6 +37,7 @@ export function WorkspaceEnvironment({
   local,
   pullRequest,
   isReady,
+  sender,
   terminalOpen,
   onClose,
 }: {
@@ -41,6 +45,8 @@ export function WorkspaceEnvironment({
   local?: LocalSession;
   pullRequest: WorkspacePullRequest | null;
   isReady: boolean;
+  /** Sends into the session while it can (Create PR's prompt). */
+  sender: SessionSender | null;
   /** The terminal below is expanded: the rows then take only their height. */
   terminalOpen: boolean;
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
@@ -66,7 +72,7 @@ export function WorkspaceEnvironment({
   const summary = environmentSummary(workspace, local);
 
   // Both views stay mounted, the one not in use hidden: leaving the overview
-  // for Changes must not lose a pull request being opened, or its error.
+  // for Changes must not stop the watch for a pull request being opened.
   return (
     <>
       {view === "changes" && (
@@ -136,15 +142,16 @@ export function WorkspaceEnvironment({
           </dl>
         )}
 
-        {/* Publishing goes through the server, which reaches cloud worktrees
-            only; a local session's branch stays in the folder's repository. */}
+        {/* Cloud sessions only: the instructions go as an attachment, which a
+            session on this Mac can't take. */}
         {!local && summary.branch && (
           <PullRequestRow
             workspaceId={workspace.id}
             branch={summary.branch}
             baseBranch={summary.baseBranch ?? workspace.baseBranch}
+            uncommitted={isReady && changes.files ? changes.files.length : null}
             pullRequest={pullRequest}
-            active={isReady}
+            sender={isReady ? sender : null}
           />
         )}
       </div>
@@ -152,29 +159,68 @@ export function WorkspaceEnvironment({
   );
 }
 
+/** How often, and for how long, the row looks for the pull request the agent
+ *  was asked to open. Long enough for an agent that commits, pushes and writes
+ *  a description; the page looking again on its next load covers the rest. */
+const PR_POLL_MS = 15_000;
+const PR_WAIT_MS = 10 * 60_000;
+
 /**
- * Create PR in one click: the server commits what's left as the owner, pushes
- * the branch and opens a pull request titled after the session. Once there is
- * one, the row is a link to it.
+ * Create PR asks the session's agent to open one, as Conductor does: the
+ * prompt "Create a PR" with `PR instructions.md` attached, sent through the
+ * session like a message typed in the composer. The row then watches GitHub
+ * for the pull request on the branch, and once there is one, links to it.
  */
 function PullRequestRow({
   workspaceId,
   branch,
   baseBranch,
+  uncommitted,
   pullRequest,
-  active,
+  sender,
 }: {
   workspaceId: string;
   branch: string;
   baseBranch: string;
+  /** Files changed and not committed, null while unknown. */
+  uncommitted: number | null;
   pullRequest: WorkspacePullRequest | null;
-  active: boolean;
+  sender: SessionSender | null;
 }) {
   const router = useRouter();
-  const [created, setCreated] = useState<WorkspacePullRequest | null>(null);
-  const [publishing, setPublishing] = useState(false);
+  const [found, setFound] = useState<WorkspacePullRequest | null>(null);
+  const [phase, setPhase] = useState<"idle" | "sending" | "waiting">("idle");
   const [error, setError] = useState<{ message: string; reconnect: boolean } | null>(null);
-  const opened = created ?? pullRequest;
+  const opened = found ?? pullRequest;
+
+  // Looks once on opening (the agent may have opened one since the page
+  // loaded, or without being asked), then every PR_POLL_MS while waiting.
+  // Only a sign-in GitHub refused is worth saying: anything else, the next
+  // look may get past.
+  useEffect(() => {
+    if (opened) return;
+    let live = true;
+    const look = async () => {
+      const result = await lookUpPullRequest(workspaceId);
+      if (!live) return;
+      if (result.pullRequest) {
+        setFound(result.pullRequest);
+        setPhase("idle");
+        router.refresh();
+      } else if (result.reconnect) {
+        setError({ message: result.error ?? "Reconnect GitHub to see the pull request.", reconnect: true });
+      }
+    };
+    void look();
+    if (phase !== "waiting") return () => void (live = false);
+    const poll = setInterval(() => void look(), PR_POLL_MS);
+    const giveUp = setTimeout(() => setPhase("idle"), PR_WAIT_MS);
+    return () => {
+      live = false;
+      clearInterval(poll);
+      clearTimeout(giveUp);
+    };
+  }, [opened, phase, workspaceId, router]);
 
   if (opened) {
     return (
@@ -189,52 +235,46 @@ function PullRequestRow({
     );
   }
 
-  async function publish() {
-    if (publishing || !active) return;
-    setPublishing(true);
+  async function createPr() {
+    if (!sender || phase !== "idle") return;
+    setPhase("sending");
     setError(null);
+    let attachment: { id: string };
     try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/publish`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const result = (await response.json().catch(() => ({}))) as {
-        pullRequest?: WorkspacePullRequest;
-        error?: string;
-        reconnect?: boolean;
-      };
-      if (!response.ok || !result.pullRequest) {
-        setError({
-          message: result.error ?? "Could not create the pull request. Please try again.",
-          reconnect: result.reconnect === true,
-        });
-        return;
-      }
-      setCreated(result.pullRequest);
-      router.refresh();
-    } catch {
-      setError({ message: "Could not reach Outrunner. Please try again.", reconnect: false });
-    } finally {
-      setPublishing(false);
+      const instructions = prInstructions({ branch, baseBranch, uncommitted });
+      attachment = await uploadAttachment(
+        new File([instructions], PR_INSTRUCTIONS_FILENAME, { type: "text/markdown" }),
+      );
+    } catch (uploadError) {
+      const reason = uploadError instanceof Error ? uploadError.message : "Upload failed";
+      setError({ message: `Could not attach the PR instructions: ${reason}.`, reconnect: false });
+      setPhase("idle");
+      return;
     }
+    // A send that fails says why in the chat, as the composer's do.
+    const sent = await sender.send(PR_PROMPT, [attachment.id]);
+    if (!sent) void fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" }).catch(() => {});
+    setPhase(sent ? "waiting" : "idle");
   }
 
+  const busy = phase !== "idle";
   return (
     <>
       <EnvRow
-        onClick={() => void publish()}
-        disabled={!active}
-        busy={publishing}
+        onClick={() => void createPr()}
+        disabled={!sender}
+        busy={busy}
         icon={<GitPullRequest />}
         title={
-          active
-            ? `Commit all changes, push ${branch} and open a pull request into ${baseBranch}`
-            : "Available once the workspace is ready"
+          !sender
+            ? "Available once the session is connected"
+            : phase === "waiting"
+              ? "The agent is creating the pull request; it shows here once it's open"
+              : `Ask the agent to commit, push ${branch} and open a pull request into ${baseBranch}`
         }
-        right={publishing ? <Spinner label="Creating pull request" /> : undefined}
+        right={busy ? <Spinner label="Creating pull request" /> : undefined}
       >
-        {publishing ? "Creating PR…" : error ? "Retry Create PR" : "Create PR"}
+        {busy ? "Creating PR…" : "Create PR"}
       </EnvRow>
       {error && (
         <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
@@ -244,6 +284,22 @@ function PullRequestRow({
       )}
     </>
   );
+}
+
+/** The session's pull request as the server finds it, or why it couldn't. */
+async function lookUpPullRequest(
+  workspaceId: string,
+): Promise<{ pullRequest?: WorkspacePullRequest | null; error?: string; reconnect?: boolean }> {
+  try {
+    const response = await fetch(`/api/workspaces/${workspaceId}/pull-request`, { cache: "no-store" });
+    return (await response.json().catch(() => ({}))) as {
+      pullRequest?: WorkspacePullRequest | null;
+      error?: string;
+      reconnect?: boolean;
+    };
+  } catch {
+    return {};
+  }
 }
 
 /** The Changes row's `+3 −0`, or what stands in for it. */

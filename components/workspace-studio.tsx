@@ -6,7 +6,7 @@ import { useState } from "react";
 import { SessionComposer } from "@/components/session-composer";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
-import { WorkspaceSession } from "@/components/workspace-session";
+import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -45,6 +45,8 @@ export function WorkspaceStudio({
   const [showTerminal, setShowTerminal] = useState(false);
   // The bottom of the Environment panel, where the session docks its terminal.
   const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
+  // How the Environment panel's Create PR sends into the session, while it can.
+  const [sender, setSender] = useState<SessionSender | null>(null);
   // The header's terminal button shows it even with the panel closed.
   const toggleTerminalFromHeader = () => {
     if (showTerminal && rightOpen) {
@@ -106,6 +108,7 @@ export function WorkspaceStudio({
               untitled={!isLocal && !workspace.title}
               initialPrompt={initialPrompt}
               initialAttachmentIds={initialAttachmentIds}
+              onSender={setSender}
             />
           ) : setup === "running" ? (
             <div className="studio-offline">
@@ -144,6 +147,7 @@ export function WorkspaceStudio({
             local={local}
             pullRequest={pullRequest}
             isReady={isReady}
+            sender={sender}
             terminalOpen={hasLiveSession && showTerminal}
             onClose={() => setRightOpen(false)}
           />
