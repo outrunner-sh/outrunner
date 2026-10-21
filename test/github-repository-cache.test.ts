@@ -3,12 +3,18 @@ import { afterEach, test } from "node:test";
 
 import type { GitHubRepositoryList } from "@/lib/github/client";
 import {
-  cachedRepositoryList,
+  cachedRepositoryList as cachedWithRead,
   clearRepositoryCache,
+  forgetRepositoryList,
   REPOSITORY_CACHE_TTL_MS,
 } from "@/lib/github/repository-cache";
 
 afterEach(clearRepositoryCache);
+
+/** Just the listing, for the tests about which one comes back. */
+async function cachedRepositoryList(...args: Parameters<typeof cachedWithRead>) {
+  return (await cachedWithRead(...args)).list;
+}
 
 /** A listing told apart by how many orgs it names. */
 function listing(count: number): GitHubRepositoryList {
@@ -73,4 +79,17 @@ test("a failed listing isn't kept, so the next call tries again", async () => {
   await assert.rejects(cachedRepositoryList("u1", () => Promise.reject(new Error("down"))));
   const list = await cachedRepositoryList("u1", () => Promise.resolve(listing(1)));
   assert.deepEqual(list.ssoPartialOrgIds, [1]);
+});
+
+test("only the call that read a listing is told it read it, and a forgotten one is read again", async () => {
+  let loads = 0;
+  const load = () => Promise.resolve(listing(++loads));
+
+  const [a, b] = await Promise.all([cachedWithRead("u1", load), cachedWithRead("u1", load)]);
+  assert.deepEqual([a.readNow, b.readNow], [true, false]);
+  assert.equal((await cachedWithRead("u1", load)).readNow, false);
+
+  forgetRepositoryList("u1");
+  assert.equal((await cachedWithRead("u1", load)).readNow, true);
+  assert.equal(loads, 2);
 });

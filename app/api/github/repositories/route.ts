@@ -22,8 +22,8 @@ export const dynamic = "force-dynamic";
  * A listing read in the last few seconds is reused (lib/github/repository-cache.ts);
  * `?fresh=1` (the picker's Refresh) reads it anew.
  *
- * Each listing also brings the connected projects up to date with it
- * (lib/github/reconcile.ts): new details written back, and ones GitHub no
+ * Each listing read from GitHub also brings the connected projects up to date
+ * with it (lib/github/reconcile.ts): new details written back, and ones GitHub no
  * longer lists marked lost. That never holds up or fails the listing.
  *
  * `connected` lists the github_repo_ids already synced, so the picker can show
@@ -39,13 +39,17 @@ export async function GET(request: Request) {
 
   try {
     const token = await requireGithubToken(owner.id);
-    const [list, projects] = await Promise.all([
+    const [{ list, readNow }, projects] = await Promise.all([
       cachedRepositoryList(owner.id, () => listGitHubRepositories(token), { fresh }),
       listProjects(),
     ]);
-    await reconcileProjects(owner.id, projects, list).catch((error: unknown) => {
-      console.error("Could not bring projects up to date with GitHub", error);
-    });
+    // Only with a listing read just now: one reused from earlier could write
+    // older details over a repository connected since.
+    if (readNow) {
+      await reconcileProjects(owner.id, token, projects, list).catch((error: unknown) => {
+        console.error("Could not bring projects up to date with GitHub", error);
+      });
+    }
 
     return NextResponse.json(
       {

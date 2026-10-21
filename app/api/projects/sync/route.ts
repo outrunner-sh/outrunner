@@ -11,7 +11,7 @@ import {
 } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { reconcileProjects } from "@/lib/github/reconcile-projects";
-import { cachedRepositoryList } from "@/lib/github/repository-cache";
+import { cachedRepositoryList, forgetRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
@@ -83,14 +83,19 @@ export async function POST(request: Request) {
       }
     } else {
       // A fresh listing, which the picker then reuses for its next few seconds.
-      list = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
+      ({ list } = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
         fresh: true,
-      });
+      }));
       repositories = list.repositories;
     }
     const synced = await upsertProjects(owner.id, repositories);
-    // Everything was just read: a project GitHub no longer lists is marked lost.
-    if (list) await reconcileProjects(owner.id, await listProjects(), list);
+    if (list) {
+      // Everything was just read: a project GitHub no longer lists is marked lost.
+      await reconcileProjects(owner.id, token, await listProjects(), list);
+    } else {
+      // Just connected from their own lookups, newer than any listing cached.
+      forgetRepositoryList(owner.id);
+    }
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
     return NextResponse.json({

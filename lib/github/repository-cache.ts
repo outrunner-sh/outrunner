@@ -18,6 +18,10 @@ type Entry = {
 /** Per process: Outrunner's server is one long-lived process (server.ts). */
 const entries = new Map<string, Entry>();
 
+/** A listing, and whether this call is the one that read it from GitHub
+ *  (rather than reusing one read earlier, or being read for another call). */
+export type CachedRepositoryList = { list: GitHubRepositoryList; readNow: boolean };
+
 /**
  * `userId`'s repository listing: one being read now, or one read in the last
  * {@link REPOSITORY_CACHE_TTL_MS}; otherwise one read now with `load`. `fresh`
@@ -25,14 +29,14 @@ const entries = new Map<string, Entry>();
  *
  * A failed listing is dropped at once, so the next call tries again.
  */
-export function cachedRepositoryList(
+export async function cachedRepositoryList(
   userId: string,
   load: () => Promise<GitHubRepositoryList>,
   { fresh = false, clock = Date.now }: { fresh?: boolean; clock?: () => number } = {},
-): Promise<GitHubRepositoryList> {
+): Promise<CachedRepositoryList> {
   pruneExpired(clock());
   const cached = entries.get(userId);
-  if (cached && !fresh) return cached.list;
+  if (cached && !fresh) return { list: await cached.list, readNow: false };
 
   const entry: Entry = { list: load(), readAt: null };
   entries.set(userId, entry);
@@ -45,7 +49,15 @@ export function cachedRepositoryList(
       if (entries.get(userId) === entry) entries.delete(userId);
     },
   );
-  return entry.list;
+  return { list: await entry.list, readNow: true };
+}
+
+/**
+ * Forget `userId`'s listing, after a change it would not show: a repository
+ * just connected from its own lookup is newer than any listing read before.
+ */
+export function forgetRepositoryList(userId: string): void {
+  entries.delete(userId);
 }
 
 /** Forget every cached listing (tests). */
