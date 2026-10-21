@@ -4,17 +4,19 @@ import {
   ChevronDown,
   ChevronRight,
   Cloud,
+  ExternalLink,
   GitBranch,
   GitPullRequest,
   Monitor,
   PanelRightClose,
   Plus,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceChanges } from "@/components/workspace-changes";
-import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
@@ -59,14 +61,12 @@ export function WorkspaceEnvironment({
     returning.current = true;
     setView("overview");
   };
-  const [open, setOpen] = useState<"branch" | "pr" | null>(null);
+  const [branchOpen, setBranchOpen] = useState(false);
   const changes = useWorkspaceChanges({ workspaceId: workspace.id, local: local !== undefined, active: isReady });
   const summary = environmentSummary(workspace, local);
-  const unfold = (row: "branch" | "pr") => setOpen((current) => (current === row ? null : row));
 
   // Both views stay mounted, the one not in use hidden: leaving the overview
-  // for Changes (or folding the PR row) must not throw away a pull request
-  // being written there.
+  // for Changes must not lose a pull request being opened, or its error.
   return (
     <>
       {view === "changes" && (
@@ -110,14 +110,14 @@ export function WorkspaceEnvironment({
         </EnvRow>
 
         <EnvRow
-          onClick={() => unfold("branch")}
-          expanded={open === "branch"}
+          onClick={() => setBranchOpen((current) => !current)}
+          expanded={branchOpen}
           icon={<GitBranch />}
-          right={<ChevronDown className={cn("transition-transform", open === "branch" && "rotate-180")} />}
+          right={<ChevronDown className={cn("transition-transform", branchOpen && "rotate-180")} />}
         >
           <span className="truncate">{summary.branch ?? "No branch"}</span>
         </EnvRow>
-        {open === "branch" && (
+        {branchOpen && (
           <dl className="studio-env-details">
             {summary.branch ? (
               <>
@@ -139,29 +139,109 @@ export function WorkspaceEnvironment({
         {/* Publishing goes through the server, which reaches cloud worktrees
             only; a local session's branch stays in the folder's repository. */}
         {!local && summary.branch && (
-          <>
-            <EnvRow
-              onClick={() => unfold("pr")}
-              expanded={open === "pr"}
-              icon={<GitPullRequest />}
-              right={<ChevronDown className={cn("transition-transform", open === "pr" && "rotate-180")} />}
-            >
-              {pullRequest ? `PR #${pullRequest.number}` : "Create PR"}
-            </EnvRow>
-            {/* Folded, not unmounted: the draft survives closing the row. */}
-            <div hidden={open !== "pr"} className="studio-env-unfold">
-              <WorkspacePublishPanel
-                workspaceId={workspace.id}
-                branch={summary.branch}
-                baseBranch={summary.baseBranch ?? workspace.baseBranch}
-                pullRequest={pullRequest}
-                active={isReady}
-                defaultTitle={workspace.title}
-              />
-            </div>
-          </>
+          <PullRequestRow
+            workspaceId={workspace.id}
+            branch={summary.branch}
+            baseBranch={summary.baseBranch ?? workspace.baseBranch}
+            pullRequest={pullRequest}
+            active={isReady}
+          />
         )}
       </div>
+    </>
+  );
+}
+
+/**
+ * Create PR in one click: the server commits what's left as the owner, pushes
+ * the branch and opens a pull request titled after the session. Once there is
+ * one, the row is a link to it.
+ */
+function PullRequestRow({
+  workspaceId,
+  branch,
+  baseBranch,
+  pullRequest,
+  active,
+}: {
+  workspaceId: string;
+  branch: string;
+  baseBranch: string;
+  pullRequest: WorkspacePullRequest | null;
+  active: boolean;
+}) {
+  const router = useRouter();
+  const [created, setCreated] = useState<WorkspacePullRequest | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [error, setError] = useState<{ message: string; reconnect: boolean } | null>(null);
+  const opened = created ?? pullRequest;
+
+  if (opened) {
+    return (
+      <EnvRow
+        href={opened.url}
+        icon={<GitPullRequest />}
+        title={`Pull request into ${opened.baseBranch}`}
+        right={<ExternalLink />}
+      >
+        PR #{opened.number}
+      </EnvRow>
+    );
+  }
+
+  async function publish() {
+    if (publishing || !active) return;
+    setPublishing(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        pullRequest?: WorkspacePullRequest;
+        error?: string;
+        reconnect?: boolean;
+      };
+      if (!response.ok || !result.pullRequest) {
+        setError({
+          message: result.error ?? "Could not create the pull request. Please try again.",
+          reconnect: result.reconnect === true,
+        });
+        return;
+      }
+      setCreated(result.pullRequest);
+      router.refresh();
+    } catch {
+      setError({ message: "Could not reach Outrunner. Please try again.", reconnect: false });
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  return (
+    <>
+      <EnvRow
+        onClick={() => void publish()}
+        disabled={!active}
+        busy={publishing}
+        icon={<GitPullRequest />}
+        title={
+          active
+            ? `Commit all changes, push ${branch} and open a pull request into ${baseBranch}`
+            : "Available once the workspace is ready"
+        }
+        right={publishing ? <Spinner label="Creating pull request" /> : undefined}
+      >
+        {publishing ? "Creating PR…" : error ? "Retry Create PR" : "Create PR"}
+      </EnvRow>
+      {error && (
+        <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
+          {error.message}
+          {error.reconnect && <GitHubReconnectLink />}
+        </p>
+      )}
     </>
   );
 }
@@ -181,14 +261,18 @@ function ChangesCount({ changes, active }: { changes: WorkspaceChangesState; act
 }
 
 /** One row: icon, what it is, and a count or chevron on the right. With
- *  `onClick` it is a button; `expanded` marks one that unfolds details. */
+ *  `onClick` it is a button (`expanded` marks one that unfolds details, `busy`
+ *  one at work, which ignores clicks); with `href`, a link out. */
 function EnvRow({
   ref,
   icon,
   right,
   title,
   onClick,
+  href,
   expanded,
+  disabled,
+  busy,
   children,
 }: {
   ref?: React.Ref<HTMLButtonElement>;
@@ -196,7 +280,10 @@ function EnvRow({
   right?: React.ReactNode;
   title?: string;
   onClick?: () => void;
+  href?: string;
   expanded?: boolean;
+  disabled?: boolean;
+  busy?: boolean;
   children: React.ReactNode;
 }) {
   const content = (
@@ -206,6 +293,13 @@ function EnvRow({
       {right && <span className="studio-env-right">{right}</span>}
     </>
   );
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" title={title} className="studio-env-row is-action">
+        {content}
+      </a>
+    );
+  }
   if (!onClick) {
     return (
       <div title={title} className="studio-env-row">
@@ -213,8 +307,18 @@ function EnvRow({
       </div>
     );
   }
+  // Busy is not disabled: the button keeps its focus and just ignores clicks.
   return (
-    <button ref={ref} type="button" onClick={onClick} title={title} aria-expanded={expanded} className="studio-env-row is-action">
+    <button
+      ref={ref}
+      type="button"
+      onClick={busy ? undefined : onClick}
+      title={title}
+      aria-expanded={expanded}
+      aria-busy={busy || undefined}
+      disabled={disabled}
+      className="studio-env-row is-action disabled:cursor-not-allowed disabled:opacity-50"
+    >
       {content}
     </button>
   );
