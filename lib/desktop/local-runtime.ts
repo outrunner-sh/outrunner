@@ -4,7 +4,9 @@ import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT, type ModelLoadout, parseLoadout } from "@/lib/runtime/model-loadout";
 import {
+  checkEffortApplied,
   defaultModel,
+  type Effort,
   type KeyHolder,
   type ModelMenu,
   predatesProvider,
@@ -250,12 +252,13 @@ export async function modelKeyFor(holder: KeyHolder): Promise<string> {
   return data.key;
 }
 
-/** Put a local session on `model`, before its first launch or as a switch:
- *  the agent records it, so Claude Code runs on it from then on. */
-export async function putOnModel(workspaceId: string, model: SessionModel): Promise<void> {
-  const body = await setModelRequest(model, modelKeyFor);
+/** Put a local session on `model` at `effort` (none: the model's own), before
+ *  its first launch or as a switch: the agent records both, so the session
+ *  runs on them from then on. */
+export async function putOnModel(workspaceId: string, model: SessionModel, effort?: Effort | null): Promise<void> {
+  const body = await setModelRequest(model, modelKeyFor, effort);
   try {
-    await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+    checkEffortApplied(body, await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body));
   } catch (error) {
     // The Mac's agent is older than the model's provider.
     if (error instanceof Error && predatesProvider(error.message)) throw new Error(predatesProviderMessage(model));

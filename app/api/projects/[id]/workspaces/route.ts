@@ -30,7 +30,14 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
-import { agentOf, defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  agentOf,
+  defaultModel,
+  type Effort,
+  requestedEffort,
+  requestedModel,
+  type SessionModel,
+} from "@/lib/runtime/session-models";
 import {
   deliverSessionAuth,
   OutdatedComputerError,
@@ -115,7 +122,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
-  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown };
+  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown; effort?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -125,6 +132,11 @@ export async function POST(request: Request, context: RouteContext) {
   const chosenModel = requestedModel(body);
   if (chosenModel === null) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+  }
+  // Picked with it; none, the model's own.
+  const chosenEffort = requestedEffort(body);
+  if (chosenEffort === null) {
+    return NextResponse.json({ error: "Choose one of the offered efforts." }, { status: 400 });
   }
   // Codex for Codex's models, Claude Code for every other, and for none.
   const agentId = agentOf(chosenModel?.provider ?? "claude");
@@ -236,6 +248,7 @@ export async function POST(request: Request, context: RouteContext) {
       hasClaude,
       menu,
       chosenModel,
+      chosenEffort,
       agentId,
       auth,
     }),
@@ -262,6 +275,7 @@ async function provisionWorkspace({
   hasClaude,
   menu,
   chosenModel,
+  chosenEffort,
   agentId,
   auth,
 }: {
@@ -277,6 +291,8 @@ async function provisionWorkspace({
   menu: Awaited<ReturnType<typeof modelMenu>>;
   /** Checked by the request: an offered model, or none for the default. */
   chosenModel: SessionModel | undefined;
+  /** Picked with it, or none for the model's own. */
+  chosenEffort: Effort | undefined;
   /** The agent the session runs, and what it signs in with. */
   agentId: AgentId;
   auth: ResolvedAuth;
@@ -374,6 +390,7 @@ async function provisionWorkspace({
         keyFor: (holder) => modelKey(owner.id, holder),
         hasClaude,
         model: chosenModel,
+        effort: chosenEffort,
         fallback: defaultModel(menu),
       });
       await agent.startWorkspace(identity);

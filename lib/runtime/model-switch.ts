@@ -2,6 +2,9 @@ import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import {
+  checkEffortApplied,
+  type Effort,
+  EffortUnsupportedError,
   type KeyHolder,
   type ModelProvider,
   predatesProvider,
@@ -20,6 +23,7 @@ function predatesSwitching(error: unknown): boolean {
 /** What to tell the user when a cloud session's agent refuses or fails a switch
  *  to `model`, and the status to answer with. */
 export function switchFailure(error: unknown, model: SessionModel): { status: number; message: string } {
+  if (error instanceof EffortUnsupportedError) return { status: 409, message: error.message };
   // An agent from before the model's provider: it says "unknown gateway".
   if (error instanceof AgentRequestError && error.status === 400 && predatesProvider(error.error?.message)) {
     return { status: 409, message: predatesProviderMessage(model) };
@@ -56,15 +60,24 @@ export class NoStartingModelError extends Error {
  * fails rather than quietly becoming another. Returns who it starts on.
  */
 export async function startingModel(deps: {
+  /** Resolves to the agent's answer, which says the effort it applied. */
   setModel: (req: SetModelRequest) => Promise<unknown>;
   keyFor: (holder: KeyHolder) => Promise<string>;
   hasClaude: boolean;
   /** Chosen on the new-session screen. */
   model?: SessionModel;
+  /** Chosen with it; it goes only with a model that takes one. */
+  effort?: Effort;
   /** What it starts on when none is chosen; null for the user's Claude. */
   fallback: SessionModel | null;
 }): Promise<ModelProvider> {
   const chosen = deps.model ?? deps.fallback;
+  // The effort was picked for the chosen model, never for the fallback.
+  const effort = deps.model ? deps.effort : undefined;
+  const put = async (model: SessionModel) => {
+    const req = await setModelRequest(model, deps.keyFor, effort);
+    checkEffortApplied(req, await deps.setModel(req));
+  };
   if (!chosen || chosen.provider === "claude") {
     if (!deps.hasClaude) {
       throw new NoStartingModelError(
@@ -74,11 +87,11 @@ export async function startingModel(deps: {
       );
     }
     // The menu's Claude model, or none: the session's own default.
-    if (chosen) await deps.setModel({ model: chosen.id });
+    if (chosen) await put(chosen);
     return "claude";
   }
   try {
-    await deps.setModel(await setModelRequest(chosen, deps.keyFor));
+    await put(chosen);
     return chosen.provider;
   } catch (error) {
     if (deps.hasClaude && !deps.model) {
@@ -91,6 +104,7 @@ export async function startingModel(deps: {
 
 /** Why a new session couldn't start on `model`, for the user. */
 function startFailure(error: unknown, model: SessionModel): string {
+  if (error instanceof EffortUnsupportedError) return error.message;
   if (predatesSwitching(error)) {
     return "This project's cloud computer runs an older Outrunner that can't switch models. Connect Claude in Settings to use it.";
   }

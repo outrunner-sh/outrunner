@@ -3,14 +3,18 @@ import { test } from "node:test";
 
 import {
   agentOf,
+  checkEffortApplied,
   defaultModel,
+  EffortUnsupportedError,
   matchModel,
   modelChoice,
   modelGroups,
   modelLabel,
   predatesProvider,
+  requestedEffort,
   requestedModel,
   setModelRequest,
+  takesEffort,
   type ModelMenu,
 } from "@/lib/runtime/session-models";
 import { usableProviders } from "@/lib/providers/registry";
@@ -181,4 +185,35 @@ test("Codex takes its listed models and any id the agent takes, and switches wit
     throw new Error("no key is asked for");
   });
   assert.deepEqual(req, { model: "gpt-6-sol" });
+});
+
+test("an effort goes only with a model that takes one", async () => {
+  const keyFor = async () => "key-0123456789abcdef";
+  assert.equal(takesEffort({ provider: "claude", id: "opus" }), true);
+  assert.equal(takesEffort({ provider: "codex", id: "gpt-7-preview" }), true, "a typed Codex id too");
+  // Haiku has none; a gateway's model runs at its own, Claude's family or not.
+  assert.equal(takesEffort({ provider: "claude", id: "haiku" }), false);
+  assert.equal(takesEffort({ provider: "outrunner", id: "anthropic/claude-opus-5.5" }), false);
+
+  assert.deepEqual(await setModelRequest(modelChoice("claude", "opus")!, keyFor, "xhigh"), { model: "opus", effort: "xhigh" });
+  assert.deepEqual(await setModelRequest(modelChoice("claude", "haiku")!, keyFor, "xhigh"), { model: "haiku" });
+  assert.equal((await setModelRequest(modelChoice("outrunner", "z-ai/glm-5.3")!, keyFor, "max")).effort, undefined);
+  assert.deepEqual(await setModelRequest(modelChoice("codex", "gpt-6-sol")!, keyFor, null), { model: "gpt-6-sol" });
+});
+
+test("a request's effort is a level, none, or refused", () => {
+  assert.equal(requestedEffort({ effort: "high" }), "high");
+  assert.equal(requestedEffort({}), undefined);
+  assert.equal(requestedEffort({ effort: null }), undefined);
+  assert.equal(requestedEffort(null), undefined);
+  for (const bad of ["ultra", "--max", "", 3]) assert.equal(requestedEffort({ effort: bad }), null, String(bad));
+});
+
+test("an agent that doesn't say it applied the effort predates efforts", () => {
+  // Asked for none: any answer will do.
+  checkEffortApplied({ model: "opus" }, { result: "opus" });
+  checkEffortApplied({ model: "opus", effort: "max" }, { result: "opus", effort: "max" });
+  for (const answer of [{ result: "opus" }, { result: "opus", effort: "" }, undefined, "opus"]) {
+    assert.throws(() => checkEffortApplied({ model: "opus", effort: "max" }, answer), EffortUnsupportedError);
+  }
 });
