@@ -4,6 +4,7 @@ import { Brain, ChevronDown, ChevronRight, Sparkles, Terminal, Wrench } from "lu
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
+import { TickingFact } from "@/components/ui/notice";
 import { DotMatrix } from "@/components/ui/loaders";
 import { useStreamedText } from "@/hooks/use-streamed-text";
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
@@ -128,9 +129,11 @@ function WorkingIndicator() {
     <div role="status" className="flex items-center gap-2.5 py-1 text-[13px] text-muted-foreground">
       <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
       <span>Working</span>
-      <span className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
+      {/* The timer ticks ten times a second, so it stays out of the live
+          region; "Working" is the announcement, once. */}
+      <TickingFact className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
         {(elapsed / 1000).toFixed(1)}s
-      </span>
+      </TickingFact>
     </div>
   );
 }

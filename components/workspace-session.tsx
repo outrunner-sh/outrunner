@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { ErrorRef, Notice } from "@/components/ui/notice";
+import { ErrorRef, Notice, TickingFact } from "@/components/ui/notice";
 import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
 import {
   LOCAL_RUNNER_LOG,
@@ -551,7 +551,17 @@ function ReconnectingNotice({ attempt, max, since }: { attempt: number; max: num
     <Notice
       tone="progress"
       title="Reconnecting to this session…"
-      meta={`${attempt > 0 ? `attempt ${Math.min(attempt, max)} of ${max} · ` : ""}${elapsed}`}
+      meta={
+        <>
+          {attempt > 0 && <span>attempt {Math.min(attempt, max)} of {max}</span>}
+          {/* The elapsed clock ticks every second, so it stays out of the
+              live region; the attempt line is announced only when it changes. */}
+          <TickingFact>
+            {attempt > 0 ? " · " : ""}
+            {elapsed}
+          </TickingFact>
+        </>
+      }
     />
   );
 }

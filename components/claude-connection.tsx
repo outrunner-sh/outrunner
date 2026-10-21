@@ -5,7 +5,7 @@ import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
-import { InlineMessage, Notice } from "@/components/ui/notice";
+import { InlineMessage, Notice, TickingFact } from "@/components/ui/notice";
 import { useNow } from "@/hooks/use-now";
 import {
   cancelClaudeLogin,
@@ -301,7 +301,10 @@ function ApprovalWindow({ url, until }: { url: string; until: number }) {
   const left = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   return (
     <>
-      A tab opened on {hostOf(url)}. This window stays open for <span className="text-foreground tabular-nums">{left}</span>.
+      A tab opened on {hostOf(url)}. This window stays open for five minutes.{" "}
+      {/* The countdown ticks every second: hidden from screen readers, so the
+          live region says the sentence once, not once per second. */}
+      <TickingFact className="text-foreground tabular-nums">{left} left</TickingFact>
     </>
   );
 }

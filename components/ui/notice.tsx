@@ -86,6 +86,18 @@ export function ErrorRef({ value, label = "error" }: { value: string; label?: st
   );
 }
 
+/** A fact that changes on its own — a countdown, an elapsed time. Hidden from
+ *  screen readers: a Notice is a live region, and a fact that ticks inside one
+ *  is re-announced every second. The sentence around it still says what it
+ *  counts. */
+export function TickingFact({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <span className={className} aria-hidden>
+      {children}
+    </span>
+  );
+}
+
 /**
  * A banner for the state of something larger than one field: a session's
  * connection, its box, its agent. Title says what happened, detail what it
