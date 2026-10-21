@@ -132,11 +132,12 @@
 /* Workspace studio: the session screen. */
 .studio-shell {
   display: grid;
-  /* The chat, and its Environment panel at about a third of the width (the
-     landing page's proportions; diffs open inside it, behind Changes); just
-     the chat when the panel is closed. The app sidebar is the layout's,
-     outside this grid. */
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.5fr);
+  /* A header across the top; beneath it the chat, and its Environment panel
+     as a narrow column of rows on the same black, no rule between them (it
+     widens for Changes, below, where diffs open); just the chat when the
+     panel is closed. The app sidebar is the layout's, outside this grid. */
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-rows: auto minmax(0, 1fr);
   /* Definite height (not min-height) so the grid tracks are bounded: the chat
      column's conversation scrolls internally and its composer stays pinned at
      the bottom, instead of the whole page growing and scrolling. */
@@ -148,9 +149,9 @@
 
 .studio-status { display: inline-block; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #555; }.studio-status.is-ready, .studio-status.is-idle { background: var(--studio-green); }.studio-status.is-failed { background: var(--studio-red); }.studio-status.is-provisioning, .studio-status.is-creating, .studio-status.is-resuming { background: var(--studio-amber); }
 
-.studio-chat { display: grid; min-width: 0; min-height: 0; overflow: hidden; grid-template-rows: auto minmax(0,1fr); background: var(--studio-bg); }
-.studio-chat-header { display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 12px 24px; border-bottom: 1px solid var(--studio-line); background: var(--studio-bg); }
-.studio-title { display: flex; align-items: center; gap: 11px; min-width: 0; }.studio-title h2 { overflow: hidden; margin: 0; color: var(--studio-text); font: 500 14px var(--font-geist-sans); text-overflow: ellipsis; white-space: nowrap; }.studio-title p { margin: 3px 0 0; color: var(--studio-muted); font-size: 11px; }.studio-header-actions { display: flex; align-items: center; gap: 8px; }.studio-icon-button { display: grid; width: 31px; height: 31px; place-items: center; border: 1px solid transparent; border-radius: 8px; color: var(--studio-muted); background: transparent; cursor: pointer; transition: .12s ease; }.studio-icon-button:hover { color:var(--studio-text);background:var(--studio-hover); }.studio-icon-button.is-active { color:var(--studio-text);border-color:transparent;background:var(--studio-hover); }.studio-icon-button svg { width:15px; }
+.studio-chat { display: grid; min-width: 0; min-height: 0; overflow: hidden; grid-template-rows: minmax(0,1fr); background: var(--studio-bg); }
+.studio-header { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 12px; height: 44px; padding: 0 12px 0 16px; background: var(--studio-bg); }
+.studio-title { display: flex; align-items: center; gap: 10px; min-width: 0; }.studio-title h2 { overflow: hidden; margin: 0; color: var(--studio-text); font: 400 14px var(--font-geist-sans); text-overflow: ellipsis; white-space: nowrap; }.studio-title-place { flex-shrink: 0; color: var(--studio-muted); font-size: 14px; white-space: nowrap; }.studio-header-actions { display: flex; align-items: center; gap: 8px; }.studio-icon-button { display: grid; width: 31px; height: 31px; place-items: center; border: 1px solid transparent; border-radius: 8px; color: var(--studio-muted); background: transparent; cursor: pointer; transition: .12s ease; }.studio-icon-button:hover { color:var(--studio-text);background:var(--studio-hover); }.studio-icon-button.is-active { color:var(--studio-text);border-color:transparent;background:var(--studio-hover); }.studio-icon-button svg { width:15px; }
 .studio-empty-chat code { color: var(--studio-text); font-family: var(--font-geist-mono); }
 .studio-empty-chat { max-width: 540px; margin: 17vh auto 0; text-align: center; }.studio-empty-icon { display: grid; width: 42px; height: 42px; margin: 0 auto 15px; place-items: center; border: 1px solid var(--studio-line); border-radius: 12px; color: var(--studio-muted); background: var(--studio-panel); }.studio-empty-icon svg { width:20px; }.studio-empty-chat h3 { margin: 0; color: var(--studio-text); font-size: 18px; letter-spacing: -.02em; }.studio-empty-chat p { margin: 9px auto 0; color: var(--studio-muted); font-size: 13px; line-height: 1.65; }
 
@@ -295,7 +296,7 @@
 
 @media (max-width: 1100px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-inspector { position: fixed; z-index: 20; top: 0; right: 0; width: min(440px, 92vw); height:100vh; box-shadow: -20px 0 50px rgba(0,0,0,.6); } }
 
-@media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-chat-header { padding:11px 15px; }.studio-empty-chat { margin-top:12vh; }.studio-composer { margin:0 15px 16px; } }
+@media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-header { padding:0 12px; }.studio-empty-chat { margin-top:12vh; }.studio-composer { margin:0 15px 16px; } }
 
 /* Loaders (components/ui/loaders.tsx), after interior.dev: a dot matrix with an
    accent wave, and a thin arc. Under reduced motion both hold still; the text
