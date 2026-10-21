@@ -166,6 +166,12 @@ type workspaceFacts struct {
 	CreatedAt string `json:"createdAt,omitempty"`
 }
 
+// GitUser is the git identity for commits in a workspace.
+type GitUser struct {
+	Name  string
+	Email string
+}
+
 // CreateInput is what Create needs to provision one workspace.
 type CreateInput struct {
 	WorkspaceID string
@@ -184,6 +190,8 @@ type CreateInput struct {
 	// Agent is the coding agent the session runs (ValidAgent); empty is
 	// Claude. Recorded at the first Create only.
 	Agent string
+	// GitUser is the git identity for commits; nil uses the system default.
+	GitUser *GitUser
 }
 
 func NewService(root string) *Service {
@@ -382,6 +390,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	// Configure git author so commits are attributed to the Outrunner user.
+	if in.GitUser != nil && in.GitUser.Name != "" && in.GitUser.Email != "" {
+		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.name", in.GitUser.Name).Run()
+		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.email", in.GitUser.Email).Run()
 	}
 	return worktree, nil
 }

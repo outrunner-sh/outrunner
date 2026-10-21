@@ -374,6 +374,8 @@ async function provisionWorkspace({
           branch: workspace.branch,
           // Named only for Codex: Claude Code is every agent's default.
           ...(agentId !== "claude" && { agent: agentId }),
+          // Configure git author so commits are attributed to the user.
+          ...(owner.email && { gitUser: { name: owner.name, email: owner.email } }),
         },
         identity,
       );
