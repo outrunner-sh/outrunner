@@ -408,9 +408,10 @@
 .timeline-row { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 60px; }
 /* A prompt stays pinned at the top while its turn scrolls beneath it, until
    the next prompt takes its place. Always rendered: a pinned row is on screen
-   wherever it sits in the list. */
+   wherever it sits in the list. Capped and scrolling on its own, so a long
+   prompt (a pasted log, a file) cannot pin over the whole turn. */
 .timeline-row.is-prompt { position: sticky; top: 0; z-index: 1; content-visibility: visible; }
-.timeline-prompt { padding: 10px 16px; border-radius: 4px; color: #d8d4d2; background: #282523; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timeline-prompt { max-height: 30vh; padding: 10px 16px; overflow: auto; border-radius: 4px; color: #d8d4d2; background: #282523; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* Claude's steps: a thought as a quiet line, a tool call as a bordered row. */
 .timeline-thought { padding: 2px 8px; color: #a69996; font-size: 14px; }
 .timeline-tool { min-width: 0; border: 1px solid var(--studio-border); border-radius: 3px; }
