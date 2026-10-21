@@ -5,17 +5,18 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
+import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
-type Repo = {
-  githubRepoId: number;
-  fullName: string;
-  name: string;
-  private: boolean;
+type Listing = {
+  repositories: RepositoryListing[];
+  connected: number[];
+  /** False when GitHub may have more than the list holds. */
+  complete: boolean;
+  /** Organizations whose repositories single sign-on held back. */
+  ssoPartialOrgIds: number[];
 };
-
-type Listing = { repositories: Repo[]; connected: number[] };
 
 /**
  * Pick the repository a session runs in — from everything on the user's GitHub,
@@ -48,7 +49,7 @@ export function RepositorySelect({
   onSelect?: (project: Project) => void;
   /** Instead of connecting it as a project, what picking a repository does
    *  (a session on this Mac clones it). The menu closes as it starts. */
-  onPick?: (repo: Repo) => void;
+  onPick?: (repo: RepositoryListing) => void;
   /** What the trigger shows in place of the selected project. */
   label?: { text: string; title?: string; icon: React.ReactNode };
   /** One more row under the list, such as choosing a folder instead. */
@@ -77,12 +78,17 @@ export function RepositorySelect({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/github/repositories", {
-        cache: force ? "no-store" : "default",
-      });
+      // Refresh asks GitHub again; otherwise a listing from the last few
+      // seconds is fine (app/api/github/repositories).
+      const res = await fetch(force ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
       const data = (await res.json()) as Partial<Listing> & { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Could not load repositories.");
-      setListing({ repositories: data.repositories ?? [], connected: data.connected ?? [] });
+      setListing({
+        repositories: data.repositories ?? [],
+        connected: data.connected ?? [],
+        complete: data.complete ?? true,
+        ssoPartialOrgIds: data.ssoPartialOrgIds ?? [],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load repositories.");
     } finally {
@@ -123,17 +129,12 @@ export function RepositorySelect({
       listing?.repositories ??
       // Before the live list arrives, offer what is already connected so the
       // menu is never empty.
-      projects.map((p) => ({
-        githubRepoId: p.githubRepoId,
-        fullName: p.fullName,
-        name: p.name,
-        private: false,
-      }));
+      projects.map(projectToListing);
     const q = query.trim().toLowerCase();
     return q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos;
   }, [listing, projects, query]);
 
-  async function choose(repo: Repo) {
+  async function choose(repo: RepositoryListing) {
     if (onPick) {
       setOpen(false);
       triggerRef.current?.focus();
@@ -243,6 +244,16 @@ export function RepositorySelect({
               </button>
             ))}
           </div>
+
+          {/* The list may be short: say why rather than let a missing
+              repository look like one that isn't there. */}
+          {listing && (listing.ssoPartialOrgIds.length > 0 || !listing.complete) && (
+            <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
+              {listing.ssoPartialOrgIds.length > 0
+                ? "Some organizations' repositories are hidden until you authorize Outrunner for their single sign-on on GitHub."
+                : "GitHub may have more repositories than this list shows."}
+            </p>
+          )}
 
           {extra && (
             <div className="border-border border-t">
