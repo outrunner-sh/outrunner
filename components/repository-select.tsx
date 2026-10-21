@@ -6,19 +6,10 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { RepositoryAccessNotes } from "@/components/repository-access-notes";
 import { Spinner } from "@/components/ui/loaders";
-import type { RepositoryAccess } from "@/lib/github/access";
-import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
+import { useGitHubRepositories } from "@/hooks/use-github-repositories";
+import { filterRepositories, projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
-
-type Listing = {
-  repositories: RepositoryListing[];
-  connected: number[];
-  /** False when GitHub may have more than the list holds. */
-  complete: boolean;
-  /** Why repositories may be missing: invitations, organizations. */
-  access: RepositoryAccess | null;
-};
 
 /**
  * Pick the repository a session runs in — from everything on the user's GitHub,
@@ -61,9 +52,7 @@ export function RepositorySelect({
   triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [listing, setListing] = useState<Listing | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { list: listing, loading, error, setError, load, connect } = useGitHubRepositories();
   const [query, setQuery] = useState("");
   const [connectingId, setConnectingId] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -74,29 +63,6 @@ export function RepositorySelect({
   const listId = useId();
 
   const selected = projects.find((p) => p.id === selectedProjectId);
-
-  async function load(force = false) {
-    if (loading || (listing && !force)) return;
-    setLoading(true);
-    setError(null);
-    try {
-      // Refresh asks GitHub again; otherwise a listing from the last few
-      // seconds is fine (app/api/github/repositories).
-      const res = await fetch(force ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
-      const data = (await res.json()) as Partial<Listing> & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not load repositories.");
-      setListing({
-        repositories: data.repositories ?? [],
-        connected: data.connected ?? [],
-        complete: data.complete ?? true,
-        access: data.access ?? null,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load repositories.");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   // Focus search on open so typing filters immediately. The fetch is kicked off
   // from the trigger's click handler rather than here — starting it in an effect
@@ -132,8 +98,7 @@ export function RepositorySelect({
       // Before the live list arrives, offer what is already connected so the
       // menu is never empty.
       projects.map(projectToListing);
-    const q = query.trim().toLowerCase();
-    return q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos;
+    return filterRepositories(repos, query);
   }, [listing, projects, query]);
 
   async function choose(repo: RepositoryListing) {
@@ -154,16 +119,7 @@ export function RepositorySelect({
     setConnectingId(repo.githubRepoId);
     setError(null);
     try {
-      const res = await fetch("/api/projects/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repoIds: [repo.githubRepoId] }),
-      });
-      const data = (await res.json()) as { projects?: Project[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not connect that repository.");
-      const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
-      if (!created) throw new Error("Connected, but the project did not come back.");
-      onSelect?.(created);
+      onSelect?.(await connect(repo.githubRepoId));
       setOpen(false);
       triggerRef.current?.focus();
     } catch (err) {
