@@ -24,13 +24,14 @@ export type RepositoryListing = {
 /**
  * Whether `value` is an `owner/name` as GitHub allows them — the same rule the
  * Mac app applies before cloning (runtime-desktop local_runtime.rs
- * `github_repo`), so nothing else (`..`, another path, an option) passes.
+ * `github_repo`), so nothing else (`..`, another path, an option) passes. An
+ * owner may hold `_`: Enterprise Managed Users are `handle_shortcode`.
  */
 export function isGitHubFullName(value: string): boolean {
   const [owner, name, ...rest] = value.split("/");
   if (rest.length > 0 || owner === undefined || name === undefined) return false;
   return (
-    /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner) &&
+    /^[A-Za-z0-9][A-Za-z0-9_-]{0,38}$/.test(owner) &&
     /^[A-Za-z0-9._][A-Za-z0-9._-]{0,99}$/.test(name) &&
     name !== "." &&
     name !== ".."
@@ -83,14 +84,46 @@ export function avatarAt(url: string, size: number): string {
 }
 
 /**
+ * GitHub's own top-level pages: names no account can take, so a URL under one
+ * is a page about something (an organization, an app), not a repository.
+ */
+const GITHUB_RESERVED_PATHS = new Set([
+  "about",
+  "apps",
+  "codespaces",
+  "collections",
+  "enterprises",
+  "explore",
+  "features",
+  "gist",
+  "issues",
+  "login",
+  "marketplace",
+  "new",
+  "notifications",
+  "organizations",
+  "orgs",
+  "pricing",
+  "pulls",
+  "search",
+  "settings",
+  "sponsors",
+  "topics",
+  "users",
+]);
+
+/**
  * The `owner/name` a pasted repository reference names, or null if it isn't
  * a GitHub repository: `owner/name`, its page (`https://github.com/o/r`, with
  * or without `www.`, `.git`, a trailing `/`, or a deeper path such as
- * `/tree/main/src`), or its SSH remote (`git@github.com:o/r.git`,
- * `ssh://git@github.com/o/r`). Another host is not GitHub, so it is null.
+ * `/tree/main/src`), its SSH remote (`git@github.com:o/r.git`,
+ * `ssh://git@github.com/o/r`), or either as package.json writes it
+ * (`git+https://…`, `git+ssh://…`). Another host is not GitHub, and a GitHub
+ * page that isn't a repository (`/orgs/acme/…`, `/settings/…`) isn't one, so
+ * both are null.
  */
 export function parseGitHubRepoInput(input: string): string | null {
-  const text = input.trim();
+  const text = input.trim().replace(/^git\+/i, "");
   if (!text) return null;
 
   let path: string;
@@ -114,6 +147,7 @@ export function parseGitHubRepoInput(input: string): string | null {
 
   const [owner, rawName] = path.replace(/^\/+/, "").split("/");
   if (!owner || !rawName) return null;
+  if (GITHUB_RESERVED_PATHS.has(owner.toLowerCase())) return null;
   // A bare `owner/name` must be just that; a URL may go deeper than the repo.
   if (path === text && path.split("/").length !== 2) return null;
   const name = rawName.replace(/\.git$/i, "");

@@ -1090,12 +1090,13 @@ fn repos_dir() -> Result<PathBuf, String> {
 
 /// A repository's `owner/name` as GitHub allows them, so the page can't steer a
 /// clone anywhere else: another host, `..`, a folder outside `repos_dir`, or
-/// an option for git.
+/// an option for git. An owner may hold `_` (an Enterprise Managed User's
+/// `handle_shortcode`), but not start with one.
 fn github_repo(full_name: &str) -> Option<(String, String)> {
     let (owner, name) = full_name.split_once('/')?;
     let owner_ok = (1..=39).contains(&owner.len())
-        && !owner.starts_with('-')
-        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+        && owner.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && owner.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
     let name_ok = (1..=100).contains(&name.len())
         && name != "."
         && name != ".."
@@ -1572,9 +1573,10 @@ mod tests {
     fn only_a_github_owner_and_name_can_be_cloned() {
         assert_eq!(github_repo("sajdakabir/Doorman"), Some(("sajdakabir".into(), "Doorman".into())));
         assert_eq!(github_repo("neevai-labs/neev.ai_x-1"), Some(("neevai-labs".into(), "neev.ai_x-1".into())));
+        assert_eq!(github_repo("jane_acme/tool"), Some(("jane_acme".into(), "tool".into())));
         for bad in [
             "", "Doorman", "a/b/c", "../x", "a/..", "a/.", "-a/x", "a/-x", "a/x y", "a/x;rm", "a b/x",
-            "evil.com/x", "a/--upload-pack=x",
+            "evil.com/x", "a/--upload-pack=x", "_a/x",
         ] {
             assert_eq!(github_repo(bad), None, "{bad:?} was allowed");
         }
