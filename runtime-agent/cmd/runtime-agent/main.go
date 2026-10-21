@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"runtime-agent/internal/ask"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/localimport"
@@ -28,6 +30,13 @@ func main() {
 		os.Exit(localimport.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 
+	// `runtime-agent ask-mcp …` is a session's ask_user relay, an MCP server
+	// its agent's CLI launches over stdio (package ask). It serves that one
+	// session, through the agent it finds under the root.
+	if len(os.Args) > 1 && os.Args[1] == "ask-mcp" {
+		os.Exit(askRelay(os.Args[2:]))
+	}
+
 	secret := os.Getenv("RUNTIME_AGENT_SECRET")
 	if secret == "" {
 		log.Fatal("RUNTIME_AGENT_SECRET is required")
@@ -40,6 +49,11 @@ func main() {
 	host := os.Getenv("HOST")
 
 	svc := workspace.NewService(root)
+	if exe, err := os.Executable(); err == nil {
+		svc.RelayExecutable = exe
+	} else {
+		log.Printf("runtime-agent: sessions launch without ask_user: %v", err)
+	}
 	if raw := os.Getenv("RUNTIME_DEFAULT_PERMISSION_MODE"); raw != "" {
 		mode, err := claude.ParsePermissionMode(raw)
 		if err != nil {
@@ -71,6 +85,9 @@ func main() {
 	listener, err := net.Listen("tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		log.Fatal(err)
+	}
+	if err := svc.Announce(listener.Addr()); err != nil {
+		log.Printf("runtime-agent: sessions' questions can't reach this agent: %v", err)
 	}
 	fmt.Printf("RUNTIME_AGENT_ADDR=%s\n", listener.Addr())
 	log.Printf("runtime-agent listening on %s (root=%s)", listener.Addr(), root)
@@ -108,4 +125,29 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// askRelay runs a session's ask_user relay until its agent's CLI closes it.
+func askRelay(args []string) int {
+	flags := flag.NewFlagSet("ask-mcp", flag.ContinueOnError)
+	root := flags.String("root", "", "the runtime-agent's root")
+	workspaceID := flags.String("workspace", "", "the session's workspace id")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *root == "" || *workspaceID == "" {
+		fmt.Fprintln(os.Stderr, "ask-mcp: --root and --workspace are required")
+		return 2
+	}
+	addrFile, tokenFile := workspace.AskPaths(*root, *workspaceID)
+	err := ask.Relay(context.Background(), os.Stdin, os.Stdout, ask.RelayConfig{
+		WorkspaceID: *workspaceID,
+		AddrFile:    addrFile,
+		TokenFile:   tokenFile,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ask-mcp:", err)
+		return 1
+	}
+	return 0
 }

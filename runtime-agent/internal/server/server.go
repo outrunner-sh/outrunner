@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"path"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"runtime-agent/internal/ask"
 	"runtime-agent/internal/auth"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
@@ -91,6 +93,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("POST /workspaces/{id}/interrupt", s.authed(s.interrupt))
+	mux.HandleFunc("POST /workspaces/{id}/answer", s.authed(s.answer))
+	// The session's own relay asks, with the session's ask token rather than
+	// a Runtime token (package ask).
+	mux.HandleFunc("POST /workspaces/{id}/ask", s.ask)
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
@@ -434,6 +440,67 @@ func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, "interrupted", err)
+}
+
+// ask holds a question the session's agent asked (its ask_user relay's call)
+// until the user answers it in the browser, or the relay gives the call up.
+func (s *Server) ask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "this session can't ask questions here")
+		return
+	}
+	var req struct {
+		RequestID string         `json:"requestId"`
+		Questions []ask.Question `json:"questions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed questions: "+err.Error())
+		return
+	}
+	if req.RequestID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "ask requires a requestId")
+		return
+	}
+	// Read to the end: only then does the server watch the connection, so a
+	// relay giving the call up (its agent interrupted) ends the wait.
+	_, _ = io.Copy(io.Discard, r.Body)
+	text, err := s.ws.Ask(r.Context(), id, req.RequestID, req.Questions)
+	switch {
+	case r.Context().Err() != nil:
+		return // the relay gave the call up: nobody to answer
+	case errors.Is(err, ask.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, ask.ErrBusy), errors.Is(err, ask.ErrReplaced):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"text": text})
+	}
+}
+
+// answer gives the user's reply to the questions the session is waiting on.
+func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req struct {
+		Questions []ask.Question `json:"questions"`
+		ask.Reply
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.Answer(r.PathValue("id"), req.Questions, req.Reply)
+	switch {
+	case errors.Is(err, ask.ErrNotWaiting):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, ask.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	default:
+		respond(w, "answered", err)
+	}
 }
 
 // setModel switches the workspace's session to another model, relaunching a

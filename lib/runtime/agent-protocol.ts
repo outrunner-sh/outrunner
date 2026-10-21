@@ -143,6 +143,22 @@ const CredentialToken = z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,400}
  * a credential on an engine that runs sessions on its own login (jcode),
  * 409 UNSUPPORTED.
  */
+/**
+ * POST /workspaces/{id}/answer: the user's reply to the questions the session
+ * is waiting on (runtime-agent/internal/ask). `questions` are the ask_user
+ * call's, as the transcript has them; the agent checks the reply against them.
+ * A dismissed card carries no answers.
+ */
+export const AnswerRequest = z.object({
+  questions: z.array(z.unknown()).min(1).max(4),
+  answers: z
+    .array(z.object({ selected: z.array(z.string().max(500)).max(4), other: z.string().max(4000) }))
+    .max(4)
+    .optional(),
+  dismissed: z.boolean().optional(),
+});
+export type AnswerRequest = z.infer<typeof AnswerRequest>;
+
 export const SetAuthRequest = z
   .object({
     kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key"]),
