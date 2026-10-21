@@ -55,3 +55,15 @@ test("reachOutrunner answers as fetch does, and says so when it can't get there"
   }) as typeof fetch;
   await assert.rejects(reachOutrunner("/x"), { message: UNREACHABLE });
 });
+
+test("a removal sends no body and no content-type", async () => {
+  let sent: RequestInit | undefined;
+  globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+    sent = init;
+    return new Response(JSON.stringify({ keys: {} }));
+  }) as typeof fetch;
+  await requestJson<{ keys: unknown }>("/x?provider=zai", { method: "DELETE", has: (d) => d.keys !== undefined });
+  assert.equal(sent?.method, "DELETE");
+  assert.equal(sent?.body, undefined);
+  assert.equal(sent?.headers, undefined);
+});
