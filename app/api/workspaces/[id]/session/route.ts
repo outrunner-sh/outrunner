@@ -36,7 +36,9 @@ type RouteContext = { params: Promise<{ id: string }> };
  *
  * The token secret never leaves the server; only the finished `wss://` URL
  * crosses the wire. Clients re-call this route whenever a stream closes to
- * refresh the URLs — do NOT cache them past a single connection.
+ * refresh the URLs — do NOT cache them past a single connection. Such a re-call
+ * adds `?fresh=1`: the box's endpoint, kept a few minutes server-side, is looked
+ * up again in case it is what failed.
  *
  * See docs/architecture/session-contract.md.
  */
@@ -44,13 +46,17 @@ export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
-  const owner = await getOwner();
+  const { id } = await context.params;
+  // Read alongside the owner check: the read is the owner's own anyway (RLS),
+  // and signed out it is dropped unread, failed or not.
+  const [ownerRead, workspaceRead] = await Promise.allSettled([getOwner(), getWorkspace(id)]);
+  if (ownerRead.status === "rejected") throw ownerRead.reason;
+  const owner = ownerRead.value;
   if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
-
-  const { id } = await context.params;
-  const workspace = await getWorkspace(id);
+  if (workspaceRead.status === "rejected") throw workspaceRead.reason;
+  const workspace = workspaceRead.value;
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
@@ -102,7 +108,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   let target;
   try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+    const fresh = new URL(request.url).searchParams.get("fresh") === "1";
+    target = await provider.agentTarget(computer.daytonaSandboxId, secret, { fresh });
   } catch (error) {
     console.error(`Session attach: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(
