@@ -3,25 +3,45 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"runtime-agent/internal/protocol"
 )
 
 func TestParseChangedFiles(t *testing.T) {
-	// porcelain v1 -z: " M" keeps its leading space, and a rename is followed by
-	// its original name as a separate field.
-	out := " M src/a.ts\x00?? new.txt\x00A  added.go\x00 D gone.md\x00R  to.ts\x00from.ts\x00"
-	got := parseChangedFiles(out)
-	want := map[string]string{"src/a.ts": "modified", "new.txt": "untracked", "added.go": "added", "gone.md": "deleted", "to.ts": "renamed"}
-	if len(got) != len(want) {
-		t.Fatalf("parsed %d files, want %d: %+v", len(got), len(want), got)
+	// -z output: a rename or copy carries its old and new names as separate
+	// fields; in numstat its path field is empty. A binary file counts "-", and
+	// a path may hold a tab.
+	nameStatus := "M\x00src/a.ts\x00A\x00logo.png\x00D\x00gone.md\x00R087\x00from.ts\x00to.ts\x00C75\x00orig.ts\x00copy.ts\x00M\x00tab\there.ts\x00"
+	numstat := "3\t1\tsrc/a.ts\x00-\t-\tlogo.png\x000\t9\tgone.md\x00" +
+		"2\t1\t\x00from.ts\x00to.ts\x004\t0\t\x00orig.ts\x00copy.ts\x005\t0\ttab\there.ts\x00"
+	// gone.md is out of the index but still on disk: listed once.
+	untracked := "new.txt\x00gone.md\x00"
+	got := parseChangedFiles(nameStatus, numstat, untracked)
+	want := []protocol.ChangedFile{
+		{Path: "src/a.ts", Status: "modified", Additions: 3, Deletions: 1},
+		{Path: "logo.png", Status: "added"},
+		{Path: "gone.md", Status: "deleted", Deletions: 9},
+		{Path: "to.ts", Status: "renamed", Additions: 2, Deletions: 1},
+		{Path: "copy.ts", Status: "added", Additions: 4},
+		{Path: "tab\there.ts", Status: "modified", Additions: 5},
+		{Path: "new.txt", Status: "untracked"},
 	}
-	for _, f := range got {
-		if want[f.Path] != f.Status {
-			t.Errorf("%s: status %q, want %q", f.Path, f.Status, want[f.Path])
-		}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseChangedFiles =\n%+v\nwant\n%+v", got, want)
+	}
+
+	var many strings.Builder
+	for i := 0; i <= maxChangedFiles; i++ {
+		fmt.Fprintf(&many, "f%d\x00", i)
+	}
+	if got := parseChangedFiles("", "", many.String()); len(got) != maxChangedFiles {
+		t.Errorf("parsed %d files, want the cap of %d", len(got), maxChangedFiles)
 	}
 }
 
@@ -97,13 +117,41 @@ func TestChangesAndDiffOfALocalWorktree(t *testing.T) {
 		t.Errorf("staged edit diff = %q, want the change", diff)
 	}
 
-	// The staged edit stays, but the working copy goes back to HEAD: still
-	// listed as changed, so its diff must not be empty.
+	// The staged edit stays, but the working copy goes back to the base: no
+	// change is left, so the file drops out rather than showing an empty patch.
 	if err := os.WriteFile(filepath.Join(worktree, "README.md"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	diff, err = s.FileDiff(context.Background(), "ws-diff", "README.md")
-	if err != nil || !strings.Contains(diff, "+world") || !strings.Contains(diff, "-world") {
-		t.Errorf("staged-then-reverted diff = %q, %v; want the staged edit and its undoing", diff, err)
+	if _, err := s.FileDiff(context.Background(), "ws-diff", "README.md"); !errors.Is(err, ErrNotChanged) {
+		t.Errorf("staged-then-reverted: err = %v, want ErrNotChanged", err)
+	}
+
+	// Committed work stays in the change set, with its line counts, alongside
+	// what is not committed yet.
+	run(t, worktree, "add", "README.md")
+	run(t, worktree, "commit", "--quiet", "-m", "notes")
+	if err := os.WriteFile(filepath.Join(worktree, "README.md"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err = s.Changes(context.Background(), "ws-diff")
+	want := []protocol.ChangedFile{
+		{Path: "README.md", Status: "modified", Additions: 1},
+		{Path: "notes.txt", Status: "added", Additions: 1},
+	}
+	if err != nil || !reflect.DeepEqual(files, want) {
+		t.Fatalf("Changes after a commit = %+v, %v; want %+v", files, err, want)
+	}
+	if diff, err := s.FileDiff(context.Background(), "ws-diff", "notes.txt"); err != nil || !strings.Contains(diff, "+n") {
+		t.Errorf("committed file diff = %q, %v; want its content", diff, err)
+	}
+
+	// A base that no longer resolves falls back to HEAD: only what is not
+	// committed yet.
+	facts, _ := s.getFacts("ws-diff")
+	facts.BaseBranch = "no-such-branch"
+	s.setFacts("ws-diff", facts)
+	files, err = s.Changes(context.Background(), "ws-diff")
+	if err != nil || !reflect.DeepEqual(files, want[:1]) {
+		t.Errorf("Changes without a base = %+v, %v; want %+v", files, err, want[:1])
 	}
 }
