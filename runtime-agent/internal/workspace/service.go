@@ -1169,10 +1169,11 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 // never started. The box need not be the original one — everything is
 // rebuilt from the Snapshot's tree + conversation (portability).
 //
-// The session's agent and its credential, which a fresh box has no record
-// of, come with the request and are recorded first: where a rollout goes, and
-// the launch after, depend on both.
-func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.RestoreWorkspaceRequest) (string, error) {
+// The session's agent, its credential and its model (nil: its agent's own
+// default), which a fresh box has no record of, come with the request and are
+// recorded first: where a rollout goes, and the launch after, depend on them.
+// The model is req.Model as the caller checked it.
+func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.RestoreWorkspaceRequest, model *ModelChoice) (string, error) {
 	codexSession := req.Agent == AgentCodex
 	rollout := downloadFor(req.Downloads, "rollout") != ""
 	sessionID := ""
@@ -1191,6 +1192,12 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent})
 	if req.Auth != nil && req.Auth.Kind != AuthNone {
 		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
+			return "", err
+		}
+	}
+	if model != nil {
+		// Nothing runs yet, so this only records it for the launch below.
+		if err := s.SetModel(ctx, workspaceID, *model, ""); err != nil {
 			return "", err
 		}
 	}

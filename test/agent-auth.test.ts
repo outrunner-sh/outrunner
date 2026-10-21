@@ -49,8 +49,8 @@ const CASES: Case[] = [
     want: { method: "subscription", credential: { kind: "claude-oauth-token", token: OAT }, picked: false } },
   { name: "claude, box, no pick: else the API key", agent: "claude", target: "cloud", choice: null, saved: { anthropic: ANTHROPIC },
     want: { method: "api-key", credential: { kind: "anthropic-api-key", token: ANTHROPIC }, picked: false } },
-  { name: "claude, box, no pick, nothing saved: the box's own setup", agent: "claude", target: "cloud", choice: null, saved: {},
-    want: { method: null, credential: null, picked: false } },
+  { name: "claude, box, no pick, nothing saved: nothing to run on, not the box's old setup", agent: "claude", target: "cloud", choice: null, saved: {},
+    want: { reason: "not-connected", method: "subscription" } },
   { name: "claude, Mac, no pick: its own login", agent: "claude", target: "local", choice: null, saved: { slot: OAT },
     want: { method: "local", credential: null, picked: false } },
   { name: "codex, box, no pick: the API key", agent: "codex", target: "cloud", choice: null, saved: { openai: OPENAI },
@@ -132,6 +132,8 @@ test("on a model on a key, a pick that can't run signs in to nothing instead", a
     resolveAgentAuth(store(choice, saved), agent, target, { ownAccount: false });
   // Disconnected after it was picked.
   assert.deepEqual(await run("subscription", {}, "cloud"), unsigned);
+  // Nothing picked or saved.
+  assert.deepEqual(await run(null, {}, "cloud"), unsigned);
   assert.deepEqual(await run("subscription", {}, "local"), unsigned);
   // The Mac's own login, on a box.
   assert.deepEqual(await run("local", {}, "cloud"), unsigned);

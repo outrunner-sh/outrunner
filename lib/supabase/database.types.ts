@@ -105,6 +105,11 @@ type WorkspaceRow = {
   agent_workspace_id: string | null;
   /** The coding agent it runs: "claude" or "codex". */
   agent: string;
+  /** The model it runs, whose it is, and its effort; null before the first
+   *  is recorded. */
+  model_provider: string | null;
+  model_id: string | null;
+  model_effort: string | null;
   last_active_at: string | null;
   created_at: string;
   updated_at: string;

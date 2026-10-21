@@ -115,6 +115,10 @@ export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
  *  conversation moved to the worktree). */
 export const AGENT_FEATURE_IMPORTS = "restore-imports";
 
+/** The agent restores a session onto its model (RestoreWorkspaceRequest's
+ *  `model`); an older one ignores it, and relaunches on Claude's default. */
+export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";
+
 /** GET /health (unauthenticated): the agent is up, and what it can run a
  *  session on. `gateways`, `agents` and `features` are absent from agents
  *  older than each: those run OpenRouter alone, and Claude alone. */
@@ -273,6 +277,21 @@ export const RestoreWorkspaceRequest = z
     /** The folder an imported session worked in on its Mac; the
      *  conversation's working directories move from it to the worktree. */
     originWorktree: z.string().startsWith("/").optional(),
+    /** The session's model, recorded before it relaunches, as POST
+     *  /workspaces/{id}/model takes it: through a gateway on its key, or
+     *  neither. Absent: its agent's own default. */
+    model: z
+      .object({
+        model: z.string().min(1).max(100),
+        gateway: z.string().min(1).optional(),
+        token: CredentialToken.optional(),
+        effort: z.string().min(1).optional(),
+      })
+      .refine((v) => (v.gateway === undefined) === (v.token === undefined), {
+        message: "a gateway needs its key, and only a gateway takes one",
+        path: ["token"],
+      })
+      .optional(),
   })
   .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",

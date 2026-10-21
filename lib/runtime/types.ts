@@ -7,6 +7,7 @@
  */
 
 import type { AgentId } from "@/lib/agents/registry";
+import type { RecordedModel } from "@/lib/runtime/session-models";
 
 // ---------------------------------------------------------------------------
 // Domain model (mirrors the `projects`, `workspaces`, `jobs` tables)
@@ -109,6 +110,9 @@ export type Workspace = {
   /** The coding agent the session runs, for good: its model can change only
    *  to another this agent runs. */
   agent: AgentId;
+  /** The model it was last put on; null for a session from before models
+   *  were recorded (or on one this release no longer offers). */
+  model: RecordedModel | null;
   lastActiveAt: string | null;
   errorMessage: string | null;
   createdAt: string;

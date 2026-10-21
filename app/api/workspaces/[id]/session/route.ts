@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
-import { agentAuthStore, getSandboxSettings } from "@/lib/db/credentials";
+import { getSandboxSettings } from "@/lib/db/credentials";
 import {
   getProject,
   getRuntimeComputerByProject,
@@ -19,7 +19,8 @@ import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
-import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
+import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
+import { signInFailure } from "@/lib/runtime/session-auth";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer } from "@/lib/runtime/types";
 
@@ -162,9 +163,10 @@ export async function POST(request: Request, context: RouteContext) {
   // running: start it (continuing its conversation), or leave it be if it is.
   if (!warm && provider.restoresBoxes) {
     try {
-      // Signed in as the user picks now, before it launches.
+      // Signed in as the user picks now, and on its model's key as it is
+      // now, before it launches.
       const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
-      await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(owner.id));
+      await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
       await agent.startWorkspace(identity);
     } catch (error) {
       const failure = signInFailure(error);

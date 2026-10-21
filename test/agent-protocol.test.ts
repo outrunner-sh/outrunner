@@ -106,3 +106,20 @@ test("a rollout may join an archive or a restore, but never replace what they ne
   assert.equal(restore("codex", ["bundle", "patch", "rollout"]), false, "the conversation is still required");
   assert.equal(restore("gemini", ["bundle", "patch", "conversation"]), false);
 });
+
+test("a restore may bring the session's model: through a gateway on its key, or neither", () => {
+  const key = "sk-or-v1-" + "k".repeat(40);
+  const restore = (model: unknown) =>
+    PROTOCOL_SCHEMAS.RestoreWorkspaceRequest.safeParse({
+      branch: "b",
+      sessionId: "s",
+      downloads: ["bundle", "patch", "conversation"].map((artifact) => ({ artifact, url: `https://s.example/${artifact}` })),
+      model,
+    }).success;
+  assert.equal(restore(undefined), true);
+  assert.equal(restore({ model: "z-ai/glm-5.3", gateway: "openrouter", token: key }), true);
+  assert.equal(restore({ model: "opus", effort: "high" }), true);
+  assert.equal(restore({ model: "z-ai/glm-5.3", gateway: "openrouter" }), false, "a gateway needs its key");
+  assert.equal(restore({ model: "opus", token: key }), false, "only a gateway takes one");
+  assert.equal(restore({ model: "z-ai/glm-5.3", gateway: "openrouter", token: "it's" + "x".repeat(20) }), false, "a key a shell file can hold");
+});

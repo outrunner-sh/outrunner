@@ -118,7 +118,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel},
 	})
 }
 
@@ -271,12 +271,24 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req)
-	if errors.Is(err, workspace.ErrAuthMismatch) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
-		return
+	var model *workspace.ModelChoice
+	if req.Model != nil {
+		choice, err := modelChoice(*req.Model)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+			return
+		}
+		model = &choice
 	}
-	respond(w, name, err)
+	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req, model)
+	switch {
+	case errors.Is(err, workspace.ErrAuthMismatch), errors.Is(err, workspace.ErrGatewayUnsupported):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, workspace.ErrModelUnsupported):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	default:
+		respond(w, name, err)
+	}
 }
 
 // workspaceSummary serves the current WorkspaceSummary — the canonical, cross-
@@ -434,26 +446,12 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if !claude.ValidModel(req.Model) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
-		return
-	}
-	gateway, err := claude.ParseGateway(req.Gateway)
+	choice, err := modelChoice(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
-	if (gateway == claude.NoGateway) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a gateway needs its key, and only a gateway takes one")
-		return
-	}
-	if req.Effort != "" && !claude.ValidEffort(req.Effort) {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid effort")
-		return
-	}
-	err = s.ws.SetModel(r.Context(), r.PathValue("id"), workspace.ModelChoice{
-		Model: req.Model, Gateway: gateway, Token: req.Token, Effort: req.Effort,
-	}, "")
+	err = s.ws.SetModel(r.Context(), r.PathValue("id"), choice, "")
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
@@ -470,6 +468,26 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 		// asked for wasn't applied.
 		writeJSON(w, http.StatusOK, map[string]string{"result": req.Model, "effort": req.Effort})
 	}
+}
+
+// modelChoice checks a model as set or restored: a model Claude takes, a
+// gateway it knows with its key (and a key only with one), and an effort it
+// knows, or none.
+func modelChoice(req protocol.SetModelRequest) (workspace.ModelChoice, error) {
+	if !claude.ValidModel(req.Model) {
+		return workspace.ModelChoice{}, errors.New("invalid model")
+	}
+	gateway, err := claude.ParseGateway(req.Gateway)
+	if err != nil {
+		return workspace.ModelChoice{}, err
+	}
+	if (gateway == claude.NoGateway) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+		return workspace.ModelChoice{}, errors.New("a gateway needs its key, and only a gateway takes one")
+	}
+	if req.Effort != "" && !claude.ValidEffort(req.Effort) {
+		return workspace.ModelChoice{}, errors.New("invalid effort")
+	}
+	return workspace.ModelChoice{Model: req.Model, Gateway: gateway, Token: req.Token, Effort: req.Effort}, nil
 }
 
 // setAuth gives the workspace's session its own credential, or takes it away;
