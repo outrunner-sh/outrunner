@@ -13,6 +13,14 @@ export const IMPORT_SOURCES = ["conductor", "claude-cli", "codex-cli", "outrunne
 export const ImportSource = z.enum(IMPORT_SOURCES);
 export type ImportSource = z.infer<typeof ImportSource>;
 
+/** Each source as the user knows it. */
+export const IMPORT_SOURCE_LABELS: Record<ImportSource, string> = {
+  conductor: "Conductor",
+  "claude-cli": "Claude Code",
+  "codex-cli": "Codex",
+  "outrunner-local": "Outrunner on this Mac",
+};
+
 /** Why something can't be imported. The server adds those only it can know:
  *  no-repo-access, branch-taken, already-imported. */
 export const SKIP_REASONS = [

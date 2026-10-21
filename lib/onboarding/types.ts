@@ -7,6 +7,7 @@
  */
 
 import type { ClaudeSetup } from "@/lib/desktop/local-runtime";
+import type { ImportFound } from "@/lib/onboarding/import-offer";
 
 /** Where the user's sessions run. */
 export type RunTarget = "mac" | "cloud";
@@ -65,24 +66,49 @@ export type OnboardingEnv = {
   pickFolder(): Promise<OnboardingFolder | null>;
   /** Whether a Claude credential is already stored for cloud sessions. */
   claudeConnected(): Promise<boolean>;
+  /** Whether Claude Code is logged in on this Mac, a sign the user has Claude
+   *  to connect; false outside the Mac app, or when it can't tell. */
+  claudeOnMac(): Promise<boolean>;
   /** Connect Claude (`claude setup-token`); resolves once the token is saved. */
   connectClaude(): Promise<void>;
   cancelConnectClaude(): void;
   listRepos(): Promise<OnboardingRepo[]>;
-  /** Start the first session; resolves with where to go next, or null to stay. */
-  start(input: FirstSession): Promise<string | null>;
+  /** What the Mac app's scan found to bring over from this Mac; null outside
+   *  the app, with nothing to import, or when the scan fails. */
+  findImports(): Promise<ImportFound | null>;
+  /** Finish onboarding; resolves with where to go next, or null to stay. */
+  finish(input: OnboardingFinish): Promise<string | null>;
   /** Leave onboarding without a session; absent where there is nothing to skip to. */
   skip?(): Promise<string>;
 };
 
-export type FirstSession = {
-  target: RunTarget;
+/**
+ * How onboarding ends. On this Mac, in the first session there. In the cloud,
+ * with the chosen repositories connected and then, as the user picked, a
+ * first session in one of them, the import of this Mac's work, or home.
+ */
+export type OnboardingFinish =
+  | {
+      target: "mac";
+      folder?: OnboardingFolder;
+      /** A first message to send; onboarding opens the session without one. */
+      prompt?: string;
+    }
+  | {
+      target: "cloud";
+      /** The repositories to connect, by GitHub id; none is fine. */
+      repoIds: string[];
+      /** A first session, in one of `repoIds`; none, onboarding ends without one. */
+      session?: CloudSession;
+      /** Where to go without a session; home when unset. */
+      next?: "home" | "import";
+    };
+
+export type CloudSession = {
+  /** Its repository's GitHub id. */
+  repoId: string;
+  /** The user's own Claude, or Outrunner's models. */
+  model: "claude" | "outrunner";
   /** A first message to send; onboarding opens the session without one. */
   prompt?: string;
-  /** This Mac: the folder chosen. */
-  folder?: OnboardingFolder;
-  /** Cloud: the repository the session works in (its GitHub id). */
-  repoId?: string;
-  /** Cloud: the user's own Claude, or Outrunner's models. */
-  model?: "claude" | "outrunner";
 };

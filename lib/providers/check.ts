@@ -11,8 +11,9 @@ import { type KeyProviderId, PROVIDERS } from "@/lib/providers/registry";
 export type KeyCheckResult = { accepted: true; warning?: string } | { accepted: false };
 
 /** As long as any one call to a provider may take: a hung one mustn't leave
- *  the Save button on "Checking" for good. */
-const TIMEOUT_MS = 10_000;
+ *  the Save button on "Checking" for good, or a Settings → Usage card on its
+ *  placeholder. */
+export const PROVIDER_TIMEOUT_MS = 10_000;
 
 export async function checkProviderKey(provider: KeyProviderId, key: string): Promise<KeyCheckResult> {
   // OpenRouter also takes a management key, which can make keys but not run
@@ -25,7 +26,7 @@ export async function checkProviderKey(provider: KeyProviderId, key: string): Pr
       ...check.headers,
       ...(check.auth === "bearer" ? { authorization: `Bearer ${key}` } : { "x-api-key": key }),
     },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
   });
   if (response.status === 401 || response.status === 403) return { accepted: false };
   // The key is good; the account can't pay for anything yet.

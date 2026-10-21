@@ -22,24 +22,17 @@ import {
   skipText,
 } from "@/lib/imports/client";
 import { isDesktopApp } from "@/lib/is-desktop";
-import type {
-  ImportCommitRequest,
-  ImportConfigCommitRequest,
-  ImportPlanItem,
-  ImportPlanRequest,
-  ImportScan,
-  ImportSource,
-  ScannedSession,
+import {
+  IMPORT_SOURCE_LABELS,
+  type ImportCommitRequest,
+  type ImportConfigCommitRequest,
+  type ImportPlanItem,
+  type ImportPlanRequest,
+  type ImportScan,
+  type ScannedSession,
 } from "@/lib/runtime/import-scan";
 
 const noopSubscribe = () => () => {};
-
-const SOURCE_LABEL: Record<ImportSource, string> = {
-  conductor: "Conductor",
-  "claude-cli": "Claude Code",
-  "codex-cli": "Codex",
-  "outrunner-local": "Outrunner on this Mac",
-};
 
 const STATE_LABEL: Record<ImportProgress["state"], string> = {
   waiting: "Waiting",
@@ -179,10 +172,10 @@ export function LocalImport() {
         <p className="text-sm text-muted-foreground">
           {found.length === 0
             ? "No Conductor, Claude Code or Codex sessions on this Mac."
-            : `Found sessions from ${found.map((s) => SOURCE_LABEL[s.id]).join(", ")}.`}
+            : `Found sessions from ${found.map((s) => IMPORT_SOURCE_LABELS[s.id]).join(", ")}.`}
           {scan.sources
             .filter((s) => s.skip)
-            .map((s) => ` ${SOURCE_LABEL[s.id]}: ${skipText(s.skip!)}`)
+            .map((s) => ` ${IMPORT_SOURCE_LABELS[s.id]}: ${skipText(s.skip!)}`)
             .join("")}
         </p>
       )}
@@ -218,7 +211,7 @@ export function LocalImport() {
           <ul className="mt-2 space-y-1">
             {blocked.map((s) => (
               <li key={s.key} className="text-muted-foreground">
-                <span className="text-foreground">{s.title || s.sessionId}</span> · {SOURCE_LABEL[s.source]} ·{" "}
+                <span className="text-foreground">{s.title || s.sessionId}</span> · {IMPORT_SOURCE_LABELS[s.source]} ·{" "}
                 {skipText(s.skip!)}
               </li>
             ))}
@@ -307,7 +300,7 @@ function SessionRow({
       <div className="min-w-0 flex-1 space-y-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{s.title || s.sessionId}</span>
-          <Badge variant="outline">{SOURCE_LABEL[s.source]}</Badge>
+          <Badge variant="outline">{IMPORT_SOURCE_LABELS[s.source]}</Badge>
           {s.agent === "codex" && <Badge variant="outline">Codex</Badge>}
         </div>
         <p className="truncate text-xs text-muted-foreground">

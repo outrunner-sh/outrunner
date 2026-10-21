@@ -141,10 +141,10 @@ export function MacSetup({
   // its sessions on those instead, so the login is offered, not required.
   const onOutrunnerModel = toolsReady && !loggedIn && env.outrunnerModels;
   // Sessions here run on Claude Code's own login on this Mac, so connecting
-  // Claude (for cloud sessions) is only offered, never required.
-  const [skippedClaude, setSkippedClaude] = useState(false);
-  const ready =
-    toolsReady && (claude === true || skippedClaude) && (loggedIn || onOutrunnerModel) && folder !== null;
+  // Claude (for cloud sessions) never holds them up, and is offered only to a
+  // user who has Claude: connected already, or Claude Code logged in here.
+  const offersClaude = claude === true || status?.claudeLoggedIn === true;
+  const ready = toolsReady && (loggedIn || onOutrunnerModel) && folder !== null;
 
   useEffect(() => onReady(ready), [ready, onReady]);
 
@@ -219,18 +219,15 @@ export function MacSetup({
         )}
       </ChecklistRow>
 
-      <ConnectClaudeRow
-        env={env}
-        connected={claude}
-        onConnected={() => setClaude(true)}
-        todo="Only for cloud sessions, so you can skip this. Sessions on this Mac don't use it."
-        skipped={
-          skippedClaude
-            ? "Skipped. It's only for cloud sessions: connect Claude anytime in Settings."
-            : undefined
-        }
-        onSkip={() => setSkippedClaude(true)}
-      />
+      {offersClaude && (
+        <ConnectClaudeRow
+          env={env}
+          connected={claude}
+          onConnected={() => setClaude(true)}
+          optional
+          todo="Optional, for cloud sessions on your Claude subscription. Sessions on this Mac don't use it."
+        />
+      )}
 
       {toolsReady && !loggedIn && (
         <ChecklistRow

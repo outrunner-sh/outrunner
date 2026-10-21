@@ -71,7 +71,26 @@ test("a failed repository listing says why", async () => {
   await assert.rejects(liveEnv(user, noModels).listRepos(), /Sign out and back in/);
 });
 
-test("a cloud start connects the chosen repository, starts there, and marks onboarding done", async () => {
+test("finishing connects the picked repositories and goes home, with no session", async () => {
+  const calls = stubFetch({
+    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-7", githubRepoId: 7 }, { id: "p-9", githubRepoId: 9 }] }],
+    "POST /api/onboarding/complete": () => [200, { ok: true }],
+  });
+  assert.equal(await liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["9", "7"] }), "/");
+  assert.deepEqual(
+    calls.map((c) => `${c.method} ${c.url}`),
+    ["POST /api/projects/sync", "POST /api/onboarding/complete"],
+  );
+  assert.deepEqual(calls[0].body, { repoIds: [9, 7] });
+});
+
+test("finishing toward the import goes there; with nothing picked, nothing is connected", async () => {
+  const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
+  assert.equal(await liveEnv(user, noModels).finish({ target: "cloud", repoIds: [], next: "import" }), "/import");
+  assert.deepEqual(calls.map((c) => c.url), ["/api/onboarding/complete"]);
+});
+
+test("a first session starts in its repository, on the user's Claude when they chose it", async () => {
   const calls = stubFetch({
     "POST /api/projects/sync": () => [
       200,
@@ -80,21 +99,46 @@ test("a cloud start connects the chosen repository, starts there, and marks onbo
     "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-1" } }],
     "POST /api/onboarding/complete": () => [200, { ok: true }],
   });
-  const href = await liveEnv(user, noModels).start({
+  const href = await liveEnv(user, noModels).finish({
     target: "cloud",
-    prompt: "Fix the flaky test",
-    repoId: "9",
-    model: "claude",
+    repoIds: ["7", "9"],
+    session: { repoId: "9", model: "claude", prompt: "Fix the flaky test" },
   });
   assert.equal(href, "/workspaces/w-1?prompt=Fix+the+flaky+test");
   assert.deepEqual(
     calls.map((c) => `${c.method} ${c.url}`),
     ["POST /api/projects/sync", "POST /api/projects/p-9/workspaces", "POST /api/onboarding/complete"],
   );
-  assert.deepEqual(calls[0].body, { repoIds: [9] });
+  // The user's Claude, named: without it the server's default is Outrunner's.
+  assert.deepEqual(calls[1].body, { branch: "", provider: "claude", model: "opus" });
 });
 
-test("a refused cloud start shows the server's reason and leaves onboarding unmarked", async () => {
+test("a first session on Outrunner's models names none, leaving the server's default", async () => {
+  const calls = stubFetch({
+    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-9", githubRepoId: 9 }] }],
+    "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-3" } }],
+    "POST /api/onboarding/complete": () => [200, { ok: true }],
+  });
+  const href = await liveEnv(user, { outrunnerModels: true }).finish({
+    target: "cloud",
+    repoIds: ["9"],
+    session: { repoId: "9", model: "outrunner" },
+  });
+  // No first message: the session opens without a query.
+  assert.equal(href, "/workspaces/w-3");
+  assert.deepEqual(calls[1].body, { branch: "" });
+});
+
+test("a session in a repository that wasn't picked is refused before anything is connected", async () => {
+  const calls = stubFetch({});
+  await assert.rejects(
+    liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["7"], session: { repoId: "9", model: "claude" } }),
+    /Choose that repository first/,
+  );
+  assert.equal(calls.length, 0);
+});
+
+test("a refused first session shows the server's reason and leaves onboarding unmarked", async () => {
   const calls = stubFetch({
     "POST /api/projects/sync": () => [200, { projects: [{ id: "p-9", githubRepoId: 9 }] }],
     "POST /api/projects/p-9/workspaces": () => [
@@ -103,9 +147,17 @@ test("a refused cloud start shows the server's reason and leaves onboarding unma
     ],
   });
   await assert.rejects(
-    liveEnv(user, noModels).start({ target: "cloud", prompt: "Hi", repoId: "9" }),
+    liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["9"], session: { repoId: "9", model: "claude" } }),
     /Connect Claude in Settings/,
   );
+  assert.ok(!calls.some((c) => c.url === "/api/onboarding/complete"));
+});
+
+test("repositories that can't be connected say why, and onboarding stays unfinished", async () => {
+  const calls = stubFetch({
+    "POST /api/projects/sync": () => [409, { error: "Sign out and back in to GitHub." }],
+  });
+  await assert.rejects(liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["9"] }), /Sign out and back in/);
   assert.ok(!calls.some((c) => c.url === "/api/onboarding/complete"));
 });
 
@@ -113,15 +165,6 @@ test("skipping marks onboarding done and goes home", async () => {
   const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
   assert.equal(await liveEnv(user, noModels).skip!(), "/");
   assert.equal(calls.length, 1);
-});
-
-test("onboarding opens the cloud session with no first message", async () => {
-  stubFetch({
-    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-9", githubRepoId: 9 }] }],
-    "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-2" } }],
-    "POST /api/onboarding/complete": () => [200, { ok: true }],
-  });
-  assert.equal(await liveEnv(user, noModels).start({ target: "cloud", repoId: "9" }), "/workspaces/w-2");
 });
 
 /** The Mac app's bridge, answering local_status with `loggedIn`; records the
@@ -163,7 +206,7 @@ test("a Mac that isn't logged in starts its session on Outrunner's model", async
     "POST /api/outrunner-models/key": () => [200, { key }],
     "POST /api/onboarding/complete": () => [200, {}],
   });
-  const href = await liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder });
+  const href = await liveEnv(user, { outrunnerModels: true }).finish({ target: "mac", folder });
   const id = agent[0].body && (agent[0].body as { workspaceId: string }).workspaceId;
   assert.equal(href, `/local/${id}`);
   // Created, then put on the model before anything launches it.
@@ -184,7 +227,7 @@ test("a logged-in Mac, or a server without Outrunner's models, keeps the Mac's o
     [false, false],
   ] as const) {
     const agent = fakeMac(loggedIn);
-    await liveEnv(user, { outrunnerModels }).start({ target: "mac", folder });
+    await liveEnv(user, { outrunnerModels }).finish({ target: "mac", folder });
     assert.deepEqual(agent.map((a) => a.path), ["/workspaces"], `loggedIn=${loggedIn} models=${outrunnerModels}`);
   }
 });
@@ -196,10 +239,104 @@ test("a session that can't get Outrunner's model is removed, not left on a login
     "POST /api/outrunner-models/key": () => [503, { error: "Outrunner's models are not set up on this server." }],
   });
   await assert.rejects(
-    liveEnv(user, { outrunnerModels: true }).start({ target: "mac", folder }),
+    liveEnv(user, { outrunnerModels: true }).finish({ target: "mac", folder }),
     /not set up on this server/,
   );
   const id = (agent[0].body as { workspaceId: string }).workspaceId;
   await new Promise((resolve) => setTimeout(resolve, 0)); // the destroy is fire-and-forget
   assert.deepEqual(agent.map((a) => a.path), ["/workspaces", `/workspaces/${id}/destroy`]);
+});
+
+test("Claude counts as on this Mac only when Claude Code there says it's logged in", async () => {
+  // Outside the Mac app there is nothing to ask.
+  assert.equal(await liveEnv(user, noModels).claudeOnMac(), false);
+  for (const [loggedIn, found] of [
+    [true, true],
+    [false, false],
+    [null, false], // the app can't tell: no sign of Claude
+  ] as const) {
+    fakeMac(loggedIn);
+    assert.equal(await liveEnv(user, noModels).claudeOnMac(), found, `loggedIn=${loggedIn}`);
+  }
+});
+
+test("a Mac bridge that fails is no sign of Claude", async () => {
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: {
+      core: {
+        invoke: async () => {
+          throw new Error("bridge down");
+        },
+        Channel: class {},
+      },
+    },
+  };
+  assert.equal(await liveEnv(user, noModels).claudeOnMac(), false);
+});
+
+/** A scan with `sessions`, as the Mac app reports one. */
+function scanWith(sessions: { source: string; skip?: string }[]) {
+  return {
+    version: 1,
+    scannedAt: "2026-10-21T00:00:00Z",
+    sources: [],
+    sessions: sessions.map((s, i) => ({
+      key: `claude:k${i}`,
+      source: s.source,
+      agent: "claude",
+      sessionId: `s${i}`,
+      title: "",
+      cwd: "/r",
+      checkedOut: true,
+      dirty: false,
+      unpushed: 0,
+      transcript: "/t",
+      transcriptBytes: 1,
+      ...(s.skip && { skip: { reason: s.skip } }),
+    })),
+    projects: [],
+    config: { items: [], mcpServers: [], plugins: [] },
+  };
+}
+
+function fakeScan(answer: () => unknown) {
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: {
+      core: {
+        invoke: async (cmd: string) => {
+          if (cmd === "import_scan") return answer();
+          throw new Error(`unexpected ${cmd}`);
+        },
+        Channel: class {},
+      },
+    },
+  };
+}
+
+test("work to import is found on this Mac, counting only what can move", async () => {
+  // Outside the Mac app there's nothing to scan.
+  assert.equal(await liveEnv(user, noModels).findImports(), null);
+  fakeScan(() =>
+    scanWith([
+      { source: "conductor" },
+      { source: "claude-cli" },
+      { source: "conductor" },
+      { source: "codex-cli", skip: "no-github-remote" },
+    ]),
+  );
+  assert.deepEqual(await liveEnv(user, noModels).findImports(), { sessions: 3, sources: ["conductor", "claude-cli"] });
+});
+
+test("a scan that finds only what can't move, or fails, offers no import", async () => {
+  fakeScan(() => scanWith([{ source: "conductor", skip: "no-github-remote" }]));
+  assert.equal(await liveEnv(user, noModels).findImports(), null);
+  fakeScan(() => {
+    throw new Error("scan failed");
+  });
+  assert.equal(await liveEnv(user, noModels).findImports(), null);
+  // An answer the web app can't read is no offer either.
+  fakeScan(() => ({ version: 2 }));
+  assert.equal(await liveEnv(user, noModels).findImports(), null);
 });
