@@ -224,7 +224,8 @@ export function MacSetup({
           env={env}
           connected={claude}
           onConnected={() => setClaude(true)}
-          optional="Optional, for cloud sessions on your Claude subscription. Sessions on this Mac don't use it."
+          optional
+          todo="Optional, for cloud sessions on your Claude subscription. Sessions on this Mac don't use it."
         />
       )}
 

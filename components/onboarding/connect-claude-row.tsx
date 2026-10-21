@@ -15,22 +15,24 @@ type Connect = { state: "idle" } | { state: "waiting" } | { state: "error"; mess
  * so connecting here reads as connected there.
  *
  * Shown only to a user who has Claude to connect, or where nothing else can
- * run a session (lib/onboarding/claude-choice.ts); `optional` says what it is
- * for where the session starts without it.
+ * run a session (lib/onboarding/claude-choice.ts).
  */
 export function ConnectClaudeRow({
   env,
   connected,
   onConnected,
-  optional,
+  todo,
+  optional = false,
   children,
 }: {
   env: OnboardingEnv;
   /** Null while it is still being checked. */
   connected: boolean | null;
   onConnected: () => void;
-  /** Set where the session starts without it: what connecting would change. */
-  optional?: React.ReactNode;
+  /** What it is for, while it is not connected (the default speaks of the subscription). */
+  todo?: React.ReactNode;
+  /** Sessions start without it: its button doesn't press for attention. */
+  optional?: boolean;
   /** Alternatives offered below the row while it is not connected. */
   children?: React.ReactNode;
 }) {
@@ -80,7 +82,7 @@ export function ConnectClaudeRow({
                 ? connect.message
                 : !env.desktop
                   ? "Connecting Claude needs the Outrunner Mac app."
-                  : (optional ?? "Use your Claude Pro or Max subscription. Approve once in your browser.")
+                  : (todo ?? "Use your Claude Pro or Max subscription. Approve once in your browser.")
       }
       action={
         connected !== false ? undefined : connect.state === "waiting" ? (
