@@ -30,7 +30,12 @@ export function KeyInput({
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       aria-label={label}
-      autoComplete="off"
+      // "off" doesn't stop browsers or password managers filling a password
+      // field with a saved login; a key is never one.
+      autoComplete={reveal ? "off" : "new-password"}
+      data-1p-ignore
+      data-lpignore="true"
+      data-bwignore
       spellCheck={false}
       className="border-border bg-background/60 h-9 min-w-48 flex-1 rounded-md border px-3 text-sm"
     />
