@@ -217,7 +217,7 @@ export function ClaudeConnection({
         </div>
       ) : desktop && pending ? (
         <div className="space-y-3">
-          <p className="text-sm text-foreground">
+          <p className="text-[13px] text-foreground">
             {waiting
               ? "Waiting for you to authorize in the browser…"
               : "Authorize in your browser to finish."}
@@ -274,7 +274,7 @@ export function ClaudeConnection({
           </p>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Open Outrunner in the desktop app to connect your Claude subscription.
         </p>
       )}

@@ -100,7 +100,7 @@ export function AgentAuthPanel({
           onChoose={(method) => void choose(method)}
           label={`How ${label} signs in`}
         />
-        <p className="text-sm text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           {chosen ? way.description : `Choose how ${label} signs in for your sessions. ${way.description}`}
         </p>
         {error ? (

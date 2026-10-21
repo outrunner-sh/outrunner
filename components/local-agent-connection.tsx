@@ -97,7 +97,7 @@ export function LocalAgentConnection({
 
   if (!desktop) {
     return (
-      <p className="text-sm text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         Open Outrunner in the Mac app to use {label} on your Mac, signed in as it is there.
       </p>
     );
@@ -119,7 +119,7 @@ export function LocalAgentConnection({
         </div>
         <ConnectionStatus connected={ready} />
         {cli === null ? (
-          <p className="text-sm text-muted-foreground">Update the Outrunner app to use {label} on this Mac.</p>
+          <p className="text-[13px] text-muted-foreground">Update the Outrunner app to use {label} on this Mac.</p>
         ) : cli ? (
           <Details>
             <DetailRow term="CLI">
@@ -139,11 +139,11 @@ export function LocalAgentConnection({
 
       {cli && !cli.path ? (
         agent === "codex" ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             Install Codex with <code className="font-mono">{CODEX_INSTALL_COMMAND}</code>, then refresh.
           </p>
         ) : (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             Outrunner sets up Claude Code on this Mac when you start a session here.
           </p>
         )
