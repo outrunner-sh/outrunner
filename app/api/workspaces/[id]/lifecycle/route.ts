@@ -20,7 +20,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { restoreSignedIn, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
-import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
@@ -304,7 +304,7 @@ async function restoreDaytonaWorkspace(
     // the bundle. Matches the create flow's lazy-provision path.
     const sessionEnv = await runtimeSessionEnvironment(userId);
     // Codex signs in per session (below); Claude Code needs the box's own.
-    if (workspace.agent === "claude" && Object.keys(sessionEnv).length === 0) {
+    if (workspace.agent === "claude" && !hasClaudeCredential(sessionEnv)) {
       throw new Error(
         "Connect Claude in Settings before restoring a workspace.",
       );
