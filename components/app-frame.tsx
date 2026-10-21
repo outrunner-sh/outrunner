@@ -18,6 +18,14 @@ export type FrameData = {
   appData: AppData;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
+};
+
+/**
+ * How the sidebar was left, from cookies alone — so it arrives ahead of
+ * {@link FrameData}, whose queries would otherwise hold the collapse back
+ * until after the first paint (app/(app)/layout.tsx).
+ */
+export type FrameChrome = {
   /** The sidebar collapsed, from its cookie. */
   collapsed: boolean;
   /** The projects folded shut in the sidebar, from their cookie. */
@@ -34,13 +42,25 @@ const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
  *
  * The frame and the page show at once, even on a cold start; what the sidebar
  * lists (`server`, answering {@link FrameData}) streams in, its rows held by a
- * skeleton until then, and the pages render from it as it lands.
+ * skeleton until then, and the pages render from it as it lands. How the
+ * sidebar was left (`chrome`, answering {@link FrameChrome}) is read from
+ * cookies alone, so the collapse lands first and the sidebar never opens wide
+ * and snaps shut.
  */
-export function AppFrame({ server, children }: { server: React.ReactNode; children: React.ReactNode }) {
+export function AppFrame({
+  chrome,
+  server,
+  children,
+}: {
+  chrome: React.ReactNode;
+  server: React.ReactNode;
+  children: React.ReactNode;
+}) {
   const [frame, slot] = useServerAnswer<FrameData>(server);
+  const [look, chromeSlot] = useServerAnswer<FrameChrome>(chrome);
   // The collapse the user toggled here; else the cookie's, once read.
   const [collapsedChoice, setCollapsed] = useState<boolean | null>(null);
-  const collapsed = collapsedChoice ?? frame?.collapsed ?? false;
+  const collapsed = collapsedChoice ?? look?.collapsed ?? false;
   // The pages render from what the sidebar has: a click shows its session at once.
   const appData = frame?.appData ?? null;
   const sidebarProjects = useMemo(
@@ -128,13 +148,14 @@ export function AppFrame({ server, children }: { server: React.ReactNode; childr
             ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
             onCollapse={() => setAndRemember(true)}
             searchSignal={searchSignal}
-            initialFolded={frame?.folded ?? NO_FOLDED}
+            initialFolded={look?.folded ?? NO_FOLDED}
           />
         )}
       </div>
       <main className="relative min-h-0 min-w-0 overflow-y-auto">
         <AppDataProvider value={appData}>{children}</AppDataProvider>
       </main>
+      {chromeSlot}
       {slot}
     </div>
   );
