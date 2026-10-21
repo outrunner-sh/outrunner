@@ -91,7 +91,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
         labels={{ idle: "Continue with GitHub", pending: "Opening GitHub" }}
         icon={<GitHubMark />}
         onClick={() => void signIn()}
-        className="w-full border-amber-500/50 bg-transparent shadow-none hover:border-amber-500 hover:bg-transparent dark:border-amber-500/50 dark:bg-transparent dark:hover:border-amber-500 dark:hover:bg-transparent"
+        className="border-amber-500/50 bg-transparent shadow-none hover:border-amber-500 hover:bg-transparent dark:border-amber-500/50 dark:bg-transparent dark:hover:border-amber-500 dark:hover:bg-transparent"
       />
       {error && <p className="text-destructive text-xs">{error}</p>}
     </div>
