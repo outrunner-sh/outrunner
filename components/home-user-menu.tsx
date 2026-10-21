@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
+import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 
 /**
  * The bottom-of-sidebar user pill (the sidebar draws the divider above it),
@@ -49,12 +50,19 @@ export function HomeUserMenu({
 }
 
 /** Log out, staying open with its icon turning until the redirect lands (the
- *  menu would otherwise close at once, with nothing to say it worked). */
+ *  menu would otherwise close at once, with nothing to say it worked). The
+ *  conversations this browser kept go with the user. */
 function SignOutItem() {
   const { pending } = useFormStatus();
   return (
     <DropdownMenuItem asChild onSelect={(event) => event.preventDefault()}>
-      <button type="submit" className="w-full" aria-busy={pending || undefined} disabled={pending}>
+      <button
+        type="submit"
+        className="w-full"
+        aria-busy={pending || undefined}
+        disabled={pending}
+        onClick={() => CONVERSATIONS.clear()}
+      >
         {pending ? <Spinner /> : <LogOut />}
         Log out
       </button>

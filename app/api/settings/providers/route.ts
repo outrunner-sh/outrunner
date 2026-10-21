@@ -8,8 +8,6 @@ import { keySource } from "@/lib/openrouter/keys";
 import { checkProviderKey } from "@/lib/providers/check";
 import { isKeyProviderId, type KeyProviderId, keyProblem, PROVIDERS } from "@/lib/providers/registry";
 
-export const dynamic = "force-dynamic";
-
 /**
  * The user's own keys for model providers, and the agents' API keys
  * (Settings → Providers, lib/providers/registry.ts). GET says which providers have one (their last 4
@@ -25,7 +23,7 @@ async function providers(userId: string) {
 }
 
 /** Run a change, answering the database's refusal as JSON the page can show. */
-function changing(change: () => Promise<NextResponse>): Promise<NextResponse> {
+function changing(change: () => Promise<NextResponse>): Promise<Response> {
   return savingSettings("provider settings", change);
 }
 

@@ -24,6 +24,15 @@ export const SIDEBAR_COOKIE = "sidebar-collapsed";
 /** The projects folded shut in the sidebar, by group key: a cookie for the
  *  same reason as {@link SIDEBAR_COOKIE}. */
 export const FOLDED_PROJECTS_COOKIE = "sidebar-folded";
+
+/**
+ * Both are read by the app layout for the frame, so every instant page under
+ * it has to name them in its `unstable_instant` samples or the build stops.
+ * The names are repeated there rather than imported from here: a segment
+ * config is read by static analysis, which cannot follow a constant. Declared
+ * absent, which is the shell's case — it is prerendered once, for nobody in
+ * particular, and each visitor's own values stream in.
+ */
 /** A cookie holds about 4 KB; folder paths are long. The latest folds win. */
 const MAX_FOLDED = 40;
 
@@ -183,26 +192,28 @@ export function filterSidebarGroups(groups: SidebarGroup[], query: string): Side
 }
 
 /**
- * Where a workspace's "+" goes: /new naming the repository or folder, plus a
- * `start` value unique to this click. The new-session form is keyed on all of
- * it, so every click opens a fresh form for that target, even when the URL
- * would otherwise be the one already open (where the form may since have been
- * switched to another repository, folder, or to This Mac).
+ * Where a workspace's "+" goes: /new naming the repository or folder. The same
+ * URL each time, so the page can be prefetched and kept; each click still opens
+ * a fresh form (startNewSession, lib/session/new-session-reset.ts), even on the
+ * URL already open, where the form may since have been switched to another
+ * repository, folder, or to This Mac.
  */
-export function newSessionHref(
-  start: NonNullable<SidebarGroup["start"]>,
-  nonce: string,
-): string {
+export function newSessionHref(start: NonNullable<SidebarGroup["start"]>): string {
   const params = new URLSearchParams(
     start.kind === "cloud" ? { project: start.projectId } : { folder: start.folder },
   );
-  params.set("start", nonce);
   return `/new?${params}`;
 }
 
 /** The session id an app path is showing, so the sidebar can mark it. */
 export function activeSessionId(pathname: string): string | undefined {
   return /^\/(?:workspaces|local)\/([^/]+)/.exec(pathname)?.[1];
+}
+
+/** Whether an app path opens a session's studio (not its replay), whose header
+ *  carries the collapsed sidebar's buttons in place of the rail. */
+export function isStudioPath(pathname: string): boolean {
+  return /^\/(?:workspaces|local)\/[^/]+\/?$/.test(pathname);
 }
 
 const MINUTE = 60_000;

@@ -12,12 +12,27 @@ import {
   type LocalFolder,
   type LocalStatus,
 } from "@/lib/desktop/local-runtime";
-import { agentOf, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  agentOf,
+  CLAUDE_DEFAULT_MODEL,
+  DEFAULT_EFFORT,
+  type Effort,
+  runsOnOwnAccount,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
+import { rememberEffort } from "@/lib/session/picked-effort";
 
 type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string; sessionHref?: string };
+
+/** The effort a new session starts at: the one picked, where its model takes
+ *  one; else none, the model's own. */
+function startingEffort(model: SessionModel | undefined, effort: Effort | null): Effort | null {
+  return model && effort && takesEffort(model) ? effort : null;
+}
 
 /** Same shape as the server's generated branches (runtime/<time>-<id>). */
 function localBranch(workspaceId: string): string {
@@ -31,7 +46,10 @@ function localBranch(workspaceId: string): string {
  */
 export function useCreateSession(projects: Project[], initialProjectId?: string) {
   const router = useRouter();
-  const [projectId, setProjectId] = useState(() => pickInitialProject(projects, initialProjectId));
+  // The one picked here; until then the one the form starts on, which follows
+  // the list as it arrives (a cold start streams it in).
+  const [pickedId, setProjectId] = useState<string | null>(null);
+  const projectId = pickedId ?? pickInitialProject(projects, initialProjectId);
   // Repositories connected from the picker on this screen: the page's own list
   // has them only after it reloads.
   const [connected, setConnected] = useState<Project[]>([]);
@@ -61,8 +79,14 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
   /** Create a cloud session and open it: at once, on its setup progress, which
    *  the server runs after answering. Resolves false when it could not be
    *  created (the message says why), so the composer keeps the prompt. */
-  function create(prompt: string, attachmentIds: string[] = [], model?: SessionModel): Promise<boolean> {
+  function create(
+    prompt: string,
+    attachmentIds: string[] = [],
+    model?: SessionModel,
+    pickedEffort: Effort | null = null,
+  ): Promise<boolean> {
     if (!selected) return Promise.resolve(false);
+    const effort = startingEffort(model, pickedEffort);
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageAction(null);
@@ -74,9 +98,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           // The prompt and attachments are not sent here: the workspace has no
           // box yet. They ride the redirect, and wait in this tab for the
           // session to be ready (lib/session/first-prompt.ts).
-          // The model picked on this screen, and who serves it; none, the
-          // server starts it on the menu's default.
-          body: JSON.stringify({ branch: "", ...(model && { provider: model.provider, model: model.id }) }),
+          // The model picked on this screen, who serves it, and its effort;
+          // none, the server starts it on the menu's default.
+          body: JSON.stringify({
+            branch: "",
+            ...(model && { provider: model.provider, model: model.id }),
+            ...(effort && { effort }),
+          }),
         });
       } catch {
         setMessage("Could not reach Outrunner. Please try again.");
@@ -96,6 +124,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       }
       const first = { prompt, attachmentIds };
       rememberFirstPrompt(tabStorage(), result.workspace.id, first);
+      // None picked: the server's default, which on the user's Claude runs at
+      // DEFAULT_EFFORT (a model that takes none doesn't show it).
+      rememberEffort(result.workspace.id, model ? effort : DEFAULT_EFFORT);
       router.push(`/workspaces/${result.workspace.id}${firstPromptQuery(first)}`);
       router.refresh();
       resolve(true);
@@ -115,7 +146,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    *
    * Its agent is its model's (Codex for Codex's), signed in the way the user
    * picked for it (Settings → Providers); `status` is what the Mac app last
-   * said of its agent CLIs.
+   * said of its agent CLIs. `pickedEffort` goes with a model that takes one.
    */
   function createLocal(
     prompt: string,
@@ -123,7 +154,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     onOutrunnerModel = false,
     model?: SessionModel,
     status: LocalStatus | null = null,
+    pickedEffort: Effort | null = null,
   ): Promise<boolean> {
+    const effort = startingEffort(model, pickedEffort);
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageAction(null);
@@ -151,23 +184,35 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         return;
       }
       try {
-        await signInLocalAgent(workspaceId, agent, status);
+        // On Outrunner's model, or another on a key, it needs no account.
+        await signInLocalAgent(workspaceId, agent, status, model ? runsOnOwnAccount(model) : !onOutrunnerModel);
       } catch (error) {
         void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
         fail(error, "Could not sign the session's agent in.");
         return;
       }
       // The model picked on this screen; without one, Outrunner's where this
-      // Mac's Claude Code isn't logged in.
+      // Mac's Claude Code isn't logged in, else Opus on it.
+      let startedAt = effort;
       if (model || onOutrunnerModel) {
         try {
-          await (model ? putOnModel(workspaceId, model) : putOnDefaultModel(workspaceId));
+          await (model ? putOnModel(workspaceId, model, effort) : putOnDefaultModel(workspaceId));
         } catch (error) {
           void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
           fail(error, "Outrunner's models are unavailable right now.");
           return;
         }
+      } else {
+        // Best effort, as on the cloud: an agent too old to switch, or to set
+        // an effort, still starts the session, on Claude Code's own default.
+        try {
+          await putOnModel(workspaceId, CLAUDE_DEFAULT_MODEL, DEFAULT_EFFORT);
+          startedAt = DEFAULT_EFFORT;
+        } catch (error) {
+          console.warn("A local session starts on Claude Code's own default model: the agent couldn't set Opus", error);
+        }
       }
+      rememberEffort(workspaceId, startedAt);
       router.push(`/local/${workspaceId}${firstPromptQuery({ prompt, attachmentIds: [] })}`);
       resolve(true);
     }));

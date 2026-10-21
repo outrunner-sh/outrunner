@@ -4,8 +4,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { markOnboarded } from "@/lib/onboarding/server";
 
-export const dynamic = "force-dynamic";
-
 /** Onboarding is done: the first session started, or the user skipped it. */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {

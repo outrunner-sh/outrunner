@@ -9,6 +9,7 @@ import {
   filterSidebarGroups,
   FOLDED_PROJECTS_COOKIE,
   foldedProjectsCookie,
+  isStudioPath,
   newSessionHref,
   readFoldedProjects,
   relativeTime,
@@ -259,6 +260,17 @@ test("the active session is read from session paths only", () => {
   assert.equal(activeSessionId("/settings/general"), undefined);
 });
 
+test("only a session's own page is a studio path", () => {
+  assert.equal(isStudioPath("/workspaces/abc"), true);
+  assert.equal(isStudioPath("/workspaces/abc/"), true);
+  assert.equal(isStudioPath("/local/xyz"), true);
+  // Its replay has no studio header to hold the sidebar's buttons.
+  assert.equal(isStudioPath("/workspaces/abc/replay"), false);
+  assert.equal(isStudioPath("/workspaces"), false);
+  assert.equal(isStudioPath("/"), false);
+  assert.equal(isStudioPath("/new"), false);
+});
+
 test("relative times step from now through minutes, hours, days, weeks, months, years", () => {
   const now = Date.parse("2026-10-07T12:00:00Z");
   const ago = (ms: number) => new Date(now - ms).toISOString();
@@ -285,16 +297,13 @@ test("a missing, unparseable or future time is handled", () => {
   assert.equal(relativeTime("2026-10-07T12:05:00Z", now), "now");
 });
 
-test("a workspace's + opens /new on that repository or folder, unique per click", () => {
-  assert.equal(newSessionHref({ kind: "cloud", projectId: "p1" }, "a1"), "/new?project=p1&start=a1");
+test("a workspace's + opens /new on that repository or folder, the same URL each time", () => {
+  assert.equal(newSessionHref({ kind: "cloud", projectId: "p1" }), "/new?project=p1");
   // A folder path is encoded, spaces and all.
-  assert.equal(
-    newSessionHref({ kind: "local", folder: "/Users/ada/my app" }, "a2"),
-    "/new?folder=%2FUsers%2Fada%2Fmy+app&start=a2",
-  );
-  // Two clicks on the same + differ, so the form is rebuilt even on the same target.
+  assert.equal(newSessionHref({ kind: "local", folder: "/Users/ada/my app" }), "/new?folder=%2FUsers%2Fada%2Fmy+app");
+  // Stable, so it can be prefetched; the fresh form per click is startNewSession's.
   const start = { kind: "cloud", projectId: "p1" } as const;
-  assert.notEqual(newSessionHref(start, "x"), newSessionHref(start, "y"));
+  assert.equal(newSessionHref(start), newSessionHref(start));
 });
 
 test("a cloud session can be deleted from a settled status, or a setup that stalled", () => {

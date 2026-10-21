@@ -309,6 +309,29 @@
           "url": "https://storage.example/download/rollout?token=t"
         }
       ]
+    },
+    {
+      "branch": "ada/daily-sheet-imported",
+      "baseBranch": "main",
+      "sessionId": "b52b847e-3fe0-4bba-98c7-15c157a7f6d4",
+      "bundleRef": "ada/daily-sheet",
+      "originWorktree": "/Users/ada/conductor/workspaces/millerp/kelowna",
+      "downloads": [
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/download/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/download/patch?token=t",
+          "encoding": "gzip"
+        },
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/download/conversation?token=t",
+          "encoding": "gzip"
+        }
+      ]
     }
   ],
   "Activity": [
@@ -354,6 +377,22 @@
         "claude",
         "codex"
       ]
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "anthropic",
+        "openrouter"
+      ],
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "features": [
+        "restore-imports",
+        "session-environment",
+        "agent-config"
+      ]
     }
   ],
   "LocalSession": [
@@ -372,5 +411,61 @@
       "model": "gpt-6-luna",
       "agent": "codex"
     }
+  ],
+  "ReservedEnv": [
+    [
+      "PATH",
+      "HOME",
+      "USER",
+      "LOGNAME",
+      "SHELL",
+      "PWD",
+      "TMPDIR",
+      "LANG",
+      "TERM",
+      "TMUX",
+      "TMUX_PANE",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_MODEL",
+      "OPENAI_API_KEY",
+      "CODEX_HOME",
+      "DISABLE_AUTOUPDATER"
+    ]
+  ],
+  "SetEnvironmentRequest": [
+    {
+      "env": {
+        "DATABASE_URL": "postgres://u:p@db/app"
+      },
+      "files": {
+        "apps/backend/.env": "JWT_SECRET=x\n"
+      },
+      "setup": "bun install"
+    },
+    {
+      "env": {}
+    }
+  ],
+  "SetAgentConfigRequest": [
+    {
+      "version": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "url": "https://storage.example/download/config?token=t",
+      "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "mcpServers": {
+        "tracker": {
+          "type": "http",
+          "url": "https://mcp.example/mcp"
+        }
+      },
+      "settings": {
+        "enabledPlugins": {
+          "review@market": true
+        }
+      }
+    },
+    {}
   ]
 }

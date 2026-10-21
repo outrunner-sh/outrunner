@@ -1,0 +1,20 @@
+"use client";
+
+import { useEffect } from "react";
+
+import { useSharedResource } from "@/hooks/use-shared-resource";
+import { OUTRUNNER_MODELS, outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
+
+/**
+ * The user's model menu, from the one answer the page keeps: the last one at
+ * once wherever it is shown, looked up only when there is none yet or it went
+ * out of date (forgetOutrunnerModels). Null until the first answer; none on
+ * offer when that look failed.
+ */
+export function useOutrunnerModels(): OutrunnerModels | null {
+  const models = useSharedResource(OUTRUNNER_MODELS);
+  useEffect(() => {
+    void outrunnerModels();
+  }, []);
+  return models.status === "loading" ? null : models.value;
+}

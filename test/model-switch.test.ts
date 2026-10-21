@@ -5,7 +5,7 @@ import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AllowanceSpentError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { NoStartingModelError, startingModel, switchFailure } from "@/lib/runtime/model-switch";
 import { NoProviderKeyError } from "@/lib/providers/errors";
-import { OUTRUNNER_MODELS, type SetModelRequest } from "@/lib/runtime/session-models";
+import { EffortUnsupportedError, modelChoice, OUTRUNNER_MODELS, type SetModelRequest } from "@/lib/runtime/session-models";
 
 const GLM = OUTRUNNER_MODELS[0];
 
@@ -80,7 +80,7 @@ test("without Outrunner's models, a Claude login starts the session instead", as
     }),
   );
   assert.equal(on, "claude");
-  assert.equal(sent, 0, "nothing reached the agent");
+  assert.equal(sent, 1, "only the Claude default reached the agent");
 });
 
 test("a box too old to switch falls back to Claude, or says why without it", async () => {
@@ -221,12 +221,58 @@ test("a chosen provider without a saved key, or an agent older than it, says so"
 });
 
 test("with no default to start on, the session starts on the user's Claude, or says what's missing", async () => {
-  let sent = 0;
-  const on = await startingModel({ setModel: async () => sent++, keyFor: async () => assert.fail("asked for a key"), hasClaude: true, fallback: null });
+  const sent: SetModelRequest[] = [];
+  const setModel = async (req: SetModelRequest) => {
+    sent.push(req);
+    return { result: req.model, effort: req.effort };
+  };
+  const on = await startingModel({ setModel, keyFor: async () => assert.fail("asked for a key"), hasClaude: true, fallback: null });
   assert.equal(on, "claude");
-  assert.equal(sent, 0, "the session's own Claude default, untouched");
+  assert.deepEqual(sent, [{ model: "opus", effort: "high" }], "the newest Opus, at high effort");
   await assert.rejects(
     startingModel({ setModel: async () => assert.fail("reached the agent"), keyFor: async () => "k", hasClaude: false, fallback: null }),
     (error: unknown) => error instanceof NoStartingModelError && /Connect Claude/.test(error.message),
   );
+});
+
+test("a session starts at the effort picked for its model, never the fallback's", async () => {
+  const sent: SetModelRequest[] = [];
+  // The agent answers with the effort it applied.
+  const setModel = async (req: SetModelRequest) => {
+    sent.push(req);
+    return { result: req.model, effort: req.effort ?? "" };
+  };
+  const opus = modelChoice("claude", "opus")!;
+  await startingModel({ setModel, model: opus, effort: "max", fallback: GLM, keyFor: async () => KEY, hasClaude: true });
+  await startingModel({ setModel, effort: "max", fallback: GLM, keyFor: async () => KEY, hasClaude: true });
+  assert.deepEqual(sent, [
+    { model: "opus", effort: "max" },
+    { model: "z-ai/glm-5.3", gateway: "openrouter", token: KEY },
+  ]);
+});
+
+test("a box too old for efforts says to update, and fails rather than run at another", async () => {
+  const old = async () => ({ result: "opus" });
+  await assert.rejects(
+    startingModel({ setModel: old, model: modelChoice("claude", "opus")!, effort: "high", fallback: null, keyFor: async () => KEY, hasClaude: true }),
+    (error: unknown) => error instanceof EffortUnsupportedError,
+  );
+  await assert.rejects(
+    startingModel({ setModel: old, model: modelChoice("codex", "gpt-6-sol")!, effort: "high", fallback: null, keyFor: async () => KEY, hasClaude: true }),
+    (error: unknown) => error instanceof NoStartingModelError && /too old to set the effort/.test(error.message),
+  );
+  assert.deepEqual(switchFailure(new EffortUnsupportedError(), GLM), { status: 409, message: new EffortUnsupportedError().message });
+});
+
+test("a box that can't put Claude on Opus still starts the session, on Claude Code's own", async () => {
+  const refusals = [
+    async () => {
+      throw new AgentRequestError(404);
+    },
+    // Switched, but too old to set the effort.
+    async () => ({ result: "opus" }),
+  ];
+  for (const setModel of refusals) {
+    assert.equal(await quiet(() => startingModel({ setModel, keyFor: async () => KEY, hasClaude: true, fallback: null })), "claude");
+  }
 });

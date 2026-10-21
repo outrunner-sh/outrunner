@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useClaudeLocalLogin, useLocalRuntime, type LocalRuntime } from "@/hooks/use-local-runtime";
+import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
+import { useSharedResource } from "@/hooks/use-shared-resource";
 import type { AgentId, AuthMethodId } from "@/lib/agents/registry";
 import {
   checkLocalFolder,
@@ -10,7 +12,6 @@ import {
   claudeSetupNeeded,
   claudeSetupText,
   needsClaudeLogin,
-  outrunnerModelsAvailable,
   pickLocalFolder,
   rememberedFolder,
   rememberFolder,
@@ -19,7 +20,7 @@ import {
   toolsToInstall,
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
-import type { AgentAuthChoices } from "@/lib/db/credentials";
+import { AGENT_AUTH_CHOICES } from "@/lib/client/agent-auth-choices";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 export type SessionLocation = "cloud" | "local";
@@ -67,32 +68,15 @@ export function useSessionLocation(agent: AgentId = "claude") {
 
   // Whether this server runs Outrunner's models: then a Mac whose Claude Code
   // isn't logged in runs its sessions on those instead of being blocked.
-  const [outrunnerModels, setOutrunnerModels] = useState(false);
-  useEffect(() => {
-    let live = true;
-    void outrunnerModelsAvailable().then((available) => {
-      if (live) setOutrunnerModels(available);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
+  const outrunnerModels = useOutrunnerModels()?.available ?? false;
   // How Claude Code signs in (Settings → Providers): this Mac's own Claude
   // login matters only when that is the pick, or nothing is picked yet. A
   // subscription or an API key is handed to the session instead.
-  const [claudePick, setClaudePick] = useState<AuthMethodId | null>(null);
+  const choices = useSharedResource(AGENT_AUTH_CHOICES);
   useEffect(() => {
-    let live = true;
-    void fetch("/api/settings/agents")
-      .then((res) => (res.ok ? (res.json() as Promise<{ choices?: AgentAuthChoices }>) : null))
-      .then((data) => {
-        if (live) setClaudePick(data?.choices?.claude ?? null);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
+    void AGENT_AUTH_CHOICES.ensure().catch(() => {});
   }, []);
+  const claudePick: AuthMethodId | null = choices.value?.claude ?? null;
   const onMacLogin = claudePick === null || claudePick === "local";
 
   const onOutrunnerModel =

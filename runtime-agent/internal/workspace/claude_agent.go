@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 	"unicode/utf8"
 
 	"runtime-agent/internal/claude"
+	"runtime-agent/internal/transcript"
 )
 
 // claudeAgent runs Claude Code: the agent every session ran before there was
@@ -157,6 +156,9 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	default:
 		argv = claude.Command(mode, orientation)
 	}
+	// Claude's own flags first: the env files below wrap the command.
+	argv = claude.WithEffort(argv, f.Effort)
+	argv = withAgentConfig(argv)
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.
 		argv = claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
@@ -171,7 +173,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 }
 
 // claudeConvDir is where Claude writes this workspace's conversation JSONL:
-// $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + claudeProjectDir —
+// $HOME/.claude/projects/<slug>. It uses os.UserHomeDir() + transcript.ClaudeProjectDir —
 // the same derivation as SessionLog and conversationDest — rather than s.Root,
 // so it stays correct when HOME and Root differ.
 func (s *Service) claudeConvDir(workspaceID string) string {
@@ -179,7 +181,7 @@ func (s *Service) claudeConvDir(workspaceID string) string {
 	if err != nil {
 		home = s.Root // best-effort fallback if HOME is unavailable
 	}
-	return claudeProjectDir(home, s.worktreePath(workspaceID))
+	return transcript.ClaudeProjectDir(home, s.worktreePath(workspaceID))
 }
 
 // userTurnCount totals the user messages Claude has recorded across the *.jsonl
@@ -239,7 +241,7 @@ func (a claudeAgent) userTurns(workspaceID string) int {
 
 // sessionLog returns the current Claude JSONL path for a workspace, or "" if
 // Claude hasn't written anything yet. Claude Code stores per-project logs at
-// ~/.claude/projects/<slug>/<sessionId>.jsonl (see claudeSlug). A worktree is
+// ~/.claude/projects/<slug>/<sessionId>.jsonl (see transcript.ClaudeSlug). A worktree is
 // the session's own, and --continue reuses its file, so "newest jsonl" ==
 // "current session"; an in-place session's conversation is named by id.
 func (a claudeAgent) sessionLog(workspaceID string) string {
@@ -248,7 +250,7 @@ func (a claudeAgent) sessionLog(workspaceID string) string {
 	if err != nil {
 		return ""
 	}
-	dir := claudeProjectDir(home, s.worktreePath(workspaceID))
+	dir := transcript.ClaudeProjectDir(home, s.worktreePath(workspaceID))
 	if f, _ := s.getFacts(workspaceID); f.ClaudeSessionID != "" {
 		path := filepath.Join(dir, f.ClaudeSessionID+".jsonl")
 		if _, err := os.Stat(path); err != nil {
@@ -277,46 +279,3 @@ func (a claudeAgent) sessionLog(workspaceID string) string {
 	}
 	return newest
 }
-
-// claudeProjectDir is the directory Claude Code keeps a working directory's
-// conversation logs in. Claude names it after its real working directory, so
-// symlinks are resolved first: on macOS /var and /tmp live under /private, and
-// a symlinked checkout or home is common. A path that does not exist yet is
-// used as given.
-func claudeProjectDir(home, worktree string) string {
-	if resolved, err := filepath.EvalSymlinks(worktree); err == nil {
-		worktree = resolved
-	}
-	return filepath.Join(home, ".claude", "projects", claudeSlug(worktree))
-}
-
-// claudeSlug encodes a filesystem path the way Claude Code names its
-// per-project JSONL directory (read from Claude Code 2.1's bundle). It runs
-// `path.replace(/[^a-zA-Z0-9]/g, "-")` on a JavaScript string, so the unit is a
-// UTF-16 code unit, not a byte or a rune: "é" becomes one '-', an emoji two.
-// A slug over claudeSlugMax units is cut there and suffixed with '-' and the
-// base-36 absolute value of the path's 32-bit Java-style string hash.
-func claudeSlug(path string) string {
-	units := utf16.Encode([]rune(path))
-	b := make([]byte, len(units))
-	var hash int32 // (h<<5)-h+c|0 in JavaScript: wraps exactly like int32
-	for i, u := range units {
-		hash = hash*31 + int32(u)
-		if u >= 'a' && u <= 'z' || u >= 'A' && u <= 'Z' || u >= '0' && u <= '9' {
-			b[i] = byte(u)
-		} else {
-			b[i] = '-'
-		}
-	}
-	if len(b) <= claudeSlugMax {
-		return string(b)
-	}
-	abs := int64(hash)
-	if abs < 0 {
-		abs = -abs
-	}
-	return string(b[:claudeSlugMax]) + "-" + strconv.FormatInt(abs, 36)
-}
-
-// claudeSlugMax is the longest slug Claude Code keeps whole.
-const claudeSlugMax = 200

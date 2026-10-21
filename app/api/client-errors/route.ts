@@ -4,8 +4,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { clientFaultLine, ClientFault } from "@/lib/http/client-error-report";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Where a browser reports a fault only it could see: a frame that didn't
  * match the protocol. The ref its Notice shows reaches the server's log here,

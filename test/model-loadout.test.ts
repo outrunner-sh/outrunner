@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  effortOnPick,
   LOADOUT_MAX,
   loadoutDefault,
+  loadoutEffort,
   loadoutModels,
   moveEntry,
   parseLoadout,
   searchModels,
+  setEntryEffort,
   toggleEntry,
 } from "@/lib/runtime/model-loadout";
+import { AGENT_IDS } from "@/lib/agents/registry";
 import { modelGroups } from "@/lib/runtime/session-models";
 
 const OPUS = { provider: "claude", id: "opus" } as const;
@@ -35,12 +39,15 @@ test("a stored or requested loadout is made sound", () => {
 test("the picker shows what the menu offers now, in the loadout's order", () => {
   const loadout = parseLoadout({ models: [LUNA, GLM, OPUS], default: GLM });
   // No Z.ai key: its model is kept in the loadout but not shown, nor started on.
-  const noKey = modelGroups({ outrunner: false, allowance: false, keys: [] });
+  const noKey = modelGroups({ outrunner: false, allowance: false, keys: [] }, AGENT_IDS);
   assert.deepEqual(loadoutModels(loadout, noKey).map((m) => m.id), ["gpt-6-luna", "opus"]);
   assert.equal(loadoutDefault(loadout, noKey), undefined);
-  const withKey = modelGroups({ outrunner: false, allowance: false, keys: ["zai"] });
+  const withKey = modelGroups({ outrunner: false, allowance: false, keys: ["zai"] }, AGENT_IDS);
   assert.deepEqual(loadoutModels(loadout, withKey).map((m) => m.id), ["gpt-6-luna", "glm-5.3", "opus"]);
   assert.equal(loadoutDefault(loadout, withKey)?.id, "glm-5.3");
+  // Claude not connected: Opus is kept too, but not shown.
+  const noClaude = modelGroups({ outrunner: false, allowance: false, keys: [] }, ["codex"]);
+  assert.deepEqual(loadoutModels(loadout, noClaude).map((m) => m.id), ["gpt-6-luna"]);
   // A typed id stays offered where its group takes typed ids.
   const typed = parseLoadout({ models: [{ provider: "codex", id: "gpt-7-preview" }] });
   assert.equal(loadoutModels(typed, noKey)[0]?.label, "gpt-7-preview");
@@ -48,17 +55,19 @@ test("the picker shows what the menu offers now, in the loadout's order", () => 
 
 test("picking, unpicking and ordering", () => {
   let loadout = toggleEntry(parseLoadout(null), OPUS);
-  assert.deepEqual(loadout, { models: [OPUS], default: OPUS }, "the first picked is the default");
+  const opusHigh = { ...OPUS, effort: "high" };
+  assert.deepEqual(loadout, { models: [opusHigh], default: opusHigh }, "the first picked is the default, at high effort");
+  assert.deepEqual(toggleEntry(loadout, GLM).models[1], GLM, "a model that takes no effort is added without one");
   loadout = toggleEntry(loadout, LUNA);
   loadout = moveEntry(loadout, LUNA, -1);
-  assert.deepEqual(loadout.models, [LUNA, OPUS]);
+  assert.deepEqual(loadout.models, [{ ...LUNA, effort: "high" }, opusHigh]);
   assert.deepEqual(moveEntry(loadout, LUNA, -1), loadout, "nothing before the first");
   loadout = toggleEntry(loadout, OPUS);
-  assert.deepEqual(loadout, { models: [LUNA], default: null }, "the default goes with its model");
+  assert.deepEqual(loadout, { models: [{ ...LUNA, effort: "high" }], default: null }, "the default goes with its model");
 });
 
 test("search finds a model by its name or its id", () => {
-  const all = modelGroups({ outrunner: false, allowance: false, keys: [] }).flatMap((g) => g.models);
+  const all = modelGroups({ outrunner: false, allowance: false, keys: [] }, AGENT_IDS).flatMap((g) => g.models);
   assert.deepEqual(searchModels(all, "luna").map((m) => m.id), ["gpt-6-luna"]);
   assert.deepEqual(searchModels(all, "OPUS").map((m) => m.id), ["opus"]);
   assert.equal(searchModels(all, "  ").length, all.length);
@@ -71,4 +80,32 @@ test("a move passes over models the picker doesn't show now", () => {
   assert.deepEqual(moveEntry(loadout, OPUS, 1, visible).models, [LUNA, GLM, OPUS]);
   assert.deepEqual(moveEntry(loadout, LUNA, -1, visible).models, [LUNA, GLM, OPUS]);
   assert.deepEqual(moveEntry(loadout, LUNA, 1, visible), loadout, "nothing shown after the last");
+});
+
+test("each loadout model keeps the effort it runs at, where it takes one", () => {
+  const HAIKU = { provider: "claude", id: "haiku" } as const;
+  const loadout = parseLoadout({
+    models: [
+      { ...OPUS, effort: "xhigh" },
+      { ...LUNA, effort: "ultra" }, // not a level
+      { ...HAIKU, effort: "high" }, // takes none
+      { ...GLM, effort: "high" }, // a gateway's runs at its own
+    ],
+  });
+  assert.deepEqual(loadout.models, [{ ...OPUS, effort: "xhigh" }, LUNA, HAIKU, GLM]);
+  assert.equal(loadoutEffort(loadout, OPUS), "xhigh");
+  assert.equal(loadoutEffort(loadout, LUNA), undefined);
+
+  // Picked, each runs at its loadout's effort, its own where it has none
+  // there, and high where it isn't in the loadout.
+  assert.equal(effortOnPick(loadout, OPUS), "xhigh");
+  assert.equal(effortOnPick(loadout, LUNA), null);
+  assert.equal(effortOnPick(loadout, { provider: "codex", id: "gpt-6-sol" }), "high");
+  assert.equal(effortOnPick(undefined, OPUS), "high");
+
+  const set = setEntryEffort(loadout, LUNA, "low");
+  assert.equal(loadoutEffort(set, LUNA), "low");
+  assert.deepEqual(setEntryEffort(set, LUNA, null).models[1], LUNA, "null goes back to the model's own");
+  assert.deepEqual(setEntryEffort(loadout, HAIKU, "max"), loadout, "a model that takes none is left");
+  assert.deepEqual(setEntryEffort(loadout, { provider: "codex", id: "gpt-6-sol" }, "max"), loadout, "nor one not in it");
 });

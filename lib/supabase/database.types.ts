@@ -222,6 +222,42 @@ type WorkspaceSnapshotRow = {
   updated_at: string;
 };
 
+type WorkspaceImportRow = {
+  owner_id: string;
+  workspace_id: string;
+  session_key: string;
+  source: string;
+  conversation_sha256: string;
+  imported_at: string;
+  created_at: string;
+};
+
+type ProjectEnvironmentRow = {
+  owner_id: string;
+  project_id: string;
+  secrets_ciphertext: string | null;
+  env_names: string[];
+  file_paths: string[];
+  setup_script: string | null;
+  run_script: string | null;
+  archive_script: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type UserAgentConfigRow = {
+  user_id: string;
+  archive_path: string | null;
+  archive_sha256: string | null;
+  archive_size: number | null;
+  items: string[];
+  mcp_ciphertext: string | null;
+  mcp_names: string[];
+  settings: Json;
+  created_at: string;
+  updated_at: string;
+};
+
 // Multi-user — each user's own GitHub and Anthropic credentials, sealed with
 // AES-256-GCM (lib/crypto/secret-box.ts). Service-role only: the table has RLS
 // enabled with NO policy, so anon/authenticated match nothing. Reach it through
@@ -428,6 +464,32 @@ export type Database = {
           },
         ];
       };
+      user_agent_config: {
+        Row: UserAgentConfigRow;
+        Insert: Insert<UserAgentConfigRow, "user_id">;
+        Update: Partial<UserAgentConfigRow>;
+        Relationships: [];
+      };
+      project_environment: {
+        Row: ProjectEnvironmentRow;
+        Insert: Insert<ProjectEnvironmentRow, "owner_id" | "project_id">;
+        Update: Partial<ProjectEnvironmentRow>;
+        Relationships: [];
+      };
+      workspace_imports: {
+        Row: WorkspaceImportRow;
+        Insert: Insert<WorkspaceImportRow, "owner_id" | "workspace_id" | "session_key" | "source" | "conversation_sha256">;
+        Update: Partial<WorkspaceImportRow>;
+        Relationships: [
+          {
+            foreignKeyName: "workspace_imports_owner_workspace_fkey";
+            columns: ["owner_id", "workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["owner_id", "id"];
+          },
+        ];
+      };
       attachments: {
         Row: AttachmentRow;
         Insert: Insert<
@@ -518,6 +580,8 @@ export type Database = {
           requested_project_id: string;
           requested_agent_secret: string;
           requested_image_version?: string;
+          /** The plan's cap on the owner's running boxes; null when none applies. */
+          max_live_computers?: number | null;
         };
         Returns: Array<{
           runtime_computer_id: string;

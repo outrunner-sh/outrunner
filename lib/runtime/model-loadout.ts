@@ -8,10 +8,20 @@
  * Imports only the menu, so the browser and the tests use it as is.
  */
 
-import { modelChoice, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  DEFAULT_EFFORT,
+  type Effort,
+  isEffort,
+  modelChoice,
+  type ModelGroup,
+  type ModelProvider,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
 
-/** One model in the loadout: whose, and which. */
-export type LoadoutEntry = { provider: ModelProvider; id: string };
+/** One model in the loadout: whose, which, and the effort it runs at when
+ *  picked (none: the model's own; only on a model that takes one). */
+export type LoadoutEntry = { provider: ModelProvider; id: string; effort?: Effort };
 
 export type ModelLoadout = {
   /** In the order the picker shows them. */
@@ -33,9 +43,13 @@ export function sameEntry(a: LoadoutEntry | null | undefined, b: LoadoutEntry | 
  *  choice is; null for anything else. */
 function parseEntry(raw: unknown): LoadoutEntry | null {
   if (!raw || typeof raw !== "object") return null;
-  const { provider, id } = raw as { provider?: unknown; id?: unknown };
+  const { provider, id, effort } = raw as { provider?: unknown; id?: unknown; effort?: unknown };
   const model = modelChoice(provider, id);
-  return model ? { provider: model.provider, id: model.id } : null;
+  if (!model) return null;
+  const entry: LoadoutEntry = { provider: model.provider, id: model.id };
+  // An effort the model doesn't take is dropped, not kept to mislead.
+  if (isEffort(effort) && takesEffort(model)) entry.effort = effort;
+  return entry;
 }
 
 /**
@@ -73,15 +87,44 @@ export function loadoutDefault(loadout: ModelLoadout, groups: ModelGroup[]): Ses
   return loadout.default ? offeredModel(groups, loadout.default) : undefined;
 }
 
-/** `entry` added at the end, or taken out; the default goes with it. */
+/** The effort the loadout runs `model` at; undefined when it isn't in the
+ *  loadout, or runs at its own. */
+export function loadoutEffort(loadout: ModelLoadout, model: LoadoutEntry): Effort | undefined {
+  return loadout.models.find((e) => sameEntry(e, model))?.effort;
+}
+
+/** The effort `model` runs at when picked: the loadout's for it (null: the
+ *  model's own, as Settings shows it), else DEFAULT_EFFORT. Only a model that
+ *  takes one gets it (takesEffort). */
+export function effortOnPick(loadout: ModelLoadout | undefined, model: LoadoutEntry): Effort | null {
+  const entry = loadout?.models.find((e) => sameEntry(e, model));
+  return entry ? (entry.effort ?? null) : DEFAULT_EFFORT;
+}
+
+/** `entry` set to run at `effort`, or at its own with null. A model not in
+ *  the loadout, or one that takes no effort, is left as it is. */
+export function setEntryEffort(loadout: ModelLoadout, entry: LoadoutEntry, effort: Effort | null): ModelLoadout {
+  if (!takesEffort(entry) || !loadout.models.some((e) => sameEntry(e, entry))) return loadout;
+  const models = loadout.models.map((e): LoadoutEntry => {
+    if (!sameEntry(e, entry)) return e;
+    const bare = { provider: e.provider, id: e.id };
+    return effort ? { ...bare, effort } : bare;
+  });
+  return { ...loadout, models };
+}
+
+/** `entry` added at the end, at DEFAULT_EFFORT where it takes one, or taken
+ *  out; the default goes with it. */
 export function toggleEntry(loadout: ModelLoadout, entry: LoadoutEntry): ModelLoadout {
   if (loadout.models.some((e) => sameEntry(e, entry))) {
     const models = loadout.models.filter((e) => !sameEntry(e, entry));
     return { models, default: sameEntry(loadout.default, entry) ? null : loadout.default };
   }
   if (loadout.models.length >= LOADOUT_MAX) return loadout;
+  const added: LoadoutEntry = { provider: entry.provider, id: entry.id };
+  if (takesEffort(entry)) added.effort = DEFAULT_EFFORT;
   // The first model picked is the default until another is made it.
-  return { models: [...loadout.models, entry], default: loadout.default ?? entry };
+  return { models: [...loadout.models, added], default: loadout.default ?? added };
 }
 
 /**

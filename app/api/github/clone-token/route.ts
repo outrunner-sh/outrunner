@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
-
-export const dynamic = "force-dynamic";
+import { githubErrorResponse } from "@/lib/github/http";
+import { requireGithubToken } from "@/lib/github/token";
 
 /**
  * The signed-in user's GitHub token, for the Mac app to clone a repository
@@ -26,9 +25,6 @@ export async function POST(request: Request) {
       { headers: { "cache-control": "no-store" } },
     );
   } catch (error) {
-    if (error instanceof MissingGithubTokenError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    throw error;
+    return githubErrorResponse(error, "Couldn't reach GitHub for that repository.");
   }
 }

@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { AllowanceBar } from "@/components/allowance-bar";
 import { NoticeActions } from "@/components/ui/notice";
 import type { AllowanceView } from "@/lib/openrouter/allowance";
-import { providerSettingsHref } from "@/lib/settings-links";
-import { cn } from "@/lib/utils";
+import { providerSettingsHref, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
 
 /**
  * How much of their allowance on Outrunner's models the user has used, as a
@@ -42,29 +43,10 @@ export function OutrunnerAllowance() {
   if (!view) return null;
   return (
     <div className="space-y-1.5 px-2 pb-3">
-      <div className="flex items-baseline justify-between gap-2 text-xs">
-        <span className="text-muted-foreground">Outrunner&apos;s models</span>
-        <span className={cn("tabular-nums", view.state === "out" ? "text-warning" : "text-muted-foreground")}>
-          {view.label}
-        </span>
-      </div>
-      <div
-        role="progressbar"
-        aria-label="Outrunner's models used"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(view.percent)}
-        aria-valuetext={view.label}
-        className="h-1.5 overflow-hidden rounded-full bg-muted"
-      >
-        <div
-          className={cn(
-            "h-full rounded-full transition-[width] duration-500",
-            view.state === "ok" ? "bg-foreground/70" : "bg-warning",
-          )}
-          style={{ width: `${view.percent}%` }}
-        />
-      </div>
+      {/* The whole picture, with the user's own keys, is in Settings → Usage. */}
+      <Link href={USAGE_SETTINGS_HREF} className="block rounded-sm hover:opacity-80">
+        <AllowanceBar view={view} />
+      </Link>
       {view.state === "out" ? (
         <>
           <p className="text-xs text-muted-foreground">You&apos;ve used your included usage.</p>

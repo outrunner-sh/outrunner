@@ -1,20 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import {
-  getRuntimeComputerByProject,
-  getWorkspace,
-  readRuntimeComputerSecret,
-} from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
-import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { sendFailureMessage } from "@/lib/session/send-failure";
-
-export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -51,57 +43,18 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const workspace = await getWorkspace(id);
-  if (!workspace) {
-    return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
-  }
-
-  const resolution = resolveProvider(workspace);
-  if (!resolution.ok) return providerErrorResponse(resolution);
-  const provider = resolution.provider;
-  if (!isComputerProvider(provider)) {
-    return NextResponse.json(
-      { error: "Messaging requires a Runtime Computer provider." },
-      { status: 409 },
-    );
-  }
-
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (!computer || !computer.daytonaSandboxId || computer.status !== "ready") {
-    return NextResponse.json(
-      { error: "Runtime Computer is not ready." },
-      { status: 409 },
-    );
-  }
-
-  const secret = await readRuntimeComputerSecret(computer.id);
-  if (!secret) {
-    return NextResponse.json({ error: "Runtime Computer secret missing." }, { status: 500 });
-  }
-
-  let target;
-  try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
-  } catch (error) {
-    console.error(`Message: agentTarget failed for ${workspace.id}`, error);
-    return NextResponse.json(
-      { error: "Could not reach the Runtime Computer." },
-      { status: 503 },
-    );
-  }
-
-  const identity: WorkspaceIdentity = {
-    workspaceId: workspace.id,
-    projectId: workspace.projectId,
-    computerId: computer.id,
-    userId: owner.id,
-  };
+  const reach = await reachWorkspaceAgent(id, owner.id, {
+    label: "Message",
+    needsComputer: "Messaging requires a Runtime Computer provider.",
+  });
+  if (!reach.ok) return reach.response;
+  const { workspace, provider, sandboxId, agent, identity } = reach.reached;
 
   let prompt = content;
   try {
     prompt = await materializeAttachments({
       provider,
-      sandboxId: computer.daytonaSandboxId,
+      sandboxId,
       worktreePath: workspace.worktreePath ?? "",
       workspaceId: workspace.id,
       attachmentIds,
@@ -116,14 +69,18 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    await new AgentClient(target).sendMessage(identity, prompt);
+    await agent.sendMessage(identity, prompt);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
+    // The agent's 404 (unknown workspace) means the session's box is gone, so
+    // retrying won't help; say so rather than offering a retry.
     return NextResponse.json(
       {
         error:
           error instanceof AgentRequestError
-            ? sendFailureMessage(error.error?.message)
+            ? error.status === 404
+              ? "This session isn't running on its computer any more."
+              : sendFailureMessage(error.error?.message)
             : "Couldn't reach the Runtime Computer. Try again.",
       },
       { status: 502 },

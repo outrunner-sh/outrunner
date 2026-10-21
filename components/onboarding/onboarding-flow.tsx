@@ -3,21 +3,32 @@
 import { useCallback, useState } from "react";
 import { ArrowLeft, ArrowRight, Cloud, Laptop, Loader2, Terminal } from "lucide-react";
 
-import { CloudSetup, type CloudModel } from "@/components/onboarding/cloud-setup";
+import { CloudSetup } from "@/components/onboarding/cloud-setup";
 import { MacSetup } from "@/components/onboarding/mac-setup";
 import { Button } from "@/components/ui/button";
-import type { OnboardingEnv, OnboardingFolder, RunTarget } from "@/lib/onboarding/types";
+import type { CloudModel } from "@/lib/onboarding/claude-choice";
+import type {
+  OnboardingEnv,
+  OnboardingFinish,
+  OnboardingFolder,
+  OnboardingRepo,
+  RunTarget,
+} from "@/lib/onboarding/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { cn } from "@/lib/utils";
 
 type Step = "welcome" | "where" | "setup";
 
+/** The ways out of the last step: a first session, home, or the import. */
+type Leaving = "start" | "finish" | "import";
+
 /**
  * First run, in three steps: welcome, where sessions run, and a live checklist
- * for that choice that ends by starting the session itself, where the user
- * types their first message. Each step asks only for what the choice needs.
- * While new local sessions are off there is no choice to make: welcome, then
- * the cloud's checklist.
+ * for that choice. On this Mac it ends by starting the session itself. In the
+ * cloud it ends with the repositories connected, and the user picks what's
+ * next: home, a first session in one of them, or importing this Mac's work.
+ * Each step asks only for what the choice needs. While new local sessions are
+ * off there is no choice to make: welcome, then the cloud's checklist.
  */
 export function OnboardingFlow({
   env,
@@ -36,8 +47,9 @@ export function OnboardingFlow({
   const [ready, setReady] = useState(false);
   const [folder, setFolder] = useState<OnboardingFolder | null>(null);
   const [model, setModel] = useState<CloudModel>(null);
-  const [repoId, setRepoId] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [picked, setPicked] = useState<OnboardingRepo[]>([]);
+  // Which way out is under way: its button spins, and every other waits.
+  const [leaving, setLeaving] = useState<Leaving | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const index = steps.indexOf(step);
@@ -48,22 +60,29 @@ export function OnboardingFlow({
   };
   const onReady = useCallback((value: boolean) => setReady(value), []);
 
-  const start = async () => {
-    if (!target) return;
-    setStarting(true);
+  const leave = async (how: Leaving, input: OnboardingFinish) => {
+    setLeaving(how);
     setError(null);
     try {
-      const href = await env.start({
-        target,
-        ...(target === "mac" ? { folder: folder ?? undefined } : { repoId: repoId ?? undefined, model: model ?? "outrunner" }),
-      });
-      // Leaving: keep the spinner up until the session page replaces this one.
+      const href = await env.finish(input);
+      // Leaving: keep the spinner up until the next page replaces this one.
       if (href) return onLeave?.(href);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not start the session.");
+      setError(e instanceof Error ? e.message : "Could not finish setting up.");
     }
-    setStarting(false);
+    setLeaving(null);
   };
+
+  // The first repository picked is where a first session starts, named on
+  // its button; it starts only on a model there is (claude-choice.ts).
+  const repoIds = picked.map((repo) => repo.id);
+  const startRepo = picked[0] ?? null;
+  const startInCloud = () =>
+    startRepo &&
+    model &&
+    leave("start", { target: "cloud", repoIds, session: { repoId: startRepo.id, model } });
+  const finishCloud = (next: "home" | "import") =>
+    leave(next === "import" ? "import" : "finish", { target: "cloud", repoIds, next });
 
   const [skipping, setSkipping] = useState(false);
   const skip = env.skip
@@ -91,7 +110,7 @@ export function OnboardingFlow({
             <button
               type="button"
               onClick={() => void skip()}
-              disabled={skipping || starting}
+              disabled={skipping || leaving !== null}
               className="text-muted-foreground hover:text-foreground text-xs disabled:opacity-50"
             >
               Skip for now
@@ -140,7 +159,7 @@ export function OnboardingFlow({
               detail={
                 target === "mac"
                   ? "A few things local sessions need. Each one checks itself."
-                  : "Connect Claude and pick the repository to work in."
+                  : "Pick the repositories to work in. Start a session now, or whenever you're ready."
               }
             />
             {target === "mac" ? (
@@ -148,27 +167,60 @@ export function OnboardingFlow({
             ) : (
               <CloudSetup
                 env={env}
-                model={model}
                 onModel={setModel}
-                repoId={repoId}
-                onRepoId={setRepoId}
+                picked={picked}
+                onPicked={setPicked}
                 onReady={onReady}
+                onImport={() => void finishCloud("import")}
+                busy={leaving !== null}
               />
             )}
-            {starting && target === "cloud" && (
+            {leaving === "start" && target === "cloud" && (
               <p className="text-muted-foreground text-sm">
                 Setting up your cloud machine. This takes about a minute the first time.
               </p>
             )}
             {error && <p className="text-destructive text-sm">{error}</p>}
-            <div className="flex items-center justify-between">
-              <Button variant="ghost" onClick={() => go(localSessions ? "where" : "welcome")} disabled={starting}>
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                variant="ghost"
+                onClick={() => go(localSessions ? "where" : "welcome")}
+                disabled={leaving !== null}
+              >
                 <ArrowLeft className="size-4" /> Back
               </Button>
-              <Button onClick={() => void start()} disabled={!ready || starting}>
-                {starting ? <Loader2 className="size-4 animate-spin" /> : null}
-                Start session
-              </Button>
+              {target === "mac" ? (
+                <Button
+                  onClick={() => void leave("start", { target: "mac", folder: folder ?? undefined })}
+                  disabled={!ready || leaving !== null}
+                >
+                  <Spinner on={leaving === "start"} />
+                  Start session
+                </Button>
+              ) : (
+                <div className="flex min-w-0 items-center gap-2">
+                  {startRepo && (
+                    <Button
+                      variant="outline"
+                      onClick={() => void startInCloud()}
+                      disabled={model === null || leaving !== null}
+                      title={
+                        model === null
+                          ? "Connect Claude or add a key in Settings → Providers to start a session."
+                          : undefined
+                      }
+                      className="min-w-0"
+                    >
+                      <Spinner on={leaving === "start"} />
+                      <span className="truncate">Start a session in {startRepo.fullName.split("/")[1]}</span>
+                    </Button>
+                  )}
+                  <Button onClick={() => void finishCloud("home")} disabled={!ready || leaving !== null}>
+                    <Spinner on={leaving === "finish"} />
+                    Finish
+                  </Button>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -190,8 +242,7 @@ function Welcome({ name, onMac, onNext }: { name: string; onMac: boolean; onNext
       <div className="space-y-2">
         <h1 className="text-xl font-semibold">Welcome, {name.split(" ")[0]}</h1>
         <p className="text-muted-foreground mx-auto max-w-sm text-sm">
-          Run many Claude Code agents in parallel, {onMac ? "on this Mac or in the cloud" : "in the cloud"}.
-          Two minutes of setup, then your first session.
+          Run fleets of coding agents {onMac ? "on this Mac or in the cloud" : "in the cloud"}.
         </p>
       </div>
       <Button size="lg" onClick={onNext}>
@@ -199,6 +250,10 @@ function Welcome({ name, onMac, onNext }: { name: string; onMac: boolean; onNext
       </Button>
     </section>
   );
+}
+
+function Spinner({ on }: { on: boolean }) {
+  return on ? <Loader2 className="size-4 animate-spin" /> : null;
 }
 
 function Heading({ title, detail }: { title: string; detail: string }) {

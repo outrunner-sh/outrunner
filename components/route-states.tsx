@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { RaillessSidebarButtons } from "@/components/app-frame";
 import { NoticeActions, type NoticeAction } from "@/components/ui/notice";
 import { DotMatrix } from "@/components/ui/loaders";
 import { cn } from "@/lib/utils";
@@ -7,11 +8,14 @@ import { cn } from "@/lib/utils";
 /**
  * Full-page states for the app's routes: loading, missing and failed. Inside
  * the app layout, so the sidebar stays and there is always a way on — the Mac
- * app has no browser back button to fall back on.
+ * app has no browser back button to fall back on. On a session's path, where
+ * the collapsed sidebar's rail steps aside for a header these states don't
+ * have, they carry its buttons themselves.
  */
 export function RouteLoading({ label }: { label: string }) {
   return (
     <div role="status" className="route-state">
+      <RaillessSidebarButtons />
       <DotMatrix rows={6} cols={10} />
       <p className="route-state-title">{label}</p>
     </div>
@@ -42,6 +46,7 @@ export function RouteMessage({
 }) {
   return (
     <div className={cn("route-state", className)}>
+      <RaillessSidebarButtons />
       <DotMatrix rows={6} cols={10} className="is-still" />
       <div className="space-y-1.5 text-center">
         <h1 className="route-state-title">{title}</h1>

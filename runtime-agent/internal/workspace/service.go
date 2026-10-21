@@ -23,6 +23,7 @@ import (
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/tmux"
+	"runtime-agent/internal/transcript"
 )
 
 // sessions is the part of tmux the service drives, behind an interface so tests
@@ -156,6 +157,10 @@ type workspaceFacts struct {
 	// Gateway, when set, runs the session through it on a key of its own (in
 	// the session's gateway file) instead of the user's Claude credential.
 	Gateway claude.Gateway `json:"gateway,omitempty"`
+	// Effort is the reasoning effort the session runs at (claude.Efforts);
+	// empty is its model's own. It is part of the model choice: SetModel
+	// replaces both together.
+	Effort string `json:"effort,omitempty"`
 	// Auth is the kind of the session's own credential (SetAuth), kept in its
 	// auth file; empty runs on its agent's own login.
 	Auth string `json:"auth,omitempty"`
@@ -164,6 +169,12 @@ type workspaceFacts struct {
 	Name      string `json:"name,omitempty"`
 	Title     string `json:"title,omitempty"`
 	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+// GitUser is the git identity for commits in a workspace.
+type GitUser struct {
+	Name  string
+	Email string
 }
 
 // CreateInput is what Create needs to provision one workspace.
@@ -184,6 +195,8 @@ type CreateInput struct {
 	// Agent is the coding agent the session runs (ValidAgent); empty is
 	// Claude. Recorded at the first Create only.
 	Agent string
+	// GitUser is the git identity for commits; nil uses the system default.
+	GitUser *GitUser
 }
 
 func NewService(root string) *Service {
@@ -208,9 +221,13 @@ func NewService(root string) *Service {
 // and excludes the Runtime agent's control-plane secret and launch variables.
 // This prevents an interactive shell from reading RUNTIME_AGENT_SECRET via
 // `env`, while keeping non-sensitive OS settings such as PATH and HOME.
+//
+// The user's GitHub token (GH_TOKEN) stays, for `gh`, and git is pointed at it
+// for github.com only (githubCredentialEnv), so the agent can push its branch.
 func sessionEnvironment(base []string) ([]string, []string) {
 	env := make([]string, 0, len(base))
 	secrets := make([]string, 0, 2)
+	hasGitHub := false
 	for _, entry := range base {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok {
@@ -219,21 +236,36 @@ func sessionEnvironment(base []string) ([]string, []string) {
 		switch key {
 		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT":
 			continue
-		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY":
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN":
 			if value != "" {
 				secrets = append(secrets, value)
+				hasGitHub = hasGitHub || key == "GH_TOKEN"
 			}
 		}
 		env = append(env, entry)
 	}
+	if hasGitHub {
+		// Last, so these win over any the box set itself.
+		env = append(withoutEnv(env, "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"), githubCredentialEnv...)
+	}
 	return env, secrets
+}
+
+// githubCredentialEnv has git answer github.com's credential prompt with
+// $GH_TOKEN, as the environment's config (GIT_CONFIG_COUNT): nothing written
+// to the box's .gitconfig, and no other host ever handed the token.
+var githubCredentialEnv = []string{
+	"GIT_CONFIG_COUNT=1",
+	"GIT_CONFIG_KEY_0=credential.https://github.com.helper",
+	`GIT_CONFIG_VALUE_0=!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f`,
 }
 
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
-	return append(secrets, s.authFiles().tokens()...)
+	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
+	return append(secrets, agentConfigTokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -328,6 +360,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.Model != "" || facts.Model == "" {
 		facts.Model, facts.Gateway = prior.Model, prior.Gateway
 	}
+	// Its effort is SetModel's alone, so a repeated Create keeps it as well.
+	facts.Effort = prior.Effort
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
 		if err != nil {
@@ -382,6 +416,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	// Configure git author so commits are attributed to the Outrunner user.
+	if in.GitUser != nil && in.GitUser.Name != "" && in.GitUser.Email != "" {
+		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.name", in.GitUser.Name).Run()
+		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.email", in.GitUser.Email).Run()
 	}
 	return worktree, nil
 }
@@ -460,6 +499,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.startSetup(workspaceID, worktree, env)
 	s.forgetStagedPrompt(workspaceID) // the old composer went with the old session
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
@@ -558,15 +598,18 @@ const (
 	switchRelaunchTimeout = 60 * time.Second // covers the readiness wait with room to spare
 )
 
-// ModelChoice is what a session runs: a model, and optionally the gateway and
-// key it runs through. Callers validate each part.
+// ModelChoice is what a session runs: a model, optionally the gateway and key
+// it runs through, and the effort it runs at (empty: the model's own).
+// Callers validate each part.
 type ModelChoice struct {
 	Model   string
 	Gateway claude.Gateway
 	Token   string
+	Effort  string
 }
 
-// SetModel switches a session to another model, or to or from a gateway. It is
+// SetModel switches a session to another model or effort, or to or from a
+// gateway. It is
 // recorded first, so every later launch and resume uses it; a running session
 // is then relaunched on it, continuing its conversation (Claude reads all of it
 // only at launch). It is refused while Claude is mid-turn, which the relaunch
@@ -588,7 +631,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
 	}
 	priorEnv := s.readGatewayEnv(workspaceID)
-	if f.Model == choice.Model && f.Gateway == choice.Gateway && priorEnv == env {
+	if f.Model == choice.Model && f.Gateway == choice.Gateway && f.Effort == choice.Effort && priorEnv == env {
 		return nil
 	}
 	// Held from the busy check through the relaunch, so no prompt can be sent
@@ -628,9 +671,11 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if err := s.gatewayFiles().put(workspaceID, env); err != nil {
 		return err
 	}
-	// Only the model and gateway change: a Codex session's tail may record its
-	// rollout meanwhile.
-	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Model, f.Gateway = choice.Model, choice.Gateway })
+	// Only the model, gateway and effort change: a Codex session's tail may
+	// record its rollout meanwhile.
+	s.updateFacts(workspaceID, func(f *workspaceFacts) {
+		f.Model, f.Gateway, f.Effort = choice.Model, choice.Gateway, choice.Effort
+	})
 	if !running {
 		return nil // the next Start launches on it
 	}
@@ -643,7 +688,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		// Not applied, so not recorded: a retry of the same choice tries again
 		// rather than finding it already set, and the next Start uses the old.
 		_ = s.gatewayFiles().put(workspaceID, priorEnv)
-		s.updateFacts(workspaceID, func(now *workspaceFacts) { now.Model, now.Gateway = f.Model, f.Gateway })
+		s.updateFacts(workspaceID, func(now *workspaceFacts) {
+			now.Model, now.Gateway, now.Effort = f.Model, f.Gateway, f.Effort
+		})
 		// The old session was killed before the new one failed to start, so
 		// bring Claude back on the model it had: a failed switch must not end
 		// a session that was working.
@@ -699,6 +746,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.startSetup(workspaceID, worktree, env)
 	s.continueRecorder(ctx, workspaceID)
 	if err := s.waitReady(ctx, a, name); err != nil {
 		return "", a.exited(worktree)
@@ -921,6 +969,79 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	return fmt.Errorf("prompt not confirmed delivered after %d attempts", submitAttempts)
 }
 
+// ErrNotInterrupted is a stop that couldn't be confirmed: the session's screen
+// couldn't be read, or still shows the turn running after Escape.
+var ErrNotInterrupted = errors.New("couldn't stop the turn; try again")
+
+const (
+	// interruptTimeout bounds one Interrupt's tmux commands.
+	interruptTimeout = 10 * time.Second
+	// interruptSettle is how long a turn has to stop after Escape.
+	interruptSettle    = 3 * time.Second
+	interruptPollEvery = 200 * time.Millisecond
+)
+
+// Interrupt stops the turn a session is running, as Escape does in its
+// terminal (Claude Code's and Codex's both), and so a question it waits on.
+// Escape is pressed only while the screen shows either, and once: on an idle
+// prompt box it does nothing useful, and twice opens Claude's rewind menu. An
+// idle session is already stopped. The stop is confirmed by the screen, the
+// turn's "esc to interrupt" footer gone, or reported as ErrNotInterrupted.
+//
+// It takes the send lock, so a stop clicked while a prompt is being delivered
+// stops the turn that prompt starts, rather than racing its Enter.
+func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
+	if s.jcode != nil {
+		return s.jcode.Interrupt(ctx, workspaceID)
+	}
+	if _, ok := s.getFacts(workspaceID); !ok {
+		return ErrUnknownWorkspace
+	}
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	defer lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptTimeout)
+	defer cancel()
+	name := sessionName(workspaceID)
+	running, err := s.tmux.SessionExists(ctx, name)
+	if err != nil {
+		return fmt.Errorf("%w (%v)", ErrNotInterrupted, err)
+	}
+	if !running {
+		return nil // no agent, no turn
+	}
+	a := s.agentFor(workspaceID)
+	stopped := func() (bool, error) {
+		pane, err := s.tmux.CapturePane(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		return !a.isBusy(pane) && !a.awaitsAnswer(pane), nil
+	}
+	if idle, err := stopped(); err != nil {
+		return fmt.Errorf("%w (its screen could not be read: %v)", ErrNotInterrupted, err)
+	} else if idle {
+		return nil
+	}
+	if err := s.tmux.SendKey(ctx, name, "Escape"); err != nil {
+		return fmt.Errorf("%w (%v)", ErrNotInterrupted, err)
+	}
+	deadline := time.Now().Add(interruptSettle)
+	for {
+		select {
+		case <-ctx.Done():
+			return ErrNotInterrupted
+		case <-time.After(interruptPollEvery):
+		}
+		if idle, err := stopped(); err == nil && idle {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return ErrNotInterrupted
+		}
+	}
+}
+
 // errAwaitsAnswer is a send held back from a menu Claude is showing.
 var errAwaitsAnswer = errors.New("Claude is waiting for an answer in the terminal (a question or a permission prompt). Answer it there, then send again")
 
@@ -1075,10 +1196,12 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	}
 	worktree := s.worktreePath(workspaceID)
 	in := snapshot.MaterializeInput{
-		MirrorPath:   s.mirrorPath(),
-		WorktreePath: worktree,
-		Branch:       req.Branch,
-		Downloads:    req.Downloads,
+		MirrorPath:     s.mirrorPath(),
+		WorktreePath:   worktree,
+		Branch:         req.Branch,
+		BundleRef:      req.BundleRef,
+		OriginWorktree: req.OriginWorktree,
+		Downloads:      req.Downloads,
 	}
 	switch {
 	case codexSession:
@@ -1101,7 +1224,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	}
 	if in.RolloutDest != "" {
 		// `codex resume` finds it by the id its first line names.
-		meta, err := readRolloutMeta(in.RolloutDest)
+		meta, err := transcript.ReadRolloutMeta(in.RolloutDest)
 		if err != nil || meta.ID != sessionID {
 			return "", fmt.Errorf("cannot restore: the snapshot's rollout is not session %s", sessionID)
 		}
@@ -1148,7 +1271,7 @@ func (s *Service) conversationDest(worktree, sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(claudeProjectDir(home, worktree), sessionID+".jsonl"), nil
+	return filepath.Join(transcript.ClaudeProjectDir(home, worktree), sessionID+".jsonl"), nil
 }
 
 // sessionID returns the session id Restore resumes by: a Codex session's
@@ -1281,6 +1404,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	_ = os.Remove(s.factsPath(workspaceID))
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
+	s.removeEnvironment(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()

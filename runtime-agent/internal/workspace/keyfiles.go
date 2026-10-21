@@ -18,7 +18,8 @@ import (
 type keyFiles struct {
 	dir string
 	// envs are the variables a key is exported in; any other export (a URL,
-	// a model) is not a secret.
+	// a model) is not a secret. Nil: every export is one (a project's
+	// environment).
 	envs []string
 }
 
@@ -117,10 +118,17 @@ func (k keyFiles) tokens() []string {
 }
 
 // keyLines are a file's exports of a non-empty key, in whichever of the
-// folder's variables it is in.
+// folder's variables it is in; with no variables named, in any.
 func (k keyFiles) keyLines(content string) []string {
 	var lines []string
 	for _, line := range strings.Split(content, "\n") {
+		if k.envs == nil {
+			if name, value, ok := strings.Cut(strings.TrimPrefix(line, "export "), "="); ok &&
+				strings.HasPrefix(line, "export ") && name != "" && strings.Trim(value, "'") != "" {
+				lines = append(lines, line)
+			}
+			continue
+		}
 		for _, name := range k.envs {
 			if value, ok := strings.CutPrefix(line, "export "+name+"="); ok && strings.Trim(value, "'") != "" {
 				lines = append(lines, line)

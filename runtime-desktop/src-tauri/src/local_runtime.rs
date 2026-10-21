@@ -187,7 +187,7 @@ fn sidecar(override_var: &str, name: &str) -> Option<PathBuf> {
 }
 
 /// The bundled agent. `OUTRUNNER_AGENT_BINARY` overrides it.
-fn agent_binary() -> Result<PathBuf, String> {
+pub(crate) fn agent_binary() -> Result<PathBuf, String> {
     sidecar("OUTRUNNER_AGENT_BINARY", "runtime-agent").ok_or_else(|| "agent-missing".into())
 }
 
@@ -283,7 +283,7 @@ fn last_line_since(path: &Path, from: u64) -> Option<String> {
 /// and home, the login-shell PATH and a UTF-8 locale. The agent runs this way,
 /// and so its Claude sessions, so the login check and login below use it too:
 /// they then see exactly the Claude Code login a session will.
-fn user_command(program: impl AsRef<OsStr>) -> Command {
+pub(crate) fn user_command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command.env_clear();
     for key in ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR"] {
@@ -959,7 +959,7 @@ pub async fn local_codex_login_cancel(state: State<'_, LocalRuntime>) -> Result<
 }
 
 /// Up to `n` non-blank lines from the end of `text`, joined for one line of UI.
-fn last_lines(text: &str, n: usize) -> String {
+pub(crate) fn last_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     lines[lines.len().saturating_sub(n)..].join(" | ")
 }
@@ -1312,7 +1312,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
     let segments: Vec<&str> = route.trim_start_matches('/').split('/').collect();
     match (method, segments.as_slice(), query) {
         ("POST", ["workspaces"], None) => Ok(reqwest::Method::POST),
-        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model" | "auth"], None)
+        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "interrupt" | "model" | "auth"], None)
             if *id == workspace_id =>
         {
             Ok(reqwest::Method::POST)
@@ -2093,6 +2093,8 @@ echo 'Logged in using ChatGPT' >&2"#,
         assert!(allowed_route("POST", "/workspaces", "ws-1").is_ok());
         assert!(allowed_route("POST", "/workspaces/ws-1/start", "ws-1").is_ok());
         assert!(allowed_route("POST", "/workspaces/ws-1/model", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-1/interrupt", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-2/interrupt", "ws-1").is_err());
         assert!(allowed_route("POST", "/workspaces/ws-2/model", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/model", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/summary", "ws-1").is_ok());

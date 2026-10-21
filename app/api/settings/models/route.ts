@@ -6,8 +6,6 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { parseLoadout } from "@/lib/runtime/model-loadout";
 
-export const dynamic = "force-dynamic";
-
 /**
  * The user's model loadout (Settings → Default models): GET reads it, PUT
  * `{ models, default }` replaces it. What isn't a menu choice is dropped on

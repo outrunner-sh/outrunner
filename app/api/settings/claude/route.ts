@@ -8,8 +8,6 @@ import {
   setClaudeToken,
 } from "@/lib/runtime/credentials/claude-credentials";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Per-user Claude Code credential. The owner stores a `claude setup-token`
  * OAuth token so their sandboxes run on their own subscription.

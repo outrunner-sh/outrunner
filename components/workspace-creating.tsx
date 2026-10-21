@@ -4,21 +4,41 @@ import { Check, Clock, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { DotMatrix, Spinner } from "@/components/ui/loaders";
+import type { ProvisionPhase } from "@/lib/runtime/types";
 import type { FirstPrompt } from "@/lib/session/first-prompt";
 import { cn } from "@/lib/utils";
 
 /**
  * Provisioning progress, shown in a new session's chat while its box is set up.
- * Cloud provisioning (sandbox → agent → clone → session) takes tens of seconds,
- * so instead of a bare spinner we walk a staged checklist on a time estimate,
- * drawn as interior.dev's Task Steps: done steps ticked, the current one
- * turning, the rest waiting, and one line naming the step.
- * The final stage HOLDS (never auto-completes) until the session's setup ends
- * and its page attaches — we never claim "done" before the box is ready.
+ * Uses actual backend phases when available, with time-based fallback for
+ * backwards compatibility.
  */
 
-/** Ordered provisioning stages with the elapsed second each becomes active. */
-const STAGES = [
+type Stage = { id: ProvisionPhase | "preparing"; label: string };
+
+/** Full provisioning stages when creating a new Runtime Computer. */
+const FULL_STAGES: Stage[] = [
+  { id: "preparing", label: "Preparing" },
+  { id: "allocate", label: "Provisioning sandbox" },
+  { id: "clone", label: "Cloning repository" },
+  { id: "worktree", label: "Creating workspace" },
+  { id: "secrets", label: "Configuring session" },
+  { id: "health_check", label: "Starting Claude" },
+  { id: "claude_ready", label: "Ready" },
+];
+
+/** Quick start stages when Runtime Computer already exists. */
+const QUICK_STAGES: Stage[] = [
+  { id: "preparing", label: "Preparing" },
+  { id: "clone", label: "Updating repository" },
+  { id: "worktree", label: "Creating workspace" },
+  { id: "secrets", label: "Configuring session" },
+  { id: "health_check", label: "Starting Claude" },
+  { id: "claude_ready", label: "Ready" },
+];
+
+/** Time-based fallback stages for when phase isn't available. */
+const FALLBACK_STAGES = [
   { label: "Preparing", at: 0 },
   { label: "Provisioning sandbox", at: 3 },
   { label: "Installing agent", at: 12 },
@@ -26,8 +46,6 @@ const STAGES = [
   { label: "Starting session", at: 38 },
   { label: "Finalizing setup", at: 46 },
 ] as const;
-
-const ESTIMATE_SECONDS = 45;
 
 function QueuedPrompt({ first }: { first: FirstPrompt }) {
   const files = first.attachmentIds.length;
@@ -57,6 +75,8 @@ export function WorkspaceCreating({
   startedAt,
   stalled,
   queued,
+  phase,
+  hasExistingComputer,
 }: {
   projectName: string;
   branch: string;
@@ -68,6 +88,10 @@ export function WorkspaceCreating({
   startedAt: string;
   /** The first prompt waiting for the box, shown as the message it will be. */
   queued?: FirstPrompt | null;
+  /** Current provisioning phase from the backend. */
+  phase: ProvisionPhase | null;
+  /** Whether there's already a Runtime Computer for this project. */
+  hasExistingComputer: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
 
@@ -80,12 +104,28 @@ export function WorkspaceCreating({
     return () => clearInterval(id);
   }, [startedAt]);
 
-  // The active stage is the last one whose threshold we've passed, capped at the
-  // final stage so we hold there until provisioning actually completes.
+  // Use real phases when available, otherwise fall back to time-based
+  const useRealPhases = phase !== null;
+  const stages = useRealPhases
+    ? (hasExistingComputer ? QUICK_STAGES : FULL_STAGES)
+    : FALLBACK_STAGES;
+
   let active = 0;
-  for (let i = 0; i < STAGES.length; i += 1) {
-    if (elapsed >= STAGES[i].at) active = i;
+  if (useRealPhases) {
+    // Find the index of the current phase
+    const phaseStages = stages as Stage[];
+    const phaseIndex = phaseStages.findIndex((s) => s.id === phase);
+    active = phaseIndex >= 0 ? phaseIndex : 0;
+  } else {
+    // Time-based fallback
+    const timeStages = stages as typeof FALLBACK_STAGES;
+    for (let i = 0; i < timeStages.length; i += 1) {
+      if (elapsed >= timeStages[i].at) active = i;
+    }
   }
+
+  // For quick start, show a shorter estimated time
+  const estimateSeconds = useRealPhases && hasExistingComputer ? 10 : 45;
 
   return (
     <div className="flex h-full items-center justify-center px-6">
@@ -104,7 +144,7 @@ export function WorkspaceCreating({
         </div>
 
         <ol className="task-steps">
-          {STAGES.map((stage, i) => {
+          {stages.map((stage, i) => {
             const state = i < active ? "done" : i === active ? "current" : "pending";
             return (
               <li key={stage.label} className={cn("task-step", `is-${state}`, stalled && state === "current" && "is-stalled")}>
@@ -125,10 +165,10 @@ export function WorkspaceCreating({
 
         <div className="text-muted-foreground flex items-center justify-between font-mono text-xs tabular-nums">
           <span role="status">
-            {STAGES[active].label}, step {active + 1} of {STAGES.length}
+            {stages[active].label}, step {active + 1} of {stages.length}
           </span>
           <span>
-            {clock(elapsed)} <span className="text-muted-foreground/60">/ ~{ESTIMATE_SECONDS}s</span>
+            {clock(elapsed)} <span className="text-muted-foreground/60">/ ~{estimateSeconds}s</span>
           </span>
         </div>
 

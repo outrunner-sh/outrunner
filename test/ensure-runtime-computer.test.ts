@@ -139,6 +139,33 @@ test("a provision failure is persisted as an error for a later retry", async () 
   assert.match(harness.row()?.errorMessage ?? "", /provisioning failed/i);
 });
 
+test("the plan's box cap rides along to the claim, null when there is none", async () => {
+  const harness = concurrencyHarness();
+  const seen: Array<number | null | undefined> = [];
+  const claim: EnsureRuntimeComputerDependencies["claim"] = async (input) => {
+    seen.push(input.maxLiveComputers);
+    return harness.deps.claim({
+      projectId: input.projectId,
+      agentSecret: input.agentSecret,
+      maxLiveComputers: input.maxLiveComputers,
+    });
+  };
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async () => ({
+      sandboxId: "daytona-cap",
+      agentBaseUrl: "https://agent.example.test",
+      timings: { stages: [{ stage: "sandbox_create", ms: 1 }], totalMs: 1 },
+    }),
+  };
+
+  await ensureRuntimeComputer(provider, { ...input, maxLiveComputers: 2 }, { ...harness.deps, claim });
+  await ensureRuntimeComputer(provider, input, { ...harness.deps, claim });
+
+  assert.deepEqual(seen, [2, null]);
+});
+
+
 test("a failed Runtime Computer can be claimed and provisioned by a retry", async () => {
   const harness = concurrencyHarness();
   let provisions = 0;

@@ -1,8 +1,10 @@
 "use client";
 
-import { Laptop } from "lucide-react";
+import { Laptop, RotateCw } from "lucide-react";
 import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 
+import { RaillessSidebarButtons } from "@/components/app-frame";
 import { RouteLoading } from "@/components/route-states";
 import { ErrorRef, Notice } from "@/components/ui/notice";
 import { WorkspaceStudio } from "@/components/workspace-studio";
@@ -14,15 +16,13 @@ import type { Workspace } from "@/lib/runtime/types";
 /**
  * A local session's page. Its record is on this Mac, not the server, so it is
  * looked up here — through the Outrunner app — and rendered in the same studio
- * as a cloud workspace.
+ * as a cloud workspace. The list is the one the sidebar already read, so a
+ * session it shows opens at once.
  */
-export function LocalWorkspaceView({
-  workspaceId,
-  initialPrompt,
-}: {
-  workspaceId: string;
-  initialPrompt?: string;
-}) {
+export function LocalWorkspaceView() {
+  const { id: workspaceId } = useParams<{ id: string }>();
+  // The first prompt carried in from the new-session screen.
+  const initialPrompt = useSearchParams().get("prompt") ?? undefined;
   const local = useLocalSessions();
   const session = local.sessions.find((s) => s.workspaceId === workspaceId);
 
@@ -40,7 +40,9 @@ export function LocalWorkspaceView({
     return <RouteLoading label="Looking for this session on your Mac" />;
   }
   // The runner is what failed, not the session being missing: say it the way
-  // the session page does, with its log to quote and a way to try again.
+  // the session page does, with its log to quote and a way to try again. The
+  // try is the one look the list shares, so while it is under way the button
+  // says so instead of queueing another.
   if (local.state === "error" && (local.code === "agent-did-not-start" || local.code === "agent-spawn-failed")) {
     return (
       <Centered>
@@ -50,7 +52,15 @@ export function LocalWorkspaceView({
             title="This Mac's session runner didn't start"
             detail={runnerDidNotStartDetail(local.reason)}
             meta={<ErrorRef label="log" value={LOCAL_RUNNER_LOG} />}
-            actions={[{ label: "Try again", primary: true, onClick: local.refresh }]}
+            actions={[
+              {
+                label: "Try again",
+                icon: <RotateCw className={local.refreshing ? "is-working" : undefined} />,
+                primary: true,
+                disabled: local.refreshing,
+                onClick: local.refresh,
+              },
+            ]}
           />
         </div>
         <Link href="/" className="text-sm underline underline-offset-4">
@@ -81,7 +91,10 @@ export function LocalWorkspaceView({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">{children}</div>
+    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
+      <RaillessSidebarButtons />
+      {children}
+    </div>
   );
 }
 

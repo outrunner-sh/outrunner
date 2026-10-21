@@ -9,6 +9,7 @@ import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
 import { InlineMessage } from "@/components/ui/notice";
 import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
+import { AGENT_AUTH_CHOICES } from "@/lib/client/agent-auth-choices";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import { requestJson } from "@/lib/http/request-json";
 import type { KeyProviderId } from "@/lib/providers/registry";
@@ -73,6 +74,7 @@ export function AgentAuthPanel({
         body: { agent, method },
         has: (d) => d.choices !== undefined,
       });
+      AGENT_AUTH_CHOICES.invalidate();
       // This agent's only: another tab's reply, sent before a pick there
       // landed, mustn't undo it.
       onChoice(agent, data.choices[agent]);

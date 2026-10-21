@@ -5,6 +5,7 @@
  * service-role only.
  */
 
+import type { Interval, Period } from "@/lib/billing/hours";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sandboxOf } from "@/lib/runtime/sandbox-choice";
 import type { ProviderName } from "@/lib/runtime/types";
@@ -90,6 +91,38 @@ export async function openIntervals(): Promise<OpenInterval[]> {
     sandboxId: row.sandbox_id,
     startedAt: new Date(row.started_at),
     lastSeenAt: new Date(row.last_seen_at),
+  }));
+}
+
+/** The owner's intervals overlapping `period`: their cloud hours' raw
+ *  material (only Outrunner's boxes are ever metered into the table). Two
+ *  reads rather than one `.or()`: an ISO timestamp's dots sit awkwardly in
+ *  `.or()`'s comma-separated grammar. */
+export async function intervalsFor(ownerId: string, period: Period): Promise<Interval[]> {
+  const supabase = createSupabaseAdminClient();
+  const columns = "sandbox_id, cpu, started_at, last_seen_at, ended_at";
+  const before = () =>
+    supabase
+      .from("compute_intervals")
+      .select(columns)
+      .eq("owner_id", ownerId)
+      .lt("started_at", period.end.toISOString());
+  const open = await allRows((from, to) =>
+    before().is("ended_at", null).order("id").range(from, to),
+  );
+  const closed = await allRows((from, to) =>
+    before()
+      .not("ended_at", "is", null)
+      .gt("ended_at", period.start.toISOString())
+      .order("id")
+      .range(from, to),
+  );
+  return [...open, ...closed].map((row) => ({
+    sandboxId: row.sandbox_id,
+    cpu: row.cpu,
+    startedAt: new Date(row.started_at),
+    lastSeenAt: new Date(row.last_seen_at),
+    endedAt: row.ended_at ? new Date(row.ended_at) : null,
   }));
 }
 

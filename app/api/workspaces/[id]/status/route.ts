@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getWorkspace } from "@/lib/db/repositories";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
@@ -23,5 +21,9 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
-  return NextResponse.json({ status: workspace.status });
+  return NextResponse.json({
+    status: workspace.status,
+    phase: workspace.phase,
+    computerId: workspace.computerId,
+  });
 }

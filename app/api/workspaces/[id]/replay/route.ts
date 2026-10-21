@@ -11,8 +11,6 @@ import { assembleReplay } from "@/lib/runtime/replay/load";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

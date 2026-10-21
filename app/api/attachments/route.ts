@@ -5,8 +5,6 @@ import { createAttachment } from "@/lib/db/attachments";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/runtime/attachments";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Upload one file to send with a prompt.
  *

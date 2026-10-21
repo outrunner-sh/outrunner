@@ -20,3 +20,11 @@ export function anthropicEnvVar(credential: string): string {
     ? "CLAUDE_CODE_OAUTH_TOKEN"
     : "ANTHROPIC_API_KEY";
 }
+
+/**
+ * Whether a box environment carries a Claude credential. The environment holds
+ * more than Claude's (GH_TOKEN too), so "is it empty" no longer answers this.
+ */
+export function hasClaudeCredential(env: Record<string, string>): boolean {
+  return Boolean(env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_API_KEY);
+}

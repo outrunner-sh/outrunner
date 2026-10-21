@@ -4,8 +4,6 @@ import { SignInButton } from "@/components/signin-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
 
-export const dynamic = "force-dynamic";
-
 /** Human-readable copy for the error codes `/auth/callback` can return. */
 const ERROR_MESSAGES: Record<string, string> = {
   not_owner:

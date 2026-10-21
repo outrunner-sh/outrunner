@@ -9,10 +9,13 @@ import type { Project } from "@/lib/runtime/types";
  */
 export function NewSessionCreator({
   projects,
+  projectsKnown = true,
   initialProjectId,
   showBack = false,
 }: {
   projects: Project[];
+  /** False until the list arrives (a cold start). */
+  projectsKnown?: boolean;
   initialProjectId?: string;
   /** /new is reached from somewhere and needs a way back where the sidebar is
    *  hidden (narrow windows); home is home already. */
@@ -25,7 +28,7 @@ export function NewSessionCreator({
           <BackButton />
         </div>
       )}
-      <NewSessionForm projects={projects} initialProjectId={initialProjectId} />
+      <NewSessionForm projects={projects} projectsKnown={projectsKnown} initialProjectId={initialProjectId} />
     </div>
   );
 }

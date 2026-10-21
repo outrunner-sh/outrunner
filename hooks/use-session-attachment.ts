@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentId } from "@/lib/agents/registry";
+import { resignInNeedsAccount } from "@/lib/agents/resolve";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import {
   localAgentRequest,
@@ -12,6 +13,7 @@ import {
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
 import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
+import { takeWarmUrls } from "@/lib/session/warm-session";
 
 /**
  * Owner of the Workspace Session's URL lifecycle: fetches
@@ -40,7 +42,8 @@ export type SessionAttachment = {
   errorReason: string | null;
   /** Increments every time `urls` changes (new fetch succeeded). */
   attachId: number;
-  /** Fetch fresh URLs. Idempotent while a fetch is in flight. */
+  /** Fetch fresh URLs, the box's endpoint looked up again too. Idempotent
+   *  while a fetch is in flight. */
   refresh: () => void;
   /**
    * Ask the shared attachment owner to refresh after a transient transport
@@ -56,7 +59,7 @@ export type SessionAttachment = {
  * in as the user picks now.
  */
 async function localSessionUrls(target: LocalTarget, agent: AgentId): Promise<SessionUrls> {
-  await deliverLocalAgentAuth(target.workspaceId, agent);
+  await deliverLocalAgentAuth(target.workspaceId, agent, resignInNeedsAccount(agent));
   await localAgentRequest(target, "POST", `/workspaces/${target.workspaceId}/start`);
   let summary: WorkspaceSummary | undefined;
   try {
@@ -87,7 +90,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
   const inflight = useRef<AbortController | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refresh = useCallback(() => {
+  // `fresh` for every attach after the first: something failed, and the box's
+  // endpoint the server keeps may be what did (POST …/session?fresh=1).
+  const attach = useCallback((fresh: boolean) => {
     if (reconnectTimer.current) {
       clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
@@ -110,7 +115,16 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           setError(null);
           return;
         }
-        const res = await fetch(`/api/workspaces/${workspaceId}/session`, {
+        // The first attach takes the URLs a sidebar warm-up already has.
+        const warm = fresh ? null : await takeWarmUrls(workspaceId);
+        if (controller.signal.aborted) return;
+        if (warm) {
+          setUrls(warm);
+          setAttachId((n) => n + 1);
+          setStatus("attached");
+          return;
+        }
+        const res = await fetch(`/api/workspaces/${workspaceId}/session${fresh ? "?fresh=1" : ""}`, {
           method: "POST",
           signal: controller.signal,
         });
@@ -142,6 +156,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
       }
     })();
   }, [workspaceId, local, agent]);
+  const refresh = useCallback(() => attach(true), [attach]);
 
   const reconnect = useCallback(() => {
     // Both browser projections can notice the same network close. The
@@ -155,14 +170,14 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
   }, [refresh]);
 
   useEffect(() => {
-    refresh();
+    attach(false);
     return () => {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
       inflight.current?.abort();
       inflight.current = null;
     };
-  }, [refresh]);
+  }, [attach]);
 
   return {
     urls,

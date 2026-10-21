@@ -56,9 +56,9 @@ const INSTALLED = { path: "/bin/codex", loggedIn: true, method: "chatgpt" } as c
 test("a credential goes to the session; with none, a saved one is taken away", async () => {
   const calls = fakeApp();
   server({ method: "api-key", credential: KEY, picked: true });
-  await deliverLocalAgentAuth("ws-1", "codex");
+  await deliverLocalAgentAuth("ws-1", "codex", true);
   server({ method: "local", credential: null, picked: true });
-  await deliverLocalAgentAuth("ws-1", "codex");
+  await deliverLocalAgentAuth("ws-1", "codex", true);
   assert.deepEqual(calls, [
     { path: "/workspaces/ws-1/auth", body: KEY },
     { path: "/workspaces/ws-1/auth", body: { kind: "none" } },
@@ -68,15 +68,15 @@ test("a credential goes to the session; with none, a saved one is taken away", a
 test("an app from before session credentials: nothing to take away is fine, a credential isn't", async () => {
   fakeApp({ refuse: true });
   server({ method: "local", credential: null, picked: false });
-  await deliverLocalAgentAuth("ws-1", "claude");
+  await deliverLocalAgentAuth("ws-1", "claude", true);
   server({ method: "api-key", credential: KEY, picked: true });
-  await assert.rejects(deliverLocalAgentAuth("ws-1", "codex"));
+  await assert.rejects(deliverLocalAgentAuth("ws-1", "codex", true));
 });
 
 test("a pick that can't run says where to fix it", async () => {
   fakeApp();
   server({ status: 409, error: "Save your OpenAI API key…", settingsHref: "/settings/providers?tab=codex&method=api-key" });
-  await assert.rejects(signInLocalAgent("ws-1", "codex", status(INSTALLED)), (error: unknown) => {
+  await assert.rejects(signInLocalAgent("ws-1", "codex", status(INSTALLED), true), (error: unknown) => {
     assert.ok(error instanceof LocalAgentAuthError);
     assert.equal(error.settingsHref, "/settings/providers?tab=codex&method=api-key");
     return true;
@@ -86,19 +86,34 @@ test("a pick that can't run says where to fix it", async () => {
 test("Codex must be on this Mac, even on an API key", async () => {
   const calls = fakeApp();
   server({ method: "api-key", credential: KEY, picked: true });
-  await assert.rejects(signInLocalAgent("ws-1", "codex", status({ path: null, loggedIn: null, method: null })), /Install Codex/);
-  await assert.rejects(signInLocalAgent("ws-1", "codex", status(null)), /Update the Outrunner app/);
+  await assert.rejects(signInLocalAgent("ws-1", "codex", status({ path: null, loggedIn: null, method: null }), true), /Install Codex/);
+  await assert.rejects(signInLocalAgent("ws-1", "codex", status(null), true), /Update the Outrunner app/);
   assert.equal(calls.length, 0, "nothing handed over to a session that can't run");
   // On an API key, the Mac's own login doesn't matter.
-  await signInLocalAgent("ws-1", "codex", status({ path: "/bin/codex", loggedIn: false, method: null }));
+  await signInLocalAgent("ws-1", "codex", status({ path: "/bin/codex", loggedIn: false, method: null }), true);
 });
 
 test("the Mac's own login, picked, must be signed in", async () => {
   fakeApp();
   server({ method: "chatgpt", credential: null, picked: true });
   await assert.rejects(
-    signInLocalAgent("ws-1", "codex", status({ path: "/bin/codex", loggedIn: false, method: null })),
+    signInLocalAgent("ws-1", "codex", status({ path: "/bin/codex", loggedIn: false, method: null }), true),
     (error: unknown) => error instanceof LocalAgentAuthError && error.settingsHref.endsWith("method=chatgpt"),
   );
-  await signInLocalAgent("ws-1", "codex", status(INSTALLED));
+  await signInLocalAgent("ws-1", "codex", status(INSTALLED), true);
+});
+
+test("the server is told whether the session needs the agent's own account", async () => {
+  fakeApp();
+  const sent: unknown[] = [];
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    sent.push(JSON.parse(String(init.body)));
+    return new Response(JSON.stringify({ method: null, credential: null, picked: false }));
+  }) as typeof fetch;
+  await deliverLocalAgentAuth("ws-1", "claude", false);
+  await deliverLocalAgentAuth("ws-1", "claude", true);
+  assert.deepEqual(sent, [
+    { agent: "claude", ownAccount: false },
+    { agent: "claude", ownAccount: true },
+  ]);
 });

@@ -6,8 +6,6 @@ import { handleEvent } from "@/lib/billing/sync";
 import { syncDeps } from "@/lib/billing/stripe-deps";
 import { optionalEnv } from "@/lib/env";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Stripe's webhook. Trusts nothing but the signature, checked on the raw body
  * with STRIPE_WEBHOOK_SECRET; then keeps the copy of the subscription the

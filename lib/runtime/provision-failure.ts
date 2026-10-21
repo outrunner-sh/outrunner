@@ -1,0 +1,69 @@
+import { makeRedactor } from "@/lib/runtime/redact";
+import type { ProvisionPhase } from "@/lib/runtime/types";
+
+/**
+ * What a session that didn't start tells its user: the step it stopped at and
+ * the error that stopped it. The raw error used to stay in the server log
+ * alone, so the page said only "Provisioning failed" and the cause took a log
+ * search to find.
+ *
+ * Errors from a box, git, or a provider can echo what they were handed, so the
+ * session's own secrets are cut out, then anything shaped like a credential.
+ */
+
+/** Longest error text the page shows; the server log keeps all of it. */
+export const MAX_DETAIL_CHARS = 300;
+
+const STEP: Record<ProvisionPhase, string> = {
+  allocate: "provisioning the sandbox",
+  clone: "cloning the repository",
+  worktree: "creating the workspace",
+  secrets: "configuring the session",
+  install: "installing dependencies",
+  health_check: "starting the agent",
+  claude_ready: "starting the agent",
+};
+
+/** Credentials by their shape, for any the session didn't know it held. */
+const CREDENTIAL_SHAPES: readonly RegExp[] = [
+  // Userinfo in a URL: https://x-access-token:<token>@github.com/...
+  /(?<=:\/\/)[^\s/@]+@/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+  /\bsk-[A-Za-z0-9_-]{20,}/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
+];
+
+export function provisionFailureMessage(
+  error: unknown,
+  phase: ProvisionPhase | null,
+  secrets: readonly (string | undefined | null)[],
+): string {
+  const step = phase ? ` while ${STEP[phase]}` : "";
+  const detail = errorText(error);
+  if (!detail) return `Setup failed${step}. Start a new session to try again.`;
+  return `Setup failed${step}: ${truncate(redact(detail, secrets))}`;
+}
+
+/** An Error's message, or a Supabase error's: those are plain objects. */
+function errorText(error: unknown): string {
+  const message =
+    typeof error === "string"
+      ? error
+      : typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+        ? error.message
+        : "";
+  return message.replace(/\s+/g, " ").trim();
+}
+
+function redact(text: string, secrets: readonly (string | undefined | null)[]): string {
+  const known = makeRedactor(secrets)(text);
+  return CREDENTIAL_SHAPES.reduce(
+    (acc, shape) => acc.replace(shape, (match) => (match.endsWith("@") ? "***@" : "***")),
+    known,
+  );
+}
+
+function truncate(text: string): string {
+  return text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS - 1)}…` : text;
+}

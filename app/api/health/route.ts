@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { connection, NextResponse } from "next/server";
 
 import { billingMode } from "@/lib/billing/mode";
 import { optionalEnv, providerName } from "@/lib/env";
@@ -9,14 +9,15 @@ import {
   type TableProbeStatus,
 } from "@/lib/supabase/probe";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Configuration and connectivity report for the DEPLOYMENT. Exposes only
  * booleans about which settings are present, never their values, and nothing
  * about any individual user's credentials.
  */
 export async function GET() {
+  // Per request, never prerendered at build (Cache Components prerenders a
+  // GET that reads nothing of the request first).
+  await connection();
   // Deployment configuration only. GitHub and Claude credentials are per-user
   // and live encrypted in the database, so there is nothing here to report
   // about them — a deployment-wide boolean would say nothing true.

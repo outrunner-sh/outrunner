@@ -21,6 +21,7 @@
 // registration and takes an ordinary http entry in the provider's allowlist.
 
 mod claude_login;
+mod import;
 mod local_runtime;
 mod managed_claude;
 mod updater;
@@ -138,9 +139,9 @@ fn deliver_callback(app: &tauri::AppHandle, site: &str, query: &str) {
 /// and can route sign-in through the system browser.
 const INIT_JS: &str = "window.__RUNTIME_DESKTOP__ = true;";
 
-/// The app's background (globals.css `--background`, #0A0A0A), for the window
+/// The app's background (globals.css `--background`, #060505), for the window
 /// behind the page and its title bar.
-const APP_BACKGROUND: Color = Color(10, 10, 10, 255);
+const APP_BACKGROUND: Color = Color(6, 5, 5, 255);
 
 /// Reveal + focus the main window (from the tray, dock, or a second launch).
 fn show_main(app: &tauri::AppHandle) {
@@ -189,6 +190,10 @@ pub fn run() {
             local_runtime::local_socket_open,
             local_runtime::local_socket_send,
             local_runtime::local_socket_close,
+            import::import_scan,
+            import::import_session,
+            import::import_environment,
+            import::import_config,
             updater::update_status,
             updater::restart_to_update,
         ])
@@ -217,7 +222,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             let builder = builder.title_bar_style(tauri::TitleBarStyle::Transparent);
             builder
-                .inner_size(1280.0, 860.0)
+                // The size Droid's window opens at.
+                .inner_size(1200.0, 800.0)
                 .min_inner_size(720.0, 480.0)
                 .initialization_script(INIT_JS)
                 // A reload drops the page's ends of any relayed local-session

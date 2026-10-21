@@ -2,37 +2,26 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
-import { optionalEnv } from "@/lib/env";
-import {
-  GitHubSyncError,
-  listGitHubRepositories,
-} from "@/lib/github/client";
-import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
+import { getGitHubRepository, listGitHubRepositories, type GitHubRepository } from "@/lib/github/client";
+import { connectRepositories } from "@/lib/github/connect";
+import { githubErrorResponse } from "@/lib/github/http";
+import { cachedRepositoryList } from "@/lib/github/repository-cache";
+import { requireGithubToken } from "@/lib/github/token";
+import { isSameOriginRequest } from "@/lib/http/guards";
 
-export const dynamic = "force-dynamic";
-
-function isSameOriginRequest(request: Request): boolean {
-  const origin = request.headers.get("origin");
-  if (!origin) return false;
-
-  // A configured public origin takes precedence over request headers, which
-  // avoids trusting a forwarded host at a proxy boundary.
-  const baseUrl = optionalEnv("RUNTIME_BASE_URL") ?? request.url;
-  try {
-    return new URL(origin).origin === new URL(baseUrl).origin;
-  } catch {
-    return false;
-  }
-}
+/** Repositories one request may connect by id; the picker sends one. */
+const MAX_SELECTION = 100;
 
 /**
  * Connect repositories as projects.
  *
  * With `{ repoIds: [...] }`, only those repositories are connected — the picker
  * posts the user's selection, so browsing hundreds of repositories does not
- * turn all of them into projects. With no body, every repository the user's
- * GitHub token can reach is connected (the original bulk behaviour, still used
- * by the plain "Sync repositories" button).
+ * turn all of them into projects. Each is looked up on GitHub by id rather than
+ * trusting the posted ids: a repository the token cannot see must not become a
+ * project row. With no body, every repository the user's GitHub token can
+ * reach is connected (the original bulk behaviour, still used by the plain
+ * "Sync repositories" button).
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -49,52 +38,67 @@ export async function POST(request: Request) {
 
   // An absent or unparseable body means "connect everything"; only an explicit
   // array narrows the selection.
-  let selection: Set<number> | null = null;
+  let selection: number[] | null = null;
   const body = (await request.json().catch(() => null)) as { repoIds?: unknown } | null;
   if (body && Array.isArray(body.repoIds)) {
     const ids = body.repoIds.filter(
-      (id): id is number => typeof id === "number" && Number.isSafeInteger(id),
+      (id): id is number => typeof id === "number" && Number.isSafeInteger(id) && id > 0,
     );
     if (ids.length === 0) {
       return NextResponse.json({ error: "Select at least one repository." }, { status: 400 });
     }
-    selection = new Set(ids);
+    selection = [...new Set(ids)];
+    if (selection.length > MAX_SELECTION) {
+      return NextResponse.json(
+        { error: `Connect at most ${MAX_SELECTION} repositories at a time.` },
+        { status: 400 },
+      );
+    }
   }
 
   try {
-    const all = await listGitHubRepositories(await requireGithubToken(owner.id));
-    // Filter against what GitHub actually returned rather than trusting the
-    // posted ids: a repo the token cannot see must not become a project row.
-    const repositories = selection
-      ? all.filter((r) => selection.has(r.githubRepoId))
-      : all;
-    // Asked for specific repositories and the token can see none of them: an
-    // organization that hasn't approved Outrunner, or access since removed.
-    if (selection && repositories.length === 0) {
-      return NextResponse.json(
-        {
-          error: "GitHub isn't giving Outrunner access to this repository.",
-          code: "repo-no-access",
-        },
-        { status: 403 },
-      );
+    const token = await requireGithubToken(owner.id);
+    let repositories: GitHubRepository[];
+    let synced: number;
+    let complete = true;
+    if (selection) {
+      ({ repositories, synced } = await connectRepositories(owner.id, token, selection, {
+        lookup: getGitHubRepository,
+        upsert: upsertProjects,
+      }));
+      // Asked for specific repositories and the token can see none of them: an
+      // organization that hasn't approved Outrunner, or access since removed.
+      // The picker names the repository and says where to grant access.
+      if (repositories.length === 0) {
+        return NextResponse.json(
+          {
+            error: "GitHub isn't giving Outrunner access to this repository.",
+            code: "repo-no-access",
+          },
+          { status: 403 },
+        );
+      }
+    } else {
+      // A fresh listing, which the picker then reuses for its next few seconds.
+      const list = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
+        fresh: true,
+      });
+      repositories = list.repositories;
+      complete = list.complete;
+      synced = await upsertProjects(owner.id, repositories);
     }
-    const synced = await upsertProjects(owner.id, repositories);
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
-    return NextResponse.json({ synced, discovered: all.length, projects: await listProjects() });
+    return NextResponse.json({
+      synced,
+      discovered: repositories.length,
+      complete,
+      projects: await listProjects(),
+    });
   } catch (error) {
-    if (error instanceof MissingGithubTokenError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    if (error instanceof GitHubSyncError) {
-      return NextResponse.json({ error: error.message }, { status: 502 });
-    }
-
-    console.error("Repository sync failed", error);
-    return NextResponse.json(
-      { error: "GitHub listed the repositories, but Outrunner couldn't save them. Try again." },
-      { status: 500 },
+    return githubErrorResponse(
+      error,
+      "GitHub listed the repositories, but Outrunner couldn't save them. Try again.",
     );
   }
 }

@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { AgentId, AuthCredential, AuthMethodId, RunTarget } from "@/lib/agents/registry";
-import { AgentAuthError, type AgentAuthStore, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
+import {
+  AgentAuthError,
+  type AgentAuthStore,
+  agentConnection,
+  resignInNeedsAccount,
+  resolveAgentAuth,
+  type ResolvedAuth,
+} from "@/lib/agents/resolve";
 
 const OAT = "sk-ant-oat01-" + "t".repeat(40);
 const ANTHROPIC = "sk-ant-api03-" + "a".repeat(40);
@@ -117,4 +124,42 @@ test("the errors say what to do, and where", async () => {
   await assert.rejects(resolveAgentAuth(store("chatgpt", {}), "codex", "cloud"), /sign in with ChatGPT, which works for sessions on your Mac only\. Choose API key under Settings → Providers → Codex/);
   await assert.rejects(resolveAgentAuth(store("api-key", {}), "codex", "local"), /Save your OpenAI API key under Settings → Providers → Codex/);
   await assert.rejects(resolveAgentAuth(store("subscription", {}), "claude", "cloud"), /Connect your Claude subscription under Settings → Providers → Claude Code/);
+});
+
+test("on a model on a key, a pick that can't run signs in to nothing instead", async () => {
+  const unsigned = { method: null, credential: null, picked: false };
+  const run = (choice: AuthMethodId | null, saved: Saved, target: RunTarget, agent: AgentId = "claude") =>
+    resolveAgentAuth(store(choice, saved), agent, target, { ownAccount: false });
+  // Disconnected after it was picked.
+  assert.deepEqual(await run("subscription", {}, "cloud"), unsigned);
+  assert.deepEqual(await run("subscription", {}, "local"), unsigned);
+  // The Mac's own login, on a box.
+  assert.deepEqual(await run("local", {}, "cloud"), unsigned);
+  // A pick that can run still signs in: the session can switch to the account.
+  assert.deepEqual(await run("subscription", { slot: OAT }, "cloud"), {
+    method: "subscription",
+    credential: { kind: "claude-oauth-token", token: OAT },
+    picked: true,
+  });
+  // Signing in again, model unknown: Claude Code may be on a key, Codex never is.
+  assert.equal(resignInNeedsAccount("claude"), false);
+  assert.equal(resignInNeedsAccount("codex"), true);
+});
+
+test("where each agent's own account is connected", async () => {
+  const connection = (agent: AgentId, choice: AuthMethodId | null, saved: Saved) =>
+    agentConnection(store(choice, saved), agent);
+  // Nothing picked or saved: not connected, as Settings shows it.
+  assert.deepEqual(await connection("claude", null, {}), { cloud: false, local: false });
+  assert.deepEqual(await connection("codex", null, {}), { cloud: false, local: false });
+  // Picked, then disconnected: not connected, though another way has a key.
+  assert.deepEqual(await connection("claude", "subscription", { anthropic: ANTHROPIC }), { cloud: false, local: false });
+  // Picked and saved: everywhere.
+  assert.deepEqual(await connection("claude", "subscription", { slot: OAT }), { cloud: true, local: true });
+  assert.deepEqual(await connection("codex", "api-key", { openai: OPENAI }), { cloud: true, local: true });
+  // The Mac's own login picked: on the Mac, as it is logged in.
+  assert.deepEqual(await connection("claude", "local", { slot: OAT }), { cloud: false, local: "mac-login" });
+  assert.deepEqual(await connection("codex", "chatgpt", {}), { cloud: false, local: "mac-login" });
+  // No pick, a key saved: on a box; on the Mac a session runs on its own login.
+  assert.deepEqual(await connection("claude", null, { anthropic: ANTHROPIC }), { cloud: true, local: "mac-login" });
 });

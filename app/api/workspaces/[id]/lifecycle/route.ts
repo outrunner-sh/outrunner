@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { resolveAgentAuth } from "@/lib/agents/resolve";
-import { getOwner } from "@/lib/auth/owner";
+import { getOwner, type Owner } from "@/lib/auth/owner";
+import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { agentAuthStore } from "@/lib/db/credentials";
 import { optionalGithubToken } from "@/lib/github/token";
 import {
@@ -18,17 +19,18 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_IMPORTS } from "@/lib/runtime/agent-protocol";
+import { requireFeature } from "@/lib/runtime/box-features";
+import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { restoreSignedIn, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
-import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { canDestroy } from "@/lib/session/provisioning";
-
-export const dynamic = "force-dynamic";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
 // archive/restore move snapshot artifacts; keep the same 60s cap as provisioning
@@ -137,7 +139,7 @@ export async function POST(request: Request, context: RouteContext) {
   const provider = resolution.provider;
 
   if (isComputerProvider(provider)) {
-    return daytonaLifecycle(action, workspace, provider, owner.id);
+    return daytonaLifecycle(action, workspace, provider, owner);
   }
 
   // Archive/restore operate on the runtime-agent's Session + Snapshot; only the
@@ -157,13 +159,13 @@ async function daytonaLifecycle(
   action: LifecycleAction,
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
-  userId: string,
+  owner: Owner,
 ) {
-  if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, userId);
-  if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, userId);
-  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, userId);
-  if (action === "restore") return restoreDaytonaWorkspace(workspace, provider, userId);
-  return destroyDaytonaWorkspace(workspace, provider, userId);
+  if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, owner);
+  if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, owner);
+  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, owner);
+  if (action === "restore") return restoreDaytonaWorkspace(workspace, provider, owner);
+  return destroyDaytonaWorkspace(workspace, provider, owner);
 }
 
 /**
@@ -176,7 +178,7 @@ async function daytonaLifecycle(
 async function archiveDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
-  userId: string,
+  owner: Owner,
 ) {
   if (workspace.status !== "ready" && workspace.status !== "idle") {
     return NextResponse.json(
@@ -191,7 +193,7 @@ async function archiveDaytonaWorkspace(
     const archivedAt = new Date().toISOString();
     const { prefix, urls } = await mintSnapshotUpload(
       supabaseSnapshotStorage(),
-      userId,
+      owner.id,
       workspace.id,
       archivedAt,
       // A Codex session's raw rollout too, so a restore resumes Codex itself
@@ -200,11 +202,11 @@ async function archiveDaytonaWorkspace(
     );
     const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
 
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity } = await daytonaAgent(workspace, provider, owner);
     const manifest = await agent.archiveWorkspace(identity, { archivedAt, uploads });
 
     await createWorkspaceSnapshot({
-      ownerId: userId,
+      ownerId: owner.id,
       workspaceId: workspace.id,
       archivedAt,
       storagePath: prefix,
@@ -239,7 +241,7 @@ async function archiveDaytonaWorkspace(
 async function restoreDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
-  userId: string,
+  owner: Owner,
 ) {
   if (workspace.status !== "archived") {
     return NextResponse.json(
@@ -254,13 +256,17 @@ async function restoreDaytonaWorkspace(
       { status: 409 },
     );
   }
+  // A box may be about to start (the project's box may be gone): the plan's
+  // hours and box count get their say before anything changes.
+  const gate = await cloudBoxStartGate(owner, provider.name);
+  if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
   const transitioned = await startTransition(workspace, ["archived"], "restoring");
   if (!transitioned) return lifecycleConflict();
 
   try {
     const project = await getProject(workspace.projectId);
     if (!project) throw new Error("Project not found for restore.");
-    const githubToken = await optionalGithubToken(userId);
+    const githubToken = await optionalGithubToken(owner.id);
 
     // Manifest pointers -> signed download URLs for exactly what the agent needs.
     const storage = supabaseSnapshotStorage();
@@ -276,7 +282,9 @@ async function restoreDaytonaWorkspace(
         ] as const
       ).map(async ({ artifact, file }) => ({
         artifact,
-        url: await mintSnapshotDownloadUrl(storage, `${storagePath}${file}`, userId),
+        url: await mintSnapshotDownloadUrl(storage, `${storagePath}${file}`, owner.id),
+        // An imported session's artifacts are stored compressed.
+        ...(manifest.encodings?.[file] && { encoding: manifest.encodings[file] }),
       })),
     );
 
@@ -298,13 +306,13 @@ async function restoreDaytonaWorkspace(
 
     // How the session's agent signs in, as the user picks now: before a box
     // is started for it, so a pick that can't run starts nothing.
-    const auth = await resolveAgentAuth(agentAuthStore(userId), workspace.agent, "cloud");
+    const auth = await resolveAgentAuth(agentAuthStore(owner.id), workspace.agent, "cloud");
 
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
-    const sessionEnv = await runtimeSessionEnvironment(userId);
+    const sessionEnv = await runtimeSessionEnvironment(owner.id);
     // Codex signs in per session (below); Claude Code needs the box's own.
-    if (workspace.agent === "claude" && Object.keys(sessionEnv).length === 0) {
+    if (workspace.agent === "claude" && !hasClaudeCredential(sessionEnv)) {
       throw new Error(
         "Connect Claude in Settings before restoring a workspace.",
       );
@@ -314,6 +322,8 @@ async function restoreDaytonaWorkspace(
       repoFullName: project.fullName,
       githubToken,
       sessionEnv,
+      // The plan's box cap, enforced by the claim in the database.
+      maxLiveComputers: gate.cap,
     });
     const computer = ensured.computer;
     if (!computer.daytonaSandboxId) {
@@ -331,13 +341,23 @@ async function restoreDaytonaWorkspace(
       workspaceId: workspace.id,
       projectId: project.id,
       computerId: computer.id,
-      userId,
+      userId: owner.id,
     };
     const agent = new AgentClient(target);
     // The restore relaunches the session at once, so its credential rides
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
-    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, userId);
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id);
+    if (manifest.origin) {
+      await requireFeature(
+        { features: async () => (await agent.health(identity)).features ?? [], upgrade },
+        AGENT_FEATURE_IMPORTS,
+        "restore a session imported from a Mac",
+      );
+    }
+    // Before the restore, which launches the session at once.
+    await setUpSession(agent, identity, upgrade, owner.id, project.id);
+    const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, (credential) =>
       agent.restoreWorkspace(identity, {
         branch: workspace.branch,
@@ -346,6 +366,8 @@ async function restoreDaytonaWorkspace(
         downloads,
         ...(workspace.agent !== "claude" && { agent: workspace.agent }),
         ...(credential && { auth: credential }),
+        ...(bundleRef && { bundleRef }),
+        ...(manifest.origin && { originWorktree: manifest.origin.worktree }),
       }),
     );
 
@@ -363,6 +385,10 @@ async function restoreDaytonaWorkspace(
     await restoreAfterFailure(workspace, "restoring", message).catch(
       (updateError: unknown) => console.error("Could not persist restore failure", updateError),
     );
+    // The plan's cap can refuse a start mid-flight (a simultaneous start won
+    // the slot first): say so, rather than blame the restore.
+    const refused = isPlanLimitError(error);
+    if (refused) return NextResponse.json({ error: refused.message, settingsHref: UPGRADE_HREF }, { status: 403 });
     return NextResponse.json(failure ?? { error: message }, { status: failure ? 409 : 502 });
   }
 
@@ -379,7 +405,7 @@ async function restoreDaytonaWorkspace(
 async function daytonaAgent(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
-  userId: string,
+  owner: Owner,
 ): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade?: () => Promise<void> }> {
   const computer = await getRuntimeComputerByProject(workspace.projectId);
   if (!computer?.daytonaSandboxId || computer.status !== "ready") {
@@ -389,13 +415,13 @@ async function daytonaAgent(
   if (!secret) throw new Error("Runtime Computer secret is missing.");
   const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
   return {
-    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, userId),
+    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id),
     agent: new AgentClient(target),
     identity: {
       workspaceId: workspace.id,
       projectId: workspace.projectId,
       computerId: computer.id,
-      userId,
+      userId: owner.id,
     },
   };
 }
@@ -403,7 +429,7 @@ async function daytonaAgent(
 async function resumeDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
-  userId: string,
+  owner: Owner,
 ) {
   if (workspace.status !== "suspended") {
     return NextResponse.json(
@@ -414,9 +440,9 @@ async function resumeDaytonaWorkspace(
   const transitioned = await startTransition(workspace, ["suspended"], "resuming");
   if (!transitioned) return lifecycleConflict();
   try {
-    const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, owner);
     // Signed in as the user picks now, before it relaunches.
-    await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(userId));
+    await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(owner.id));
     await agent.resumeWorkspace(identity);
   } catch (error) {
     const failure = signInFailure(error);
@@ -440,7 +466,7 @@ async function resumeDaytonaWorkspace(
 async function suspendDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
-  userId: string,
+  owner: Owner,
 ) {
   if (workspace.status !== "ready" && workspace.status !== "idle") {
     return NextResponse.json(
@@ -451,7 +477,7 @@ async function suspendDaytonaWorkspace(
   const transitioned = await startTransition(workspace, ["ready", "idle"], "suspending");
   if (!transitioned) return lifecycleConflict();
   try {
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity } = await daytonaAgent(workspace, provider, owner);
     await agent.stopWorkspace(identity);
   } catch (error) {
     console.error(`Workspace ${workspace.id} suspend failed`, error);
@@ -473,10 +499,10 @@ async function suspendDaytonaWorkspace(
 async function destroyDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
-  userId: string,
+  owner: Owner,
 ) {
   return endWorkspace(workspace, async () => {
-    const { agent, identity } = await daytonaAgent(workspace, provider, userId);
+    const { agent, identity } = await daytonaAgent(workspace, provider, owner);
     await agent.destroyWorkspace(identity);
   });
 }
