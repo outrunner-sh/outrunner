@@ -4,7 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { ChevronRight, RefreshCw, TerminalSquare, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
@@ -13,6 +13,12 @@ import { SessionComposer, type ModelChoice } from "@/components/session-composer
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
+import {
+  anchorPending,
+  livePrompts,
+  pendingShows,
+  type PendingPrompt,
+} from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import {
   forgetFirstPrompt,
@@ -97,7 +103,7 @@ export function WorkspaceSession({
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const attachment = useSessionAttachment(workspaceId, local, agent);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
-  const conversation = useConversationStream(attachment);
+  const conversation = useConversationStream(attachment, workspaceId);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
@@ -113,31 +119,42 @@ export function WorkspaceSession({
     setSendError(null);
     attachment.refresh();
   };
-  const canSend = attachment.status === "attached";
+  const attached = attachment.status === "attached";
+  // The composer takes a prompt while the session is still connecting: it goes
+  // once attached (whenAttached), so opening a session never means waiting to
+  // type. Only a failed attach stops it, until Reconnect.
+  const canSend = attachment.status !== "error";
+  const whenAttached = useWhenAttached(attachment.status, connectionError);
 
   // Optimistic echo: the prompt only reaches the timeline after Claude logs it
   // and the agent streams it back (a second or two). Show the user's own bubble
   // immediately and drop it once the streamed copy of that turn arrives, so the
   // composer feels instant without ever double-rendering the message.
-  // Each pending item remembers the delivered-prompt count it is waiting to
-  // exceed. Sends are serialized, so the Nth optimistic bubble is superseded
-  // once the stream has recorded N prompts — independent of the text, so
-  // duplicate messages and Claude's text-less tool-result user turns can't
-  // confuse the match.
-  const [pending, setPending] = useState<{ id: string; text: string; expect: number }[]>([]);
+  // Which bubble is superseded when is lib/session/optimistic-echo.ts: a
+  // delivered-prompt count rather than the text, anchored as the session takes
+  // the prompt rather than as it is typed.
+  const [pending, setPending] = useState<PendingPrompt[]>([]);
+  // The newest events, for anchoring after an await, when the closure's are old.
+  const eventsRef = useRef(conversation.events);
+  useEffect(() => {
+    eventsRef.current = conversation.events;
+  }, [conversation.events]);
+
+  /** The prompt has reached the session: hold its bubble until the stream has
+   *  recorded one more prompt than the history it answered with. */
+  const anchor = (pendingId: string) =>
+    setPending((prev) => anchorPending(prev, pendingId, userPromptCount(eventsRef.current)));
 
   const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
     if (trimmed) {
       setPending((prev) => {
-        const base = userPromptCount(conversation.events);
-        // Drop items the stream has already caught up on, then queue this one to
-        // wait for the next prompt slot. Trimming here (not in an effect) keeps
-        // the list bounded without a setState-in-effect cascade.
-        const live = prev.filter((p) => base < p.expect);
-        const expect = Math.max(base + 1, live.length ? live[live.length - 1].expect + 1 : 0);
-        return [...live, { id: pendingId, text: trimmed, expect }];
+        // Drop items the stream has already caught up on, then queue this one.
+        // Trimming here (not in an effect) keeps the list bounded without a
+        // setState-in-effect cascade.
+        const live = livePrompts(prev, userPromptCount(conversation.events));
+        return [...live, { id: pendingId, text: trimmed, expect: null }];
       });
     }
     setSendError(null);
@@ -149,6 +166,20 @@ export function WorkspaceSession({
       setSendError(message);
       return false;
     };
+    return whenAttached().then(
+      () => deliver(text, attachmentIds, pendingId, failed),
+      (error: unknown) => failed(error instanceof Error ? error.message : "Could not connect to send that message."),
+    );
+  };
+
+  /** Hand a prompt to the session, once it is attached. Anchors its bubble as
+   *  the session takes it, against the history that has landed by then. */
+  const deliver = (
+    text: string,
+    attachmentIds: string[],
+    pendingId: string,
+    failed: (message: string) => boolean,
+  ) => {
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -156,7 +187,10 @@ export function WorkspaceSession({
         `/workspaces/${workspaceId}/message`,
         { content: text },
       ).then(
-        () => true,
+        () => {
+          anchor(pendingId);
+          return true;
+        },
         (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
       );
     }
@@ -168,6 +202,7 @@ export function WorkspaceSession({
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.");
+        anchor(pendingId);
         // The first prompt just named this session: re-read the sidebar.
         if (body.titled) router.refresh();
         return true;
@@ -225,14 +260,14 @@ export function WorkspaceSession({
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
   const delivered = userPromptCount(conversation.events);
   const working =
-    claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
+    claudeIsWorking(conversation.events) || pending.some((p) => pendingShows(p, delivered));
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
     effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
-    disabledReason: !canSend
+    disabledReason: !attached
       ? "Waiting for the session to connect"
       : working
         ? `Switch models once ${AGENTS[agent].label} has finished this turn`
@@ -266,7 +301,7 @@ export function WorkspaceSession({
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
     const optimistic = pending
-      .filter((p) => delivered < p.expect)
+      .filter((p) => pendingShows(p, delivered))
       .map<AgentEvent>((p) => ({
         t: "message",
         uuid: `optimistic-${p.id}`,
@@ -306,7 +341,7 @@ export function WorkspaceSession({
   // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
   useEffect(() => {
-    if (sentInitial.current || !canSend) return;
+    if (sentInitial.current || !attached) return;
     const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
     const first = hasFirstPrompt(fromUrl)
       ? fromUrl
@@ -332,7 +367,7 @@ export function WorkspaceSession({
     });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSend, initialPrompt, initialAttachmentIds]);
+  }, [attached, initialPrompt, initialAttachmentIds]);
 
   return (
     <div className="studio-live-session" data-testid="workspace-session">
@@ -405,11 +440,41 @@ export function WorkspaceSession({
       <SessionComposer
         onSend={send}
         canSend={canSend}
+        disabledPlaceholder="Couldn't connect to the session: reconnect to send"
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
       />
     </div>
+  );
+}
+
+/**
+ * A promise for "the session is attached": at once when it is, else when it
+ * gets there; rejected, with why, if attaching fails first. What a prompt typed
+ * while the session connects waits on.
+ */
+function useWhenAttached(
+  status: "idle" | "loading" | "attached" | "error",
+  error: string | null,
+): () => Promise<void> {
+  const waiting = useRef<{ resolve: () => void; reject: (error: Error) => void }[]>([]);
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+    if (status !== "attached" && status !== "error") return;
+    const waiters = waiting.current.splice(0);
+    for (const waiter of waiters) {
+      if (status === "attached") waiter.resolve();
+      else waiter.reject(new Error(error ?? "Could not connect to the session."));
+    }
+  }, [status, error]);
+  return useCallback(
+    () =>
+      statusRef.current === "attached"
+        ? Promise.resolve()
+        : new Promise<void>((resolve, reject) => waiting.current.push({ resolve, reject })),
+    [],
   );
 }
 

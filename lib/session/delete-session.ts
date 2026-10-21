@@ -1,4 +1,5 @@
 import { store, useStore } from "@/lib/client/store";
+import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { SessionDeletion } from "@/lib/nav/sidebar";
 
@@ -31,6 +32,7 @@ export async function deleteSession(id: string, deletion: SessionDeletion): Prom
     }
     if (res.ok) {
       DELETED.set(new Set([...DELETED.get(), id]));
+      CONVERSATIONS.forget(id);
       return;
     }
     const body = (await res.json().catch(() => ({}))) as { error?: string };

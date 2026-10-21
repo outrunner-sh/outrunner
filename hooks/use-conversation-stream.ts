@@ -6,6 +6,7 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
 import { reconnectPlan } from "@/lib/runtime/reconnect";
 import { subscribeEventsWs } from "@/lib/runtime/session-client";
+import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 
 import type { SessionAttachment } from "./use-session-attachment";
 
@@ -23,21 +24,27 @@ export type ConversationStreamState = {
 // backs off exponentially and gives up after a bounded number of consecutive
 // failures rather than hammering /session against a genuinely-down endpoint.
 
-// A single {error, closed} slice: reducer keeps effect body free of setState,
-// and both signals update from the same subscribe callbacks.
-type WsStatus = { error: string | null; closed: boolean };
+// A single {error, closed, live} slice: reducer keeps effect body free of
+// setState, and the signals update from the same subscribe callbacks. `live`:
+// a frame has arrived on this connection.
+type WsStatus = { error: string | null; closed: boolean; live: boolean };
 type WsAction =
+  | { kind: "opening" }
   | { kind: "frame-received" }
   | { kind: "closed" }
   | { kind: "error"; message: string };
 
 function wsReducer(state: WsStatus, action: WsAction): WsStatus {
   switch (action.kind) {
+    case "opening":
+      // A new connection (a reconnect, or the page shown again): not live
+      // until its first frame.
+      return state.live ? { ...state, live: false } : state;
     case "frame-received":
       // First frame after connect implicitly means we're open again.
-      return { error: null, closed: false };
+      return state.live && !state.closed && state.error === null ? state : { error: null, closed: false, live: true };
     case "closed":
-      return { ...state, closed: true };
+      return { ...state, closed: true, live: false };
     case "error":
       return { ...state, error: action.message };
   }
@@ -54,8 +61,12 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
  * The hook owns the `lastEventId` cursor across reconnects; the useSessionAttachment
  * hook re-fetches URLs, but the cursor survives so subscribeEvents starts
  * from exactly where we left off.
+ *
+ * The conversation is kept for the page (lib/session/conversation-cache.ts):
+ * a session opened before, or warmed up from the sidebar, shows at once and
+ * its stream resumes from the kept cursor.
  */
-export function useConversationStream(attachment: SessionAttachment): ConversationStreamState {
+export function useConversationStream(attachment: SessionAttachment, workspaceId: string): ConversationStreamState {
   const {
     urls,
     status: attachmentStatus,
@@ -64,10 +75,20 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
     reconnect,
     refresh,
   } = attachment;
-  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [kept] = useState(() => CONVERSATIONS.get(workspaceId));
+  const [events, setEvents] = useState<AgentEvent[]>(kept?.events ?? []);
   const [ws, dispatch] = useReducerState();
-  const lastEventIdRef = useRef<string | null>(null);
-  const seenIdsRef = useRef<Set<string>>(new Set());
+  const lastEventIdRef = useRef<string | null>(kept?.lastEventId ?? null);
+  // A copy: a sidebar warm-up may still be adding to the kept one.
+  const seenIdsRef = useRef<Set<string>>(new Set(kept?.seenIds));
+  // Keep what this page has seen for the next time the session is opened.
+  useEffect(() => {
+    CONVERSATIONS.set(workspaceId, {
+      events,
+      lastEventId: lastEventIdRef.current,
+      seenIds: seenIdsRef.current,
+    });
+  }, [workspaceId, events]);
   // Consecutive failed reconnects (reset by any received frame). A ref, not
   // reducer state, so the onClose closure reads the live count, not a stale one.
   const reconnectAttemptsRef = useRef(0);
@@ -78,6 +99,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
     if (!url || attachmentStatus !== "attached") return;
 
     let active = true;
+    dispatch({ kind: "opening" });
 
     const sub = subscribeEventsWs(
       url,
@@ -165,11 +187,12 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
     if (attachmentStatus === "error") return "error";
     if (ws.error && ws.closed) return "error";
     if (ws.closed) return "disconnected";
-    // We consider ourselves "connected" once at least one frame arrived (the
-    // agent emits an initial state event on every fresh connect, so this
-    // resolves within one round trip). Before that, we're still connecting.
-    return events.length > 0 ? "connected" : "connecting";
-  }, [attachmentStatus, ws.error, ws.closed, events.length]);
+    // We consider ourselves "connected" once at least one frame arrived on
+    // this connection (the agent emits an initial state event on every fresh
+    // connect, so this resolves within one round trip). Before that, we're
+    // still connecting, whatever was kept from before.
+    return ws.live ? "connected" : "connecting";
+  }, [attachmentStatus, ws.error, ws.closed, ws.live]);
 
   return {
     events,
@@ -184,6 +207,7 @@ function useReducerState() {
   const [state, setState] = useState<WsStatus>({
     error: null,
     closed: false,
+    live: false,
   });
   const dispatch = useMemo(
     () => (action: WsAction) => setState((s) => wsReducer(s, action)),
