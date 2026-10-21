@@ -221,7 +221,7 @@ function ProjectRow({
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-mono text-sm">{project.repo}</span>
+            <span className="block truncate font-mono text-[13px] text-foreground/80">{project.repo}</span>
             <span className="text-muted-foreground block truncate text-xs">
               {summary || [label, latest && `last active ${latest}`].filter(Boolean).join(" · ")}
             </span>
@@ -286,7 +286,7 @@ function SessionRow({
             <span title={IMPORT_SOURCE_LABELS[s.source]} className="text-muted-foreground shrink-0">
               <ImportSourceIcon source={s.source} className="size-3.5" />
             </span>
-            <span className="truncate text-sm">{s.title || s.sessionId}</span>
+            <span className="truncate text-[13px] text-foreground/80">{s.title || s.sessionId}</span>
           </span>
           <span className="text-muted-foreground block truncate text-xs">
             {progress ? (

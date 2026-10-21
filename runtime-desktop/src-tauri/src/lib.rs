@@ -79,7 +79,7 @@ const SIGNED_IN_PAGE: &str = r#"<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Signed in — Outrunner</title>
+<title>Signed in — outrunner</title>
 <style>
   :root { color-scheme: dark; }
   html, body { height: 100%; }
@@ -119,7 +119,7 @@ const SIGNED_IN_PAGE: &str = r#"<!doctype html>
            stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
     </div>
     <h1>Signed in</h1>
-    <p>You can close this tab and return to Outrunner.</p>
+    <p>You can close this tab and return to outrunner.</p>
   </main>
 </body>
 </html>"#;
@@ -213,7 +213,7 @@ pub fn run() {
             let site = site();
             let site_host = site_host(&site);
             let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(site.parse().unwrap()))
-                .title("Outrunner")
+                .title("outrunner")
                 // Dark, like the app: what shows before the page has painted,
                 // and on a Mac the title bar, take its background, not the
                 // system grey.
@@ -289,23 +289,23 @@ pub fn run() {
             });
 
             // Tray menu.
-            let show_i = MenuItem::with_id(app, "show", "Show Outrunner", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Show outrunner", true, None::<&str>)?;
             let new_i = MenuItem::with_id(app, "new", "New Workspace", true, None::<&str>)?;
             let reload_i = MenuItem::with_id(app, "reload", "Reload", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let update_i =
                 MenuItem::with_id(app, "check_updates", "Check for Updates…", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit Outrunner", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit outrunner", true, None::<&str>)?;
             let menu =
                 Menu::with_items(app, &[&show_i, &new_i, &reload_i, &sep, &update_i, &quit_i])?;
 
             TrayIconBuilder::with_id("tray")
-                // The app icon's ">_" alone, as a template image: macOS tints
+                // The app icon's "o" alone, as a template image: macOS tints
                 // it for a light or dark menu bar, where the app icon's tile
                 // would sit as a dark square.
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .icon_as_template(true)
-                .tooltip("Outrunner")
+                .tooltip("outrunner")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event({
@@ -356,7 +356,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // Closing the window hides it to the tray instead of quitting; use
-            // the tray's "Quit Outrunner" to exit. Keeps the session reachable.
+            // the tray's "Quit outrunner" to exit. Keeps the session reachable.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
                 api.prevent_close();

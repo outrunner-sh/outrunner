@@ -111,10 +111,10 @@ jobs:
           echo "tag=desktop-v$VERSION" >> "$GITHUB_OUTPUT"
           # Tauri's output names, used by every later step.
           {
-            echo "APP=$BUNDLE_DIR/macos/Outrunner.app"
-            echo "DMG=$BUNDLE_DIR/dmg/Outrunner_${VERSION}_universal.dmg"
+            echo "APP=$BUNDLE_DIR/macos/outrunner.app"
+            echo "DMG=$BUNDLE_DIR/dmg/outrunner_${VERSION}_universal.dmg"
             # The signed update bundle the installed app downloads (updater.rs).
-            echo "UPDATE=$BUNDLE_DIR/macos/Outrunner.app.tar.gz"
+            echo "UPDATE=$BUNDLE_DIR/macos/outrunner.app.tar.gz"
             # Everything the release ships, under the names it ships them as.
             echo "OUT=$RUNNER_TEMP/release"
           } >> "$GITHUB_ENV"
@@ -348,7 +348,7 @@ jobs:
           [ "$(plist CFBundleIdentifier)" = "ai.neev.outrunner" ] || fail "bundle id is $(plist CFBundleIdentifier)"
           [ "$(plist CFBundleShortVersionString)" = "$VERSION" ] || fail "app version is $(plist CFBundleShortVersionString), expected $VERSION"
 
-          codesign --verify --deep --strict --verbose=2 "$APP" || fail "Outrunner.app's signature does not verify"
+          codesign --verify --deep --strict --verbose=2 "$APP" || fail "outrunner.app's signature does not verify"
 
           # The app binary and the sidecar are checked one by one: both must be
           # universal, Developer ID signed by our team, and hardened (notarization
@@ -378,10 +378,10 @@ jobs:
           test -s "$UPDATE" && test -s "$UPDATE.sig" || fail "missing $UPDATE or its .sig"
           UNPACKED=$(mktemp -d)
           tar -xzf "$UPDATE" -C "$UNPACKED"
-          [ "$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$UNPACKED/Outrunner.app/Contents/Info.plist")" = "$VERSION" ] ||
+          [ "$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$UNPACKED/outrunner.app/Contents/Info.plist")" = "$VERSION" ] ||
             fail "the update bundle is not version $VERSION"
-          xcrun stapler validate "$UNPACKED/Outrunner.app" || fail "the update bundle's app is not stapled"
-          spctl --assess --type exec --verbose=4 "$UNPACKED/Outrunner.app" || fail "Gatekeeper rejects the update bundle's app"
+          xcrun stapler validate "$UNPACKED/outrunner.app" || fail "the update bundle's app is not stapled"
+          spctl --assess --type exec --verbose=4 "$UNPACKED/outrunner.app" || fail "Gatekeeper rejects the update bundle's app"
           rm -rf "$UNPACKED"
 
       # The release's files, under their published names, with checksums
@@ -427,7 +427,7 @@ jobs:
             gh release create "$TAG" "$OUT"/* \
               --draft --verify-tag \
               --title "Outrunner $VERSION" \
-              --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag Outrunner to Applications."
+              --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag outrunner to Applications."
           fi
 
       # The automatic release: tagged and published here, only once the build
@@ -452,5 +452,5 @@ jobs:
           gh release create "$TAG" "$OUT"/* \
             --target "$GITHUB_SHA" --latest \
             --title "Outrunner $VERSION" \
-            --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag Outrunner to Applications." \
+            --notes "Universal (Apple Silicon + Intel), Developer ID signed and notarized. Open the DMG and drag outrunner to Applications." \
             --generate-notes ${FROM[@]+"${FROM[@]}"}
