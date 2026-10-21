@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
 import { allowsBoxSize, boxSizeWithin, type Plan } from "@/lib/billing/plans";
+import { saveOutcome, type SaveFailure } from "@/lib/settings/save-error";
 import type { SandboxChoice, SandboxSettings, StoredKey } from "@/lib/db/credentials";
 import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,11 @@ const SANDBOXES: Record<SandboxChoice, { label: string; icon: OptionCard<Sandbox
 
 const ORDER: SandboxChoice[] = ["outrunner", "daytona", "modal"];
 
+/** What a credential change is called when it fails, so the line says which. */
+function credentialSubject(sandbox: OwnSandbox): string {
+  return `the ${SANDBOXES[sandbox].label} ${sandbox === "modal" ? "token" : "API key"}`;
+}
+
 /** Outrunner's mark: its prompt. */
 function OutrunnerMark({ className }: { className?: string }) {
   return <SquareTerminal aria-hidden className={className} />;
@@ -66,7 +72,9 @@ export function SandboxSettingsForm({
   const [settings, setSettings] = useState(initial);
   const [shown, setShown] = useState<SandboxChoice>(initial.sandbox);
   const [status, setStatus] = useState<ActionStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  // The change that didn't save, as a line names it. Cleared by that change's
+  // own success, replaced by a newer failure, dismissed by hand.
+  const [error, setError] = useState<SaveFailure | null>(null);
   // Changes go out one at a time, in the order made: a save that is still
   // checking a key mustn't land after, and undo, a switch made since. Each
   // names the sandbox in use as it is when it goes out, not when it was made.
@@ -76,7 +84,7 @@ export function SandboxSettingsForm({
 
   /** Send a change, after any before it; the answer is the settings as the
    *  server has them. `body` is made as it goes out. */
-  function send(method: "PUT" | "DELETE", body?: () => object, query = ""): Promise<boolean> {
+  function send(subject: string, method: "PUT" | "DELETE", body?: () => object, query = ""): Promise<boolean> {
     setStatus("pending");
     const run = queue.current.then(async () => {
       try {
@@ -90,12 +98,15 @@ export function SandboxSettingsForm({
         const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
         if (!res.ok || !data?.sandbox) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
         inUseNow.current = data.sandbox;
-        setError(null);
+        // What saved clears its own failure — the line names the change, and
+        // only that change's success retires it. Anything else that failed is
+        // still unsaved, whatever just landed.
+        setError((current) => saveOutcome(current, { subject, ok: true }));
         setSettings(data);
         setStatus("success");
         return true;
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Couldn't save that.");
+        setError(saveOutcome(null, { subject, ok: false, message: e instanceof Error ? e.message : "Couldn't save that." }));
         setStatus("error");
         return false;
       }
@@ -132,9 +143,9 @@ export function SandboxSettingsForm({
           shown={shown}
           onSelect={(id) => {
             setShown(id);
-            // A save still under way keeps saying so.
+            // A save still under way keeps saying so. Looking at another card
+            // saves nothing: a failure that is still true stays on screen.
             if (!busy) setStatus("idle");
-            setError(null);
           }}
           label="Sandbox"
           chosenLabel="in use"
@@ -151,8 +162,10 @@ export function SandboxSettingsForm({
           stored={settings[shown]}
           inUse={inUse === shown}
           busy={busy}
-          onSave={(credential) => send("PUT", () => ({ sandbox: inUseNow.current, ...credential }))}
-          onRemove={() => void send("DELETE", undefined, `?key=${shown}`)}
+          onSave={(credential) =>
+            send(credentialSubject(shown), "PUT", () => ({ sandbox: inUseNow.current, ...credential }))
+          }
+          onRemove={() => void send(credentialSubject(shown), "DELETE", undefined, `?key=${shown}`)}
         />
       ) : null}
 
@@ -160,7 +173,7 @@ export function SandboxSettingsForm({
         <BoxSizePicker
           value={size}
           onChange={(next) => {
-            if (!busy) void send("PUT", () => ({ sandbox: inUseNow.current, boxSize: next }));
+            if (!busy) void send("the new box size", "PUT", () => ({ sandbox: inUseNow.current, boxSize: next }));
           }}
           plan={shown === "outrunner" ? plan : undefined}
         />
@@ -180,7 +193,7 @@ export function SandboxSettingsForm({
             disabled={!ready(shown) || busy}
             onClick={() => {
               const next = shown;
-              void send("PUT", () => ({ sandbox: next }));
+              void send(`the switch to ${SANDBOXES[next].label}`, "PUT", () => ({ sandbox: next }));
             }}
           />
         </div>
@@ -191,7 +204,9 @@ export function SandboxSettingsForm({
       )}
 
       {error ? (
-        <InlineMessage>{error}</InlineMessage>
+        <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>
+          Couldn&apos;t save {error.subject}: {error.message}
+        </InlineMessage>
       ) : null}
     </section>
   );
