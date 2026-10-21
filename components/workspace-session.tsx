@@ -16,12 +16,14 @@ import {
   LOCAL_RUNNER_LOG,
   localAgentRequest,
   localTarget,
+  LocalRuntimeError,
   messageForLocalError,
   putOnModel,
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { SEND_FAILED, sendFailureMessage } from "@/lib/session/send-failure";
 import {
   forgetFirstPrompt,
   hasFirstPrompt,
@@ -40,6 +42,15 @@ import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 import { cn } from "@/lib/utils";
+
+/** The app's own errors are already sentences (messageForLocalError); what the
+ *  agent itself said goes through the same filter as a hosted send's. */
+function localSendFailure(error: unknown): string {
+  console.error("Send failed", error);
+  if (!(error instanceof LocalRuntimeError)) return SEND_FAILED;
+  if (error.code === "agent" && error.reason !== "unknown workspace") return sendFailureMessage(error.reason);
+  return error.message;
+}
 
 /** A send that didn't go: why, and how to try it again. `retry` is set only
  * where its text never was in the composer's box (a session's first prompt),
@@ -153,7 +164,7 @@ export function WorkspaceSession({
         { content: text },
       ).then(
         () => true,
-        (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
+        (error: unknown) => failed(localSendFailure(error)),
       );
     }
     return fetch(`/api/workspaces/${workspaceId}/message`, {

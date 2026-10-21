@@ -7,11 +7,12 @@ import {
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
+import { sendFailureMessage } from "@/lib/session/send-failure";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +120,12 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Send failed." },
+      {
+        error:
+          error instanceof AgentRequestError
+            ? sendFailureMessage(error.error?.message)
+            : "Couldn't reach the Runtime Computer. Try again.",
+      },
       { status: 502 },
     );
   }
