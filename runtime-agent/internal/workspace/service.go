@@ -156,6 +156,10 @@ type workspaceFacts struct {
 	// Gateway, when set, runs the session through it on a key of its own (in
 	// the session's gateway file) instead of the user's Claude credential.
 	Gateway claude.Gateway `json:"gateway,omitempty"`
+	// Effort is the reasoning effort the session runs at (claude.Efforts);
+	// empty is its model's own. It is part of the model choice: SetModel
+	// replaces both together.
+	Effort string `json:"effort,omitempty"`
 	// Auth is the kind of the session's own credential (SetAuth), kept in its
 	// auth file; empty runs on its agent's own login.
 	Auth string `json:"auth,omitempty"`
@@ -328,6 +332,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.Model != "" || facts.Model == "" {
 		facts.Model, facts.Gateway = prior.Model, prior.Gateway
 	}
+	// Its effort is SetModel's alone, so a repeated Create keeps it as well.
+	facts.Effort = prior.Effort
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
 		if err != nil {
@@ -558,15 +564,18 @@ const (
 	switchRelaunchTimeout = 60 * time.Second // covers the readiness wait with room to spare
 )
 
-// ModelChoice is what a session runs: a model, and optionally the gateway and
-// key it runs through. Callers validate each part.
+// ModelChoice is what a session runs: a model, optionally the gateway and key
+// it runs through, and the effort it runs at (empty: the model's own).
+// Callers validate each part.
 type ModelChoice struct {
 	Model   string
 	Gateway claude.Gateway
 	Token   string
+	Effort  string
 }
 
-// SetModel switches a session to another model, or to or from a gateway. It is
+// SetModel switches a session to another model or effort, or to or from a
+// gateway. It is
 // recorded first, so every later launch and resume uses it; a running session
 // is then relaunched on it, continuing its conversation (Claude reads all of it
 // only at launch). It is refused while Claude is mid-turn, which the relaunch
@@ -588,7 +597,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
 	}
 	priorEnv := s.readGatewayEnv(workspaceID)
-	if f.Model == choice.Model && f.Gateway == choice.Gateway && priorEnv == env {
+	if f.Model == choice.Model && f.Gateway == choice.Gateway && f.Effort == choice.Effort && priorEnv == env {
 		return nil
 	}
 	// Held from the busy check through the relaunch, so no prompt can be sent
@@ -628,9 +637,11 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if err := s.gatewayFiles().put(workspaceID, env); err != nil {
 		return err
 	}
-	// Only the model and gateway change: a Codex session's tail may record its
-	// rollout meanwhile.
-	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Model, f.Gateway = choice.Model, choice.Gateway })
+	// Only the model, gateway and effort change: a Codex session's tail may
+	// record its rollout meanwhile.
+	s.updateFacts(workspaceID, func(f *workspaceFacts) {
+		f.Model, f.Gateway, f.Effort = choice.Model, choice.Gateway, choice.Effort
+	})
 	if !running {
 		return nil // the next Start launches on it
 	}
@@ -643,7 +654,9 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 		// Not applied, so not recorded: a retry of the same choice tries again
 		// rather than finding it already set, and the next Start uses the old.
 		_ = s.gatewayFiles().put(workspaceID, priorEnv)
-		s.updateFacts(workspaceID, func(now *workspaceFacts) { now.Model, now.Gateway = f.Model, f.Gateway })
+		s.updateFacts(workspaceID, func(now *workspaceFacts) {
+			now.Model, now.Gateway, now.Effort = f.Model, f.Gateway, f.Effort
+		})
 		// The old session was killed before the new one failed to start, so
 		// bring Claude back on the model it had: a failed switch must not end
 		// a session that was working.

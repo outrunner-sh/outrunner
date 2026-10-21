@@ -90,7 +90,7 @@ export function AppFrame({
     >
       <div className="hidden min-h-0 sm:block">
         {collapsed ? (
-          <div className="flex h-full flex-col items-center gap-2 border-r border-border/60 pt-5">
+          <div className="flex h-full flex-col items-center gap-2 border-r border-border/60 bg-sidebar pt-5">
             <button
               type="button"
               onClick={() => setAndRemember(false)}

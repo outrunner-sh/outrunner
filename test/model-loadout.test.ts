@@ -4,10 +4,12 @@ import { test } from "node:test";
 import {
   LOADOUT_MAX,
   loadoutDefault,
+  loadoutEffort,
   loadoutModels,
   moveEntry,
   parseLoadout,
   searchModels,
+  setEntryEffort,
   toggleEntry,
 } from "@/lib/runtime/model-loadout";
 import { modelGroups } from "@/lib/runtime/session-models";
@@ -71,4 +73,25 @@ test("a move passes over models the picker doesn't show now", () => {
   assert.deepEqual(moveEntry(loadout, OPUS, 1, visible).models, [LUNA, GLM, OPUS]);
   assert.deepEqual(moveEntry(loadout, LUNA, -1, visible).models, [LUNA, GLM, OPUS]);
   assert.deepEqual(moveEntry(loadout, LUNA, 1, visible), loadout, "nothing shown after the last");
+});
+
+test("each loadout model keeps the effort it runs at, where it takes one", () => {
+  const HAIKU = { provider: "claude", id: "haiku" } as const;
+  const loadout = parseLoadout({
+    models: [
+      { ...OPUS, effort: "xhigh" },
+      { ...LUNA, effort: "ultra" }, // not a level
+      { ...HAIKU, effort: "high" }, // takes none
+      { ...GLM, effort: "high" }, // a gateway's runs at its own
+    ],
+  });
+  assert.deepEqual(loadout.models, [{ ...OPUS, effort: "xhigh" }, LUNA, HAIKU, GLM]);
+  assert.equal(loadoutEffort(loadout, OPUS), "xhigh");
+  assert.equal(loadoutEffort(loadout, LUNA), undefined);
+
+  const set = setEntryEffort(loadout, LUNA, "low");
+  assert.equal(loadoutEffort(set, LUNA), "low");
+  assert.deepEqual(setEntryEffort(set, LUNA, null).models[1], LUNA, "null goes back to the model's own");
+  assert.deepEqual(setEntryEffort(loadout, HAIKU, "max"), loadout, "a model that takes none is left");
+  assert.deepEqual(setEntryEffort(loadout, { provider: "codex", id: "gpt-6-sol" }, "max"), loadout, "nor one not in it");
 });

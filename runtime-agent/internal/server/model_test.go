@@ -62,6 +62,13 @@ func TestASessionsModelIsSetAtCreateAndSwitched(t *testing.T) {
 	if got := listedModel(); got != "opus" {
 		t.Errorf("listed model after the switch = %v, want opus", got)
 	}
+	if code, _ := call("ws-m", "POST", "/workspaces/ws-m/model", map[string]string{"model": "opus", "effort": "--max"}); code != http.StatusBadRequest {
+		t.Errorf("invalid effort = %d, want 400", code)
+	}
+	// The effort is answered, so the web app can tell it was applied.
+	if code, out := call("ws-m", "POST", "/workspaces/ws-m/model", map[string]string{"model": "opus", "effort": "xhigh"}); code != http.StatusOK || out["effort"] != "xhigh" {
+		t.Fatalf("switch at an effort = %d %v", code, out)
+	}
 
 	for _, bad := range []map[string]string{
 		{"model": "z-ai/glm-5.3", "gateway": "openrouter"},                         // no key

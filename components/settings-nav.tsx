@@ -30,7 +30,7 @@ export function SettingsNav() {
     <aside
       role="navigation"
       aria-label="Settings"
-      className="flex min-h-0 flex-col gap-0.5 border-r border-border/60 px-4 py-6"
+      className="flex min-h-0 flex-col gap-0.5 border-r border-border/60 bg-sidebar px-4 py-6"
     >
       <Link
         href="/"

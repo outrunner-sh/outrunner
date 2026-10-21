@@ -85,6 +85,9 @@ type SetModelRequest struct {
 	Model   string `json:"model"`
 	Gateway string `json:"gateway,omitempty"`
 	Token   string `json:"token,omitempty"`
+	// Effort is the reasoning effort to run at ("low" … "max"); empty runs at
+	// the model's own.
+	Effort string `json:"effort,omitempty"`
 }
 
 // SetAuthRequest gives a workspace's session its own credential, applied at

@@ -12,12 +12,19 @@ import {
   type LocalFolder,
   type LocalStatus,
 } from "@/lib/desktop/local-runtime";
-import { agentOf, type SessionModel } from "@/lib/runtime/session-models";
+import { agentOf, type Effort, type SessionModel, takesEffort } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
+import { rememberEffort } from "@/lib/session/picked-effort";
 
 type CreateResponse = { workspace?: { id: string }; error?: string; settingsHref?: string };
+
+/** The effort a new session starts at: the one picked, where its model takes
+ *  one; else none, the model's own. */
+function startingEffort(model: SessionModel | undefined, effort: Effort | null): Effort | null {
+  return model && effort && takesEffort(model) ? effort : null;
+}
 
 /** Same shape as the server's generated branches (runtime/<time>-<id>). */
 function localBranch(workspaceId: string): string {
@@ -59,8 +66,14 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
   /** Create a cloud session and open it: at once, on its setup progress, which
    *  the server runs after answering. Resolves false when it could not be
    *  created (the message says why), so the composer keeps the prompt. */
-  function create(prompt: string, attachmentIds: string[] = [], model?: SessionModel): Promise<boolean> {
+  function create(
+    prompt: string,
+    attachmentIds: string[] = [],
+    model?: SessionModel,
+    pickedEffort: Effort | null = null,
+  ): Promise<boolean> {
     if (!selected) return Promise.resolve(false);
+    const effort = startingEffort(model, pickedEffort);
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
@@ -72,9 +85,13 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           // The prompt and attachments are not sent here: the workspace has no
           // box yet. They ride the redirect, and wait in this tab for the
           // session to be ready (lib/session/first-prompt.ts).
-          // The model picked on this screen, and who serves it; none, the
-          // server starts it on the menu's default.
-          body: JSON.stringify({ branch: "", ...(model && { provider: model.provider, model: model.id }) }),
+          // The model picked on this screen, who serves it, and its effort;
+          // none, the server starts it on the menu's default.
+          body: JSON.stringify({
+            branch: "",
+            ...(model && { provider: model.provider, model: model.id }),
+            ...(effort && { effort }),
+          }),
         });
       } catch {
         setMessage("Could not reach Outrunner. Please try again.");
@@ -92,6 +109,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       }
       const first = { prompt, attachmentIds };
       rememberFirstPrompt(tabStorage(), result.workspace.id, first);
+      rememberEffort(result.workspace.id, effort);
       router.push(`/workspaces/${result.workspace.id}${firstPromptQuery(first)}`);
       router.refresh();
       resolve(true);
@@ -111,7 +129,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
    *
    * Its agent is its model's (Codex for Codex's), signed in the way the user
    * picked for it (Settings → Providers); `status` is what the Mac app last
-   * said of its agent CLIs.
+   * said of its agent CLIs. `pickedEffort` goes with a model that takes one.
    */
   function createLocal(
     prompt: string,
@@ -119,7 +137,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
     onOutrunnerModel = false,
     model?: SessionModel,
     status: LocalStatus | null = null,
+    pickedEffort: Effort | null = null,
   ): Promise<boolean> {
+    const effort = startingEffort(model, pickedEffort);
     return new Promise((resolve) => startCreating(async () => {
       setMessage(null);
       setMessageHref(null);
@@ -157,13 +177,14 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       // Mac's Claude Code isn't logged in.
       if (model || onOutrunnerModel) {
         try {
-          await (model ? putOnModel(workspaceId, model) : putOnDefaultModel(workspaceId));
+          await (model ? putOnModel(workspaceId, model, effort) : putOnDefaultModel(workspaceId));
         } catch (error) {
           void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
           fail(error, "Outrunner's models are unavailable right now.");
           return;
         }
       }
+      rememberEffort(workspaceId, effort);
       router.push(`/local/${workspaceId}${firstPromptQuery({ prompt, attachmentIds: [] })}`);
       resolve(true);
     }));

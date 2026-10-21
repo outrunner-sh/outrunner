@@ -112,6 +112,17 @@ func TestClaudeLaunchCommands(t *testing.T) {
 			t.Errorf("launch = %q\nwant %q", got, want)
 		}
 	})
+	t.Run("an effort rides on --effort, inside the env files", func(t *testing.T) {
+		s, wt := cloudSession(t, CreateInput{WorkspaceID: "ws-e", Branch: "b", BaseBranch: "main"})
+		if err := s.SetModel(context.Background(), "ws-e", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-v1-launch-0123456789abcdef", Effort: "high"}, ""); err != nil {
+			t.Fatalf("SetModel: %v", err)
+		}
+		want := []string{"sh", "-c", `. "$1" && shift && exec "$@"`, "sh", s.gatewayEnvPath("ws-e"),
+			"claude", "--continue", "--permission-mode", "bypassPermissions", "--append-system-prompt", s.orientation("ws-e", wt), "--effort", "high"}
+		if got := s.launchCommand("ws-e", wt, true); !slices.Equal(got, want) {
+			t.Errorf("launch = %q\nwant %q", got, want)
+		}
+	})
 	t.Run("a gateway session sources its key file and takes no --model", func(t *testing.T) {
 		s, wt := cloudSession(t, CreateInput{WorkspaceID: "ws-g", Branch: "b", BaseBranch: "main"})
 		if err := s.SetModel(context.Background(), "ws-g", ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-v1-launch-0123456789abcdef"}, ""); err != nil {

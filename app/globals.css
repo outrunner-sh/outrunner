@@ -26,10 +26,11 @@
   --ring: oklch(0.708 0 0);
   --success: oklch(0.627 0.17 149.2);
   --warning: oklch(0.769 0.157 70.08);
+  --sidebar: oklch(0.985 0 0);
 }
 
 .dark {
-  --background: #0A0A0A;
+  --background: #060505;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -50,6 +51,7 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.696 0.17 162.48);
   --warning: oklch(0.769 0.157 70.08);
+  --sidebar: #0B0B0A;
 }
 
 @theme inline {
@@ -78,6 +80,7 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-sidebar: var(--sidebar);
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --font-display: var(--font-pixel), var(--font-geist-mono), ui-monospace, monospace;
@@ -108,8 +111,8 @@
    text on the black composer in light mode). The app is dark only — see the
    ThemeProvider in app/layout.tsx. */
 :root {
-  --studio-bg: #0A0A0A;
-  --studio-panel: #0A0A0A;
+  --studio-bg: #060505;
+  --studio-panel: #060505;
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
   --studio-selected: #232323;
@@ -151,27 +154,38 @@
 .studio-empty-chat code { color: var(--studio-text); font-family: var(--font-geist-mono); }
 .studio-empty-chat { max-width: 540px; margin: 17vh auto 0; text-align: center; }.studio-empty-icon { display: grid; width: 42px; height: 42px; margin: 0 auto 15px; place-items: center; border: 1px solid var(--studio-line); border-radius: 12px; color: var(--studio-muted); background: var(--studio-panel); }.studio-empty-icon svg { width:20px; }.studio-empty-chat h3 { margin: 0; color: var(--studio-text); font-size: 18px; letter-spacing: -.02em; }.studio-empty-chat p { margin: 9px auto 0; color: var(--studio-muted); font-size: 13px; line-height: 1.65; }
 
-/* Composer, as the landing page draws the app (neevai-labs/outrunner-landing,
-   ProductWindow): a faintly bordered black card, every footer control a
-   bordered 28px chip, and a round send button. */
-.studio-composer { position: relative; margin: 12px auto 18px; max-width: 720px; width: calc(100% - 32px); border: 1px solid rgba(255,255,255,.09); border-radius: 16px; background: #000; }
-.studio-composer:focus-within { border-color: rgba(255,255,255,.18); }
-.studio-composer textarea { display:block; width:100%; resize:none; min-height:64px; padding:14px 16px 6px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
+/* Composer: a square-cornered bordered box on the page's own black, the text
+   above and its controls below. */
+.studio-composer { position: relative; margin: 12px auto 18px; max-width: 720px; width: calc(100% - 32px); border: 1px solid rgba(255,255,255,.12); border-radius: 4px; background: var(--studio-bg); }
+.studio-composer:focus-within { border-color: rgba(255,255,255,.22); }
+.studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }
 .studio-composer-notice { margin: 0; padding: 10px 16px 0; color: color-mix(in oklab, var(--foreground) 60%, transparent); font-size: 12px; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }
-.studio-composer-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px 10px; }
-.studio-composer-footer > span { display:flex; align-items:center; gap:6px; min-width:0; }
-.studio-composer-footer button, .studio-composer-model { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:28px; min-width:28px; padding:0 10px; border:1px solid rgba(255,255,255,.1); border-radius:6px; color:rgba(255,255,255,.6); background:transparent; font:12px var(--font-geist-sans); white-space:nowrap; }
-.studio-composer-footer button { padding:0 7px; cursor:pointer; }
-.studio-composer-footer .studio-composer-model-picker { padding:0 10px; }
-.studio-composer-footer button:hover:not(:disabled) { color:var(--studio-text); background:var(--studio-hover); }
+/* The toolbar, ruled off from the text: every control a square-cornered
+   bordered box of one height, the send button among them. */
+.studio-composer-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px; border-top:1px solid rgba(255,255,255,.08); }
+.studio-composer-footer > span { display:flex; align-items:center; gap:8px; min-width:0; }
+.studio-composer-footer button, .studio-composer-model { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:30px; min-width:30px; padding:0 10px; border:1px solid rgba(255,255,255,.14); border-radius:3px; color:var(--studio-text); background:transparent; font:13px var(--font-geist-sans); white-space:nowrap; }
+.studio-composer-footer button { padding:0 7px; cursor:pointer; transition: background-color .15s, border-color .15s; }
+.studio-composer-footer .studio-composer-model-picker { padding:0 10px 0 12px; }
+.studio-composer-footer button:hover:not(:disabled) { color:var(--studio-text); border-color:rgba(255,255,255,.24); background:var(--studio-hover); }
 .studio-composer-footer button:disabled { color:#555; cursor:not-allowed; }
 .studio-composer-footer svg { width:14px; height:14px; flex-shrink:0; }
-.studio-composer-footer .studio-composer-model-picker svg { width:12px; height:12px; }
-.studio-composer-footer .studio-composer-send { border:0; border-radius:9999px; color:#0a0a0a; background:#ededed; }
-.studio-composer-footer .studio-composer-send:hover:not(:disabled) { color:#0a0a0a; background:#fff; }
-.studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); background:rgba(255,255,255,.1); }
+.studio-composer-footer .studio-composer-send { color:#0a0a0a; border-color:#ededed; background:#ededed; }
+.studio-composer-footer .studio-composer-send:hover:not(:disabled) { color:#0a0a0a; border-color:#fff; background:#fff; }
+.studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); border-color:rgba(255,255,255,.14); background:transparent; }
+
+/* An effort as a row of bars (components/effort-meter.tsx): lit up to its
+   level in the brand's orange, the rest dim. */
+.effort-meter { display:inline-flex; align-items:center; gap:2px; }
+.effort-meter > * { display:block; width:5px; height:12px; padding:0; border:0; border-radius:1px; background:rgba(255,255,255,.18); }
+.effort-meter > [data-on] { background:var(--color-brand); }
+.effort-picker > button { width:8px; height:14px; cursor:pointer; transition: background-color .15s, transform .15s; }
+.effort-picker > button:hover:not(:disabled) { transform: scaleY(1.15); }
+.effort-picker > button:not([data-on]):hover:not(:disabled) { background:rgba(255,255,255,.35); }
+.effort-picker > button:disabled { cursor:not-allowed; opacity:.5; }
+.effort-picker > button:focus-visible { outline: 2px solid rgba(255,255,255,.5); outline-offset: 1px; }
 
 .studio-inspector { min-width: 0; border-left: 1px solid var(--studio-line); background: var(--studio-bg); }
 /* The Environment panel: quiet rows on black, the terminal docked beneath. */
