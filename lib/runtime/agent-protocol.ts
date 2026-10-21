@@ -115,6 +115,10 @@ export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
  *  conversation moved to the worktree). */
 export const AGENT_FEATURE_IMPORTS = "restore-imports";
 
+/** The agent restores a session onto its model (RestoreWorkspaceRequest's
+ *  `model`); an older one ignores it, and relaunches on Claude's default. */
+export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";
+
 /** GET /health (unauthenticated): the agent is up, and what it can run a
  *  session on. `gateways`, `agents` and `features` are absent from agents
  *  older than each: those run OpenRouter alone, and Claude alone. */
@@ -139,6 +143,22 @@ const CredentialToken = z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,400}
  * a credential on an engine that runs sessions on its own login (jcode),
  * 409 UNSUPPORTED.
  */
+/**
+ * POST /workspaces/{id}/answer: the user's reply to the questions the session
+ * is waiting on (runtime-agent/internal/ask). `questions` are the ask_user
+ * call's, as the transcript has them; the agent checks the reply against them.
+ * A dismissed card carries no answers.
+ */
+export const AnswerRequest = z.object({
+  questions: z.array(z.unknown()).min(1).max(4),
+  answers: z
+    .array(z.object({ selected: z.array(z.string().max(500)).max(4), other: z.string().max(4000) }))
+    .max(4)
+    .optional(),
+  dismissed: z.boolean().optional(),
+});
+export type AnswerRequest = z.infer<typeof AnswerRequest>;
+
 export const SetAuthRequest = z
   .object({
     kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key"]),
@@ -273,6 +293,21 @@ export const RestoreWorkspaceRequest = z
     /** The folder an imported session worked in on its Mac; the
      *  conversation's working directories move from it to the worktree. */
     originWorktree: z.string().startsWith("/").optional(),
+    /** The session's model, recorded before it relaunches, as POST
+     *  /workspaces/{id}/model takes it: through a gateway on its key, or
+     *  neither. Absent: its agent's own default. */
+    model: z
+      .object({
+        model: z.string().min(1).max(100),
+        gateway: z.string().min(1).optional(),
+        token: CredentialToken.optional(),
+        effort: z.string().min(1).optional(),
+      })
+      .refine((v) => (v.gateway === undefined) === (v.token === undefined), {
+        message: "a gateway needs its key, and only a gateway takes one",
+        path: ["token"],
+      })
+      .optional(),
   })
   .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",

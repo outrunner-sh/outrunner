@@ -12,8 +12,10 @@ import {
   modelChoice,
   modelGroups,
   modelLabel,
+  OUTRUNNER_MODELS,
   parseAgentConnections,
   predatesProvider,
+  recordedModel,
   requestedEffort,
   requestedModel,
   runsOnOwnAccount,
@@ -265,4 +267,18 @@ test("only Claude's and Codex's own models run on the user's account", () => {
   assert.equal(runsOnOwnAccount({ provider: "codex" }), true);
   assert.equal(runsOnOwnAccount({ provider: "outrunner" }), false);
   assert.equal(runsOnOwnAccount({ provider: "anthropic" }), false);
+});
+
+test("a row's recorded model is checked as a request's choice is", () => {
+  assert.deepEqual(recordedModel("outrunner", "z-ai/glm-5.3", null), { model: OUTRUNNER_MODELS[0], effort: null });
+  assert.deepEqual(recordedModel("claude", "opus", "max"), { model: modelChoice("claude", "opus"), effort: "max" });
+  // A model typed in on the user's own key.
+  assert.deepEqual(recordedModel("zai", "glm-9", null), { model: { id: "glm-9", label: "glm-9", provider: "zai" }, effort: null });
+  // An effort this release doesn't know runs at the model's own.
+  assert.deepEqual(recordedModel("claude", "opus", "turbo"), { model: modelChoice("claude", "opus"), effort: null });
+  // None recorded (a session from before the columns), or one no longer offered.
+  assert.equal(recordedModel(null, null, null), null);
+  assert.equal(recordedModel(undefined, undefined, undefined), null);
+  assert.equal(recordedModel("outrunner", "z-ai/glm-4", null), null);
+  assert.equal(recordedModel("gemini", "flash", null), null);
 });

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"runtime-agent/internal/claude"
 	"runtime-agent/internal/codex"
 	"runtime-agent/internal/protocol"
 )
@@ -89,7 +90,7 @@ func TestACodexSessionIsRestoredWithItsRolloutAndCredential(t *testing.T) {
 		Branch: "feature", BaseBranch: "main", SessionID: &id, Agent: AgentCodex,
 		Auth:      &protocol.SetAuthRequest{Kind: AuthOpenAIAPIKey, Token: testOpenAIKey},
 		Downloads: downloads(srv, "bundle", "patch", "conversation", "rollout"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -118,12 +119,39 @@ func TestACodexSessionWithoutARolloutStartsAfresh(t *testing.T) {
 	srv := snapshotServer(t, nil)
 	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
 		Branch: "feature", Agent: AgentCodex, Downloads: downloads(srv, "bundle", "patch"),
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
 	if argv := fake.lastLaunch(); argv[0] != "codex" || slices.Contains(argv, "resume") {
 		t.Errorf("launch = %q, want a fresh codex in the user's home", argv)
+	}
+}
+
+// A fresh box has no record of the session's model: the restore brings it,
+// and the session relaunches on it, through its gateway on its key.
+func TestAClaudeSessionIsRestoredOnItsModel(t *testing.T) {
+	s, fake := restoringService(t)
+	srv := snapshotServer(t, map[string][]byte{"/conversation": []byte("{}\n")})
+	id := "sess-1"
+	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
+		Branch: "feature", BaseBranch: "main", SessionID: &id, Downloads: downloads(srv, "bundle", "patch", "conversation"),
+	}, &ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if f, _ := s.getFacts("ws-r"); f.Model != "z-ai/glm-5.3" || f.Gateway != claude.OpenRouter {
+		t.Fatalf("facts = %+v, want the session on GLM through OpenRouter", f)
+	}
+	argv := fake.lastLaunch()
+	if !slices.Contains(argv, s.gatewayFiles().path("ws-r")) {
+		t.Errorf("launch = %q, want claude run after sourcing its gateway's file", argv)
+	}
+	if strings.Contains(strings.Join(argv, " "), testGatewayKey2) {
+		t.Errorf("the key is on the command line: %q", argv)
+	}
+	if got := readFileString(t, s.gatewayFiles().path("ws-r")); !strings.Contains(got, testGatewayKey2) {
+		t.Errorf("gateway file = %q, want the session's key", got)
 	}
 }
 
@@ -142,16 +170,22 @@ func TestRestoreRefusesWhatItCantResume(t *testing.T) {
 		{"a credential for the other agent", protocol.RestoreWorkspaceRequest{Branch: "feature", SessionID: &id,
 			Auth: &protocol.SetAuthRequest{Kind: AuthOpenAIAPIKey, Token: testOpenAIKey}}, ErrAuthMismatch.Error()},
 	} {
-		_, err := s.Restore(context.Background(), "ws-r", c.req)
+		_, err := s.Restore(context.Background(), "ws-r", c.req, nil)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: Restore = %v, want %q", c.name, err, c.want)
 		}
 	}
+	// A Codex session never runs through a gateway.
+	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{Branch: "feature", Agent: AgentCodex,
+		Downloads: downloads(srv, "bundle", "patch")}, &ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2})
+	if !errors.Is(err, ErrGatewayUnsupported) {
+		t.Errorf("Restore of Codex through a gateway = %v, want ErrGatewayUnsupported", err)
+	}
 	// A rollout that isn't the session's is not resumed.
 	other := "02b2"
 	srv = snapshotServer(t, map[string][]byte{"/conversation": []byte("{}\n"), "/rollout": fixtureRollout(t, "/x")})
-	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{Branch: "feature", Agent: AgentCodex,
-		SessionID: &other, Downloads: downloads(srv, "bundle", "patch", "conversation", "rollout")})
+	_, err = s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{Branch: "feature", Agent: AgentCodex,
+		SessionID: &other, Downloads: downloads(srv, "bundle", "patch", "conversation", "rollout")}, nil)
 	if err == nil || !strings.Contains(err.Error(), "not session 02b2") {
 		t.Errorf("Restore with another session's rollout = %v", err)
 	}

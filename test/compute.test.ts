@@ -26,6 +26,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     tmuxSession: null,
     agentWorkspaceId: null,
     agent: "claude",
+    model: null,
     lastActiveAt: null,
     errorMessage: null,
     createdAt: "2026-01-01T00:00:00Z",

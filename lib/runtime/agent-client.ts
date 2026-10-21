@@ -10,6 +10,7 @@
 import {
   Activity,
   AgentHealth,
+  AnswerRequest,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   ErrorResponse,
@@ -128,6 +129,13 @@ export class AgentClient {
    *  terminal; a session not running one is already stopped. */
   interrupt(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/interrupt`, identity);
+  }
+
+  /** Answer the questions the workspace's session is waiting on (its agent's
+   *  ask_user call). `questions` are the call's, as the transcript has them:
+   *  the agent refuses an answer to any it isn't waiting on (409 CONFLICT). */
+  answer(identity: WorkspaceIdentity, req: AnswerRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/answer`, identity, AnswerRequest.parse(req));
   }
 
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {

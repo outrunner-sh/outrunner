@@ -107,6 +107,8 @@ function asWorkspace(session: LocalSession): Workspace {
     ownerId: "",
     provider: "local",
     agent: isAgentId(session.agent) ? session.agent : "claude",
+    // Its agent on this Mac knows it (session.model); no row records it.
+    model: null,
     // A local session is always openable: attaching starts (or continues) it.
     status: "ready",
     phase: "claude_ready",

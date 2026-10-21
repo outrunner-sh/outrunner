@@ -99,7 +99,7 @@ async fn check(app: &AppHandle, interactive: bool) {
     let mut installed = match state.enter() {
         Gate::Busy => {
             if interactive {
-                inform(app, "Already checking", "Outrunner is already checking for an update.");
+                inform(app, "Already checking", "outrunner is already checking for an update.");
             }
             return;
         }
@@ -127,7 +127,7 @@ async fn check(app: &AppHandle, interactive: bool) {
         Ok(None) => {
             if interactive {
                 let current = app.package_info().version.to_string();
-                inform(app, "You're up to date", &format!("Outrunner {current} is the latest version."));
+                inform(app, "You're up to date", &format!("outrunner {current} is the latest version."));
             }
         }
         Err(error) => {
@@ -135,8 +135,8 @@ async fn check(app: &AppHandle, interactive: bool) {
             if interactive {
                 app.dialog()
                     .message(format!(
-                        "Outrunner could not update.\n\n{error}\n\n\
-                         If Outrunner is not in your Applications folder, move it there and try again."
+                        "outrunner could not update.\n\n{error}\n\n\
+                         If outrunner is not in your Applications folder, move it there and try again."
                     ))
                     .title("Update failed")
                     .kind(MessageDialogKind::Error)
@@ -160,7 +160,7 @@ fn ask_to_restart(app: &AppHandle, version: &str) {
     let handle = app.clone();
     app.dialog()
         .message(format!(
-            "Outrunner {version} is installed. Restart now to start using it?\n\n\
+            "outrunner {version} is installed. Restart now to start using it?\n\n\
              Local sessions keep running and reconnect after the restart."
         ))
         .title("Update ready")

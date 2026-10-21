@@ -35,6 +35,23 @@ type rawRecord struct {
 	} `json:"message"`
 }
 
+// rawBlock is a content block as the log writes it. Claude names a tool
+// result's call `tool_use_id`; the logs Runtime writes itself (a Codex
+// translation, the jcode engine's) marshal protocol.ContentBlock, which names
+// it `toolUseId`. Both are read, so a result pairs with its call either way.
+type rawBlock struct {
+	protocol.ContentBlock
+	ClaudeToolUseID string `json:"tool_use_id"`
+}
+
+func (b rawBlock) block() protocol.ContentBlock {
+	out := b.ContentBlock
+	if out.ToolUseID == "" {
+		out.ToolUseID = b.ClaudeToolUseID
+	}
+	return out
+}
+
 // Event is a decoded conversation event. Exactly one of Message/Usage is set.
 // ID is the JSONL byte offset AT THE END of the record that produced this
 // event — the resume cursor the SSE handler emits as `id:`.
@@ -195,9 +212,13 @@ func parseContent(raw json.RawMessage) ([]protocol.ContentBlock, bool) {
 	}
 	switch trimmed[0] {
 	case '[':
-		var blocks []protocol.ContentBlock
-		if err := json.Unmarshal(trimmed, &blocks); err != nil {
+		var raw []rawBlock
+		if err := json.Unmarshal(trimmed, &raw); err != nil {
 			return nil, false
+		}
+		blocks := make([]protocol.ContentBlock, len(raw))
+		for i, b := range raw {
+			blocks[i] = b.block()
 		}
 		return blocks, true
 	case '"':

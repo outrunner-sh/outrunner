@@ -98,6 +98,12 @@ function fallbackMethod(agent: AgentId, target: RunTarget, state: AgentAuthState
   return null;
 }
 
+/** The way an agent signs in on a box that Settings offers first: what to
+ *  connect when nothing is. */
+function firstCloudMethod(agent: AgentId): AuthMethodId {
+  return AGENTS[agent].methods.find((method) => method.targets.includes("cloud"))!.id;
+}
+
 /** The session credential for a way of signing in that needs one. */
 function sessionCredential(credential: AuthCredential, token: string): SessionCredential | null {
   switch (credential.kind) {
@@ -142,10 +148,10 @@ export async function resolveAgentAuth(
     return unsigned;
   };
   if (!method) {
-    // Codex has nothing else to run on; Claude Code still has the box's own
-    // setup and the model providers.
-    if (agent === "codex") return cantRun("api-key", "not-connected");
-    return unsigned;
+    // Nothing picked, and nothing saved a box could run it on. Not the box's
+    // own environment instead: it holds only what the user had saved when
+    // the box was set up, which may since have been removed.
+    return cantRun(firstCloudMethod(agent), "not-connected");
   }
   const way = authMethod(agent, method)!;
   if (!way.targets.includes(target)) return cantRun(method, "local-only");

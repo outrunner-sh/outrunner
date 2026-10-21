@@ -7,6 +7,7 @@ import {
   Globe,
   ListTodo,
   type LucideIcon,
+  MessageCircleQuestionMark,
   Pencil,
   Search,
   SquareTerminal,
@@ -223,6 +224,7 @@ const TOOL_ICONS: Record<ToolKind, LucideIcon> = {
   web: Globe,
   agent: Bot,
   todo: ListTodo,
+  question: MessageCircleQuestionMark,
   other: Wrench,
 };
 

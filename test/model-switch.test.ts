@@ -3,9 +3,21 @@ import { test } from "node:test";
 
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AllowanceSpentError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
-import { NoStartingModelError, startingModel, switchFailure } from "@/lib/runtime/model-switch";
+import {
+  NoStartingModelError,
+  putBackOnModel,
+  SessionKeyRemovedError,
+  startingModel,
+  switchFailure,
+} from "@/lib/runtime/model-switch";
 import { NoProviderKeyError } from "@/lib/providers/errors";
-import { EffortUnsupportedError, modelChoice, OUTRUNNER_MODELS, type SetModelRequest } from "@/lib/runtime/session-models";
+import {
+  CLAUDE_DEFAULT_MODEL,
+  EffortUnsupportedError,
+  modelChoice,
+  OUTRUNNER_MODELS,
+  type SetModelRequest,
+} from "@/lib/runtime/session-models";
 
 const GLM = OUTRUNNER_MODELS[0];
 
@@ -57,14 +69,14 @@ test("a new session starts on Outrunner's default model, through OpenRouter", as
     fallback: GLM, keyFor: async () => KEY,
     hasClaude: false,
   });
-  assert.equal(on, "outrunner");
+  assert.deepEqual(on, { model: GLM, effort: null }, "what its row records");
   assert.deepEqual(sent, [{ model: "z-ai/glm-5.3", gateway: "openrouter", token: KEY }]);
 });
 
 test("it is the default with a Claude login too", async () => {
   let sent = 0;
   const on = await startingModel({ setModel: async () => sent++, fallback: GLM, keyFor: async () => KEY, hasClaude: true });
-  assert.equal(on, "outrunner");
+  assert.deepEqual(on, { model: GLM, effort: null });
   assert.equal(sent, 1);
 });
 
@@ -79,7 +91,7 @@ test("without Outrunner's models, a Claude login starts the session instead", as
       hasClaude: true,
     }),
   );
-  assert.equal(on, "claude");
+  assert.deepEqual(on, { model: CLAUDE_DEFAULT_MODEL, effort: "high" });
   assert.equal(sent, 1, "only the Claude default reached the agent");
 });
 
@@ -87,7 +99,7 @@ test("a box too old to switch falls back to Claude, or says why without it", asy
   const old = async () => {
     throw new AgentRequestError(404);
   };
-  assert.equal(await quiet(() => startingModel({ setModel: old, fallback: GLM, keyFor: async () => KEY, hasClaude: true })), "claude");
+  assert.equal((await quiet(() => startingModel({ setModel: old, fallback: GLM, keyFor: async () => KEY, hasClaude: true }))).model.provider, "claude");
   await assert.rejects(
     startingModel({ setModel: old, fallback: GLM, keyFor: async () => KEY, hasClaude: false }),
     (error: unknown) => error instanceof NoStartingModelError && /older Outrunner/.test(error.message),
@@ -113,7 +125,7 @@ test("a spent allowance falls back to Claude, or says what to do without it", as
     throw new AllowanceSpentError();
   };
   const setModel = async () => assert.fail("reached the agent");
-  assert.equal(await quiet(() => startingModel({ setModel, fallback: GLM, keyFor: spent, hasClaude: true })), "claude");
+  assert.equal((await quiet(() => startingModel({ setModel, fallback: GLM, keyFor: spent, hasClaude: true }))).model.provider, "claude");
   await assert.rejects(
     startingModel({ setModel, fallback: GLM, keyFor: spent, hasClaude: false }),
     (error: unknown) => error instanceof NoStartingModelError && error.message === new AllowanceSpentError().message,
@@ -135,22 +147,23 @@ test("any other failure without Claude asks to try again", async () => {
 
 test("a session starts on the model chosen for it, on the key it was chosen on", async () => {
   const sent: SetModelRequest[] = [];
+  const opus = { id: "anthropic/claude-opus-5.5", label: "Claude Opus", provider: "openrouter" } as const;
   const on = await startingModel({
     setModel: async (req) => void sent.push(req),
     fallback: GLM, keyFor: async () => KEY,
     hasClaude: false,
-    model: { id: "anthropic/claude-opus-5.5", label: "Claude Opus", provider: "openrouter" },
+    model: opus,
   });
-  assert.equal(on, "openrouter");
+  assert.deepEqual(on, { model: opus, effort: null });
   assert.deepEqual(sent, [{ model: "anthropic/claude-opus-5.5", gateway: "openrouter", token: KEY }]);
 });
 
 test("a Claude account model needs the user's Claude, and runs on it with no key", async () => {
   const sent: SetModelRequest[] = [];
   const opus = { id: "opus", label: "Opus", provider: "claude" } as const;
-  assert.equal(
+  assert.deepEqual(
     await startingModel({ setModel: async (req) => void sent.push(req), fallback: GLM, keyFor: async () => assert.fail("asked for a key"), hasClaude: true, model: opus }),
-    "claude",
+    { model: opus, effort: null },
   );
   assert.deepEqual(sent, [{ model: "opus" }]);
   await assert.rejects(
@@ -188,7 +201,7 @@ test("a model on the user's own key runs through its provider, on their key", as
     model: { id: "glm-5.3", label: "GLM 5.3", provider: "zai" },
     fallback: GLM,
   });
-  assert.equal(on, "zai");
+  assert.equal(on.model.provider, "zai");
   assert.deepEqual(asked, ["zai"]);
   assert.deepEqual(sent, [{ model: "glm-5.3", gateway: "zai", token: "zai-key-0123456789abcdef.secret" }]);
 });
@@ -227,7 +240,7 @@ test("with no default to start on, the session starts on the user's Claude, or s
     return { result: req.model, effort: req.effort };
   };
   const on = await startingModel({ setModel, keyFor: async () => assert.fail("asked for a key"), hasClaude: true, fallback: null });
-  assert.equal(on, "claude");
+  assert.deepEqual(on, { model: CLAUDE_DEFAULT_MODEL, effort: "high" });
   assert.deepEqual(sent, [{ model: "opus", effort: "high" }], "the newest Opus, at high effort");
   await assert.rejects(
     startingModel({ setModel: async () => assert.fail("reached the agent"), keyFor: async () => "k", hasClaude: false, fallback: null }),
@@ -273,6 +286,67 @@ test("a box that can't put Claude on Opus still starts the session, on Claude Co
     async () => ({ result: "opus" }),
   ];
   for (const setModel of refusals) {
-    assert.equal(await quiet(() => startingModel({ setModel, keyFor: async () => KEY, hasClaude: true, fallback: null })), "claude");
+    assert.equal((await quiet(() => startingModel({ setModel, keyFor: async () => KEY, hasClaude: true, fallback: null }))).model.provider, "claude");
   }
+});
+
+const ZAI_KEY = "zai-key-0123456789abcdef.secret";
+const onZai = { model: { id: "glm-5.3", label: "GLM 5.3", provider: "zai" }, effort: null } as const;
+
+test("a relaunch puts a session on the user's own key back on it, the key fetched now", async () => {
+  const sent: SetModelRequest[] = [];
+  const asked: string[] = [];
+  await putBackOnModel(
+    {
+      setModel: async (req) => void sent.push(req),
+      keyFor: async (holder) => {
+        asked.push(holder);
+        return ZAI_KEY;
+      },
+    },
+    onZai,
+  );
+  assert.deepEqual(asked, ["zai"]);
+  assert.deepEqual(sent, [{ model: "glm-5.3", gateway: "zai", token: ZAI_KEY }]);
+});
+
+test("a relaunch on a key the user removed stops, saying where to put it back", async () => {
+  await assert.rejects(
+    putBackOnModel(
+      {
+        setModel: async () => assert.fail("reached the agent"),
+        keyFor: async () => {
+          throw new NoProviderKeyError("zai");
+        },
+      },
+      onZai,
+    ),
+    (error: unknown) =>
+      error instanceof SessionKeyRemovedError &&
+      /runs GLM 5\.3 on your Z\.ai key, which isn't saved anymore/.test(error.message) &&
+      error.settingsHref === new NoProviderKeyError("zai").settingsHref,
+  );
+});
+
+test("a relaunch leaves alone what has no key of the user's to fetch", async () => {
+  const deps = {
+    setModel: async () => assert.fail("reached the agent"),
+    keyFor: async () => assert.fail("asked for a key"),
+  };
+  // From before models were recorded.
+  await putBackOnModel(deps, null);
+  // Outrunner's: its key stays the user's, and OpenRouter caps it.
+  await putBackOnModel(deps, { model: GLM, effort: null });
+  // The agent's own account: signInSession's.
+  await putBackOnModel(deps, { model: CLAUDE_DEFAULT_MODEL, effort: "high" });
+  await putBackOnModel(deps, { model: modelChoice("codex", "gpt-6-sol")!, effort: null });
+});
+
+test("a session running mid-turn keeps its key until it next relaunches; any other refusal is told", async () => {
+  const busy = new AgentRequestError(409, { code: "CONFLICT", message: "Claude is mid-turn; switch models once it has finished" });
+  await quiet(() =>
+    putBackOnModel({ setModel: async () => Promise.reject(busy), keyFor: async () => ZAI_KEY }, onZai),
+  );
+  const gone = new AgentRequestError(404, { code: "NOT_FOUND", message: "unknown workspace" });
+  await assert.rejects(putBackOnModel({ setModel: async () => Promise.reject(gone), keyFor: async () => ZAI_KEY }, onZai), gone);
 });

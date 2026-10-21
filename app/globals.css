@@ -179,6 +179,36 @@
 .studio-composer-footer .studio-composer-send:hover:not(:disabled) { color:#0a0a0a; border-color:#fff; background:#fff; }
 .studio-composer-footer .studio-composer-stop svg:not(.spinner) { width:10px; height:10px; fill:currentColor; }
 .studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); border-color:rgba(255,255,255,.14); background:transparent; }
+.studio-question { position: relative; margin: 12px auto 18px; max-width: 736px; width: calc(100% - 32px); padding: 12px 12px 8px; border: 1px solid var(--studio-border); border-radius: 4px; color: var(--studio-text); background: var(--studio-bg); font: 14px var(--font-geist-sans); outline: 0; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }
+.studio-question:focus-within, .studio-question:focus { border-color: #423c38; }
+.studio-question-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--studio-muted); font-size: 12px; }
+.studio-question-head button { display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 3px; color: var(--studio-muted); background: transparent; cursor: pointer; }
+.studio-question-head button:hover { color: var(--studio-text); background: var(--studio-hover); }
+.studio-question-head svg { width: 14px; height: 14px; }
+.studio-question-text { margin: 4px 0 10px; font-weight: 500; line-height: 1.5; }
+.studio-question-options { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.studio-question-options button, .studio-question-other { display: flex; width: 100%; align-items: flex-start; gap: 14px; padding: 7px 10px; border: 0; border-radius: 3px; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.studio-question-options button:hover, .studio-question-other:focus-within { background: var(--studio-hover); }
+.studio-question-options button.is-selected, .studio-question-other.is-selected { background: rgba(255,255,255,.07); }
+.studio-question-key { flex-shrink: 0; width: 12px; color: var(--studio-muted); font-size: 13px; line-height: 21px; font-variant-numeric: tabular-nums; }
+.studio-question-choice { display: grid; gap: 2px; min-width: 0; line-height: 21px; }
+.studio-question-choice small { color: var(--studio-muted); font-size: 12.5px; line-height: 1.45; }
+.studio-question-other { align-items: center; cursor: text; }
+.studio-question-other input { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; color: var(--studio-text); background: transparent; font: inherit; line-height: 21px; }
+.studio-question-other input::placeholder { color: #6f6f6f; }
+.studio-question-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.studio-question-pager { display: inline-flex; align-items: center; gap: 4px; }
+.studio-question-pager button { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; color: var(--studio-muted); background: transparent; cursor: pointer; }
+.studio-question-pager button:disabled { color: #4a4a4a; cursor: default; }
+.studio-question-pager svg { width: 14px; height: 14px; }
+.studio-question-pager .studio-question-dot { width: 9px; height: 9px; border: 1px solid var(--studio-muted); border-radius: 50%; }
+.studio-question-pager .studio-question-dot.is-answered { background: var(--studio-muted); }
+.studio-question-pager .studio-question-dot[aria-current="step"] { box-shadow: 0 0 0 2px var(--studio-bg), 0 0 0 3px var(--studio-text); }
+.studio-question-send { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid #ededed; border-radius: 3px; color: #0a0a0a; background: #ededed; cursor: pointer; }
+.studio-question-send:hover:not(:disabled) { border-color: #fff; background: #fff; }
+.studio-question-send:disabled { color: rgba(255,255,255,.45); border-color: rgba(255,255,255,.14); background: transparent; cursor: not-allowed; }
+.studio-question-send svg { width: 14px; height: 14px; }
+.studio-question button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
 
 /* An effort as a row of bars (components/effort-meter.tsx): lit up to its
    level in the brand's orange, the rest dim. */
@@ -352,7 +382,7 @@
 
 @media (max-width: 1100px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-inspector { position: fixed; z-index: 20; top: 0; right: 0; width: min(440px, 92vw); height:100vh; box-shadow: -20px 0 50px rgba(0,0,0,.6); } }
 
-@media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-header { padding:0 12px; }.studio-empty-chat { margin-top:12vh; }.studio-composer { margin:0 15px 16px; } }
+@media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-header { padding:0 12px; }.studio-empty-chat { margin-top:12vh; }.studio-composer, .studio-question { margin:0 15px 16px; } }
 
 /* Loaders (components/ui/loaders.tsx), after interior.dev: a dot matrix with an
    accent wave, and a thin arc. Under reduced motion both hold still; the text

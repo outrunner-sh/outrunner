@@ -10,6 +10,7 @@ import {
   toWorkspacePullRequest,
   toWorkspaceSnapshot,
 } from "@/lib/db/mappers";
+import type { RecordedModel } from "@/lib/runtime/session-models";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type {
   ArchivePolicy,
@@ -263,6 +264,25 @@ export async function updateWorkspace(id: string, patch: WorkspacePatch): Promis
     .eq("id", id);
 
   if (error) throw error;
+}
+
+/**
+ * Record the model a session was just put on, so its next relaunch goes back
+ * on it (workspaces.model_*). Best effort: the session is already on it, and
+ * a database from before the columns can't say so; that session relaunches
+ * as one from before them does.
+ */
+export async function recordWorkspaceModel(id: string, recorded: RecordedModel): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({
+      model_provider: recorded.model.provider,
+      model_id: recorded.model.id,
+      model_effort: recorded.effort,
+    })
+    .eq("id", id);
+  if (error) console.warn(`Workspace ${id}: could not record its model ${recorded.model.provider}/${recorded.model.id}`, error);
 }
 
 /**

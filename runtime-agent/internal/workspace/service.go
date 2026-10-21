@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"runtime-agent/internal/ask"
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/jcode"
@@ -104,6 +105,13 @@ type Service struct {
 	// codexTails translate the running Codex sessions' rollouts.
 	codexTailsMu sync.Mutex
 	codexTails   map[string]*codexTail
+
+	// asks holds the questions sessions are waiting on the user to answer
+	// (ask.go).
+	asks *ask.Broker
+	// RelayExecutable is this binary, which a session's agent launches as
+	// its ask_user relay; empty launches sessions without the tool.
+	RelayExecutable string
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -214,6 +222,7 @@ func NewService(root string) *Service {
 		lookPath:   exec.LookPath,
 		runCommand: runCommand,
 		codexTails: map[string]*codexTail{},
+		asks:       ask.NewBroker(),
 	}
 }
 
@@ -1169,10 +1178,11 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 // never started. The box need not be the original one — everything is
 // rebuilt from the Snapshot's tree + conversation (portability).
 //
-// The session's agent and its credential, which a fresh box has no record
-// of, come with the request and are recorded first: where a rollout goes, and
-// the launch after, depend on both.
-func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.RestoreWorkspaceRequest) (string, error) {
+// The session's agent, its credential and its model (nil: its agent's own
+// default), which a fresh box has no record of, come with the request and are
+// recorded first: where a rollout goes, and the launch after, depend on them.
+// The model is req.Model as the caller checked it.
+func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.RestoreWorkspaceRequest, model *ModelChoice) (string, error) {
 	codexSession := req.Agent == AgentCodex
 	rollout := downloadFor(req.Downloads, "rollout") != ""
 	sessionID := ""
@@ -1191,6 +1201,12 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent})
 	if req.Auth != nil && req.Auth.Kind != AuthNone {
 		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
+			return "", err
+		}
+	}
+	if model != nil {
+		// Nothing runs yet, so this only records it for the launch below.
+		if err := s.SetModel(ctx, workspaceID, *model, ""); err != nil {
 			return "", err
 		}
 	}
@@ -1405,6 +1421,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	s.removeEnvironment(workspaceID)
+	s.forgetAsk(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()

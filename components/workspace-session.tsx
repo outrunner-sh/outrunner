@@ -9,8 +9,9 @@ import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
+import { QuestionCard } from "@/components/question-card";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { ErrorRef, Notice, TickingFact } from "@/components/ui/notice";
+import { ErrorRef, InlineMessage, Notice, TickingFact } from "@/components/ui/notice";
 import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
 import {
   LOCAL_RUNNER_LOG,
@@ -23,6 +24,12 @@ import {
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
+import {
+  type AskAnswer,
+  isExpiredQuestionError,
+  pendingQuestion,
+  type PendingQuestion,
+} from "@/lib/runtime/pending-question";
 import {
   livePrompts,
   pendingShows,
@@ -132,6 +139,9 @@ export function WorkspaceSession({
   // from the session attachment + conversation stream, not the terminal (which
   // stays available only as an optional shell panel).
   const [sendError, setSendError] = useState<FailedSend | null>(null);
+  // An answer that didn't go: why, under the card that asked it. The next
+  // answer retires it, and the card leaving takes it along.
+  const [answerError, setAnswerError] = useState<string | null>(null);
   // A model switch that didn't happen: which model, why, and where to fix it.
   const [switchError, setSwitchError] = useState<{ label: string; message: string; href?: string } | null>(null);
   // A failed send is shown by the composer, with a way to send it again: the box's own text comes back to it; a session's first prompt, which never was in the box, retries its original.
@@ -146,6 +156,7 @@ export function WorkspaceSession({
   const connectionError = streamDropped ? null : (fromBox ? attachment.error : conversation.error);
   const refresh = () => {
     setSendError(null);
+    setAnswerError(null);
     conversation.refresh();
   };
   const attached = attachment.status === "attached";
@@ -297,12 +308,47 @@ export function WorkspaceSession({
   // The prompts recorded when a turn was last stopped: the turn is over until
   // the next, even where the agent records nothing of the stop (Codex).
   const [stoppedAt, setStoppedAt] = useState<number | null>(null);
+  // The questions the agent is waiting on the user to answer: the composer
+  // gives way to their card. One answered or dismissed here is put away at
+  // once, kept hidden while its answer is on the way (and offered again if
+  // that fails), until its result reaches the stream.
+  const question = useMemo(() => pendingQuestion(conversation.events), [conversation.events]);
+  const [answeredHere, setAnsweredHere] = useState<ReadonlySet<string>>(() => new Set());
+  const waitingOnUser = question !== null && !answeredHere.has(question.toolUseId);
+  const answer = (asked: PendingQuestion, reply: { answers: AskAnswer[] } | { dismissed: true }) => {
+    setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
+    setSendError(null);
+    setAnswerError(null);
+    const body = { questions: asked.raw, ...reply };
+    (local
+      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/answer`, body)
+      : answerCloudQuestion(workspaceId, body)
+    ).catch((error: unknown) => {
+      const raw = error instanceof Error ? error.message : String(error ?? "");
+      if (isExpiredQuestionError(raw)) {
+        // Over already (the session restarted, or it was answered elsewhere):
+        // it stays put away. The composer is back, so its line says it.
+        setSendError({ message: `${AGENTS[agent].label} isn't waiting on that question any more. Reply in the chat instead.` });
+        return;
+      }
+      setAnsweredHere((prev) => {
+        const next = new Set(prev);
+        next.delete(asked.toolUseId);
+        return next;
+      });
+      // The card is up again, so the line sits under it — the composer's send
+      // line is hidden with the composer.
+      setAnswerError(local ? messageForLocalError(error, agent) : raw || "Couldn't send your answer.");
+    });
+  };
   // A prompt the stream hasn't recorded yet is a turn starting. The agent
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
+  // A turn waiting on the user's answer is theirs, not the agent's at work.
   const delivered = userPromptCount(conversation.events);
   const working =
-    pending.some((p) => pendingShows(p, delivered)) ||
-    (claudeIsWorking(conversation.events) && stoppedAt !== delivered);
+    !waitingOnUser &&
+    (pending.some((p) => pendingShows(p, delivered)) ||
+      (claudeIsWorking(conversation.events) && stoppedAt !== delivered));
   const stop = () => {
     setStopping(true);
     setSendError(null);
@@ -332,9 +378,11 @@ export function WorkspaceSession({
     switching,
     disabledReason: !attached
       ? "Waiting for the session to connect"
-      : working
-        ? `Switch models once ${AGENTS[agent].label} has finished this turn`
-        : null,
+      : waitingOnUser
+        ? `Answer ${AGENTS[agent].label}'s question first`
+        : working
+          ? `Switch models once ${AGENTS[agent].label} has finished this turn`
+          : null,
     onChange: (model, pickedEffort) => {
       // What the agent is told: an effort goes only with a model that takes one.
       const next = takesEffort(model) ? pickedEffort : null;
@@ -568,22 +616,39 @@ export function WorkspaceSession({
           terminalSlot,
         )}
 
-      <SessionComposer
-        onSend={send}
-        canSend={canSend}
-        // Sending waits on the connection alone, so say that, not the
-        // composer's default (another viewer holding the keyboard).
-        disabledPlaceholder={
-          attachment.status === "error" ? "You can send once this session is back." : "Connecting to this session…"
-        }
-        model={shownModel}
-        modelChoice={modelChoice}
-        allowAttachments={!local}
-        sendError={connectionError ? null : (sendError?.message ?? null)}
-        onDismissSendError={() => setSendError(null)}
-        onRetrySendError={sendError?.retry}
-        stop={attached && working ? { onStop: stop, stopping } : undefined}
-      />
+      {question && (
+        <QuestionCard
+          key={question.toolUseId}
+          question={question}
+          agentLabel={AGENTS[agent].label}
+          hidden={!waitingOnUser}
+          onAnswer={(answers) => answer(question, { answers })}
+          onDismiss={() => answer(question, { dismissed: true })}
+        />
+      )}
+      {question && answerError ? (
+        // An answer that didn't go is the card's failure to say, not the
+        // composer's: the composer is away while the card is up.
+        <InlineMessage>{answerError}</InlineMessage>
+      ) : null}
+      {!waitingOnUser && (
+        <SessionComposer
+          onSend={send}
+          canSend={canSend}
+          // Sending waits on the connection alone, so say that, not the
+          // composer's default (another viewer holding the keyboard).
+          disabledPlaceholder={
+            attachment.status === "error" ? "You can send once this session is back." : "Connecting to this session…"
+          }
+          model={shownModel}
+          modelChoice={modelChoice}
+          allowAttachments={!local}
+          sendError={connectionError ? null : (sendError?.message ?? null)}
+          onDismissSendError={() => setSendError(null)}
+          onRetrySendError={sendError?.retry}
+          stop={attached && working ? { onStop: stop, stopping } : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -734,6 +799,19 @@ class ModelSwitchError extends Error {
     this.name = "ModelSwitchError";
     this.settingsHref = settingsHref;
   }
+}
+
+/** Answer the questions a cloud session's agent is waiting on. The server
+ *  reaches the session's agent, as for a prompt. */
+async function answerCloudQuestion(workspaceId: string, body: unknown): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/answer`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't send your answer. Please try again.");
 }
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as
