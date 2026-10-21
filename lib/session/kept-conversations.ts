@@ -44,6 +44,11 @@ export class KeptConversations implements ConversationStore {
   private readonly schedule: (flush: () => void) => void;
   private readonly pending = new Map<string, CachedConversation>();
   private scheduled = false;
+  /** Forgotten by `clear`: the user signed out, and nothing more is kept or
+   *  shown for the rest of the page. Sign-out takes a round trip before the
+   *  redirect lands, and a session still streaming would otherwise write its
+   *  conversation back in that window. */
+  private forgotten = false;
 
   /** `schedule` arranges for `flush` to run a little later: once per batch of
    *  saves, not once per save. */
@@ -53,6 +58,7 @@ export class KeptConversations implements ConversationStore {
   }
 
   load(id: string): Pick<CachedConversation, "events" | "seenIds"> | undefined {
+    if (this.forgotten) return undefined;
     const storage = this.storage();
     if (!storage) return undefined;
     try {
@@ -72,6 +78,7 @@ export class KeptConversations implements ConversationStore {
   }
 
   save(id: string, entry: CachedConversation): void {
+    if (this.forgotten) return;
     this.pending.set(id, entry);
     if (this.scheduled) return;
     this.scheduled = true;
@@ -83,6 +90,7 @@ export class KeptConversations implements ConversationStore {
     this.scheduled = false;
     const pending = [...this.pending];
     this.pending.clear();
+    if (this.forgotten) return;
     const storage = this.storage();
     if (!storage) return;
     for (const [id, entry] of pending) {
@@ -106,8 +114,10 @@ export class KeptConversations implements ConversationStore {
     }
   }
 
-  /** Forget every kept conversation: whoever signs in next isn't shown them. */
+  /** Forget every kept conversation, for good: whoever signs in next isn't
+   *  shown them, and nothing this page goes on to stream is kept. */
   clear(): void {
+    this.forgotten = true;
     this.pending.clear();
     const storage = this.storage();
     if (!storage) return;

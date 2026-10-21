@@ -138,6 +138,21 @@ test("deleting a session forgets its conversation, and signing out forgets them 
   assert.equal(storage.items.size, 0);
 });
 
+test("a frame that lands during the sign-out round trip isn't kept", () => {
+  const storage = new FakeStorage();
+  const { store } = kept(storage);
+  const cache = new ConversationCache(20, store);
+  cache.append("w1", message("m1"), "10");
+  store.flush();
+
+  cache.clear(); // the user clicked Log out
+  cache.append("w1", message("m2"), "11"); // a frame still on its way
+  store.flush(); // …and the page goes
+
+  assert.equal(storage.items.size, 0);
+  assert.equal(store.load("w1"), undefined);
+});
+
 test("blocked storage keeps nothing and breaks nothing", () => {
   const store = new KeptConversations(() => null, (flush) => flush());
   store.save("w1", entry([message("m1")]));
