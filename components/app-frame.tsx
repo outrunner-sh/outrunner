@@ -7,10 +7,22 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
+import { useServerAnswer } from "@/components/server-answer";
 import { SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import { startNewSession } from "@/lib/session/new-session-reset";
-import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import type { AppData } from "@/lib/session/session-view";
 import { cn } from "@/lib/utils";
+
+/** What the layout reads for the frame, streamed in (app/(app)/layout.tsx). */
+export type FrameData = {
+  appData: AppData;
+  ownerLogin: string;
+  ownerAvatarUrl: string | null;
+  /** The sidebar collapsed, from its cookie. */
+  collapsed: boolean;
+  /** The projects folded shut in the sidebar, from their cookie. */
+  folded: string[];
+};
 
 /** Where the choice was kept before the cookie, read once to carry it over. */
 const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
@@ -19,40 +31,22 @@ const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
  * Sidebar + page. Collapsing leaves a narrow rail (expand, new session) rather
  * than nothing, so no page has to make room for a floating button. Below the
  * `sm` breakpoint the sidebar is hidden, as the pages were built for.
+ *
+ * The frame and the page show at once, even on a cold start; what the sidebar
+ * lists (`server`, answering {@link FrameData}) streams in, its rows held by a
+ * skeleton until then, and the pages render from it as it lands.
  */
-export function AppFrame({
-  projects,
-  hiddenProjects,
-  workspaces,
-  pullRequests,
-  ownerLogin,
-  ownerAvatarUrl,
-  initialCollapsed = false,
-  initialFolded = [],
-  children,
-}: {
-  /** The repositories listed to start sessions in. */
-  projects: Project[];
-  /** Hidden ones a session belongs to, for naming it. */
-  hiddenProjects: Project[];
-  workspaces: Workspace[];
-  /** Each session's pull request, by workspace id. */
-  pullRequests: Record<string, WorkspacePullRequest>;
-  ownerLogin: string;
-  ownerAvatarUrl: string | null;
-  /** From the cookie, read by the layout on the server. */
-  initialCollapsed?: boolean;
-  /** The projects folded shut in the sidebar, from their cookie. */
-  initialFolded?: string[];
-  children: React.ReactNode;
-}) {
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
+export function AppFrame({ server, children }: { server: React.ReactNode; children: React.ReactNode }) {
+  const [frame, slot] = useServerAnswer<FrameData>(server);
+  // The collapse the user toggled here; else the cookie's, once read.
+  const [collapsedChoice, setCollapsed] = useState<boolean | null>(null);
+  const collapsed = collapsedChoice ?? frame?.collapsed ?? false;
   // The pages render from what the sidebar has: a click shows its session at once.
-  const appData = useMemo(
-    () => ({ projects, hiddenProjects, workspaces, pullRequests }),
-    [projects, hiddenProjects, workspaces, pullRequests],
+  const appData = frame?.appData ?? null;
+  const sidebarProjects = useMemo(
+    () => (appData ? [...appData.projects, ...appData.hiddenProjects] : []),
+    [appData],
   );
-  const sidebarProjects = useMemo(() => [...projects, ...hiddenProjects], [projects, hiddenProjects]);
   const router = useRouter();
   // Bumped by ⌘K: the sidebar opens its search field on each change.
   const [searchSignal, setSearchSignal] = useState(0);
@@ -127,19 +121,24 @@ export function AppFrame({
           </div>
         ) : (
           <AppSidebar
+            loading={frame === null}
             projects={sidebarProjects}
-            workspaces={workspaces}
-            ownerLogin={ownerLogin}
-            ownerAvatarUrl={ownerAvatarUrl}
+            workspaces={appData?.workspaces ?? NO_WORKSPACES}
+            ownerLogin={frame?.ownerLogin ?? ""}
+            ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
             onCollapse={() => setAndRemember(true)}
             searchSignal={searchSignal}
-            initialFolded={initialFolded}
+            initialFolded={frame?.folded ?? NO_FOLDED}
           />
         )}
       </div>
       <main className="relative min-h-0 min-w-0 overflow-y-auto">
         <AppDataProvider value={appData}>{children}</AppDataProvider>
       </main>
+      {slot}
     </div>
   );
 }
+
+const NO_WORKSPACES: AppData["workspaces"] = [];
+const NO_FOLDED: string[] = [];
