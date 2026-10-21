@@ -6,6 +6,7 @@ import {
   agentOf,
   checkEffortApplied,
   connectedAccounts,
+  costHint,
   defaultModel,
   EffortUnsupportedError,
   matchModel,
@@ -37,8 +38,23 @@ test("a Claude account reply matches its family's alias", () => {
 
 test("a reply from one of Outrunner's models matches its OpenRouter slug, not a Claude alias", () => {
   assert.deepEqual(matchModel(GROUPS, "z-ai/glm-5.3"), { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner" });
-  // OpenRouter's Sonnet is Outrunner's, though the name says Sonnet.
-  assert.equal(matchModel(GROUPS, "anthropic/claude-sonnet-5")?.provider, "outrunner");
+  assert.equal(matchModel(GROUPS, "moonshotai/kimi-k3")?.label, "Kimi K3");
+  assert.equal(matchModel(GROUPS, "deepseek/deepseek-v4.1-flash")?.label, "DeepSeek V4.1 Flash");
+});
+
+test("Outrunner's key runs only its own models: Claude through OpenRouter is no longer one", () => {
+  // A session recorded on one before reads as on none, and a request for it
+  // is refused, so the shared key isn't spent on a model it no longer offers.
+  assert.equal(modelChoice("outrunner", "anthropic/claude-opus-5.5"), null);
+  assert.equal(recordedModel("outrunner", "anthropic/claude-sonnet-5", null), null);
+  assert.equal(matchModel(GROUPS, "anthropic/claude-sonnet-5"), undefined);
+});
+
+test("every one of Outrunner's models says what it costs against the default; nothing else does", () => {
+  assert.deepEqual(OUTRUNNER_MODELS.map(costHint), ["1x", "8.5x", "0.27x"]);
+  // The same slug on the user's own OpenRouter key is theirs to pay for.
+  assert.equal(costHint({ ...OUTRUNNER_MODELS[0], provider: "openrouter" }), null);
+  assert.equal(costHint({ id: "opus", label: "Opus", provider: "claude" }), null);
 });
 
 test("a model outside the menu matches none", () => {
@@ -199,7 +215,7 @@ test("an effort goes only with a model that takes one", async () => {
   assert.equal(takesEffort({ provider: "codex", id: "gpt-7-preview" }), true, "a typed Codex id too");
   // Haiku has none; a gateway's model runs at its own, Claude's family or not.
   assert.equal(takesEffort({ provider: "claude", id: "haiku" }), false);
-  assert.equal(takesEffort({ provider: "outrunner", id: "anthropic/claude-opus-5.5" }), false);
+  assert.equal(takesEffort({ provider: "openrouter", id: "anthropic/claude-opus-5.5" }), false);
 
   assert.deepEqual(await setModelRequest(modelChoice("claude", "opus")!, keyFor, "xhigh"), { model: "opus", effort: "xhigh" });
   assert.deepEqual(await setModelRequest(modelChoice("claude", "haiku")!, keyFor, "xhigh"), { model: "haiku" });

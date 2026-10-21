@@ -44,6 +44,12 @@ export function switchFailure(error: unknown, model: SessionModel): { status: nu
   return { status: 502, message: "Couldn't switch models. Please try again." };
 }
 
+/** Why a session can't start where the server runs none of Outrunner's
+ *  models: it needs the user's Claude, or a key of their own. Said where the
+ *  menu is empty, not "Connect Claude" alone: a key is just as good. */
+export const NO_OUTRUNNER_MODELS =
+  "Outrunner's models aren't available on this server. Connect Claude or add a provider key in Settings to start a session.";
+
 /** A new session has no model to start on: Outrunner's are out of reach, and
  *  the user has no Claude login to fall back on. The message is for the user. */
 export class NoStartingModelError extends Error {
@@ -103,7 +109,7 @@ export async function startingModel(deps: {
       throw new NoStartingModelError(
         chosen
           ? "Connect Claude in Settings to start a session on your Claude account."
-          : "Outrunner's models aren't available on this server. Connect Claude in Settings to start a session.",
+          : NO_OUTRUNNER_MODELS,
       );
     }
     return chosen ? put(chosen) : putOnClaudeDefault();
@@ -129,7 +135,7 @@ function startFailure(error: unknown, model: SessionModel): string {
     return predatesProviderMessage(model);
   }
   if (error instanceof OutrunnerModelsUnavailableError) {
-    return "Outrunner's models aren't available on this server. Connect Claude in Settings to start a session.";
+    return NO_OUTRUNNER_MODELS;
   }
   if (error instanceof ModelKeyRefusedError || error instanceof NoProviderKeyError) return error.message;
   return `Couldn't start the session on ${model.label}. Please try again, or connect Claude in Settings.`;

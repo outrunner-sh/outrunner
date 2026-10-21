@@ -34,18 +34,33 @@ export type GetStartedSignals = {
   sessions: number;
   /** A Claude subscription saved for cloud sessions; null until known. */
   claudeConnected: boolean | null;
+  /** Whether a session can start without the user's Claude (Outrunner's
+   *  models, or a key of their own); null until known. */
+  startsWithoutClaude: boolean | null;
 };
 
-export function getStartedSteps({ projects, sessions, claudeConnected }: GetStartedSignals): GetStartedStep[] {
-  return [
+export function getStartedSteps({
+  projects,
+  sessions,
+  claudeConnected,
+  startsWithoutClaude,
+}: GetStartedSignals): GetStartedStep[] {
+  const steps: GetStartedStep[] = [
     // The new-session screen is where a repository is picked and becomes a project.
     { id: "project", label: "Create your first project", href: "/new", done: projects > 0 },
     { id: "session", label: "Start your first session", href: "/new", done: sessions > 0 },
+  ];
+  // Claude is a step only where a session needs it: on Outrunner's models a
+  // new user has nothing to connect, and a step they needn't take would hold
+  // the checklist open. Until that's known, the step waits with it.
+  if (startsWithoutClaude === true) return steps;
+  return [
+    ...steps,
     {
       id: "claude",
       label: "Connect Claude sub",
       href: providerSettingsHref("claude", "subscription"),
-      done: claudeConnected,
+      done: startsWithoutClaude === null ? null : claudeConnected,
     },
   ];
 }

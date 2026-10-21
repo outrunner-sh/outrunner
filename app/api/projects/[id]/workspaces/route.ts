@@ -34,7 +34,7 @@ import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { isValidBranchName } from "@/lib/runtime/git";
 import { provisionFailureMessage } from "@/lib/runtime/provision-failure";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
-import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
+import { NO_OUTRUNNER_MODELS, NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
   agentOf,
   defaultModel,
@@ -65,7 +65,7 @@ import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
-import { providerSettingsHref } from "@/lib/settings-links";
+import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
 // Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror, in
 // after() once the response has gone. maxDuration caps the per-request
@@ -158,7 +158,7 @@ export async function POST(request: Request, context: RouteContext) {
   // must. Codex runs on its own sign-in, resolved above.
   const hasClaude = agentId === "claude" && auth.credential !== null;
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
-    return needsClaude("Connect Claude in Settings before creating a workspace.");
+    return NextResponse.json({ error: NO_OUTRUNNER_MODELS, settingsHref: PROVIDERS_SETTINGS_HREF }, { status: 409 });
   }
   if (project.private && !githubToken) {
     return NextResponse.json(
@@ -209,8 +209,12 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 409 },
     );
   }
+  // Only a Runtime Computer switches models: on any other sandbox, a session
+  // runs on the user's Claude or not at all, whatever the menu offers.
   if (agentId === "claude" && !hasClaude && !isComputerProvider(provider)) {
-    return needsClaude("Connect Claude in Settings before creating a workspace.");
+    return needsClaude(
+      "Sessions on this sandbox run only on your Claude account. Connect Claude in Settings, or choose another sandbox under Settings → Sandbox.",
+    );
   }
 
   // A box may be about to start: the plan's hours and box count get their say
