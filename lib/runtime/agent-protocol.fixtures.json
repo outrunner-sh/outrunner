@@ -389,7 +389,9 @@
         "codex"
       ],
       "features": [
-        "restore-imports"
+        "restore-imports",
+        "session-environment",
+        "agent-config"
       ]
     }
   ],
@@ -446,5 +448,24 @@
     {
       "env": {}
     }
+  ],
+  "SetAgentConfigRequest": [
+    {
+      "version": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "url": "https://storage.example/download/config?token=t",
+      "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "mcpServers": {
+        "tracker": {
+          "type": "http",
+          "url": "https://mcp.example/mcp"
+        }
+      },
+      "settings": {
+        "enabledPlugins": {
+          "review@market": true
+        }
+      }
+    },
+    {}
   ]
 }

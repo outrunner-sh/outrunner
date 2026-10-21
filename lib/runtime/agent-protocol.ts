@@ -88,6 +88,25 @@ export const SetEnvironmentRequest = z
   .strict();
 export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
 
+/** POST /config: the user's own agent setup for the computer — an archive of
+ *  their CLAUDE.md, skills, subagents, commands and AGENTS.md (downloaded
+ *  unless its version is installed; none removes any), Claude's MCP servers
+ *  and plugin settings. */
+export const SetAgentConfigRequest = z
+  .object({
+    version: z.string().optional(),
+    url: z.string().url().optional(),
+    sha256: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+    mcpServers: z.record(z.string(), z.unknown()).optional(),
+    settings: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+  .refine((v) => !v.url || (v.version && v.sha256), { message: "an archive needs its version and digest", path: ["url"] });
+export type SetAgentConfigRequest = z.infer<typeof SetAgentConfigRequest>;
+
+/** The agent takes the user's own setup (POST /config). */
+export const AGENT_FEATURE_AGENT_CONFIG = "agent-config";
+
 /** The agent takes a session's environment (POST /workspaces/{id}/environment). */
 export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
 
@@ -459,6 +478,7 @@ export const PROTOCOL_SCHEMAS = {
   TokenUsage,
   WorkspaceStateChanged,
   SetEnvironmentRequest,
+  SetAgentConfigRequest,
   /** The variables a session's environment may not set; lib/imports/
    *  environment.ts and the agent each hold the list, checked against this. */
   ReservedEnv: z.array(z.string()),

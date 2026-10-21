@@ -61,6 +61,7 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 	if err := writeKeysFile(filepath.Join(home, "config.toml"), config); err != nil {
 		return err
 	}
+	copyAgentsMD(home) // the user's instructions, as the computer's own home has them
 	ctx, cancel := context.WithTimeout(ctx, codexLoginTimeout)
 	defer cancel()
 	env := append(withoutEnv(s.env, "CODEX_HOME", "OPENAI_API_KEY"), "CODEX_HOME="+home)

@@ -156,6 +156,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	default:
 		argv = claude.Command(mode, orientation)
 	}
+	argv = withAgentConfig(argv)
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.
 		argv = claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
