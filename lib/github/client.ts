@@ -109,10 +109,19 @@ function githubHeaders(token: string) {
   };
 }
 
-async function fetchGitHub(url: URL, token: string): Promise<Response> {
+async function fetchGitHub(
+  url: URL,
+  token: string,
+  init: { method?: "GET" | "PUT"; body?: unknown } = {},
+): Promise<Response> {
   try {
     return await fetch(url, {
-      headers: githubHeaders(token),
+      method: init.method ?? "GET",
+      headers: {
+        ...githubHeaders(token),
+        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -358,6 +367,125 @@ export async function findPullRequest(input: {
   const list = await readJson(response);
   if (!Array.isArray(list) || list.length === 0) return null;
   return toPullRequestRef(list[0]);
+}
+
+/** Where a pull request stands: its state, what GitHub says of merging it
+ *  (`mergeable_state`: clean, unstable, blocked, behind, dirty, draft,
+ *  has_hooks, unknown), and its head commit's checks. */
+export type PullRequestStatus = {
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  mergeableState: string;
+  headSha: string;
+  checks: { passing: number; failing: number; pending: number };
+};
+
+/** A check run's or commit status's outcome, as the three a summary counts. */
+const FAILED_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"]);
+
+/**
+ * A pull request's status, with its head commit's checks: GitHub Actions'
+ * check runs and the older commit statuses some CI still posts, counted
+ * together.
+ */
+export async function getPullRequestStatus(input: {
+  token: string;
+  repoFullName: string;
+  number: number;
+}): Promise<PullRequestStatus> {
+  const repo = `/repos/${input.repoFullName}`;
+  const response = await fetchGitHub(new URL(`${repo}/pulls/${input.number}`, GITHUB_API_URL), input.token);
+  if (!response.ok) {
+    throw rejected(response, "pull request status", "GitHub could not read the pull request. Please try again.");
+  }
+  const pr = (await readJson(response)) as {
+    state?: unknown;
+    merged?: unknown;
+    draft?: unknown;
+    mergeable_state?: unknown;
+    head?: { sha?: unknown };
+  };
+  const headSha = pr.head?.sha;
+  if (typeof headSha !== "string" || (pr.state !== "open" && pr.state !== "closed")) {
+    throw new GitHubSyncError("GitHub returned an invalid pull request record.");
+  }
+
+  const checksUrl = new URL(`${repo}/commits/${headSha}/check-runs`, GITHUB_API_URL);
+  checksUrl.searchParams.set("per_page", "100");
+  const [runs, statuses] = await Promise.all([
+    fetchGitHub(checksUrl, input.token),
+    fetchGitHub(new URL(`${repo}/commits/${headSha}/status`, GITHUB_API_URL), input.token),
+  ]);
+  if (!runs.ok) throw rejected(runs, "check runs", "GitHub could not read the pull request's checks. Please try again.");
+  if (!statuses.ok) throw rejected(statuses, "commit status", "GitHub could not read the pull request's checks. Please try again.");
+
+  const checks = { passing: 0, failing: 0, pending: 0 };
+  const runList = ((await readJson(runs)) as { check_runs?: { status?: unknown; conclusion?: unknown }[] }).check_runs ?? [];
+  for (const run of runList) {
+    if (run.status !== "completed") checks.pending += 1;
+    else if (FAILED_CONCLUSIONS.has(String(run.conclusion))) checks.failing += 1;
+    else checks.passing += 1;
+  }
+  // Each status, not the combined `state`: that reads "pending" when there are none.
+  const statusList = ((await readJson(statuses)) as { statuses?: { state?: unknown }[] }).statuses ?? [];
+  for (const status of statusList) {
+    if (status.state === "pending") checks.pending += 1;
+    else if (status.state === "success") checks.passing += 1;
+    else checks.failing += 1;
+  }
+
+  return {
+    state: pr.merged === true ? "merged" : pr.state,
+    draft: pr.draft === true,
+    mergeableState: typeof pr.mergeable_state === "string" ? pr.mergeable_state : "unknown",
+    headSha,
+    checks,
+  };
+}
+
+/**
+ * Merge a pull request at `headSha`, the commit the user saw pass: should the
+ * branch have moved since, GitHub refuses (409) rather than merge what nobody
+ * looked at. The method is the first the repository allows of a merge commit,
+ * a squash and a rebase. GitHub's own reason for a refusal is the message.
+ */
+export async function mergePullRequest(input: {
+  token: string;
+  repoFullName: string;
+  number: number;
+  headSha: string;
+}): Promise<void> {
+  const repoResponse = await fetchGitHub(new URL(`/repos/${input.repoFullName}`, GITHUB_API_URL), input.token);
+  if (!repoResponse.ok) {
+    throw rejected(repoResponse, "repository lookup", "GitHub could not look up that repository. Please try again.");
+  }
+  const repo = (await readJson(repoResponse)) as Record<string, unknown>;
+  const method = mergeMethod(repo);
+  if (!method) throw new GitHubSyncError("This repository allows no way of merging a pull request.");
+
+  const response = await fetchGitHub(
+    new URL(`/repos/${input.repoFullName}/pulls/${input.number}/merge`, GITHUB_API_URL),
+    input.token,
+    { method: "PUT", body: { sha: input.headSha, merge_method: method } },
+  );
+  if (response.ok) return;
+  if (response.status === 405 || response.status === 409 || response.status === 422) {
+    const reason = ((await response.json().catch(() => ({}))) as { message?: unknown }).message;
+    console.error("GitHub merge was refused", { status: response.status, reason });
+    throw new GitHubSyncError(
+      typeof reason === "string" && reason ? `GitHub could not merge: ${reason}` : "GitHub could not merge this pull request.",
+      response.status,
+    );
+  }
+  throw rejected(response, "merge", "GitHub could not merge this pull request. Please try again.");
+}
+
+/** The first merge method a repository record allows, merge commit first. */
+export function mergeMethod(repo: Record<string, unknown>): "merge" | "squash" | "rebase" | null {
+  if (repo.allow_merge_commit !== false) return "merge";
+  if (repo.allow_squash_merge !== false) return "squash";
+  if (repo.allow_rebase_merge !== false) return "rebase";
+  return null;
 }
 
 async function readJson(response: Response): Promise<unknown> {

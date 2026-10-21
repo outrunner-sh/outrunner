@@ -4,6 +4,8 @@ import { afterEach, beforeEach, test } from "node:test";
 import {
   findPullRequest,
   getGitHubRepository,
+  getPullRequestStatus,
+  mergePullRequest,
   GitHubReconnectError,
   GitHubSyncError,
   listGitHubRepositories,
@@ -87,6 +89,86 @@ test("findPullRequest is null while the branch has no PR", async () => {
 test("findPullRequest says to reconnect when GitHub rejects the token", async () => {
   setFetchByUrl(() => new Response("{}", { status: 401 }));
   await assert.rejects(findPullRequest(PR_LOOKUP), GitHubReconnectError);
+});
+
+/** Stub global fetch by path, recording each request's method and body. */
+function setFetchByPath(routes: Record<string, (method: string) => Response>) {
+  const seen: { method: string; path: string; body: unknown }[] = [];
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(String(input));
+    const method = init?.method ?? "GET";
+    seen.push({ method, path: url.pathname, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const route = routes[url.pathname];
+    return Promise.resolve(route ? route(method) : new Response("{}", { status: 404 }));
+  }) as typeof fetch;
+  return seen;
+}
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+test("getPullRequestStatus counts check runs and commit statuses together", async () => {
+  setFetchByPath({
+    "/repos/acme/repo/pulls/7": () =>
+      json({ state: "open", merged: false, draft: false, mergeable_state: "unstable", head: { sha: "s1" } }),
+    "/repos/acme/repo/commits/s1/check-runs": () =>
+      json({
+        check_runs: [
+          { status: "completed", conclusion: "success" },
+          { status: "completed", conclusion: "skipped" },
+          { status: "completed", conclusion: "timed_out" },
+          { status: "in_progress", conclusion: null },
+        ],
+      }),
+    "/repos/acme/repo/commits/s1/status": () => json({ state: "failure", statuses: [{ state: "error" }, { state: "pending" }] }),
+  });
+
+  const status = await getPullRequestStatus({ token: "t", repoFullName: "acme/repo", number: 7 });
+  assert.deepEqual(status, {
+    state: "open",
+    draft: false,
+    mergeableState: "unstable",
+    headSha: "s1",
+    checks: { passing: 2, failing: 2, pending: 2 },
+  });
+});
+
+test("getPullRequestStatus: no commit statuses is nothing pending, and a merged PR says merged", async () => {
+  setFetchByPath({
+    "/repos/acme/repo/pulls/7": () => json({ state: "closed", merged: true, mergeable_state: "unknown", head: { sha: "s1" } }),
+    "/repos/acme/repo/commits/s1/check-runs": () => json({ check_runs: [] }),
+    // GitHub's combined state with no statuses at all is "pending".
+    "/repos/acme/repo/commits/s1/status": () => json({ state: "pending", statuses: [] }),
+  });
+
+  const status = await getPullRequestStatus({ token: "t", repoFullName: "acme/repo", number: 7 });
+  assert.equal(status.state, "merged");
+  assert.deepEqual(status.checks, { passing: 0, failing: 0, pending: 0 });
+});
+
+test("mergePullRequest merges at the seen commit, by the first method the repo allows", async () => {
+  const seen = setFetchByPath({
+    "/repos/acme/repo": () => json({ allow_merge_commit: false, allow_squash_merge: true, allow_rebase_merge: true }),
+    "/repos/acme/repo/pulls/7/merge": () => json({ merged: true }),
+  });
+
+  await mergePullRequest({ token: "t", repoFullName: "acme/repo", number: 7, headSha: "s1" });
+  const merge = seen.find((request) => request.path.endsWith("/merge"));
+  assert.equal(merge?.method, "PUT");
+  assert.deepEqual(merge?.body, { sha: "s1", merge_method: "squash" });
+});
+
+test("mergePullRequest passes on GitHub's reason when the branch moved", async () => {
+  setFetchByPath({
+    "/repos/acme/repo": () => json({}),
+    "/repos/acme/repo/pulls/7/merge": () =>
+      json({ message: "Head branch was modified. Review and try the merge again." }, 409),
+  });
+
+  await assert.rejects(
+    mergePullRequest({ token: "t", repoFullName: "acme/repo", number: 7, headSha: "old" }),
+    (error: unknown) =>
+      error instanceof GitHubSyncError && /Head branch was modified/.test(error.message),
+  );
 });
 
 test("listGitHubRepositories reads every page the first one names, newest push first", async () => {
