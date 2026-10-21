@@ -2,13 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Lru } from "@/lib/client/lru";
 import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { ChangedFile } from "@/lib/runtime/types";
 
+/** Each session's changed files as last read, for the page: the panel shows
+ *  them at once when the session opens again, and reads them fresh behind. */
+const KEPT_CHANGES = new Lru<{ files: ChangedFile[]; message: string | null }>(20);
+
 /**
- * A session's changed files, kept live: loaded on mount, then polled while the
- * caller stays mounted, with each file's diff fetched lazily the first time it
- * is expanded and cached. Shared by the Environment panel's Changes row (the
+ * A session's changed files, kept live: the last read shown at once, loaded
+ * fresh on mount, then polled while the caller stays mounted, with each file's
+ * diff fetched lazily the first time it is expanded and cached. Shared by the Environment panel's Changes row (the
  * totals) and the file list behind it.
  */
 export function useWorkspaceChanges({
@@ -23,8 +28,13 @@ export function useWorkspaceChanges({
   /** Only a ready workspace has a worktree to read. */
   active: boolean;
 }) {
-  const [files, setFiles] = useState<ChangedFile[] | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const keptKey = `${local ? "local" : "cloud"}:${workspaceId}`;
+  const [kept] = useState(() => KEPT_CHANGES.get(keptKey));
+  const [files, setFiles] = useState<ChangedFile[] | null>(kept?.files ?? null);
+  const [message, setMessage] = useState<string | null>(kept?.message ?? null);
+  useEffect(() => {
+    if (files !== null) KEPT_CHANGES.set(keptKey, { files, message });
+  }, [keptKey, files, message]);
   // Maps (not plain objects) so a file named "toString"/"constructor" can't
   // collide with Object.prototype. Errors are tracked separately from successful
   // diffs so a transient failure isn't cached as a diff and re-expanding retries.
