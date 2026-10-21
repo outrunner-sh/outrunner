@@ -1,7 +1,7 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, Lock, RefreshCw, Search } from "lucide-react";
+import { Check, Cloud, FolderOpen, Laptop, Lock, RefreshCw, Search } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { RepositoryAccessNotes } from "@/components/repository-access-notes";
@@ -10,6 +10,14 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/loaders";
 import { useGitHubRepositories } from "@/hooks/use-github-repositories";
+import { savedLocation } from "@/hooks/use-session-location";
+import {
+  cloneLocalRepository,
+  cloneLocation,
+  pickCloneLocation,
+  type CloneLocation,
+  type LocalFolder,
+} from "@/lib/desktop/local-runtime";
 import {
   avatarAt,
   filterRepositories,
@@ -20,6 +28,10 @@ import {
 } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
+
+/** What opening a repository made: a project for the cloud, or a clone on
+ *  this Mac. */
+export type OpenedProject = { kind: "cloud"; project: Project } | { kind: "mac"; folder: LocalFolder };
 
 type Row =
   | { kind: "owner"; group: RepositoryGroup }
@@ -51,30 +63,41 @@ function toRows(groups: RepositoryGroup[]): { rows: Row[]; repos: RepositoryList
  * organization holding repositories back and invitations waiting on GitHub.
  *
  * The list is read anew each time the dialog opens, so a repository the user
- * was just added to is there. Opening one connects it (if it wasn't) and
- * hands the project to `onOpened`.
+ * was just added to is there. Opening one connects it (if it wasn't) for the
+ * cloud — or, where sessions can run on this Mac (`macPossible`) and that is
+ * chosen, clones it into the clone location, which Browse changes — and hands
+ * the result to `onOpened`.
  */
 export function OpenGitHubProjectDialog({
   open,
   onOpenChange,
   viewerLogin,
+  macPossible = false,
   onOpened,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The signed-in user's GitHub login: their own repositories list first. */
   viewerLogin: string | null;
-  onOpened: (project: Project) => void;
+  /** In the Mac app with local sessions on: offer to clone to this Mac. */
+  macPossible?: boolean;
+  onOpened: (opened: OpenedProject) => void;
 }) {
   // Opening a repository can't be walked away from halfway: the dialog stays
   // until it lands or fails.
   const [opening, setOpening] = useState(false);
   return (
     <Dialog open={open} onOpenChange={(next) => !opening && onOpenChange(next)}>
-      <DialogContent className="max-w-xl gap-0 p-0">
+      <DialogContent
+        className="max-w-xl gap-0 p-0"
+        // The body puts focus in the search field itself (Radix would pick the
+        // first button, which reads as a choice already made).
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
         {/* Mounted only while open, so each opening starts clean. */}
         <OpenGitHubProjectBody
           viewerLogin={viewerLogin}
+          macPossible={macPossible}
           onOpened={onOpened}
           opening={opening}
           setOpening={setOpening}
@@ -86,12 +109,14 @@ export function OpenGitHubProjectDialog({
 
 function OpenGitHubProjectBody({
   viewerLogin,
+  macPossible,
   onOpened,
   opening,
   setOpening,
 }: {
   viewerLogin: string | null;
-  onOpened: (project: Project) => void;
+  macPossible: boolean;
+  onOpened: (opened: OpenedProject) => void;
   opening: boolean;
   setOpening: (opening: boolean) => void;
 }) {
@@ -102,6 +127,10 @@ function OpenGitHubProjectBody({
   const [active, setActive] = useState(0);
   const [problem, setProblem] = useState<string | null>(null);
   const listId = useId();
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    searchRef.current?.focus();
+  }, []);
 
   // Fresh each time it opens: a repository just shared with the user, or an
   // organization just joined, shows without waiting out the server's cache.
@@ -111,6 +140,34 @@ function OpenGitHubProjectBody({
   useEffect(() => {
     void loadFresh.current();
   }, []);
+
+  // Where it opens: the cloud, or (in the Mac app) a clone on this Mac,
+  // starting from where the last session ran.
+  const [where, setWhere] = useState<"cloud" | "mac">(() =>
+    macPossible && savedLocation() === "local" ? "mac" : "cloud",
+  );
+  const [location, setLocation] = useState<CloneLocation | null>(null);
+  useEffect(() => {
+    if (!macPossible) return;
+    let live = true;
+    void cloneLocation()
+      .then((answer) => {
+        if (live) setLocation(answer);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [macPossible]);
+
+  async function browseLocation() {
+    try {
+      const picked = await pickCloneLocation();
+      if (picked) setLocation(picked);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : "Couldn't choose that folder.");
+    }
+  }
 
   const { rows, repos } = useMemo(
     () => toRows(groupRepositories(filterRepositories(list?.repositories ?? [], query), viewerLogin)),
@@ -126,12 +183,20 @@ function OpenGitHubProjectBody({
     setActive((active + step + repos.length) % repos.length);
   }
 
+  /** Open a repository by its id in the list, or the `owner/name` of a URL. */
   async function openRepository(ref: number | string) {
     if (opening) return;
     setOpening(true);
     setProblem(null);
     try {
-      onOpened(await github.connect(ref));
+      if (where === "mac") {
+        const fullName =
+          typeof ref === "string" ? ref : list?.repositories.find((repo) => repo.githubRepoId === ref)?.fullName;
+        if (!fullName) throw new Error("That repository isn't in the list any more. Refresh and try again.");
+        onOpened({ kind: "mac", folder: await cloneLocalRepository(fullName) });
+      } else {
+        onOpened({ kind: "cloud", project: await github.connect(ref) });
+      }
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "Could not open that repository.");
     } finally {
@@ -170,6 +235,34 @@ function OpenGitHubProjectBody({
         </div>
 
         <div className="space-y-4 px-6">
+          {macPossible && (
+            <div role="radiogroup" aria-label="Where it runs" className="flex gap-2">
+              {(
+                [
+                  ["cloud", "Cloud", <Cloud key="cloud" className="size-4" />],
+                  ["mac", "This Mac", <Laptop key="mac" className="size-4" />],
+                ] as const
+              ).map(([value, label, icon]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={where === value}
+                  disabled={opening}
+                  onClick={() => setWhere(value)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm transition-colors",
+                    where === value
+                      ? "border-foreground/60 bg-accent text-foreground"
+                      : "border-border text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {icon} {label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">Repository URL</span>
             <Input
@@ -207,6 +300,7 @@ function OpenGitHubProjectBody({
               <div className="border-border relative border-b">
                 <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
                 <input
+                  ref={searchRef}
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value);
@@ -257,6 +351,23 @@ function OpenGitHubProjectBody({
             </div>
             {list && github.error && <p className="text-destructive text-xs">{github.error}</p>}
           </div>
+
+          {where === "mac" && (
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium">Location</span>
+              <div className="flex gap-2">
+                <p
+                  className="border-input text-muted-foreground flex h-9 min-w-0 flex-1 items-center truncate rounded-md border px-3 font-mono text-xs"
+                  title={location?.path}
+                >
+                  {location?.path ?? "~/outrunner/repos"}
+                </p>
+                <Button variant="outline" onClick={() => void browseLocation()} disabled={opening}>
+                  <FolderOpen className="size-4" /> Browse
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between gap-3 px-6 pt-4 pb-6">
@@ -265,7 +376,7 @@ function OpenGitHubProjectBody({
           </p>
           <Button onClick={openChosen} disabled={opening || (!pasted && !activeRepo)}>
             {opening && <Spinner className="size-4" />}
-            Open
+            {where === "mac" ? (opening ? "Cloning" : "Clone") : "Open"}
             <kbd className="text-primary-foreground/70 ml-1 text-xs">⌘↵</kbd>
           </Button>
         </div>

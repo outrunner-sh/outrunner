@@ -1,11 +1,11 @@
 "use client";
 
-import { FolderOpen, FolderPlus } from "lucide-react";
+import { FolderGit2, FolderOpen, FolderPlus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore } from "react";
 
 import { GitHubIcon } from "@/components/brand-icons";
-import { OpenGitHubProjectDialog } from "@/components/open-github-project-dialog";
+import { OpenGitHubProjectDialog, type OpenedProject } from "@/components/open-github-project-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
-import { pickLocalFolder } from "@/lib/desktop/local-runtime";
+import { initGitRepository, pickLocalFolder, type LocalFolder } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { newSessionHref } from "@/lib/nav/sidebar";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
@@ -23,46 +23,70 @@ const noopSubscribe = () => () => {};
 /**
  * The sidebar's "+" beside Projects: open a project to start a session in —
  * a GitHub repository (by URL, or from every one the user can reach), or, in
- * the Mac app while local sessions are on, a folder on this Mac. Either way
- * the new-session screen opens on it.
+ * the Mac app while local sessions are on, a folder on this Mac, as it is
+ * (Open project) or made a git repository first (New project). Either way the
+ * new-session screen opens on it.
  */
 export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null }) {
   const router = useRouter();
   const [githubOpen, setGithubOpen] = useState(false);
-  const [folderError, setFolderError] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
   const desktop = useSyncExternalStore(noopSubscribe, isDesktopApp, () => false);
-  const folders = LOCAL_SESSIONS && desktop;
+  const onMac = LOCAL_SESSIONS && desktop;
 
-  async function openFolder() {
-    setFolderError(null);
+  function startInFolder(folder: LocalFolder) {
+    startNextSessionIn(folder.path);
+    router.push(newSessionHref({ kind: "local", folder: folder.path }, Date.now().toString(36)));
+  }
+
+  /** A folder from the Mac's dialog; with `asNewProject`, made a git
+   *  repository first unless it already is one. */
+  async function openFolder(asNewProject: boolean) {
+    setProblem(null);
     try {
       const folder = await pickLocalFolder();
       if (!folder) return; // cancelled
-      startNextSessionIn(folder.path);
-      router.push(newSessionHref({ kind: "local", folder: folder.path }, Date.now().toString(36)));
+      startInFolder(asNewProject && !folder.git ? await initGitRepository(folder.path) : folder);
     } catch (error) {
-      setFolderError(error instanceof Error ? error.message : "Couldn't open that folder.");
+      setProblem(error instanceof Error ? error.message : "Couldn't open that folder.");
     }
   }
 
+  function opened(result: OpenedProject) {
+    setGithubOpen(false);
+    if (result.kind === "mac") {
+      startInFolder(result.folder);
+      return;
+    }
+    startNextSessionInCloud();
+    router.push(newSessionHref({ kind: "cloud", projectId: result.project.id }, Date.now().toString(36)));
+    // The sidebar and the form read projects on the server: show this one.
+    router.refresh();
+  }
+
   return (
-    <>
+    <div className="relative">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
             aria-label="Open a project"
-            title={folderError ?? "Open a project"}
+            title="Open a project"
             className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <FolderPlus className="size-4" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          {folders && (
-            <DropdownMenuItem onSelect={() => void openFolder()}>
-              <FolderOpen /> Open project
-            </DropdownMenuItem>
+          {onMac && (
+            <>
+              <DropdownMenuItem onSelect={() => void openFolder(false)}>
+                <FolderOpen /> Open project
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void openFolder(true)}>
+                <FolderGit2 /> New project
+              </DropdownMenuItem>
+            </>
           )}
           <DropdownMenuItem onSelect={() => setGithubOpen(true)}>
             <GitHubIcon /> Open GitHub project
@@ -70,18 +94,26 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {/* Why a folder couldn't be opened, under the "+" until dismissed. */}
+      {problem && (
+        <p
+          role="alert"
+          className="absolute right-0 top-full z-40 mt-1 flex w-64 items-start gap-2 rounded-md border border-border bg-popover p-2 text-xs text-destructive shadow-md"
+        >
+          <span className="min-w-0 flex-1">{problem}</span>
+          <button type="button" aria-label="Dismiss" onClick={() => setProblem(null)} className="text-muted-foreground">
+            <X className="size-3" />
+          </button>
+        </p>
+      )}
+
       <OpenGitHubProjectDialog
         open={githubOpen}
         onOpenChange={setGithubOpen}
         viewerLogin={viewerLogin}
-        onOpened={(project) => {
-          setGithubOpen(false);
-          startNextSessionInCloud();
-          router.push(newSessionHref({ kind: "cloud", projectId: project.id }, Date.now().toString(36)));
-          // The sidebar and the form read projects on the server: show this one.
-          router.refresh();
-        }}
+        macPossible={onMac}
+        onOpened={opened}
       />
-    </>
+    </div>
   );
 }
