@@ -30,7 +30,7 @@ var keyPattern = regexp.MustCompile(`^(claude|codex):[A-Za-z0-9][A-Za-z0-9_-]{0,
 // on stdout.
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: runtime-agent import scan | capture --key <key> --out <dir> [--upload] | env --repo <owner/name> [--vars a,b] [--files p,q] [--scripts]")
+		fmt.Fprintln(stderr, "usage: runtime-agent import scan | capture --key <key> --out <dir> [--upload] | env --repo <owner/name> [--vars a,b] [--files p,q] [--scripts] | config --out <dir> [--items a,b] [--mcp x,y] [--plugins] [--upload]")
 		return ExitUsage
 	}
 	home, err := os.UserHomeDir()
@@ -83,6 +83,46 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		if err != nil {
 			fmt.Fprintln(stderr, "capture:", err)
+			return ExitFailed
+		}
+		return printJSON(stdout, stderr, capture)
+	case "config":
+		flags := flag.NewFlagSet("config", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		items := flags.String("items", "", "the items to take, comma-separated ids from a scan")
+		mcp := flags.String("mcp", "", "the MCP servers to take, comma-separated names from a scan")
+		plugins := flags.Bool("plugins", false, "take the enabled plugins' settings")
+		out := flags.String("out", "", "an empty folder to write the archive in")
+		upload := flags.Bool("upload", false, `upload the archive to the URL stdin names, as {"archive": url}`)
+		if flags.Parse(args[1:]) != nil {
+			return ExitUsage
+		}
+		if err := emptyDir(*out); err != nil {
+			fmt.Fprintln(stderr, "config: --out", err)
+			return ExitUsage
+		}
+		var urls map[string]string
+		if *upload {
+			if err := json.NewDecoder(stdin).Decode(&urls); err != nil {
+				fmt.Fprintln(stderr, "config: --upload needs a JSON object of upload URLs on stdin:", err)
+				return ExitUsage
+			}
+		}
+		capture, err := CaptureConfig(opts.Home, ConfigPick{Items: list(*items), MCP: list(*mcp), Plugins: *plugins}, *out)
+		if err == nil && *upload && capture.Archive != nil {
+			if urls["archive"] == "" {
+				err = fmt.Errorf("no upload URL for the archive")
+			} else {
+				err = uploadOne(ctx, urls["archive"], capture.Archive.Path)
+			}
+		}
+		var skip *SkipError
+		if errors.As(err, &skip) {
+			printJSON(stdout, stderr, map[string]Skip{"skip": skip.Skip})
+			return ExitSkipped
+		}
+		if err != nil {
+			fmt.Fprintln(stderr, "config:", err)
 			return ExitFailed
 		}
 		return printJSON(stdout, stderr, capture)

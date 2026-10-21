@@ -108,6 +108,70 @@ pub async fn import_environment(
     run_import(args, None).await
 }
 
+/// Archive what the user picked of their own agent setup (items and MCP
+/// servers by a scan's ids and names, and the plugins' settings), upload the
+/// archive to `upload` (none: nothing to archive), and return the capture.
+#[tauri::command]
+pub async fn import_config(
+    items: Vec<String>,
+    mcp: Vec<String>,
+    plugins: bool,
+    upload: Option<String>,
+) -> Result<serde_json::Value, String> {
+    if items.len() > 500 || mcp.len() > 50 {
+        return Err("too-many".into());
+    }
+    if let Some(bad) = items.iter().find(|i| !valid_config_item(i)) {
+        return Err(format!("invalid-item: {bad}"));
+    }
+    if let Some(bad) = mcp.iter().find(|m| !valid_mcp_name(m)) {
+        return Err(format!("invalid-mcp: {bad}"));
+    }
+    if !items.is_empty() && upload.as_deref().is_none_or(|url| !allowed_upload_to(url, &storage_host())) {
+        return Err("upload-not-allowed: archive".into());
+    }
+    let out = std::env::temp_dir().join(format!("outrunner-config-{}", random_hex(8)));
+    create_private_dir(&out)?;
+    let _cleanup = RemoveOnDrop(out.clone());
+    let mut args = vec!["config".into(), "--out".into(), out.to_string_lossy().into_owned()];
+    if !items.is_empty() {
+        args.extend(["--items".into(), items.join(","), "--upload".into()]);
+    }
+    if !mcp.is_empty() {
+        args.extend(["--mcp".into(), mcp.join(",")]);
+    }
+    if plugins {
+        args.push("--plugins".into());
+    }
+    let stdin = upload
+        .filter(|_| !items.is_empty())
+        .map(|url| serde_json::to_vec(&HashMap::from([("archive", url)])))
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    run_import(args, stdin).await
+}
+
+/// A setup item's id as a scan gives one.
+fn valid_config_item(id: &str) -> bool {
+    if id == "claude-md" || id == "agents-md" {
+        return true;
+    }
+    let Some((kind, name)) = id.split_once(':') else {
+        return false;
+    };
+    matches!(kind, "skill" | "agent" | "command")
+        && !name.is_empty()
+        && name.len() <= 200
+        && !name.contains(',')
+        && !name.contains('\0')
+        && name.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+/// An MCP server's name; no comma, which would split it.
+fn valid_mcp_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 128 && !name.contains(',') && !name.contains('\0')
+}
+
 /// A GitHub repository, "owner/name".
 fn valid_repo(repo: &str) -> bool {
     static REPO: OnceLock<Regex> = OnceLock::new();
@@ -246,6 +310,17 @@ mod tests {
         for bad in ["/etc/passwd", "../.ssh/id_rsa", "a/../../b", "a,b", "./x", "a//b", ""] {
             assert!(!valid_checkout_path(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn config_picks_are_scan_ids() {
+        for ok in ["claude-md", "agents-md", "skill:review", "command:git/ship", "agent:scout"] {
+            assert!(valid_config_item(ok), "{ok}");
+        }
+        for bad in ["skill:", "skill:../../.ssh", "hook:x", "skill:a,b", "settings", "command:/etc/x"] {
+            assert!(!valid_config_item(bad), "{bad}");
+        }
+        assert!(valid_mcp_name("gojiberry-ai") && !valid_mcp_name("a,b") && !valid_mcp_name(""));
     }
 
     #[test]

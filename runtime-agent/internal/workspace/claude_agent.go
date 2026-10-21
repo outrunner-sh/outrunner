@@ -158,6 +158,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	}
 	// Claude's own flags first: the env files below wrap the command.
 	argv = claude.WithEffort(argv, f.Effort)
+	argv = withAgentConfig(argv)
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.
 		argv = claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))

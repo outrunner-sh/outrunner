@@ -236,6 +236,21 @@ type SetEnvironmentRequest struct {
 	Setup string            `json:"setup,omitempty"`
 }
 
+// SetAgentConfigRequest is the user's own agent setup for this computer
+// (POST /config): an archive of their CLAUDE.md, skills, subagents, commands
+// and AGENTS.md, downloaded unless its version is installed (none: any
+// installed is removed), and Claude's MCP servers and plugin settings.
+type SetAgentConfigRequest struct {
+	Version    string                     `json:"version,omitempty"`
+	URL        string                     `json:"url,omitempty"`
+	SHA256     string                     `json:"sha256,omitempty"`
+	MCPServers map[string]json.RawMessage `json:"mcpServers,omitempty"`
+	Settings   map[string]json.RawMessage `json:"settings,omitempty"`
+}
+
+// FeatureAgentConfig is POST /config.
+const FeatureAgentConfig = "agent-config"
+
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
 

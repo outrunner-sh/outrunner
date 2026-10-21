@@ -73,6 +73,8 @@ type Scan struct {
 	Sessions  []Session `json:"sessions"`
 	// Projects are the repositories' environments: names only.
 	Projects []ProjectEnv `json:"projects"`
+	// Config is the user's own agent setup: names only.
+	Config AgentConfig `json:"config"`
 }
 
 // Source is one place sessions are looked for.
@@ -156,6 +158,7 @@ func Run(ctx context.Context, opts Options) Scan {
 		Sources:   sources,
 		Sessions:  sessions,
 		Projects:  projectEnvs(ctx, opts, sessions, ""),
+		Config:    scanConfig(opts.Home),
 	}
 }
 

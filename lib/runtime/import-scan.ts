@@ -101,6 +101,39 @@ export const ScannedProjectEnv = z
   .strict();
 export type ScannedProjectEnv = z.infer<typeof ScannedProjectEnv>;
 
+/** A file or folder of the user's own agent setup, by name. */
+export const ScannedConfigItem = z
+  .object({
+    id: z.string().min(1),
+    kind: z.enum(["claude-md", "skill", "agent", "command", "agents-md"]),
+    name: z.string(),
+    path: z.string(),
+    bytes: z.number().int().nonnegative(),
+    omitted: z.number().int().optional(),
+    skip: ImportSkip.optional(),
+  })
+  .strict();
+export type ScannedConfigItem = z.infer<typeof ScannedConfigItem>;
+
+/** One of Claude's MCP servers; its keys by name only. */
+export const ScannedMCPServer = z
+  .object({
+    name: z.string().min(1),
+    transport: z.string(),
+    command: z.string().optional(),
+    url: z.string().optional(),
+    envNames: z.array(z.string()),
+    headerNames: z.array(z.string()),
+    skip: ImportSkip.optional(),
+  })
+  .strict();
+export type ScannedMCPServer = z.infer<typeof ScannedMCPServer>;
+
+export const ScannedAgentConfig = z
+  .object({ items: z.array(ScannedConfigItem), mcpServers: z.array(ScannedMCPServer), plugins: z.array(z.string()) })
+  .strict();
+export type ScannedAgentConfig = z.infer<typeof ScannedAgentConfig>;
+
 export const ImportScan = z
   .object({
     version: z.literal(1),
@@ -110,6 +143,7 @@ export const ImportScan = z
     ),
     sessions: z.array(ScannedSession),
     projects: z.array(ScannedProjectEnv),
+    config: ScannedAgentConfig,
   })
   .strict();
 export type ImportScan = z.infer<typeof ImportScan>;
@@ -242,7 +276,31 @@ export const ImportCommitRequest = z
   .refine((v) => v.key === `${v.agent}:${v.sessionId}`, { message: "key must be <agent>:<sessionId>", path: ["key"] });
 export type ImportCommitRequest = z.infer<typeof ImportCommitRequest>;
 
+/** What of the user's setup was picked: the files' archive (uploaded), and
+ *  the MCP servers and plugin settings in full, keys and all. */
+export const ImportConfigCapture = z
+  .object({
+    archive: CapturedArtifact.optional(),
+    items: z.array(z.string()),
+    mcpServers: z.record(z.string().min(1), z.record(z.string(), z.unknown())),
+    settings: z.partialRecord(z.enum(["enabledPlugins", "extraKnownMarketplaces"]), z.unknown()),
+  })
+  .strict();
+export type ImportConfigCapture = z.infer<typeof ImportConfigCapture>;
+
 /** POST /api/imports/environment: a repository's picked environment, values
  *  and all, to keep sealed for its cloud sessions. */
 export const ImportEnvironmentRequest = ImportEnvCapture;
 export type ImportEnvironmentRequest = ImportEnvCapture;
+
+/** POST /api/imports/config/commit: the user's picked setup, its archive
+ *  uploaded where POST /api/imports/config said. */
+export const ImportConfigCommitRequest = z
+  .object({
+    archive: z.object({ path: z.string().min(1), sha256: Sha256, size: z.number().int().positive() }).strict().optional(),
+    items: z.array(z.string().min(1).max(256)).max(500),
+    mcpServers: z.record(z.string().min(1).max(128), z.record(z.string(), z.unknown())),
+    settings: z.partialRecord(z.enum(["enabledPlugins", "extraKnownMarketplaces"]), z.unknown()),
+  })
+  .strict();
+export type ImportConfigCommitRequest = z.infer<typeof ImportConfigCommitRequest>;

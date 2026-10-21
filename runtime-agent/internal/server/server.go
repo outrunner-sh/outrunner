@@ -93,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
+	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -116,7 +117,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig},
 	})
 }
 
@@ -495,6 +496,31 @@ func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
 	if errors.Is(err, workspace.ErrInvalidEnvironment) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	respond(w, "set", err)
+}
+
+// setAgentConfig installs the user's own agent setup on this computer. Any
+// session's token may: the computer is that user's, for that project.
+func (s *Server) setAgentConfig(w http.ResponseWriter, r *http.Request) {
+	var req protocol.SetAgentConfigRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.URL != "" && (req.Version == "" || !strings.HasPrefix(req.SHA256, "sha256:")) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "an archive needs its version and digest")
+		return
+	}
+	err := s.ws.SetAgentConfig(r.Context(), workspace.AgentConfigRequest{
+		Version:    req.Version,
+		URL:        req.URL,
+		SHA256:     req.SHA256,
+		MCPServers: req.MCPServers,
+		Settings:   req.Settings,
+	})
+	if errors.Is(err, workspace.ErrInvalidAgentConfig) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}

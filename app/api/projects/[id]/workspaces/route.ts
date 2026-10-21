@@ -5,7 +5,6 @@ import { after, NextResponse } from "next/server";
 import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
-import { getProjectEnvironment } from "@/lib/db/project-environment";
 import { planFor } from "@/lib/billing/entitlements";
 import {
   agentAuthStore,
@@ -31,7 +30,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { isValidBranchName } from "@/lib/runtime/git";
-import { deliverProjectEnvironment } from "@/lib/runtime/project-environment";
+import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
   agentOf,
@@ -384,15 +383,8 @@ async function provisionWorkspace({
       // Before the first launch, so the agent starts signed in.
       await setPhase("secrets");
       await deliverSessionAuth(signIn, agentId, auth);
-      // And with its project's variables, its setup run once as it starts.
-      await deliverProjectEnvironment(
-        {
-          features: async () => (await agent.health(identity)).features ?? [],
-          upgrade,
-          setEnvironment: (req) => agent.setEnvironment(identity, req),
-        },
-        await getProjectEnvironment(owner.id, project.id),
-      );
+      // And with the user's own setup and its project's environment.
+      await setUpSession(agent, identity, upgrade, owner.id, project.id);
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),

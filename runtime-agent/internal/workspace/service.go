@@ -264,7 +264,8 @@ var githubCredentialEnv = []string{
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
-	return append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
+	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
+	return append(secrets, agentConfigTokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }

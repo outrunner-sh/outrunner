@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { ImportCapture, ImportCaptureSkip, ImportEnvCapture, ImportScan } from "@/lib/runtime/import-scan";
+import { ImportCapture, ImportCaptureSkip, ImportConfigCapture, ImportEnvCapture, ImportScan } from "@/lib/runtime/import-scan";
 
 /** The examples runtime-agent's Go types are checked against too. */
 const fixtures = JSON.parse(
@@ -11,7 +11,7 @@ const fixtures = JSON.parse(
 ) as Record<string, unknown[]>;
 
 test("the shared scan and capture examples parse, and parse back the same", () => {
-  const schemas = { Scan: ImportScan, Capture: ImportCapture, CaptureSkip: ImportCaptureSkip, EnvCapture: ImportEnvCapture };
+  const schemas = { Scan: ImportScan, Capture: ImportCapture, CaptureSkip: ImportCaptureSkip, EnvCapture: ImportEnvCapture, ConfigCapture: ImportConfigCapture };
   assert.deepEqual(Object.keys(fixtures).sort(), Object.keys(schemas).sort());
   for (const [group, schema] of Object.entries(schemas)) {
     for (const example of fixtures[group]) {
