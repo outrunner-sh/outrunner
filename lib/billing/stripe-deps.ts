@@ -84,11 +84,22 @@ export const checkoutDeps: CheckoutDeps = {
   },
 };
 
+/** How long to wait for Stripe's prices before going without them. The pages
+ *  that show them render around the answer, so a slow Stripe must not hold
+ *  them: the SDK waits 80 seconds and retries twice by default, long enough
+ *  to look like a hang. A price lookup changes nothing, and both callers show
+ *  their page without prices, so it is not worth retrying either. */
+const PRICES_TIMEOUT_MS = 5000;
+
 /** What Stripe charges for each plan and interval, in USD, by lookup key:
- *  shown on the billing page, so prices live in Stripe alone. */
+ *  shown on the billing page and onboarding's plans step, so prices live in
+ *  Stripe alone. Rejects rather than wait past PRICES_TIMEOUT_MS. */
 export async function listedPricesUsd(): Promise<Record<string, number>> {
   const keys = Object.values(LOOKUP_KEYS).flatMap((byInterval) => Object.values(byInterval));
-  const prices = await stripe().prices.list({ lookup_keys: keys, active: true, limit: keys.length });
+  const prices = await stripe().prices.list(
+    { lookup_keys: keys, active: true, limit: keys.length },
+    { timeout: PRICES_TIMEOUT_MS, maxNetworkRetries: 0 },
+  );
   return Object.fromEntries(
     prices.data.flatMap((price) =>
       price.lookup_key && price.unit_amount !== null ? [[price.lookup_key, price.unit_amount / 100]] : [],
