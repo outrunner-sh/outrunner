@@ -297,17 +297,20 @@ export async function putOnDefaultModel(workspaceId: string): Promise<void> {
   await putOnModel(workspaceId, model);
 }
 
-/** What the user's model menu offers (GET /api/outrunner-models), and whether
- *  a session can start without their Claude; asked once per page load, or
- *  again after Settings → Providers changes a key. */
 /** The model menu, whether a session can start without the user's Claude,
  *  and the user's loadout (Settings → Default models). */
 export type OutrunnerModels = ModelMenu & { available: boolean; loadout: ModelLoadout };
 const NO_MODELS: OutrunnerModels = { outrunner: false, allowance: false, keys: [], available: false, loadout: EMPTY_LOADOUT };
 let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
+/** What the user's model menu offers (GET /api/outrunner-models); asked once
+ *  per page load, or again after Settings → Providers changes a key. Only an
+ *  answer is kept: a failed look, refused or unreachable, is asked again. */
 export function outrunnerModels(): Promise<OutrunnerModels> {
   outrunnerModelsAnswer ??= fetch("/api/outrunner-models")
-    .then((res): Promise<Record<string, unknown>> | Record<string, unknown> => (res.ok ? res.json() : {}))
+    .then((res): Promise<Record<string, unknown>> => {
+      if (!res.ok) throw new Error(`outrunner-models answered ${res.status}`);
+      return res.json();
+    })
     .then((data): OutrunnerModels => {
       const keys = Array.isArray(data.keys)
         ? data.keys.filter(isProviderId)
