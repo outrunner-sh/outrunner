@@ -21,14 +21,32 @@ export type SessionModel = { id: string; label: string; provider: ModelProvider 
 /** `custom`: the group takes a model id typed in, as well as its list. */
 export type ModelGroup = { label: string; provider: ModelProvider; models: SessionModel[]; custom: boolean };
 
-/** Outrunner's models, through OpenRouter on Outrunner's key. Exact OpenRouter
- *  slugs, so the menu ticks what a reply reports. Only these run on it: the
- *  allowance pays for them. */
+/** Outrunner's models, through OpenRouter on Outrunner's key; the first is a
+ *  new session's default. Exact OpenRouter slugs, so the menu ticks what a
+ *  reply reports. Only these run on it: the allowance pays for them. */
 export const OUTRUNNER_MODELS: SessionModel[] = [
   { id: "z-ai/glm-5.3", label: "GLM 5.3", provider: "outrunner" },
-  { id: "anthropic/claude-sonnet-5", label: "Claude Sonnet", provider: "outrunner" },
-  { id: "anthropic/claude-opus-5.5", label: "Claude Opus", provider: "outrunner" },
+  { id: "moonshotai/kimi-k3", label: "Kimi K3", provider: "outrunner" },
+  { id: "deepseek/deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", provider: "outrunner" },
 ];
+
+/** What each of Outrunner's models costs, as a multiple of the default's
+ *  (GLM 5.3): OpenRouter's output price, which most of a coding session's
+ *  bill is, as of 2026-10-22. Update with the list, and when OpenRouter's
+ *  prices move. */
+const OUTRUNNER_COST: Record<string, number> = {
+  "z-ai/glm-5.3": 1, // $1.40 per million output tokens
+  "moonshotai/kimi-k3": 8.5, // $11.94
+  "deepseek/deepseek-v4.1-flash": 0.27, // $0.375
+};
+
+/** The picker's cost hint for `model` ("8.5x"): only Outrunner's models have
+ *  one, as only they draw on Outrunner's key; the user pays for the rest. */
+export function costHint(model: SessionModel): string | null {
+  if (model.provider !== "outrunner") return null;
+  const cost = OUTRUNNER_COST[model.id];
+  return cost === undefined ? null : `${cost}x`;
+}
 
 /** What a session on the user's Claude runs when no model is picked: the
  *  newest Opus, at DEFAULT_EFFORT, rather than Claude Code's own default. */

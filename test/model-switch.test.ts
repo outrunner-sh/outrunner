@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AllowanceSpentError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import {
+  NO_OUTRUNNER_MODELS,
   NoStartingModelError,
   putBackOnModel,
   SessionKeyRemovedError,
@@ -106,7 +107,7 @@ test("a box too old to switch falls back to Claude, or says why without it", asy
   );
 });
 
-test("with neither, the error says Outrunner's models are missing and to connect Claude", async () => {
+test("with neither, the error says Outrunner's models are missing, and to connect Claude or add a key", async () => {
   await assert.rejects(
     startingModel({
       setModel: async () => assert.fail("reached the agent"),
@@ -116,7 +117,7 @@ test("with neither, the error says Outrunner's models are missing and to connect
       hasClaude: false,
     }),
     (error: unknown) =>
-      error instanceof NoStartingModelError && /aren't available on this server\. Connect Claude/.test(error.message),
+      error instanceof NoStartingModelError && error.message === NO_OUTRUNNER_MODELS,
   );
 });
 

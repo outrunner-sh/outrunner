@@ -28,6 +28,7 @@ import {
 import { EffortMeter, effortName } from "@/components/effort-meter";
 import { effortOnPick, loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
 import {
+  costHint,
   DEFAULT_EFFORT,
   type Effort,
   EFFORT_LABELS,
@@ -431,8 +432,11 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
       onSelect={() => choice.onChange(m, isCurrent(m) ? choice.effort : effortOnPick(choice.loadout, m))}
     >
       <ModelIcon provider={m.provider} />
-      <span className="flex-1 truncate">{m.label}</span>
-      <Check className={isCurrent(m) ? "opacity-100" : "opacity-0"} />
+      {/* The current model in the brand's colour, as a tick would mark it. */}
+      <span className={cn("flex-1 truncate", isCurrent(m) && "text-brand")}>{m.label}</span>
+      <span className={cn("text-xs tabular-nums text-muted-foreground", isCurrent(m) && "text-brand")}>
+        {costHint(m)}
+      </span>
     </DropdownMenuItem>
   );
   return (
@@ -462,7 +466,12 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
             </span>
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" className="w-64">
+        {/* On the composer's own black, not the theme's grey popover. */}
+        <DropdownMenuContent
+          align="start"
+          side="top"
+          className="w-72 border-(--studio-border) bg-(--studio-bg)"
+        >
           <div className="flex items-center gap-2 px-2 pb-1.5 pt-1">
             <Search className="size-3.5 text-muted-foreground" />
             <input
@@ -476,13 +485,18 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
               spellCheck={false}
               className="h-7 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
+            <DropdownMenuItem asChild className="size-7 justify-center p-0 text-muted-foreground">
+              <Link href="/settings/models" aria-label="Edit models" title="Edit models">
+                <Settings2 />
+              </Link>
+            </DropdownMenuItem>
           </div>
           <DropdownMenuSeparator />
           {showGroups
             ? groups.map((group, i) => (
                 <div key={group.label}>
-                  {i > 0 && <DropdownMenuSeparator />}
-                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                  {/* Groups set apart by their headings, not rules. */}
+                  <DropdownMenuLabel className={cn("text-xs font-normal text-muted-foreground", i > 0 && "pt-3")}>
                     {group.label}
                   </DropdownMenuLabel>
                   {group.models.map(item)}
@@ -538,12 +552,6 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
               ))}
             </>
           ) : null}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem asChild>
-            <Link href="/settings/models" className="text-muted-foreground">
-              <Settings2 /> Edit models
-            </Link>
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <CustomModelDialog

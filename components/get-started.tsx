@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
+import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { getStartedSteps, rememberGetStartedSkipped, showGetStarted } from "@/lib/nav/get-started";
 import { cn } from "@/lib/utils";
 
@@ -81,7 +82,8 @@ export function GetStarted({
     };
   }, [away]);
 
-  const steps = getStartedSteps({ projects, sessions, claudeConnected });
+  const models = useOutrunnerModels();
+  const steps = getStartedSteps({ projects, sessions, claudeConnected, startsWithoutClaude: models?.available ?? null });
   if (!showGetStarted(steps, away)) return null;
   const done = steps.filter((s) => s.done).length;
 
