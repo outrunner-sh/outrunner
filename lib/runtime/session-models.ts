@@ -215,6 +215,17 @@ export function modelChoice(provider: unknown, model: unknown): SessionModel | n
   return listed.find((m) => m.id === model) ?? { id: model, label: model, provider };
 }
 
+/** The model a session was last put on, and the effort picked with it (none:
+ *  the model's own), as its row records it (workspaces.model_*). */
+export type RecordedModel = { model: SessionModel; effort: Effort | null };
+
+/** A row's recorded model, checked as a request's choice is: null when none
+ *  is recorded, or one this release no longer offers. */
+export function recordedModel(provider: unknown, model: unknown, effort: unknown): RecordedModel | null {
+  const choice = modelChoice(provider, model);
+  return choice ? { model: choice, effort: isEffort(effort) ? effort : null } : null;
+}
+
 /**
  * A request body's choice: `{ provider, model }`; or, from a page loaded
  * before providers (kept for one release), `{ model, key }`, where `key` said

@@ -1,4 +1,5 @@
 import { isAgentId } from "@/lib/agents/registry";
+import { recordedModel } from "@/lib/runtime/session-models";
 import { parseManifest } from "@/lib/runtime/snapshot/manifest";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -64,6 +65,8 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     // Claude Code: every session from before the column, and a value a later
     // release added.
     agent: isAgentId(row.agent) ? row.agent : "claude",
+    // Absent before the migration that adds the columns.
+    model: recordedModel(row.model_provider, row.model_id, row.model_effort),
     lastActiveAt: row.last_active_at,
     errorMessage: row.error_message,
     createdAt: row.created_at,
