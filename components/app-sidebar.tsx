@@ -22,6 +22,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AppUpdate } from "@/components/app-update";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
+import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
 import { Spinner } from "@/components/ui/loaders";
@@ -225,6 +226,10 @@ export function AppSidebar({
         onDeleted={onDeleted}
       />
 
+      {/* Counted once both lists are in, so no step reads undone as they land. */}
+      {!loading && local.state !== "loading" && (
+        <GetStarted projects={projects.length} sessions={workspaces.length + local.sessions.length} />
+      )}
       <OutrunnerAllowance />
       <AppUpdate />
       <div className="flex items-center gap-1 border-t border-border/60 pt-3">
