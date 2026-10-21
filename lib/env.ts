@@ -23,6 +23,10 @@ type EnvKey =
   | "CREDENTIALS_ENCRYPTION_KEY"
   // Single-user guard
   | "RUNTIME_OWNER_GITHUB_LOGIN"
+  // The GitHub OAuth app's client id (the one Supabase signs in with), for
+  // linking users to that app's access page on GitHub. Optional: without it
+  // they get GitHub's list of all their authorized apps.
+  | "GITHUB_OAUTH_CLIENT_ID"
   // Modal
   | "MODAL_TOKEN_ID"
   | "MODAL_TOKEN_SECRET"

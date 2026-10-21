@@ -330,6 +330,122 @@ export async function getGitHubRepository(
 }
 
 // ---------------------------------------------------------------------------
+// Organizations and invitations: why a repository may be missing from the list.
+// ---------------------------------------------------------------------------
+
+/** An organization the user belongs to, or has been invited to. */
+export type GitHubOrgMembership = {
+  id: number;
+  login: string;
+  avatarUrl: string | null;
+  /** `pending`: invited, not yet accepted on GitHub. */
+  state: "active" | "pending";
+};
+
+/**
+ * The user's organizations, or `canReadOrgs: false` when the token was granted
+ * before Outrunner asked for `read:org` — signing in again grants it.
+ */
+export type GitHubOrgMemberships =
+  | { canReadOrgs: false }
+  | { canReadOrgs: true; orgs: GitHubOrgMembership[] };
+
+/** An invitation to collaborate on a repository, not yet accepted. */
+export type GitHubRepositoryInvitation = {
+  id: number;
+  fullName: string;
+  avatarUrl: string | null;
+  inviter: string | null;
+};
+
+const ORG_SCOPES = ["read:org", "write:org", "admin:org"];
+
+/**
+ * Whether the token may read org memberships, from GitHub's `X-OAuth-Scopes`
+ * header. No header at all is a token without OAuth scopes (a fine-grained or
+ * app token), whose access the response itself shows.
+ */
+function hasOrgScope(scopesHeader: string | null): boolean {
+  if (scopesHeader === null) return true;
+  return scopesHeader.split(",").some((scope) => ORG_SCOPES.includes(scope.trim()));
+}
+
+/**
+ * The organizations the user belongs to or is invited to (the first 100: far
+ * more than one person is in).
+ */
+export async function listOrgMemberships(token: string): Promise<GitHubOrgMemberships> {
+  const url = new URL("/user/memberships/orgs", GITHUB_API_URL);
+  url.searchParams.set("per_page", String(PER_PAGE));
+
+  const response = await fetchGitHub(url, token);
+  if (!hasOrgScope(response.headers.get("x-oauth-scopes"))) return { canReadOrgs: false };
+  if (!response.ok) {
+    throw rejected(response, "organization membership request", "GitHub could not list your organizations.");
+  }
+
+  const records = await readJson(response);
+  if (!Array.isArray(records)) throw new GitHubSyncError("GitHub returned an invalid response.");
+
+  const orgs: GitHubOrgMembership[] = [];
+  for (const record of records) {
+    const membership = (record ?? {}) as {
+      state?: unknown;
+      organization?: { id?: unknown; login?: unknown; avatar_url?: unknown };
+    };
+    const org = membership.organization;
+    if (
+      (membership.state !== "active" && membership.state !== "pending") ||
+      typeof org?.id !== "number" ||
+      !nonEmpty(org.login)
+    ) {
+      continue;
+    }
+    orgs.push({
+      id: org.id,
+      login: org.login,
+      avatarUrl: nonEmpty(org.avatar_url) ? org.avatar_url : null,
+      state: membership.state,
+    });
+  }
+  return { canReadOrgs: true, orgs };
+}
+
+/** The user's open invitations to collaborate on repositories (the first 100). */
+export async function listRepositoryInvitations(token: string): Promise<GitHubRepositoryInvitation[]> {
+  const url = new URL("/user/repository_invitations", GITHUB_API_URL);
+  url.searchParams.set("per_page", String(PER_PAGE));
+
+  const response = await fetchGitHub(url, token);
+  if (!response.ok) {
+    throw rejected(response, "repository invitation request", "GitHub could not list your invitations.");
+  }
+
+  const records = await readJson(response);
+  if (!Array.isArray(records)) throw new GitHubSyncError("GitHub returned an invalid response.");
+
+  const invitations: GitHubRepositoryInvitation[] = [];
+  for (const record of records) {
+    const invitation = (record ?? {}) as {
+      id?: unknown;
+      repository?: { full_name?: unknown; owner?: { avatar_url?: unknown } };
+      inviter?: { login?: unknown } | null;
+    };
+    const fullName = invitation.repository?.full_name;
+    if (typeof invitation.id !== "number" || !nonEmpty(fullName) || !isGitHubFullName(fullName)) continue;
+    const avatar = invitation.repository?.owner?.avatar_url;
+    const inviter = invitation.inviter?.login;
+    invitations.push({
+      id: invitation.id,
+      fullName,
+      avatarUrl: nonEmpty(avatar) ? avatar : null,
+      inviter: nonEmpty(inviter) ? inviter : null,
+    });
+  }
+  return invitations;
+}
+
+// ---------------------------------------------------------------------------
 // M9 publish: verify the token owner, then find-or-create one pull request.
 // ---------------------------------------------------------------------------
 

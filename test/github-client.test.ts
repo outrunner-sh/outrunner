@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
+import { loadRepositoryBrowse } from "@/lib/github/browse";
 import {
   findOrCreatePullRequest,
   getGitHubRepository,
   GitHubSyncError,
   listGitHubRepositories,
+  listOrgMemberships,
+  listRepositoryInvitations,
 } from "@/lib/github/client";
 
 const realFetch = globalThis.fetch;
@@ -221,4 +224,57 @@ test("getGitHubRepository: null for what the token can't see, an error for a rat
   assert.equal(await getGitHubRepository("t", "acme/repo/extra"), null);
   assert.equal(await getGitHubRepository("t", -1), null);
   assert.equal(seen.length, before);
+});
+
+test("listOrgMemberships: a token granted before read:org can't read orgs", async () => {
+  setFetchByUrl(() => new Response("[]", { headers: { "x-oauth-scopes": "read:user, user:email, repo" } }));
+  assert.deepEqual(await listOrgMemberships("t"), { canReadOrgs: false });
+});
+
+test("listOrgMemberships reads active and pending orgs, skipping what it can't read", async () => {
+  setFetchByUrl(
+    () =>
+      new Response(
+        JSON.stringify([
+          { state: "active", organization: { id: 1, login: "acme", avatar_url: "https://a/acme" } },
+          { state: "pending", organization: { id: 2, login: "newco" } },
+          { state: "active", organization: { login: "no-id" } },
+          { state: "weird", organization: { id: 3, login: "x" } },
+        ]),
+        { headers: { "x-oauth-scopes": "repo, read:org" } },
+      ),
+  );
+  assert.deepEqual(await listOrgMemberships("t"), {
+    canReadOrgs: true,
+    orgs: [
+      { id: 1, login: "acme", avatarUrl: "https://a/acme", state: "active" },
+      { id: 2, login: "newco", avatarUrl: null, state: "pending" },
+    ],
+  });
+});
+
+test("listRepositoryInvitations keeps only invitations to real repository names", async () => {
+  setFetchByUrl(
+    () =>
+      new Response(
+        JSON.stringify([
+          { id: 7, repository: { full_name: "friend/tool", owner: { avatar_url: "https://a/f" } }, inviter: { login: "friend" } },
+          { id: 8, repository: { full_name: "../etc" }, inviter: null },
+          { id: "9", repository: { full_name: "a/b" } },
+        ]),
+      ),
+  );
+  assert.deepEqual(await listRepositoryInvitations("t"), [
+    { id: 7, fullName: "friend/tool", avatarUrl: "https://a/f", inviter: "friend" },
+  ]);
+});
+
+test("loadRepositoryBrowse keeps the listing when orgs and invitations can't be read", async () => {
+  setFetchByUrl((url) =>
+    url.pathname === "/user/repos" ? reposPage([apiRepo(1, null)]) : new Response("{}", { status: 500 }),
+  );
+  const browse = await loadRepositoryBrowse("t");
+  assert.equal(browse.list.repositories.length, 1);
+  assert.equal(browse.memberships, null);
+  assert.deepEqual(browse.invitations, []);
 });

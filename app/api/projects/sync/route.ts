@@ -3,15 +3,11 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
-import {
-  getGitHubRepository,
-  listGitHubRepositories,
-  type GitHubRepository,
-  type GitHubRepositoryList,
-} from "@/lib/github/client";
+import { loadRepositoryBrowse } from "@/lib/github/browse";
+import { getGitHubRepository, type GitHubRepository, type GitHubRepositoryList } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { reconcileProjects } from "@/lib/github/reconcile-projects";
-import { cachedRepositoryList, forgetRepositoryList } from "@/lib/github/repository-cache";
+import { cachedRepositoryBrowse, forgetRepositoryBrowse } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
@@ -83,9 +79,10 @@ export async function POST(request: Request) {
       }
     } else {
       // A fresh listing, which the picker then reuses for its next few seconds.
-      ({ list } = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
+      const { browse } = await cachedRepositoryBrowse(owner.id, () => loadRepositoryBrowse(token), {
         fresh: true,
-      }));
+      });
+      list = browse.list;
       repositories = list.repositories;
     }
     const synced = await upsertProjects(owner.id, repositories);
@@ -94,7 +91,7 @@ export async function POST(request: Request) {
       await reconcileProjects(owner.id, token, await listProjects(), list);
     } else {
       // Just connected from their own lookups, newer than any listing cached.
-      forgetRepositoryList(owner.id);
+      forgetRepositoryBrowse(owner.id);
     }
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
