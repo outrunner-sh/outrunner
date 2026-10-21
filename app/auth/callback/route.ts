@@ -1,5 +1,5 @@
 import type { Session, User } from "@supabase/supabase-js";
-import { NextResponse } from "next/server";
+import { connection, NextResponse } from "next/server";
 
 import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
@@ -16,6 +16,9 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
  * single-owner allowlist before letting anyone in.
  */
 export async function GET(request: Request) {
+  // Per request, never prerendered at build (Cache Components prerenders a
+  // GET that reads nothing of the request first).
+  await connection();
   const requestUrl = new URL(request.url);
   const base = redirectBase(request, requestUrl);
   const next = safeRelativePath(requestUrl.searchParams.get("next"));
