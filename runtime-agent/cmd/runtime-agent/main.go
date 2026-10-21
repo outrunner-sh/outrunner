@@ -16,11 +16,18 @@ import (
 
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/jcode"
+	"runtime-agent/internal/localimport"
 	"runtime-agent/internal/server"
 	"runtime-agent/internal/workspace"
 )
 
 func main() {
+	// `runtime-agent import …` is the desktop app's: it reads this Mac's
+	// sessions and exits. It serves nothing, so needs no secret.
+	if len(os.Args) > 1 && os.Args[1] == "import" {
+		os.Exit(localimport.Main(context.Background(), os.Args[2:], os.Stdout, os.Stderr))
+	}
+
 	secret := os.Getenv("RUNTIME_AGENT_SECRET")
 	if secret == "" {
 		log.Fatal("RUNTIME_AGENT_SECRET is required")
