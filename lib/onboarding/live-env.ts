@@ -1,10 +1,4 @@
 import {
-  cancelClaudeLogin as cancelSetupToken,
-  pollClaudeLogin,
-  startClaudeLogin,
-} from "@/lib/desktop/connect-claude";
-import {
-  agentCli,
   cancelClaudeLogin as cancelClaudeCodeLogin,
   importScan,
   localAgentRequest,
@@ -33,19 +27,16 @@ import type { Project } from "@/lib/runtime/types";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** How long Connect Claude waits for the browser approval. */
-const CONNECT_TIMEOUT_MS = 5 * 60 * 1000;
 /** How often to ask whether Claude Code's login has landed. */
 const LOGIN_CHECK_MS = 3000;
 
 /**
  * Onboarding on the real thing: the Mac app's bridge for this Mac, and the
  * app's own APIs for the cloud. Each action is the same one the rest of the app
- * uses (Settings → Providers → Claude subscription, the new-session form), not a parallel copy.
+ * uses (the new-session form, Settings → Providers), not a parallel copy.
  */
 export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
   let loginStopped = false;
-  let connectStopped = false;
 
   return {
     user,
@@ -107,47 +98,6 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       const res = await fetch("/api/settings/claude").catch(() => null);
       if (!res?.ok) return false;
       return Boolean(((await res.json()) as { connected?: boolean }).connected);
-    },
-
-    async claudeOnMac() {
-      // A bridge that fails, or an app that can't tell, is no sign of Claude.
-      const status = await localStatus().catch(() => null);
-      if (!status) return false;
-      const cli = agentCli(status, "claude");
-      return cli.path !== null && cli.loggedIn === true;
-    },
-
-    async connectClaude() {
-      connectStopped = false;
-      const url = await startClaudeLogin();
-      // The shell sends off-site links to the system browser, where Claude's
-      // sign-in has to happen.
-      window.open(url, "_blank");
-      const deadline = Date.now() + CONNECT_TIMEOUT_MS;
-      while (Date.now() < deadline) {
-        if (connectStopped) throw new Error("Cancelled.");
-        const poll = await pollClaudeLogin();
-        if (poll.state === "ended") throw new Error("That sign-in ended. Start again.");
-        if (poll.state === "done") {
-          const res = await fetch("/api/settings/claude", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: poll.token }),
-          });
-          if (!res.ok) {
-            const body = (await res.json().catch(() => null)) as { error?: string } | null;
-            throw new Error(body?.error ?? "Could not save the connection.");
-          }
-          return;
-        }
-      }
-      void cancelSetupToken();
-      throw new Error("No answer from the browser after five minutes. Start again.");
-    },
-
-    cancelConnectClaude() {
-      connectStopped = true;
-      void cancelSetupToken();
     },
 
     async listRepos() {

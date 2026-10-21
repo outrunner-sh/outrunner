@@ -247,34 +247,6 @@ test("a session that can't get Outrunner's model is removed, not left on a login
   assert.deepEqual(agent.map((a) => a.path), ["/workspaces", `/workspaces/${id}/destroy`]);
 });
 
-test("Claude counts as on this Mac only when Claude Code there says it's logged in", async () => {
-  // Outside the Mac app there is nothing to ask.
-  assert.equal(await liveEnv(user, noModels).claudeOnMac(), false);
-  for (const [loggedIn, found] of [
-    [true, true],
-    [false, false],
-    [null, false], // the app can't tell: no sign of Claude
-  ] as const) {
-    fakeMac(loggedIn);
-    assert.equal(await liveEnv(user, noModels).claudeOnMac(), found, `loggedIn=${loggedIn}`);
-  }
-});
-
-test("a Mac bridge that fails is no sign of Claude", async () => {
-  (globalThis as Record<string, unknown>).window = {
-    __RUNTIME_DESKTOP__: true,
-    __TAURI__: {
-      core: {
-        invoke: async () => {
-          throw new Error("bridge down");
-        },
-        Channel: class {},
-      },
-    },
-  };
-  assert.equal(await liveEnv(user, noModels).claudeOnMac(), false);
-});
-
 /** A scan with `sessions`, as the Mac app reports one. */
 function scanWith(sessions: { source: string; skip?: string }[]) {
   return {
