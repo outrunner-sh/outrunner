@@ -17,11 +17,19 @@ import {
   type ResolvedAuth,
   type SessionCredential,
 } from "@/lib/agents/resolve";
+import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { type AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { SessionKeyRemovedError } from "@/lib/runtime/model-switch";
+import { type RecordedModel, runsOnOwnAccount } from "@/lib/runtime/session-models";
+
+/** What takes a session's credential away: its agent's own login, or the
+ *  agent's environment, applies again (for a session on a model on a key,
+ *  which its gateway overrides, nothing does). */
+const SIGNED_OUT = { kind: "none" } as const;
 
 /** The parts of the agent's client this needs, so it tests with a stand-in. */
 export type SessionAuthClient = {
-  setAuth(credential: SessionCredential): Promise<unknown>;
+  setAuth(credential: SessionCredential | typeof SIGNED_OUT): Promise<unknown>;
   /** The agents the box can run (GET /health); null from an agent from
    *  before the list, which runs Claude Code alone and takes no per-session
    *  credential. */
@@ -144,15 +152,24 @@ function takesNoSessionAuth(error: unknown): boolean {
 }
 
 /**
- * Give the session `auth`'s credential, if it has one. An agent from before
- * per-session credentials, or on an engine that runs every session on its own
- * login, can't take it: that is fine for a credential the
- * user never picked (the box's own setup holds the same one), and an
- * {@link OutdatedComputerError} for one they did, which the session would
- * otherwise run without, on another account.
+ * Give the session `auth`'s credential, or with none take away the one it
+ * had: a credential removed (or a pick changed) since it was given must not
+ * be what the session relaunches on. An agent from before per-session
+ * credentials, or on an engine that runs every session on its own login,
+ * can't take one: that is fine for a credential the user never picked (the
+ * box's own setup holds the same one), and an {@link OutdatedComputerError}
+ * for one they did, which the session would otherwise run without, on
+ * another account. Neither has one to take away.
  */
 export async function deliverSessionAuth(client: SessionAuthClient, agent: AgentId, auth: ResolvedAuth): Promise<void> {
-  if (!auth.credential) return;
+  if (!auth.credential) {
+    try {
+      await client.setAuth(SIGNED_OUT);
+    } catch (error) {
+      if (!takesNoSessionAuth(error)) throw error;
+    }
+    return;
+  }
   try {
     await client.setAuth(auth.credential);
   } catch (error) {
@@ -167,10 +184,21 @@ export async function deliverSessionAuth(client: SessionAuthClient, agent: Agent
 }
 
 /**
+ * Whether a session relaunching on `recorded` (its row's model) needs its
+ * agent's own account: on the user's Claude, or Codex, it does; on a model
+ * on a key, it doesn't. A session from before models were recorded, as
+ * {@link resignInNeedsAccount}.
+ */
+export function relaunchNeedsAccount(agent: AgentId, recorded: RecordedModel | null): boolean {
+  return recorded ? runsOnOwnAccount(recorded.model) : resignInNeedsAccount(agent);
+}
+
+/**
  * Sign an existing cloud session's agent in again before it relaunches (an
  * attach that starts it, a resume, a switch), as the user picks now: a key
- * replaced, or a pick changed, since it was made takes effect. `ownAccount`
- * as resolveAgentAuth takes it: by default, as {@link resignInNeedsAccount}.
+ * replaced, or a pick changed, since it was made takes effect, and one
+ * removed is taken away. `ownAccount` as resolveAgentAuth takes it (see
+ * {@link relaunchNeedsAccount}): by default, as {@link resignInNeedsAccount}.
  */
 export async function signInSession(
   client: SessionAuthClient,
@@ -183,11 +211,20 @@ export async function signInSession(
   await deliverSessionAuth(client, agent, auth);
 }
 
-/** What a route answers when a session's agent can't sign in: the message,
- *  and where in Settings it's fixed; null for any other error. */
+/** What a route answers when a session's agent can't sign in, or its model's
+ *  key can't be had: the message, and where in Settings it's fixed when the
+ *  user can fix it there; null for any other error. */
 export function signInFailure(error: unknown): { error: string; settingsHref?: string } | null {
-  if (error instanceof AgentAuthError) return { error: error.message, settingsHref: error.settingsHref };
-  if (error instanceof OutdatedComputerError) return { error: error.message };
+  if (error instanceof AgentAuthError || error instanceof SessionKeyRemovedError) {
+    return { error: error.message, settingsHref: error.settingsHref };
+  }
+  if (
+    error instanceof OutdatedComputerError ||
+    error instanceof ModelKeyRefusedError ||
+    error instanceof OutrunnerModelsUnavailableError
+  ) {
+    return { error: error.message };
+  }
   return null;
 }
 

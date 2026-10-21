@@ -8,9 +8,14 @@ import {
   deliverSessionAuth,
   OutdatedComputerError,
   readyBox,
+  relaunchNeedsAccount,
   restoreSignedIn,
   type SessionAuthClient,
+  signInFailure,
 } from "@/lib/runtime/session-auth";
+import { AllowanceSpentError } from "@/lib/openrouter/keys";
+import { NoProviderKeyError } from "@/lib/providers/errors";
+import { SessionKeyRemovedError } from "@/lib/runtime/model-switch";
 
 const KEY: ResolvedAuth["credential"] = { kind: "openai-api-key", token: "sk-proj-" + "o".repeat(40) };
 const TOKEN: ResolvedAuth["credential"] = { kind: "claude-oauth-token", token: "sk-ant-oat01-" + "t".repeat(40) };
@@ -32,13 +37,40 @@ const ok = () => Promise.resolve({});
 /** An agent from before /auth: a 404 with no error envelope. */
 const missingRoute = () => Promise.reject(new AgentRequestError(404));
 
-test("a credential goes to the session; none sends nothing", async () => {
+test("a credential goes to the session; none takes away the one it had", async () => {
   const { c, given } = client(ok);
   await deliverSessionAuth(c, "codex", { method: "api-key", credential: KEY, picked: true });
   assert.deepEqual(given, [KEY]);
-  await deliverSessionAuth(c, "claude", { method: "local", credential: null, picked: true });
+  // Removed since, or a pick that signs in to nothing: the session must not
+  // relaunch on the credential it was given before.
   await deliverSessionAuth(c, "claude", { method: null, credential: null, picked: false });
-  assert.equal(given.length, 1);
+  assert.deepEqual(given, [KEY, { kind: "none" }]);
+});
+
+test("taking a credential away: nothing to take from an agent that never held one; any other refusal is told", async () => {
+  // An agent from before session credentials, and one on an engine that runs
+  // every session on its own login: neither has one to take.
+  const unsupported = () => Promise.reject(new AgentRequestError(409, { code: "UNSUPPORTED", message: "own login" }));
+  for (const answer of [missingRoute, unsupported]) {
+    await deliverSessionAuth(client(answer).c, "claude", { method: null, credential: null, picked: false });
+  }
+  // Left in place, it would be what the session relaunches on.
+  const gone = new AgentRequestError(404, { code: "NOT_FOUND", message: "unknown workspace" });
+  await assert.rejects(
+    deliverSessionAuth(client(() => Promise.reject(gone)).c, "claude", { method: null, credential: null, picked: false }),
+    gone,
+  );
+});
+
+test("a relaunch needs the agent's own account only on a model that runs on it", () => {
+  const on = (provider: "outrunner" | "claude" | "codex" | "zai", id: string) => ({ model: { id, label: id, provider }, effort: null });
+  assert.equal(relaunchNeedsAccount("claude", on("outrunner", "z-ai/glm-5.3")), false);
+  assert.equal(relaunchNeedsAccount("claude", on("zai", "glm-5.3")), false);
+  assert.equal(relaunchNeedsAccount("claude", on("claude", "opus")), true);
+  assert.equal(relaunchNeedsAccount("codex", on("codex", "gpt-6-sol")), true);
+  // From before models were recorded: Claude Code may be on a key, Codex never is.
+  assert.equal(relaunchNeedsAccount("claude", null), false);
+  assert.equal(relaunchNeedsAccount("codex", null), true);
 });
 
 test("an agent from before session credentials: fine for the box's own, refused for a pick", async () => {
@@ -162,4 +194,12 @@ test("an engine that runs sessions on its own login: like an agent without crede
     deliverSessionAuth(c, "claude", { method: "api-key", credential: TOKEN, picked: true }),
     (error: Error) => error instanceof OutdatedComputerError && /runs every session on its own login/.test(error.message),
   );
+});
+
+test("a relaunch that can't be had says why, and where to fix it when the user can", () => {
+  const removed = new SessionKeyRemovedError({ id: "kimi-k3", label: "Kimi K3", provider: "moonshot" }, new NoProviderKeyError("moonshot"));
+  assert.deepEqual(signInFailure(removed), { error: removed.message, settingsHref: new NoProviderKeyError("moonshot").settingsHref });
+  assert.deepEqual(signInFailure(new AllowanceSpentError()), { error: new AllowanceSpentError().message });
+  // Anything else stays in the log.
+  assert.equal(signInFailure(new Error("fetch failed")), null);
 });

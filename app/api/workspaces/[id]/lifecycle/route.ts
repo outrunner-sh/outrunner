@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { resolveAgentAuth } from "@/lib/agents/resolve";
+import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
-import { agentAuthStore } from "@/lib/db/credentials";
+import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
 import { optionalGithubToken } from "@/lib/github/token";
 import {
   createWorkspaceSnapshot,
@@ -14,17 +14,21 @@ import {
   listWorkspaceSnapshots,
   markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
+  recordWorkspaceModel,
   transitionWorkspace,
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_IMPORTS } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_IMPORTS, AGENT_FEATURE_RESTORE_MODEL } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
-import { restoreSignedIn, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
-import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { recordedModelRequest } from "@/lib/runtime/model-switch";
+import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
+import { relaunchNeedsAccount, restoreSignedIn, sessionAuthClient, signInFailure } from "@/lib/runtime/session-auth";
+import { defaultModel, type RecordedModel } from "@/lib/runtime/session-models";
+import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
@@ -304,19 +308,15 @@ async function restoreDaytonaWorkspace(
       );
     }
 
-    // How the session's agent signs in, as the user picks now: before a box
-    // is started for it, so a pick that can't run starts nothing.
-    const auth = await resolveAgentAuth(agentAuthStore(owner.id), workspace.agent, "cloud");
+    // How the session's agent signs in, as the user picks now, and the model
+    // it goes back on, its key fetched now: before a box is started for it,
+    // so a pick that can't run, or a key removed, starts nothing.
+    const { auth, restoreOn } = await restoreSignIn(workspace, owner.id);
+    const model = restoreOn ? await recordedModelRequest(restoreOn, (holder) => modelKey(owner.id, holder)) : undefined;
 
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
     const sessionEnv = await runtimeSessionEnvironment(owner.id);
-    // Codex signs in per session (below); Claude Code needs the box's own.
-    if (workspace.agent === "claude" && !hasClaudeCredential(sessionEnv)) {
-      throw new Error(
-        "Connect Claude in Settings before restoring a workspace.",
-      );
-    }
     const ensured = await ensureProjectRuntimeComputer(provider, {
       projectId: project.id,
       repoFullName: project.fullName,
@@ -348,13 +348,12 @@ async function restoreDaytonaWorkspace(
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
     const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id);
+    const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
     if (manifest.origin) {
-      await requireFeature(
-        { features: async () => (await agent.health(identity)).features ?? [], upgrade },
-        AGENT_FEATURE_IMPORTS,
-        "restore a session imported from a Mac",
-      );
+      await requireFeature(features, AGENT_FEATURE_IMPORTS, "restore a session imported from a Mac");
     }
+    // An older agent would ignore the model, and relaunch on Claude's own.
+    if (model) await requireFeature(features, AGENT_FEATURE_RESTORE_MODEL, "restore a session on its model");
     // Before the restore, which launches the session at once.
     await setUpSession(agent, identity, upgrade, owner.id, project.id);
     const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
@@ -366,6 +365,7 @@ async function restoreDaytonaWorkspace(
         downloads,
         ...(workspace.agent !== "claude" && { agent: workspace.agent }),
         ...(credential && { auth: credential }),
+        ...(model && { model }),
         ...(bundleRef && { bundleRef }),
         ...(manifest.origin && { originWorktree: manifest.origin.worktree }),
       }),
@@ -378,6 +378,8 @@ async function restoreDaytonaWorkspace(
       tmuxSession: `ws-${workspace.id}`,
       agentWorkspaceId: workspace.id,
     });
+    // One from before models were recorded now has one.
+    if (restoreOn && !workspace.model) await recordWorkspaceModel(workspace.id, restoreOn);
   } catch (error) {
     const failure = signInFailure(error);
     if (!failure) console.error(`Workspace ${workspace.id} restore failed`, error);
@@ -400,6 +402,29 @@ async function restoreDaytonaWorkspace(
   return completed
     ? NextResponse.json({ workspace: { id: workspace.id, status: "ready" } })
     : lifecycleReconciliationRequired("restore");
+}
+
+/**
+ * How a session being restored signs in, and the model it goes back on: the
+ * one its row records, or, for a session from before models were recorded,
+ * the user's Claude when it signs in there, else the model a new session
+ * would start on (Outrunner's, or one on the user's key). With neither, the
+ * user is told to connect Claude.
+ */
+async function restoreSignIn(
+  workspace: Workspace,
+  ownerId: string,
+): Promise<{ auth: ResolvedAuth; restoreOn: RecordedModel | null }> {
+  const store = agentAuthStore(ownerId);
+  const ownAccount = relaunchNeedsAccount(workspace.agent, workspace.model);
+  const auth = await resolveAgentAuth(store, workspace.agent, "cloud", { ownAccount });
+  if (workspace.model || auth.credential || workspace.agent !== "claude") {
+    return { auth, restoreOn: workspace.model };
+  }
+  const fallback = defaultModel(await modelMenu(ownerId));
+  // Nothing to run on: this says what to connect.
+  if (!fallback) await resolveAgentAuth(store, workspace.agent, "cloud");
+  return { auth, restoreOn: fallback && { model: fallback, effort: null } };
 }
 
 async function daytonaAgent(
@@ -441,8 +466,9 @@ async function resumeDaytonaWorkspace(
   if (!transitioned) return lifecycleConflict();
   try {
     const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, owner);
-    // Signed in as the user picks now, before it relaunches.
-    await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(owner.id));
+    // Signed in as the user picks now, and on its model's key as it is now,
+    // before it relaunches.
+    await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
     await agent.resumeWorkspace(identity);
   } catch (error) {
     const failure = signInFailure(error);

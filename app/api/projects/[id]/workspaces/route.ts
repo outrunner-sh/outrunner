@@ -21,6 +21,7 @@ import {
   getProject,
   getRuntimeComputerByProject,
   markRuntimeComputerStoppedIfReady,
+  recordWorkspaceModel,
   transitionWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -413,7 +414,7 @@ async function provisionWorkspace({
       // And with the user's own setup and its project's environment.
       await setUpSession(agent, identity, upgrade, owner.id, project.id);
       // Before the first launch, so Claude starts on it rather than switching.
-      await startingModel({
+      const startsOn = await startingModel({
         setModel: (req) => agent.setModel(identity, req),
         keyFor: (holder) => modelKey(owner.id, holder),
         hasClaude,
@@ -421,6 +422,8 @@ async function provisionWorkspace({
         effort: chosenEffort,
         fallback: defaultModel(menu),
       });
+      // So its next relaunch goes back on it, its key fetched again.
+      await recordWorkspaceModel(workspace.id, startsOn);
       await setPhase("health_check");
       await agent.startWorkspace(identity);
 

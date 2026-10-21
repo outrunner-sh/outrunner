@@ -7,6 +7,7 @@ import {
   getRuntimeComputerByProject,
   getWorkspace,
   readRuntimeComputerSecret,
+  recordWorkspaceModel,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
@@ -137,6 +138,8 @@ export async function POST(request: Request, context: RouteContext) {
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);
     return NextResponse.json({ error: message }, { status });
   }
+  // So its next relaunch goes back on it, its key fetched again.
+  await recordWorkspaceModel(workspace.id, { model, effort: req.effort ?? null });
   return NextResponse.json({ model: req.model, effort: req.effort ?? null });
 }
 
