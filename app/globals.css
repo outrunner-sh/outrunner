@@ -208,6 +208,14 @@
 .studio-env-details { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 6px 12px; margin: 0; padding: 6px 20px 12px 49px; color: rgba(255,255,255,.45); font-size: 12px; }
 .studio-env-details dd { min-width: 0; margin: 0; overflow: hidden; color: rgba(255,255,255,.72); text-overflow: ellipsis; white-space: nowrap; }
 .studio-env-unfold { padding: 8px 20px 16px 49px; }
+/* The pull request row: its number links out, Merge sits at the right once it's green. */
+.studio-env-pr-link { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--studio-text); font-variant-numeric: tabular-nums; }
+.studio-env-pr-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.studio-env-pr-link svg { width: 14px; height: 14px; color: rgba(255,255,255,.45); }
+.studio-env-merge { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--color-positive); font-size: 13px; font-weight: 500; cursor: pointer; transition: filter .15s; }
+.studio-env-merge:hover { filter: brightness(1.1); }
+.studio-env-merge:focus-visible { outline: 2px solid color-mix(in oklab, var(--color-positive) 60%, transparent); outline-offset: 2px; }
+.studio-env-merge[aria-busy="true"] { cursor: progress; }
 .studio-env-terminal-slot { display: contents; }
 .studio-env-terminal { display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,.07); background: #000; }
 .studio-env-terminal.is-open { flex: 1 1 0; min-height: 200px; }

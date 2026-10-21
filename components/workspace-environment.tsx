@@ -1,11 +1,12 @@
 "use client";
 
 import {
+  ArrowUpRight,
   ChevronDown,
   ChevronRight,
   Cloud,
-  ExternalLink,
   GitBranch,
+  GitMerge,
   GitPullRequest,
   Monitor,
   PanelRightClose,
@@ -21,16 +22,19 @@ import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
+import type { PullRequestStatus } from "@/lib/github/client";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
 import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
+import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";
 import { cn } from "@/lib/utils";
 
 /**
  * The session's Environment: where it runs, its changes, its branch and its
  * pull request, one quiet row each. Changes opens the file list in place; the
- * branch and pull request rows unfold their details beneath them. The terminal
- * docks below, in the studio's slot, not here.
+ * branch row unfolds its details beneath it, and the pull request row asks the
+ * agent for one, then links to the pull request it opens. The terminal docks
+ * below, in the studio's slot, not here.
  */
 export function WorkspaceEnvironment({
   workspace,
@@ -164,12 +168,19 @@ export function WorkspaceEnvironment({
  *  a description; the page looking again on its next load covers the rest. */
 const PR_POLL_MS = 15_000;
 const PR_WAIT_MS = 10 * 60_000;
+/** How often an open pull request's status (checks, mergeability) is re-read. */
+const PR_STATUS_POLL_MS = 30_000;
+/** How long Merge waits for its confirming second click. */
+const MERGE_CONFIRM_MS = 4_000;
+
+type RowError = { message: string; reconnect: boolean };
 
 /**
- * Create PR asks the session's agent to open one, as Conductor does: the
- * prompt "Create a PR" with `PR instructions.md` attached, sent through the
- * session like a message typed in the composer. The row then watches GitHub
- * for the pull request on the branch, and once there is one, links to it.
+ * The session's pull request. Without one, Create PR asks the session's agent
+ * to open it, as Conductor does: the prompt "Create a PR" with
+ * `PR instructions.md` attached, sent through the session like a message typed
+ * in the composer; the row then watches GitHub for it. With one, the row links
+ * to it, says where it stands, and offers Merge once it is green.
  */
 function PullRequestRow({
   workspaceId,
@@ -189,49 +200,66 @@ function PullRequestRow({
 }) {
   const router = useRouter();
   const [found, setFound] = useState<WorkspacePullRequest | null>(null);
+  const [status, setStatus] = useState<PullRequestStatus | null>(null);
   const [phase, setPhase] = useState<"idle" | "sending" | "waiting">("idle");
-  const [error, setError] = useState<{ message: string; reconnect: boolean } | null>(null);
+  const [error, setError] = useState<RowError | null>(null);
   const opened = found ?? pullRequest;
+  const hasPullRequest = opened !== null;
+  // Looked for every PR_POLL_MS while the agent is at it, re-read every
+  // PR_STATUS_POLL_MS while open, and left alone once merged or closed.
+  const settled = status !== null && status.state !== "open";
+  const pollMs = hasPullRequest ? (settled ? null : PR_STATUS_POLL_MS) : phase === "waiting" ? PR_POLL_MS : null;
 
-  // Looks once on opening (the agent may have opened one since the page
-  // loaded, or without being asked), then every PR_POLL_MS while waiting.
-  // Only a sign-in GitHub refused is worth saying: anything else, the next
-  // look may get past.
+  // Also looks once on opening: the agent may have opened one since the page
+  // loaded, or without being asked. Only a sign-in GitHub refused is worth
+  // saying; anything else, the next look may get past, and a status that
+  // couldn't be read keeps the last one.
   useEffect(() => {
-    if (opened) return;
     let live = true;
     const look = async () => {
       const result = await lookUpPullRequest(workspaceId);
       if (!live) return;
       if (result.pullRequest) {
-        setFound(result.pullRequest);
-        setPhase("idle");
-        router.refresh();
+        if (!hasPullRequest) {
+          setFound(result.pullRequest);
+          setPhase("idle");
+          router.refresh();
+        }
+        if (result.status) setStatus(result.status);
       } else if (result.reconnect) {
         setError({ message: result.error ?? "Reconnect GitHub to see the pull request.", reconnect: true });
       }
     };
     void look();
-    if (phase !== "waiting") return () => void (live = false);
-    const poll = setInterval(() => void look(), PR_POLL_MS);
-    const giveUp = setTimeout(() => setPhase("idle"), PR_WAIT_MS);
+    if (pollMs === null) return () => void (live = false);
+    const poll = setInterval(() => void look(), pollMs);
+    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPhase("idle"), PR_WAIT_MS);
     return () => {
       live = false;
       clearInterval(poll);
       clearTimeout(giveUp);
     };
-  }, [opened, phase, workspaceId, router]);
+  }, [hasPullRequest, pollMs, workspaceId, router]);
+
+  const errorLine = error && (
+    <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
+      {error.message}
+      {error.reconnect && <GitHubReconnectLink />}
+    </p>
+  );
 
   if (opened) {
     return (
-      <EnvRow
-        href={opened.url}
-        icon={<GitPullRequest />}
-        title={`Pull request into ${opened.baseBranch}`}
-        right={<ExternalLink />}
-      >
-        PR #{opened.number}
-      </EnvRow>
+      <>
+        <OpenedPullRequestRow
+          workspaceId={workspaceId}
+          pullRequest={opened}
+          status={status}
+          onStatus={setStatus}
+          onError={setError}
+        />
+        {errorLine}
+      </>
     );
   }
 
@@ -276,27 +304,122 @@ function PullRequestRow({
       >
         {busy ? "Creating PR…" : "Create PR"}
       </EnvRow>
-      {error && (
-        <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
-          {error.message}
-          {error.reconnect && <GitHubReconnectLink />}
-        </p>
-      )}
+      {errorLine}
     </>
   );
 }
 
-/** The session's pull request as the server finds it, or why it couldn't. */
-async function lookUpPullRequest(
-  workspaceId: string,
-): Promise<{ pullRequest?: WorkspacePullRequest | null; error?: string; reconnect?: boolean }> {
+/** The verdict's colour in the row. */
+const VERDICT_TONE: Record<PullRequestVerdict["tone"], string> = {
+  ready: "text-positive",
+  pending: "text-white/45",
+  problem: "text-destructive",
+  done: "text-white/45",
+};
+
+/**
+ * `#99 ↗  Ready to merge  [Merge]`, after Conductor's bar. Merge takes a
+ * second click to confirm, and merges the head commit the status was read at.
+ */
+function OpenedPullRequestRow({
+  workspaceId,
+  pullRequest,
+  status,
+  onStatus,
+  onError,
+}: {
+  workspaceId: string;
+  pullRequest: WorkspacePullRequest;
+  status: PullRequestStatus | null;
+  onStatus: (status: PullRequestStatus) => void;
+  onError: (error: RowError | null) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const verdict = status ? pullRequestVerdict(status) : null;
+
+  useEffect(() => {
+    if (!confirming) return;
+    const reset = setTimeout(() => setConfirming(false), MERGE_CONFIRM_MS);
+    return () => clearTimeout(reset);
+  }, [confirming]);
+
+  async function merge() {
+    if (!status || merging) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    setMerging(true);
+    onError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/pull-request/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ headSha: status.headSha }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        status?: PullRequestStatus | null;
+        error?: string;
+        reconnect?: boolean;
+      };
+      if (!response.ok) {
+        onError({ message: result.error ?? "Could not merge the pull request.", reconnect: result.reconnect === true });
+        return;
+      }
+      onStatus(result.status ?? { ...status, state: "merged" });
+    } catch {
+      onError({ message: "Could not reach Outrunner. Please try again.", reconnect: false });
+    } finally {
+      setMerging(false);
+    }
+  }
+
+  return (
+    <EnvRow
+      icon={<GitPullRequest />}
+      right={
+        verdict?.canMerge && (
+          <button
+            type="button"
+            onClick={() => void merge()}
+            aria-busy={merging || undefined}
+            className="studio-env-merge"
+            title={`Merge #${pullRequest.number} into ${pullRequest.baseBranch} on GitHub`}
+          >
+            {merging ? <Spinner label="Merging" /> : <GitMerge />}
+            {merging ? "Merging" : confirming ? "Confirm merge" : "Merge"}
+          </button>
+        )
+      }
+    >
+      <a
+        href={pullRequest.url}
+        target="_blank"
+        rel="noreferrer"
+        title={`Open pull request #${pullRequest.number} on GitHub`}
+        className="studio-env-pr-link"
+      >
+        #{pullRequest.number}
+        <ArrowUpRight />
+      </a>
+      {verdict && <span className={cn("ml-3 truncate text-sm", VERDICT_TONE[verdict.tone])}>{verdict.label}</span>}
+    </EnvRow>
+  );
+}
+
+/** The session's pull request and its status as the server finds them, or
+ *  why it couldn't. */
+async function lookUpPullRequest(workspaceId: string): Promise<{
+  pullRequest?: WorkspacePullRequest | null;
+  status?: PullRequestStatus | null;
+  error?: string;
+  reconnect?: boolean;
+}> {
   try {
     const response = await fetch(`/api/workspaces/${workspaceId}/pull-request`, { cache: "no-store" });
-    return (await response.json().catch(() => ({}))) as {
-      pullRequest?: WorkspacePullRequest | null;
-      error?: string;
-      reconnect?: boolean;
-    };
+    return (await response.json().catch(() => ({}))) as Awaited<ReturnType<typeof lookUpPullRequest>>;
   } catch {
     return {};
   }
@@ -317,15 +440,14 @@ function ChangesCount({ changes, active }: { changes: WorkspaceChangesState; act
 }
 
 /** One row: icon, what it is, and a count or chevron on the right. With
- *  `onClick` it is a button (`expanded` marks one that unfolds details, `busy`
- *  one at work, which ignores clicks); with `href`, a link out. */
+ *  `onClick` it is a button: `expanded` marks one that unfolds details, `busy`
+ *  one at work, which ignores clicks. */
 function EnvRow({
   ref,
   icon,
   right,
   title,
   onClick,
-  href,
   expanded,
   disabled,
   busy,
@@ -336,7 +458,6 @@ function EnvRow({
   right?: React.ReactNode;
   title?: string;
   onClick?: () => void;
-  href?: string;
   expanded?: boolean;
   disabled?: boolean;
   busy?: boolean;
@@ -349,13 +470,6 @@ function EnvRow({
       {right && <span className="studio-env-right">{right}</span>}
     </>
   );
-  if (href) {
-    return (
-      <a href={href} target="_blank" rel="noreferrer" title={title} className="studio-env-row is-action">
-        {content}
-      </a>
-    );
-  }
   if (!onClick) {
     return (
       <div title={title} className="studio-env-row">
