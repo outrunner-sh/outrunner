@@ -18,12 +18,20 @@ export async function POST(request: Request) {
   if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
+  // A report is a few known fields: one bigger than any we send isn't ours.
+  // (The header can be absent behind a proxy — then the schema is the bound.)
+  const length = request.headers.get("content-length");
+  if (length !== null && Number(length) > 8 * 1024) {
+    return NextResponse.json({ error: "Malformed report." }, { status: 400 });
+  }
   const report = ClientFault.safeParse(await request.json().catch(() => null));
   if (!report.success) {
     return NextResponse.json({ error: "Malformed report." }, { status: 400 });
   }
   // Context after the line, ref before the fold: the log is grepped by ref.
+  // The owner's id says whose session faulted it; a ref alone traces nowhere.
   console.error(clientFaultLine(report.data), {
+    ownerId: owner.id,
     workspaceId: report.data.workspaceId,
     eventId: report.data.eventId,
     eventType: report.data.eventType,

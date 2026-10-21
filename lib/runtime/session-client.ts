@@ -18,6 +18,7 @@
 import type { Terminal } from "@xterm/xterm";
 
 import { openSocket } from "@/lib/desktop/local-runtime";
+import { CLIENT_FAULT_MESSAGES } from "@/lib/http/client-error-report";
 import {
   AgentEvent,
   PtyServerMessage,
@@ -38,6 +39,11 @@ export class StreamProtocolError extends Error {
     this.ref = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
   }
 }
+
+/** The two faults the events stream can hit, taken from the closed set its
+ *  reports are logged under: the reporting route accepts no other message, so
+ *  what the stream says and what the log takes cannot drift apart. */
+const [MALFORMED_FRAME, SCHEMA_MISMATCH] = CLIENT_FAULT_MESSAGES;
 
 export type TerminalAttachment = {
   /** Close the WebSocket and detach input listeners; safe to call twice. */
@@ -231,6 +237,19 @@ export function subscribeEventsWs(
   let disposed = false;
   let opened = false;
   let lastId: string | null = options.lastEventId ?? null;
+  // One report per fault kind per subscription: a stream that keeps sending
+  // frames it can't read is one problem, not a log line each, and the browser
+  // console keeps every ref anyway. A resubscribe starts the set over.
+  const reported = new Set<string>();
+  const reportOnce = (
+    kind: string,
+    error: StreamProtocolError,
+    meta: { eventId?: string; eventType?: string; issues?: unknown[] },
+  ): void => {
+    if (reported.has(kind)) return;
+    reported.add(kind);
+    reportFault(options.workspaceId, error, meta);
+  };
 
   ws.addEventListener("open", () => {
     opened = true;
@@ -241,9 +260,9 @@ export function subscribeEventsWs(
     try {
       frame = JSON.parse((raw as MessageEvent<string>).data);
     } catch {
-      const error = new StreamProtocolError("Malformed events frame payload");
+      const error = new StreamProtocolError(MALFORMED_FRAME);
       console.warn(error.message, { ref: error.ref });
-      reportFault(options.workspaceId, error, {});
+      reportOnce("malformed frame", error, {});
       options.onError?.(error);
       return;
     }
@@ -253,17 +272,16 @@ export function subscribeEventsWs(
       // unmodeled shape can be identified — never the raw payload, which can
       // carry user prompts or tool output.
       const data = frame?.data as { t?: unknown } | undefined;
-      const error = new StreamProtocolError("Events frame did not match AgentEvent schema");
-      console.warn(error.message, {
-        ref: error.ref,
-        issues: parsed.error.issues,
-        eventId: typeof frame.id === "string" ? frame.id : undefined,
-        eventType: typeof data?.t === "string" ? data.t : undefined,
-      });
-      reportFault(options.workspaceId, error, {
-        eventId: typeof frame.id === "string" ? frame.id : undefined,
-        eventType: typeof data?.t === "string" ? data.t : undefined,
-        issues: parsed.error.issues.slice(0, 20),
+      const eventId = typeof frame.id === "string" ? frame.id : undefined;
+      const eventType = typeof data?.t === "string" ? data.t : undefined;
+      const error = new StreamProtocolError(SCHEMA_MISMATCH);
+      console.warn(error.message, { ref: error.ref, issues: parsed.error.issues, eventId, eventType });
+      reportOnce(eventType || "no type", error, {
+        eventId,
+        eventType,
+        // The report carries only what identifies the shape — code, path,
+        // message — never a payload value, which can hold a prompt.
+        issues: parsed.error.issues.slice(0, 20).map(({ code, path, message }) => ({ code, path, message })),
       });
       options.onError?.(error);
       return;
