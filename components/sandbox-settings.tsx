@@ -13,6 +13,7 @@ import { InlineMessage } from "@/components/ui/notice";
 import { allowsBoxSize, boxSizeWithin, type Plan } from "@/lib/billing/plans";
 import { saveOutcome, type SaveFailure } from "@/lib/settings/save-error";
 import type { SandboxChoice, SandboxSettings, StoredKey } from "@/lib/db/credentials";
+import { requestJson } from "@/lib/http/request-json";
 import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { cn } from "@/lib/utils";
 
@@ -88,15 +89,11 @@ export function SandboxSettingsForm({
     setStatus("pending");
     const run = queue.current.then(async () => {
       try {
-        const payload = body?.();
-        const res = await fetch(`/api/settings/sandbox${query}`, {
+        const data = await requestJson<SandboxSettings>(`/api/settings/sandbox${query}`, {
           method,
-          headers: payload ? { "Content-Type": "application/json" } : undefined,
-          body: payload ? JSON.stringify(payload) : undefined,
+          body: body?.(),
+          has: (d) => d.sandbox !== undefined,
         });
-        // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
-        const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
-        if (!res.ok || !data?.sandbox) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
         inUseNow.current = data.sandbox;
         // What saved clears its own failure — the line names the change, and
         // only that change's success retires it. Anything else that failed is

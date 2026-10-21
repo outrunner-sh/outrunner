@@ -10,6 +10,7 @@ import { SectionHeader } from "@/components/settings-details";
 import { InlineMessage } from "@/components/ui/notice";
 import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
+import { requestJson } from "@/lib/http/request-json";
 import type { KeyProviderId } from "@/lib/providers/registry";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 
@@ -67,13 +68,11 @@ export function AgentAuthPanel({
     if (method === chosen) return;
     setSaving(true);
     try {
-      const res = await fetch("/api/settings/agents", {
+      const data = await requestJson<{ choices: AgentAuthChoices }>("/api/settings/agents", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent, method }),
+        body: { agent, method },
+        has: (d) => d.choices !== undefined,
       });
-      const data = (await res.json().catch(() => null)) as { choices?: AgentAuthChoices; error?: string } | null;
-      if (!res.ok || !data?.choices) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
       // This agent's only: another tab's reply, sent before a pick there
       // landed, mustn't undo it.
       onChoice(agent, data.choices[agent]);

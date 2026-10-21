@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
 import type { StoredKey } from "@/lib/db/credentials";
+import { requestJson } from "@/lib/http/request-json";
 import { type KeyProviderId, PROVIDERS } from "@/lib/providers/registry";
 
 /** What /api/settings/providers answers a change with: every saved key's
@@ -46,19 +47,10 @@ export function ApiKeyCard({
     // at once doesn't blink it off and on.
     setStatus("pending");
     try {
-      const res = await fetch(
+      const data = await requestJson<{ keys: ProviderKeys; warning?: string | null }>(
         method === "PUT" ? "/api/settings/providers" : `/api/settings/providers?provider=${provider}`,
-        {
-          method,
-          headers: method === "PUT" ? { "Content-Type": "application/json" } : undefined,
-          body: method === "PUT" ? JSON.stringify({ provider, key: key.trim() }) : undefined,
-        },
+        { method, body: method === "PUT" ? { provider, key: key.trim() } : undefined, has: (d) => d.keys !== undefined },
       );
-      // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
-      const data = (await res.json().catch(() => null)) as
-        | { keys?: ProviderKeys; error?: string; warning?: string | null }
-        | null;
-      if (!res.ok || !data?.keys) throw new Error(data?.error ?? "Couldn't save that. Outrunner didn't say why.");
       onChange(data.keys);
       setError(null);
       setWarning(data.warning ?? null);

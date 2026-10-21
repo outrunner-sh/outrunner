@@ -14,6 +14,7 @@ import {
   submitClaudeCode,
 } from "@/lib/desktop/connect-claude";
 import { isDesktopApp } from "@/lib/is-desktop";
+import { requestJson } from "@/lib/http/request-json";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 
 const noopSubscribe = () => () => {};
@@ -60,16 +61,14 @@ export function ClaudeConnection({
 
   /** Store a freshly minted token and clear the in-progress state. */
   const save = useCallback(async (token: string) => {
-    const res = await fetch("/api/settings/claude", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(body?.error ?? "Could not save the token.");
-    }
-    onChange((await res.json()) as ClaudeTokenMeta);
+    onChange(
+      await requestJson<ClaudeTokenMeta>("/api/settings/claude", {
+        method: "PUT",
+        body: { token },
+        has: (d) => typeof d.connected === "boolean",
+        fallback: "Could not save the token.",
+      }),
+    );
     setPending(null);
     setCode("");
     // A save means the login finished, whatever the approval window was doing.
@@ -188,12 +187,13 @@ export function ClaudeConnection({
     setExpired(false);
     setBusy(true);
     try {
-      const res = await fetch("/api/settings/claude", { method: "DELETE" });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "Could not disconnect.");
-      }
-      onChange((await res.json()) as ClaudeTokenMeta);
+      onChange(
+        await requestJson<ClaudeTokenMeta>("/api/settings/claude", {
+          method: "DELETE",
+          has: (d) => typeof d.connected === "boolean",
+          fallback: "Could not disconnect.",
+        }),
+      );
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Disconnecting failed.");

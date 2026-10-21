@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage, Notice } from "@/components/ui/notice";
 import { isDesktopApp } from "@/lib/is-desktop";
+import { requestJson } from "@/lib/http/request-json";
 import { type BillingInterval, LOOKUP_KEYS, type Plan, PLANS } from "@/lib/billing/plans";
 import { boxSize } from "@/lib/runtime/box-sizes";
 import { cn } from "@/lib/utils";
@@ -79,13 +80,12 @@ export function BillingSettings({
   async function go(action: string, path: string, body?: object) {
     setPending(action);
     try {
-      const res = await fetch(path, {
+      const data = await requestJson<{ url: string }>(path, {
         method: "POST",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
+        body,
+        has: (d) => Boolean(d.url),
+        fallback: "Stripe's page didn't open.",
       });
-      const data = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
-      if (!res.ok || !data?.url) throw new Error(data?.error ?? "Stripe's page didn't open.");
       setFailed(null);
       setError(null);
       window.location.assign(data.url);
