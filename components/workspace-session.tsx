@@ -99,9 +99,12 @@ export function WorkspaceSession({
   // A dropped stream gets its own notice (retrying, then lost) instead of the
   // strip, so a handshake failure mid-retry doesn't flash red.
   const streamDropped = conversation.reconnecting !== null || conversation.lost;
-  const connectionError = streamDropped ? null : (conversation.error ?? attachment.error);
-  // The stream reports the attachment's error as its own until it has one.
-  const fromBox = attachment.error !== null && connectionError === attachment.error;
+  // The box's own answer wins over the stream's: a box that is gone explains a
+  // socket that can't reconnect, so its notice — and its way out — is the one
+  // to show, whatever the stream said before it closed. (The stream reports
+  // the attachment's error as its own only until it has one of its own.)
+  const fromBox = attachment.error !== null;
+  const connectionError = streamDropped ? null : (fromBox ? attachment.error : conversation.error);
   const refresh = () => {
     setSendError(null);
     conversation.refresh();
