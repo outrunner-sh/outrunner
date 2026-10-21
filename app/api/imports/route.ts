@@ -9,8 +9,6 @@ import { importProvider, planDeps } from "@/lib/imports/deps";
 import { planImports } from "@/lib/imports/plan";
 import { ImportPlanRequest } from "@/lib/runtime/import-scan";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Plan an import of sessions the desktop app found on the user's Mac: each
  * gets a new workspace id and signed upload URLs for its artifacts, or the

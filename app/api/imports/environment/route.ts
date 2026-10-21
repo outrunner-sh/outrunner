@@ -12,8 +12,6 @@ import { ImportError } from "@/lib/imports/commit";
 import { importEnvironment } from "@/lib/imports/environment";
 import { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Keep the environment the user picked of a repository on their Mac (the
  * desktop app read its values) for its cloud sessions, sealed. New sessions,

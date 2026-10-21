@@ -6,8 +6,6 @@ import { commitImport, ImportError } from "@/lib/imports/commit";
 import { commitDeps } from "@/lib/imports/deps";
 import { ImportCommitRequest } from "@/lib/runtime/import-scan";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Finish importing one session whose artifacts the desktop app uploaded where
  * the plan said: it becomes an archived workspace, resumed in the cloud by
