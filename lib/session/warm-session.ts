@@ -19,10 +19,12 @@ const warming = new Map<string, Warm>();
 
 /**
  * Warm a cloud session up as the pointer rests on it in the sidebar: attach
- * (POST …/session?warm=1, which never brings back a box that ended) and stream
- * its conversation into the page's cache, so a click shows it at once and the
- * page attaches with the URLs already in hand. Stops by itself when no click
- * follows. Again within {@link WARM_URLS_FOR_MS} does nothing.
+ * (POST …/session?warm=1, which is read-only — it never brings back a box that
+ * ended, nor signs the session in or starts it, and says 409 when there is
+ * nothing to warm) and stream its conversation into the page's cache, so a
+ * click shows it at once and the page attaches with the URLs already in hand.
+ * Stops by itself when no click follows. Again within {@link WARM_URLS_FOR_MS}
+ * does nothing.
  */
 export function warmSession(workspaceId: string): void {
   const kept = warming.get(workspaceId);
