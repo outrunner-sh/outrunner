@@ -15,11 +15,9 @@ import {
 } from "@/lib/db/credentials";
 import { boxSize, isBoxSizeId } from "@/lib/runtime/box-sizes";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { daytonaAcceptsKey } from "@/lib/runtime/sandbox/daytona";
 import { modalAcceptsToken, type ModalToken } from "@/lib/runtime/sandbox/modal";
-import { probeStatus } from "@/lib/supabase/probe";
-
-export const dynamic = "force-dynamic";
 
 /**
  * Where the user's cloud sessions run (Settings → Sandbox): Outrunner's
@@ -48,34 +46,18 @@ function modalTokenIn(value: unknown): ModalToken | null {
   return MODAL_TOKEN_ID.test(id) && MODAL_TOKEN_SECRET.test(secret) ? { tokenId: id, tokenSecret: secret } : null;
 }
 
-function unauthorized() {
-  return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
-}
-
 function invalid(error: string) {
   return NextResponse.json({ error }, { status: 400 });
 }
 
 /** Run a save, answering the database's refusal as JSON the page can show. */
-async function saving(save: () => Promise<NextResponse>): Promise<NextResponse> {
-  try {
-    return await save();
-  } catch (error) {
-    // Until the sandbox migrations are applied, their columns aren't there.
-    if (probeStatus(error as { code?: string }) === "outdated") {
-      return NextResponse.json(
-        { error: "This can't be saved until Outrunner's database is updated. Try again later." },
-        { status: 503 },
-      );
-    }
-    console.error("Could not save sandbox settings", error);
-    return NextResponse.json({ error: "Couldn't save that. Try again." }, { status: 500 });
-  }
+function saving(save: () => Promise<NextResponse>): Promise<Response> {
+  return savingSettings("sandbox settings", save);
 }
 
 export async function GET() {
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
   return NextResponse.json(await getSandboxSettings(owner.id));
 }
 
@@ -84,7 +66,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
 
   let body: { sandbox?: unknown; daytonaKey?: unknown; modalToken?: unknown; boxSize?: unknown };
   try {
@@ -158,7 +140,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
 
   const key = new URL(request.url).searchParams.get("key") ?? "daytona";
   if (key !== "daytona" && key !== "modal") return invalid("Say which key to remove: daytona or modal.");

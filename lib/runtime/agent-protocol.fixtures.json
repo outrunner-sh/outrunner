@@ -55,6 +55,13 @@
       "repoPath": "/Users/ada/code/app",
       "permissionMode": "acceptEdits",
       "title": "Fix the login redirect"
+    },
+    {
+      "workspaceId": "ws-3",
+      "repoFullName": "acme/app",
+      "branch": "feat/z",
+      "baseBranch": "main",
+      "agent": "codex"
     }
   ],
   "WorkspaceActionRequest": [
@@ -202,6 +209,39 @@
           "url": "https://storage.example/upload/manifest?token=t"
         }
       ]
+    },
+    {
+      "archivedAt": "2026-08-06T00:00:00.000Z",
+      "uploads": [
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/upload/conversation?token=t"
+        },
+        {
+          "artifact": "cast",
+          "url": "https://storage.example/upload/cast?token=t"
+        },
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/upload/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/upload/patch?token=t"
+        },
+        {
+          "artifact": "summary",
+          "url": "https://storage.example/upload/summary?token=t"
+        },
+        {
+          "artifact": "manifest",
+          "url": "https://storage.example/upload/manifest?token=t"
+        },
+        {
+          "artifact": "rollout",
+          "url": "https://storage.example/upload/rollout?token=t"
+        }
+      ]
     }
   ],
   "RestoreWorkspaceRequest": [
@@ -241,6 +281,57 @@
           "url": "https://storage.example/download/conversation?token=t"
         }
       ]
+    },
+    {
+      "branch": "feat/z",
+      "baseBranch": "main",
+      "sessionId": "01a1596f-41f4-7f30-88f4-b569d1b5bf76",
+      "agent": "codex",
+      "auth": {
+        "kind": "openai-api-key",
+        "token": "sk-proj-0123456789abcdef0123456789"
+      },
+      "downloads": [
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/download/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/download/patch?token=t"
+        },
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/download/conversation?token=t"
+        },
+        {
+          "artifact": "rollout",
+          "url": "https://storage.example/download/rollout?token=t"
+        }
+      ]
+    },
+    {
+      "branch": "ada/daily-sheet-imported",
+      "baseBranch": "main",
+      "sessionId": "b52b847e-3fe0-4bba-98c7-15c157a7f6d4",
+      "bundleRef": "ada/daily-sheet",
+      "originWorktree": "/Users/ada/conductor/workspaces/millerp/kelowna",
+      "downloads": [
+        {
+          "artifact": "bundle",
+          "url": "https://storage.example/download/bundle?token=t"
+        },
+        {
+          "artifact": "patch",
+          "url": "https://storage.example/download/patch?token=t",
+          "encoding": "gzip"
+        },
+        {
+          "artifact": "conversation",
+          "url": "https://storage.example/download/conversation?token=t",
+          "encoding": "gzip"
+        }
+      ]
     }
   ],
   "Activity": [
@@ -252,5 +343,129 @@
       "lastActivity": "2026-10-17T10:15:30Z",
       "turnInProgress": true
     }
+  ],
+  "SetAuthRequest": [
+    {
+      "kind": "openai-api-key",
+      "token": "sk-proj-0123456789abcdef0123456789"
+    },
+    {
+      "kind": "claude-oauth-token",
+      "token": "sk-ant-oat01-0123456789abcdef0123"
+    },
+    {
+      "kind": "none"
+    }
+  ],
+  "AgentHealth": [
+    {
+      "status": "ok"
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "openrouter"
+      ]
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "anthropic",
+        "openrouter"
+      ],
+      "agents": [
+        "claude",
+        "codex"
+      ]
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "anthropic",
+        "openrouter"
+      ],
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "features": [
+        "restore-imports",
+        "session-environment",
+        "agent-config"
+      ]
+    }
+  ],
+  "LocalSession": [
+    {
+      "workspaceId": "ws-2",
+      "name": "app",
+      "title": "Fix the login redirect",
+      "folder": "/Users/ada/code/app",
+      "worktree": "/Users/ada/.outrunner/workspaces/ws-2",
+      "branch": "runtime/mv69bt00-3a01334a",
+      "baseBranch": "main",
+      "inPlace": false,
+      "createdAt": "2026-10-20T10:00:00Z",
+      "lastActiveAt": "2026-10-20T11:00:00Z",
+      "running": true,
+      "model": "gpt-6-luna",
+      "agent": "codex"
+    }
+  ],
+  "ReservedEnv": [
+    [
+      "PATH",
+      "HOME",
+      "USER",
+      "LOGNAME",
+      "SHELL",
+      "PWD",
+      "TMPDIR",
+      "LANG",
+      "TERM",
+      "TMUX",
+      "TMUX_PANE",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_MODEL",
+      "OPENAI_API_KEY",
+      "CODEX_HOME",
+      "DISABLE_AUTOUPDATER"
+    ]
+  ],
+  "SetEnvironmentRequest": [
+    {
+      "env": {
+        "DATABASE_URL": "postgres://u:p@db/app"
+      },
+      "files": {
+        "apps/backend/.env": "JWT_SECRET=x\n"
+      },
+      "setup": "bun install"
+    },
+    {
+      "env": {}
+    }
+  ],
+  "SetAgentConfigRequest": [
+    {
+      "version": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "url": "https://storage.example/download/config?token=t",
+      "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "mcpServers": {
+        "tracker": {
+          "type": "http",
+          "url": "https://mcp.example/mcp"
+        }
+      },
+      "settings": {
+        "enabledPlugins": {
+          "review@market": true
+        }
+      }
+    },
+    {}
   ]
 }

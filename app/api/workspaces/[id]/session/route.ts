@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
-import { getSandboxSettings } from "@/lib/db/credentials";
+import { agentAuthStore, getSandboxSettings } from "@/lib/db/credentials";
 import {
   getProject,
   getRuntimeComputerByProject,
@@ -19,10 +19,9 @@ import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
-import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
+import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer } from "@/lib/runtime/types";
-
-export const dynamic = "force-dynamic";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
@@ -36,7 +35,15 @@ type RouteContext = { params: Promise<{ id: string }> };
  *
  * The token secret never leaves the server; only the finished `wss://` URL
  * crosses the wire. Clients re-call this route whenever a stream closes to
- * refresh the URLs — do NOT cache them past a single connection.
+ * refresh the URLs — do NOT cache them past a single connection. Such a re-call
+ * adds `?fresh=1`: the box's endpoint, kept a few minutes server-side, is looked
+ * up again in case it is what failed.
+ *
+ * `?warm=1` is the sidebar warming a session up as the pointer rests on it
+ * (lib/session/warm-session.ts): the same answer, but read-only. It never
+ * brings back a box that ended (minutes, and a box that runs) on a hover, and
+ * never signs the session in or starts it; it says 409 instead, which the
+ * warm-up treats as nothing to warm.
  *
  * See docs/architecture/session-contract.md.
  */
@@ -44,13 +51,17 @@ export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
-  const owner = await getOwner();
+  const { id } = await context.params;
+  // Read alongside the owner check: the read is the owner's own anyway (RLS),
+  // and signed out it is dropped unread, failed or not.
+  const [ownerRead, workspaceRead] = await Promise.allSettled([getOwner(), getWorkspace(id)]);
+  if (ownerRead.status === "rejected") throw ownerRead.reason;
+  const owner = ownerRead.value;
   if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
-
-  const { id } = await context.params;
-  const workspace = await getWorkspace(id);
+  if (workspaceRead.status === "rejected") throw workspaceRead.reason;
+  const workspace = workspaceRead.value;
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
@@ -68,10 +79,18 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  const query = new URL(request.url).searchParams;
+  const warm = query.get("warm") === "1";
   let computer = await getRuntimeComputerByProject(workspace.projectId);
-  // A box that ended on its own (Modal, after a day) comes back on the disk it
-  // left, so the session opens where it was.
-  if (computer && provider.restoresBoxes) {
+  if (warm && computer && provider.restoresBoxes) {
+    const up =
+      computer.status === "ready" &&
+      computer.daytonaSandboxId !== null &&
+      (await provider.computerAlive(computer.daytonaSandboxId));
+    if (!up) return NextResponse.json({ error: "Its sandbox isn't up to warm." }, { status: 409 });
+  } else if (computer && provider.restoresBoxes) {
+    // A box that ended on its own (Modal, after a day) comes back on the disk
+    // it left, so the session opens where it was.
     try {
       computer = (await bringBack(provider, computer, owner)) ?? computer;
     } catch (error) {
@@ -105,7 +124,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   let target;
   try {
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret);
+    target = await provider.agentTarget(computer.daytonaSandboxId, secret, { fresh: query.get("fresh") === "1" });
   } catch (error) {
     console.error(`Session attach: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(
@@ -122,12 +141,34 @@ export async function POST(request: Request, context: RouteContext) {
   };
   const agent = new AgentClient(target);
 
+  // A hover must leave the session as it found it: a warm-up signs nothing in
+  // and starts nothing. Its URLs stand in for the page's first attach, so it
+  // answers only for a session already running — the one case where that
+  // attach would have had nothing to start anyway. The conversation itself is
+  // read from the transcript on disk, running or not, so the warm-up still
+  // fills the page's cache.
+  let summary;
+  if (warm) {
+    summary = await agent.workspaceSummary(identity).catch((error: unknown) => {
+      console.warn(`Session warm: summary fetch failed for ${workspace.id}`, error);
+      return undefined;
+    });
+    if (summary?.state !== "running") {
+      return NextResponse.json({ error: "Its session isn't running to warm." }, { status: 409 });
+    }
+  }
+
   // On a box that comes back after it ends, the session's Claude may not be
   // running: start it (continuing its conversation), or leave it be if it is.
-  if (provider.restoresBoxes) {
+  if (!warm && provider.restoresBoxes) {
     try {
+      // Signed in as the user picks now, before it launches.
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+      await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(owner.id));
       await agent.startWorkspace(identity);
     } catch (error) {
+      const failure = signInFailure(error);
+      if (failure) return NextResponse.json(failure, { status: 409 });
       if (error instanceof AgentRequestError && error.status === 404) {
         return NextResponse.json(
           {
@@ -143,12 +184,14 @@ export async function POST(request: Request, context: RouteContext) {
 
   // Fetch the current WorkspaceSummary alongside the URLs so the browser has
   // it on the first paint without an extra round-trip. If the agent hiccups,
-  // omit summary — clients can hit /api/workspaces/[id]/summary directly.
-  let summary;
-  try {
-    summary = await agent.workspaceSummary(identity);
-  } catch (error) {
-    console.warn(`Session attach: summary fetch failed for ${workspace.id}`, error);
+  // omit summary — clients can hit /api/workspaces/[id]/summary directly. A
+  // warm-up already has it, from the check above.
+  if (!summary) {
+    try {
+      summary = await agent.workspaceSummary(identity);
+    } catch (error) {
+      console.warn(`Session attach: summary fetch failed for ${workspace.id}`, error);
+    }
   }
 
   const body: SessionUrls = {

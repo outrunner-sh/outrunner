@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Box, ChevronLeft, CreditCard, Info, KeyRound, User } from "lucide-react";
+import { BarChart3, Box, ChevronLeft, CreditCard, Info, KeyRound, Layers, User } from "lucide-react";
 
-import { PROVIDERS_SETTINGS_HREF } from "@/lib/settings-links";
+import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
 
 const sections = [
@@ -12,12 +12,17 @@ const sections = [
   { href: "/settings/account", label: "Account", icon: User },
   // The user's plan; Stripe sends them back here after Checkout or the portal.
   { href: "/settings/billing", label: "Billing", icon: CreditCard },
+  // What Outrunner's models and the user's own keys have used; the sidebar's
+  // allowance bar points here.
+  { href: USAGE_SETTINGS_HREF, label: "Usage", icon: BarChart3 },
   // Where cloud sessions run; a create that needs a Daytona key points here.
   { href: "/settings/sandbox", label: "Sandbox", icon: Box },
   // The user's own Claude subscription and keys for model providers
   // (lib/settings-links.ts): a failed workspace create points here when it
   // has no Claude.
   { href: PROVIDERS_SETTINGS_HREF, label: "Providers (BYOK)", icon: KeyRound },
+  // The models the chat picker shows first, and the one new sessions start on.
+  { href: "/settings/models", label: "Default models", icon: Layers },
 ];
 
 /** The settings-nav column: a Back link home, then the section links with the
@@ -28,7 +33,7 @@ export function SettingsNav() {
     <aside
       role="navigation"
       aria-label="Settings"
-      className="flex min-h-0 flex-col gap-0.5 border-r border-border/60 px-4 py-6"
+      className="flex min-h-0 flex-col gap-0.5 border-r border-border/60 bg-sidebar px-4 py-6"
     >
       <Link
         href="/"

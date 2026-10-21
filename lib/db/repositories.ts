@@ -1,3 +1,4 @@
+import type { AgentId } from "@/lib/agents/registry";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -57,6 +58,16 @@ export async function getProject(id: string): Promise<Project | null> {
 
   if (error) throw error;
   return data ? toProject(data) : null;
+}
+
+/** Projects by id, hidden ones included, in one query. */
+export async function getProjects(ids: string[]): Promise<Project[]> {
+  if (ids.length === 0) return [];
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("projects").select("*").in("id", ids);
+
+  if (error) throw error;
+  return (data ?? []).map(toProject);
 }
 
 /** Upsert the repositories returned by GitHub, keyed on (owner, repo id). */
@@ -138,6 +149,8 @@ export async function createWorkspaceRow(input: {
   branch: string;
   baseBranch: string;
   provider: ProviderName;
+  /** Claude Code when not named. */
+  agent?: AgentId;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -148,6 +161,9 @@ export async function createWorkspaceRow(input: {
       branch: input.branch,
       base_branch: input.baseBranch,
       provider: input.provider,
+      // Named only for Codex, so a database before 20261020130000 still
+      // makes Claude Code sessions (its default) and refuses only Codex's.
+      ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
       status: "creating",
     })
     .select("*")
@@ -578,6 +594,15 @@ export async function getWorkspacePullRequest(
     .maybeSingle();
   if (error) throw error;
   return data ? toWorkspacePullRequest(data) : null;
+}
+
+/** The pull requests of these workspaces, in one query. */
+export async function listWorkspacePullRequests(workspaceIds: string[]): Promise<WorkspacePullRequest[]> {
+  if (workspaceIds.length === 0) return [];
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("pull_requests").select("*").in("workspace_id", workspaceIds);
+  if (error) throw error;
+  return (data ?? []).map(toWorkspacePullRequest);
 }
 
 export async function createWorkspacePullRequest(input: {

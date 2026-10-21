@@ -1,18 +1,33 @@
 "use client";
 
-import { Brain, ChevronDown, ChevronRight, Sparkles, Terminal, Wrench } from "lucide-react";
+import {
+  Bot,
+  FilePlus,
+  FileText,
+  Globe,
+  ListTodo,
+  type LucideIcon,
+  Pencil,
+  Search,
+  SquareTerminal,
+  Wrench,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
 import { DotMatrix } from "@/components/ui/loaders";
 import { useStreamedText } from "@/hooks/use-streamed-text";
-import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
+import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import {
-  activityVerb,
   describeToolUse,
   formatTokens,
   summarizeToolResult,
+  thoughtLabel,
+  type ToolKind,
+  toolRow,
 } from "@/lib/runtime/conversation-format";
+import { isInterruption } from "@/lib/runtime/conversation-events";
+import { type ConversationNode, conversationNodes } from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
@@ -23,14 +38,20 @@ import { cn } from "@/lib/utils";
  * but rows off screen skip layout and paint (`.timeline-row`, content-
  * visibility), which keeps a long session cheap without losing find-in-page. Every entry comes from
  * one AgentEvent; nothing is derived from PTY output (see
- * docs/architecture/session-contract.md). Assistant prose renders as a bordered
- * card, user turns as a right-aligned bubble, and tool activity as muted lines.
+ * docs/architecture/session-contract.md). Each of Claude's steps is a row: its
+ * words as plain prose, a thought as a quiet line, a tool call as a bordered
+ * row that opens onto its input and output. A prompt is a full-width box that
+ * stays pinned at the top while its turn scrolls beneath it.
  */
 export function ConversationTimeline({
   events,
   placeholder = null,
+  working = claudeIsWorking(events),
 }: {
   events: AgentEvent[];
+  /** Whether Claude is mid-turn, for the working indicator; read from the
+   *  events where the caller knows no better (a stopped turn it can't see). */
+  working?: boolean;
   /** What an empty conversation says (see conversationPlaceholder); a replay,
    *  which has nothing to connect to, passes none. */
   placeholder?: ConversationPlaceholder;
@@ -68,7 +89,7 @@ export function ConversationTimeline({
       }}
       className="min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
     >
-      <div ref={contentRef} className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pt-16 pb-16">
+      <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
         {placeholder === "connecting" && (
           <div role="status" className="conversation-placeholder">
             <DotMatrix rows={6} cols={9} />
@@ -81,12 +102,14 @@ export function ConversationTimeline({
             <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
           </div>
         )}
-        {buildNodes(events).map((node) => (
-          <div key={node.key} className="timeline-row">
+        {/* Under a placeholder there is only the session's state to show,
+            which the placeholder already speaks for. */}
+        {!placeholder && conversationNodes(events).map((node) => (
+          <div key={node.key} className={cn("timeline-row", node.kind === "prompt" && "is-prompt")}>
             <NodeRow node={node} />
           </div>
         ))}
-        {claudeIsWorking(events) && <WorkingIndicator />}
+        {working && <WorkingIndicator />}
       </div>
     </div>
   );
@@ -106,7 +129,8 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
       continue;
     }
     if (event.t !== "message") continue;
-    if (event.role === "user") return true; // a prompt or a tool result awaiting Claude
+    // A prompt or a tool result awaiting Claude; not the record of a stop.
+    if (event.role === "user") return !isInterruption(event);
     const last = event.content[event.content.length - 1];
     return last ? last.type !== "text" : false;
   }
@@ -135,69 +159,7 @@ function WorkingIndicator() {
   );
 }
 
-/** A rendered row. Tool activity is grouped ACROSS messages (Claude emits each
- *  tool call as its own message), so a whole working run collapses into one
- *  summary instead of a wall of "1 tool call" rows. */
-type Node =
-  | { kind: "state"; key: string; state: string }
-  | { kind: "usage"; key: string; event: Extract<AgentEvent, { t: "usage" }> }
-  | { kind: "prompt"; key: string; text: string }
-  | { kind: "prose"; key: string; text: string; at: string }
-  | { kind: "activity"; key: string; blocks: ContentBlock[]; messages: number };
-
-/** Flatten the event stream into render nodes, coalescing every consecutive
- *  thinking / tool_use / tool_result block — no matter how many messages they
- *  span — into a single collapsible activity node. User prompts and assistant
- *  prose break the run and render on their own. */
-function buildNodes(events: AgentEvent[]): Node[] {
-  const nodes: Node[] = [];
-  let group: { blocks: ContentBlock[]; messages: number } | null = null;
-  const flush = () => {
-    if (group && group.blocks.length) {
-      nodes.push({ kind: "activity", key: `act-${nodes.length}`, blocks: group.blocks, messages: group.messages });
-    }
-    group = null;
-  };
-
-  events.forEach((event, ei) => {
-    if (event.t === "state") {
-      flush();
-      nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
-      return;
-    }
-    if (event.t === "usage") {
-      flush();
-      nodes.push({ kind: "usage", key: `us-${ei}`, event });
-      return;
-    }
-    let addedToGroup = false;
-    event.content.forEach((block, bi) => {
-      if (block.type === "text") {
-        if (addedToGroup && group) {
-          group.messages += 1;
-          addedToGroup = false;
-        }
-        flush();
-        const key = `${event.uuid}-${ei}-${bi}`;
-        nodes.push(
-          event.role === "user"
-            ? { kind: "prompt", key, text: block.text }
-            : { kind: "prose", key, text: block.text, at: event.timestamp },
-        );
-        return;
-      }
-      if (!group) group = { blocks: [], messages: 0 };
-      group.blocks.push(block);
-      addedToGroup = true;
-    });
-    if (addedToGroup && group) group.messages += 1;
-  });
-
-  flush();
-  return nodes;
-}
-
-function NodeRow({ node }: { node: Node }) {
+function NodeRow({ node }: { node: ConversationNode }) {
   switch (node.kind) {
     case "state":
       return (
@@ -223,17 +185,15 @@ function NodeRow({ node }: { node: Node }) {
         </div>
       );
     case "prompt":
-      return (
-        <div className="flex justify-end">
-          <div className="max-w-[90%] whitespace-pre-wrap break-words rounded-3xl bg-foreground/[0.07] px-4 py-2 text-[0.8125rem] leading-relaxed text-foreground">
-            {node.text}
-          </div>
-        </div>
-      );
+      return <div className="timeline-prompt">{node.text}</div>;
+    case "interrupted":
+      return <div className="timeline-thought">Interrupted</div>;
     case "prose":
       return <Prose text={node.text} at={node.at} />;
-    case "activity":
-      return <ToolActivity blocks={node.blocks} />;
+    case "thought":
+      return <div className="timeline-thought">{thoughtLabel(node.seconds)}</div>;
+    case "tool":
+      return <ToolRow name={node.name} input={node.input} result={node.result} />;
   }
 }
 
@@ -245,139 +205,61 @@ function Prose({ text, at }: { text: string; at: string }) {
   const [live] = useState(() => isLive(at, Date.now()));
   const { visible, streaming } = useStreamedText(text, live);
   return (
-    <div className={cn("min-w-0", streaming && "is-streaming")} aria-busy={streaming || undefined}>
+    <div className={cn("min-w-0 px-2", streaming && "is-streaming")} aria-busy={streaming || undefined}>
       <Markdown>{visible}</Markdown>
     </div>
   );
 }
 
-/** One collapsed summary for a whole working run (Conductor / open-webui style):
- *  "Explored · Read a.ts, 2 Bash" or "Thought" for a reasoning-only run; expands
- *  to every step. */
-function ToolActivity({ blocks }: { blocks: ContentBlock[] }) {
-  const tools = blocks.filter(
-    (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
-  );
-  const verb = activityVerb(tools.map((tool) => tool.name));
-  const summary = toolSummary(tools);
+const TOOL_ICONS: Record<ToolKind, LucideIcon> = {
+  command: SquareTerminal,
+  create: FilePlus,
+  edit: Pencil,
+  read: FileText,
+  search: Search,
+  web: Globe,
+  agent: Bot,
+  todo: ListTodo,
+  other: Wrench,
+};
 
+/** One tool call: a bordered row (what it did, and the lines it changed),
+ *  opening onto its input and, once it has arrived, its output. */
+function ToolRow({ name, input, result }: { name: string; input: unknown; result: { content: unknown } | null }) {
+  const row = toolRow(name, input);
+  const Icon = TOOL_ICONS[row.kind];
+  const command = name === "Bash" ? describeToolUse(name, input) : null;
   return (
-    <details className="group min-w-0">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-sm text-muted-foreground hover:text-foreground">
-        {tools.length === 0 ? (
-          <Sparkles className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <span className="min-w-0 flex-1 truncate">
-          <span className="text-foreground/80">{verb}</span>
-          {summary && <span className="ml-1 text-muted-foreground">{summary}</span>}
-        </span>
-        <ChevronDown className="size-3 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" />
-      </summary>
-      <div className="mt-1.5 space-y-3 overflow-hidden rounded-2xl border border-border p-3">
-        {blocks.map((block, i) => (
-          <BlockRow key={i} block={block} />
-        ))}
-      </div>
-    </details>
-  );
-}
-
-/** cptr-style run summary: count-grouped tool names, e.g. "Read a.ts, 2 Bash". */
-function toolSummary(tools: Extract<ContentBlock, { type: "tool_use" }>[]): string {
-  if (tools.length === 0) return "";
-  const counts = new Map<string, number>();
-  for (const t of tools) counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
-  return [...counts].map(([name, n]) => (n > 1 ? `${n} ${name}` : name)).join(", ");
-}
-
-function BlockRow({ block }: { block: ContentBlock }) {
-  switch (block.type) {
-    case "text":
-      // Assistant prose renders plain on white (per the light reference); the
-      // user bubble supplies its own container.
-      return <Markdown>{block.text}</Markdown>;
-    case "thinking":
-      return (
-        <div className="flex items-center gap-1.5 text-[11px] italic text-muted-foreground">
-          <Brain className="size-3" />
-          Thinking
-        </div>
-      );
-    case "tool_use":
-      return <ToolUseRow name={block.name} input={block.input} />;
-    case "tool_result":
-      return <ToolResultRow content={block.content} />;
-  }
-}
-
-function ToolUseRow({ name, input }: { name: string; input: unknown }) {
-  const summary = describeToolUse(name, input);
-  const isBash = name === "Bash";
-  return (
-    <details className="group">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px]">
-        <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-        {isBash ? (
-          <Terminal className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : (
-          <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <span className="shrink-0 font-medium text-foreground">{name}</span>
-        {summary && (
-          <span
-            className={`truncate text-muted-foreground ${isBash ? "font-mono" : ""}`}
-            title={summary}
-          >
-            {summary}
+    <details className="timeline-tool">
+      <summary title={row.title ?? undefined}>
+        <Icon aria-hidden />
+        <span className={cn("min-w-0 truncate", row.mono && "font-mono text-[12px]")}>{row.label}</span>
+        {row.stats && (
+          <span className="shrink-0 tabular-nums">
+            {row.stats.added > 0 && <span className="text-positive">+{row.stats.added}</span>}
+            {row.stats.added > 0 && row.stats.removed > 0 && " "}
+            {row.stats.removed > 0 && <span className="text-destructive">-{row.stats.removed}</span>}
           </span>
         )}
       </summary>
-      <pre className="mt-1 ml-[18px] overflow-x-auto rounded-md border border-border bg-muted px-3 py-2 font-mono text-[11px] text-muted-foreground">
-        {JSON.stringify(input, null, 2)}
-      </pre>
+      <div className="timeline-tool-body">
+        <pre>{command ?? JSON.stringify(input, null, 2)}</pre>
+        {result && <ToolOutput content={result.content} />}
+      </div>
     </details>
   );
 }
 
-/** A tool's result: its first line, expanding to the rest only when there is
- *  more than the preview shows. A short result is a plain row, with a blank
- *  where the chevron would be so the rows still line up. */
-function ToolResultRow({ content }: { content: unknown }) {
-  const { text, preview, truncated, lineCount } = summarizeToolResult(content);
-  const line = (
-    <>
-      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        result
-      </span>
-      <span className="truncate font-mono text-[11px] text-muted-foreground" title={preview}>
-        {preview}
-      </span>
-      {lineCount > 1 && (
-        <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
-          {lineCount} lines
-        </span>
-      )}
-    </>
-  );
-  if (!truncated) {
-    return (
-      <div className="flex items-center gap-1.5 py-0.5 text-[12px]">
-        <span aria-hidden className="size-3 shrink-0" />
-        {line}
-      </div>
-    );
-  }
+/** A tool's output under its input, its size beside the heading. */
+function ToolOutput({ content }: { content: unknown }) {
+  const { text, lineCount } = summarizeToolResult(content);
   return (
-    <details className="group">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-[12px]">
-        <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
-        {line}
-      </summary>
-      <pre className="mt-1 ml-[18px] max-h-96 overflow-auto rounded-md border border-border bg-muted px-3 py-2 font-mono text-[11px] whitespace-pre-wrap text-muted-foreground">
-        {text}
-      </pre>
-    </details>
+    <>
+      <div className="timeline-tool-heading">
+        Output
+        {lineCount > 1 && <span className="tabular-nums">{lineCount} lines</span>}
+      </div>
+      <pre className="max-h-96 overflow-auto whitespace-pre-wrap">{lineCount === 0 ? "(empty result)" : text}</pre>
+    </>
   );
 }

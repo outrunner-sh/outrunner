@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,41 +20,77 @@ func buildBundle(ctx context.Context, worktree, dst string) (string, error) {
 	return dst, nil
 }
 
-// buildPatch writes a patch of the working-tree changes relative to HEAD so
-// Restore can reconstruct exact WIP — including binary changes and untracked
-// files. `--binary` serializes binary blobs so `git apply` can rebuild them.
-// Untracked (non-ignored) files are staged intent-to-add so they appear as
-// new-file diffs, then the intent-to-add markers are cleared for EXACTLY those
-// paths — never a blanket reset, so any files the session had genuinely staged
-// keep their index state. An empty patch (no WIP) is valid.
-//
-// `.gitignore`d files are excluded by design.
+// buildPatch writes the worktree's WorkingPatch to dst.
 func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
-	// The untracked (non-ignored) files to fold in as new-file diffs.
-	others := untrackedFiles(ctx, worktree)
-	if len(others) > 0 {
-		args := append([]string{"-C", worktree, "add", "-N", "--"}, others...)
-		_ = exec.CommandContext(ctx, "git", args...).Run() // best-effort
-	}
-
-	out, err := exec.CommandContext(ctx, "git", "-C", worktree, "diff", "HEAD", "--binary").Output()
-	if err != nil {
-		// A broken repo is the only real failure here; degrade to an empty patch
-		// rather than aborting the whole archive over WIP capture.
-		out = nil
-	}
-
-	// Undo intent-to-add for exactly the paths we added — leaving any pre-staged
-	// tracked changes in the index untouched.
-	if len(others) > 0 {
-		args := append([]string{"-C", worktree, "reset", "-q", "--"}, others...)
-		_ = exec.CommandContext(ctx, "git", args...).Run()
-	}
-
-	if err := os.WriteFile(dst, out, 0o644); err != nil {
+	if err := os.WriteFile(dst, WorkingPatch(ctx, worktree), 0o644); err != nil {
 		return "", fmt.Errorf("write patch: %w", err)
 	}
 	return dst, nil
+}
+
+// WorkingPatch is a patch of the working-tree changes relative to HEAD, so
+// Restore can reconstruct exact WIP — including binary changes and untracked
+// files. `--binary` serializes binary blobs so `git apply` can rebuild them.
+// Untracked (non-ignored) files are added intent-to-add so they appear as
+// new-file diffs — in a copy of the index, never the worktree's own: someone
+// may be working in it (a local checkout imported while its agent runs), and
+// their index, staged changes included, is left exactly as it was. An empty
+// patch (no WIP, or a broken repo) is valid.
+//
+// `.gitignore`d files are excluded by design.
+func WorkingPatch(ctx context.Context, worktree string) []byte {
+	env := os.Environ()
+	if others := untrackedFiles(ctx, worktree); len(others) > 0 {
+		index, cleanup, err := indexCopy(ctx, worktree)
+		if err == nil {
+			defer cleanup()
+			env = append(env, "GIT_INDEX_FILE="+index)
+			add := exec.CommandContext(ctx, "git", append([]string{"-C", worktree, "add", "-N", "--"}, others...)...)
+			add.Env = env
+			_ = add.Run() // best-effort: without it, only tracked changes are captured
+		}
+	}
+	diff := exec.CommandContext(ctx, "git", "-C", worktree, "diff", "HEAD", "--binary")
+	diff.Env = env
+	out, err := diff.Output()
+	if err != nil {
+		// A broken repo is the only real failure here; degrade to an empty patch
+		// rather than aborting the whole capture over WIP.
+		return nil
+	}
+	return out
+}
+
+// indexCopy copies the worktree's index to a temporary file. Git replaces an
+// index by renaming a finished one into place, so the copy is never half
+// written. A repository with no index yet gets a path to none, which git reads
+// as empty.
+func indexCopy(ctx context.Context, worktree string) (string, func(), error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", worktree, "rev-parse", "--git-path", "index").Output()
+	if err != nil {
+		return "", nil, err
+	}
+	index := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(index) {
+		index = filepath.Join(worktree, index)
+	}
+	dir, err := os.MkdirTemp("", "patch-index-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+	copied := filepath.Join(dir, "index")
+	data, err := os.ReadFile(index)
+	if err == nil {
+		err = os.WriteFile(copied, data, 0o600)
+	} else if os.IsNotExist(err) {
+		err = nil
+	}
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return copied, cleanup, nil
 }
 
 // untrackedFiles lists the worktree's untracked, non-ignored files.

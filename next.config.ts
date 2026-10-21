@@ -1,6 +1,16 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /**
+   * Cache Components: each page's static shell is prerendered and prefetched,
+   * so a click shows it at once while anything read per request streams in
+   * under its <Suspense>; and the last few pages visited stay alive, hidden in
+   * React <Activity>, so going back to one shows it as it was. Pages export
+   * `unstable_instant` where a click must never wait on the server: the build
+   * fails if one would.
+   */
+  cacheComponents: true,
+
   // The Daytona SDK loads `form-data` lazily for file uploads. Turbopack
   // cannot transform that dynamic Node require, so leave both packages for
   // the Node runtime rather than bundling them into route handlers.

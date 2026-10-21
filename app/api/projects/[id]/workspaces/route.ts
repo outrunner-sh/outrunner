@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import { after, NextResponse } from "next/server";
 
+import type { AgentId } from "@/lib/agents/registry";
+import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, isPlanLimitError } from "@/lib/billing/limits";
 import {
+  agentAuthStore,
   getSandboxSettings,
   modelKey,
   modelMenu,
@@ -27,8 +30,26 @@ import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
+import { isValidBranchName } from "@/lib/runtime/git";
+import { provisionFailureMessage } from "@/lib/runtime/provision-failure";
+import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
-import { defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  agentOf,
+  defaultModel,
+  type Effort,
+  EffortUnsupportedError,
+  requestedEffort,
+  requestedModel,
+  runsOnOwnAccount,
+  type SessionModel,
+} from "@/lib/runtime/session-models";
+import {
+  deliverSessionAuth,
+  OutdatedComputerError,
+  readyBox,
+  sessionAuthClient,
+} from "@/lib/runtime/session-auth";
 import {
   boxSizeOn,
   computerMadeBy,
@@ -37,15 +58,13 @@ import {
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
-import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { providerSettingsHref } from "@/lib/settings-links";
-
-export const dynamic = "force-dynamic";
 
 // Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror, in
 // after() once the response has gone. maxDuration caps the per-request
@@ -54,19 +73,6 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-function isValidBranchName(branch: string): boolean {
-  return (
-    branch.length >= 1 &&
-    branch.length <= 128 &&
-    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch) &&
-    !branch.includes("..") &&
-    !branch.includes("//") &&
-    !branch.endsWith(".") &&
-    !branch.endsWith("/") &&
-    !branch.endsWith(".lock")
-  );
-}
 
 function generatedBranch(): string {
   return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
@@ -107,14 +113,47 @@ export async function POST(request: Request, context: RouteContext) {
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
+  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown; effort?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  // The model chosen on the new-session screen; none, the menu's default.
+  const chosenModel = requestedModel(body);
+  if (chosenModel === null) {
+    return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+  }
+  // Picked with it; none, the model's own.
+  const chosenEffort = requestedEffort(body);
+  if (chosenEffort === null) {
+    return NextResponse.json({ error: "Choose one of the offered efforts." }, { status: 400 });
+  }
+  // Codex for Codex's models, Claude Code for every other, and for none.
+  const agentId = agentOf(chosenModel?.provider ?? "claude");
+  const menu = await modelMenu(owner.id);
+  // What it starts on: the model chosen, else the menu's default, else the
+  // user's Claude (startingModel). On a model on a key, Claude Code needs no
+  // account of the user's: one they haven't connected doesn't stop it.
+  const startsOn = chosenModel ?? defaultModel(menu);
+  const ownAccount = !startsOn || runsOnOwnAccount(startsOn);
+  // How it signs in, said before a box is set up for it, not after.
+  let auth: ResolvedAuth;
+  try {
+    auth = await resolveAgentAuth(agentAuthStore(owner.id), agentId, "cloud", { ownAccount });
+  } catch (error) {
+    if (!(error instanceof AgentAuthError)) throw error;
+    return NextResponse.json({ error: error.message, settingsHref: error.settingsHref }, { status: 409 });
+  }
+
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  // Either credential kind is fine; an empty env means none was set. Sessions
-  // start on Outrunner's models (on the user's own OpenRouter key, or the
-  // server's), so only without those is Claude a must.
-  const hasClaude = Object.keys(sessionEnv).length > 0;
-  const menu = await modelMenu(owner.id);
-  if (!hasClaude && !offersModels(menu)) {
+  // Either credential kind is fine; without one none was set, unless
+  // the session gets one of its own. Sessions start on Outrunner's models (on
+  // the user's own OpenRouter key, or the server's), so only without those is
+  // Claude a must. Codex runs on its own sign-in, resolved above.
+  const hasClaude = agentId === "claude" && (hasClaudeCredential(sessionEnv) || auth.credential !== null);
+  if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
   if (project.private && !githubToken) {
@@ -127,17 +166,6 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-  }
-  // The model chosen on the new-session screen; none, the menu's default.
-  const chosenModel = requestedModel(body);
-  if (chosenModel === null) {
-    return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
-  }
   // Said before a box is set up for it, not after.
   if (chosenModel?.provider === "claude" && !hasClaude) {
     return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
@@ -169,8 +197,15 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 503 },
     );
   }
-  // Only a Runtime Computer's agent can put a session on another model.
-  if (!hasClaude && !isComputerProvider(provider)) {
+  // Only a Runtime Computer's agent can put a session on another model, or
+  // run Codex.
+  if (agentId === "codex" && !isComputerProvider(provider)) {
+    return NextResponse.json(
+      { error: "Codex runs on Outrunner's cloud computers. Choose one under Settings → Sandbox.", settingsHref: "/settings/sandbox" },
+      { status: 409 },
+    );
+  }
+  if (agentId === "claude" && !hasClaude && !isComputerProvider(provider)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
 
@@ -187,6 +222,7 @@ export async function POST(request: Request, context: RouteContext) {
       branch: requestedBranch || generatedBranch(),
       baseBranch: project.defaultBranch,
       provider: provider.name,
+      agent: agentId,
     });
   } catch (error) {
     const message = safeErrorMessage(error);
@@ -214,6 +250,9 @@ export async function POST(request: Request, context: RouteContext) {
       menu,
       chosenModel,
       maxLiveComputers: gate.cap,
+      chosenEffort,
+      agentId,
+      auth,
     }),
   );
   return NextResponse.json({ workspace: { id: workspace.id } }, { status: 202 });
@@ -239,6 +278,9 @@ async function provisionWorkspace({
   menu,
   chosenModel,
   maxLiveComputers,
+  chosenEffort,
+  agentId,
+  auth,
 }: {
   workspace: Workspace;
   project: Project;
@@ -254,6 +296,11 @@ async function provisionWorkspace({
   chosenModel: SessionModel | undefined;
   /** The plan's box cap, enforced by the claim in the database; null when none applies. */
   maxLiveComputers: number | null;
+  /** Picked with it, or none for the model's own. */
+  chosenEffort: Effort | undefined;
+  /** The agent the session runs, and what it signs in with. */
+  agentId: AgentId;
+  auth: ResolvedAuth;
 }): Promise<void> {
   const settle = async (patch: Parameters<typeof transitionWorkspace>[0]["patch"]) => {
     const moved = await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch });
@@ -262,9 +309,14 @@ async function provisionWorkspace({
   };
   // Phases only: even the last stays "provisioning", so the ready below, with
   // the box's details, still finds the session setting up.
-  const setPhase = async (phase: ProvisionPhase) => {
-    await settle({ status: "provisioning", phase });
+  // The step a failure stopped at, for the session page.
+  let phase: ProvisionPhase | null = null;
+  const setPhase = async (next: ProvisionPhase) => {
+    phase = next;
+    await settle({ status: "provisioning", phase: next });
   };
+  // Cut from any error the session page shows.
+  const secrets: (string | undefined)[] = [githubToken, auth.credential?.token, ...Object.values(sessionEnv)];
 
   try {
     if (isComputerProvider(provider)) {
@@ -276,6 +328,15 @@ async function provisionWorkspace({
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
       let endedBox = endedBoxOf(currentComputer, provider.name);
+      const needsNewComputer =
+        !currentComputer?.daytonaSandboxId ||
+        currentComputer.status !== "ready";
+
+      // Show "allocate" phase only when provisioning a new computer
+      if (needsNewComputer) {
+        await setPhase("allocate");
+      }
+
       if (currentComputer?.status === "ready" && currentComputer.daytonaSandboxId) {
         const sandboxId = currentComputer.daytonaSandboxId;
         const madeBy = computerMadeBy(currentComputer);
@@ -301,6 +362,7 @@ async function provisionWorkspace({
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
+      secrets.push(ensured.agentSecret);
       if (!computer.daytonaSandboxId) {
         throw new Error("Ready Runtime Computer has no sandbox id.");
       }
@@ -308,9 +370,11 @@ async function provisionWorkspace({
       // Initial provisioning clones the mirror. Every later workspace refreshes
       // it before the agent branches from the project's default branch.
       if (!ensured.provisioned) {
+        await setPhase("clone");
         await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
       }
 
+      await setPhase("worktree");
       const target = await provider.agentTarget(
         computer.daytonaSandboxId,
         ensured.agentSecret,
@@ -322,23 +386,39 @@ async function provisionWorkspace({
         userId: owner.id,
       };
       const agent = new AgentClient(target);
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id);
+      const signIn = sessionAuthClient(agent, identity, upgrade);
+      // Before the session is made: an agent too old for Codex would make a
+      // Claude Code session of it. One that is, is upgraded in place.
+      await readyBox(signIn, agentId, auth);
       const created = await agent.createWorkspace(
         {
           workspaceId: workspace.id,
           repoFullName: project.fullName,
           baseBranch: project.defaultBranch,
           branch: workspace.branch,
+          // Named only for Codex: Claude Code is every agent's default.
+          ...(agentId !== "claude" && { agent: agentId }),
+          // Configure git author so commits are attributed to the user.
+          ...(owner.email && { gitUser: { name: owner.name, email: owner.email } }),
         },
         identity,
       );
+      // Before the first launch, so the agent starts signed in.
+      await setPhase("secrets");
+      await deliverSessionAuth(signIn, agentId, auth);
+      // And with the user's own setup and its project's environment.
+      await setUpSession(agent, identity, upgrade, owner.id, project.id);
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
         keyFor: (holder) => modelKey(owner.id, holder),
         hasClaude,
         model: chosenModel,
+        effort: chosenEffort,
         fallback: defaultModel(menu),
       });
+      await setPhase("health_check");
       await agent.startWorkspace(identity);
 
       const ready = await settle({
@@ -383,16 +463,21 @@ async function provisionWorkspace({
     });
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
-    // The session page shows this: say what to do where the user can fix it.
+    // The session page shows this: say what to do where the user can fix it,
+    // or else the step it stopped at and why, so the cause isn't only in the
+    // log. A Claude model's effort is set on the way to the user's own Claude,
+    // which startingModel leaves unwrapped: its message says to update the box.
     // The plan's cap can refuse a start mid-flight (a simultaneous start won
     // the slot first): say so, rather than blame the setup.
     const refused = isPlanLimitError(error);
     const errorMessage =
-      error instanceof NoStartingModelError
+      error instanceof NoStartingModelError ||
+      error instanceof OutdatedComputerError ||
+      error instanceof EffortUnsupportedError
         ? error.message
         : refused
           ? refused.message
-          : "Provisioning failed. Check Outrunner's setup and try again.";
+          : provisionFailureMessage(error, phase, secrets);
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );

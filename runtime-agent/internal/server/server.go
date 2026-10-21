@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -88,7 +90,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/restore", s.authed(s.restoreWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
+	mux.HandleFunc("POST /workspaces/{id}/interrupt", s.authed(s.interrupt))
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
+	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
+	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
+	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -98,12 +104,22 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// health answers unauthenticated, so it says nothing but that the agent is up
-// and which gateways it can run a session through (public: they're in the
-// source), for the web app to offer only those. An agent from before this
-// field supports OpenRouter alone.
+// health answers unauthenticated, so it says nothing but that the agent is up,
+// which gateways it can run a session through (public: they're in the
+// source), and which agents (whether Codex is installed), for the web app to
+// offer only those. An agent from before gateways supports OpenRouter alone;
+// one from before agents runs Claude alone.
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "gateways": claude.Gateways()})
+	gateways := []string{}
+	for _, g := range claude.Gateways() {
+		gateways = append(gateways, string(g))
+	}
+	writeJSON(w, http.StatusOK, protocol.Health{
+		Status:   "ok",
+		Gateways: gateways,
+		Agents:   s.ws.Agents(),
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig},
+	})
 }
 
 // authed verifies the Bearer Runtime token before invoking a control handler.
@@ -141,6 +157,14 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid model")
 		return
 	}
+	if err := s.ws.CheckAgent(req.Agent); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	var gitUser *workspace.GitUser
+	if req.GitUser != nil {
+		gitUser = &workspace.GitUser{Name: req.GitUser.Name, Email: req.GitUser.Email}
+	}
 	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
 		WorkspaceID:    req.WorkspaceID,
 		Branch:         req.Branch,
@@ -149,6 +173,8 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		PermissionMode: mode,
 		Title:          req.Title,
 		Model:          req.Model,
+		Agent:          req.Agent,
+		GitUser:        gitUser,
 	})
 	switch {
 	case errors.Is(err, workspace.ErrBypassInFolder):
@@ -227,7 +253,29 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "restore requires a branch and download URLs")
 		return
 	}
+	if err := validImportRestore(req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if err := s.ws.CheckAgent(req.Agent); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if req.Auth != nil {
+		if err := validAuth(*req.Auth); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+			return
+		}
+		if err := s.ws.CheckAuth(req.Auth.Kind); err != nil {
+			writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+			return
+		}
+	}
 	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req)
+	if errors.Is(err, workspace.ErrAuthMismatch) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
 	respond(w, name, err)
 }
 
@@ -363,6 +411,19 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	respond(w, "sent", s.ws.SendMessage(r.PathValue("id"), req.Content))
 }
 
+// interrupt stops the turn the workspace's session is running, if any.
+func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	err := s.ws.Interrupt(r.Context(), r.PathValue("id"))
+	if errors.Is(err, workspace.ErrNotInterrupted) {
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+		return
+	}
+	respond(w, "interrupted", err)
+}
+
 // setModel switches the workspace's session to another model, relaunching a
 // running session on it (its conversation continues).
 func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
@@ -386,18 +447,110 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a gateway needs its key, and only a gateway takes one")
 		return
 	}
+	if req.Effort != "" && !claude.ValidEffort(req.Effort) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid effort")
+		return
+	}
 	err = s.ws.SetModel(r.Context(), r.PathValue("id"), workspace.ModelChoice{
-		Model: req.Model, Gateway: gateway, Token: req.Token,
+		Model: req.Model, Gateway: gateway, Token: req.Token, Effort: req.Effort,
 	}, "")
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+	case errors.Is(err, workspace.ErrGatewayUnsupported):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrSessionUnchecked),
 		errors.Is(err, workspace.ErrModelUnsupported):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
-	default:
+	case err != nil:
 		respond(w, req.Model, err)
+	default:
+		// The effort is always answered, empty or not: an agent from before
+		// efforts answers without it, which tells the web app the effort it
+		// asked for wasn't applied.
+		writeJSON(w, http.StatusOK, map[string]string{"result": req.Model, "effort": req.Effort})
 	}
+}
+
+// setAuth gives the workspace's session its own credential, or takes it away;
+// it applies at the session's next launch. The token is checked like a
+// gateway key: it goes into a sourced file, and is masked in every session's
+// output.
+func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.SetAuthRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := validAuth(req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	err := s.ws.SetAuth(r.Context(), r.PathValue("id"), req.Kind, req.Token)
+	if errors.Is(err, workspace.ErrAuthMismatch) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	if errors.Is(err, workspace.ErrAuthUnsupported) {
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+		return
+	}
+	respond(w, req.Kind, err)
+}
+
+func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.SetEnvironmentRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
+	if errors.Is(err, workspace.ErrInvalidEnvironment) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	respond(w, "set", err)
+}
+
+// setAgentConfig installs the user's own agent setup on this computer. Any
+// session's token may: the computer is that user's, for that project.
+func (s *Server) setAgentConfig(w http.ResponseWriter, r *http.Request) {
+	var req protocol.SetAgentConfigRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.URL != "" && (req.Version == "" || !strings.HasPrefix(req.SHA256, "sha256:")) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "an archive needs its version and digest")
+		return
+	}
+	err := s.ws.SetAgentConfig(r.Context(), workspace.AgentConfigRequest{
+		Version:    req.Version,
+		URL:        req.URL,
+		SHA256:     req.SHA256,
+		MCPServers: req.MCPServers,
+		Settings:   req.Settings,
+	})
+	if errors.Is(err, workspace.ErrInvalidAgentConfig) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	respond(w, "set", err)
+}
+
+// validAuth checks a session credential as set or restored: a known kind, and
+// a token shaped like a key for any kind but none, which takes none.
+func validAuth(req protocol.SetAuthRequest) error {
+	if !workspace.ValidAuthKind(req.Kind) {
+		return fmt.Errorf("unknown credential kind %q", req.Kind)
+	}
+	if (req.Kind == workspace.AuthNone) != (req.Token == "") || (req.Token != "" && !claude.ValidGatewayToken(req.Token)) {
+		return errors.New("a credential needs a valid token, and none takes one")
+	}
+	return nil
 }
 
 // pty bridges the browser WebSocket to the workspace's tmux PTY. Every attach
@@ -783,3 +936,22 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func intptr(v int) *int { return &v }
+
+// validImportRestore checks what a restore of an imported session adds: a
+// known encoding, a bundle branch that can't be read as a refspec of more
+// than one ref, and an absolute folder to move the conversation from.
+func validImportRestore(req protocol.RestoreWorkspaceRequest) error {
+	for _, d := range req.Downloads {
+		if d.Encoding != "" && d.Encoding != "gzip" {
+			return fmt.Errorf("unknown encoding %q for %s", d.Encoding, d.Artifact)
+		}
+	}
+	if ref := req.BundleRef; ref != "" &&
+		(strings.HasPrefix(ref, "-") || strings.ContainsAny(ref, ": \t\n~^?*[\\") || strings.Contains(ref, "..")) {
+		return fmt.Errorf("invalid bundle branch %q", ref)
+	}
+	if o := req.OriginWorktree; o != "" && (!path.IsAbs(o) || path.Clean(o) != o || o == "/") {
+		return fmt.Errorf("invalid origin folder %q", o)
+	}
+	return nil
+}

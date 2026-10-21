@@ -42,7 +42,7 @@ test("a secret reaches a command as the box user by name only", () => {
 
 test("the box setup installs what the agent needs and makes its user", () => {
   const s = neevPrepareScript();
-  for (const part of ["set -e", "apt-get update", "tmux", "jq", "@anthropic-ai/claude-code", "useradd -m"]) {
+  for (const part of ["set -e", "apt-get update", "tmux", "jq", "@anthropic-ai/claude-code", "@openai/codex@", "/bin/gh", "useradd -m"]) {
     assert.ok(s.includes(part), `setup lacks ${part}`);
   }
   assert.ok(s.indexOf("apt-get update") < s.indexOf("apt-get install"), "update before install");

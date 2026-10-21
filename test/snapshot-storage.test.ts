@@ -88,3 +88,11 @@ test("mintSnapshotDownloadUrl refuses a cross-owner key without calling storage"
   await assert.rejects(() => mintSnapshotDownloadUrl(storage, foreign, OWNER));
   assert.equal(storage.downloadCalls.length, 0);
 });
+
+test("an optional artifact is planned only when asked for, beside the rest", () => {
+  const plain = planSnapshotUpload(OWNER, "ws", ARCHIVED_AT);
+  assert.equal(plain.targets.some((t) => t.artifact === "rollout"), false);
+  const codex = planSnapshotUpload(OWNER, "ws", ARCHIVED_AT, ["rollout"]);
+  assert.equal(codex.targets.length, plain.targets.length + 1);
+  assert.deepEqual(codex.targets.at(-1), { artifact: "rollout", path: `${codex.prefix}rollout.jsonl` });
+});

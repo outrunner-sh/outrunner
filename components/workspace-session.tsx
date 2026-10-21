@@ -4,14 +4,27 @@ import "@xterm/xterm/css/xterm.css";
 
 import { ChevronRight, RefreshCw, TerminalSquare, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
-import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
+import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
+import {
+  accountsHere,
+  localAgentRequest,
+  localTarget,
+  messageForLocalError,
+  putOnModel,
+} from "@/lib/desktop/local-runtime";
+import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
+import {
+  livePrompts,
+  pendingShows,
+  settlePending,
+  type PendingPrompt,
+} from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import {
   forgetFirstPrompt,
@@ -22,16 +35,45 @@ import {
   withoutFirstPrompt,
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { isProviderId } from "@/lib/providers/registry";
-import { defaultModel, modelGroups, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
-import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
+import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
+import {
+  defaultModel,
+  type Effort,
+  modelGroups,
+  type ModelProvider,
+  parseAgentConnections,
+  runsOnOwnAccount,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
+import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
+import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 import { cn } from "@/lib/utils";
 
+const MENU_UNTIL_ANSWERED: OutrunnerModels = {
+  outrunner: true,
+  allowance: false,
+  keys: [],
+  available: true,
+  loadout: EMPTY_LOADOUT,
+  agents: parseAgentConnections(undefined),
+};
+
+/** Sends a prompt into the session as the composer does, resolving whether it
+ *  went: handed out (WorkspaceSession's `onSender`) while the session can send. */
+export type SessionSender = {
+  send: (text: string, attachmentIds?: string[]) => Promise<boolean>;
+};
+
 export function WorkspaceSession({
   workspaceId,
+  agent = "claude",
   local = false,
   showTerminal,
   onToggleTerminal,
@@ -39,8 +81,12 @@ export function WorkspaceSession({
   untitled = false,
   initialPrompt,
   initialAttachmentIds,
+  onSender,
 }: {
   workspaceId: string;
+  /** The coding agent the session runs: its model menu offers only models
+   *  that agent runs. */
+  agent?: AgentId;
   /** A local session: everything then goes through the Outrunner app to the
    *  agent on this Mac, instead of through the server. */
   local?: boolean;
@@ -58,12 +104,15 @@ export function WorkspaceSession({
   initialPrompt?: string;
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
+  /** Given a sender while the session can send, null when it no longer can:
+   *  for prompts from outside the composer (Create PR). Must be stable. */
+  onSender?: (sender: SessionSender | null) => void;
 }) {
   const router = useRouter();
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
-  const attachment = useSessionAttachment(workspaceId, local);
+  const attachment = useSessionAttachment(workspaceId, local, agent);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
-  const conversation = useConversationStream(attachment);
+  const conversation = useConversationStream(attachment, workspaceId);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
@@ -79,31 +128,43 @@ export function WorkspaceSession({
     setSendError(null);
     attachment.refresh();
   };
-  const canSend = attachment.status === "attached";
+  const attached = attachment.status === "attached";
+  // The composer takes a prompt while the session is still connecting: it goes
+  // once attached (whenAttached), so opening a session never means waiting to
+  // type. Only a failed attach stops it, until Reconnect.
+  const canSend = attachment.status !== "error";
+  const whenAttached = useWhenAttached(attachment.status, connectionError);
 
   // Optimistic echo: the prompt only reaches the timeline after Claude logs it
   // and the agent streams it back (a second or two). Show the user's own bubble
   // immediately and drop it once the streamed copy of that turn arrives, so the
   // composer feels instant without ever double-rendering the message.
-  // Each pending item remembers the delivered-prompt count it is waiting to
-  // exceed. Sends are serialized, so the Nth optimistic bubble is superseded
-  // once the stream has recorded N prompts — independent of the text, so
-  // duplicate messages and Claude's text-less tool-result user turns can't
-  // confuse the match.
-  const [pending, setPending] = useState<{ id: string; text: string; expect: number }[]>([]);
+  // Which bubble is superseded when is lib/session/optimistic-echo.ts: a
+  // delivered-prompt count rather than the text, anchored as the session takes
+  // the prompt rather than as it is typed.
+  const [pending, setPending] = useState<PendingPrompt[]>([]);
+  // The newest events, for anchoring after an await, when the closure's are old.
+  const eventsRef = useRef(conversation.events);
+  useEffect(() => {
+    eventsRef.current = conversation.events;
+  }, [conversation.events]);
+
+  /** The prompt has reached the session, handed over at `sentAt` recorded
+   *  prompts: drop its bubble if the stream already has it, else hold it until
+   *  the stream records one more prompt than the history it answered with. */
+  const anchor = (pendingId: string, sentAt: number) =>
+    setPending((prev) => settlePending(prev, pendingId, userPrompts(eventsRef.current), sentAt));
 
   const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
     if (trimmed) {
       setPending((prev) => {
-        const base = userPromptCount(conversation.events);
-        // Drop items the stream has already caught up on, then queue this one to
-        // wait for the next prompt slot. Trimming here (not in an effect) keeps
-        // the list bounded without a setState-in-effect cascade.
-        const live = prev.filter((p) => base < p.expect);
-        const expect = Math.max(base + 1, live.length ? live[live.length - 1].expect + 1 : 0);
-        return [...live, { id: pendingId, text: trimmed, expect }];
+        // Drop items the stream has already caught up on, then queue this one.
+        // Trimming here (not in an effect) keeps the list bounded without a
+        // setState-in-effect cascade.
+        const live = livePrompts(prev, userPromptCount(conversation.events));
+        return [...live, { id: pendingId, text: trimmed, expect: null }];
       });
     }
     setSendError(null);
@@ -115,6 +176,22 @@ export function WorkspaceSession({
       setSendError(message);
       return false;
     };
+    return whenAttached().then(
+      () => deliver(text, attachmentIds, pendingId, failed),
+      (error: unknown) => failed(error instanceof Error ? error.message : "Could not connect to send that message."),
+    );
+  };
+
+  /** Hand a prompt to the session, once it is attached. Anchors its bubble as
+   *  the session takes it, against the history that has landed by then. */
+  const deliver = (
+    text: string,
+    attachmentIds: string[],
+    pendingId: string,
+    failed: (message: string) => boolean,
+  ) => {
+    // The stream may record the prompt before the session answers.
+    const sentAt = userPromptCount(eventsRef.current);
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -122,7 +199,10 @@ export function WorkspaceSession({
         `/workspaces/${workspaceId}/message`,
         { content: text },
       ).then(
-        () => true,
+        () => {
+          anchor(pendingId, sentAt);
+          return true;
+        },
         (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
       );
     }
@@ -134,6 +214,7 @@ export function WorkspaceSession({
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.");
+        anchor(pendingId, sentAt);
         // The first prompt just named this session: re-read the sidebar.
         if (body.titled) router.refresh();
         return true;
@@ -141,6 +222,19 @@ export function WorkspaceSession({
       () => failed("Could not reach Outrunner. Check your connection and send it again."),
     );
   };
+
+  // Create PR, in the Environment panel, sends through here too: its prompt
+  // gets the composer's bubble and error. The sender reads `send` as of the
+  // last render, so handing it out once per connection is enough.
+  const sendRef = useRef(send);
+  useEffect(() => {
+    sendRef.current = send;
+  });
+  useEffect(() => {
+    if (!canSend || !onSender) return;
+    onSender({ send: (text, attachmentIds) => sendRef.current(text, attachmentIds) });
+    return () => onSender(null);
+  }, [canSend, onSender]);
 
   // The model of the most recent assistant turn — shown in the composer so it
   // reflects what's actually running, not a hardcoded label.
@@ -159,49 +253,80 @@ export function WorkspaceSession({
   // actually ran.
   const [switching, setSwitching] = useState(false);
   // What the model menu offers: Outrunner's models, the user's own keys
-  // (Settings → Providers), and their Claude.
-  const [menu, setMenu] = useState<OutrunnerModels>({ outrunner: true, allowance: false, keys: [], available: true });
-  useEffect(() => {
-    let live = true;
-    void outrunnerModels().then((answer) => {
-      if (live) setMenu(answer);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
+  // (Settings → Providers), and their Claude. Until the first answer, as if
+  // all were on offer.
+  const menu = useOutrunnerModels() ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
   const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
+  // The effort it runs at, as last put on from here (lib/session/picked-effort.ts).
+  const [effort, setEffort] = useState<Effort | null>(() => rememberedEffort(workspaceId));
   const repliedSincePick =
     picked !== null &&
     conversation.events
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
   const shownModel = picked && !repliedSincePick ? picked.model : activeModel;
+  // Stopping the turn under way (the composer's stop button): the agent
+  // presses Escape in the session and answers once the turn has stopped.
+  const [stopping, setStopping] = useState(false);
+  // The prompts recorded when a turn was last stopped: the turn is over until
+  // the next, even where the agent records nothing of the stop (Codex).
+  const [stoppedAt, setStoppedAt] = useState<number | null>(null);
   // A prompt the stream hasn't recorded yet is a turn starting. The agent
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
   const delivered = userPromptCount(conversation.events);
   const working =
-    claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
+    pending.some((p) => pendingShows(p, delivered)) ||
+    (claudeIsWorking(conversation.events) && stoppedAt !== delivered);
+  const stop = () => {
+    setStopping(true);
+    setSendError(null);
+    (local
+      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
+      : stopCloudTurn(workspaceId)
+    )
+      .then(() => setStoppedAt(userPromptCount(eventsRef.current)))
+      .catch((error: unknown) =>
+        setSendError(
+          local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
+        ),
+      )
+      .finally(() => setStopping(false));
+  };
+  // The user's own accounts this session can switch to. A local session's
+  // agent is already running on this Mac, so its own login there counts.
+  const accounts = accountsHere(menu.agents, local, null);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(menu),
+    groups: modelGroups(menu, accounts, agent),
+    // The session's own agent's account, where it isn't connected here.
+    connect: accounts.includes(agent) ? [] : [agent],
+    effort,
+    loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
-    disabledReason: !canSend
+    disabledReason: !attached
       ? "Waiting for the session to connect"
       : working
-        ? "Switch models once Claude has finished this turn"
+        ? `Switch models once ${AGENTS[agent].label} has finished this turn`
         : null,
-    onChange: (model) => {
+    onChange: (model, pickedEffort) => {
+      // What the agent is told: an effort goes only with a model that takes one.
+      const next = takesEffort(model) ? pickedEffort : null;
       setSwitching(true);
       setSendError(null);
-      (local ? putOnModel(workspaceId, model) : switchCloudModel(workspaceId, model))
+      // A local switch relaunches the session on this Mac: signed in as the
+      // user picks now first, as the server does for a cloud one.
+      (local
+        ? deliverLocalAgentAuth(workspaceId, agent, runsOnOwnAccount(model)).then(() => putOnModel(workspaceId, model, next))
+        : switchCloudModel(workspaceId, model, next))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });
           setProviderPicked(model.provider);
           rememberPickedProvider(workspaceId, model.provider);
+          setEffort(next);
+          rememberEffort(workspaceId, next);
         })
         .catch((error: unknown) =>
           setSendError(
@@ -215,7 +340,7 @@ export function WorkspaceSession({
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
     const optimistic = pending
-      .filter((p) => delivered < p.expect)
+      .filter((p) => pendingShows(p, delivered))
       .map<AgentEvent>((p) => ({
         t: "message",
         uuid: `optimistic-${p.id}`,
@@ -255,7 +380,7 @@ export function WorkspaceSession({
   // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
   useEffect(() => {
-    if (sentInitial.current || !canSend) return;
+    if (sentInitial.current || !attached) return;
     const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
     const first = hasFirstPrompt(fromUrl)
       ? fromUrl
@@ -281,7 +406,7 @@ export function WorkspaceSession({
     });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSend, initialPrompt, initialAttachmentIds]);
+  }, [attached, initialPrompt, initialAttachmentIds]);
 
   return (
     <div className="studio-live-session" data-testid="workspace-session">
@@ -300,8 +425,9 @@ export function WorkspaceSession({
         <div className="studio-convo-body">
           <ConversationTimeline
             events={timelineEvents}
+            working={working}
             placeholder={conversationPlaceholder({
-              events: timelineEvents.length,
+              events: timelineEvents,
               attachment: attachment.status,
               stream: conversation.status,
             })}
@@ -354,25 +480,65 @@ export function WorkspaceSession({
       <SessionComposer
         onSend={send}
         canSend={canSend}
+        disabledPlaceholder="Couldn't connect to the session: reconnect to send"
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
+        stop={attached && working ? { onStop: stop, stopping } : undefined}
       />
     </div>
   );
 }
 
+/**
+ * A promise for "the session is attached": at once when it is, else when it
+ * gets there; rejected, with why, if attaching fails first. What a prompt typed
+ * while the session connects waits on.
+ */
+function useWhenAttached(
+  status: "idle" | "loading" | "attached" | "error",
+  error: string | null,
+): () => Promise<void> {
+  const waiting = useRef<{ resolve: () => void; reject: (error: Error) => void }[]>([]);
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+    if (status !== "attached" && status !== "error") return;
+    const waiters = waiting.current.splice(0);
+    for (const waiter of waiters) {
+      if (status === "attached") waiter.resolve();
+      else waiter.reject(new Error(error ?? "Could not connect to the session."));
+    }
+  }, [status, error]);
+  return useCallback(
+    () =>
+      statusRef.current === "attached"
+        ? Promise.resolve()
+        : new Promise<void>((resolve, reject) => waiting.current.push({ resolve, reject })),
+    [],
+  );
+}
+
 /** Switch a cloud session's model. The server adds the key the model needs
  *  and calls the session's agent, so the key stays off the browser. */
-async function switchCloudModel(workspaceId: string, model: SessionModel): Promise<void> {
+async function switchCloudModel(workspaceId: string, model: SessionModel, effort: Effort | null): Promise<void> {
   const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: model.provider, model: model.id }),
+    body: JSON.stringify({ provider: model.provider, model: model.id, ...(effort && { effort }) }),
   });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't switch models. Please try again.");
+}
+
+/** Stop a cloud session's turn. The server reaches the session's agent, as
+ *  for a prompt. */
+async function stopCloudTurn(workspaceId: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
 }
 
 /** Who served a session's model when it was last picked here (a convenience:
@@ -384,7 +550,7 @@ function pickedProvider(workspaceId: string): ModelProvider | null {
     // "neev" Outrunner's, before the rename.
     if (saved === "own") return "openrouter";
     if (saved === "neev") return "outrunner";
-    return saved === "outrunner" || saved === "claude" || isProviderId(saved) ? saved : null;
+    return saved === "outrunner" || saved === "claude" || saved === "codex" || isProviderId(saved) ? saved : null;
   } catch {
     return null;
   }

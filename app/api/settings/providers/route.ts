@@ -3,16 +3,14 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { clearProviderKey, getProviderKeyStatuses, setProviderKey, settleClaudeSlot } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { keySource } from "@/lib/openrouter/keys";
 import { checkProviderKey } from "@/lib/providers/check";
-import { isProviderId, keyProblem, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
-import { probeStatus } from "@/lib/supabase/probe";
-
-export const dynamic = "force-dynamic";
+import { isKeyProviderId, type KeyProviderId, keyProblem, PROVIDERS } from "@/lib/providers/registry";
 
 /**
- * The user's own keys for model providers (Settings → Providers,
- * lib/providers/registry.ts). GET says which providers have one (their last 4
+ * The user's own keys for model providers, and the agents' API keys
+ * (Settings → Providers, lib/providers/registry.ts). GET says which providers have one (their last 4
  * characters, never the key). PUT stores a key its provider has accepted;
  * DELETE forgets one.
  */
@@ -24,31 +22,14 @@ async function providers(userId: string) {
   return { keys, openrouter: keys.openrouter, serverModels: keySource() !== null };
 }
 
-function unauthorized() {
-  return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
-}
-
 /** Run a change, answering the database's refusal as JSON the page can show. */
-async function changing(change: () => Promise<NextResponse>): Promise<NextResponse> {
-  try {
-    return await change();
-  } catch (error) {
-    // Until the migration is applied, the table or its columns aren't there.
-    const status = probeStatus(error as { code?: string });
-    if (status === "outdated" || status === "missing") {
-      return NextResponse.json(
-        { error: "This can't be saved until Outrunner's database is updated. Try again later." },
-        { status: 503 },
-      );
-    }
-    console.error("Could not save provider settings", error);
-    return NextResponse.json({ error: "Couldn't save that. Try again." }, { status: 500 });
-  }
+function changing(change: () => Promise<NextResponse>): Promise<Response> {
+  return savingSettings("provider settings", change);
 }
 
 export async function GET() {
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
   return changing(async () => {
     await settleClaudeSlot(owner.id); // see app/settings/providers/page.tsx
     return NextResponse.json(await providers(owner.id));
@@ -60,7 +41,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
 
   const body = (await request.json().catch(() => null)) as
     | { provider?: unknown; key?: unknown; openrouterKey?: unknown }
@@ -70,7 +51,7 @@ export async function PUT(request: Request) {
   const legacy = body?.provider === undefined && typeof body?.openrouterKey === "string";
   const provider: unknown = legacy ? "openrouter" : body?.provider;
   const raw = legacy ? body?.openrouterKey : body?.key;
-  if (!isProviderId(provider)) {
+  if (!isKeyProviderId(provider)) {
     return NextResponse.json({ error: "Choose one of the providers." }, { status: 400 });
   }
   const key = typeof raw === "string" ? raw.trim() : "";
@@ -110,11 +91,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const owner = await getOwner();
-  if (!owner) return unauthorized();
+  if (!owner) return signInFirst();
   // No provider named: a page from before the other providers, removing its
   // OpenRouter key. Kept for one release.
   const named = new URL(request.url).searchParams.get("provider");
-  const provider: ProviderId | null = named === null ? "openrouter" : isProviderId(named) ? named : null;
+  const provider: KeyProviderId | null = named === null ? "openrouter" : isKeyProviderId(named) ? named : null;
   if (!provider) return NextResponse.json({ error: "Choose one of the providers." }, { status: 400 });
   return changing(async () => {
     await clearProviderKey(owner.id, provider);

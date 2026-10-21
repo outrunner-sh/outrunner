@@ -4,12 +4,32 @@ import * as React from "react"
 import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
+import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden"
 import { cn } from "@/lib/utils"
 
+/** Open state kept here unless the caller controls it, so that a page kept
+ *  hidden for going back to comes back with the menu shut. */
 function DropdownMenu({
+  open: controlledOpen,
+  defaultOpen = false,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+  const [ownOpen, setOwnOpen] = React.useState(defaultOpen)
+  const controlled = controlledOpen !== undefined
+  const open = controlled ? controlledOpen : ownOpen
+  const setOpen = React.useCallback(
+    (next: boolean) => {
+      if (!controlled) setOwnOpen(next)
+      onOpenChange?.(next)
+    },
+    [controlled, onOpenChange]
+  )
+  const close = React.useCallback(() => {
+    if (!controlled) setOwnOpen(false)
+  }, [controlled])
+  useCloseWhenHidden(close)
+  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" open={open} onOpenChange={setOpen} {...props} />
 }
 
 function DropdownMenuPortal({

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 
 import { assembleReplay } from "@/lib/runtime/replay/load";
 import type { SnapshotStorage } from "@/lib/runtime/storage/snapshots";
@@ -112,7 +113,7 @@ test("assembleReplay reads the canonical manifest + verifies and parses artifact
   });
 
   assert.equal(payload.manifest.sessionId, "sess-1");
-  assert.deepEqual(payload.cast.frames, [{ time: 0.1, data: "hello" }]);
+  assert.deepEqual(payload.cast?.frames, [{ time: 0.1, data: "hello" }]);
   assert.equal(payload.events.length, 1);
   assert.equal((payload.events[0] as { uuid: string }).uuid, "u1");
   assert.match(payload.patch, /\+world/);
@@ -169,4 +170,39 @@ test("assembleReplay yields a null summary when summary.json is malformed", asyn
     fetchBytes: fetcherFrom(store),
   });
   assert.equal(payload.summary, null);
+});
+
+test("assembleReplay reads an imported Snapshot: no cast, artifacts verified as stored, then decompressed", async () => {
+  const stored: Record<string, Buffer> = {
+    "conversation.jsonl": gzipSync(artifactText["conversation.jsonl"]),
+    "uncommitted.patch": gzipSync(artifactText["uncommitted.patch"]),
+    "summary.json": Buffer.from(artifactText["summary.json"]),
+  };
+  const imported: SnapshotManifest = {
+    ...manifest,
+    cast: undefined,
+    checksums: Object.fromEntries(
+      Object.entries(stored).map(([k, v]) => [k, "sha256:" + createHash("sha256").update(v).digest("hex")]),
+    ),
+    sizes: Object.fromEntries(Object.entries(stored).map(([k, v]) => [k, v.length])),
+    encodings: { "conversation.jsonl": "gzip", "uncommitted.patch": "gzip" },
+    origin: { source: "conductor", key: "claude:sess-1", worktree: "/Users/ada/app", importedAt: "2026-10-21T00:00:00Z" },
+  };
+  const store: Record<string, Buffer> = { ...stored, "manifest.json": Buffer.from(JSON.stringify(imported)) };
+  const { storage } = fakeStorage();
+
+  const payload = await assembleReplay({
+    snapshot: { ...snapshot, manifest: imported },
+    ownerId: OWNER,
+    storage,
+    fetchBytes: async (url) => {
+      const filename = url.replace(/^signed:/, "").slice(PREFIX.length);
+      if (!(filename in store)) throw new Error(`unexpected fetch: ${filename}`);
+      return new Uint8Array(store[filename]);
+    },
+  });
+
+  assert.equal(payload.cast, null);
+  assert.equal((payload.events[0] as { uuid: string }).uuid, "u1");
+  assert.match(payload.patch, /\+world/);
 });

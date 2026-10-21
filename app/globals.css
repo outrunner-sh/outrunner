@@ -26,10 +26,11 @@
   --ring: oklch(0.708 0 0);
   --success: oklch(0.627 0.17 149.2);
   --warning: oklch(0.769 0.157 70.08);
+  --sidebar: oklch(0.985 0 0);
 }
 
 .dark {
-  --background: #0A0A0A;
+  --background: #060505;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -50,6 +51,7 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.696 0.17 162.48);
   --warning: oklch(0.769 0.157 70.08);
+  --sidebar: #0B0B0A;
 }
 
 @theme inline {
@@ -78,6 +80,7 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-sidebar: var(--sidebar);
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --font-display: var(--font-pixel), var(--font-geist-mono), ui-monospace, monospace;
@@ -93,6 +96,13 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* An app, not a page: a panel scrolled to its end mustn't hand the scroll
+     on to the document, which in the Mac app's webview bounces the whole
+     window, sidebar and all. Each panel scrolls on its own. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
 }
 
 /* The app's dark surface palette. Defined app-wide, not on the studio alone:
@@ -101,16 +111,18 @@
    text on the black composer in light mode). The app is dark only — see the
    ThemeProvider in app/layout.tsx. */
 :root {
-  --studio-bg: #0A0A0A;
-  --studio-panel: #0A0A0A;
+  --studio-bg: #060505;
+  --studio-panel: #060505;
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
   --studio-selected: #232323;
   --studio-line: rgba(255, 255, 255, 0.08);
   --studio-line-strong: rgba(255, 255, 255, 0.14);
+  /* Warm hairline for the boxes on the page's black (the composer, its controls). */
+  --studio-border: #2d2926;
   --studio-text: #ededed;
   --studio-text-2: #cfcfcf;
-  --studio-muted: #8a8a8a;
+  --studio-muted: #978b88;
   --studio-dim: #6f6f6f;
   --studio-accent: #262626;
   --studio-on-accent: #ededed;
@@ -122,11 +134,12 @@
 /* Workspace studio: the session screen. */
 .studio-shell {
   display: grid;
-  /* The chat, and its Environment panel at about a third of the width (the
-     landing page's proportions; diffs open inside it, behind Changes); just
-     the chat when the panel is closed. The app sidebar is the layout's,
-     outside this grid. */
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.5fr);
+  /* A header across the top; beneath it the chat, and its Environment panel
+     as a narrow column of rows on the same black, no rule between them (it
+     widens for Changes, below, where diffs open); just the chat when the
+     panel is closed. The app sidebar is the layout's, outside this grid. */
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-rows: auto minmax(0, 1fr);
   /* Definite height (not min-height) so the grid tracks are bounded: the chat
      column's conversation scrolls internally and its composer stays pinned at
      the bottom, instead of the whole page growing and scrolling. */
@@ -138,38 +151,50 @@
 
 .studio-status { display: inline-block; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #555; }.studio-status.is-ready, .studio-status.is-idle { background: var(--studio-green); }.studio-status.is-failed { background: var(--studio-red); }.studio-status.is-provisioning, .studio-status.is-creating, .studio-status.is-resuming { background: var(--studio-amber); }
 
-.studio-chat { display: grid; min-width: 0; min-height: 0; overflow: hidden; grid-template-rows: auto minmax(0,1fr); background: var(--studio-bg); }
-.studio-chat-header { display: flex; align-items: center; justify-content: space-between; min-height: 60px; padding: 12px 24px; border-bottom: 1px solid var(--studio-line); background: var(--studio-bg); }
-.studio-title { display: flex; align-items: center; gap: 11px; min-width: 0; }.studio-title h2 { overflow: hidden; margin: 0; color: var(--studio-text); font: 500 14px var(--font-geist-sans); text-overflow: ellipsis; white-space: nowrap; }.studio-title p { margin: 3px 0 0; color: var(--studio-muted); font-size: 11px; }.studio-header-actions { display: flex; align-items: center; gap: 8px; }.studio-icon-button { display: grid; width: 31px; height: 31px; place-items: center; border: 1px solid transparent; border-radius: 8px; color: var(--studio-muted); background: transparent; cursor: pointer; transition: .12s ease; }.studio-icon-button:hover { color:var(--studio-text);background:var(--studio-hover); }.studio-icon-button.is-active { color:var(--studio-text);border-color:transparent;background:var(--studio-hover); }.studio-icon-button svg { width:15px; }
+.studio-chat { display: grid; min-width: 0; min-height: 0; overflow: hidden; grid-template-rows: minmax(0,1fr); background: var(--studio-bg); }
+.studio-header { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 12px; height: 44px; padding: 0 12px 0 16px; background: var(--studio-bg); }
+.studio-title { display: flex; align-items: center; gap: 10px; min-width: 0; }.studio-title h2 { overflow: hidden; margin: 0; color: var(--studio-text); font: 400 14px var(--font-geist-sans); text-overflow: ellipsis; white-space: nowrap; }.studio-title-place { flex-shrink: 0; color: var(--studio-muted); font-size: 14px; white-space: nowrap; }.studio-header-actions { display: flex; align-items: center; gap: 8px; }.studio-icon-button { display: grid; width: 31px; height: 31px; place-items: center; border: 1px solid transparent; border-radius: 8px; color: var(--studio-muted); background: transparent; cursor: pointer; transition: .12s ease; }.studio-icon-button:hover { color:var(--studio-text);background:var(--studio-hover); }.studio-icon-button.is-active { color:var(--studio-text);border-color:transparent;background:var(--studio-hover); }.studio-icon-button svg { width:15px; }
 .studio-empty-chat code { color: var(--studio-text); font-family: var(--font-geist-mono); }
 .studio-empty-chat { max-width: 540px; margin: 17vh auto 0; text-align: center; }.studio-empty-icon { display: grid; width: 42px; height: 42px; margin: 0 auto 15px; place-items: center; border: 1px solid var(--studio-line); border-radius: 12px; color: var(--studio-muted); background: var(--studio-panel); }.studio-empty-icon svg { width:20px; }.studio-empty-chat h3 { margin: 0; color: var(--studio-text); font-size: 18px; letter-spacing: -.02em; }.studio-empty-chat p { margin: 9px auto 0; color: var(--studio-muted); font-size: 13px; line-height: 1.65; }
 
-/* Composer, as the landing page draws the app (neevai-labs/outrunner-landing,
-   ProductWindow): a faintly bordered black card, every footer control a
-   bordered 28px chip, and a round send button. */
-.studio-composer { position: relative; margin: 12px auto 18px; max-width: 720px; width: calc(100% - 32px); border: 1px solid rgba(255,255,255,.09); border-radius: 16px; background: #000; }
-.studio-composer:focus-within { border-color: rgba(255,255,255,.18); }
-.studio-composer textarea { display:block; width:100%; resize:none; min-height:64px; padding:14px 16px 6px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
+/* Composer: a square-cornered bordered box on the page's own black, the text
+   above and its controls below. */
+.studio-composer { position: relative; margin: 12px auto 18px; max-width: 736px; width: calc(100% - 32px); border: 1px solid var(--studio-border); border-radius: 4px; background: var(--studio-bg); }
+.studio-composer:focus-within { border-color: #423c38; }
+.studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }
 .studio-composer-notice { margin: 0; padding: 10px 16px 0; color: color-mix(in oklab, var(--foreground) 60%, transparent); font-size: 12px; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }
-.studio-composer-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 10px 10px; }
-.studio-composer-footer > span { display:flex; align-items:center; gap:6px; min-width:0; }
-.studio-composer-footer button, .studio-composer-model { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:28px; min-width:28px; padding:0 10px; border:1px solid rgba(255,255,255,.1); border-radius:6px; color:rgba(255,255,255,.6); background:transparent; font:12px var(--font-geist-sans); white-space:nowrap; }
-.studio-composer-footer button { padding:0 7px; cursor:pointer; }
-.studio-composer-footer .studio-composer-model-picker { padding:0 10px; }
-.studio-composer-footer button:hover:not(:disabled) { color:var(--studio-text); background:var(--studio-hover); }
+/* The toolbar, ruled off from the text: every control a square-cornered
+   bordered box of one height, the send button among them. */
+.studio-composer-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px; border-top:1px solid var(--studio-border); }
+.studio-composer-footer > span { display:flex; align-items:center; gap:8px; min-width:0; }
+.studio-composer-footer button, .studio-composer-model { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:30px; min-width:30px; padding:0 10px; border:1px solid var(--studio-border); border-radius:3px; color:var(--studio-text); background:transparent; font:13px var(--font-geist-sans); white-space:nowrap; }
+.studio-composer-footer button { padding:0 7px; cursor:pointer; transition: background-color .15s, border-color .15s; }
+.studio-composer-footer .studio-composer-model-picker { padding:0 10px 0 12px; }
+.studio-composer-footer button:hover:not(:disabled) { color:var(--studio-text); border-color:rgba(255,255,255,.24); background:var(--studio-hover); }
 .studio-composer-footer button:disabled { color:#555; cursor:not-allowed; }
 .studio-composer-footer svg { width:14px; height:14px; flex-shrink:0; }
-.studio-composer-footer .studio-composer-model-picker svg { width:12px; height:12px; }
-.studio-composer-footer .studio-composer-send { border:0; border-radius:9999px; color:#0a0a0a; background:#ededed; }
-.studio-composer-footer .studio-composer-send:hover:not(:disabled) { color:#0a0a0a; background:#fff; }
-.studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); background:rgba(255,255,255,.1); }
+.studio-composer-footer .studio-composer-send { color:#0a0a0a; border-color:#ededed; background:#ededed; }
+.studio-composer-footer .studio-composer-send:hover:not(:disabled) { color:#0a0a0a; border-color:#fff; background:#fff; }
+.studio-composer-footer .studio-composer-stop svg:not(.spinner) { width:10px; height:10px; fill:currentColor; }
+.studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); border-color:rgba(255,255,255,.14); background:transparent; }
 
-.studio-inspector { min-width: 0; border-left: 1px solid var(--studio-line); background: var(--studio-bg); }
-/* The Environment panel: quiet rows on black, the terminal docked beneath. */
-.studio-env { display: flex; flex-direction: column; height: 100%; min-height: 0; background: #000; }
-.studio-env-body { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; padding-top: 14px; overflow-y: auto; }
+/* An effort as a row of bars (components/effort-meter.tsx): lit up to its
+   level in the brand's orange, the rest dim. */
+.effort-meter { display:inline-flex; align-items:center; gap:2px; }
+.effort-meter > * { display:block; width:5px; height:12px; padding:0; border:0; border-radius:1px; background:rgba(255,255,255,.18); }
+.effort-meter > [data-on] { background:var(--color-brand); }
+.effort-picker > button { width:8px; height:14px; cursor:pointer; transition: background-color .15s, transform .15s; }
+.effort-picker > button:hover:not(:disabled) { transform: scaleY(1.15); }
+.effort-picker > button:not([data-on]):hover:not(:disabled) { background:rgba(255,255,255,.35); }
+.effort-picker > button:disabled { cursor:not-allowed; opacity:.5; }
+.effort-picker > button:focus-visible { outline: 2px solid rgba(255,255,255,.5); outline-offset: 1px; }
+
+.studio-inspector { min-width: 0; background: var(--studio-bg); }
+/* The Environment panel: quiet rows on the chat's black, the terminal docked beneath. */
+.studio-env { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--studio-bg); }
+.studio-env-body { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; padding-top: 8px; overflow-y: auto; }
 .studio-env-body.is-compact { flex: 0 1 auto; }
 .studio-env-label { display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 20px; color: rgba(255,255,255,.55); font-size: 13px; }
 .studio-env-close { display: none; padding: 4px; border-radius: 6px; color: rgba(255,255,255,.5); background: transparent; cursor: pointer; }
@@ -177,18 +202,26 @@
 .studio-env-close svg { width: 15px; height: 15px; }
 /* Narrow windows: the panel covers the chat, and with it the header's toggle. */
 @media (max-width: 1100px) { .studio-env-close { display: inline-flex; } }
-.studio-env-row { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 9px 20px; color: rgba(255,255,255,.72); background: transparent; font-size: 14px; text-align: left; }
+.studio-env-row { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; padding: 5px 20px; color: rgba(255,255,255,.72); background: transparent; font-size: 14px; text-align: left; }
 .studio-env-row.is-action { cursor: pointer; transition: background-color .15s, color .15s; }
 .studio-env-row.is-action:hover, .studio-env-row[aria-expanded="true"] { color: var(--studio-text); background: rgba(255,255,255,.04); }
 .studio-env-icon { display: inline-flex; color: rgba(255,255,255,.5); }
-.studio-env-icon svg { width: 17px; height: 17px; }
+.studio-env-icon svg { width: 16px; height: 16px; }
 .studio-env-right { display: inline-flex; flex-shrink: 0; align-items: center; gap: 10px; color: rgba(255,255,255,.45); font-size: 14px; }
 .studio-env-right svg { width: 15px; height: 15px; }
 .studio-env-details { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 6px 12px; margin: 0; padding: 6px 20px 12px 49px; color: rgba(255,255,255,.45); font-size: 12px; }
 .studio-env-details dd { min-width: 0; margin: 0; overflow: hidden; color: rgba(255,255,255,.72); text-overflow: ellipsis; white-space: nowrap; }
 .studio-env-unfold { padding: 8px 20px 16px 49px; }
+/* The pull request row: its number links out, Merge sits at the right once it's green. */
+.studio-env-pr-link { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--studio-text); font-variant-numeric: tabular-nums; }
+.studio-env-pr-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.studio-env-pr-link svg { width: 14px; height: 14px; color: rgba(255,255,255,.45); }
+.studio-env-merge { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 7px; color: #fff; background: var(--color-positive); font-size: 13px; font-weight: 500; cursor: pointer; transition: filter .15s; }
+.studio-env-merge:hover { filter: brightness(1.1); }
+.studio-env-merge:focus-visible { outline: 2px solid color-mix(in oklab, var(--color-positive) 60%, transparent); outline-offset: 2px; }
+.studio-env-merge[aria-busy="true"] { cursor: progress; }
 .studio-env-terminal-slot { display: contents; }
-.studio-env-terminal { display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,.07); background: #000; }
+.studio-env-terminal { display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,.07); background: var(--studio-bg); }
 .studio-env-terminal.is-open { flex: 1 1 0; min-height: 200px; }
 .studio-env-terminal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 40px; padding: 0 12px 0 16px; }
 .studio-env-terminal-toggle { display: inline-flex; align-items: center; gap: 8px; color: rgba(255,255,255,.55); background: transparent; font-size: 12px; cursor: pointer; }
@@ -199,7 +232,11 @@
    expandable diff (no separate select-a-file pane). */
 /* Scoped to wide screens so it can't out-specify the responsive breakpoints
    (media queries add no specificity) and crush the chat column on phones. */
-@media (min-width: 1101px) { .studio-shell.no-inspector { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1101px) {
+  /* Changes lists diffs, which want more room than the rows do. */
+  .studio-shell:has(.studio-changes) { grid-template-columns: minmax(0, 1fr) minmax(360px, 0.5fr); }
+  .studio-shell.no-inspector { grid-template-columns: minmax(0, 1fr); }
+}
 .studio-changes { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .studio-changes-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--studio-line); }
 .studio-changes-scroll { flex: 1; min-height: 0; overflow-y: auto; }
@@ -214,7 +251,7 @@
 .studio-offline { display:flex; flex-direction:column; height:100%; min-height:0; }
 .studio-offline .studio-empty-chat { margin:auto; }
 
-.studio-session-error { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px auto 0; max-width:820px; width:calc(100% - 32px); padding:9px 12px; border:1px solid rgba(248,81,73,.32); border-radius:9px; color:#f5847e; background:rgba(248,81,73,.1); font-size:11px; }.studio-session-error button { border:0; color:#f5847e; background:transparent; font-size:11px; text-decoration:underline; cursor:pointer; }
+.studio-session-error { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px auto 0; max-width:736px; width:calc(100% - 32px); padding:9px 12px; border:1px solid rgba(248,81,73,.32); border-radius:9px; color:#f5847e; background:rgba(248,81,73,.1); font-size:11px; }.studio-session-error button { border:0; color:#f5847e; background:transparent; font-size:11px; text-decoration:underline; cursor:pointer; }
 
 .studio-convo-panel { display:flex; flex:1; min-height:0; flex-direction:column; }
 .studio-convo-body { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
@@ -226,7 +263,7 @@
 .studio-terminal-exit { margin:0; padding:8px 11px; border-top:1px solid rgba(210,153,34,.3); color:var(--studio-amber); background:#1c1a12; font-size:10px; }
 
 /* Markdown chat rendering — dark palette. */
-.md-body { color: #c9c9c9; font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.md-body { color: #e4e2e1; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
 .md-body > :first-child { margin-top: 0; }
 .md-body > :last-child { margin-bottom: 0; }
 .md-body p { margin: 0 0 12px; }
@@ -243,8 +280,8 @@
 .md-body strong { color: #f0f0f0; font-weight: 650; }
 .md-body blockquote { margin: 0 0 12px; padding: 2px 0 2px 13px; border-left: 2px solid #333; color: #9a9a9a; }
 .md-body hr { margin: 20px 0; border: 0; border-top: 1px solid rgba(255,255,255,.1); }
-/* Inline code: subtle chip. */
-.md-body :not(pre) > code { padding: 1px 5px; border-radius: 5px; color: #e6e6e6; background: #262626; font: 0.86em var(--font-geist-mono); }
+/* Inline code: a dark chip with a hairline edge. */
+.md-body :not(pre) > code { padding: 2px 5px; border: 1px solid #1d1a18; border-radius: 4px; color: #fdfcfb; background: #151311; font: 0.9em var(--font-geist-mono); }
 /* Fenced blocks: framed panel on a dark field. */
 .md-body pre { margin: 0 0 14px; padding: 13px 15px; overflow-x: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: #161616; }
 .md-body pre code { padding: 0; border-radius: 0; color: #e6e6e6; background: transparent; font: 12.5px/1.65 var(--font-geist-mono); }
@@ -266,7 +303,7 @@
 
 @media (max-width: 1100px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-inspector { position: fixed; z-index: 20; top: 0; right: 0; width: min(440px, 92vw); height:100vh; box-shadow: -20px 0 50px rgba(0,0,0,.6); } }
 
-@media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-chat-header { padding:11px 15px; }.studio-empty-chat { margin-top:12vh; }.studio-composer { margin:0 15px 16px; } }
+@media (max-width: 720px) { .studio-shell { grid-template-columns: minmax(0,1fr); }.studio-header { padding:0 12px; }.studio-empty-chat { margin-top:12vh; }.studio-composer { margin:0 15px 16px; } }
 
 /* Loaders (components/ui/loaders.tsx), after interior.dev: a dot matrix with an
    accent wave, and a thin arc. Under reduced motion both hold still; the text
@@ -370,3 +407,20 @@
 /* Conversation rows off screen skip layout and paint; each remembers its last
    rendered height, so the scrollbar and auto-follow stay true. */
 .timeline-row { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 60px; }
+/* A prompt stays pinned at the top while its turn scrolls beneath it, until
+   the next prompt takes its place. Always rendered: a pinned row is on screen
+   wherever it sits in the list. Capped and scrolling on its own, so a long
+   prompt (a pasted log, a file) cannot pin over the whole turn. */
+.timeline-row.is-prompt { position: sticky; top: 0; z-index: 1; content-visibility: visible; }
+.timeline-prompt { max-height: 30vh; padding: 10px 16px; overflow: auto; border-radius: 4px; color: #d8d4d2; background: #282523; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Claude's steps: a thought as a quiet line, a tool call as a bordered row. */
+.timeline-thought { padding: 2px 8px; color: #a69996; font-size: 14px; }
+.timeline-tool { min-width: 0; border: 1px solid var(--studio-border); border-radius: 3px; }
+.timeline-tool > summary { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 3px 9px; color: #a69996; font-size: 13.5px; line-height: 20px; list-style: none; cursor: pointer; transition: color .15s; }
+.timeline-tool > summary::-webkit-details-marker { display: none; }
+.timeline-tool > summary:hover, .timeline-tool[open] > summary { color: var(--studio-text); }
+.timeline-tool > summary:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+.timeline-tool > summary > svg { width: 15px; height: 15px; flex-shrink: 0; color: #8a7e7b; }
+.timeline-tool-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px 10px; border-top: 1px solid var(--studio-border); }
+.timeline-tool-body pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 3px; color: #b9b1ae; background: #0d0b0a; font: 11.5px/1.6 var(--font-geist-mono); }
+.timeline-tool-heading { display: flex; justify-content: space-between; margin-top: 4px; color: #8a7e7b; font-size: 11px; }

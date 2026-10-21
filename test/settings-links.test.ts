@@ -2,10 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { PROVIDER_IDS } from "@/lib/providers/registry";
-import { isProviderTab, PROVIDER_TABS, providerSettingsHref } from "@/lib/settings-links";
+import {
+  GATEWAY_TABS,
+  isProviderTab,
+  parseProviderPlace,
+  PROVIDER_TABS,
+  providerSettingsHref,
+} from "@/lib/settings-links";
 
-test("Settings → Providers has Claude first, then every provider", () => {
-  assert.deepEqual(PROVIDER_TABS, ["claude", ...PROVIDER_IDS]);
+test("Settings → Providers has the agents first, then every provider whose key is no agent's", () => {
+  assert.deepEqual(GATEWAY_TABS, PROVIDER_IDS.filter((id) => id !== "anthropic"));
+  assert.deepEqual(PROVIDER_TABS, ["claude", "codex", ...GATEWAY_TABS]);
 });
 
 test("?tab= opens only a tab there is", () => {
@@ -13,10 +20,29 @@ test("?tab= opens only a tab there is", () => {
   // Junk in the address bar, a repeated param, or none: the page picks a tab itself.
   for (const junk of ["", "Claude", "toString", "__proto__", ["claude"], undefined]) {
     assert.equal(isProviderTab(junk), false, String(junk));
+    assert.equal(parseProviderPlace(junk), null, String(junk));
   }
 });
 
-test("a link to a tab opens that tab", () => {
+test("a link to a tab opens that tab, and an agent's key opens that agent's API key", () => {
   assert.equal(providerSettingsHref("claude"), "/settings/providers?tab=claude");
   assert.equal(providerSettingsHref("zai"), "/settings/providers?tab=zai");
+  assert.equal(providerSettingsHref("anthropic"), "/settings/providers?tab=claude&method=api-key");
+  assert.equal(providerSettingsHref("openai"), "/settings/providers?tab=codex&method=api-key");
+  assert.equal(providerSettingsHref("codex", "chatgpt"), "/settings/providers?tab=codex&method=chatgpt");
+  // A method is an agent's only.
+  assert.equal(providerSettingsHref("zai", "api-key"), "/settings/providers?tab=zai");
+});
+
+test("a link from before agents had tabs still lands where its key now is", () => {
+  assert.deepEqual(parseProviderPlace("anthropic"), { tab: "claude", method: "api-key" });
+  assert.deepEqual(parseProviderPlace("openai"), { tab: "codex", method: "api-key" });
+  assert.deepEqual(parseProviderPlace("claude"), { tab: "claude" });
+});
+
+test("?method= counts only on an agent's tab, and only for a way it has", () => {
+  assert.deepEqual(parseProviderPlace("codex", "chatgpt"), { tab: "codex", method: "chatgpt" });
+  assert.deepEqual(parseProviderPlace("claude", "chatgpt"), { tab: "claude" });
+  assert.deepEqual(parseProviderPlace("openrouter", "api-key"), { tab: "openrouter" });
+  assert.deepEqual(parseProviderPlace("claude", ["local"]), { tab: "claude" });
 });

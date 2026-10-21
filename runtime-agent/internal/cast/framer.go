@@ -95,6 +95,23 @@ func NewWriter(w io.Writer, opts Options) (*Writer, error) {
 	return cw, nil
 }
 
+// ResumeWriter continues a cast whose header (and earlier events) are already
+// in w, which started at `started`: it writes no header, and stamps events by
+// the time since then, so they follow the ones already there. The header's
+// timestamp is in whole seconds, so `started` may be up to a second early,
+// which only moves the new events a little later, never before the old.
+func ResumeWriter(w io.Writer, started time.Time, opts Options) *Writer {
+	clock := opts.Clock
+	if clock == nil {
+		clock = realClock{}
+	}
+	window := opts.Window
+	if window <= 0 {
+		window = defaultWindow
+	}
+	return &Writer{w: bufio.NewWriter(w), clock: clock, window: window, start: started}
+}
+
 // Write records a chunk of terminal output as (part of) an output event. Chunks
 // arriving within the coalescing window of the current frame's start are merged;
 // once the window is crossed the pending frame is flushed and a new one begins.

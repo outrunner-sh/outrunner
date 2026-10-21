@@ -56,3 +56,19 @@ test("OpenRouter refuses a management key, which can't run a model", async () =>
   answer(() => new Response(JSON.stringify({ data: { is_management_key: true } })));
   assert.deepEqual(await checkProviderKey("openrouter", "sk-or-v1-mgmt-0123456789abcdef"), { accepted: false });
 });
+
+test("OpenAI is asked for its models with the key as a bearer; a rate-limited key is kept, with a warning", async () => {
+  const seen = answer(() => new Response("{}"));
+  const key = "sk-proj-" + "AbCd_-0123456789".repeat(3);
+  assert.deepEqual(await checkProviderKey("openai", key), { accepted: true });
+  assert.equal(seen[0].url, "https://api.openai.com/v1/models");
+  assert.equal((seen[0].init.headers as Record<string, string>).authorization, `Bearer ${key}`);
+
+  answer(() => new Response("{}", { status: 401 }));
+  assert.deepEqual(await checkProviderKey("openai", key), { accepted: false });
+
+  answer(() => new Response("{}", { status: 429 }));
+  const limited = await checkProviderKey("openai", key);
+  assert.equal(limited.accepted, true);
+  assert.match(limited.accepted ? (limited.warning ?? "") : "", /OpenAI accepted the key, but is limiting its requests/);
+});

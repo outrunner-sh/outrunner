@@ -9,12 +9,16 @@
 
 import {
   Activity,
+  AgentHealth,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   ErrorResponse,
   LISTING_WORKSPACE_ID,
   RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
+  SetAgentConfigRequest,
+  SetAuthRequest,
+  SetEnvironmentRequest,
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
@@ -120,6 +124,12 @@ export class AgentClient {
     });
   }
 
+  /** Stop the turn the workspace's session is running, as Escape does in its
+   *  terminal; a session not running one is already stopped. */
+  interrupt(identity: WorkspaceIdentity): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/interrupt`, identity);
+  }
+
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(
       `/workspaces/${identity.workspaceId}/resume`,
@@ -127,6 +137,29 @@ export class AgentClient {
       undefined,
       AGENT_START_TIMEOUT_MS,
     );
+  }
+
+  /** Give the workspace's session its own credential, applied at its next
+   *  launch. An agent from before per-session credentials answers 404 with no
+   *  error envelope; one that doesn't know the session, 404 NOT_FOUND. */
+  setAuth(identity: WorkspaceIdentity, req: SetAuthRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/auth`, identity, SetAuthRequest.parse(req));
+  }
+
+  /** Install the user's own agent setup on the computer. */
+  setAgentConfig(identity: WorkspaceIdentity, req: SetAgentConfigRequest): Promise<unknown> {
+    return this.post("/config", identity, SetAgentConfigRequest.parse(req), AGENT_LIFECYCLE_TIMEOUT_MS);
+  }
+
+  /** Give the session its project's environment, before it launches. */
+  setEnvironment(identity: WorkspaceIdentity, req: SetEnvironmentRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/environment`, identity, SetEnvironmentRequest.parse(req));
+  }
+
+  /** What the box's agent can run (GET /health, which needs no token; the
+   *  identity's is sent anyway). */
+  async health(identity: WorkspaceIdentity): Promise<AgentHealth> {
+    return AgentHealth.parse(await this.get("/health", identity));
   }
 
   /** Switch the workspace's session to another model; the agent relaunches

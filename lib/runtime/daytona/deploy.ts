@@ -17,6 +17,8 @@
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
+import { codexInstallCommand } from "@/lib/runtime/codex-cli";
+import { ghInstallCommand } from "@/lib/runtime/github-cli";
 import type { ProvisionStage, StageTiming, ProvisionTimings } from "@/lib/runtime/types";
 
 /** The single port the agent listens on; the preview URL is derived from it. */
@@ -450,15 +452,19 @@ async function resetJcode(io: BoxIO, root: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** Install what the Claude-in-tmux engine needs beyond the base image (which
- *  already has `claude` + node). `apt-get update` first: the base ships a stale
- *  cache where tmux otherwise reports "no installation candidate". Skipped when
- *  the tools are already there: a backend may install them while preparing the
- *  box (Neev does, as root, since its sandboxes have no usable sudo). */
+ *  already has `claude` + node), and Codex. `apt-get update` first: the base
+ *  ships a stale cache where tmux otherwise reports "no installation
+ *  candidate". Each is skipped when it's already there: a backend may install
+ *  them while preparing the box (Neev does, as root, since its sandboxes have
+ *  no usable sudo). */
 export function claudeInstallScript(): string {
   return (
-    "command -v tmux >/dev/null && command -v jq >/dev/null || { " +
+    "{ command -v tmux >/dev/null && command -v jq >/dev/null || { " +
     "sudo apt-get update -q && " +
-    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tmux git-lfs ripgrep jq; }"
+    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tmux git-lfs ripgrep jq; }; } && " +
+    codexInstallCommand({ sudo: true }) +
+    " && " +
+    ghInstallCommand({ sudo: true })
   );
 }
 

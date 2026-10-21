@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"runtime-agent/internal/transcript"
 )
 
 // These run real git against throwaway repositories, because what matters is
@@ -263,7 +265,7 @@ func TestLocalSessionsReportWhenEachWasLastUsed(t *testing.T) {
 	if f.ClaudeSessionID != "" {
 		name = f.ClaudeSessionID + ".jsonl"
 	}
-	dir := claudeProjectDir(home, s.worktreePath("ws-used"))
+	dir := transcript.ClaudeProjectDir(home, s.worktreePath("ws-used"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +308,7 @@ func TestAnInPlaceSessionNeverTakesAnotherSessionsActivity(t *testing.T) {
 	})
 	// The folder's transcript directory: one log the legacy sessions cannot
 	// tell apart (whoever wrote it), and ws-named's own, written later.
-	dir := claudeProjectDir(home, folder)
+	dir := transcript.ClaudeProjectDir(home, folder)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +411,7 @@ func TestSessionsSharingAFolderKeepTheirOwnConversations(t *testing.T) {
 		}
 	}
 	// The user has run Claude Code in this folder themselves.
-	projectDir := claudeProjectDir(home, folder)
+	projectDir := transcript.ClaudeProjectDir(home, folder)
 	writeTurns(filepath.Join(projectDir, "users-own.jsonl"), 3)
 
 	s := NewService(t.TempDir())

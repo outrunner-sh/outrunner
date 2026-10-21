@@ -2,6 +2,7 @@ package cast
 
 import (
 	"bytes"
+	"encoding/json"
 	"context"
 	"os"
 	"path/filepath"
@@ -192,5 +193,53 @@ func TestRecorderMasksSecretsBeforeRecording(t *testing.T) {
 	}
 	if got := out.String(); got != "ANTHROPIC_AUTH_TOKEN=***\r\nmore output ***" {
 		t.Fatalf("recorded %q, want the output with the key masked and nothing else lost", got)
+	}
+}
+
+func TestANewRecorderContinuesTheCastAnEarlierOneLeft(t *testing.T) {
+	ctx := context.Background()
+	p := &fakePane{data: []byte("BEFORE_RESTART ")}
+	first := newFakeRecorder(t, p)
+	if err := first.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	// The agent goes (restarted, upgraded) without stopping its recorder; the
+	// session carries on in tmux, and a crash cut the last line short.
+	if err := first.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := os.OpenFile(first.castPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	_, _ = f.WriteString(`[0.5, "o", "torn`)
+	f.Close()
+
+	p.mu.Lock()
+	p.data = []byte("AFTER_RESTART")
+	p.mu.Unlock()
+	second := &Recorder{pane: p, castPath: first.castPath}
+	if err := second.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := second.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(first.castPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(b, []byte(`"version"`)); n != 1 {
+		t.Fatalf("cast has %d headers, want 1: continued, not started over", n)
+	}
+	var out bytes.Buffer
+	for _, line := range bytes.Split(b, []byte("\n"))[1:] {
+		var frame []any
+		if json.Unmarshal(line, &frame) == nil && len(frame) == 3 {
+			out.WriteString(frame[2].(string))
+		}
+	}
+	if !bytes.Contains(out.Bytes(), []byte("BEFORE_RESTART")) || !bytes.Contains(out.Bytes(), []byte("AFTER_RESTART")) {
+		t.Fatalf("cast = %q, want what both recorders saw", out.String())
 	}
 }

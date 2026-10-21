@@ -3,7 +3,9 @@ import { test } from "node:test";
 
 import { InvalidError, NotFoundError, SnapshotCreationError, TimeoutError } from "modal";
 
+import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 import { AGENT_PORT } from "@/lib/runtime/daytona/deploy";
+import { GH_VERSION } from "@/lib/runtime/github-cli";
 import { box, MODAL_IMAGE_SETUP, noSnapshot, sandboxParams } from "@/lib/runtime/sandbox/modal";
 
 test("a box lives as long as Modal allows, opens the agent's port, and leaves a snapshot when it ends", () => {
@@ -31,6 +33,11 @@ test("the image has what the agent needs, and the user Claude runs as", () => {
   }
   // Installed by the box user, so Claude Code can update itself.
   assert.match(setup, /su - runtime -c '[^']*install\.sh/);
+  // Codex at the version the agent reads, for every user.
+  assert.ok(setup.includes(`RUN npm install -g ${CODEX_PACKAGE}`), "the image lacks the pinned Codex");
+  // `gh` for the orientation's `gh pr create`: not in node:22-bookworm, nor in
+  // Debian's repos, so the image must bring it or the agent can't open a PR.
+  assert.ok(setup.includes(`/v${GH_VERSION}/gh_${GH_VERSION}_linux_`), "the image lacks the pinned gh");
 });
 
 test("only a missing, never-taken or failed snapshot means there's no disk to restore", () => {

@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/transcript"
 )
 
 // MaterializeInput is everything the agent needs to rebuild a Session's
@@ -22,10 +24,21 @@ type MaterializeInput struct {
 	WorktreePath string
 	// Branch is the workspace branch to check out (carried in the bundle).
 	Branch string
+	// BundleRef is the branch as the bundle names it, when not Branch: it is
+	// imported under Branch.
+	BundleRef string
+	// OriginWorktree, when set, is the folder the conversation was recorded
+	// in elsewhere (an imported session's): the working directories it
+	// records under it are moved to WorktreePath.
+	OriginWorktree string
 	// ConversationDest, when non-empty, is the absolute path to write the
 	// conversation JSONL so `claude --continue` finds the archived session.
 	ConversationDest string
-	// Downloads maps artifact (bundle/patch/conversation) -> signed download URL.
+	// RolloutDest, when non-empty, is where a Codex session's raw rollout is
+	// written, if the Snapshot has one (its download is optional).
+	RolloutDest string
+	// Downloads maps artifact (bundle/patch/conversation/rollout) -> signed
+	// download URL.
 	Downloads []protocol.RestoreDownload
 }
 
@@ -39,8 +52,13 @@ type MaterializeInput struct {
 // retry after a partial restore) converges rather than failing.
 func Materialize(ctx context.Context, in MaterializeInput) error {
 	urls := map[string]string{}
+	encodings := map[string]string{}
 	for _, d := range in.Downloads {
 		urls[d.Artifact] = d.URL
+		encodings[d.Artifact] = d.Encoding
+	}
+	get := func(artifact, dst string) error {
+		return download(ctx, urls[artifact], encodings[artifact], dst)
 	}
 	required := []string{"bundle", "patch"}
 	// When a conversation destination is set (it always is for a real restore),
@@ -63,11 +81,11 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 	defer os.RemoveAll(staging)
 
 	bundlePath := filepath.Join(staging, BundleName)
-	if err := download(ctx, urls["bundle"], bundlePath); err != nil {
+	if err := get("bundle", bundlePath); err != nil {
 		return fmt.Errorf("download bundle: %w", err)
 	}
 	patchPath := filepath.Join(staging, PatchName)
-	if err := download(ctx, urls["patch"], patchPath); err != nil {
+	if err := get("patch", patchPath); err != nil {
 		return fmt.Errorf("download patch: %w", err)
 	}
 
@@ -75,7 +93,11 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 	// branch that's currently checked out, so a re-run must free the branch first.
 	removeWorktree(ctx, in.MirrorPath, in.WorktreePath)
 
-	if err := importBundle(ctx, in.MirrorPath, bundlePath, in.Branch); err != nil {
+	bundleRef := in.BundleRef
+	if bundleRef == "" {
+		bundleRef = in.Branch
+	}
+	if err := importBundle(ctx, in.MirrorPath, bundlePath, bundleRef, in.Branch); err != nil {
 		return err
 	}
 	if err := addWorktree(ctx, in.MirrorPath, in.WorktreePath, in.Branch); err != nil {
@@ -86,11 +108,26 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 	}
 
 	if in.ConversationDest != "" {
-		if err := download(ctx, urls["conversation"], in.ConversationDest); err != nil {
+		if err := get("conversation", in.ConversationDest); err != nil {
 			return fmt.Errorf("download conversation: %w", err)
 		}
 		if info, err := os.Stat(in.ConversationDest); err != nil || info.Size() == 0 {
 			return fmt.Errorf("restore: conversation JSONL was not written to %s", in.ConversationDest)
+		}
+	}
+	if in.RolloutDest != "" && urls["rollout"] != "" {
+		if err := get("rollout", in.RolloutDest); err != nil {
+			return fmt.Errorf("download rollout: %w", err)
+		}
+	}
+	if in.OriginWorktree != "" {
+		for _, path := range []string{in.ConversationDest, in.RolloutDest} {
+			if _, err := os.Stat(path); path == "" || err != nil {
+				continue
+			}
+			if err := transcript.RewriteCwd(path, in.OriginWorktree, in.WorktreePath); err != nil {
+				return fmt.Errorf("move the conversation to the worktree: %w", err)
+			}
 		}
 	}
 
@@ -100,9 +137,10 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 // importBundle pulls the archived branch (and its history) out of the bundle into
 // the shared mirror, so a worktree can then check it out. The bundle carries
 // commits the freshly-cloned mirror doesn't have (they only ever lived in the
-// archived worktree), which is what makes restore box-independent.
-func importBundle(ctx context.Context, mirror, bundlePath, branch string) error {
-	ref := fmt.Sprintf("+refs/heads/%s:refs/heads/%s", branch, branch)
+// archived worktree), which is what makes restore box-independent. The
+// bundle's branch is from; it is checked out as branch.
+func importBundle(ctx context.Context, mirror, bundlePath, from, branch string) error {
+	ref := fmt.Sprintf("+refs/heads/%s:refs/heads/%s", from, branch)
 	out, err := exec.CommandContext(ctx, "git", "-C", mirror,
 		"fetch", bundlePath, ref).CombinedOutput()
 	if err != nil {
@@ -169,8 +207,8 @@ func verify(ctx context.Context, mirror, worktree, branch string) error {
 	return nil
 }
 
-// download streams a signed URL to dst.
-func download(ctx context.Context, url, dst string) error {
+// download streams a signed URL to dst, decompressing a gzip-encoded one.
+func download(ctx context.Context, url, encoding, dst string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -192,7 +230,20 @@ func download(ctx context.Context, url, dst string) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	var body io.Reader = resp.Body
+	switch encoding {
+	case "":
+	case "gzip":
+		gz, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return fmt.Errorf("decompress: %w", err)
+		}
+		defer gz.Close()
+		body = gz
+	default:
+		return fmt.Errorf("unknown encoding %q", encoding)
+	}
+	if _, err := io.Copy(f, body); err != nil {
 		return err
 	}
 	return nil

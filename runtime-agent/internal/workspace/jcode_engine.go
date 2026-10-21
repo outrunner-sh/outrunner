@@ -61,7 +61,7 @@ func newJcodeEngine(client *jcode.Client, root string) *jcodeEngine {
 // conversationPath is where a workspace's assembled conversation log lives —
 // outside any worktree, keyed by workspace id.
 func (e *jcodeEngine) conversationPath(workspaceID string) string {
-	return filepath.Join(e.root, "conversations", workspaceID+".jsonl")
+	return conversationPath(e.root, workspaceID)
 }
 
 // StartSession opens a jcode session rooted at worktree and begins writing its
@@ -112,6 +112,17 @@ func (e *jcodeEngine) SendMessage(workspaceID, content string) error {
 		return fmt.Errorf("jcode: no session for workspace %s", workspaceID)
 	}
 	return e.client.SendMessage(js.jcodeID, content)
+}
+
+// Interrupt stops the turn a workspace's session is running.
+func (e *jcodeEngine) Interrupt(ctx context.Context, workspaceID string) error {
+	e.mu.Lock()
+	js, ok := e.byWS[workspaceID]
+	e.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("jcode: no session for workspace %s", workspaceID)
+	}
+	return e.client.Cancel(ctx, js.jcodeID)
 }
 
 // StopSession stops consuming a workspace's events and closes its log. The jcode

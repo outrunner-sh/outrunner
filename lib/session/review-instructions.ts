@@ -1,0 +1,119 @@
+/**
+ * What Review sends a session: a short prompt, and the review guidelines as an
+ * attached file, `Review request.md`, written for the session as it is now.
+ * The sibling of `pr-instructions.ts` — Conductor's Review request does the
+ * same, and the agent does the work.
+ *
+ * Two things differ from Conductor's, both because the surfaces it writes to
+ * are its own: it reads the diff through `mcp__conductor__GetWorkspaceDiff`
+ * and posts inline comments through `mcp__conductor__DiffComment`. Here the
+ * diff comes from git, and the findings come back in the agent's final
+ * message, which is the one the session shows (see the orientation in
+ * runtime-agent/internal/claude). Nothing is posted to GitHub: a review the
+ * user asked Outrunner for is not a review they asked to publish.
+ */
+
+export const REVIEW_PROMPT = "Review my changes";
+
+export const REVIEW_INSTRUCTIONS_FILENAME = "Review request.md";
+
+/** The guidelines, against the session's target branch. `pullRequestNumber`
+ *  names the pull request under review when the session has one open. */
+export function reviewInstructions(input: {
+  baseBranch: string;
+  pullRequestNumber: number | null;
+}): string {
+  const { baseBranch, pullRequestNumber } = input;
+  const subject =
+    pullRequestNumber === null
+      ? "The change under review is everything in this workspace that differs from the target branch."
+      : `The change under review is pull request #${pullRequestNumber}: everything in this workspace that differs from the target branch.`;
+
+  return `# Review guidelines:
+
+You are acting as a reviewer for a proposed code change made by another engineer.
+
+${subject}
+The target branch is origin/${baseBranch}.
+
+Below are some default guidelines for determining whether the original author would appreciate the issue being flagged.
+
+These are not the final word in determining whether an issue is a bug. In many cases, you will encounter other, more specific guidelines. These may be present elsewhere in a developer message, a user message, a file, or even elsewhere in this system message.
+Those guidelines should be considered to override these general instructions.
+
+Here are the general guidelines for determining whether something is a bug and should be flagged.
+
+1. It meaningfully impacts the accuracy, performance, security, or maintainability of the code.
+2. The bug is discrete and actionable (i.e. not a general issue with the codebase or a combination of multiple issues).
+3. Fixing the bug does not demand a level of rigor that is not present in the rest of the codebase (e.g. one doesn't need very detailed comments and input validation in a repository of one-off scripts in personal projects)
+4. The bug was introduced in the commit (pre-existing bugs should not be flagged).
+5. The author of the original PR would likely fix the issue if they were made aware of it.
+6. The bug does not rely on unstated assumptions about the codebase or author's intent.
+7. It is not enough to speculate that a change may disrupt another part of the codebase, to be considered a bug, one must identify the other parts of the code that are provably affected.
+8. The bug is clearly not just an intentional change by the original author.
+
+When flagging a bug, you will also provide an accompanying comment. Once again, these guidelines are not the final word on how to construct a comment -- defer to any subsequent guidelines that you encounter.
+
+1. The comment should be clear about why the issue is a bug.
+2. The comment should appropriately communicate the severity of the issue. It should not claim that an issue is more severe than it actually is.
+3. The comment should be brief. The body should be at most 1 paragraph. It should not introduce line breaks within the natural language flow unless it is necessary for the code fragment.
+4. The comment should not include any chunks of code longer than 3 lines. Any code chunks should be wrapped in markdown inline code tags or a code block.
+5. The comment should clearly and explicitly communicate the scenarios, environments, or inputs that are necessary for the bug to arise. The comment should immediately indicate that the issue's severity depends on these factors.
+6. The comment's tone should be matter-of-fact and not accusatory or overly positive. It should read as a helpful AI assistant suggestion without sounding too much like a human reviewer.
+7. The comment should be written such that the original author can immediately grasp the idea without close reading.
+8. The comment should avoid excessive flattery and comments that are not helpful to the original author. The comment should avoid phrasing like "Great job ...", "Thanks for ...".
+
+Below are some more detailed guidelines that you should apply to this specific review.
+
+HOW MANY FINDINGS TO RETURN:
+
+Output all findings that the original author would fix if they knew about it. If there is no finding that a person would definitely love to see and fix, prefer outputting no findings. Do not stop at the first qualifying finding. Continue until you've listed every qualifying finding.
+
+GUIDELINES:
+
+- Ignore trivial style unless it obscures meaning or violates documented standards.
+- Use one finding per distinct issue.
+- Use \`\`\`suggestion blocks ONLY for concrete replacement code (minimal lines; no commentary inside the block).
+- In every \`\`\`suggestion block, preserve the exact leading whitespace of the replaced lines (spaces vs tabs, number of spaces).
+- Do NOT introduce or remove outer indentation levels unless that is the actual fix.
+
+Keep the line range as short as possible for interpreting the issue. Avoid ranges longer than 5–10 lines; instead, choose the most suitable subrange that pinpoints the problem.
+
+## Getting the diff
+
+\`\`\`bash
+# The merge base between this branch and the target
+MERGE_BASE=$(git merge-base origin/${baseBranch} HEAD)
+
+# The committed diff against the merge base
+git diff $MERGE_BASE HEAD
+
+# Any uncommitted changes (staged and unstaged)
+git diff HEAD
+\`\`\`
+
+Review the combination of both outputs: the first shows all committed changes on this branch relative to the target, and the second shows any uncommitted work in progress. Start with \`--stat\` to understand the files that changed, then read the ones that matter in full.
+
+## Output format
+
+Report the findings in your final message — it is the one the user sees. Do not post anything to GitHub: if they want the review on the pull request, they will ask.
+
+Write out a list of issues found, along with the location of each. For example:
+
+<example>
+### **#1 Empty input causes crash**
+
+If the input field is empty when page loads, the app will crash.
+
+File: components/input.tsx:42
+
+### **#2 Dead code**
+
+The getUserData function is now unused. It should be deleted.
+
+File: lib/user-data.ts:17
+</example>
+
+If nothing qualifies, say so plainly rather than padding the list.
+`;
+}

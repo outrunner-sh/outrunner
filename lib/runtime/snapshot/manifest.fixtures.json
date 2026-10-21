@@ -61,6 +61,49 @@
       "lastMessage": null,
       "tokenUsage": {},
       "changedFiles": 0
+    },
+    {
+      "version": 1,
+      "workspaceId": "ws-imported",
+      "runtimeVersion": "import-1",
+      "claudeVersion": "unknown",
+      "sessionId": "b52b847e-3fe0-4bba-98c7-15c157a7f6d4",
+      "conversation": "conversation.jsonl",
+      "tree": {
+        "kind": "git-bundle+patch",
+        "bundle": "worktree.bundle",
+        "patch": "uncommitted.patch",
+        "ref": "ada/daily-sheet"
+      },
+      "summary": "summary.json",
+      "checksums": {
+        "conversation.jsonl": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "worktree.bundle": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "uncommitted.patch": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "summary.json": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "sizes": {
+        "conversation.jsonl": 560932,
+        "worktree.bundle": 2695,
+        "uncommitted.patch": 22496,
+        "summary.json": 380
+      },
+      "encodings": {
+        "conversation.jsonl": "gzip",
+        "uncommitted.patch": "gzip"
+      },
+      "origin": {
+        "source": "conductor",
+        "key": "claude:b52b847e-3fe0-4bba-98c7-15c157a7f6d4",
+        "worktree": "/Users/ada/conductor/workspaces/millerp/kelowna",
+        "importedAt": "2026-10-21T12:00:00.000Z"
+      },
+      "startedAt": "2026-10-20T15:21:37.760Z",
+      "archivedAt": "2026-10-21T12:00:00.000Z",
+      "lastCommit": "714199adae0c429b8119ffca6764598084169ee0",
+      "lastMessage": "The sheet now embeds the loan settlements.",
+      "tokenUsage": {},
+      "changedFiles": 16
     }
   ]
 }

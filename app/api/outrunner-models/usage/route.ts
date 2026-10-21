@@ -4,8 +4,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { outrunnerModelAllowance } from "@/lib/db/credentials";
 import { allowanceView } from "@/lib/openrouter/allowance";
 
-export const dynamic = "force-dynamic";
-
 /**
  * How much the signed-in user has used of their allowance on Outrunner's
  * models (`allowance`: a percentage and its state, never dollars), for the

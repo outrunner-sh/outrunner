@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUp, Check, ChevronDown, FileText, Plus, X } from "lucide-react";
+import { ArrowUp, Check, FileText, Plus, Search, Settings2, Square, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -14,11 +15,32 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
+import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { CustomModelDialog } from "@/components/custom-model-dialog";
-import { isProviderId, type ProviderId } from "@/lib/providers/registry";
-import { rememberCustomModel, rememberedCustomModels } from "@/lib/runtime/custom-models";
-import { matchModel, modelLabel, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  rememberCustomModel,
+  rememberedCustomModels,
+  takesTypedModels,
+  typedModelOwner,
+  type TypedModelProvider,
+} from "@/lib/runtime/custom-models";
+import { EffortMeter, effortName } from "@/components/effort-meter";
+import { effortOnPick, loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
+import {
+  DEFAULT_EFFORT,
+  type Effort,
+  EFFORT_LABELS,
+  EFFORTS,
+  matchModel,
+  modelLabel,
+  type ModelGroup,
+  type ModelProvider,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,16 +53,26 @@ import { cn } from "@/lib/utils";
  * `onSend` receives their ids to attach server-side.
  */
 
-/** Switching the session's model from the footer, where the session allows it. */
+/** Switching the session's model, and the effort it runs at, from the footer,
+ *  where the session allows it. */
 export type ModelChoice = {
   groups: ModelGroup[];
-  onChange: (model: SessionModel) => void;
+  /** `effort` null runs the model at its own. */
+  onChange: (model: SessionModel, effort: Effort | null) => void;
+  /** The effort the session runs at; null for the model's own. */
+  effort: Effort | null;
   /** Why it can't switch right now (mid-turn, not at the keyboard); null when
    *  it can. */
   disabledReason: string | null;
   switching: boolean;
   /** Whose entry is the current one, for a model offered by two. */
   preferredProvider?: ModelProvider;
+  /** The user's loadout (Settings → Default models): shown first, in place of
+   *  the groups, where it has a model the menu offers. */
+  loadout?: ModelLoadout;
+  /** Agents whose own accounts aren't connected here, so their models aren't
+   *  in `groups`: each offered as a link to connect it instead. */
+  connect: AgentId[];
 };
 
 export function SessionComposer({
@@ -51,6 +83,7 @@ export function SessionComposer({
   model,
   modelChoice,
   allowAttachments = true,
+  stop,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -68,6 +101,9 @@ export function SessionComposer({
   /** False hides attaching. Attachments are delivered by the server, which
    *  cannot reach a local session's worktree on the user's Mac. */
   allowAttachments?: boolean;
+  /** Stopping the turn under way, shown beside send (and on Escape) while
+   *  there is one to stop. */
+  stop?: { onStop: () => void; stopping: boolean };
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -236,6 +272,9 @@ export function SessionComposer({
           if (event.key === "Enter" && !event.shiftKey && !isImeKeydown(event.nativeEvent)) {
             event.preventDefault();
             submit();
+          } else if (event.key === "Escape" && stop && !stop.stopping && !isImeKeydown(event.nativeEvent)) {
+            event.preventDefault();
+            stop.onStop();
           }
         }}
       />
@@ -269,36 +308,87 @@ export function SessionComposer({
             model && <span className="studio-composer-model">{modelLabel(model)}</span>
           )}
         </span>
-        <button
-          type="submit"
-          className="studio-composer-send"
-          disabled={!canSend || sending || !hasSomethingToSend || attachments.busy}
-          aria-label="Send"
-        >
-          <ArrowUp />
-        </button>
+        <span>
+          {stop && (
+            <button
+              type="button"
+              className="studio-composer-stop"
+              onClick={stop.onStop}
+              disabled={stop.stopping}
+              aria-label="Stop"
+              title="Stop (Esc)"
+            >
+              {stop.stopping ? <Spinner /> : <Square />}
+            </button>
+          )}
+          <button
+            type="submit"
+            className="studio-composer-send"
+            disabled={!canSend || sending || !hasSomethingToSend || attachments.busy}
+            aria-label="Send"
+          >
+            <ArrowUp />
+          </button>
+        </span>
       </div>
     </form>
   );
 }
 
-/** The footer's model, as a menu of the models the session can switch to. */
+/** A model's mark: its agent's for Claude Code's and Codex's own, its
+ *  provider's for one on a key. */
+function ModelIcon({ provider }: { provider: ModelProvider }) {
+  if (provider === "claude" || provider === "codex") return <AgentIcon agent={provider} />;
+  return <ProviderIcon provider={provider === "outrunner" ? "openrouter" : provider} />;
+}
+
+/** The footer's model, as a menu of the models the session can switch to:
+ *  the user's loadout where they have one, else every group, and a search
+ *  across all of them either way. */
 function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice }) {
   // A group on the user's own key offers the ids they typed in before, and
   // takes another (CustomModelDialog).
-  const [customFor, setCustomFor] = useState<ProviderId | null>(null);
+  const [customFor, setCustomFor] = useState<TypedModelProvider | null>(null);
+  const [query, setQuery] = useState("");
   const groups = choice.groups.map((group) => {
-    const own = group.custom && isProviderId(group.provider) ? group.provider : null;
+    const own = group.custom && takesTypedModels(group.provider) ? group.provider : null;
     if (!own) return { ...group, own };
     const typed = rememberedCustomModels(own).filter((m) => !group.models.some((listed) => listed.id === m.id));
     return { ...group, own, models: [...group.models, ...typed] };
   });
   const current = matchModel(groups, model, choice.preferredProvider);
   const name = current?.label ?? (model ? modelLabel(model) : "Model");
-  const label = choice.switching ? "Switching model" : name;
+  // The effort shows only where it does something.
+  const effort = current && takesEffort(current) ? choice.effort : undefined;
+  const label = choice.switching
+    ? "Switching model"
+    : effort === undefined
+      ? name
+      : `${name}, ${effortName(effort)} effort`;
+  const loadout = choice.loadout ? loadoutModels(choice.loadout, groups) : [];
+  const searching = query.trim() !== "";
+  // Searching looks through everything; otherwise the loadout, where there is
+  // one, stands in for the groups.
+  const flat = searching ? searchModels(groups.flatMap((g) => g.models), query) : loadout;
+  const showGroups = !searching && loadout.length === 0;
+  const isCurrent = (m: SessionModel) => m.id === current?.id && m.provider === current.provider;
+  const item = (m: SessionModel) => (
+    <DropdownMenuItem
+      key={`${m.provider}:${m.id}`}
+      // Always sent, even for the ticked family: the session may run an
+      // older model of it, and the agent ignores a switch to what it has.
+      // The same model keeps its effort; another runs at the loadout's for
+      // it, else DEFAULT_EFFORT.
+      onSelect={() => choice.onChange(m, isCurrent(m) ? choice.effort : effortOnPick(choice.loadout, m))}
+    >
+      <ModelIcon provider={m.provider} />
+      <span className="flex-1 truncate">{m.label}</span>
+      <Check className={isCurrent(m) ? "opacity-100" : "opacity-0"} />
+    </DropdownMenuItem>
+  );
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => !open && setQuery("")}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
@@ -310,7 +400,10 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
             {/* Both labels share one cell, so the footer holds still while the
                 name gives way to "Switching" and back. */}
             <span className="grid place-items-center">
-              <span className={cn("col-start-1 row-start-1", choice.switching && "invisible")}>{name}</span>
+              <span className={cn("col-start-1 row-start-1 inline-flex items-center gap-2", choice.switching && "invisible")}>
+                {name}
+                {effort !== undefined && <EffortMeter effort={effort} />}
+              </span>
               <span
                 aria-hidden
                 className={cn("col-start-1 row-start-1 inline-flex items-center gap-1", !choice.switching && "invisible")}
@@ -318,35 +411,90 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                 <Spinner /> Switching
               </span>
             </span>
-            <ChevronDown />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" className="w-56">
-          {groups.map((group, i) => (
-            <div key={group.label}>
-              {i > 0 && <DropdownMenuSeparator />}
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                {group.label}
-              </DropdownMenuLabel>
-              {group.models.map((m) => (
-                <DropdownMenuItem
-                  key={`${m.provider}:${m.id}`}
-                  // Always sent, even for the ticked family: the session may run an
-                  // older model of it, and the agent ignores a switch to what it has.
-                  onSelect={() => choice.onChange(m)}
-                >
-                  <Check className={m.id === current?.id && m.provider === current.provider ? "opacity-100" : "opacity-0"} />
-                  <span className="truncate">{m.label}</span>
+        <DropdownMenuContent align="start" side="top" className="w-64">
+          <div className="flex items-center gap-2 px-2 pb-1.5 pt-1">
+            <Search className="size-3.5 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              // The menu's own typeahead would take the letters typed here.
+              onKeyDown={(event) => event.stopPropagation()}
+              placeholder="Search models"
+              aria-label="Search models"
+              autoFocus
+              spellCheck={false}
+              className="h-7 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <DropdownMenuSeparator />
+          {showGroups
+            ? groups.map((group, i) => (
+                <div key={group.label}>
+                  {i > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    {group.label}
+                  </DropdownMenuLabel>
+                  {group.models.map(item)}
+                  {group.own ? (
+                    <DropdownMenuItem onSelect={() => setCustomFor(group.own)}>
+                      <Check className="opacity-0" />
+                      <span className="text-muted-foreground">Other model…</span>
+                    </DropdownMenuItem>
+                  ) : null}
+                </div>
+              ))
+            : flat.map(item)}
+          {searching && flat.length === 0 ? (
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">No model matches “{query.trim()}”.</p>
+          ) : null}
+          {/* Without the groups, their way to type a model in stays here. */}
+          {!showGroups && groups.some((group) => group.own) ? <DropdownMenuSeparator /> : null}
+          {!showGroups
+            ? groups.flatMap((group) =>
+                group.own ? (
+                  <DropdownMenuItem key={`other:${group.provider}`} onSelect={() => setCustomFor(group.own)}>
+                    <ModelIcon provider={group.provider} />
+                    <span className="text-muted-foreground">Other {typedModelOwner(group.own).label} model…</span>
+                  </DropdownMenuItem>
+                ) : [],
+              )
+            : null}
+          {!searching && choice.connect.length > 0 ? (
+            <>
+              <DropdownMenuSeparator />
+              {choice.connect.map((agent) => (
+                <DropdownMenuItem key={`connect:${agent}`} asChild>
+                  <Link href={providerSettingsHref(agent)}>
+                    <AgentIcon agent={agent} />
+                    <span className="flex-1 truncate">Connect {AGENTS[agent].label}</span>
+                  </Link>
                 </DropdownMenuItem>
               ))}
-              {group.own ? (
-                <DropdownMenuItem onSelect={() => setCustomFor(group.own)}>
-                  <Check className="opacity-0" />
-                  <span className="text-muted-foreground">Other model…</span>
+            </>
+          ) : null}
+          {current && effort !== undefined ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                {current.label} effort
+              </DropdownMenuLabel>
+              {[null, ...EFFORTS].map((level) => (
+                <DropdownMenuItem key={level ?? "default"} onSelect={() => choice.onChange(current, level)}>
+                  <EffortMeter effort={level} />
+                  <span className="flex-1 truncate">{level ? EFFORT_LABELS[level] : effortName(null)}</span>
+                  <Check className={level === effort ? "opacity-100" : "opacity-0"} />
                 </DropdownMenuItem>
-              ) : null}
-            </div>
-          ))}
+              ))}
+            </>
+          ) : null}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem asChild>
+            <Link href="/settings/models" className="text-muted-foreground">
+              <Settings2 /> Edit models
+            </Link>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <CustomModelDialog
@@ -356,7 +504,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
         }}
         onChoose={(provider, id) => {
           rememberCustomModel(provider, id);
-          choice.onChange({ id, label: id, provider });
+          choice.onChange({ id, label: id, provider }, DEFAULT_EFFORT);
         }}
       />
     </>

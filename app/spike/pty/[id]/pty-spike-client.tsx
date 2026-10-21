@@ -25,7 +25,7 @@ export function PtySpikeClient({
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const attachment = useSessionAttachment(workspaceId);
   const terminal = useSessionTerminal(attachment, terminalContainer);
-  const conversation = useConversationStream(attachment);
+  const conversation = useConversationStream(attachment, workspaceId);
 
   return (
     <div className="flex h-dvh flex-col bg-neutral-950 text-neutral-100">

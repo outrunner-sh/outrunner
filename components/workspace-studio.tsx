@@ -3,10 +3,11 @@
 import { MessageSquarePlus, PanelRight, PanelRightClose, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 
+import { CollapsedSidebarButtons } from "@/components/app-frame";
 import { SessionComposer } from "@/components/session-composer";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
-import { WorkspaceSession } from "@/components/workspace-session";
+import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -14,9 +15,10 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
-/** The session itself: chat in the middle, its Environment (changes, branch,
- *  pull request, terminal) on the right. The app sidebar to its left belongs
- *  to the layout (app/(app)/layout.tsx). */
+/** The session itself: a header across the top, then the chat, with its
+ *  Environment (changes, branch, pull request, terminal) on the right. The app
+ *  sidebar to its left belongs to the layout (app/(app)/layout.tsx); collapsed,
+ *  its buttons sit at the start of this header. */
 export function WorkspaceStudio({
   workspace,
   projectName,
@@ -45,6 +47,8 @@ export function WorkspaceStudio({
   const [showTerminal, setShowTerminal] = useState(false);
   // The bottom of the Environment panel, where the session docks its terminal.
   const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
+  // How the Environment panel's Create PR sends into the session, while it can.
+  const [sender, setSender] = useState<SessionSender | null>(null);
   // The header's terminal button shows it even with the panel closed.
   const toggleTerminalFromHeader = () => {
     if (showTerminal && rightOpen) {
@@ -58,79 +62,87 @@ export function WorkspaceStudio({
   const setup = useWorkspaceSetup(workspace, !isLocal);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
-  const offline = offlineCopy({ workspace, isReady, stalled: setup === "stalled" });
+  const offline = offlineCopy({ workspace, isReady, stalled: setup.state === "stalled" });
+  // Beside the title: the repository by its short name, or this Mac's folder.
+  const place = local ? local.name : projectName?.split("/").pop();
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
-      <section className="studio-chat">
-        <header className="studio-chat-header">
-          <div className="studio-title">
-            <span
-              className={cn("studio-status", `is-${workspace.status}`)}
-              title={workspace.status}
-              aria-label={`Session ${workspace.status}`}
-              role="img"
-            />
-            <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
-          </div>
-          <div className="studio-header-actions">
-            {hasLiveSession && (
-              <button
-                className={cn("studio-icon-button", showTerminal && rightOpen && "is-active")}
-                onClick={toggleTerminalFromHeader}
-                title={showTerminal && rightOpen ? "Hide terminal" : "Show terminal"}
-                aria-pressed={showTerminal && rightOpen}
-              >
-                <TerminalSquare />
-              </button>
-            )}
+      <header className="studio-header">
+        <div className="studio-title">
+          <CollapsedSidebarButtons className="mr-1 flex shrink-0 items-center gap-0.5" />
+          <span
+            className={cn("studio-status", `is-${workspace.status}`)}
+            title={workspace.status}
+            aria-label={`Session ${workspace.status}`}
+            role="img"
+          />
+          <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
+          {place && <span className="studio-title-place">{place}</span>}
+        </div>
+        <div className="studio-header-actions">
+          {hasLiveSession && (
             <button
-              className="studio-icon-button"
-              onClick={() => setRightOpen((open) => !open)}
-              title={rightOpen ? "Hide environment" : "Show environment"}
-              aria-pressed={rightOpen}
+              className={cn("studio-icon-button", showTerminal && rightOpen && "is-active")}
+              onClick={toggleTerminalFromHeader}
+              title={showTerminal && rightOpen ? "Hide terminal" : "Show terminal"}
+              aria-pressed={showTerminal && rightOpen}
             >
-              {rightOpen ? <PanelRightClose /> : <PanelRight />}
+              <TerminalSquare />
             </button>
-          </div>
-        </header>
+          )}
+          <button
+            className="studio-icon-button"
+            onClick={() => setRightOpen((open) => !open)}
+            title={rightOpen ? "Hide environment" : "Show environment"}
+            aria-pressed={rightOpen}
+          >
+            {rightOpen ? <PanelRightClose /> : <PanelRight />}
+          </button>
+        </div>
+      </header>
 
-          {hasLiveSession ? (
-            <WorkspaceSession
-              workspaceId={workspace.id}
-              local={isLocal}
-              showTerminal={showTerminal}
-              onToggleTerminal={() => setShowTerminal((open) => !open)}
-              terminalSlot={terminalSlot}
-              untitled={!isLocal && !workspace.title}
-              initialPrompt={initialPrompt}
-              initialAttachmentIds={initialAttachmentIds}
-            />
-          ) : setup === "running" ? (
-            <div className="studio-offline">
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <WorkspaceCreating
-                  projectName={projectName ?? workspaceLabel(workspace)}
-                  branch={workspace.baseBranch}
-                  startedAt={workspace.createdAt}
-                />
-              </div>
-              <SessionComposer
-                onSend={() => {}}
-                canSend={false}
-                disabledPlaceholder="Claude starts here, with your first message, once the session is ready"
+      <section className="studio-chat">
+        {hasLiveSession ? (
+          <WorkspaceSession
+            workspaceId={workspace.id}
+            agent={workspace.agent}
+            local={isLocal}
+            showTerminal={showTerminal}
+            onToggleTerminal={() => setShowTerminal((open) => !open)}
+            terminalSlot={terminalSlot}
+            untitled={!isLocal && !workspace.title}
+            initialPrompt={initialPrompt}
+            initialAttachmentIds={initialAttachmentIds}
+            onSender={setSender}
+          />
+        ) : setup.state === "running" ? (
+          <div className="studio-offline">
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <WorkspaceCreating
+                projectName={projectName ?? workspaceLabel(workspace)}
+                branch={workspace.baseBranch}
+                startedAt={workspace.createdAt}
+                phase={setup.phase}
+                hasExistingComputer={setup.hasComputer}
               />
             </div>
-          ) : (
-            <div className="studio-offline">
-              <div className="studio-empty-chat">
-                <div className="studio-empty-icon"><MessageSquarePlus /></div>
-                <h3>{offline.title}</h3>
-                <p>{offline.detail}</p>
-              </div>
-              <SessionComposer onSend={() => {}} canSend={false} disabledPlaceholder={offline.placeholder} />
+            <SessionComposer
+              onSend={() => {}}
+              canSend={false}
+              disabledPlaceholder="Claude starts here, with your first message, once the session is ready"
+            />
+          </div>
+        ) : (
+          <div className="studio-offline">
+            <div className="studio-empty-chat">
+              <div className="studio-empty-icon"><MessageSquarePlus /></div>
+              <h3>{offline.title}</h3>
+              <p>{offline.detail}</p>
             </div>
-          )}
+            <SessionComposer onSend={() => {}} canSend={false} disabledPlaceholder={offline.placeholder} />
+          </div>
+        )}
       </section>
 
       {/* Hidden rather than unmounted when closed: the terminal docked at its
@@ -143,6 +155,7 @@ export function WorkspaceStudio({
             local={local}
             pullRequest={pullRequest}
             isReady={isReady}
+            sender={sender}
             terminalOpen={hasLiveSession && showTerminal}
             onClose={() => setRightOpen(false)}
           />

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { AGENTS } from "@/lib/agents/registry";
 import { getOwner } from "@/lib/auth/owner";
-import { modelKey } from "@/lib/db/credentials";
+import { agentAuthStore, modelKey } from "@/lib/db/credentials";
 import {
   getRuntimeComputerByProject,
   getWorkspace,
@@ -13,9 +14,16 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { requestedModel, setModelRequest } from "@/lib/runtime/session-models";
-
-export const dynamic = "force-dynamic";
+import { boxUpgrade } from "@/lib/runtime/session-environment";
+import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
+import {
+  agentOf,
+  checkEffortApplied,
+  requestedEffort,
+  requestedModel,
+  runsOnOwnAccount,
+  setModelRequest,
+} from "@/lib/runtime/session-models";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -34,16 +42,30 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in to switch models." }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as { provider?: unknown; model?: unknown; key?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as
+    | { provider?: unknown; model?: unknown; key?: unknown; effort?: unknown }
+    | null;
   const model = requestedModel(body);
   if (!model) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+  }
+  // None: the model's own.
+  const effort = requestedEffort(body);
+  if (effort === null) {
+    return NextResponse.json({ error: "Choose one of the offered efforts." }, { status: 400 });
   }
 
   const { id } = await context.params;
   const workspace = await getWorkspace(id);
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
+  }
+  // A session keeps its agent: its conversation is that agent's.
+  if (agentOf(model.provider) !== workspace.agent) {
+    return NextResponse.json(
+      { error: `This session runs ${AGENTS[workspace.agent].label}. Start a new session to use ${AGENTS[agentOf(model.provider)].label}.` },
+      { status: 409 },
+    );
   }
 
   const resolution = resolveProvider(workspace);
@@ -70,7 +92,7 @@ export async function POST(request: Request, context: RouteContext) {
   // OpenRouter, so only for a switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder));
+    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder), effort);
   } catch (error) {
     return modelKeyErrorResponse(error, `Model: could not get the ${model.provider} key of ${owner.id}`);
   }
@@ -90,13 +112,31 @@ export async function POST(request: Request, context: RouteContext) {
     userId: owner.id,
   };
 
+  const agent = new AgentClient(target);
   try {
-    await new AgentClient(target).setModel(identity, req);
+    // The switch relaunches the session: signed in as the user picks now, so
+    // a key replaced since is the one it relaunches on.
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+    await signInSession(
+      sessionAuthClient(agent, identity, upgrade),
+      workspace.agent,
+      agentAuthStore(owner.id),
+      runsOnOwnAccount(model),
+    );
+  } catch (error) {
+    const failure = signInFailure(error);
+    if (failure) return NextResponse.json(failure, { status: 409 });
+    console.error(`Model: signing ${workspace.id} in failed`, error);
+    return NextResponse.json({ error: "Couldn't switch models. Please try again." }, { status: 502 });
+  }
+
+  try {
+    checkEffortApplied(req, await agent.setModel(identity, req));
   } catch (error) {
     const { status, message } = switchFailure(error, model);
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);
     return NextResponse.json({ error: message }, { status });
   }
-  return NextResponse.json({ model: req.model });
+  return NextResponse.json({ model: req.model, effort: req.effort ?? null });
 }
 

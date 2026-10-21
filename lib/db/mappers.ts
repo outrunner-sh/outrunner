@@ -1,3 +1,4 @@
+import { isAgentId } from "@/lib/agents/registry";
 import { parseManifest } from "@/lib/runtime/snapshot/manifest";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
 import type { Database } from "@/lib/supabase/database.types";
@@ -60,6 +61,9 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     computerId: row.computer_id,
     tmuxSession: row.tmux_session,
     agentWorkspaceId: row.agent_workspace_id,
+    // Claude Code: every session from before the column, and a value a later
+    // release added.
+    agent: isAgentId(row.agent) ? row.agent : "claude",
     lastActiveAt: row.last_active_at,
     errorMessage: row.error_message,
     createdAt: row.created_at,

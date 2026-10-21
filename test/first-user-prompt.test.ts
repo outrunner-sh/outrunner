@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { promptWithAttachments } from "@/lib/runtime/attachments";
-import { firstUserPrompt, messageText, userPromptCount } from "@/lib/runtime/conversation-events";
+import { firstUserPrompt, isInterruption, messageText, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 
 let n = 0;
 const message = (role: "user" | "assistant", content: unknown[]): AgentEvent => ({
@@ -54,4 +54,14 @@ test("a prompt of only files gives way to the next prompt with words", () => {
 test("no prompt yet is null", () => {
   assert.equal(firstUserPrompt([]), null);
   assert.equal(firstUserPrompt([message("assistant", [text("hello")])]), null);
+});
+
+test("Claude's record of a stopped turn is not a prompt", () => {
+  const stopped = message("user", [text("[Request interrupted by user]")]);
+  const stoppedTool = message("user", [text("[Request interrupted by user for tool use]")]);
+  assert.ok(isInterruption(stopped) && isInterruption(stoppedTool));
+  assert.equal(isInterruption(message("user", [text("why was the [Request interrupted by user] shown?")])), false);
+  const events = [stopped, message("user", [text("try again")]), stoppedTool];
+  assert.deepEqual(userPrompts(events), ["try again"]);
+  assert.equal(firstUserPrompt(events), "try again");
 });

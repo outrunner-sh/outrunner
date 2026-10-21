@@ -1,19 +1,16 @@
-import { redirect } from "next/navigation";
-
 import { SettingsNav } from "@/components/settings-nav";
-import { getOwnerSafe } from "@/lib/auth/owner";
-
-export const dynamic = "force-dynamic";
 
 /** Two-pane settings: a section nav on the left, the selected section on the
- *  right. Owner-gated like the rest of the control plane. */
-export default async function SettingsLayout({
+ *  right. It reads nothing, so it shows at once. Owner-gated like the rest of
+ *  the control plane: signed out by the proxy, and each section that shows
+ *  anything of the user's checks for the owner as it loads — with getOwnerSafe,
+ *  so a deployment whose Supabase isn't configured yet still reaches sign-in
+ *  rather than the error page. */
+export default function SettingsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  if (!(await getOwnerSafe())) redirect("/signin?next=/settings");
-
   return (
     <div className="grid h-dvh grid-cols-[240px_1fr] overflow-hidden bg-background">
       <SettingsNav />

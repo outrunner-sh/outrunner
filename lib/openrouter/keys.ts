@@ -87,20 +87,67 @@ export function keySource(): "per-user" | "shared" | null {
 /** OpenRouter's account of the key a request is made with. */
 const CURRENT_KEY_URL = "https://openrouter.ai/api/v1/key";
 
+/** OpenRouter's account of a key, read on that key's own authority: what it
+ *  has spent in USD, in all and this UTC day, week and month; its cap, null
+ *  when it has none; and whether it is a management key, which can make keys
+ *  but not run a model. A figure OpenRouter leaves out is null. */
+export type CurrentKey = {
+  management: boolean;
+  usedUsd: number | null;
+  dailyUsd: number | null;
+  weeklyUsd: number | null;
+  monthlyUsd: number | null;
+  limitUsd: number | null;
+  remainingUsd: number | null;
+};
+
+/** OpenRouter answered, but not with the key: `status` says why (a 429 is a
+ *  key it knows, but is limiting). The body is never read into it: it could
+ *  echo the key back. */
+export class OpenRouterAnswerError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`OpenRouter answered ${status} reading a key`);
+    this.name = "OpenRouterAnswerError";
+    this.status = status;
+  }
+}
+
+/**
+ * Read `key`'s own account from OpenRouter (Settings → Providers checks a
+ * user's key with it; Settings → Usage shows what it spent): null when
+ * OpenRouter refuses the key, an {@link OpenRouterAnswerError} for any other
+ * answer but its account, a throw when OpenRouter can't be reached.
+ */
+export async function readCurrentKey(key: string): Promise<CurrentKey | null> {
+  const response = await openRouter(CURRENT_KEY_URL, { headers: { authorization: `Bearer ${key}` } });
+  if (response.status === 401 || response.status === 403) return null;
+  if (!response.ok) throw new OpenRouterAnswerError(response.status);
+  const data = ((await response.json().catch(() => null)) as { data?: Record<string, unknown> } | null)?.data ?? {};
+  return {
+    // is_provisioning_key is OpenRouter's older name for it.
+    management: data.is_management_key === true || data.is_provisioning_key === true,
+    usedUsd: usd(data.usage),
+    dailyUsd: usd(data.usage_daily),
+    weeklyUsd: usd(data.usage_weekly),
+    monthlyUsd: usd(data.usage_monthly),
+    limitUsd: usd(data.limit),
+    remainingUsd: usd(data.limit_remaining),
+  };
+}
+
+function usd(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 /**
  * Whether OpenRouter takes `key` for running models (Settings → Providers checks
  * a user's own before keeping it): false when it refuses it, or when it is a
- * management key, which can make keys but not run a model; a throw when
- * OpenRouter can't be asked.
+ * management key; a throw when OpenRouter can't be asked.
  */
 export async function openRouterAcceptsKey(key: string): Promise<boolean> {
-  const response = await openRouter(CURRENT_KEY_URL, { headers: { authorization: `Bearer ${key}` } });
-  if (response.status === 401 || response.status === 403) return false;
-  if (!response.ok) throw new Error(`OpenRouter answered ${response.status} checking a key`);
-  const body = (await response.json().catch(() => null)) as {
-    data?: { is_management_key?: boolean; is_provisioning_key?: boolean };
-  } | null;
-  return body?.data?.is_management_key !== true && body?.data?.is_provisioning_key !== true;
+  const current = await readCurrentKey(key);
+  return current !== null && !current.management;
 }
 
 export type CreatedKey = {

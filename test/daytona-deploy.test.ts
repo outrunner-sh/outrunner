@@ -32,6 +32,7 @@ import {
   type BoxIO,
   type ExecResult,
 } from "@/lib/runtime/daytona/deploy";
+import { GH_VERSION } from "@/lib/runtime/github-cli";
 
 /** A scripted BoxIO: exec returns queued results by matching a predicate. */
 function fakeBox(
@@ -166,7 +167,7 @@ test("waitForAgentHealth resolves once the probe returns 200", async () => {
   ]);
   // Override exec to fail twice then succeed, and serve the log tail.
   box.io.exec = async (command) => {
-    if (command.includes("curl")) {
+    if (command.includes("/health")) {
       probes += 1;
       return { stdout: probes >= 3 ? "200" : "000", exitCode: 0 };
     }
@@ -194,7 +195,7 @@ test("deployAgent runs upload → prep → launch → health in order", async ()
   const io: BoxIO = {
     exec: async (command) => {
       if (command.includes("gunzip")) order.push("prep");
-      if (command.includes("curl")) {
+      if (command.includes("/health")) {
         order.push("health");
         return { stdout: "200", exitCode: 0 };
       }
@@ -224,15 +225,52 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
   }
 });
 
+test("claudeInstallScript installs the pinned Codex, after the tools", () => {
+  const s = claudeInstallScript();
+  assert.ok(s.includes("sudo npm install -g @openai/codex@"), "installs Codex");
+  assert.ok(s.indexOf("apt-get install") < s.indexOf("npm install"), "tools first");
+});
+
+// `gh` is what the agent's orientation tells it to open pull requests with, and
+// the box's GH_TOKEN signs it in. No base image has it and Debian doesn't ship
+// it, so the deploy installs the release itself.
+test("claudeInstallScript installs the pinned gh, for the architecture the box reports", () => {
+  const s = claudeInstallScript();
+  assert.ok(s.includes(`/v${GH_VERSION}/gh_${GH_VERSION}_linux_$arch.tar.gz`), "installs the pinned gh");
+  // uname, not dpkg: the mapping must cover both architectures a box runs on.
+  assert.match(s, /x86_64\) arch=amd64;; aarch64\|arm64\) arch=arm64;;/);
+  // Whole release down before anything is unpacked, so a cut connection can't
+  // leave a half-written gh on the PATH.
+  assert.ok(s.indexOf("-o \"$tmp/gh.tar.gz\"") < s.indexOf("tar -xzf"), "downloads before unpacking");
+  assert.ok(s.includes("sudo install -m 0755"), "installs it as root, world-executable");
+  assert.ok(s.includes("/usr/local/bin/gh"), "puts gh on every user's PATH");
+});
+
+test("claudeInstallScript fails when the tools can't be installed, whatever Codex does", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  // No tmux or jq, a sudo that fails apt but runs npm, and Codex installing fine.
+  const bin = mkdtempSync(join(tmpdir(), "install-fail-"));
+  writeFileSync(join(bin, "sudo"), `#!/bin/sh\ncase "$*" in *apt-get*) exit 1;; *) exit 0;; esac\n`);
+  chmodSync(join(bin, "sudo"), 0o755);
+  // Only the stand-ins on PATH: a machine's own tmux or jq mustn't count.
+  assert.throws(() =>
+    execFileSync("/bin/sh", ["-c", claudeInstallScript()], { env: { ...process.env, PATH: bin }, stdio: "ignore" }),
+  );
+});
+
 test("claudeInstallScript skips the install when the box already has the tools", async () => {
   const { execFileSync } = await import("node:child_process");
   const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  // A PATH with tmux and jq present, and a sudo that records being called.
+  // A PATH with tmux, jq, codex and gh present, and a sudo that records being
+  // called: every install is guarded, so none of them runs.
   const bin = mkdtempSync(join(tmpdir(), "install-"));
   const called = join(bin, "sudo-called");
-  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["codex", "exit 0"], ["gh", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   }
@@ -305,7 +343,7 @@ test("deployClaude runs install → upload → prep → seed → launch → heal
       if (command.includes("pkill")) order.push("stop");
       if (command.includes("gunzip")) order.push("prep");
       if (command.includes(".claude.json")) order.push("seed");
-      if (command.includes("curl")) {
+      if (command.includes("/health")) {
         order.push("health");
         return { stdout: "200", exitCode: 0 };
       }
@@ -337,7 +375,7 @@ test("deployClaude doesn't upload an agent the box has already (a restored one)"
         return { stdout: `${createHash("sha256").update(binary).digest("hex")}\n`, exitCode: 0 };
       }
       if (command.includes("gunzip")) order.push("prep");
-      if (command.includes("curl")) return { stdout: "200", exitCode: 0 };
+      if (command.includes("/health")) return { stdout: "200", exitCode: 0 };
       return { stdout: "", exitCode: 0 };
     },
     launch: async () => {
@@ -417,7 +455,7 @@ test("deployJcode runs creds → install → bridge → agent → health in orde
       if (command.includes("npm i @1jehuang/jcode-sdk")) { order.push("install"); return { stdout: "/tmp/node_modules/@1jehuang/jcode-linux-x64/bin/jcode", exitCode: 0 }; }
       if (command.includes("test -S")) { order.push("socket"); return { stdout: "yes", exitCode: 0 }; }
       if (command.includes("gunzip")) { order.push("prep"); return { stdout: "", exitCode: 0 }; }
-      if (command.includes("curl")) { order.push("health"); return { stdout: "200", exitCode: 0 }; }
+      if (command.includes("/health")) { order.push("health"); return { stdout: "200", exitCode: 0 }; }
       return { stdout: "", exitCode: 0 };
     },
     launch: async (command) => { order.push(command.includes("api-bridge") ? "bridge" : "agent"); },

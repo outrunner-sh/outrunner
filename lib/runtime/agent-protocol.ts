@@ -13,7 +13,9 @@
 import { z } from "zod";
 
 import {
+  OPTIONAL_SNAPSHOT_ARTIFACTS,
   SNAPSHOT_ARTIFACTS,
+  type OptionalSnapshotArtifact,
   type SnapshotArtifact,
 } from "@/lib/runtime/snapshot/manifest";
 
@@ -61,6 +63,102 @@ export type PtyServerMessage = z.infer<typeof PtyServerMessage>;
 // Control API (HTTP, Next -> agent). Requests + a stable error envelope.
 // ---------------------------------------------------------------------------
 
+/** The coding agent a session runs. Omitted wherever it is optional: Claude. */
+export const AgentName = z.enum(["claude", "codex"]);
+export type AgentName = z.infer<typeof AgentName>;
+
+/** POST /workspaces/{id}/environment: a session's project variables, sourced
+ *  by its launch; its checkout's .env files, under $CONDUCTOR_ROOT_PATH (and
+ *  in the worktree when there's no setup script); and the setup script its
+ *  next launch runs once. */
+export const SetEnvironmentRequest = z
+  .object({
+    env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string()),
+    /** Files the checkout kept out of git (its .env files), by path in it. */
+    files: z
+      .record(
+        z.string().refine((p) => !p.startsWith("/") && !p.split("/").some((s) => s === ".." || s === "." || s === ""), {
+          message: "a path in the checkout",
+        }),
+        z.string(),
+      )
+      .optional(),
+    setup: z.string().max(64 * 1024).optional(),
+  })
+  .strict();
+export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
+
+/** POST /config: the user's own agent setup for the computer — an archive of
+ *  their CLAUDE.md, skills, subagents, commands and AGENTS.md (downloaded
+ *  unless its version is installed; none removes any), Claude's MCP servers
+ *  and plugin settings. */
+export const SetAgentConfigRequest = z
+  .object({
+    version: z.string().optional(),
+    url: z.string().url().optional(),
+    sha256: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+    mcpServers: z.record(z.string(), z.unknown()).optional(),
+    settings: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+  .refine((v) => !v.url || (v.version && v.sha256), { message: "an archive needs its version and digest", path: ["url"] });
+export type SetAgentConfigRequest = z.infer<typeof SetAgentConfigRequest>;
+
+/** The agent takes the user's own setup (POST /config). */
+export const AGENT_FEATURE_AGENT_CONFIG = "agent-config";
+
+/** The agent takes a session's environment (POST /workspaces/{id}/environment). */
+export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
+
+/** What an agent can do that an older one can't: `restore-imports` restores
+ *  an imported session (compressed downloads, its branch renamed, its
+ *  conversation moved to the worktree). */
+export const AGENT_FEATURE_IMPORTS = "restore-imports";
+
+/** GET /health (unauthenticated): the agent is up, and what it can run a
+ *  session on. `gateways`, `agents` and `features` are absent from agents
+ *  older than each: those run OpenRouter alone, and Claude alone. */
+export const AgentHealth = z.object({
+  status: z.literal("ok"),
+  gateways: z.array(z.string()).optional(),
+  agents: z.array(AgentName).optional(),
+  features: z.array(z.string()).optional(),
+});
+export type AgentHealth = z.infer<typeof AgentHealth>;
+
+/** A credential as the agent takes it: printable ASCII with no space, quote
+ *  or backslash (it is written into a sourced shell file), 20 to 400 long. */
+const CredentialToken = z.string().regex(/^[\x21-\x26\x28-\x5b\x5d-\x7e]{20,400}$/);
+
+/**
+ * POST /workspaces/{id}/auth: the session's own credential, applied at its
+ * next launch. claude-oauth-token and anthropic-api-key are a Claude
+ * session's, openai-api-key a Codex session's (another agent's is refused);
+ * none takes the credential away and carries no token. An unknown session is
+ * 404 with the NOT_FOUND envelope (an agent without the route: a bare 404);
+ * a credential on an engine that runs sessions on its own login (jcode),
+ * 409 UNSUPPORTED.
+ */
+export const SetAuthRequest = z
+  .object({
+    kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key"]),
+    token: CredentialToken.optional(),
+  })
+  .refine((v) => (v.kind === "none") === (v.token === undefined), {
+    message: "a credential needs its token, and none takes one",
+    path: ["token"],
+  });
+export type SetAuthRequest = z.infer<typeof SetAuthRequest>;
+
+/** Git user identity for commits. When provided, the agent configures git
+ *  user.name and user.email in the worktree so commits are attributed to the
+ *  Outrunner user rather than a generic identity. */
+export const GitUser = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+});
+export type GitUser = z.infer<typeof GitUser>;
+
 export const CreateWorkspaceRequest = z.object({
   workspaceId: z.string().min(1),
   repoFullName: z.string().min(1),
@@ -74,6 +172,12 @@ export const CreateWorkspaceRequest = z.object({
   permissionMode: z.enum(["default", "acceptEdits", "plan", "bypassPermissions"]).optional(),
   /** Labels a local session in the desktop's list (the first prompt). */
   title: z.string().optional(),
+  /** The session's agent; omitted is Claude. Recorded by the first create, a
+   *  repeated one never changes it. An agent from before agents ignores it
+   *  and runs Claude: check `agents` on /health first. */
+  agent: AgentName.optional(),
+  /** Git user identity for commits; omitted uses the system default. */
+  gitUser: GitUser.optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
@@ -89,13 +193,20 @@ const ARCHIVE_ARTIFACTS = Object.keys(SNAPSHOT_ARTIFACTS) as [
   ...SnapshotArtifact[],
 ];
 const RESTORE_ARTIFACTS = ["bundle", "patch", "conversation"] as const;
+/** Artifacts a request may add to those: a Codex session's raw rollout. */
+const OPTIONAL_ARTIFACTS = Object.keys(OPTIONAL_SNAPSHOT_ARTIFACTS) as [
+  OptionalSnapshotArtifact,
+  ...OptionalSnapshotArtifact[],
+];
 
-/** True when `got` is exactly `want` as a set — no missing, extra, or dup keys. */
-function coversExactly(got: string[], want: readonly string[]): boolean {
+/** True when `got` is exactly `want` as a set, plus any of `optional` — no
+ *  missing, extra, or dup keys. */
+function coversExactly(got: string[], want: readonly string[], optional: readonly string[] = []): boolean {
   const set = new Set(got);
+  const required = got.filter((k) => !optional.includes(k));
   return (
-    got.length === want.length &&
-    set.size === want.length &&
+    set.size === got.length &&
+    required.length === want.length &&
     want.every((k) => set.has(k))
   );
 }
@@ -106,7 +217,7 @@ function coversExactly(got: string[], want: readonly string[]): boolean {
  * credentials (M4 open decision #1). `artifact` is a key of SNAPSHOT_ARTIFACTS.
  */
 export const ArchiveUpload = z.object({
-  artifact: z.enum(ARCHIVE_ARTIFACTS),
+  artifact: z.enum([...ARCHIVE_ARTIFACTS, ...OPTIONAL_ARTIFACTS]),
   url: z.string().url(),
 });
 export type ArchiveUpload = z.infer<typeof ArchiveUpload>;
@@ -123,16 +234,18 @@ export const ArchiveWorkspaceRequest = z
     archivedAt: z.string().min(1),
     uploads: z.array(ArchiveUpload),
   })
-  .refine((v) => coversExactly(v.uploads.map((u) => u.artifact), ARCHIVE_ARTIFACTS), {
-    message: "archive uploads must cover exactly the six Snapshot artifacts",
+  .refine((v) => coversExactly(v.uploads.map((u) => u.artifact), ARCHIVE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
+    message: "archive uploads must cover exactly the six Snapshot artifacts (and may add a rollout)",
     path: ["uploads"],
   });
 export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequest>;
 
 /** One signed download URL for a Snapshot artifact the agent reads at Restore. */
 export const RestoreDownload = z.object({
-  artifact: z.enum(RESTORE_ARTIFACTS),
+  artifact: z.enum([...RESTORE_ARTIFACTS, ...OPTIONAL_ARTIFACTS]),
   url: z.string().url(),
+  /** How the artifact is stored: "gzip" for an imported session's. */
+  encoding: z.literal("gzip").optional(),
 });
 export type RestoreDownload = z.infer<typeof RestoreDownload>;
 
@@ -149,9 +262,20 @@ export const RestoreWorkspaceRequest = z
     baseBranch: z.string().optional(),
     sessionId: z.string().min(1).nullable(),
     downloads: z.array(RestoreDownload),
+    /** The session's agent (a fresh box has no record of it); omitted is
+     *  Claude. A Codex session resumes by its `rollout` download when the
+     *  Snapshot has one, else starts afresh with its conversation restored. */
+    agent: AgentName.optional(),
+    /** The session's own credential, recorded before it relaunches. */
+    auth: SetAuthRequest.optional(),
+    /** The branch as the bundle names it, when restored onto another name. */
+    bundleRef: z.string().min(1).optional(),
+    /** The folder an imported session worked in on its Mac; the
+     *  conversation's working directories move from it to the worktree. */
+    originWorktree: z.string().startsWith("/").optional(),
   })
-  .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS), {
-    message: "restore downloads must cover exactly bundle, patch, and conversation",
+  .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
+    message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",
     path: ["downloads"],
   });
 export type RestoreWorkspaceRequest = z.infer<typeof RestoreWorkspaceRequest>;
@@ -165,6 +289,8 @@ export const ErrorCode = z.enum([
   // A model switch: an unknown session, or one that can't switch right now.
   "NOT_FOUND",
   "CONFLICT",
+  // A session credential on an engine that runs sessions on its own login.
+  "UNSUPPORTED",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
@@ -228,6 +354,26 @@ export type WorkspaceSummary = z.infer<typeof WorkspaceSummary>;
 /** The workspace claim of the only token that may ask about the whole box
  *  (GET /workspaces, GET /activity): no real workspace can have it. */
 export const LISTING_WORKSPACE_ID = "*";
+
+/** One local session the agent on a user's Mac knows (GET /workspaces). */
+export const LocalSession = z.object({
+  workspaceId: z.string(),
+  name: z.string(),
+  title: z.string(),
+  folder: z.string(),
+  worktree: z.string(),
+  branch: z.string(),
+  baseBranch: z.string(),
+  inPlace: z.boolean(),
+  createdAt: z.string(),
+  lastActiveAt: z.string().optional(),
+  running: z.boolean(),
+  model: z.string().optional(),
+  gateway: z.string().optional(),
+  /** The session's agent; omitted is Claude (and from agents before agents). */
+  agent: AgentName.optional(),
+});
+export type LocalSession = z.infer<typeof LocalSession>;
 
 /** GET /activity: the box's most recent activity in any session or from a
  *  user, and whether Claude is mid-turn anywhere. An idle box is paused. */
@@ -329,6 +475,9 @@ export const PROTOCOL_SCHEMAS = {
   PtyClientMessage,
   PtyServerMessage,
   CreateWorkspaceRequest,
+  SetAuthRequest,
+  AgentHealth,
+  LocalSession,
   WorkspaceActionRequest,
   ArchiveWorkspaceRequest,
   RestoreWorkspaceRequest,
@@ -339,6 +488,11 @@ export const PROTOCOL_SCHEMAS = {
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  SetEnvironmentRequest,
+  SetAgentConfigRequest,
+  /** The variables a session's environment may not set; lib/imports/
+   *  environment.ts and the agent each hold the list, checked against this. */
+  ReservedEnv: z.array(z.string()),
 } as const;
 
 export type ProtocolSchemaName = keyof typeof PROTOCOL_SCHEMAS;

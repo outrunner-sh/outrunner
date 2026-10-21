@@ -4,6 +4,7 @@ import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronRight,
+  CloudUpload,
   Ellipsis,
   Flag,
   Folder,
@@ -41,6 +42,8 @@ import {
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import { startNewSession } from "@/lib/session/new-session-reset";
+import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 
 /**
@@ -50,6 +53,7 @@ import { cn } from "@/lib/utils";
  * this Mac's folders together, newest activity first), then the user.
  */
 export function AppSidebar({
+  loading = false,
   projects,
   workspaces,
   ownerLogin,
@@ -58,6 +62,8 @@ export function AppSidebar({
   searchSignal = 0,
   initialFolded = [],
 }: {
+  /** What it lists hasn't arrived yet (a cold start): rows held by a skeleton. */
+  loading?: boolean;
   projects: NavProject[];
   workspaces: Workspace[];
   ownerLogin: string;
@@ -91,7 +97,9 @@ export function AppSidebar({
   const shown = filterSidebarGroups(groups, query);
 
   // Projects folded shut with their chevron, remembered across visits.
-  const [folded, setFolded] = useState(initialFolded);
+  // Toggled here; else as the cookie had them, once read.
+  const [foldedChoice, setFolded] = useState<string[] | null>(null);
+  const folded = foldedChoice ?? initialFolded;
   const toggleFolded = (key: string) => {
     const next = folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key];
     setFolded(next);
@@ -124,7 +132,7 @@ export function AppSidebar({
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 px-3 pb-3 pt-5">
+    <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 bg-sidebar px-3 pb-3 pt-5">
       <div className="flex items-center justify-between px-2">
         <Link href="/" className="flex items-center gap-2 font-mono text-sm font-semibold text-foreground">
           <Terminal className="size-4" />
@@ -145,11 +153,13 @@ export function AppSidebar({
         {/* Home is the new-session screen too. */}
         <NavLink
           href="/new"
+          onClick={startNewSession}
           icon={<Plus />}
           label="New Session"
           hint="⌘N"
           active={pathname === "/" || pathname === "/new"}
         />
+        <NavLink href="/import" icon={<CloudUpload />} label="Import" active={pathname === "/import"} />
         <NavSoon icon={<Flag />} label="Runner" />
         <NavSoon icon={<Sparkles />} label="Automations" />
         {searching ? (
@@ -166,6 +176,7 @@ export function AppSidebar({
               picked: the way to start in a project not listed yet. */}
           <Link
             href="/new"
+            onClick={startNewSession}
             aria-label="Start a session in another project"
             title="Start a session in another project"
             className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -173,9 +184,15 @@ export function AppSidebar({
             <FolderPlus className="size-4" />
           </Link>
         </div>
-        {/* This Mac's sessions are read from the agent after the page loads, so
-            the list waits for them rather than reshuffling as they land. */}
-        <SkeletonSwap ready={local.state !== "loading"} skeleton={<SidebarSkeleton />} label="Sessions" className="mt-2">
+        {/* What it lists streams in on a cold start, and this Mac's sessions are
+            read from the agent after the page loads, so the list waits for
+            both rather than reshuffling as they land. */}
+        <SkeletonSwap
+          ready={!loading && local.state !== "loading"}
+          skeleton={<SidebarSkeleton />}
+          label="Sessions"
+          className="mt-2"
+        >
           <div className="space-y-3">
             {shown.length === 0 ? (
               <p className="px-2 py-1 text-sm text-muted-foreground">
@@ -252,12 +269,13 @@ function WorkspaceGroup({
   const router = useRouter();
   const { start } = group;
   // Set the form's cloud/Mac choice, then open a fresh form for this target
-  // (newSessionHref: a new key each click, even for the URL already open).
+  // (startNewSession: a new form each click, even for the URL already open).
   const startHere = () => {
     if (!start) return;
     if (start.kind === "local") startNextSessionIn(start.folder);
     else startNextSessionInCloud();
-    router.push(newSessionHref(start, Date.now().toString(36)));
+    startNewSession();
+    router.push(newSessionHref(start));
   };
   const Icon = group.local ? Laptop : Folder;
   return (
@@ -300,10 +318,17 @@ function WorkspaceGroup({
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
           const { deletion } = session;
+          // A cloud session warms up as the pointer rests on it, so its click
+          // shows the conversation at once. A Mac one is near already, and
+          // attaching would start it.
+          const warm = !isActive && !group.local;
           return (
             <div key={session.id} className="group/row relative">
               <Link
                 href={session.href}
+                onPointerEnter={warm ? () => warmOnRest(session.id) : undefined}
+                onPointerLeave={warm ? cancelWarmOnRest : undefined}
+                onFocus={warm ? () => warmSession(session.id) : undefined}
                 title={session.title}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
@@ -378,12 +403,14 @@ const rowClass =
 
 function NavLink({
   href,
+  onClick,
   icon,
   label,
   hint,
   active,
 }: {
   href: string;
+  onClick?: () => void;
   icon: React.ReactNode;
   label: string;
   /** Its keyboard shortcut, shown at the row's end on hover. */
@@ -393,6 +420,7 @@ function NavLink({
   return (
     <Link
       href={href}
+      onClick={onClick}
       aria-current={active ? "page" : undefined}
       aria-keyshortcuts={hint ? keyShortcut(hint) : undefined}
       className={cn(

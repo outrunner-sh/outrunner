@@ -1,10 +1,25 @@
+import { type AgentConnection, AGENTS, type AgentId } from "@/lib/agents/registry";
+import { sharedResource } from "@/lib/client/shared-resource";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
 import {
+  ImportCapture,
+  ImportCaptureSkip,
+  ImportConfigCapture,
+  ImportEnvCapture,
+  ImportScan,
+  type ImportSkip,
+} from "@/lib/runtime/import-scan";
+import { EMPTY_LOADOUT, type ModelLoadout, parseLoadout } from "@/lib/runtime/model-loadout";
+import {
+  checkEffortApplied,
+  connectedAccounts,
   defaultModel,
+  type Effort,
   type KeyHolder,
   type ModelMenu,
+  parseAgentConnections,
   predatesProvider,
   predatesProviderMessage,
   setModelRequest,
@@ -53,6 +68,28 @@ export type LocalStatus = {
   /** The app setting up its own Claude Code; null when it isn't. Absent from
    *  an app built before it could, which leaves installing it to the user. */
   claudeSetup?: ClaudeSetup | null;
+  /** Each agent CLI a local session can run, on this Mac's own login of it.
+   *  Absent from an app built before Codex: read it through `agentCli`. */
+  agents?: Record<AgentId, AgentCliStatus>;
+};
+
+/** One agent CLI on this Mac, as the app reports it. */
+export type AgentCliStatus = {
+  /** The one sessions run; null when this Mac has none. */
+  path: string | null;
+  /** Whether it is logged in; null when the app cannot tell. */
+  loggedIn: boolean | null;
+  /** How it is logged in, when it says (only Codex does). */
+  method: "chatgpt" | "api-key" | null;
+};
+
+/** How to install Codex on a Mac; the app has no copy of its own to set up. */
+export const CODEX_INSTALL_COMMAND = "npm i -g @openai/codex";
+
+/** How to log each agent CLI in by hand. */
+const MANUAL_LOGIN: Record<AgentId, string> = {
+  claude: "Run `claude` in Terminal and type /login.",
+  codex: "Run `codex login` in Terminal.",
 };
 
 /**
@@ -92,6 +129,9 @@ export type LocalSession = {
    *  createdAt. Absent from agents bundled before it existed. */
   lastActiveAt?: string;
   running: boolean;
+  /** The coding agent it runs; absent from an agent from before Codex, and
+   *  for any session that runs Claude Code. */
+  agent?: AgentId;
 };
 
 export function tauriCore(): TauriCore | null {
@@ -106,12 +146,53 @@ function requireCore(): TauriCore {
   return core;
 }
 
-async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+/** `agent` names the CLI a login error is about. */
+async function call<T>(cmd: string, args?: Record<string, unknown>, agent: AgentId = "claude"): Promise<T> {
   try {
     return (await requireCore().invoke(cmd, args)) as T;
   } catch (error) {
-    throw new Error(messageForLocalError(error));
+    throw new Error(messageForLocalError(error, agent));
   }
+}
+
+/** Every session on this Mac that could move to the cloud, and why any can't;
+ *  null outside the desktop app. */
+export async function importScan(): Promise<ImportScan | null> {
+  if (!tauriCore()) return null;
+  return ImportScan.parse(await call<unknown>("import_scan"));
+}
+
+/** Capture the session with `key` and upload it to `uploads` (a signed URL per
+ *  artifact kind): its capture, or why it can't be imported. */
+export async function importSession(
+  key: string,
+  uploads: Record<string, string>,
+): Promise<ImportCapture | { skip: ImportSkip }> {
+  const result = await call<unknown>("import_session", { key, uploads });
+  const skipped = ImportCaptureSkip.safeParse(result);
+  return skipped.success ? skipped.data : ImportCapture.parse(result);
+}
+
+/** The values of what the user picked of a repository's environment on this
+ *  Mac: variables by name, .env files by path, and its scripts. */
+export async function importEnvironment(
+  repo: string,
+  pick: { vars: string[]; files: string[]; scripts: boolean },
+): Promise<ImportEnvCapture> {
+  return ImportEnvCapture.parse(await call<unknown>("import_environment", { repo, ...pick }));
+}
+
+/** Archive what the user picked of their own agent setup, upload it to
+ *  `upload`, and read the picked MCP servers and plugin settings. */
+export async function importConfig(pick: {
+  items: string[];
+  mcp: string[];
+  plugins: boolean;
+  upload: string | null;
+}): Promise<ImportConfigCapture | { skip: ImportSkip }> {
+  const result = await call<unknown>("import_config", pick);
+  const skipped = ImportCaptureSkip.safeParse(result);
+  return skipped.success ? skipped.data : ImportConfigCapture.parse(result);
 }
 
 /** What this Mac has for local sessions; null outside the desktop app. */
@@ -165,12 +246,52 @@ export function setUpClaudeCode(): Promise<void> {
 }
 
 /**
+ * One agent CLI on this Mac. An app built before `agents` reports Claude Code
+ * alone, in its own fields, and cannot log Codex in: it has none.
+ */
+export function agentCli(status: LocalStatus, agent: AgentId): AgentCliStatus {
+  if (status.agents) return status.agents[agent];
+  if (agent === "codex") return { path: null, loggedIn: null, method: null };
+  return { path: status.claude, loggedIn: status.claudeLoggedIn ?? null, method: null };
+}
+
+/**
+ * Whether a local session can run on `agent` with this Mac's own login of it:
+ * `missing` when it isn't installed, `logged-out` on a clear no, else `ready`.
+ * A login the app cannot read counts as ready: the CLI asks in the session.
+ */
+export function localAgentState(status: LocalStatus, agent: AgentId): "missing" | "logged-out" | "ready" {
+  const cli = agentCli(status, agent);
+  if (cli.path === null) return "missing";
+  return cli.loggedIn === false ? "logged-out" : "ready";
+}
+
+/**
  * Whether this Mac's Claude Code must be logged in before a local session can
  * run. Only a clear no counts: an app that cannot tell, or predates the check,
  * leaves it to Claude Code's own /login in the session.
  */
 export function needsClaudeLogin(status: LocalStatus): boolean {
-  return status.claude !== null && status.claudeLoggedIn === false;
+  return localAgentState(status, "claude") === "logged-out";
+}
+
+/** Whether this Mac's Codex must be logged in before a local Codex session can
+ *  run; as `needsClaudeLogin`, only on a clear no. */
+export function needsCodexLogin(status: LocalStatus): boolean {
+  return localAgentState(status, "codex") === "logged-out";
+}
+
+/** The agents whose own accounts a session runs on, in the cloud or on this
+ *  Mac (`local`), whose app last said `status`: a CLI not yet known to be
+ *  logged out counts as logged in, as only a clear no does elsewhere. */
+export function accountsHere(
+  connections: Record<AgentId, AgentConnection>,
+  local: boolean,
+  status: LocalStatus | null,
+): AgentId[] {
+  return connectedAccounts(connections, local ? "local" : "cloud", (agent) =>
+    status === null ? true : localAgentState(status, agent) === "ready",
+  );
 }
 
 /**
@@ -195,12 +316,13 @@ export async function modelKeyFor(holder: KeyHolder): Promise<string> {
   return data.key;
 }
 
-/** Put a local session on `model`, before its first launch or as a switch:
- *  the agent records it, so Claude Code runs on it from then on. */
-export async function putOnModel(workspaceId: string, model: SessionModel): Promise<void> {
-  const body = await setModelRequest(model, modelKeyFor);
+/** Put a local session on `model` at `effort` (none: the model's own), before
+ *  its first launch or as a switch: the agent records both, so the session
+ *  runs on them from then on. */
+export async function putOnModel(workspaceId: string, model: SessionModel, effort?: Effort | null): Promise<void> {
+  const body = await setModelRequest(model, modelKeyFor, effort);
   try {
-    await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body);
+    checkEffortApplied(body, await localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/model`, body));
   } catch (error) {
     // The Mac's agent is older than the model's provider.
     if (error instanceof Error && predatesProvider(error.message)) throw new Error(predatesProviderMessage(model));
@@ -217,40 +339,65 @@ export async function putOnDefaultModel(workspaceId: string): Promise<void> {
   await putOnModel(workspaceId, model);
 }
 
+/** The model menu, whether a session can start without the user's Claude,
+ *  and the user's loadout (Settings → Default models). */
+export type OutrunnerModels = ModelMenu & {
+  available: boolean;
+  loadout: ModelLoadout;
+  /** Where sessions can run on the user's own Claude, and Codex. */
+  agents: Record<AgentId, AgentConnection>;
+};
+const NO_MODELS: OutrunnerModels = {
+  outrunner: false,
+  allowance: false,
+  keys: [],
+  available: false,
+  loadout: EMPTY_LOADOUT,
+  agents: parseAgentConnections(undefined),
+};
+
 /** What the user's model menu offers (GET /api/outrunner-models), and whether
  *  a session can start without their Claude; asked once per page load, or
- *  again after Settings → Providers changes a key. */
-export type OutrunnerModels = ModelMenu & { available: boolean };
-const NO_MODELS: OutrunnerModels = { outrunner: false, allowance: false, keys: [], available: false };
-let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
+ *  again after Settings → Providers changes a key. One answer for the page:
+ *  read it with useSharedResource to show the last one at once. A failed look
+ *  is asked again next time. */
+export const OUTRUNNER_MODELS = sharedResource<OutrunnerModels>(
+  () =>
+    fetch("/api/outrunner-models")
+      .then((res): Promise<Record<string, unknown>> | Record<string, unknown> => (res.ok ? res.json() : {}))
+      .then(parseOutrunnerModels),
+  NO_MODELS,
+);
+
+function parseOutrunnerModels(data: Record<string, unknown>): OutrunnerModels {
+  const keys = Array.isArray(data.keys)
+    ? data.keys.filter(isProviderId)
+    : // A server from before providers says only whether there's an OpenRouter key.
+      data.ownKey === true
+      ? (["openrouter"] as ProviderId[])
+      : [];
+  const outrunner = typeof data.outrunner === "boolean" ? data.outrunner : data.serverModels === true;
+  return {
+    outrunner,
+    allowance: data.allowance === true,
+    keys,
+    available: data.available === true,
+    // A server from before loadouts sends none.
+    loadout: parseLoadout(data.loadout),
+    // A server from before connections sends none: all are assumed.
+    agents: parseAgentConnections(data.agents),
+  };
+}
+
+/** The menu, looked up if not yet held; none on offer when it can't be. */
 export function outrunnerModels(): Promise<OutrunnerModels> {
-  outrunnerModelsAnswer ??= fetch("/api/outrunner-models")
-    .then((res): Promise<Record<string, unknown>> | Record<string, unknown> => (res.ok ? res.json() : {}))
-    .then((data): OutrunnerModels => {
-      const keys = Array.isArray(data.keys)
-        ? data.keys.filter(isProviderId)
-        : // A server from before providers says only whether there's an OpenRouter key.
-          data.ownKey === true
-          ? (["openrouter"] as ProviderId[])
-          : [];
-      const outrunner = typeof data.outrunner === "boolean" ? data.outrunner : data.serverModels === true;
-      return { outrunner, allowance: data.allowance === true, keys, available: data.available === true };
-    })
-    .catch(() => {
-      outrunnerModelsAnswer = null; // a failed look is asked again next time
-      return NO_MODELS;
-    });
-  return outrunnerModelsAnswer;
+  return OUTRUNNER_MODELS.ensure().catch(() => NO_MODELS);
 }
 
-/** Whether this user can start a session without their Claude. */
-export function outrunnerModelsAvailable(): Promise<boolean> {
-  return outrunnerModels().then((answer) => answer.available);
-}
-
-/** Ask again next time: one of the user's keys has just changed. */
+/** Ask again next time: one of the user's keys, or their loadout, has just
+ *  changed. */
 export function forgetOutrunnerModels(): void {
-  outrunnerModelsAnswer = null;
+  OUTRUNNER_MODELS.invalidate();
 }
 
 /**
@@ -264,6 +411,20 @@ export function logInToClaude(): Promise<void> {
 /** Stop a `logInToClaude` in progress. */
 export function cancelClaudeLogin(): Promise<void> {
   return call<void>("local_claude_login_cancel");
+}
+
+/**
+ * Log Codex in on this Mac. The app runs `codex login`, which opens the browser
+ * to sign in with ChatGPT; this resolves once that is done. A Claude Code login
+ * under way carries on.
+ */
+export function logInToCodex(): Promise<void> {
+  return call<void>("local_codex_login", undefined, "codex");
+}
+
+/** Stop a `logInToCodex` in progress. */
+export function cancelCodexLogin(): Promise<void> {
+  return call<void>("local_codex_login_cancel", undefined, "codex");
 }
 
 /** Ask for a folder to work in; null when the user cancels. */
@@ -342,10 +503,16 @@ export function rememberFolder(path: string | null): void {
 const NEEDS_NEWER_APP: Record<string, string> = {
   local_clone_repo:
     "This version of the Outrunner app can't clone repositories. Update the app, or choose a folder on this Mac instead.",
+  local_codex_login: "This version of the Outrunner app can't log Codex in. Update the app, then try again.",
+  import_scan: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
+  import_session: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
+  import_environment: "This version of the Outrunner app can't import a project's environment. Update the app, then try again.",
+  import_config: "This version of the Outrunner app can't import your agent setup. Update the app, then try again.",
 };
 
-/** Human-readable message for an error the app returned. */
-export function messageForLocalError(error: unknown): string {
+/** Human-readable message for an error the app returned; `agent` is the CLI a
+ *  login error is about. */
+export function messageForLocalError(error: unknown, agent: AgentId = "claude"): string {
   const raw = error instanceof Error ? error.message : String(error ?? "");
   // Tauri's refusal of a command the app doesn't have.
   const missing = /^(\w+) not allowed\. Command not found$/.exec(raw);
@@ -381,16 +548,32 @@ export function messageForLocalError(error: unknown): string {
       return "Choose the folder to work in again.";
     case "claude-missing":
       return "Install Claude Code to run sessions on this Mac.";
+    case "codex-missing":
+      return `Install Codex to run Codex sessions on this Mac: run \`${CODEX_INSTALL_COMMAND}\` (or \`brew install --cask codex\`) in Terminal, then try again.`;
     case "login-cancelled":
-      return "The Claude Code login was stopped. Try again.";
+      return `The ${AGENTS[agent].label} login was stopped. Try again.`;
     case "login-timed-out":
       return "No approval came from the browser. Try again.";
     case "login-failed": {
+      const name = AGENTS[agent].label;
       const said = cliReason(raw.slice("login-failed:".length));
-      return said
-        ? `Claude Code couldn't log in. It said: ${said}`
-        : "Claude Code couldn't log in. Run `claude` in Terminal and type /login.";
+      return said ? `${name} couldn't log in. It said: ${said}` : `${name} couldn't log in. ${MANUAL_LOGIN[agent]}`;
     }
+    case "import-failed": {
+      const said = raw.slice("import-failed:".length).trim();
+      return said ? `The import failed: ${said}` : "The import failed. Try again.";
+    }
+    case "invalid-item":
+    case "invalid-mcp":
+    case "invalid-repo":
+    case "invalid-variable":
+    case "invalid-file":
+    case "too-many":
+    case "invalid-session-key":
+    case "upload-not-allowed":
+    case "unknown-artifact":
+    case "no-uploads":
+      return "The app refused that import. Scan again, then try again.";
     case "agent": {
       // The agent's own message, e.g. a worktree that could not be created.
       const said = raw.slice("agent:".length).trim();

@@ -7,11 +7,11 @@
  * through the Supabase server client.
  */
 
-import { getClaudeCredential } from "@/lib/db/credentials";
-import { anthropicEnvVar } from "@/lib/runtime/anthropic-env";
+import { getClaudeCredential, getGithubToken } from "@/lib/db/credentials";
+import { anthropicEnvVar, hasClaudeCredential } from "@/lib/runtime/anthropic-env";
 
 /**
- * The Claude credential to boot this user's agent with — their own, never the
+ * The credentials to boot this user's agent with — their own, never the
  * operator's.
  *
  * This used to forward ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN and
@@ -22,15 +22,43 @@ import { anthropicEnvVar } from "@/lib/runtime/anthropic-env";
  * terminal display, not a file write or an outbound request.
  *
  * Their Claude subscription token, else their Anthropic API key
- * (Settings → Providers). Returns {} when the user has neither; callers fail closed on that rather
- * than falling back to a shared credential.
+ * (Settings → Providers). Without either, callers fail closed
+ * ({@link hasClaudeCredential}) rather than falling back to a shared credential.
+ *
+ * And their GitHub token as GH_TOKEN, so the agent can push its branch and run
+ * `gh pr create` as its orientation tells it to. The box is theirs alone (one
+ * per user and project), so it reaches no one else's; the agent masks it in
+ * the terminal and points git at it for github.com only.
  */
 export async function runtimeSessionEnvironment(
   userId: string,
 ): Promise<Record<string, string>> {
-  const credential = await getClaudeCredential(userId);
-  if (!credential) return {};
-  return { [anthropicEnvVar(credential)]: credential };
+  const [credential, githubToken] = await Promise.all([
+    getClaudeCredential(userId),
+    getGithubToken(userId),
+  ]);
+  return {
+    ...(credential ? { [anthropicEnvVar(credential)]: credential } : {}),
+    ...(githubToken ? { GH_TOKEN: githubToken } : {}),
+  };
 }
 
-export { anthropicEnvVar };
+export { anthropicEnvVar, hasClaudeCredential };
+
+/**
+ * A box's agent upgrade (ComputerRuntimeProvider.upgradeAgent) for a session
+ * of `userId`'s, its agent booted again with their environment as it is now;
+ * undefined where the provider can't upgrade one in place (jcode).
+ */
+export function boxUpgrade(
+  provider: {
+    upgradesAgents: boolean;
+    upgradeAgent(sandboxId: string, secret: string, sessionEnv: Record<string, string>): Promise<void>;
+  },
+  sandboxId: string,
+  secret: string,
+  userId: string,
+): (() => Promise<void>) | undefined {
+  if (!provider.upgradesAgents) return undefined;
+  return async () => provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId));
+}

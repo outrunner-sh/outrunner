@@ -2,25 +2,26 @@
 
 import { Laptop } from "lucide-react";
 import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 
+import { RaillessSidebarButtons } from "@/components/app-frame";
 import { RouteLoading } from "@/components/route-states";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
+import { isAgentId } from "@/lib/agents/registry";
 import { LOCAL_PROJECT, type LocalSession } from "@/lib/desktop/local-runtime";
 import type { Workspace } from "@/lib/runtime/types";
 
 /**
  * A local session's page. Its record is on this Mac, not the server, so it is
  * looked up here — through the Outrunner app — and rendered in the same studio
- * as a cloud workspace.
+ * as a cloud workspace. The list is the one the sidebar already read, so a
+ * session it shows opens at once.
  */
-export function LocalWorkspaceView({
-  workspaceId,
-  initialPrompt,
-}: {
-  workspaceId: string;
-  initialPrompt?: string;
-}) {
+export function LocalWorkspaceView() {
+  const { id: workspaceId } = useParams<{ id: string }>();
+  // The first prompt carried in from the new-session screen.
+  const initialPrompt = useSearchParams().get("prompt") ?? undefined;
   const local = useLocalSessions();
   const session = local.sessions.find((s) => s.workspaceId === workspaceId);
 
@@ -59,7 +60,10 @@ export function LocalWorkspaceView({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">{children}</div>
+    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 text-center">
+      <RaillessSidebarButtons />
+      {children}
+    </div>
   );
 }
 
@@ -71,6 +75,7 @@ function asWorkspace(session: LocalSession): Workspace {
     // Not a row of anyone's: it lives on this Mac, outside the database.
     ownerId: "",
     provider: "local",
+    agent: isAgentId(session.agent) ? session.agent : "claude",
     // A local session is always openable: attaching starts (or continues) it.
     status: "ready",
     phase: "claude_ready",

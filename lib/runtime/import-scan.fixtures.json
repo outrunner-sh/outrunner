@@ -1,0 +1,268 @@
+{
+  "Scan": [
+    {
+      "version": 1,
+      "scannedAt": "2026-10-21T12:00:00Z",
+      "sources": [
+        {
+          "id": "conductor",
+          "found": true
+        },
+        {
+          "id": "claude-cli",
+          "found": true
+        },
+        {
+          "id": "codex-cli",
+          "found": false
+        },
+        {
+          "id": "conductor",
+          "found": true,
+          "skip": {
+            "reason": "unknown-conductor-schema",
+            "detail": "this Conductor has no sessions.claude_session_id"
+          }
+        }
+      ],
+      "sessions": [
+        {
+          "key": "claude:b52b847e-3fe0-4bba-98c7-15c157a7f6d4",
+          "source": "conductor",
+          "agent": "claude",
+          "sessionId": "b52b847e-3fe0-4bba-98c7-15c157a7f6d4",
+          "title": "Excel daily sheet embed",
+          "model": "opus-5-5-1m",
+          "cwd": "/Users/ada/conductor/workspaces/millerp/kelowna",
+          "worktree": "/Users/ada/conductor/workspaces/millerp/kelowna",
+          "repo": "ada/millerp",
+          "branch": "ada/daily-sheet",
+          "baseBranch": "main",
+          "checkedOut": true,
+          "dirty": true,
+          "unpushed": 3,
+          "transcript": "/Users/ada/.claude/projects/-Users-ada-conductor-workspaces-millerp-kelowna/b52b847e-3fe0-4bba-98c7-15c157a7f6d4.jsonl",
+          "transcriptBytes": 21805980,
+          "startedAt": "2026-10-20T15:21:37.760Z",
+          "updatedAt": "2026-10-21T09:31:16.906Z",
+          "lastMessage": "The sheet now embeds the loan settlements.",
+          "conductorState": "ready"
+        },
+        {
+          "key": "codex:0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000",
+          "source": "codex-cli",
+          "agent": "codex",
+          "sessionId": "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000",
+          "title": "",
+          "cwd": "/Users/ada/scratch",
+          "checkedOut": false,
+          "dirty": false,
+          "unpushed": 0,
+          "transcript": "/Users/ada/.codex/sessions/2026/10/20/rollout-2026-10-20T09-00-00-0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000.jsonl",
+          "transcriptBytes": 5120,
+          "startedAt": "2026-10-20T09:00:00Z",
+          "updatedAt": "2026-10-20T09:05:00Z",
+          "skip": {
+            "reason": "no-github-remote",
+            "detail": "/Users/ada/scratch is not a git repository"
+          }
+        }
+      ],
+      "projects": [
+        {
+          "repo": "ada/millerp",
+          "root": "/Users/ada/Downloads/millerp",
+          "vars": [
+            {
+              "name": "APP_TOKEN",
+              "shared": false
+            },
+            {
+              "name": "OPENAI_API_KEY",
+              "shared": true
+            }
+          ],
+          "files": [
+            {
+              "path": "apps/backend/.env",
+              "names": [
+                "DATABASE_URL",
+                "JWT_SECRET"
+              ],
+              "bytes": 412
+            }
+          ],
+          "scripts": {
+            "setup": "bun install\nln -sf $CONDUCTOR_ROOT_PATH/apps/backend/.env apps/backend/.env"
+          }
+        },
+        {
+          "repo": "ada/scratch",
+          "vars": [],
+          "files": []
+        }
+      ],
+      "config": {
+        "items": [
+          {
+            "id": "claude-md",
+            "kind": "claude-md",
+            "name": "CLAUDE.md",
+            "path": ".claude/CLAUDE.md",
+            "bytes": 4858
+          },
+          {
+            "id": "skill:review",
+            "kind": "skill",
+            "name": "review",
+            "path": ".claude/skills/review",
+            "bytes": 20480,
+            "omitted": 1
+          },
+          {
+            "id": "skill:huge",
+            "kind": "skill",
+            "name": "huge",
+            "path": ".claude/skills/huge",
+            "bytes": 20971520,
+            "skip": {
+              "reason": "too-large",
+              "detail": "over 10 MB"
+            }
+          }
+        ],
+        "mcpServers": [
+          {
+            "name": "tracker",
+            "transport": "http",
+            "url": "https://mcp.example/mcp",
+            "envNames": [],
+            "headerNames": [
+              "Authorization"
+            ]
+          },
+          {
+            "name": "figma",
+            "transport": "http",
+            "url": "http://localhost:3845/mcp",
+            "envNames": [],
+            "headerNames": [],
+            "skip": {
+              "reason": "unportable-mcp",
+              "detail": "it is served on this Mac"
+            }
+          }
+        ],
+        "plugins": [
+          "review@market"
+        ]
+      }
+    }
+  ],
+  "Capture": [
+    {
+      "session": {
+        "key": "claude:s-1",
+        "source": "outrunner-local",
+        "agent": "claude",
+        "sessionId": "s-1",
+        "title": "Fix login",
+        "cwd": "/Users/ada/.outrunner/workspaces/w-1",
+        "worktree": "/Users/ada/.outrunner/workspaces/w-1",
+        "repo": "ada/app",
+        "branch": "feature",
+        "baseBranch": "main",
+        "checkedOut": true,
+        "dirty": false,
+        "unpushed": 1,
+        "transcript": "/Users/ada/.claude/projects/-Users-ada--outrunner-workspaces-w-1/s-1.jsonl",
+        "transcriptBytes": 2048
+      },
+      "lastCommit": "714199adae0c429b8119ffca6764598084169ee0",
+      "changedFiles": 0,
+      "artifacts": {
+        "bundle": {
+          "name": "worktree.bundle",
+          "path": "/tmp/import-1/worktree.bundle",
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+          "size": 4096
+        },
+        "patch": {
+          "name": "uncommitted.patch",
+          "path": "/tmp/import-1/uncommitted.patch.gz",
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+          "size": 20,
+          "encoding": "gzip"
+        },
+        "conversation": {
+          "name": "conversation.jsonl",
+          "path": "/tmp/import-1/conversation.jsonl.gz",
+          "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+          "size": 512,
+          "encoding": "gzip"
+        }
+      }
+    }
+  ],
+  "CaptureSkip": [
+    {
+      "skip": {
+        "reason": "too-large",
+        "detail": "the branch's unpushed history is over 1 GB"
+      }
+    }
+  ],
+  "EnvCapture": [
+    {
+      "repo": "ada/millerp",
+      "env": {
+        "APP_TOKEN": "tok"
+      },
+      "files": {
+        "apps/backend/.env": "DATABASE_URL=postgres://u:p@db/app\n"
+      },
+      "scripts": {
+        "setup": "bun install"
+      }
+    },
+    {
+      "repo": "ada/scratch",
+      "env": {},
+      "files": {}
+    }
+  ],
+  "ConfigCapture": [
+    {
+      "archive": {
+        "name": "agent-config.tar.gz",
+        "path": "/tmp/x/agent-config.tar.gz",
+        "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "size": 32007,
+        "encoding": "gzip"
+      },
+      "items": [
+        "claude-md",
+        "skill:review"
+      ],
+      "mcpServers": {
+        "tracker": {
+          "type": "http",
+          "url": "https://mcp.example/mcp",
+          "headers": {
+            "Authorization": "Bearer tok"
+          }
+        }
+      },
+      "settings": {
+        "enabledPlugins": {
+          "review@market": true
+        }
+      }
+    },
+    {
+      "items": [],
+      "mcpServers": {},
+      "settings": {}
+    }
+  ]
+}

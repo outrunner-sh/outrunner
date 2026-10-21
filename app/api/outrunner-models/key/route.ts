@@ -7,8 +7,6 @@ import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { isProviderId } from "@/lib/providers/registry";
 import type { KeyHolder } from "@/lib/runtime/session-models";
 
-export const dynamic = "force-dynamic";
-
 /**
  * The key a model runs on, for `holder`: Outrunner's (created on first use),
  * or one of the user's own (Settings → Providers). A local session's page

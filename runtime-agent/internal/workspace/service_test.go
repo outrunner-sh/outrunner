@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -167,6 +168,46 @@ func TestSessionEnvironmentExcludesAgentControlSecrets(t *testing.T) {
 	}
 }
 
+// The user's GitHub token reaches the session for gh, is masked in the
+// terminal, and answers git's credential prompt for github.com and nowhere
+// else: run through real git, as the agent's `git push` would.
+func TestSessionEnvironmentGivesGitTheGitHubTokenForGitHubOnly(t *testing.T) {
+	env, secrets := sessionEnvironment([]string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=credential.helper",
+		"GIT_CONFIG_VALUE_0=!echo password=the-box-own",
+		"GH_TOKEN=gho_user",
+	})
+	if !slices.Contains(env, "GH_TOKEN=gho_user") || !slices.Contains(secrets, "gho_user") {
+		t.Fatalf("GitHub token not kept and masked: env=%q secrets=%q", env, secrets)
+	}
+
+	fill := func(host string) string {
+		cmd := exec.Command("git", "credential", "fill")
+		cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1")
+		cmd.Stdin = strings.NewReader("protocol=https\nhost=" + host + "\n\n")
+		out, _ := cmd.Output()
+		return string(out)
+	}
+	if got := fill("github.com"); !strings.Contains(got, "password=gho_user") {
+		t.Fatalf("git did not get the token for github.com: %q", got)
+	}
+	if got := fill("example.com"); strings.Contains(got, "gho_user") {
+		t.Fatalf("git handed the token to another host: %q", got)
+	}
+}
+
+func TestSessionEnvironmentWithoutGitHubTokenLeavesGitAlone(t *testing.T) {
+	env, _ := sessionEnvironment([]string{"PATH=/usr/bin", "GH_TOKEN="})
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_CONFIG_") {
+			t.Fatalf("git configured without a token: %q", env)
+		}
+	}
+}
+
 func TestValidSessionIDRejectsPathEscapes(t *testing.T) {
 	good := []string{"sess-123", "a1b2c3d4", "0e3f-9c2a"}
 	for _, id := range good {
@@ -186,52 +227,12 @@ func TestClaudeConvDirEncodesWorktreePath(t *testing.T) {
 	t.Setenv("HOME", "/home/daytona")
 	s := NewService("/home/daytona")
 	// Claude derives the conversation dir under $HOME from the session cwd (the
-	// worktree) via claudeSlug (non-alphanumerics -> '-'). This must match what Claude
+	// worktree) via transcript.ClaudeSlug (non-alphanumerics -> '-'). This must match what Claude
 	// writes on disk, since SendMessage polls it to confirm a prompt landed.
 	got := s.claudeConvDir("abc123")
 	want := "/home/daytona/.claude/projects/-home-daytona-workspaces-abc123"
 	if got != want {
 		t.Errorf("claudeConvDir = %q, want %q", got, want)
-	}
-}
-
-func TestClaudeSlugMatchesClaudeCode(t *testing.T) {
-	// Real directory names Claude Code created on a Mac.
-	for path, want := range map[string]string{
-		"/home/daytona/workspaces/abc-123":        "-home-daytona-workspaces-abc-123",
-		"/Users/ada/.outrunner/workspaces/x":      "-Users-ada--outrunner-workspaces-x",
-		"/Users/ada/Desktop/personal/new project": "-Users-ada-Desktop-personal-new-project",
-		"/Users/ada/Desktop - MacBook Air (3)/m":  "-Users-ada-Desktop---MacBook-Air--3--m",
-		// Computed with the slug function from Claude Code 2.1.228's bundle: one
-		// '-' per UTF-16 code unit, so "é" and each CJK character give one and an
-		// emoji (a surrogate pair) two.
-		"/Users/ada/café":    "-Users-ada-caf-",
-		"/Users/ada/日本語/app": "-Users-ada-----app",
-		"/Users/ada/😀 x":     "-Users-ada----x",
-		// Over 200 characters: cut, then a hash of the whole path.
-		"/Users/ada/" + strings.Repeat("projects/", 22) + "café 😀": "-Users-ada-" +
-			strings.Repeat("projects-", 21) + "-22n29x",
-	} {
-		if got := claudeSlug(path); got != want {
-			t.Errorf("claudeSlug(%q) = %q, want %q", path, got, want)
-		}
-	}
-}
-
-func TestClaudeProjectDirResolvesSymlinks(t *testing.T) {
-	real := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
-	resolved, err := filepath.EvalSymlinks(real)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Claude runs in the real directory, so the log lives under its name.
-	want := filepath.Join("/h", ".claude", "projects", claudeSlug(resolved))
-	if got := claudeProjectDir("/h", link); got != want {
-		t.Errorf("claudeProjectDir(link) = %q, want %q", got, want)
 	}
 }
 

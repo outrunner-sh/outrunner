@@ -5,8 +5,6 @@ import { getWorkspace } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

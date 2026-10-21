@@ -1,21 +1,75 @@
 "use client";
 
 import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
+import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden";
+import { useSharedResource } from "@/hooks/use-shared-resource";
+import { sharedResource } from "@/lib/client/shared-resource";
+import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
-type Repo = {
-  githubRepoId: number;
-  fullName: string;
-  name: string;
-  private: boolean;
+type Listing = {
+  repositories: RepositoryListing[];
+  connected: number[];
+  /** False when GitHub may have more than the list holds. */
+  complete: boolean;
+  /** Organizations whose repositories single sign-on held back. */
+  ssoPartialOrgIds: number[];
 };
 
-type Listing = { repositories: Repo[]; connected: number[] };
+/** A failed request's message, and whether only reconnecting GitHub fixes it. */
+type PickerError = { message: string; reconnect: boolean };
+
+/** Read the API's error body (`reconnect` set when the token is the problem). */
+async function readError(res: Response, fallback: string): Promise<PickerError> {
+  const data = (await res.json().catch(() => ({}))) as { error?: string; reconnect?: boolean };
+  return { message: data.error ?? fallback, reconnect: data.reconnect === true };
+}
+
+type ListingAnswer = { listing: Listing; error: null } | { listing: null; error: PickerError };
+
+/** The next look asks GitHub again rather than take the server's recent copy. */
+let askGitHubAgain = false;
+
+/**
+ * Everything on the user's GitHub, one listing for the page: looked up as the
+ * form mounts, so the picker opens on it at once, and again in the background
+ * each time it opens. A failure is an answer too, said in the picker.
+ */
+const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
+  const fresh = askGitHubAgain;
+  askGitHubAgain = false;
+  try {
+    // Refresh asks GitHub again; otherwise a listing from the last few seconds
+    // is fine (app/api/github/repositories).
+    const res = await fetch(fresh ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
+    if (!res.ok) return { listing: null, error: await readError(res, "Could not load repositories.") };
+    const data = (await res.json()) as Partial<Listing>;
+    return {
+      listing: {
+        repositories: data.repositories ?? [],
+        connected: data.connected ?? [],
+        complete: data.complete ?? true,
+        ssoPartialOrgIds: data.ssoPartialOrgIds ?? [],
+      },
+      error: null,
+    };
+  } catch {
+    return { listing: null, error: { message: "Could not load repositories.", reconnect: false } };
+  }
+}, null);
+
+/** Ask GitHub again (the picker's Refresh list). */
+function refreshRepositories(): Promise<unknown> {
+  askGitHubAgain = true;
+  REPOSITORIES.invalidate();
+  return REPOSITORIES.ensure();
+}
 
 /**
  * Pick the repository a session runs in — from everything on the user's GitHub,
@@ -48,7 +102,7 @@ export function RepositorySelect({
   onSelect?: (project: Project) => void;
   /** Instead of connecting it as a project, what picking a repository does
    *  (a session on this Mac clones it). The menu closes as it starts. */
-  onPick?: (repo: Repo) => void;
+  onPick?: (repo: RepositoryListing) => void;
   /** What the trigger shows in place of the selected project. */
   label?: { text: string; title?: string; icon: React.ReactNode };
   /** One more row under the list, such as choosing a folder instead. */
@@ -58,9 +112,18 @@ export function RepositorySelect({
   triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [listing, setListing] = useState<Listing | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  useCloseWhenHidden(useCallback(() => setOpen(false), []));
+  const repositories = useSharedResource(REPOSITORIES);
+  const listing = repositories.value?.listing ?? null;
+  const [refreshing, setRefreshing] = useState(false);
+  const loading = repositories.status === "loading" || refreshing;
+  // Looked up as the form mounts, so the picker opens on it at once.
+  useEffect(() => {
+    void REPOSITORIES.ensure();
+  }, []);
+  // Connecting one that failed; the listing's own failure is its answer's.
+  const [connectError, setError] = useState<PickerError | null>(null);
+  const error = connectError ?? repositories.value?.error ?? null;
   const [query, setQuery] = useState("");
   const [connectingId, setConnectingId] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -72,22 +135,18 @@ export function RepositorySelect({
 
   const selected = projects.find((p) => p.id === selectedProjectId);
 
+  /** On opening, look again in the background (the last listing shows
+   *  meanwhile); Refresh list asks GitHub itself, and waits. */
   async function load(force = false) {
-    if (loading || (listing && !force)) return;
-    setLoading(true);
     setError(null);
-    try {
-      const res = await fetch("/api/github/repositories", {
-        cache: force ? "no-store" : "default",
-      });
-      const data = (await res.json()) as Partial<Listing> & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not load repositories.");
-      setListing({ repositories: data.repositories ?? [], connected: data.connected ?? [] });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load repositories.");
-    } finally {
-      setLoading(false);
+    if (!force) {
+      void REPOSITORIES.refresh();
+      return;
     }
+    if (refreshing) return;
+    setRefreshing(true);
+    await refreshRepositories();
+    setRefreshing(false);
   }
 
   // Focus search on open so typing filters immediately. The fetch is kicked off
@@ -123,17 +182,12 @@ export function RepositorySelect({
       listing?.repositories ??
       // Before the live list arrives, offer what is already connected so the
       // menu is never empty.
-      projects.map((p) => ({
-        githubRepoId: p.githubRepoId,
-        fullName: p.fullName,
-        name: p.name,
-        private: false,
-      }));
+      projects.map(projectToListing);
     const q = query.trim().toLowerCase();
     return q ? repos.filter((r) => r.fullName.toLowerCase().includes(q)) : repos;
   }, [listing, projects, query]);
 
-  async function choose(repo: Repo) {
+  async function choose(repo: RepositoryListing) {
     if (onPick) {
       setOpen(false);
       triggerRef.current?.focus();
@@ -156,15 +210,21 @@ export function RepositorySelect({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repoIds: [repo.githubRepoId] }),
       });
-      const data = (await res.json()) as { projects?: Project[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not connect that repository.");
+      if (!res.ok) {
+        setError(await readError(res, "Could not connect that repository."));
+        return;
+      }
+      const data = (await res.json()) as { projects?: Project[] };
       const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
-      if (!created) throw new Error("Connected, but the project did not come back.");
+      if (!created) {
+        setError({ message: "Connected, but the project did not come back.", reconnect: false });
+        return;
+      }
       onSelect?.(created);
       setOpen(false);
       triggerRef.current?.focus();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not connect that repository.");
+    } catch {
+      setError({ message: "Could not connect that repository.", reconnect: false });
     } finally {
       setConnectingId(null);
     }
@@ -208,7 +268,8 @@ export function RepositorySelect({
       {open && (
         <div className="bg-popover border-border absolute bottom-full left-1/2 z-50 mb-2 w-80 -translate-x-1/2 overflow-hidden rounded-lg border shadow-xl">
           <div id={listId} role="listbox" aria-label="Repositories" className="max-h-72 overflow-y-auto py-1">
-            {loading && !listing && (
+            {repositories.status === "loading" && (
+              /* Only before the first answer: the page looks once as the form mounts. */
               <p className="text-muted-foreground flex items-center gap-2 px-3 py-2 text-sm">
                 <Spinner className="size-4" /> Loading repositories…
               </p>
@@ -244,6 +305,16 @@ export function RepositorySelect({
             ))}
           </div>
 
+          {/* The list may be short: say why rather than let a missing
+              repository look like one that isn't there. */}
+          {listing && (listing.ssoPartialOrgIds.length > 0 || !listing.complete) && (
+            <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
+              {listing.ssoPartialOrgIds.length > 0
+                ? "Some organizations' repositories are hidden until you authorize Outrunner for their single sign-on on GitHub."
+                : "GitHub may have more repositories than this list shows."}
+            </p>
+          )}
+
           {extra && (
             <div className="border-border border-t">
               <button
@@ -271,7 +342,10 @@ export function RepositorySelect({
           </div>
 
           {error && (
-            <p className="text-destructive border-border border-t px-3 py-2 text-xs">{error}</p>
+            <p className="text-destructive border-border border-t px-3 py-2 text-xs">
+              {error.message}
+              {error.reconnect && <GitHubReconnectLink />}
+            </p>
           )}
 
           <div className="border-border relative border-t">

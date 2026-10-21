@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getWorkspace, listWorkspaceSnapshots } from "@/lib/db/repositories";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /** A workspace's Snapshots, newest first — the Replay picker's list. */
