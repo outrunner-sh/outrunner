@@ -417,7 +417,12 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
             </span>
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top" className="w-72">
+        {/* On the composer's own black, not the theme's grey popover. */}
+        <DropdownMenuContent
+          align="start"
+          side="top"
+          className="w-72 border-(--studio-border) bg-(--studio-bg)"
+        >
           <div className="flex items-center gap-2 px-2 pb-1.5 pt-1">
             <Search className="size-3.5 text-muted-foreground" />
             <input
