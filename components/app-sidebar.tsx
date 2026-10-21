@@ -7,7 +7,6 @@ import {
   Ellipsis,
   Flag,
   Folder,
-  FolderPlus,
   Laptop,
   PanelLeft,
   Plus,
@@ -22,6 +21,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AppUpdate } from "@/components/app-update";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { HomeUserMenu } from "@/components/home-user-menu";
+import { OpenProjectMenu } from "@/components/open-project-menu";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
 import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
@@ -162,16 +162,8 @@ export function AppSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-2">
           <h2 className="text-sm text-muted-foreground">Projects</h2>
-          {/* Opens the new-session screen, where any repository or folder can be
-              picked: the way to start in a project not listed yet. */}
-          <Link
-            href="/new"
-            aria-label="Start a session in another project"
-            title="Start a session in another project"
-            className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <FolderPlus className="size-4" />
-          </Link>
+          {/* The way to start in a project not listed yet. */}
+          <OpenProjectMenu viewerLogin={ownerLogin} />
         </div>
         {/* This Mac's sessions are read from the agent after the page loads, so
             the list waits for them rather than reshuffling as they land. */}
