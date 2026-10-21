@@ -9,9 +9,12 @@
  * Two-sided on purpose: hours are checked here against the meter
  * (compute_intervals, lib/billing/hours.ts), and the box count is enforced
  * in the database, inside claim_runtime_computer, so two requests that
- * start boxes at the same moment cannot both pass it. At a limit the start
- * is refused with the upgrade link; a box already running is never paused
- * (the reconciler pauses idle ones itself, after 15 minutes).
+ * start boxes at the same moment cannot both pass it. A session on a project
+ * whose box is already running starts no box, so the count doesn't refuse it.
+ * At a limit the start is refused with the upgrade link; a box already
+ * running is never paused for it (a box is paused when its last session is
+ * archived or ended, lib/billing/release-box.ts, and the reconciler pauses
+ * idle ones itself, after 15 minutes).
  *
  * The deployment's named operators can be exempted with
  * RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN. That is separate from
@@ -76,7 +79,7 @@ export function boxesDenial(plan: Plan, live: number): CloudLimitDenial | null {
   };
 }
 
-export type MeteredComputerRow = Pick<RuntimeComputer, "status" | "provider" | "updatedAt">;
+export type MeteredComputerRow = Pick<RuntimeComputer, "projectId" | "status" | "provider" | "updatedAt">;
 
 /** Whether one of the owner's computers is a box the plan limits: running
  *  (ready, or provisioning while still fresh — a claim whose provision died
@@ -98,6 +101,16 @@ export function liveMeteredComputers(computers: readonly MeteredComputerRow[], n
   return computers.filter((computer) => isLiveMeteredComputer(computer, now)).length;
 }
 
+/** Whether the project's box is one of the live ones: a session there runs
+ *  on it, and starts no box of its own. */
+export function projectBoxLive(
+  computers: readonly MeteredComputerRow[],
+  projectId: string,
+  now: Date,
+): boolean {
+  return computers.some((computer) => computer.projectId === projectId && isLiveMeteredComputer(computer, now));
+}
+
 /** Whether this login appears in the explicit plan-limit exemption list.
  *  Unlike the sign-in allowlist, an unset list exempts nobody. */
 export function exemptFromPlanLimits(
@@ -109,15 +122,19 @@ export function exemptFromPlanLimits(
 }
 
 /**
- * May this owner start another of Outrunner's boxes on `provider`? The
- * refusal to answer with, or the cap the claim in the database enforces
- * (null: the owner's own sandbox, or an owner the limits are not for).
- * Called where a box starts: creating a workspace, restoring one, and
- * session attach bringing an ended box back.
+ * May this owner start another of Outrunner's boxes on `provider` for
+ * `projectId`? The refusal to answer with, or the cap the claim in the
+ * database enforces (null: the owner's own sandbox, or an owner the limits
+ * are not for). Called where a box may start: creating a workspace,
+ * restoring one, and session attach bringing an ended box back. The box
+ * count only refuses when the project has no live box: its sessions share
+ * the one it has. Should that box turn out gone, the claim that replaces it
+ * still enforces the cap.
  */
 export async function cloudBoxStartGate(
   owner: Owner,
   provider: ProviderName,
+  projectId: string,
 ): Promise<CloudBoxStartGate> {
   // Loaded here, not at the top, so the pure rules above stay testable in the
   // Node test runner: these pull Next's request scope (next/headers) through
@@ -139,8 +156,10 @@ export async function cloudBoxStartGate(
   const used = hoursUsed(await intervalsFor(owner.id, period), period, now);
   const hours = hoursDenial(plan, used);
   if (hours) return { denial: hours };
-  const live = liveMeteredComputers(await runtimeComputersForOwner(owner.id), now);
-  const boxes = boxesDenial(plan, live);
-  if (boxes) return { denial: boxes };
+  const computers = await runtimeComputersForOwner(owner.id);
+  if (!projectBoxLive(computers, projectId, now)) {
+    const boxes = boxesDenial(plan, liveMeteredComputers(computers, now));
+    if (boxes) return { denial: boxes };
+  }
   return { cap: plan.concurrentCloudSessions };
 }

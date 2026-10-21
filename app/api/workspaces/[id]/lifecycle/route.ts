@@ -262,7 +262,7 @@ async function restoreDaytonaWorkspace(
   }
   // A box may be about to start (the project's box may be gone): the plan's
   // hours and box count get their say before anything changes.
-  const gate = await cloudBoxStartGate(owner, provider.name);
+  const gate = await cloudBoxStartGate(owner, provider.name, workspace.projectId);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
   const transitioned = await startTransition(workspace, ["archived"], "restoring");
   if (!transitioned) return lifecycleConflict();
