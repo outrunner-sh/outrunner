@@ -35,6 +35,7 @@ fn main() {
                 "import_scan",
                 "import_session",
                 "import_environment",
+                "import_config",
                 "update_status",
                 "restart_to_update",
             ]),

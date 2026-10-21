@@ -193,6 +193,7 @@ pub fn run() {
             import::import_scan,
             import::import_session,
             import::import_environment,
+            import::import_config,
             updater::update_status,
             updater::restart_to_update,
         ])

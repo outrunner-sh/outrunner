@@ -2,7 +2,14 @@ import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
-import { ImportCapture, ImportCaptureSkip, ImportEnvCapture, ImportScan, type ImportSkip } from "@/lib/runtime/import-scan";
+import {
+  ImportCapture,
+  ImportCaptureSkip,
+  ImportConfigCapture,
+  ImportEnvCapture,
+  ImportScan,
+  type ImportSkip,
+} from "@/lib/runtime/import-scan";
 import { EMPTY_LOADOUT, type ModelLoadout, parseLoadout } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
@@ -168,6 +175,19 @@ export async function importEnvironment(
   pick: { vars: string[]; files: string[]; scripts: boolean },
 ): Promise<ImportEnvCapture> {
   return ImportEnvCapture.parse(await call<unknown>("import_environment", { repo, ...pick }));
+}
+
+/** Archive what the user picked of their own agent setup, upload it to
+ *  `upload`, and read the picked MCP servers and plugin settings. */
+export async function importConfig(pick: {
+  items: string[];
+  mcp: string[];
+  plugins: boolean;
+  upload: string | null;
+}): Promise<ImportConfigCapture | { skip: ImportSkip }> {
+  const result = await call<unknown>("import_config", pick);
+  const skipped = ImportCaptureSkip.safeParse(result);
+  return skipped.success ? skipped.data : ImportConfigCapture.parse(result);
 }
 
 /** What this Mac has for local sessions; null outside the desktop app. */
@@ -453,6 +473,7 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   import_scan: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
   import_session: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
   import_environment: "This version of the Outrunner app can't import a project's environment. Update the app, then try again.",
+  import_config: "This version of the Outrunner app can't import your agent setup. Update the app, then try again.",
 };
 
 /** Human-readable message for an error the app returned; `agent` is the CLI a
@@ -508,6 +529,8 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
       const said = raw.slice("import-failed:".length).trim();
       return said ? `The import failed: ${said}` : "The import failed. Try again.";
     }
+    case "invalid-item":
+    case "invalid-mcp":
     case "invalid-repo":
     case "invalid-variable":
     case "invalid-file":

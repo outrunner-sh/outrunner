@@ -37,6 +37,7 @@
     "allow-import-scan",
     "allow-import-session",
     "allow-import-environment",
+    "allow-import-config",
     "allow-update-status",
     "allow-restart-to-update"
   ]
