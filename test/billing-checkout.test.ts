@@ -70,6 +70,17 @@ test("a Free user goes to Checkout for the plan and interval asked, and back to 
   ]);
 });
 
+test("a new user from a pricing link goes back to onboarding, paid or not", async () => {
+  const { d, calls } = deps({ stored: "cus_1" });
+  await checkoutDestination(user, "pro", "month", BASE, d, "/onboarding");
+  assert.equal(
+    calls.at(-1),
+    "checkout cus_1 price_pro_monthly " +
+      `${BASE}/onboarding?checkout=success&session_id={CHECKOUT_SESSION_ID} ` +
+      `${BASE}/onboarding?checkout=canceled`,
+  );
+});
+
 test("a user with a subscription that can still bill goes to the portal, never a second checkout", async () => {
   const pro: SubscriptionRecord = {
     stripeSubscriptionId: "sub_1",

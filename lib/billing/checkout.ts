@@ -32,7 +32,8 @@ export type CheckoutDeps = {
   expireOpenCheckouts(customerId: string): Promise<void>;
 };
 
-/** Where the billing page is, which Stripe sends users back to. */
+/** Where the billing page is, which Stripe sends users back to unless told
+ *  otherwise. */
 export const BILLING_PATH = "/settings/billing";
 
 /**
@@ -53,7 +54,8 @@ export async function ensureCustomer(user: CheckoutUser, deps: CheckoutDeps): Pr
  * or fix it there rather than pay twice. Asked of Stripe, not the stored
  * copy, which leaves out subscriptions to prices Outrunner doesn't sell. A
  * new checkout expires any older one still open, so two tabs can't each
- * start a subscription.
+ * start a subscription. Stripe sends the user back to `returnPath`: Billing,
+ * or onboarding for a new user who bought from a link.
  */
 export async function checkoutDestination(
   user: CheckoutUser,
@@ -61,11 +63,12 @@ export async function checkoutDestination(
   interval: BillingInterval,
   baseUrl: string,
   deps: CheckoutDeps,
+  returnPath: string = BILLING_PATH,
 ): Promise<{ url: string; kind: "checkout" | "portal" }> {
   const customerId = await ensureCustomer(user, deps);
-  const billing = new URL(BILLING_PATH, baseUrl).toString();
+  const back = new URL(returnPath, baseUrl).toString();
   if ((await deps.subscriptionStatuses(customerId)).some(stillBills)) {
-    return { url: await deps.createPortalSession(customerId, billing), kind: "portal" };
+    return { url: await deps.createPortalSession(customerId, back), kind: "portal" };
   }
   const priceId = await deps.priceIdFor(LOOKUP_KEYS[plan][interval]);
   await deps.expireOpenCheckouts(customerId);
@@ -74,8 +77,8 @@ export async function checkoutDestination(
     priceId,
     userId: user.id,
     // Stripe fills in {CHECKOUT_SESSION_ID}; braces are kept as they are.
-    successUrl: `${billing}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancelUrl: `${billing}?checkout=canceled`,
+    successUrl: `${back}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancelUrl: `${back}?checkout=canceled`,
   });
   return { url, kind: "checkout" };
 }
