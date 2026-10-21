@@ -2,6 +2,7 @@ import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
+import { ImportCapture, ImportCaptureSkip, ImportScan, type ImportSkip } from "@/lib/runtime/import-scan";
 import { EMPTY_LOADOUT, type ModelLoadout, parseLoadout } from "@/lib/runtime/model-loadout";
 import {
   defaultModel,
@@ -140,6 +141,24 @@ async function call<T>(cmd: string, args?: Record<string, unknown>, agent: Agent
   } catch (error) {
     throw new Error(messageForLocalError(error, agent));
   }
+}
+
+/** Every session on this Mac that could move to the cloud, and why any can't;
+ *  null outside the desktop app. */
+export async function importScan(): Promise<ImportScan | null> {
+  if (!tauriCore()) return null;
+  return ImportScan.parse(await call<unknown>("import_scan"));
+}
+
+/** Capture the session with `key` and upload it to `uploads` (a signed URL per
+ *  artifact kind): its capture, or why it can't be imported. */
+export async function importSession(
+  key: string,
+  uploads: Record<string, string>,
+): Promise<ImportCapture | { skip: ImportSkip }> {
+  const result = await call<unknown>("import_session", { key, uploads });
+  const skipped = ImportCaptureSkip.safeParse(result);
+  return skipped.success ? skipped.data : ImportCapture.parse(result);
 }
 
 /** What this Mac has for local sessions; null outside the desktop app. */
@@ -422,6 +441,8 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   local_clone_repo:
     "This version of the Outrunner app can't clone repositories. Update the app, or choose a folder on this Mac instead.",
   local_codex_login: "This version of the Outrunner app can't log Codex in. Update the app, then try again.",
+  import_scan: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
+  import_session: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
 };
 
 /** Human-readable message for an error the app returned; `agent` is the CLI a
@@ -473,6 +494,15 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
       const said = cliReason(raw.slice("login-failed:".length));
       return said ? `${name} couldn't log in. It said: ${said}` : `${name} couldn't log in. ${MANUAL_LOGIN[agent]}`;
     }
+    case "import-failed": {
+      const said = raw.slice("import-failed:".length).trim();
+      return said ? `The import failed: ${said}` : "The import failed. Try again.";
+    }
+    case "invalid-session-key":
+    case "upload-not-allowed":
+    case "unknown-artifact":
+    case "no-uploads":
+      return "The app refused that import. Scan again, then try again.";
     case "agent": {
       // The agent's own message, e.g. a worktree that could not be created.
       const said = raw.slice("agent:".length).trim();

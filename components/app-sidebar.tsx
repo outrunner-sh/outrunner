@@ -4,6 +4,7 @@ import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronRight,
+  CloudUpload,
   Ellipsis,
   Flag,
   Folder,
@@ -150,6 +151,7 @@ export function AppSidebar({
           hint="⌘N"
           active={pathname === "/" || pathname === "/new"}
         />
+        <NavLink href="/import" icon={<CloudUpload />} label="Import" active={pathname === "/import"} />
         <NavSoon icon={<Flag />} label="Runner" />
         <NavSoon icon={<Sparkles />} label="Automations" />
         {searching ? (
