@@ -6,6 +6,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { RepositoryAccessNotes } from "@/components/repository-access-notes";
 import { Spinner } from "@/components/ui/loaders";
+import { useActiveOption } from "@/hooks/use-active-option";
 import { useGitHubRepositories } from "@/hooks/use-github-repositories";
 import { filterRepositories, projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
@@ -57,9 +58,6 @@ export function RepositorySelect({
   const [connectingId, setConnectingId] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  // The option the arrow keys are on (a combobox: focus stays in the search
-  // field, and this one is announced as active).
-  const [active, setActive] = useState(0);
   const listId = useId();
 
   const selected = projects.find((p) => p.id === selectedProjectId);
@@ -100,6 +98,15 @@ export function RepositorySelect({
       projects.map(projectToListing);
     return filterRepositories(repos, query);
   }, [listing, projects, query]);
+  // The option the arrow keys are on (a combobox: focus stays in the search
+  // field, and this one is announced as active).
+  const {
+    activeIndex: active,
+    active: activeRepo,
+    move,
+    setActive,
+    reset: resetActive,
+  } = useActiveOption(visible, (repo) => repo.githubRepoId);
 
   async function choose(repo: RepositoryListing) {
     if (onPick) {
@@ -140,7 +147,7 @@ export function RepositorySelect({
         onClick={() => {
           const next = !open;
           setOpen(next);
-          setActive(0);
+          resetActive();
           if (next) void load();
         }}
         className={
@@ -187,7 +194,7 @@ export function RepositorySelect({
                 tabIndex={-1}
                 disabled={connectingId !== null}
                 onClick={() => void choose(repo)}
-                onMouseMove={() => setActive(i)}
+                onMouseMove={() => setActive(repo)}
                 ref={i === active ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
                 className={cn(
                   "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm disabled:opacity-50",
@@ -244,25 +251,22 @@ export function RepositorySelect({
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
-                setActive(0);
+                resetActive();
               }}
               // ↑/↓ move through the list, Enter picks; typing filters it.
               onKeyDown={(event) => {
                 if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                   event.preventDefault();
-                  if (visible.length === 0) return;
-                  const step = event.key === "ArrowDown" ? 1 : -1;
-                  setActive((i) => (i + step + visible.length) % visible.length);
+                  move(event.key === "ArrowDown" ? 1 : -1);
                 } else if (event.key === "Enter") {
                   event.preventDefault();
-                  const repo = visible[active];
-                  if (repo && connectingId === null) void choose(repo);
+                  if (activeRepo && connectingId === null) void choose(activeRepo);
                 }
               }}
               role="combobox"
               aria-expanded={open}
               aria-controls={listId}
-              aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
+              aria-activedescendant={activeRepo ? `${listId}-${active}` : undefined}
               aria-autocomplete="list"
               placeholder="Search repositories…"
               aria-label="Search repositories"

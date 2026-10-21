@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/loaders";
+import { useActiveOption } from "@/hooks/use-active-option";
 import { useGitHubRepositories } from "@/hooks/use-github-repositories";
 import {
   avatarAt,
@@ -99,7 +100,6 @@ function OpenGitHubProjectBody({
   const { list, loading, load } = github;
   const [url, setUrl] = useState("");
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
   const [problem, setProblem] = useState<string | null>(null);
   const listId = useId();
 
@@ -118,13 +118,16 @@ function OpenGitHubProjectBody({
   );
   const connected = useMemo(() => new Set(list?.connected ?? []), [list]);
 
-  const activeRepo = repos[Math.min(active, repos.length - 1)] ?? null;
+  // Followed by key, so a Refresh that re-sorts the list keeps the same repo
+  // highlighted, and what is highlighted is what opens.
+  const {
+    activeIndex: active,
+    active: activeRepo,
+    move: moveActive,
+    setActive,
+    reset: resetActive,
+  } = useActiveOption(repos, (repo) => repo.githubRepoId);
   const pasted = url.trim();
-
-  function moveActive(step: number) {
-    if (repos.length === 0) return;
-    setActive((active + step + repos.length) % repos.length);
-  }
 
   async function openRepository(ref: number | string) {
     if (opening) return;
@@ -179,9 +182,11 @@ function OpenGitHubProjectBody({
                 setProblem(null);
               }}
               onKeyDown={(event) => {
+                // Enter here opens what was pasted, never the list's pick
+                // (⌘↵ is the dialog's "open whichever is chosen").
                 if (event.key === "Enter" && !event.metaKey && !event.ctrlKey) {
                   event.preventDefault();
-                  openChosen();
+                  if (pasted) openChosen();
                 }
               }}
               placeholder="https://github.com/owner/repo"
@@ -210,7 +215,7 @@ function OpenGitHubProjectBody({
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value);
-                    setActive(0);
+                    resetActive();
                   }}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -292,7 +297,7 @@ function RepositoryOptions({
   active: number;
   connected: ReadonlySet<number>;
   disabled: boolean;
-  onHover: (index: number) => void;
+  onHover: (repo: RepositoryListing) => void;
   onOpen: (repo: RepositoryListing) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -345,7 +350,7 @@ function RepositoryOptions({
                   active={row.index === active}
                   connected={connected.has(row.repo.githubRepoId)}
                   disabled={disabled}
-                  onHover={() => onHover(row.index)}
+                  onHover={() => onHover(row.repo)}
                   onOpen={() => onOpen(row.repo)}
                 />
               )}
