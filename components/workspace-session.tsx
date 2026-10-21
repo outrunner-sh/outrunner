@@ -4,7 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { ChevronRight, RefreshCw, TerminalSquare, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
@@ -103,7 +103,12 @@ export function WorkspaceSession({
     setSendError(null);
     attachment.refresh();
   };
-  const canSend = attachment.status === "attached";
+  const attached = attachment.status === "attached";
+  // The composer takes a prompt while the session is still connecting: it goes
+  // once attached (whenAttached), so opening a session never means waiting to
+  // type. Only a failed attach stops it, until Reconnect.
+  const canSend = attachment.status !== "error";
+  const whenAttached = useWhenAttached(attachment.status, connectionError);
 
   // Optimistic echo: the prompt only reaches the timeline after Claude logs it
   // and the agent streams it back (a second or two). Show the user's own bubble
@@ -139,6 +144,14 @@ export function WorkspaceSession({
       setSendError(message);
       return false;
     };
+    return whenAttached().then(
+      () => deliver(text, attachmentIds, failed),
+      (error: unknown) => failed(error instanceof Error ? error.message : "Could not connect to send that message."),
+    );
+  };
+
+  /** Hand a prompt to the session, once it is attached. */
+  const deliver = (text: string, attachmentIds: string[], failed: (message: string) => boolean) => {
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -209,7 +222,7 @@ export function WorkspaceSession({
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
-    disabledReason: !canSend
+    disabledReason: !attached
       ? "Waiting for the session to connect"
       : working
         ? `Switch models once ${AGENTS[agent].label} has finished this turn`
@@ -283,7 +296,7 @@ export function WorkspaceSession({
   // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
   useEffect(() => {
-    if (sentInitial.current || !canSend) return;
+    if (sentInitial.current || !attached) return;
     const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
     const first = hasFirstPrompt(fromUrl)
       ? fromUrl
@@ -309,7 +322,7 @@ export function WorkspaceSession({
     });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSend, initialPrompt, initialAttachmentIds]);
+  }, [attached, initialPrompt, initialAttachmentIds]);
 
   return (
     <div className="studio-live-session" data-testid="workspace-session">
@@ -382,11 +395,41 @@ export function WorkspaceSession({
       <SessionComposer
         onSend={send}
         canSend={canSend}
+        disabledPlaceholder="Couldn't connect to the session: reconnect to send"
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
       />
     </div>
+  );
+}
+
+/**
+ * A promise for "the session is attached": at once when it is, else when it
+ * gets there; rejected, with why, if attaching fails first. What a prompt typed
+ * while the session connects waits on.
+ */
+function useWhenAttached(
+  status: "idle" | "loading" | "attached" | "error",
+  error: string | null,
+): () => Promise<void> {
+  const waiting = useRef<{ resolve: () => void; reject: (error: Error) => void }[]>([]);
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+    if (status !== "attached" && status !== "error") return;
+    const waiters = waiting.current.splice(0);
+    for (const waiter of waiters) {
+      if (status === "attached") waiter.resolve();
+      else waiter.reject(new Error(error ?? "Could not connect to the session."));
+    }
+  }, [status, error]);
+  return useCallback(
+    () =>
+      statusRef.current === "attached"
+        ? Promise.resolve()
+        : new Promise<void>((resolve, reject) => waiting.current.push({ resolve, reject })),
+    [],
   );
 }
 
