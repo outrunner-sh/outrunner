@@ -68,7 +68,7 @@ export function ConversationTimeline({
       }}
       className="min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
     >
-      <div ref={contentRef} className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 pt-16 pb-16">
+      <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 pt-10 pb-16">
         {placeholder === "connecting" && (
           <div role="status" className="conversation-placeholder">
             <DotMatrix rows={6} cols={9} />
