@@ -9,6 +9,7 @@
 import type { GitHubRepository } from "@/lib/github/client";
 import { isValidBranchName } from "@/lib/runtime/git";
 import type { ImportArtifactKind, ImportPlanItem, ImportPlanRequest, ImportSkip } from "@/lib/runtime/import-scan";
+import { OPTIONAL_SNAPSHOT_ARTIFACTS, SNAPSHOT_ARTIFACTS } from "@/lib/runtime/snapshot/manifest";
 import { snapshotPrefix } from "@/lib/runtime/snapshot/paths";
 
 /** How many "-imported-<n>" names are tried for a branch that is taken. */
@@ -27,12 +28,19 @@ export type PlanDeps = {
   mintUploads(paths: string[]): Promise<Map<string, string>>;
 };
 
-/** The Snapshot filename each artifact is stored as. */
+/**
+ * The Snapshot filename each artifact is stored as. Taken from the Snapshot's
+ * own names rather than repeated: `commitImport` keys a manifest's checksums,
+ * sizes and encodings by these, while the manifest's pointers are the
+ * SNAPSHOT_ARTIFACTS literals, and `verifyIntegrity` skips an artifact whose
+ * checksum is absent — so a name that drifted would leave every imported
+ * Snapshot replaying unverified rather than failing.
+ */
 export const IMPORT_ARTIFACT_FILES: Record<ImportArtifactKind, string> = {
-  bundle: "worktree.bundle",
-  patch: "uncommitted.patch",
-  conversation: "conversation.jsonl",
-  rollout: "rollout.jsonl",
+  bundle: SNAPSHOT_ARTIFACTS.bundle,
+  patch: SNAPSHOT_ARTIFACTS.patch,
+  conversation: SNAPSHOT_ARTIFACTS.conversation,
+  rollout: OPTIONAL_SNAPSHOT_ARTIFACTS.rollout,
 };
 
 export async function planImports(
@@ -50,11 +58,17 @@ export async function planImports(
 
   const items: ImportPlanItem[] = [];
   const pending: Array<{ index: number; paths: Partial<Record<ImportArtifactKind, string>> }> = [];
+  // One item per key, and one for every key: a request that names a session
+  // twice is planned once, rather than dropping the repeat with no item at
+  // all — the picker leaves a key it gets no item for showing "Waiting".
   const seen = new Set<string>();
-  for (const session of request.sessions) {
+  const once = request.sessions.filter((s) => {
+    if (seen.has(s.key)) return false;
+    seen.add(s.key);
+    return true;
+  });
+  for (const session of once) {
     const skipped = (skip: ImportSkip) => items.push({ key: session.key, status: "skipped", skip });
-    if (seen.has(session.key)) continue;
-    seen.add(session.key);
     if (!session.key.startsWith(`${session.agent}:`)) {
       skipped({ reason: "source-unreadable", detail: "the session's key doesn't match its agent" });
       continue;
