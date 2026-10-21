@@ -12,7 +12,7 @@ import {
   findOrCreatePullRequest,
   verifyTokenOwner,
 } from "@/lib/github/client";
-import { githubErrorResponse } from "@/lib/github/response";
+import { githubErrorResponse } from "@/lib/github/http";
 import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -98,13 +98,7 @@ export async function POST(request: Request, context: RouteContext) {
     await verifyTokenOwner(githubToken, owner.githubLogin);
   } catch (error) {
     console.error(`Workspace ${id} publish token check failed`, error);
-    return (
-      githubErrorResponse(error) ??
-      NextResponse.json(
-        { error: "Could not verify your GitHub connection. Please try again." },
-        { status: 502 },
-      )
-    );
+    return githubErrorResponse(error, "Could not verify your GitHub connection. Please try again.");
   }
 
   try {
@@ -186,13 +180,7 @@ export async function POST(request: Request, context: RouteContext) {
     });
   } catch (error) {
     console.error(`Workspace ${id} pull request failed`, error);
-    return (
-      githubErrorResponse(error) ??
-      NextResponse.json(
-        { error: "Could not open a pull request. Please try again." },
-        { status: 502 },
-      )
-    );
+    return githubErrorResponse(error, "Could not open a pull request. Please try again.");
   }
 
   try {

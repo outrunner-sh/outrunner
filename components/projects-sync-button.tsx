@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 type SyncResponse = {
   synced?: number;
   discovered?: number;
+  complete?: boolean;
   error?: string;
   reconnect?: boolean;
 };
@@ -60,7 +61,10 @@ export function ProjectsSyncButton({
     }
     const discovered = result.discovered ?? 0;
     setStatus("success");
-    setMessage(discovered === 1 ? "1 repository synchronized." : `${discovered} repositories synchronized.`);
+    const synced = discovered === 1 ? "1 repository synchronized." : `${discovered} repositories synchronized.`;
+    // GitHub had more than Outrunner reads in one go, or sent a record it
+    // couldn't read: say so rather than imply this is everything.
+    setMessage(result.complete === false ? `${synced} GitHub may have more.` : synced);
     router.refresh();
   }
 

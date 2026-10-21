@@ -1,12 +1,9 @@
-import {
-  GitHubReconnectError,
-  GitHubSyncError,
-  MissingGithubTokenError,
-} from "@/lib/github/client";
+import { GitHubReconnectError, GitHubSyncError, MissingGithubTokenError } from "@/lib/github/client";
 
 /**
- * What a route answers when GitHub work fails, or null for an error that is not
- * GitHub's (the caller logs it and answers its own 500).
+ * The response for an error from a route's GitHub work: no usable token is
+ * 409, GitHub refusing or failing is 502 with its already-safe message, and
+ * anything else is logged and becomes 500 with `fallback`.
  *
  * `reconnect: true` marks the failures only a fresh sign-in fixes — no stored
  * token, or one GitHub now refuses — so the UI can link to Settings → Account
@@ -14,7 +11,7 @@ import {
  *
  * A plain `Response` (not NextResponse) so it stays importable outside Next.
  */
-export function githubErrorResponse(error: unknown): Response | null {
+export function githubErrorResponse(error: unknown, fallback: string): Response {
   if (error instanceof MissingGithubTokenError) {
     return Response.json({ error: error.message, reconnect: true }, { status: 409 });
   }
@@ -24,5 +21,6 @@ export function githubErrorResponse(error: unknown): Response | null {
   if (error instanceof GitHubSyncError) {
     return Response.json({ error: error.message }, { status: 502 });
   }
-  return null;
+  console.error(fallback, error);
+  return Response.json({ error: fallback }, { status: 500 });
 }

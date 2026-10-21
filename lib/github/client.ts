@@ -1,23 +1,37 @@
+import { mapWithConcurrency } from "@/lib/concurrency";
+import { isGitHubFullName, type RepositoryListing } from "@/lib/github/listing";
 
-/** A GitHub repository normalized to the fields Runtime persists. */
-export type GitHubRepository = {
-  githubRepoId: number;
-  fullName: string;
-  owner: string;
-  name: string;
+/**
+ * A GitHub repository normalized to the fields Runtime persists, plus the
+ * owner's kind and avatar the pickers show.
+ */
+export type GitHubRepository = RepositoryListing & {
   defaultBranch: string;
-  private: boolean;
-  language: string | null;
-  description: string | null;
   htmlUrl: string;
-  pushedAt: string | null;
+};
+
+/** What a listing of the user's repositories found. */
+export type GitHubRepositoryList = {
+  /** Most recently pushed first. */
+  repositories: GitHubRepository[];
+  /**
+   * Whether this is every repository the token can reach. False when GitHub
+   * had more pages than Outrunner reads, or returned a record it could not
+   * read: then a repository missing from the list may still be there.
+   */
+  complete: boolean;
+  /**
+   * Organizations whose repositories GitHub left out because the token is not
+   * authorized for their SAML single sign-on (its `X-GitHub-SSO` header).
+   */
+  ssoPartialOrgIds: number[];
 };
 
 type GitHubApiRepository = {
   id: number;
   full_name: string;
   name: string;
-  owner: { login: string };
+  owner: { login: string; type?: string; avatar_url?: string };
   default_branch: string;
   private: boolean;
   language: string | null;
@@ -82,6 +96,8 @@ function isTokenRejected(status: number): boolean {
 const GITHUB_API_URL = "https://api.github.com";
 const PER_PAGE = 100;
 const MAX_PAGES = 100;
+/** Pages of a listing fetched at once, after the first says how many there are. */
+const PAGE_CONCURRENCY = 6;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 function githubHeaders(token: string) {
@@ -121,6 +137,16 @@ async function githubRequest(
 }
 
 /**
+ * GitHub said no. A 401 means the token itself is dead, which only
+ * reconnecting fixes; anything else (a 403 rate limit included) gets `message`.
+ */
+function rejected(response: Response, what: string, message: string): GitHubSyncError {
+  console.error(`GitHub ${what} was rejected`, { status: response.status });
+  if (isTokenRejected(response.status)) return new GitHubReconnectError(undefined, response.status);
+  return new GitHubSyncError(message, response.status);
+}
+
+/**
  * The GitHub login that owns `token`, read from `/user`. Used by the publish
  * path to confirm a stored per-user token still belongs to the account that
  * granted it.
@@ -154,91 +180,193 @@ async function fetchTokenLogin(token: string): Promise<string> {
   return login;
 }
 
-function normalizeRepository(repo: GitHubApiRepository): GitHubRepository {
+function nonEmpty(value: unknown): value is string {
+  return typeof value === "string" && value !== "";
+}
+
+/** A repository record from GitHub, or null if it lacks what Runtime needs. */
+function normalizeRepository(record: unknown): GitHubRepository | null {
+  const repo = (record ?? {}) as Partial<GitHubApiRepository>;
   if (
+    typeof repo.id !== "number" ||
     !Number.isSafeInteger(repo.id) ||
     repo.id <= 0 ||
-    !repo.full_name ||
-    !repo.name ||
-    !repo.owner?.login ||
-    !repo.html_url
+    !nonEmpty(repo.full_name) ||
+    !nonEmpty(repo.name) ||
+    !nonEmpty(repo.owner?.login) ||
+    !nonEmpty(repo.html_url)
   ) {
-    throw new GitHubSyncError("GitHub returned an invalid repository record.");
+    return null;
   }
+  const ownerType = repo.owner.type;
 
   return {
     githubRepoId: repo.id,
     fullName: repo.full_name,
     owner: repo.owner.login,
+    ownerType: ownerType === "Organization" || ownerType === "User" ? ownerType : null,
+    avatarUrl: nonEmpty(repo.owner.avatar_url) ? repo.owner.avatar_url : null,
     name: repo.name,
     defaultBranch: repo.default_branch || "main",
     private: Boolean(repo.private),
-    language: repo.language,
-    description: repo.description,
+    language: repo.language ?? null,
+    description: repo.description ?? null,
     htmlUrl: repo.html_url,
-    pushedAt: repo.pushed_at,
+    pushedAt: repo.pushed_at ?? null,
   };
+}
+
+/** The page number of a `Link` header's `rel="last"` URL, if it has one. */
+export function lastPageFromLink(link: string | null): number | null {
+  const match = link?.match(/<([^>]+)>;\s*rel="last"/);
+  if (!match) return null;
+  try {
+    const page = Number(new URL(match[1]).searchParams.get("page"));
+    return Number.isSafeInteger(page) && page > 0 ? page : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The organizations an `X-GitHub-SSO: partial-results; organizations=1,2`
+ * header says were left out. Any other value (or none) leaves out nothing.
+ */
+export function ssoPartialOrgIds(header: string | null): number[] {
+  if (!header?.trim().startsWith("partial-results")) return [];
+  const orgs = header.match(/organizations=([\d,\s]+)/)?.[1] ?? "";
+  return orgs
+    .split(",")
+    .map((id) => Number(id.trim()))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+}
+
+type RepositoryPage = {
+  repositories: GitHubRepository[];
+  skipped: number;
+  lastPage: number | null;
+  ssoPartialOrgIds: number[];
+};
+
+async function fetchRepositoryPage(token: string, page: number): Promise<RepositoryPage> {
+  const url = new URL("/user/repos", GITHUB_API_URL);
+  url.searchParams.set("affiliation", "owner,collaborator,organization_member");
+  // By name, not by push: pages fetched side by side must not shift under a
+  // push landing mid-listing, or a repository could be read twice and another
+  // missed. The list is sorted by push once it is all in.
+  url.searchParams.set("sort", "full_name");
+  url.searchParams.set("direction", "asc");
+  url.searchParams.set("per_page", String(PER_PAGE));
+  url.searchParams.set("page", String(page));
+
+  const response = await fetchGitHub(url, token);
+  if (!response.ok) {
+    throw rejected(response, "repository request", "GitHub could not list repositories. Please try again.");
+  }
+
+  const records = await readJson(response);
+  if (!Array.isArray(records)) {
+    throw new GitHubSyncError("GitHub returned an invalid response.");
+  }
+
+  const repositories: GitHubRepository[] = [];
+  for (const record of records) {
+    const repo = normalizeRepository(record);
+    if (repo) repositories.push(repo);
+  }
+  const skipped = records.length - repositories.length;
+  if (skipped > 0) {
+    console.warn("GitHub returned repository records Runtime could not read", { page, skipped });
+  }
+
+  return {
+    repositories,
+    skipped,
+    lastPage: lastPageFromLink(response.headers.get("link")),
+    ssoPartialOrgIds: ssoPartialOrgIds(response.headers.get("x-github-sso")),
+  };
+}
+
+function newestPushFirst(a: GitHubRepository, b: GitHubRepository): number {
+  if (a.pushedAt !== b.pushedAt) {
+    if (a.pushedAt === null) return 1;
+    if (b.pushedAt === null) return -1;
+    return a.pushedAt < b.pushedAt ? 1 : -1;
+  }
+  return a.fullName.localeCompare(b.fullName);
 }
 
 /**
  * Retrieves the repositories visible to `token` — the signed-in user's own
- * GitHub credential, captured from their OAuth sign-in.
+ * GitHub credential, captured from their OAuth sign-in: their own, ones they
+ * collaborate on, and every one their organizations give them (all of an
+ * organization's, for its owners).
+ *
+ * The first page says how many there are (its `Link` header); the rest are
+ * fetched a few at a time. Past {@link MAX_PAGES} pages, or with a record that
+ * could not be read, the list comes back with `complete: false` rather than
+ * failing, so the user still gets to pick from what was read.
  *
  * The caller supplies the token rather than this module reading one from the
  * environment: every user syncs their own repositories under their own
  * identity, so there is no server-wide credential to fall back on.
  */
-export async function listGitHubRepositories(
-  token: string,
-): Promise<GitHubRepository[]> {
-  const repositories: GitHubRepository[] = [];
+export async function listGitHubRepositories(token: string): Promise<GitHubRepositoryList> {
+  const first = await fetchRepositoryPage(token, 1);
+  const lastPage = first.lastPage ?? 1;
+  const morePages = Array.from({ length: Math.min(lastPage, MAX_PAGES) - 1 }, (_, i) => i + 2);
+  const pages = [
+    first,
+    ...(await mapWithConcurrency(morePages, PAGE_CONCURRENCY, (page) => fetchRepositoryPage(token, page))),
+  ];
 
-  for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const url = new URL("/user/repos", GITHUB_API_URL);
-    url.searchParams.set(
-      "affiliation",
-      "owner,collaborator,organization_member",
-    );
-    url.searchParams.set("sort", "pushed");
-    url.searchParams.set("direction", "desc");
-    url.searchParams.set("per_page", String(PER_PAGE));
-    url.searchParams.set("page", String(page));
-
-    const response = await fetchGitHub(url, token);
-
-    if (!response.ok) {
-      console.error("GitHub repository request was rejected", {
-        status: response.status,
-      });
-      if (isTokenRejected(response.status)) {
-        throw new GitHubReconnectError(undefined, response.status);
-      }
-      throw new GitHubSyncError(
-        "GitHub could not list repositories. Please try again.",
-        response.status,
-      );
-    }
-
-    let pageRepositories: GitHubApiRepository[];
-    try {
-      pageRepositories = (await response.json()) as GitHubApiRepository[];
-    } catch (error) {
-      console.error("GitHub returned an unreadable repository response", error);
-      throw new GitHubSyncError("GitHub returned an invalid response.");
-    }
-
-    if (!Array.isArray(pageRepositories)) {
-      throw new GitHubSyncError("GitHub returned an invalid response.");
-    }
-
-    repositories.push(...pageRepositories.map(normalizeRepository));
-
-    if (pageRepositories.length < PER_PAGE) return repositories;
+  // A repository created or deleted mid-listing can shift one onto two pages.
+  const byId = new Map<number, GitHubRepository>();
+  for (const page of pages) {
+    for (const repo of page.repositories) byId.set(repo.githubRepoId, repo);
   }
 
-  throw new GitHubSyncError(
-    "Repository sync stopped after 10,000 repositories. Narrow your GitHub app's repository access and try again.",
-  );
+  return {
+    repositories: [...byId.values()].sort(newestPushFirst),
+    complete: lastPage <= MAX_PAGES && pages.every((page) => page.skipped === 0),
+    ssoPartialOrgIds: [...new Set(pages.flatMap((page) => page.ssoPartialOrgIds))],
+  };
+}
+
+/**
+ * One repository, by id or `owner/name`, as `token` sees it — or null when it
+ * cannot: it does not exist, is private to others, or belongs to an
+ * organization whose single sign-on the token is not authorized for (a 403
+ * that is not a rate limit).
+ *
+ * Connecting a picked repository checks it this way rather than listing every
+ * repository to find one.
+ */
+export async function getGitHubRepository(
+  token: string,
+  ref: number | string,
+): Promise<GitHubRepository | null> {
+  let path: string;
+  if (typeof ref === "number") {
+    if (!Number.isSafeInteger(ref) || ref <= 0) return null;
+    path = `/repositories/${ref}`;
+  } else {
+    if (!isGitHubFullName(ref)) return null;
+    path = `/repos/${ref}`;
+  }
+
+  const response = await fetchGitHub(new URL(path, GITHUB_API_URL), token);
+  if (response.status === 404) return null;
+  const rateLimited =
+    response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
+  if (response.status === 403 && !rateLimited) return null;
+  if (!response.ok) {
+    throw rejected(response, "repository lookup", "GitHub could not look up that repository. Please try again.");
+  }
+
+  const repo = normalizeRepository(await readJson(response));
+  if (!repo) throw new GitHubSyncError("GitHub returned an invalid repository record.");
+  return repo;
 }
 
 // ---------------------------------------------------------------------------
