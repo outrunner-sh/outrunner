@@ -42,6 +42,7 @@ import {
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
 import { startNewSession } from "@/lib/session/new-session-reset";
+import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 
 /**
@@ -304,10 +305,17 @@ function WorkspaceGroup({
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
           const { deletion } = session;
+          // A cloud session warms up as the pointer rests on it, so its click
+          // shows the conversation at once. A Mac one is near already, and
+          // attaching would start it.
+          const warm = !isActive && !group.local;
           return (
             <div key={session.id} className="group/row relative">
               <Link
                 href={session.href}
+                onPointerEnter={warm ? () => warmOnRest(session.id) : undefined}
+                onPointerLeave={warm ? cancelWarmOnRest : undefined}
+                onFocus={warm ? () => warmSession(session.id) : undefined}
                 title={session.title}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(

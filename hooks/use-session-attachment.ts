@@ -11,6 +11,7 @@ import {
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
 import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
+import { takeWarmUrls } from "@/lib/session/warm-session";
 
 /**
  * Owner of the Workspace Session's URL lifecycle: fetches
@@ -100,6 +101,15 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           const urls = await localSessionUrls(localTarget(workspaceId), agent);
           if (controller.signal.aborted) return;
           setUrls(urls);
+          setAttachId((n) => n + 1);
+          setStatus("attached");
+          return;
+        }
+        // The first attach takes the URLs a sidebar warm-up already has.
+        const warm = fresh ? null : await takeWarmUrls(workspaceId);
+        if (controller.signal.aborted) return;
+        if (warm) {
+          setUrls(warm);
           setAttachId((n) => n + 1);
           setStatus("attached");
           return;

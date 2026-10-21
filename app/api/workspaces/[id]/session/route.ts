@@ -38,6 +38,10 @@ type RouteContext = { params: Promise<{ id: string }> };
  * adds `?fresh=1`: the box's endpoint, kept a few minutes server-side, is looked
  * up again in case it is what failed.
  *
+ * `?warm=1` is the sidebar warming a session up as the pointer rests on it
+ * (lib/session/warm-session.ts): the same answer, but it never brings back a box
+ * that ended (minutes, and a box that runs) on a hover; it says 409 instead.
+ *
  * See docs/architecture/session-contract.md.
  */
 export async function POST(request: Request, context: RouteContext) {
@@ -72,10 +76,17 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  const query = new URL(request.url).searchParams;
   let computer = await getRuntimeComputerByProject(workspace.projectId);
-  // A box that ended on its own (Modal, after a day) comes back on the disk it
-  // left, so the session opens where it was.
-  if (computer && provider.restoresBoxes) {
+  if (query.get("warm") === "1" && computer && provider.restoresBoxes) {
+    const up =
+      computer.status === "ready" &&
+      computer.daytonaSandboxId !== null &&
+      (await provider.computerAlive(computer.daytonaSandboxId));
+    if (!up) return NextResponse.json({ error: "Its sandbox isn't up to warm." }, { status: 409 });
+  } else if (computer && provider.restoresBoxes) {
+    // A box that ended on its own (Modal, after a day) comes back on the disk
+    // it left, so the session opens where it was.
     try {
       computer = (await bringBack(provider, computer, owner.id)) ?? computer;
     } catch (error) {
@@ -106,8 +117,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   let target;
   try {
-    const fresh = new URL(request.url).searchParams.get("fresh") === "1";
-    target = await provider.agentTarget(computer.daytonaSandboxId, secret, { fresh });
+    target = await provider.agentTarget(computer.daytonaSandboxId, secret, { fresh: query.get("fresh") === "1" });
   } catch (error) {
     console.error(`Session attach: agentTarget failed for ${workspace.id}`, error);
     return NextResponse.json(
