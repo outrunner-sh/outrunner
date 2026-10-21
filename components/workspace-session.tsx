@@ -13,6 +13,12 @@ import { SessionComposer, type ModelChoice } from "@/components/session-composer
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
+import {
+  anchorPending,
+  livePrompts,
+  pendingShows,
+  type PendingPrompt,
+} from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import {
   forgetFirstPrompt,
@@ -114,25 +120,31 @@ export function WorkspaceSession({
   // and the agent streams it back (a second or two). Show the user's own bubble
   // immediately and drop it once the streamed copy of that turn arrives, so the
   // composer feels instant without ever double-rendering the message.
-  // Each pending item remembers the delivered-prompt count it is waiting to
-  // exceed. Sends are serialized, so the Nth optimistic bubble is superseded
-  // once the stream has recorded N prompts — independent of the text, so
-  // duplicate messages and Claude's text-less tool-result user turns can't
-  // confuse the match.
-  const [pending, setPending] = useState<{ id: string; text: string; expect: number }[]>([]);
+  // Which bubble is superseded when is lib/session/optimistic-echo.ts: a
+  // delivered-prompt count rather than the text, anchored as the session takes
+  // the prompt rather than as it is typed.
+  const [pending, setPending] = useState<PendingPrompt[]>([]);
+  // The newest events, for anchoring after an await, when the closure's are old.
+  const eventsRef = useRef(conversation.events);
+  useEffect(() => {
+    eventsRef.current = conversation.events;
+  }, [conversation.events]);
+
+  /** The prompt has reached the session: hold its bubble until the stream has
+   *  recorded one more prompt than the history it answered with. */
+  const anchor = (pendingId: string) =>
+    setPending((prev) => anchorPending(prev, pendingId, userPromptCount(eventsRef.current)));
 
   const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
     if (trimmed) {
       setPending((prev) => {
-        const base = userPromptCount(conversation.events);
-        // Drop items the stream has already caught up on, then queue this one to
-        // wait for the next prompt slot. Trimming here (not in an effect) keeps
-        // the list bounded without a setState-in-effect cascade.
-        const live = prev.filter((p) => base < p.expect);
-        const expect = Math.max(base + 1, live.length ? live[live.length - 1].expect + 1 : 0);
-        return [...live, { id: pendingId, text: trimmed, expect }];
+        // Drop items the stream has already caught up on, then queue this one.
+        // Trimming here (not in an effect) keeps the list bounded without a
+        // setState-in-effect cascade.
+        const live = livePrompts(prev, userPromptCount(conversation.events));
+        return [...live, { id: pendingId, text: trimmed, expect: null }];
       });
     }
     setSendError(null);
@@ -145,13 +157,19 @@ export function WorkspaceSession({
       return false;
     };
     return whenAttached().then(
-      () => deliver(text, attachmentIds, failed),
+      () => deliver(text, attachmentIds, pendingId, failed),
       (error: unknown) => failed(error instanceof Error ? error.message : "Could not connect to send that message."),
     );
   };
 
-  /** Hand a prompt to the session, once it is attached. */
-  const deliver = (text: string, attachmentIds: string[], failed: (message: string) => boolean) => {
+  /** Hand a prompt to the session, once it is attached. Anchors its bubble as
+   *  the session takes it, against the history that has landed by then. */
+  const deliver = (
+    text: string,
+    attachmentIds: string[],
+    pendingId: string,
+    failed: (message: string) => boolean,
+  ) => {
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -159,7 +177,10 @@ export function WorkspaceSession({
         `/workspaces/${workspaceId}/message`,
         { content: text },
       ).then(
-        () => true,
+        () => {
+          anchor(pendingId);
+          return true;
+        },
         (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
       );
     }
@@ -171,6 +192,7 @@ export function WorkspaceSession({
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.");
+        anchor(pendingId);
         // The first prompt just named this session: re-read the sidebar.
         if (body.titled) router.refresh();
         return true;
@@ -215,7 +237,7 @@ export function WorkspaceSession({
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
   const delivered = userPromptCount(conversation.events);
   const working =
-    claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
+    claudeIsWorking(conversation.events) || pending.some((p) => pendingShows(p, delivered));
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
     effort,
@@ -256,7 +278,7 @@ export function WorkspaceSession({
   const timelineEvents = useMemo<AgentEvent[]>(() => {
     const delivered = userPromptCount(conversation.events);
     const optimistic = pending
-      .filter((p) => delivered < p.expect)
+      .filter((p) => pendingShows(p, delivered))
       .map<AgentEvent>((p) => ({
         t: "message",
         uuid: `optimistic-${p.id}`,

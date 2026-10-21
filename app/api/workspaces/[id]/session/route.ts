@@ -39,8 +39,10 @@ type RouteContext = { params: Promise<{ id: string }> };
  * up again in case it is what failed.
  *
  * `?warm=1` is the sidebar warming a session up as the pointer rests on it
- * (lib/session/warm-session.ts): the same answer, but it never brings back a box
- * that ended (minutes, and a box that runs) on a hover; it says 409 instead.
+ * (lib/session/warm-session.ts): the same answer, but read-only. It never
+ * brings back a box that ended (minutes, and a box that runs) on a hover, and
+ * never signs the session in or starts it; it says 409 instead, which the
+ * warm-up treats as nothing to warm.
  *
  * See docs/architecture/session-contract.md.
  */
@@ -77,8 +79,9 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const query = new URL(request.url).searchParams;
+  const warm = query.get("warm") === "1";
   let computer = await getRuntimeComputerByProject(workspace.projectId);
-  if (query.get("warm") === "1" && computer && provider.restoresBoxes) {
+  if (warm && computer && provider.restoresBoxes) {
     const up =
       computer.status === "ready" &&
       computer.daytonaSandboxId !== null &&
@@ -134,9 +137,26 @@ export async function POST(request: Request, context: RouteContext) {
   };
   const agent = new AgentClient(target);
 
+  // A hover must leave the session as it found it: a warm-up signs nothing in
+  // and starts nothing. Its URLs stand in for the page's first attach, so it
+  // answers only for a session already running — the one case where that
+  // attach would have had nothing to start anyway. The conversation itself is
+  // read from the transcript on disk, running or not, so the warm-up still
+  // fills the page's cache.
+  let summary;
+  if (warm) {
+    summary = await agent.workspaceSummary(identity).catch((error: unknown) => {
+      console.warn(`Session warm: summary fetch failed for ${workspace.id}`, error);
+      return undefined;
+    });
+    if (summary?.state !== "running") {
+      return NextResponse.json({ error: "Its session isn't running to warm." }, { status: 409 });
+    }
+  }
+
   // On a box that comes back after it ends, the session's Claude may not be
   // running: start it (continuing its conversation), or leave it be if it is.
-  if (provider.restoresBoxes) {
+  if (!warm && provider.restoresBoxes) {
     try {
       // Signed in as the user picks now, before it launches.
       const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
@@ -160,12 +180,14 @@ export async function POST(request: Request, context: RouteContext) {
 
   // Fetch the current WorkspaceSummary alongside the URLs so the browser has
   // it on the first paint without an extra round-trip. If the agent hiccups,
-  // omit summary — clients can hit /api/workspaces/[id]/summary directly.
-  let summary;
-  try {
-    summary = await agent.workspaceSummary(identity);
-  } catch (error) {
-    console.warn(`Session attach: summary fetch failed for ${workspace.id}`, error);
+  // omit summary — clients can hit /api/workspaces/[id]/summary directly. A
+  // warm-up already has it, from the check above.
+  if (!summary) {
+    try {
+      summary = await agent.workspaceSummary(identity);
+    } catch (error) {
+      console.warn(`Session attach: summary fetch failed for ${workspace.id}`, error);
+    }
   }
 
   const body: SessionUrls = {
