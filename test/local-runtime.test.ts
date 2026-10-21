@@ -11,6 +11,7 @@ import {
   localAgentState,
   localSocketUrl,
   logInToCodex,
+  isGitRepository,
   messageForLocalError,
   missingTools,
   needsClaudeLogin,
@@ -292,4 +293,12 @@ test("closing before the relay answers still closes the relay", async () => {
   desktop.resolveOpen(9);
   await tick();
   assert.deepEqual(desktop.sent.at(-1), { cmd: "local_socket_close", args: { id: 9 } });
+});
+
+test("a folder is a git repository by the app's word, or by having a commit with an older app", () => {
+  const folder = { path: "/x", name: "x", branch: null };
+  assert.equal(isGitRepository({ ...folder, git: false, repo: true }), true);
+  assert.equal(isGitRepository({ ...folder, git: false, repo: false }), false);
+  assert.equal(isGitRepository({ ...folder, git: true }), true);
+  assert.equal(isGitRepository({ ...folder, git: false }), false);
 });

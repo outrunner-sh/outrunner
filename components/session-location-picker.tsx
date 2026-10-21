@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { RepositorySelect } from "@/components/repository-select";
+import { isGitRepository } from "@/lib/desktop/local-runtime";
 import { Spinner } from "@/components/ui/loaders";
 import type { SessionLocation, SessionLocationState } from "@/hooks/use-session-location";
 import { cn } from "@/lib/utils";
@@ -126,7 +127,7 @@ export function LocalRepositoryButton({
         },
         // Not a git repository yet: sessions work in it directly, without a
         // worktree each. One click makes it one, its files the first commit.
-        ...(chosen && !chosen.git
+        ...(chosen && !isGitRepository(chosen)
           ? [
               {
                 label: `Make ${chosen.name} a git repository`,

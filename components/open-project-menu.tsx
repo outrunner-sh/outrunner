@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
-import { initGitRepository, pickLocalFolder, type LocalFolder } from "@/lib/desktop/local-runtime";
+import { initGitRepository, isGitRepository, pickLocalFolder, type LocalFolder } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { newSessionHref } from "@/lib/nav/sidebar";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
@@ -46,7 +46,7 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
     try {
       const folder = await pickLocalFolder();
       if (!folder) return; // cancelled
-      startInFolder(asNewProject && !folder.git ? await initGitRepository(folder.path) : folder);
+      startInFolder(asNewProject && !isGitRepository(folder) ? await initGitRepository(folder.path) : folder);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "Couldn't open that folder.");
     }

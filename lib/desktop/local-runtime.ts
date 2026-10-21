@@ -94,9 +94,18 @@ export type LocalFolder = {
   /** A repository with a commit: each session gets its own worktree. Otherwise
    *  Claude works in the folder itself. */
   git: boolean;
+  /** In a git repository at all, even one with no commit yet. Absent from
+   *  apps older than it: use {@link isGitRepository}. */
+  repo?: boolean;
   /** The checked-out branch, when there is one. */
   branch: string | null;
 };
+
+/** Whether a folder is already a git repository (so it can't be made one):
+ *  an app too old to say counts a repository with a commit only. */
+export function isGitRepository(folder: LocalFolder): boolean {
+  return folder.repo ?? folder.git;
+}
 
 /** One session the agent on this Mac knows (GET /workspaces on the agent). */
 export type LocalSession = {
