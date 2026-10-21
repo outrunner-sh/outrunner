@@ -51,7 +51,7 @@ function invalid(error: string) {
 }
 
 /** Run a save, answering the database's refusal as JSON the page can show. */
-function saving(save: () => Promise<NextResponse>): Promise<NextResponse> {
+function saving(save: () => Promise<NextResponse>): Promise<Response> {
   return savingSettings("sandbox settings", save);
 }
 

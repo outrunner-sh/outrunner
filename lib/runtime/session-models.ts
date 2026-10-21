@@ -30,10 +30,14 @@ export const OUTRUNNER_MODELS: SessionModel[] = [
   { id: "anthropic/claude-opus-5.5", label: "Claude Opus", provider: "outrunner" },
 ];
 
+/** What a session on the user's Claude runs when no model is picked: the
+ *  newest Opus, at DEFAULT_EFFORT, rather than Claude Code's own default. */
+export const CLAUDE_DEFAULT_MODEL: SessionModel = { id: "opus", label: "Opus", provider: "claude" };
+
 /** The user's own Claude. Aliases, so each is the newest of its family without
  *  a release here. */
 export const CLAUDE_MODELS: SessionModel[] = [
-  { id: "opus", label: "Opus", provider: "claude" },
+  CLAUDE_DEFAULT_MODEL,
   { id: "sonnet", label: "Sonnet", provider: "claude" },
   { id: "haiku", label: "Haiku", provider: "claude" },
 ];
@@ -103,6 +107,9 @@ export function defaultModel(menu: ModelMenu): SessionModel | null {
  *  and Codex's model_reasoning_effort both take (claude.Efforts). */
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
+
+/** The effort a model that takes one runs at when none is picked for it. */
+export const DEFAULT_EFFORT: Effort = "high";
 
 export const EFFORT_LABELS: Record<Effort, string> = {
   low: "Low",

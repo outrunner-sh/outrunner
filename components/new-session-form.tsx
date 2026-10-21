@@ -4,15 +4,25 @@ import { GitBranch, GitFork } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { useCreateSession } from "@/hooks/use-create-session";
+import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
-import { loadoutDefault, loadoutEffort } from "@/lib/runtime/model-loadout";
-import { agentOf, defaultModel, type Effort, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
+import { effortOnPick, loadoutDefault } from "@/lib/runtime/model-loadout";
+import {
+  agentOf,
+  CLAUDE_DEFAULT_MODEL,
+  DEFAULT_EFFORT,
+  defaultModel,
+  type Effort,
+  modelGroups,
+  type SessionModel,
+} from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
@@ -44,17 +54,22 @@ export function NewSessionForm({
     useCreateSession(listed, initialProjectId);
   // The model the session starts on, picked in the composer as in a session;
   // none picked, what it starts on anyway: the menu's default on the cloud,
-  // and on a Mac whose Claude Code isn't logged in; otherwise that Mac's
-  // Claude Code default.
+  // and on a Mac whose Claude Code isn't logged in; otherwise the user's
+  // Claude, on CLAUDE_DEFAULT_MODEL.
   const menu = useOutrunnerModels();
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(null);
   // The effort picked in the composer; undefined until one is, when the
-  // loadout's for the model it starts on shows.
+  // loadout's for the model it starts on shows, else DEFAULT_EFFORT.
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
+  // A repository's first cloud session can bring its environment from this Mac.
+  const environment = useFirstSessionEnvironment(selected, !local);
+  // A send is under way: the environment is being kept, or the session made.
+  // What it was sent with must not change under it.
+  const busy = isCreating || environment.keeping;
   // No repositories only blocks the cloud; a local session needs none.
   const noRepositories = projectsKnown && !local && projects.length === 0;
   const details = newSessionDetails(
@@ -71,12 +86,13 @@ export function NewSessionForm({
     : [];
   const onDefault = local ? where.outrunnerModel : menu?.available === true;
   // The loadout's default (Settings → Default models) where the menu offers
-  // it here; else what a session starts on without one.
+  // it here; else what a session starts on without one: the menu's default,
+  // or, where it starts on the user's Claude, Opus.
   const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
-  const startsOn = picked ?? chosenDefault ?? (onDefault && menu ? defaultModel(menu) : null);
+  const startsOn = picked ?? chosenDefault ?? (menu ? (onDefault ? defaultModel(menu) : CLAUDE_DEFAULT_MODEL) : null);
   const startModel = picked ?? chosenDefault ?? undefined;
   const effort =
-    pickedEffort !== undefined ? pickedEffort : (startsOn && menu && loadoutEffort(menu.loadout, startsOn)) || null;
+    pickedEffort !== undefined ? pickedEffort : startsOn ? effortOnPick(menu?.loadout, startsOn) : DEFAULT_EFFORT;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one
@@ -110,15 +126,15 @@ export function NewSessionForm({
           </div>
         ) : (
           <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
-            {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />}
+            {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={busy} className={CHIP_BUTTON} />}
             {local ? (
-              <LocalRepositoryButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
+              <LocalRepositoryButton state={where} disabled={busy} className={CHIP_BUTTON} />
             ) : (
               <RepositorySelect
                 projects={projects}
                 selectedProjectId={projectId}
                 onSelect={selectProject}
-                disabled={isCreating}
+                disabled={busy}
                 triggerClassName={CHIP_BUTTON}
               />
             )}
@@ -138,6 +154,7 @@ export function NewSessionForm({
         )}
 
         <LocalBlocker state={where} className="mt-4 text-center" />
+        {!local && !noRepositories && <EnvironmentOffer environment={environment} disabled={busy} />}
       </div>
 
       <div className="shrink-0">
@@ -168,7 +185,9 @@ export function NewSessionForm({
                   where.runtime.state === "ready" ? where.runtime.status : null,
                   effort,
                 )
-              : create(text, attachmentIds, startModel, effort)
+              : // Kept first, so the session's box starts with it; one that
+                // fails keeps the prompt, and the session isn't started.
+                environment.keep().then((kept) => kept && create(text, attachmentIds, startModel, effort))
           }
           model={startsOn?.id}
           modelChoice={
@@ -181,7 +200,7 @@ export function NewSessionForm({
                     setPickedEffort(effort);
                   },
                   switching: false,
-                  disabledReason: isCreating ? "Starting the session" : null,
+                  disabledReason: busy ? "Starting the session" : null,
                   preferredProvider: startsOn?.provider,
                   loadout: menu?.loadout,
                 }
@@ -189,12 +208,19 @@ export function NewSessionForm({
           }
           // Typing starts at once, the list still on its way included (a send
           // before it lands gives the prompt back).
-          canSend={!isCreating && (local ? where.localFolder !== null : selected != null || !projectsKnown)}
+          canSend={
+            !isCreating &&
+            (local
+              ? where.localFolder !== null
+              : (selected != null || !projectsKnown) && (!environment.secrets || environment.consent))
+          }
           placeholder="What would you like to work on?"
           disabledPlaceholder={
             local && where.blocker
               ? where.blocker
-              : noRepositories
+              : !local && environment.secrets && !environment.consent
+                ? "Agree to store the environment above to start…"
+                : noRepositories
                 ? "Sync a repository to start…"
                 : "Pick a repository above to start…"
           }
@@ -202,5 +228,43 @@ export function NewSessionForm({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * The repository's environment on this Mac, offered as its first cloud session
+ * starts: what is picked is kept, encrypted, as the session is started, and
+ * this and every later session of the project starts with it.
+ */
+function EnvironmentOffer({ environment: env, disabled }: { environment: FirstSessionEnvironment; disabled: boolean }) {
+  if (!env.offer || !env.pick) return null;
+  return (
+    <section className="mt-8 w-full max-w-xl space-y-3 rounded-lg border border-border/60 p-4 text-left">
+      <div>
+        <h2 className="text-sm font-medium">Bring {env.offer.repo}&apos;s environment from this Mac</h2>
+        <p className="text-muted-foreground text-xs">
+          Pick what this project&apos;s cloud sessions start with. Kept encrypted, for this one and every one after.
+        </p>
+      </div>
+      <div className="max-h-56 overflow-auto">
+        <ProjectEnvironmentPicker project={env.offer} pick={env.pick} onChange={env.setPick} disabled={disabled} />
+      </div>
+      {env.secrets && (
+        <label className="flex items-start gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={env.consent}
+            onChange={() => env.setConsent(!env.consent)}
+            disabled={disabled}
+          />
+          <span>
+            Store the variables and files I picked, encrypted, in Outrunner&apos;s cloud, and give them to this
+            project&apos;s cloud sessions, where the agent can read them.
+          </span>
+        </label>
+      )}
+      {env.error && <p className="text-destructive text-xs">{env.error}</p>}
+    </section>
   );
 }

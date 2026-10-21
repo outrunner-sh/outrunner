@@ -309,3 +309,54 @@ func TestAFailedSwitchKeepsTheGatewayKeyItWasRunningOn(t *testing.T) {
 		t.Error("a failed switch left no session running")
 	}
 }
+
+func TestAStopPressesEscapeOnceAndWaitsForTheTurnToEnd(t *testing.T) {
+	t.Parallel()
+	s, fake, id := runningSession(t, "sonnet")
+	fake.pane = "✶ Combobulating…\n  ⏵⏵ accept edits on · esc to interrupt"
+	fake.onKey = func(key string) string {
+		if key == "Escape" {
+			return composerPane
+		}
+		return ""
+	}
+	if err := s.Interrupt(context.Background(), id); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if !slices.Equal(fake.keys, []string{"Escape"}) {
+		t.Errorf("keys = %q, want one Escape", fake.keys)
+	}
+}
+
+func TestAStopOfAnIdleSessionPressesNothing(t *testing.T) {
+	t.Parallel()
+	s, fake, id := runningSession(t, "sonnet")
+	// Escape on an idle prompt box, pressed twice, opens Claude's rewind menu.
+	if err := s.Interrupt(context.Background(), id); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if len(fake.keys) != 0 {
+		t.Errorf("keys = %q on an idle session, want none", fake.keys)
+	}
+}
+
+func TestAStopThatLeavesTheTurnRunningSaysSo(t *testing.T) {
+	t.Parallel()
+	s, fake, id := runningSession(t, "sonnet")
+	fake.pane = "✶ Combobulating…\n  ⏵⏵ accept edits on · esc to interrupt"
+	if err := s.Interrupt(context.Background(), id); !errors.Is(err, ErrNotInterrupted) {
+		t.Fatalf("Interrupt = %v, want ErrNotInterrupted", err)
+	}
+	if len(fake.keys) != 1 {
+		t.Errorf("keys = %q, want Escape pressed once only", fake.keys)
+	}
+}
+
+func TestAStopOfAnUnknownWorkspaceIsRefused(t *testing.T) {
+	t.Parallel()
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	if err := s.Interrupt(context.Background(), "nope"); !errors.Is(err, ErrUnknownWorkspace) {
+		t.Fatalf("Interrupt = %v, want ErrUnknownWorkspace", err)
+	}
+}

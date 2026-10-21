@@ -8,7 +8,8 @@
  * prompt ({@link anchorPending}), not when it was typed: a prompt typed while
  * the session connects waits for the attach, and the history that arrives
  * meanwhile must not be counted as its own turn — which would drop the bubble
- * before the prompt had been sent at all.
+ * before the prompt had been sent at all. The stream can also record the
+ * prompt before the session's answer comes back ({@link settlePending}).
  */
 
 /** One bubble: `expect` is the delivered-prompt count the stream must pass for
@@ -36,4 +37,27 @@ export function anchorPending(pending: PendingPrompt[], id: string, delivered: n
   const kept = livePrompts(pending, delivered);
   const latest = kept.reduce((n, p) => Math.max(n, p.expect ?? 0), delivered);
   return kept.map((p) => (p.id === id ? { ...p, expect: latest + 1 } : p));
+}
+
+/**
+ * `pending` once the session has taken `id`'s prompt: `recorded` is the
+ * prompts the stream has recorded by now (userPrompts), and `sentAt` how many
+ * it had when the prompt was handed over. The stream can record the prompt
+ * before the session answers (a new session's first prompt, which launches
+ * Claude): a prompt of its text among those recorded since it was handed over
+ * is its own, so its bubble goes now rather than waiting on a turn already
+ * past, which would show it twice until the next prompt. Otherwise it is
+ * anchored ({@link anchorPending}).
+ */
+export function settlePending(
+  pending: PendingPrompt[],
+  id: string,
+  recorded: string[],
+  sentAt: number,
+): PendingPrompt[] {
+  const mine = pending.find((p) => p.id === id);
+  if (mine && recorded.slice(sentAt).includes(mine.text)) {
+    return livePrompts(pending, recorded.length).filter((p) => p.id !== id);
+  }
+  return anchorPending(pending, id, recorded.length);
 }

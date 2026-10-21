@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  effortOnPick,
   LOADOUT_MAX,
   loadoutDefault,
   loadoutEffort,
@@ -50,13 +51,15 @@ test("the picker shows what the menu offers now, in the loadout's order", () => 
 
 test("picking, unpicking and ordering", () => {
   let loadout = toggleEntry(parseLoadout(null), OPUS);
-  assert.deepEqual(loadout, { models: [OPUS], default: OPUS }, "the first picked is the default");
+  const opusHigh = { ...OPUS, effort: "high" };
+  assert.deepEqual(loadout, { models: [opusHigh], default: opusHigh }, "the first picked is the default, at high effort");
+  assert.deepEqual(toggleEntry(loadout, GLM).models[1], GLM, "a model that takes no effort is added without one");
   loadout = toggleEntry(loadout, LUNA);
   loadout = moveEntry(loadout, LUNA, -1);
-  assert.deepEqual(loadout.models, [LUNA, OPUS]);
+  assert.deepEqual(loadout.models, [{ ...LUNA, effort: "high" }, opusHigh]);
   assert.deepEqual(moveEntry(loadout, LUNA, -1), loadout, "nothing before the first");
   loadout = toggleEntry(loadout, OPUS);
-  assert.deepEqual(loadout, { models: [LUNA], default: null }, "the default goes with its model");
+  assert.deepEqual(loadout, { models: [{ ...LUNA, effort: "high" }], default: null }, "the default goes with its model");
 });
 
 test("search finds a model by its name or its id", () => {
@@ -88,6 +91,13 @@ test("each loadout model keeps the effort it runs at, where it takes one", () =>
   assert.deepEqual(loadout.models, [{ ...OPUS, effort: "xhigh" }, LUNA, HAIKU, GLM]);
   assert.equal(loadoutEffort(loadout, OPUS), "xhigh");
   assert.equal(loadoutEffort(loadout, LUNA), undefined);
+
+  // Picked, each runs at its loadout's effort, its own where it has none
+  // there, and high where it isn't in the loadout.
+  assert.equal(effortOnPick(loadout, OPUS), "xhigh");
+  assert.equal(effortOnPick(loadout, LUNA), null);
+  assert.equal(effortOnPick(loadout, { provider: "codex", id: "gpt-6-sol" }), "high");
+  assert.equal(effortOnPick(undefined, OPUS), "high");
 
   const set = setEntryEffort(loadout, LUNA, "low");
   assert.equal(loadoutEffort(set, LUNA), "low");

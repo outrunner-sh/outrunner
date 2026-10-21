@@ -8,6 +8,7 @@ import { connectRepositories } from "@/lib/github/connect";
 import { githubErrorResponse } from "@/lib/github/http";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 import { ImportError } from "@/lib/imports/commit";
 import { importEnvironment } from "@/lib/imports/environment";
 import { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
@@ -49,6 +50,9 @@ export async function POST(request: Request) {
     if (error instanceof ImportError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    return githubErrorResponse(error, "Could not keep that environment. Please try again.");
+    return (
+      databaseNotUpdated(error, `${parsed.data.repo}'s environment`) ??
+      githubErrorResponse(error, "Could not keep that environment. Please try again.")
+    );
   }
 }

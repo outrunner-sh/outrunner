@@ -1286,7 +1286,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
     let segments: Vec<&str> = route.trim_start_matches('/').split('/').collect();
     match (method, segments.as_slice(), query) {
         ("POST", ["workspaces"], None) => Ok(reqwest::Method::POST),
-        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "model" | "auth"], None)
+        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "interrupt" | "model" | "auth"], None)
             if *id == workspace_id =>
         {
             Ok(reqwest::Method::POST)
@@ -2044,6 +2044,8 @@ echo 'Logged in using ChatGPT' >&2"#,
         assert!(allowed_route("POST", "/workspaces", "ws-1").is_ok());
         assert!(allowed_route("POST", "/workspaces/ws-1/start", "ws-1").is_ok());
         assert!(allowed_route("POST", "/workspaces/ws-1/model", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-1/interrupt", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-2/interrupt", "ws-1").is_err());
         assert!(allowed_route("POST", "/workspaces/ws-2/model", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/model", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/summary", "ws-1").is_ok());

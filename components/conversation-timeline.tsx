@@ -26,6 +26,7 @@ import {
   type ToolKind,
   toolRow,
 } from "@/lib/runtime/conversation-format";
+import { isInterruption } from "@/lib/runtime/conversation-events";
 import { type ConversationNode, conversationNodes } from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { isLive } from "@/lib/session/streaming";
@@ -45,8 +46,12 @@ import { cn } from "@/lib/utils";
 export function ConversationTimeline({
   events,
   placeholder = null,
+  working = claudeIsWorking(events),
 }: {
   events: AgentEvent[];
+  /** Whether Claude is mid-turn, for the working indicator; read from the
+   *  events where the caller knows no better (a stopped turn it can't see). */
+  working?: boolean;
   /** What an empty conversation says (see conversationPlaceholder); a replay,
    *  which has nothing to connect to, passes none. */
   placeholder?: ConversationPlaceholder;
@@ -104,7 +109,7 @@ export function ConversationTimeline({
             <NodeRow node={node} />
           </div>
         ))}
-        {claudeIsWorking(events) && <WorkingIndicator />}
+        {working && <WorkingIndicator />}
       </div>
     </div>
   );
@@ -124,7 +129,8 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
       continue;
     }
     if (event.t !== "message") continue;
-    if (event.role === "user") return true; // a prompt or a tool result awaiting Claude
+    // A prompt or a tool result awaiting Claude; not the record of a stop.
+    if (event.role === "user") return !isInterruption(event);
     const last = event.content[event.content.length - 1];
     return last ? last.type !== "text" : false;
   }
@@ -180,6 +186,8 @@ function NodeRow({ node }: { node: ConversationNode }) {
       );
     case "prompt":
       return <div className="timeline-prompt">{node.text}</div>;
+    case "interrupted":
+      return <div className="timeline-thought">Interrupted</div>;
     case "prose":
       return <Prose text={node.text} at={node.at} />;
     case "thought":

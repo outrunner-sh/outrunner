@@ -41,6 +41,9 @@ export type Provider = {
   /** Where to make a key, and what to call that page. */
   keysUrl: string;
   keysPage: string;
+  /** Where the provider shows what the key spent, where that has a page of
+   *  its own; else its keys page, in the same console (usageDashboard). */
+  usageUrl?: string;
   check: KeyCheck;
   /** The models the menu offers on the user's key, by the provider's own
    *  names: a few good ones, with any other a custom id away. */
@@ -59,6 +62,7 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     keyPlaceholder: "Paste your OpenRouter API key (sk-or-…)",
     keysUrl: "https://openrouter.ai/settings/keys",
     keysPage: "OpenRouter → Keys",
+    usageUrl: "https://openrouter.ai/activity",
     // Replaced by a check that also refuses a management key
     // (lib/providers/check.ts).
     check: { url: "https://openrouter.ai/api/v1/key", auth: "bearer" },
@@ -79,6 +83,7 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     keyPlaceholder: "Paste your Anthropic API key (sk-ant-api…)",
     keysUrl: "https://platform.claude.com/settings/keys",
     keysPage: "Claude Console → API keys",
+    usageUrl: "https://platform.claude.com/usage",
     check: { url: "https://api.anthropic.com/v1/models", auth: "x-api-key", headers: { "anthropic-version": "2023-06-01" } },
     models: [
       { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
@@ -124,6 +129,7 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     keyPlaceholder: "Paste your DeepSeek API key (sk-…)",
     keysUrl: "https://platform.deepseek.com/api_keys",
     keysPage: "DeepSeek → API keys",
+    usageUrl: "https://platform.deepseek.com/usage",
     check: { url: "https://api.deepseek.com/models", auth: "bearer" },
     models: [
       { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
@@ -142,6 +148,7 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     keyPlaceholder: "Paste your OpenAI API key (sk-proj-…)",
     keysUrl: "https://platform.openai.com/api-keys",
     keysPage: "OpenAI → API keys",
+    usageUrl: "https://platform.openai.com/usage",
     check: { url: "https://api.openai.com/v1/models", auth: "bearer" },
     // Codex's models on an API key (codex-cli 0.146).
     models: [
@@ -152,6 +159,11 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     ],
   },
 };
+
+/** Where to see what a key of `provider`'s has spent, on the provider's site. */
+export function usageDashboard(provider: KeyProviderId): string {
+  return PROVIDERS[provider].usageUrl ?? PROVIDERS[provider].keysUrl;
+}
 
 /** The gateways, in providers.json's order. */
 export const PROVIDER_IDS = Object.keys(gateways) as ProviderId[];

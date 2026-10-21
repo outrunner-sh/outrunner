@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { anchorPending, livePrompts, pendingShows, type PendingPrompt } from "@/lib/session/optimistic-echo";
+import { anchorPending, livePrompts, pendingShows, settlePending, type PendingPrompt } from "@/lib/session/optimistic-echo";
 
 const typed = (id: string): PendingPrompt => ({ id, text: id, expect: null });
 
@@ -36,4 +36,25 @@ test("queued prompts keep their order, and caught-up ones go", () => {
   ]);
   // Once the stream has recorded a's turn, anchoring b drops a.
   assert.deepEqual(anchorPending(queued, "b", 6), [{ id: "b", text: "b", expect: 7 }]);
+});
+
+test("a prompt the stream recorded before the session answered goes at once", () => {
+  // A new session's first prompt: handed over at 0, and Claude's copy of it
+  // streamed back before the POST returned. Anchored at 1, it would wait for a
+  // second prompt and show twice until then.
+  assert.deepEqual(settlePending([typed("a")], "a", ["a"], 0), []);
+});
+
+test("a prompt not recorded yet is anchored past what has been", () => {
+  assert.deepEqual(settlePending([typed("a")], "a", ["x", "y"], 1), [{ id: "a", text: "a", expect: 3 }]);
+});
+
+test("the same text earlier in the history isn't taken for the prompt", () => {
+  // "a" was asked before; this "a" was handed over after it, at 1.
+  assert.deepEqual(settlePending([typed("a")], "a", ["a"], 1), [{ id: "a", text: "a", expect: 2 }]);
+});
+
+test("settling one bubble keeps the others queued behind it", () => {
+  const pending = [typed("a"), typed("b")];
+  assert.deepEqual(settlePending(pending, "a", ["a"], 0), [typed("b")]);
 });

@@ -4,7 +4,9 @@ import {
   startClaudeLogin,
 } from "@/lib/desktop/connect-claude";
 import {
+  agentCli,
   cancelClaudeLogin as cancelClaudeCodeLogin,
+  importScan,
   localAgentRequest,
   localStatus,
   localTarget,
@@ -18,7 +20,15 @@ import {
   setUpClaudeCode,
 } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import type { FirstSession, OnboardingEnv, OnboardingRepo, OnboardingUser } from "@/lib/onboarding/types";
+import { importFound } from "@/lib/onboarding/import-offer";
+import type {
+  CloudSession,
+  OnboardingEnv,
+  OnboardingFinish,
+  OnboardingRepo,
+  OnboardingUser,
+} from "@/lib/onboarding/types";
+import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,6 +109,14 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       return Boolean(((await res.json()) as { connected?: boolean }).connected);
     },
 
+    async claudeOnMac() {
+      // A bridge that fails, or an app that can't tell, is no sign of Claude.
+      const status = await localStatus().catch(() => null);
+      if (!status) return false;
+      const cli = agentCli(status, "claude");
+      return cli.path !== null && cli.loggedIn === true;
+    },
+
     async connectClaude() {
       connectStopped = false;
       const url = await startClaudeLogin();
@@ -151,9 +169,14 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
         .sort((a, b) => b.pushedAt.localeCompare(a.pushedAt));
     },
 
-    async start(input) {
+    async findImports() {
+      // A scan that fails only means nothing is offered: /import scans again.
+      return importFound(await importScan().catch(() => null));
+    },
+
+    async finish(input) {
       const href =
-        input.target === "mac" ? await startOnMac(input, server.outrunnerModels) : await startInCloud(input);
+        input.target === "mac" ? await startOnMac(input, server.outrunnerModels) : await finishInCloud(input);
       await markOnboarded();
       return href;
     },
@@ -170,7 +193,10 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
  * whose Claude Code isn't logged in, where the server runs Outrunner's models,
  * the session starts on those.
  */
-async function startOnMac({ prompt = "", folder }: FirstSession, outrunnerModels: boolean): Promise<string> {
+async function startOnMac(
+  { prompt = "", folder }: Extract<OnboardingFinish, { target: "mac" }>,
+  outrunnerModels: boolean,
+): Promise<string> {
   if (!folder) throw new Error("Choose a folder first.");
   const workspaceId = crypto.randomUUID();
   const target = localTarget(workspaceId);
@@ -196,25 +222,44 @@ async function startOnMac({ prompt = "", folder }: FirstSession, outrunnerModels
 }
 
 /**
- * Connect the chosen repository, then start the session there, as the
- * new-session form does (its sync and create calls).
+ * Connect the chosen repositories, as the repository picker does, then go
+ * where the user chose: a first session in one of them, as the new-session
+ * form starts one, on the model chosen; the import; or home.
  */
-async function startInCloud({ prompt = "", repoId }: FirstSession): Promise<string> {
-  if (!repoId) throw new Error("Choose a repository first.");
+async function finishInCloud({
+  repoIds,
+  session,
+  next = "home",
+}: Extract<OnboardingFinish, { target: "cloud" }>): Promise<string> {
+  if (session && !repoIds.includes(session.repoId)) throw new Error("Choose that repository first.");
+  const projects = repoIds.length > 0 ? await connectRepos(repoIds) : [];
+  if (!session) return next === "import" ? "/import" : "/";
+  const project = projects.find((p) => String(p.githubRepoId) === session.repoId);
+  if (!project) throw new Error("Could not find that repository after connecting it.");
+  return startInCloud(project, session);
+}
+
+async function connectRepos(repoIds: string[]): Promise<Project[]> {
   const synced = await fetch("/api/projects/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repoIds: [Number(repoId)] }),
+    body: JSON.stringify({ repoIds: repoIds.map(Number) }),
   });
-  const syncBody = (await synced.json().catch(() => ({}))) as { projects?: Project[]; error?: string };
-  if (!synced.ok) throw new Error(syncBody.error ?? "Could not connect those repositories.");
-  const project = syncBody.projects?.find((p) => String(p.githubRepoId) === repoId);
-  if (!project) throw new Error("Could not find that repository after connecting it.");
+  const body = (await synced.json().catch(() => ({}))) as { projects?: Project[]; error?: string };
+  if (!synced.ok) throw new Error(body.error ?? "Could not connect those repositories.");
+  return body.projects ?? [];
+}
 
+async function startInCloud(project: Project, { prompt = "", model }: CloudSession): Promise<string> {
   const created = await fetch(`/api/projects/${project.id}/workspaces`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ branch: "" }),
+    // Claude, when the user has it: the first of its models. Otherwise none,
+    // so the session starts on the menu's default, Outrunner's.
+    body: JSON.stringify({
+      branch: "",
+      ...(model === "claude" && { provider: "claude", model: CLAUDE_MODELS[0].id }),
+    }),
   });
   const result = (await created.json().catch(() => ({}))) as { workspace?: { id: string }; error?: string };
   if (!created.ok || !result.workspace) {
@@ -231,7 +276,7 @@ function promptQuery(prompt: string): string {
 async function markOnboarded(): Promise<void> {
   const res = await fetch("/api/onboarding/complete", { method: "POST" });
   if (!res.ok) {
-    // The session is already started: a missed mark only shows onboarding again.
+    // The user is already on their way: a missed mark only shows onboarding again.
     console.error("Could not mark onboarding complete", res.status);
   }
 }
