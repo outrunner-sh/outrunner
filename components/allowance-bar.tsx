@@ -14,7 +14,7 @@ export function AllowanceBar({ view, label = "Outrunner's models" }: { view: All
       </div>
       <div
         role="progressbar"
-        aria-label={`${label} used`}
+        aria-label={label}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(view.percent)}
