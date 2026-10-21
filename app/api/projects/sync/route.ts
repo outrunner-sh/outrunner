@@ -3,8 +3,14 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
-import { getGitHubRepository, listGitHubRepositories, type GitHubRepository } from "@/lib/github/client";
+import {
+  getGitHubRepository,
+  listGitHubRepositories,
+  type GitHubRepository,
+  type GitHubRepositoryList,
+} from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
+import { reconcileProjects } from "@/lib/github/reconcile-projects";
 import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -63,7 +69,7 @@ export async function POST(request: Request) {
   try {
     const token = await requireGithubToken(owner.id);
     let repositories: GitHubRepository[];
-    let complete = true;
+    let list: GitHubRepositoryList | null = null;
     if (selection) {
       const found = await mapWithConcurrency(selection, LOOKUP_CONCURRENCY, (id) =>
         getGitHubRepository(token, id),
@@ -77,19 +83,20 @@ export async function POST(request: Request) {
       }
     } else {
       // A fresh listing, which the picker then reuses for its next few seconds.
-      const list = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
+      list = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
         fresh: true,
       });
       repositories = list.repositories;
-      complete = list.complete;
     }
     const synced = await upsertProjects(owner.id, repositories);
+    // Everything was just read: a project GitHub no longer lists is marked lost.
+    if (list) await reconcileProjects(owner.id, await listProjects(), list);
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
     return NextResponse.json({
       synced,
       discovered: repositories.length,
-      complete,
+      complete: list?.complete ?? true,
       projects: await listProjects(),
     });
   } catch (error) {
