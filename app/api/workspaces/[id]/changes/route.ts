@@ -11,6 +11,8 @@ type RouteContext = { params: Promise<{ id: string }> };
  * Without `?path=`, list the active worktree's changed files. With `?path=`,
  * return a bounded, text-only diff for that one file. The provider validates
  * membership, rejects traversal and Git pathspec magic, and caps the size.
+ * Both are measured from the workspace's base branch, so changes it has
+ * already committed or pushed still show.
  */
 export async function GET(request: Request, context: RouteContext) {
   if (!(await getOwner())) {
@@ -43,12 +45,14 @@ export async function GET(request: Request, context: RouteContext) {
           computer.daytonaSandboxId,
           workspace.worktreePath,
           path,
+          workspace.baseBranch,
         );
         return NextResponse.json({ diff });
       }
       const files = await provider.listWorkspaceChangedFiles(
         computer.daytonaSandboxId,
         workspace.worktreePath,
+        workspace.baseBranch,
       );
       return NextResponse.json({ files });
     }
@@ -64,12 +68,14 @@ export async function GET(request: Request, context: RouteContext) {
         workspaceId: workspace.id,
         sandboxId: workspace.sandboxId,
         path,
+        baseBranch: workspace.baseBranch,
       });
       return NextResponse.json({ diff });
     }
     const files = await provider.listChangedFiles({
       workspaceId: workspace.id,
       sandboxId: workspace.sandboxId,
+      baseBranch: workspace.baseBranch,
     });
     return NextResponse.json({ files });
   } catch (error) {

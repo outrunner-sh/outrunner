@@ -181,17 +181,26 @@ export class LocalRuntimeProvider implements RuntimeProvider {
 
   async listChangedFiles(input: {
     workspaceId: string;
+    baseBranch?: string;
   }): Promise<ChangedFile[]> {
     const worktree = await this.requireWorktree(input.workspaceId);
-    return gitListChangedFiles(this.git, { worktree });
+    return gitListChangedFiles(this.git, {
+      worktree,
+      baseBranch: input.baseBranch,
+    });
   }
 
   async readChangedFileDiff(input: {
     workspaceId: string;
     path: string;
+    baseBranch?: string;
   }): Promise<string> {
     const worktree = await this.requireWorktree(input.workspaceId);
-    return readFileDiff(this.git, { worktree, path: input.path });
+    return readFileDiff(this.git, {
+      worktree,
+      path: input.path,
+      baseBranch: input.baseBranch,
+    });
   }
 
   async commitWorkspace(

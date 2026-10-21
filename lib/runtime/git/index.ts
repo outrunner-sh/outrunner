@@ -70,33 +70,72 @@ export function isSafeRelativePath(filePath: string): boolean {
   );
 }
 
-export function parseChangedFiles(output: string): ChangedFile[] {
-  const entries = output.split("\0").filter(Boolean);
+/** The `git diff --name-status -z`, `git diff --numstat -z` and
+ * `git ls-files --others -z` output that together make a change set. */
+export type ChangeSetOutput = {
+  nameStatus: string;
+  numstat: string;
+  untracked: string;
+};
+
+export function parseChangedFiles(output: ChangeSetOutput): ChangedFile[] {
+  const counts = parseNumstat(output.numstat);
   const files: ChangedFile[] = [];
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    const code = entry.slice(0, 2);
-    const filePath = entry.slice(3);
+  const fields = output.nameStatus.split("\0");
+  for (let index = 0; index < fields.length; index += 1) {
+    const code = fields[index];
+    if (!code) continue;
+    // A rename or copy ("R100", "C75") is followed by its old and new names.
+    if (code.startsWith("R") || code.startsWith("C")) index += 1;
+    index += 1;
+    const filePath = fields[index];
     if (!filePath) continue;
-    // porcelain v1 -z emits the original name as the next field for R/C.
-    if (code.includes("R") || code.includes("C")) index += 1;
     files.push({
       path: filePath,
+      // A copy leaves its original in place, so the new path is an addition.
       status:
-        code === "??"
-          ? "untracked"
-          : code.includes("A")
-            ? "added"
-            : code.includes("D")
-              ? "deleted"
-              : code.includes("R") || code.includes("C")
-                ? "renamed"
-                : "modified",
-      additions: 0,
-      deletions: 0,
+        code.startsWith("A") || code.startsWith("C")
+          ? "added"
+          : code.startsWith("D")
+            ? "deleted"
+            : code.startsWith("R")
+              ? "renamed"
+              : "modified",
+      additions: counts.get(filePath)?.additions ?? 0,
+      deletions: counts.get(filePath)?.deletions ?? 0,
     });
   }
+  // A file dropped from the index but left on disk is both a deletion and
+  // untracked; list it once.
+  const listed = new Set(files.map((file) => file.path));
+  for (const filePath of output.untracked.split("\0")) {
+    if (!filePath || listed.has(filePath)) continue;
+    files.push({ path: filePath, status: "untracked", additions: 0, deletions: 0 });
+  }
   return files.slice(0, 500);
+}
+
+/** Line counts by path from `git diff --numstat -z`. A binary file counts "-",
+ * read as 0; a rename leaves the path empty and puts its old and new names in
+ * the next two fields. */
+function parseNumstat(
+  output: string,
+): Map<string, { additions: number; deletions: number }> {
+  const counts = new Map<string, { additions: number; deletions: number }>();
+  const fields = output.split("\0");
+  const count = (value: string) => (value === "-" ? 0 : Number(value));
+  for (let index = 0; index < fields.length; index += 1) {
+    // A path may itself hold tabs, so only the first two separate counts.
+    const [added, deleted, ...rest] = fields[index].split("\t");
+    if (!/^(-|\d+)$/.test(added) || !/^(-|\d+)$/.test(deleted ?? "")) continue;
+    let filePath = rest.join("\t");
+    if (filePath === "") {
+      index += 2;
+      filePath = fields[index] ?? "";
+    }
+    counts.set(filePath, { additions: count(added), deletions: count(deleted) });
+  }
+  return counts;
 }
 
 export function limitText(value: string, maxBytes: number): string {
@@ -246,32 +285,137 @@ export async function removeWorktree(
   ]);
 }
 
-/** Changed files in a worktree, including untracked. */
-export async function listChangedFiles(
+/**
+ * Where a change set is measured from: the commit the branch left its base at
+ * (its merge-base with `origin/<base>`, else with a local `<base>`), so work
+ * already committed or pushed still shows. When no base resolves it is HEAD,
+ * which leaves just the uncommitted changes.
+ */
+async function changeBase(
   exec: GitExec,
-  input: { worktree: string },
-): Promise<ChangedFile[]> {
-  const output = await git(exec, [
-    "-C",
-    input.worktree,
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--untracked-files=all",
-  ]);
-  return parseChangedFiles(output);
+  worktree: string,
+  baseBranch: string | undefined,
+): Promise<string> {
+  if (!baseBranch || !isValidBranchName(baseBranch)) return "HEAD";
+  for (const ref of [`origin/${baseBranch}`, baseBranch]) {
+    const result = await exec(["git", "-C", worktree, "merge-base", ref, "HEAD"]);
+    const sha = result.stdout.trim();
+    if (result.exitCode === 0 && sha) return sha;
+  }
+  return "HEAD";
 }
 
-/** Bounded, text-only diff for one changed file, with membership + path safety. */
+async function readChangeSet(
+  exec: GitExec,
+  input: { worktree: string; baseBranch?: string },
+): Promise<{ base: string; files: ChangedFile[] }> {
+  const base = await changeBase(exec, input.worktree, input.baseBranch);
+  // Against a commit, `git diff` covers staged and unstaged changes alike.
+  const diff = (format: string) =>
+    git(exec, [
+      "-C",
+      input.worktree,
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--find-renames",
+      format,
+      "-z",
+      base,
+      "--",
+    ]);
+  const [nameStatus, numstat, untracked] = await Promise.all([
+    diff("--name-status"),
+    diff("--numstat"),
+    git(exec, [
+      "-C",
+      input.worktree,
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "-z",
+    ]),
+  ]);
+  const files = parseChangedFiles({ nameStatus, numstat, untracked });
+  await countUntrackedLines(exec, input.worktree, files);
+  return { base, files };
+}
+
+/**
+ * Sets each untracked file's additions to its line count, as a diff against
+ * nothing would. One `git grep` counts them all: the empty pattern matches
+ * every line and `-I` skips binaries, which stay at 0. The counts are a
+ * nicety, so a grep that fails or matches nothing leaves them at 0.
+ */
+async function countUntrackedLines(
+  exec: GitExec,
+  worktree: string,
+  files: ChangedFile[],
+): Promise<void> {
+  const untracked = files.filter((file) => file.status === "untracked");
+  if (untracked.length === 0) return;
+  const result = await exec([
+    "git",
+    "-C",
+    worktree,
+    "--literal-pathspecs",
+    "grep",
+    "--untracked",
+    "--no-color",
+    "-I",
+    "-c",
+    "-z",
+    "-e",
+    "",
+    "--",
+    ...untracked.map((file) => file.path),
+  ]);
+  if (result.exitCode !== 0) return;
+  const counts = parseLineCounts(result.stdout);
+  for (const file of untracked) file.additions = counts.get(file.path) ?? 0;
+}
+
+/** Line counts by path from `git grep -c -z`, which prints `path\0count\n`
+ * per file. A path may hold a newline but a count cannot, so the first
+ * newline after each count starts the next path. */
+export function parseLineCounts(output: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  const fields = output.split("\0");
+  let filePath = fields[0];
+  for (const field of fields.slice(1)) {
+    const newline = field.indexOf("\n");
+    const count = newline === -1 ? field : field.slice(0, newline);
+    if (filePath && /^\d+$/.test(count)) counts.set(filePath, Number(count));
+    filePath = newline === -1 ? "" : field.slice(newline + 1);
+  }
+  return counts;
+}
+
+/** Changed files in a worktree since it left `baseBranch`, untracked included.
+ * Without a base, only what is not committed yet. */
+export async function listChangedFiles(
+  exec: GitExec,
+  input: { worktree: string; baseBranch?: string },
+): Promise<ChangedFile[]> {
+  return (await readChangeSet(exec, input)).files;
+}
+
+/** Bounded, text-only diff for one changed file, with membership + path safety.
+ * Measured from the same base as `listChangedFiles`. */
 export async function readFileDiff(
   exec: GitExec,
-  input: { worktree: string; path: string; maxBytes?: number },
+  input: {
+    worktree: string;
+    path: string;
+    baseBranch?: string;
+    maxBytes?: number;
+  },
 ): Promise<string> {
   if (!isSafeRelativePath(input.path)) {
     throw new Error("Invalid changed file path");
   }
-  const changed = await listChangedFiles(exec, { worktree: input.worktree });
-  const file = changed.find((f) => f.path === input.path);
+  const { base, files } = await readChangeSet(exec, input);
+  const file = files.find((f) => f.path === input.path);
   if (!file) throw new Error("File is not part of this workspace change set");
   if (file.status === "untracked") {
     return "This untracked file has no Git diff yet.";
@@ -283,6 +427,7 @@ export async function readFileDiff(
     "diff",
     "--no-ext-diff",
     "--no-textconv",
+    base,
     "--",
     input.path,
   ]);
