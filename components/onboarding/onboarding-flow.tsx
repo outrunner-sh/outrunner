@@ -167,7 +167,6 @@ export function OnboardingFlow({
             ) : (
               <CloudSetup
                 env={env}
-                model={model}
                 onModel={setModel}
                 picked={picked}
                 onPicked={setPicked}
@@ -205,7 +204,11 @@ export function OnboardingFlow({
                       variant="outline"
                       onClick={() => void startInCloud()}
                       disabled={model === null || leaving !== null}
-                      title={model === null ? "Connect Claude to start a session." : undefined}
+                      title={
+                        model === null
+                          ? "Connect Claude or add a key in Settings → Providers to start a session."
+                          : undefined
+                      }
                       className="min-w-0"
                     >
                       <Spinner on={leaving === "start"} />

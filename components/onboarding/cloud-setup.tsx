@@ -4,21 +4,21 @@ import { useEffect, useMemo, useState } from "react";
 import { Lock, Search } from "lucide-react";
 
 import { ChecklistRow } from "@/components/onboarding/checklist-row";
-import { ConnectClaudeRow } from "@/components/onboarding/connect-claude-row";
 import { Button } from "@/components/ui/button";
-import { type CloudModel, claudeOffer, startingCloudModel } from "@/lib/onboarding/claude-choice";
+import { type CloudModel, startingCloudModel } from "@/lib/onboarding/claude-choice";
 import { type ImportFound, importFoundText } from "@/lib/onboarding/import-offer";
 import type { OnboardingEnv, OnboardingRepo } from "@/lib/onboarding/types";
 
 /**
  * Setting up the cloud: the GitHub repositories to work in, and, for a user
- * who has them, Claude (lib/onboarding/claude-choice.ts) and work on this Mac
- * to import (lib/onboarding/import-offer.ts). Starting a session is the flow's
- * choice, not a step: a user can finish here and start one later.
+ * who has it, work on this Mac to import (lib/onboarding/import-offer.ts).
+ * Claude isn't asked for: sessions start on Outrunner's models
+ * (lib/onboarding/claude-choice.ts), and a subscription or key is connected in
+ * Settings → Providers. Starting a session is the flow's choice, not a step: a
+ * user can finish here and start one later.
  */
 export function CloudSetup({
   env,
-  model,
   onModel,
   picked,
   onPicked,
@@ -27,7 +27,6 @@ export function CloudSetup({
   busy,
 }: {
   env: OnboardingEnv;
-  model: CloudModel;
   onModel: (model: CloudModel) => void;
   /** The repositories picked, in the order they were picked. */
   picked: OnboardingRepo[];
@@ -40,8 +39,6 @@ export function CloudSetup({
   busy: boolean;
 }) {
   // Each null until checked.
-  const [connected, setConnected] = useState<boolean | null>(null);
-  const [onMac, setOnMac] = useState<boolean | null>(null);
   const [imports, setImports] = useState<ImportFound | null>(null);
   const [repos, setRepos] = useState<OnboardingRepo[] | null>(null);
   const [repoError, setRepoError] = useState<string | null>(null);
@@ -50,14 +47,14 @@ export function CloudSetup({
   useEffect(() => {
     let live = true;
     const { outrunnerModels } = env;
-    void env.claudeConnected().then((found) => {
-      if (!live) return;
-      setConnected(found);
-      onModel(startingCloudModel({ connected: found, outrunnerModels }));
-    });
-    void env.claudeOnMac().then((found) => {
-      if (live) setOnMac(found);
-    });
+    onModel(startingCloudModel({ connected: null, outrunnerModels }));
+    // Only a server without Outrunner's models needs to know: there, a Claude
+    // connection already saved is the one thing a session can start on.
+    if (!outrunnerModels) {
+      void env.claudeConnected().then((found) => {
+        if (live) onModel(startingCloudModel({ connected: found, outrunnerModels }));
+      });
+    }
     void env.findImports().then((found) => {
       if (live) setImports(found);
     });
@@ -76,7 +73,6 @@ export function CloudSetup({
     };
   }, [env, onModel]);
 
-  const offer = claudeOffer({ connected, onMac, outrunnerModels: env.outrunnerModels });
   // With no repository to pick (none on GitHub, or GitHub unreachable), the
   // user can still finish and add them later.
   const ready = repos !== null && (picked.length > 0 || repos.length === 0);
@@ -145,22 +141,8 @@ export function CloudSetup({
         )}
       </ChecklistRow>
 
-      {/* Below the repositories: each of these is found a moment later, and
-          a row appearing here moves nothing the user is reading. */}
-      {offer !== "hidden" && (
-        <ConnectClaudeRow
-          env={env}
-          connected={model === "claude" ? true : connected === null ? null : false}
-          onConnected={() => onModel("claude")}
-          optional={offer === "optional"}
-          todo={
-            offer === "optional"
-              ? "Optional. Sessions start on Outrunner's models; connect to use your Claude Pro or Max subscription instead."
-              : "Needed to start sessions: this server has no models of its own. Use your Claude Pro or Max subscription."
-          }
-        />
-      )}
-
+      {/* Below the repositories: found a moment later, and a row appearing
+          here moves nothing the user is reading. */}
       {imports && (
         <ChecklistRow
           state="todo"

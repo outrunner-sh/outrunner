@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Folder, FolderGit2 } from "lucide-react";
 
 import { ChecklistRow, CommandSnippet, type RowState } from "@/components/onboarding/checklist-row";
-import { ConnectClaudeRow } from "@/components/onboarding/connect-claude-row";
 import { Button } from "@/components/ui/button";
 import { claudeSetupText } from "@/lib/desktop/local-runtime";
 import type { MacStatus, OnboardingEnv, OnboardingFolder } from "@/lib/onboarding/types";
@@ -12,9 +11,9 @@ import type { MacStatus, OnboardingEnv, OnboardingFolder } from "@/lib/onboardin
 type Login = { state: "idle" } | { state: "waiting" } | { state: "error"; message: string };
 
 /**
- * Everything a session on this Mac needs, checked live: the tools, the user's
- * Claude connection, Claude Code's own login here (asked for only when it is
- * missing), and a folder to work in.
+ * Everything a session on this Mac needs, checked live: the tools, Claude
+ * Code's own login here (asked for only when it is missing), and a folder to
+ * work in. Connecting Claude for the cloud is left to Settings → Providers.
  */
 export function MacSetup({
   env,
@@ -32,19 +31,6 @@ export function MacSetup({
   // Why the last check failed, so a broken bridge says so instead of spinning.
   const [checkError, setCheckError] = useState<string | null>(null);
   const [login, setLogin] = useState<Login>({ state: "idle" });
-  // The user's Claude connection (the same one the cloud and Settings use);
-  // null until checked.
-  const [claude, setClaude] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    void env.claudeConnected().then((connected) => {
-      if (live) setClaude(connected);
-    });
-    return () => {
-      live = false;
-    };
-  }, [env]);
 
   // The first check runs on its own; `check` is for Check again and after a login.
   useEffect(() => {
@@ -140,10 +126,6 @@ export function MacSetup({
   // Where the server runs Outrunner's models, a Mac that isn't logged in runs
   // its sessions on those instead, so the login is offered, not required.
   const onOutrunnerModel = toolsReady && !loggedIn && env.outrunnerModels;
-  // Sessions here run on Claude Code's own login on this Mac, so connecting
-  // Claude (for cloud sessions) never holds them up, and is offered only to a
-  // user who has Claude: connected already, or Claude Code logged in here.
-  const offersClaude = claude === true || status?.claudeLoggedIn === true;
   const ready = toolsReady && (loggedIn || onOutrunnerModel) && folder !== null;
 
   useEffect(() => onReady(ready), [ready, onReady]);
@@ -218,16 +200,6 @@ export function MacSetup({
           </div>
         )}
       </ChecklistRow>
-
-      {offersClaude && (
-        <ConnectClaudeRow
-          env={env}
-          connected={claude}
-          onConnected={() => setClaude(true)}
-          optional
-          todo="Optional, for cloud sessions on your Claude subscription. Sessions on this Mac don't use it."
-        />
-      )}
 
       {toolsReady && !loggedIn && (
         <ChecklistRow
