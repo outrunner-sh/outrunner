@@ -183,20 +183,16 @@ export function filterSidebarGroups(groups: SidebarGroup[], query: string): Side
 }
 
 /**
- * Where a workspace's "+" goes: /new naming the repository or folder, plus a
- * `start` value unique to this click. The new-session form is keyed on all of
- * it, so every click opens a fresh form for that target, even when the URL
- * would otherwise be the one already open (where the form may since have been
- * switched to another repository, folder, or to This Mac).
+ * Where a workspace's "+" goes: /new naming the repository or folder. The same
+ * URL each time, so the page can be prefetched and kept; each click still opens
+ * a fresh form (startNewSession, lib/session/new-session-reset.ts), even on the
+ * URL already open, where the form may since have been switched to another
+ * repository, folder, or to This Mac.
  */
-export function newSessionHref(
-  start: NonNullable<SidebarGroup["start"]>,
-  nonce: string,
-): string {
+export function newSessionHref(start: NonNullable<SidebarGroup["start"]>): string {
   const params = new URLSearchParams(
     start.kind === "cloud" ? { project: start.projectId } : { folder: start.folder },
   );
-  params.set("start", nonce);
   return `/new?${params}`;
 }
 

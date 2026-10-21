@@ -7,8 +7,6 @@ import { checkoutDeps } from "@/lib/billing/stripe-deps";
 import { requireEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Start a plan: `{ plan: "pro" | "max", interval: "month" | "year" }`. Answers
  * `{ url }`, Stripe Checkout's page to send the user to; for a user who has a

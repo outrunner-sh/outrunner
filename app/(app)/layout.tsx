@@ -5,10 +5,7 @@ import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
-import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
-
-export const dynamic = "force-dynamic";
 
 /**
  * Every app page (home, new session, a cloud or local session) under one
@@ -37,8 +34,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       return [];
     }),
   ]);
-  const [projects, pullRequests] = await Promise.all([
-    withSessionProjects(listed, workspaces),
+  const [hidden, pullRequests] = await Promise.all([
+    hiddenSessionProjects(listed, workspaces),
     listWorkspacePullRequests(workspaces.map((w) => w.id)).catch((error: unknown): WorkspacePullRequest[] => {
       console.error("Sidebar: could not load pull requests", error);
       return [];
@@ -50,7 +47,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <AppFrame
-      projects={projects}
+      projects={listed}
+      hiddenProjects={hidden}
       workspaces={workspaces}
       pullRequests={Object.fromEntries(pullRequests.map((pr) => [pr.workspaceId, pr]))}
       ownerLogin={owner.githubLogin}
@@ -64,16 +62,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 }
 
 /**
- * The listed projects, plus any a session belongs to that the list hides (a
- * hidden repository), so that session's group is named rather than shown under
- * a placeholder. Usually adds nothing; one query when it does.
+ * The projects a session belongs to that the list hides (a hidden repository),
+ * so that session's group is named rather than shown under a placeholder.
+ * Usually none; one query when there are.
  */
-async function withSessionProjects(listed: Project[], workspaces: Workspace[]): Promise<NavProject[]> {
+async function hiddenSessionProjects(listed: Project[], workspaces: Workspace[]): Promise<Project[]> {
   const known = new Set(listed.map((p) => p.id));
   const missing = [...new Set(workspaces.map((w) => w.projectId))].filter((id) => !known.has(id));
-  const found = await getProjects(missing).catch((error: unknown): Project[] => {
+  return getProjects(missing).catch((error: unknown): Project[] => {
     console.error("Sidebar: could not load hidden repositories", error);
     return [];
   });
-  return [...listed, ...found];
 }

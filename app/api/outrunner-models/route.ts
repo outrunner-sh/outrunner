@@ -4,8 +4,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { modelMenu, offersModels } from "@/lib/db/credentials";
 import { getModelLoadout } from "@/lib/db/model-loadout";
 
-export const dynamic = "force-dynamic";
-
 /**
  * What the user's model menu offers (lib/runtime/session-models.ts): whether
  * the server runs Outrunner's models and on an allowance, and which providers

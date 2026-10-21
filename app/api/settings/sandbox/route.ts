@@ -19,8 +19,6 @@ import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { daytonaAcceptsKey } from "@/lib/runtime/sandbox/daytona";
 import { modalAcceptsToken, type ModalToken } from "@/lib/runtime/sandbox/modal";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Where the user's cloud sessions run (Settings → Sandbox): Outrunner's
  * sandboxes, or their own Daytona or Modal on their key. GET returns the

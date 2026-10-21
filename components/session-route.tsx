@@ -1,21 +1,21 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { createContext, useContext, useLayoutEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { useAppData } from "@/components/app-data";
-import { RouteLoading } from "@/components/route-states";
+import { RouteLoading, RouteMessage } from "@/components/route-states";
+import { useServerAnswer } from "@/components/server-answer";
 import { WorkspaceStudio } from "@/components/workspace-studio";
+import { useDeletedSession } from "@/lib/session/delete-session";
 import { newerSessionView, resolveSessionView, type SessionView } from "@/lib/session/session-view";
-
-/** Where the server's answer about the session lands (ServerSessionView). */
-const ServerViewContext = createContext<(view: SessionView) => void>(() => {});
 
 /**
  * A cloud session's page. It shows at once from what the sidebar holds
  * (lib/session/session-view.ts); the server's own read (`server`, streamed in
- * under Suspense) stands in for a session the sidebar doesn't have yet — one
- * just made — and is where a session that is gone turns into not-found.
+ * under Suspense, answering a SessionView) stands in for a session the sidebar
+ * doesn't have yet — one just made — and is where a session that is gone turns
+ * into not-found.
  *
  * The studio sits in one place whichever answer it shows, so the sidebar
  * catching up on a new session (router.refresh) doesn't remount it mid-setup.
@@ -24,8 +24,10 @@ const ServerViewContext = createContext<(view: SessionView) => void>(() => {});
 export function SessionRoute({ server }: { server: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
   const fromSidebar = resolveSessionView(id, useAppData());
-  const [fromServer, setFromServer] = useState<SessionView | null>(null);
+  const [fromServer, slot] = useServerAnswer<SessionView>(server);
   const view = newerSessionView(id, fromSidebar, fromServer);
+  // Deleted from the sidebar while this page was kept for going back to.
+  const deleted = useDeletedSession(id);
 
   // The first prompt carried in from the new-session screen. Repeated
   // ?attachment= params are each an id.
@@ -36,7 +38,9 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
 
   return (
     <>
-      {view ? (
+      {deleted ? (
+        <RouteMessage title="Session deleted" detail="This session and its worktree are gone." />
+      ) : view ? (
         <WorkspaceStudio
           workspace={view.workspace}
           projectName={view.projectName}
@@ -47,15 +51,7 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
       ) : (
         <RouteLoading label="Opening session" />
       )}
-      <ServerViewContext.Provider value={setFromServer}>{server}</ServerViewContext.Provider>
+      {slot}
     </>
   );
-}
-
-/** The server's read of the session, handed to the {@link SessionRoute} it is
- *  rendered in. Shows nothing itself. */
-export function ServerSessionView({ view }: { view: SessionView }) {
-  const set = useContext(ServerViewContext);
-  useLayoutEffect(() => set(view), [set, view]);
-  return null;
 }

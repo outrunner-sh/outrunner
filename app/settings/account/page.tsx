@@ -5,8 +5,6 @@ import { signOut } from "@/app/auth/actions";
 import { SignOutButton } from "@/components/sign-out-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
 
-export const dynamic = "force-dynamic";
-
 /** Account: the signed-in GitHub identity, and sign-out — which is also how a
  *  revoked GitHub token is replaced (see components/github-reconnect-link). */
 export default async function AccountSettings() {

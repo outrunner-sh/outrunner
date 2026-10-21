@@ -8,8 +8,6 @@ import { PLANS } from "@/lib/billing/plans";
 import { listedPricesUsd } from "@/lib/billing/stripe-deps";
 import { currentSubscription, planFromSubscriptions } from "@/lib/billing/subscriptions";
 
-export const dynamic = "force-dynamic";
-
 /** Settings → Billing: the user's plan, and Stripe's pages to change it. */
 export default async function BillingSettingsPage({
   searchParams,

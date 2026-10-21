@@ -7,8 +7,6 @@ import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
 
-export const dynamic = "force-dynamic";
-
 /**
  * One reconciler run (lib/billing/reconcile.ts), and the model allowances
  * due to renew for sessions already running, for the Cloudflare cron

@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { signInRedirect, type SignedIn } from "@/lib/auth/sign-in-redirect";
+import { isShellPrefetch, signInRedirect, type SignedIn } from "@/lib/auth/sign-in-redirect";
 
 /**
  * Session refresh and the sign-in gate (Next.js 16 renamed `middleware` to
@@ -17,6 +17,7 @@ import { signInRedirect, type SignedIn } from "@/lib/auth/sign-in-redirect";
  */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
+  if (isShellPrefetch(request.headers)) return response;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;

@@ -6,8 +6,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { modelMenu, offersModels } from "@/lib/db/credentials";
 import { getOnboardingUser } from "@/lib/onboarding/server";
 
-export const dynamic = "force-dynamic";
-
 /**
  * First-run onboarding: where sessions run, a live setup checklist for that
  * choice, and the first prompt. Home sends a new user here (see

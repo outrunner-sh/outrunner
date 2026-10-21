@@ -6,8 +6,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { agentAuthStore } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
-export const dynamic = "force-dynamic";
-
 /**
  * What a local session's agent signs in with (lib/agents/resolve.ts): the
  * user's pick for it, and the credential that pick needs, if it needs one the

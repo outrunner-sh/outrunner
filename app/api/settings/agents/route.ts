@@ -6,8 +6,6 @@ import { getAgentAuthChoices, setAgentAuthChoice } from "@/lib/db/credentials";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 
-export const dynamic = "force-dynamic";
-
 /**
  * How each of the user's coding agents signs in (Settings → Providers, a card
  * per way, lib/agents/registry.ts). GET says which way each agent is set to;

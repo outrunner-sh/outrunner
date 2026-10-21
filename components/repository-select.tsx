@@ -1,11 +1,12 @@
 "use client";
 
 import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
+import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden";
 import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
@@ -69,6 +70,7 @@ export function RepositorySelect({
   triggerClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
+  useCloseWhenHidden(useCallback(() => setOpen(false), []));
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<PickerError | null>(null);

@@ -1,40 +1,33 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
-import { NewSessionCreator } from "@/components/new-session-creator";
+import { HomeSessionRoute } from "@/components/new-session-route";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
 import { needsOnboarding } from "@/lib/onboarding/server";
-import type { Project, Workspace } from "@/lib/runtime/types";
-import { lastSessionProjectId } from "@/lib/session/initial-project";
 
-export const dynamic = "force-dynamic";
+/** Home never waits on the server: the build checks it. */
+export const unstable_instant = { prefetch: "static" };
 
 /**
  * Home is the new-session screen: every session is in the sidebar, so the page
- * itself is for starting the next one. A new user is sent through onboarding
- * first.
+ * itself is for starting the next one. It shows at once; a new user is sent
+ * through onboarding as the server's check arrives.
  */
-export default async function Home() {
-  // The control plane is owner-only; unauthenticated visitors go to sign-in.
-  const owner = await getOwnerSafe();
-  if (!owner) redirect("/signin");
+export default function Home() {
+  return (
+    <>
+      <HomeSessionRoute />
+      <Suspense fallback={null}>
+        <HomeGate />
+      </Suspense>
+    </>
+  );
+}
 
-  // Both shared with the sidebar's reads in app/(app)/layout.tsx: one query
-  // each. Neither failing may block starting a session.
-  const [projects, workspaces] = await Promise.all([
-    listProjectsOnce().catch((error: unknown): Project[] => {
-      console.error("Could not load repositories", error);
-      return [];
-    }),
-    listWorkspacesOnce().catch((error: unknown): Workspace[] => {
-      console.error("Could not load workspaces", error);
-      return [];
-    }),
-  ]);
-
-  // A new user starts with onboarding. Same per-request workspace read as
-  // above, so this asks for nothing more.
+/** A signed-in user who isn't the owner goes to sign-in (signed out is the
+ *  proxy's to catch); a new one, to onboarding. Shows nothing. */
+async function HomeGate() {
+  if (!(await getOwnerSafe())) redirect("/signin");
   if (await needsOnboarding()) redirect("/onboarding");
-
-  return <NewSessionCreator projects={projects} initialProjectId={lastSessionProjectId(projects, workspaces)} />;
+  return null;
 }

@@ -5,8 +5,6 @@ import { getRuntimeComputerByProject, getWorkspace } from "@/lib/db/repositories
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

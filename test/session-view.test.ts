@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { newerSessionView, resolveSessionView, type AppData, type SessionView } from "@/lib/session/session-view";
 
 function workspace(id: string, over: Partial<Workspace> = {}): Workspace {
@@ -41,8 +41,33 @@ const pr: WorkspacePullRequest = {
   createdAt: "2026-10-02T00:00:00Z",
 };
 
-const data = (workspaces: Workspace[], pullRequests: AppData["pullRequests"] = {}): AppData => ({
-  projects: [{ id: "p1", name: "r", fullName: "o/r" }],
+function project(id: string, fullName: string): Project {
+  const [owner, name] = fullName.split("/");
+  return {
+    id,
+    githubRepoId: 1,
+    fullName,
+    owner,
+    name,
+    defaultBranch: "main",
+    private: true,
+    language: null,
+    description: null,
+    htmlUrl: `https://github.com/${fullName}`,
+    pushedAt: null,
+    linearIssueIds: [],
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-01T00:00:00Z",
+  };
+}
+
+const data = (
+  workspaces: Workspace[],
+  pullRequests: AppData["pullRequests"] = {},
+  hiddenProjects: Project[] = [],
+): AppData => ({
+  projects: [project("p1", "o/r")],
+  hiddenProjects,
   workspaces,
   pullRequests,
 });
@@ -54,6 +79,11 @@ test("a session the sidebar has shows from it: its repository and pull request t
     projectName: "o/r",
     pullRequest: pr,
   });
+});
+
+test("a session in a hidden repository is named from it", () => {
+  const w = workspace("w1", { projectId: "p2" });
+  assert.equal(resolveSessionView("w1", data([w], {}, [project("p2", "o/hidden")]))?.projectName, "o/hidden");
 });
 
 test("no pull request, or a repository the sidebar doesn't name, still shows", () => {

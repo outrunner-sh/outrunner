@@ -1,44 +1,50 @@
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
-import { NewSessionCreator } from "@/components/new-session-creator";
-import { getOwnerSafe } from "@/lib/auth/owner";
-import { getProjectOnce, listProjectsOnce } from "@/lib/db/request-cache";
+import { NewSessionRoute } from "@/components/new-session-route";
+import { RequireOwner } from "@/components/require-owner";
+import { RouteLoading } from "@/components/route-states";
+import { ServerAnswer } from "@/components/server-answer";
+import { getProjectOnce } from "@/lib/db/request-cache";
 import type { Project } from "@/lib/runtime/types";
 
-export const dynamic = "force-dynamic";
+/** "New Session" never waits on the server: the build checks it, on the bare
+ *  form and on a project's "+". */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    { searchParams: { project: null, folder: null } },
+    { searchParams: { project: "sample", folder: null } },
+  ],
+};
 
-export default async function NewSessionPage({
-  searchParams,
-}: {
-  // A sidebar "+" adds `folder` (a Mac folder's; the sidebar also stores it for
-  // the form) and `start` (unique per click); both only key the form, below.
-  searchParams: Promise<{ project?: string; folder?: string; start?: string }>;
-}) {
-  if (!(await getOwnerSafe())) redirect("/signin?next=/new");
+type SearchParams = Promise<{ project?: string }>;
 
-  const { project, folder, start } = await searchParams;
-  let projects: Project[] = [];
-  try {
-    projects = await listProjectsOnce();
-  } catch (error) {
-    console.error("Could not load repositories", error);
-  }
-  // The list leaves out hidden repositories, but one asked for by name (its
-  // sidebar group's "+") is still a valid place to start a session: add it
-  // rather than let the form fall back to some other repository.
-  if (project && !projects.some((p) => p.id === project)) {
-    const requested = await getProjectOnce(project).catch(() => null);
-    if (requested) projects = [requested, ...projects];
-  }
-
+/** The new-session form a sidebar "+" opens. (The outer boundary is for a page
+ *  load, where the URL is read on the client.) */
+export default function NewSessionPage({ searchParams }: { searchParams: SearchParams }) {
   return (
-    <NewSessionCreator
-      // A new form per "+": arriving while already on /new must not keep the
-      // repository, folder or cloud/Mac choice the open form was switched to.
-      key={`${project ?? ""}\n${folder ?? ""}\n${start ?? ""}`}
-      projects={projects}
-      initialProjectId={project}
-      showBack
-    />
+    <>
+      <Suspense fallback={<RouteLoading label="Loading" />}>
+        <NewSessionRoute
+          server={
+            <Suspense fallback={null}>
+              <RequestedProject searchParams={searchParams} />
+            </Suspense>
+          }
+        />
+      </Suspense>
+      <Suspense fallback={null}>
+        <RequireOwner />
+      </Suspense>
+    </>
   );
+}
+
+/** The repository `?project=` asks for, hidden or not, for the form to start
+ *  on when the sidebar doesn't have it. */
+async function RequestedProject({ searchParams }: { searchParams: SearchParams }) {
+  const { project } = await searchParams;
+  if (!project) return null;
+  const requested = await getProjectOnce(project).catch(() => null);
+  return requested ? <ServerAnswer<Project> value={requested} /> : null;
 }

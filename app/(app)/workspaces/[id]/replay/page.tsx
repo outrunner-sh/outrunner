@@ -5,8 +5,6 @@ import { WorkspaceReplay } from "@/components/workspace-replay";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProject, getWorkspace, listWorkspaceSnapshots } from "@/lib/db/repositories";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Replay view for a workspace's Snapshots — browser + storage only, no Runtime
  * Computer (M4 invariant #2). For an archived workspace; nothing in the app

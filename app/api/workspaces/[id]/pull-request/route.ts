@@ -12,8 +12,6 @@ import { githubErrorResponse } from "@/lib/github/http";
 import { optionalGithubToken } from "@/lib/github/token";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

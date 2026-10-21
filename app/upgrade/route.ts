@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { connection, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { BILLING_PATH, checkoutDestination, requestedPlan } from "@/lib/billing/checkout";
@@ -6,8 +6,6 @@ import { billingMode } from "@/lib/billing/mode";
 import { checkoutDeps } from "@/lib/billing/stripe-deps";
 import { requireEnv } from "@/lib/env";
 import { needsOnboarding } from "@/lib/onboarding/server";
-
-export const dynamic = "force-dynamic";
 
 /**
  * A plan bought from a link: `/upgrade?plan=pro|max&interval=month|year`, which
@@ -25,6 +23,9 @@ export const dynamic = "force-dynamic";
  * Stripe's checkout page, which charges nothing until they pay on it.
  */
 export async function GET(request: Request) {
+  // Per request, never prerendered at build (Cache Components prerenders a
+  // GET that reads nothing of the request first).
+  await connection();
   const base = requireEnv("RUNTIME_BASE_URL");
   const { plan, interval } = requestedPlan(new URL(request.url).searchParams);
   const to = (path: string) => NextResponse.redirect(new URL(path, base), 303);
