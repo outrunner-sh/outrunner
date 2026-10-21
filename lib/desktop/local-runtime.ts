@@ -25,6 +25,7 @@ import {
   setModelRequest,
   type SessionModel,
 } from "@/lib/runtime/session-models";
+import { SEND_FAILED, sendFailureMessage } from "@/lib/session/send-failure";
 
 /**
  * Desktop-only bridge for local sessions: Claude Code running on this Mac.
@@ -160,6 +161,16 @@ export class LocalRuntimeError extends Error {
     this.code = code;
     this.reason = reason;
   }
+}
+
+/** What the composer says for a local send that didn't reach the agent: this
+ *  module's own errors are already sentences (messageForLocalError); what the
+ *  agent itself said goes through the same filter as a hosted send's. */
+export function localSendFailure(error: unknown): string {
+  console.error("Send failed", error);
+  if (!(error instanceof LocalRuntimeError)) return SEND_FAILED;
+  if (error.code === "agent" && error.reason !== "unknown workspace") return sendFailureMessage(error.reason);
+  return error.message;
 }
 
 /** `agent` names the CLI a login error is about. */
