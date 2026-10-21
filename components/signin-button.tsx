@@ -20,9 +20,14 @@ function GitHubMark() {
  * code verifier in a cookie and redirects to GitHub; the `/auth/callback`
  * route completes the exchange and enforces the owner allowlist.
  *
- * OAuth is used for identity only — repository access uses a separate PAT —
- * so the requested scopes are the minimum needed to read the account login.
+ * The token GitHub grants is the user's own repository access too (stored at
+ * the callback, lib/db/credentials.ts), so the scopes are what that needs: the
+ * account (`read:user user:email`), repositories to list, clone and push
+ * (`repo`), and the organizations the user belongs to (`read:org`), so the
+ * repository picker can say which of them are holding repositories back.
  */
+const GITHUB_SCOPES = "read:user user:email repo read:org";
+
 /**
  * Where the desktop shell listens for the OAuth redirect. Must match
  * `OAUTH_PORT` in runtime-desktop/src-tauri/src/lib.rs, and be listed in the
@@ -56,7 +61,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
         const redirectTo = `${DESKTOP_OAUTH_REDIRECT}?next=${encodeURIComponent(next)}`;
         const { data, error } = await supabase.auth.signInWithOAuth({
           provider: "github",
-          options: { redirectTo, scopes: "read:user user:email repo", skipBrowserRedirect: true },
+          options: { redirectTo, scopes: GITHUB_SCOPES, skipBrowserRedirect: true },
         });
         if (error) throw error;
         // Navigating to the provider URL is intercepted by the shell, which
@@ -70,7 +75,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "github",
-        options: { redirectTo, scopes: "read:user user:email repo" },
+        options: { redirectTo, scopes: GITHUB_SCOPES },
       });
 
       // On success the browser navigates away, so we only reach here on failure.
