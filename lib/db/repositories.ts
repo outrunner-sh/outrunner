@@ -60,7 +60,10 @@ export async function getProject(id: string): Promise<Project | null> {
   return data ? toProject(data) : null;
 }
 
-/** Upsert the repositories returned by GitHub, keyed on (owner, repo id). */
+/**
+ * Upsert the repositories returned by GitHub, keyed on (owner, repo id). Each
+ * was just read from GitHub, so any `access_lost_at` it had is cleared.
+ */
 export async function upsertProjects(
   ownerId: string,
   repos: Array<{
@@ -94,12 +97,30 @@ export async function upsertProjects(
         description: r.description,
         html_url: r.htmlUrl,
         pushed_at: r.pushedAt,
+        access_lost_at: null,
       })),
       { onConflict: "owner_id,github_repo_id", count: "exact" },
     );
 
   if (error) throw error;
   return count ?? repos.length;
+}
+
+/**
+ * Mark the user's projects for these repositories as ones their GitHub
+ * account no longer sees. Already-marked ones keep when that was first seen.
+ */
+export async function markProjectsAccessLost(githubRepoIds: number[]): Promise<void> {
+  if (githubRepoIds.length === 0) return;
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ access_lost_at: new Date().toISOString() })
+    .in("github_repo_id", githubRepoIds)
+    .is("access_lost_at", null);
+
+  if (error) throw error;
 }
 
 // --- workspaces ------------------------------------------------------------

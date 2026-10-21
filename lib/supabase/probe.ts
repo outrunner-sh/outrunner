@@ -14,7 +14,7 @@ export type DatabaseProbe = Record<RuntimeTable, TableProbeStatus>;
  * then failed to save, quietly. Add a column here when a migration adds one.
  */
 export const RUNTIME_COLUMNS: Record<RuntimeTable, readonly string[]> = {
-  projects: ["id"],
+  projects: ["id", "access_lost_at"],
   workspaces: ["id", "computer_id", "tmux_session", "agent_workspace_id", "title", "agent"],
   jobs: ["id", "result_path", "execution_handle", "agent"],
   pull_requests: ["id"],

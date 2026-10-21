@@ -28,6 +28,9 @@ export type Project = {
   pushedAt: string | null;
   /** Linear issues attached to this project (never standalone projects). */
   linearIssueIds: string[];
+  /** When the user's GitHub account stopped seeing this repository; null
+   *  while it can (lib/github/reconcile.ts). */
+  accessLostAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

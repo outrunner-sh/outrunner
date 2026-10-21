@@ -80,6 +80,7 @@ type ProjectRow = {
   pushed_at: string | null;
   linear_issues: LinearIssueRef[];
   hidden_at: string | null;
+  access_lost_at: string | null;
   created_at: string;
   updated_at: string;
 };

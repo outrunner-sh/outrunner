@@ -38,6 +38,7 @@ export function toProject(row: Tables["projects"]["Row"]): Project {
     htmlUrl: row.html_url ?? `https://github.com/${row.full_name}`,
     pushedAt: row.pushed_at,
     linearIssueIds: (row.linear_issues ?? []).map((i) => i.id),
+    accessLostAt: row.access_lost_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
