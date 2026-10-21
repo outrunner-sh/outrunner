@@ -69,3 +69,15 @@ export function projectToListing(project: Project): RepositoryListing {
     pushedAt: project.pushedAt,
   };
 }
+
+/** A GitHub avatar URL at `size` pixels (its `s` parameter), so a list of
+ *  them doesn't download each at full size. */
+export function avatarAt(url: string, size: number): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("s", String(size));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}

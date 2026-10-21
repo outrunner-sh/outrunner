@@ -4,7 +4,9 @@ import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { ProjectAvatar } from "@/components/project-avatar";
+import { RepositoryAccessNotes } from "@/components/repository-access-notes";
 import { Spinner } from "@/components/ui/loaders";
+import type { RepositoryAccess } from "@/lib/github/access";
 import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
@@ -14,8 +16,8 @@ type Listing = {
   connected: number[];
   /** False when GitHub may have more than the list holds. */
   complete: boolean;
-  /** Organizations whose repositories single sign-on held back. */
-  ssoPartialOrgIds: number[];
+  /** Why repositories may be missing: invitations, organizations. */
+  access: RepositoryAccess | null;
 };
 
 /**
@@ -87,7 +89,7 @@ export function RepositorySelect({
         repositories: data.repositories ?? [],
         connected: data.connected ?? [],
         complete: data.complete ?? true,
-        ssoPartialOrgIds: data.ssoPartialOrgIds ?? [],
+        access: data.access ?? null,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load repositories.");
@@ -247,13 +249,7 @@ export function RepositorySelect({
 
           {/* The list may be short: say why rather than let a missing
               repository look like one that isn't there. */}
-          {listing && (listing.ssoPartialOrgIds.length > 0 || !listing.complete) && (
-            <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
-              {listing.ssoPartialOrgIds.length > 0
-                ? "Some organizations' repositories are hidden until you authorize Outrunner for their single sign-on on GitHub."
-                : "GitHub may have more repositories than this list shows."}
-            </p>
-          )}
+          {listing && <RepositoryAccessNotes access={listing.access} complete={listing.complete} />}
 
           {extra && (
             <div className="border-border border-t">
