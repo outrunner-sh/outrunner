@@ -40,6 +40,12 @@ class FakeStorage {
   removeItem(key: string) {
     this.items.delete(key);
   }
+  get length() {
+    return this.items.size;
+  }
+  key(i: number) {
+    return [...this.items.keys()][i] ?? null;
+  }
 }
 
 function kept(storage: FakeStorage) {
@@ -151,6 +157,25 @@ test("a frame that lands during the sign-out round trip isn't kept", () => {
 
   assert.equal(storage.items.size, 0);
   assert.equal(store.load("w1"), undefined);
+});
+
+test("one with no room even on its own leaves no older copy behind", () => {
+  const small = JSON.stringify({ v: 1, events: [message("m1")], seenIds: [] }).length;
+  const storage = new FakeStorage(small + 40);
+  const { store } = kept(storage);
+  store.save("w1", entry([message("m1")]));
+  store.flush();
+  store.save("w1", entry([message("m1", "x".repeat(small * 5))]));
+  store.flush();
+  assert.equal(store.load("w1"), undefined);
+});
+
+test("signing out forgets one the index lost", () => {
+  const storage = new FakeStorage();
+  storage.setItem("outrunner:conversation:orphan", JSON.stringify({ v: 1, events: [message("m1")], seenIds: [] }));
+  const { store } = kept(storage);
+  store.clear();
+  assert.equal(storage.items.size, 0);
 });
 
 test("blocked storage keeps nothing and breaks nothing", () => {

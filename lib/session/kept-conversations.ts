@@ -31,7 +31,7 @@ export const KEPT_CHARS = 1_000_000;
  *  however fast a reply streams in. */
 export const SAVE_EVERY_MS = 1000;
 
-type KeptStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+type KeptStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
 
 const Kept = z.object({
   v: z.literal(VERSION),
@@ -115,14 +115,17 @@ export class KeptConversations implements ConversationStore {
   }
 
   /** Forget every kept conversation, for good: whoever signs in next isn't
-   *  shown them, and nothing this page goes on to stream is kept. */
+   *  shown them, and nothing this page goes on to stream is kept. Every key
+   *  this browser holds, not the ones the index lists: a full storage can
+   *  leave the two out of step (see `writeIndex`), and one the index lost
+   *  would otherwise outlive the sign-out. */
   clear(): void {
     this.forgotten = true;
     this.pending.clear();
     const storage = this.storage();
     if (!storage) return;
     try {
-      for (const id of this.readIndex(storage)) storage.removeItem(PREFIX + id);
+      for (const key of keptKeys(storage)) storage.removeItem(key);
       storage.removeItem(INDEX_KEY);
     } catch {
       // Blocked storage keeps nothing to forget.
@@ -152,6 +155,8 @@ export class KeptConversations implements ConversationStore {
       } catch {
         const oldest = index.shift();
         if (oldest === undefined) {
+          // No room even on its own: no older copy may stand in for it.
+          storage.removeItem(PREFIX + id);
           this.writeIndex(storage, index);
           return;
         }
@@ -177,6 +182,18 @@ export class KeptConversations implements ConversationStore {
       // Full: the entries are there, and the next write orders them again.
     }
   }
+}
+
+/** Every key a conversation is kept under. INDEX_KEY ("outrunner:conversations")
+ *  isn't one: PREFIX ends in a colon it doesn't share. */
+function keptKeys(storage: KeptStorage): string[] {
+  const keys: string[] = [];
+  // Collected before any removal: removing one renumbers the rest.
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key?.startsWith(PREFIX)) keys.push(key);
+  }
+  return keys;
 }
 
 function browserStorage(): KeptStorage | null {
