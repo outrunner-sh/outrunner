@@ -155,7 +155,7 @@ func Run(ctx context.Context, opts Options) Scan {
 		ScannedAt: opts.now().UTC().Format(time.RFC3339),
 		Sources:   sources,
 		Sessions:  sessions,
-		Projects:  projectEnvs(ctx, opts, sessions),
+		Projects:  projectEnvs(ctx, opts, sessions, ""),
 	}
 }
 
