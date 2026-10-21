@@ -3,13 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { BillingIntervalToggle, PlanIncludes, PlanPrice, planPrice } from "@/components/plan-parts";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage, Notice } from "@/components/ui/notice";
+import { stripePage } from "@/lib/billing/client";
+import { type BillingInterval, type Plan, PLANS } from "@/lib/billing/plans";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { requestJson } from "@/lib/http/request-json";
-import { type BillingInterval, LOOKUP_KEYS, type Plan, PLANS } from "@/lib/billing/plans";
-import { boxSize } from "@/lib/runtime/box-sizes";
-import { cn } from "@/lib/utils";
 
 /** The subscription the plan comes from, as the page shows it. */
 export type ShownSubscription = {
@@ -80,15 +79,10 @@ export function BillingSettings({
   async function go(action: string, path: string, body?: object) {
     setPending(action);
     try {
-      const data = await requestJson<{ url: string }>(path, {
-        method: "POST",
-        body,
-        has: (d) => Boolean(d.url),
-        fallback: "Stripe's page didn't open.",
-      });
+      const url = await stripePage(path, body);
       setFailed(null);
       setError(null);
-      window.location.assign(data.url);
+      window.location.assign(url);
       if (isDesktopApp()) {
         setInBrowser(true);
         setPending(null);
@@ -137,7 +131,7 @@ export function BillingSettings({
           <p className="text-sm font-medium text-foreground">{plan.label}</p>
           {subscription ? <p className="text-xs text-muted-foreground">{subscriptionLine(subscription)}</p> : null}
         </div>
-        <Includes plan={plan} />
+        <PlanIncludes plan={plan} />
         {hasCustomer ? (
           <LoadingButton
             variant="outline"
@@ -151,40 +145,19 @@ export function BillingSettings({
 
       {prices ? (
         <div className="space-y-4">
-          <div role="radiogroup" aria-label="Billing interval" className="inline-flex rounded-md border border-border/60 p-0.5">
-            {(["month", "year"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={interval === option}
-                onClick={() => setBillingInterval(option)}
-                className={cn(
-                  "rounded px-3 py-1 text-sm transition-colors",
-                  interval === option ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {option === "month" ? "Monthly" : "Yearly · 2 months free"}
-              </button>
-            ))}
-          </div>
+          <BillingIntervalToggle interval={interval} onChange={setBillingInterval} />
           <div className="grid gap-3 sm:grid-cols-2">
             {(["pro", "max"] as const).map((id) => {
               const offered = PLANS[id];
-              const price = prices[LOOKUP_KEYS[id][interval]];
+              const price = planPrice(prices, id, interval);
               const current = plan.id === id;
               return (
                 <div key={id} className="space-y-3 rounded-lg border border-border/60 p-4">
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-sm font-medium text-foreground">{offered.label}</p>
-                    {price !== undefined ? (
-                      <p className="text-sm text-foreground">
-                        ${price}
-                        <span className="text-xs text-muted-foreground"> / {interval === "month" ? "month" : "year"}</span>
-                      </p>
-                    ) : null}
+                    {price !== undefined ? <PlanPrice usd={price} interval={interval} /> : null}
                   </div>
-                  <Includes plan={offered} />
+                  <PlanIncludes plan={offered} />
                   <LoadingButton
                     status={status(id)}
                     disabled={current || price === undefined}
@@ -205,19 +178,6 @@ export function BillingSettings({
       )}
 
     </section>
-  );
-}
-
-/** What a plan includes. The model allowance is never shown in dollars. */
-function Includes({ plan }: { plan: Plan }) {
-  return (
-    <ul className="space-y-1 text-xs text-muted-foreground">
-      <li>{plan.cloudHoursPerMonth} cloud hours a month</li>
-      <li>
-        {plan.concurrentCloudSessions} cloud sessions at once, up to {boxSize(plan.largestBoxSize).label} boxes
-      </li>
-      <li>{plan.models.per === "once" ? "Outrunner's models, to try" : "Outrunner's models, usage included"}</li>
-    </ul>
   );
 }
 

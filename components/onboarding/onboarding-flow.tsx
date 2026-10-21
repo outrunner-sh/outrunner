@@ -1,34 +1,31 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, Cloud, Laptop, Loader2, Terminal } from "lucide-react";
 
-import { CloudSetup } from "@/components/onboarding/cloud-setup";
+import { ImportStep } from "@/components/onboarding/import-step";
 import { MacSetup } from "@/components/onboarding/mac-setup";
+import { PlansStep, type PlansLeaving } from "@/components/onboarding/plans-step";
 import { Button } from "@/components/ui/button";
-import type { CloudModel } from "@/lib/onboarding/claude-choice";
-import type {
-  OnboardingEnv,
-  OnboardingFinish,
-  OnboardingFolder,
-  OnboardingRepo,
-  RunTarget,
-} from "@/lib/onboarding/types";
+import { importProjects } from "@/lib/onboarding/import-projects";
+import type { CloudNext, OnboardingEnv, OnboardingFinish, OnboardingFolder, RunTarget } from "@/lib/onboarding/types";
+import type { ImportScan } from "@/lib/runtime/import-scan";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { cn } from "@/lib/utils";
 
-type Step = "welcome" | "where" | "setup";
+type Step = "welcome" | "where" | "setup" | "import" | "plans";
 
-/** The ways out of the last step: a first session, home, or the import. */
-type Leaving = "start" | "finish" | "import";
+/** The ways out: a first session on this Mac, or one of the plans step's. */
+type Leaving = "start" | PlansLeaving;
 
 /**
- * First run, in three steps: welcome, where sessions run, and a live checklist
- * for that choice. On this Mac it ends by starting the session itself. In the
- * cloud it ends with the repositories connected, and the user picks what's
- * next: home, a first session in one of them, or importing this Mac's work.
- * Each step asks only for what the choice needs. While new local sessions are
- * off there is no choice to make: welcome, then the cloud's checklist.
+ * First run. Welcome, then where sessions run. On this Mac, a live checklist
+ * that ends by starting the session itself. In the cloud, the projects this
+ * Mac is working on, to bring over with their active sessions (offered only
+ * in the Mac app, when its scan finds some), then the plans, free to start,
+ * with the way to the user's own models. No repository has to be picked:
+ * projects are added once onboarded. While new local sessions are off there
+ * is no choice of where: welcome, then the cloud's steps.
  */
 export function OnboardingFlow({
   env,
@@ -41,23 +38,49 @@ export function OnboardingFlow({
   /** Whether This Mac is offered (lib/session/local-sessions.ts). */
   localSessions?: boolean;
 }) {
-  const steps: readonly Step[] = localSessions ? ["welcome", "where", "setup"] : ["welcome", "setup"];
   const [step, setStep] = useState<Step>("welcome");
   const [target, setTarget] = useState<RunTarget | null>(localSessions ? null : "cloud");
   const [ready, setReady] = useState(false);
   const [folder, setFolder] = useState<OnboardingFolder | null>(null);
-  const [model, setModel] = useState<CloudModel>(null);
-  const [picked, setPicked] = useState<OnboardingRepo[]>([]);
   // Which way out is under way: its button spins, and every other waits.
   const [leaving, setLeaving] = useState<Leaving | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
 
-  const index = steps.indexOf(step);
-  const afterWelcome: Step = localSessions ? "where" : "setup";
-  const go = (next: Step) => {
+  // The Mac's scan starts at once, so it's in by the time the user is past
+  // welcome. Undefined while it runs; null outside the Mac app or on failure.
+  const [scan, setScan] = useState<ImportScan | null | undefined>(env.desktop ? undefined : null);
+  const [now] = useState(() => Date.now());
+  useEffect(() => {
+    if (!env.desktop) return;
+    let live = true;
+    env.findImports().then(
+      (found) => live && setScan(found),
+      () => live && setScan(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [env]);
+  const projects = useMemo(() => (scan === undefined ? undefined : importProjects(scan, now)), [scan, now]);
+
+  // The import step only while the scan may still find something, or did.
+  const offerImport = projects === undefined || projects.length > 0;
+  const steps: Step[] = [
+    "welcome",
+    ...(localSessions ? (["where"] as const) : []),
+    ...(target === "mac" ? (["setup"] as const) : offerImport ? (["import", "plans"] as const) : (["plans"] as const)),
+  ];
+  // A scan that found nothing drops the import step under a user already on it.
+  const current: Step = steps.includes(step) ? step : "plans";
+  const index = steps.indexOf(current);
+  const go = (next: Step | undefined) => {
+    if (!next) return;
     setError(null);
     setStep(next);
   };
+  const back = () => go(steps[index - 1]);
+  const forward = () => go(steps[index + 1]);
   const onReady = useCallback((value: boolean) => setReady(value), []);
 
   const leave = async (how: Leaving, input: OnboardingFinish) => {
@@ -72,17 +95,8 @@ export function OnboardingFlow({
     }
     setLeaving(null);
   };
-
-  // The first repository picked is where a first session starts, named on
-  // its button; it starts only on a model there is (claude-choice.ts).
-  const repoIds = picked.map((repo) => repo.id);
-  const startRepo = picked[0] ?? null;
-  const startInCloud = () =>
-    startRepo &&
-    model &&
-    leave("start", { target: "cloud", repoIds, session: { repoId: startRepo.id, model } });
-  const finishCloud = (next: "home" | "import") =>
-    leave(next === "import" ? "import" : "finish", { target: "cloud", repoIds, next });
+  const leaveCloud = (next: CloudNext) =>
+    void leave(next.to === "plan" ? next.plan : next.to, { target: "cloud", next });
 
   const [skipping, setSkipping] = useState(false);
   const skip = env.skip
@@ -97,20 +111,23 @@ export function OnboardingFlow({
       }
     : null;
 
+  // The plans sit side by side: the one step that needs the room.
+  const width = current === "plans" && env.prices ? "max-w-3xl" : "max-w-xl";
+
   return (
     <div className="flex min-h-screen flex-col items-center px-6 py-10">
-      <header className="flex w-full max-w-xl items-center justify-between">
+      <header className={cn("flex w-full items-center justify-between", width)}>
         <div className="flex items-center gap-2 font-mono text-sm">
           <Terminal className="size-4" />
           <span className="font-semibold tracking-tight">outrunner</span>
         </div>
         <div className="flex items-center gap-4">
-          {step !== "welcome" && steps.length > 2 && <Progress steps={steps} index={index} />}
+          {current !== "welcome" && steps.length > 2 && <Progress steps={steps} index={index} />}
           {skip && (
             <button
               type="button"
               onClick={() => void skip()}
-              disabled={skipping || leaving !== null}
+              disabled={skipping || importing || leaving !== null}
               className="text-muted-foreground hover:text-foreground text-xs disabled:opacity-50"
             >
               Skip for now
@@ -119,12 +136,10 @@ export function OnboardingFlow({
         </div>
       </header>
 
-      <main className="flex w-full max-w-xl flex-1 flex-col justify-center py-10">
-        {step === "welcome" && (
-          <Welcome name={env.user.name} onMac={localSessions} onNext={() => go(afterWelcome)} />
-        )}
+      <main className={cn("flex w-full flex-1 flex-col justify-center py-10", width)}>
+        {current === "welcome" && <Welcome name={env.user.name} onMac={localSessions} onNext={forward} />}
 
-        {step === "where" && (
+        {current === "where" && (
           <section className="space-y-6">
             <Heading
               title="Where should your agents run?"
@@ -148,83 +163,48 @@ export function OnboardingFlow({
                 onSelect={() => setTarget("cloud")}
               />
             </div>
-            <Nav onBack={() => go("welcome")} onNext={() => go("setup")} nextDisabled={!target} />
+            <Nav onBack={back} onNext={forward} nextDisabled={!target} />
           </section>
         )}
 
-        {step === "setup" && target && (
+        {current === "setup" && (
           <section className="space-y-6">
-            <Heading
-              title={target === "mac" ? "Set up this Mac" : "Set up the cloud"}
-              detail={
-                target === "mac"
-                  ? "A few things local sessions need. Each one checks itself."
-                  : "Pick the repositories to work in. Start a session now, or whenever you're ready."
-              }
-            />
-            {target === "mac" ? (
-              <MacSetup env={env} folder={folder} onFolder={setFolder} onReady={onReady} />
-            ) : (
-              <CloudSetup
-                env={env}
-                onModel={setModel}
-                picked={picked}
-                onPicked={setPicked}
-                onReady={onReady}
-                onImport={() => void finishCloud("import")}
-                busy={leaving !== null}
-              />
-            )}
-            {leaving === "start" && target === "cloud" && (
-              <p className="text-muted-foreground text-sm">
-                Setting up your cloud machine. This takes about a minute the first time.
-              </p>
-            )}
+            <Heading title="Set up this Mac" detail="A few things local sessions need. Each one checks itself." />
+            <MacSetup env={env} folder={folder} onFolder={setFolder} onReady={onReady} />
             {error && <p className="text-destructive text-sm">{error}</p>}
             <div className="flex items-center justify-between gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => go(localSessions ? "where" : "welcome")}
-                disabled={leaving !== null}
-              >
+              <Button variant="ghost" onClick={back} disabled={leaving !== null}>
                 <ArrowLeft className="size-4" /> Back
               </Button>
-              {target === "mac" ? (
-                <Button
-                  onClick={() => void leave("start", { target: "mac", folder: folder ?? undefined })}
-                  disabled={!ready || leaving !== null}
-                >
-                  <Spinner on={leaving === "start"} />
-                  Start session
-                </Button>
-              ) : (
-                <div className="flex min-w-0 items-center gap-2">
-                  {startRepo && (
-                    <Button
-                      variant="outline"
-                      onClick={() => void startInCloud()}
-                      disabled={model === null || leaving !== null}
-                      title={
-                        model === null
-                          ? "Connect Claude or add a key in Settings → Providers to start a session."
-                          : undefined
-                      }
-                      className="min-w-0"
-                    >
-                      <Spinner on={leaving === "start"} />
-                      <span className="truncate">Start a session in {startRepo.fullName.split("/")[1]}</span>
-                    </Button>
-                  )}
-                  <Button onClick={() => void finishCloud("home")} disabled={!ready || leaving !== null}>
-                    <Spinner on={leaving === "finish"} />
-                    Finish
-                  </Button>
-                </div>
-              )}
+              <Button
+                onClick={() => void leave("start", { target: "mac", folder: folder ?? undefined })}
+                disabled={!ready || leaving !== null}
+              >
+                <Spinner on={leaving === "start"} />
+                Start session
+              </Button>
             </div>
           </section>
         )}
 
+        {current === "import" && (
+          <ImportStep
+            env={env}
+            projects={projects}
+            now={now}
+            onBack={back}
+            onNext={forward}
+            onImporting={setImporting}
+            disabled={leaving !== null || skipping}
+          />
+        )}
+
+        {current === "plans" && (
+          <>
+            <PlansStep prices={env.prices} leaving={leaving === "start" ? null : leaving} onBack={back} onLeave={leaveCloud} />
+            {error && <p className="text-destructive mt-4 text-sm">{error}</p>}
+          </>
+        )}
       </main>
     </div>
   );

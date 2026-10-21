@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowRight } from "lucide-react";
 import { useState } from "react";
 
 import { LoadingButton } from "@/components/ui/loading-button";
@@ -86,12 +87,13 @@ export function SignInButton({ next = "/" }: { next?: string }) {
     <div className="space-y-2">
       {/* The app's primary button (light on dark), not near-black on black. */}
       <LoadingButton
-        size="default"
+        size="sm"
         status={loading ? "pending" : "idle"}
         labels={{ idle: "Continue with GitHub", pending: "Opening GitHub" }}
         icon={<GitHubMark />}
+        trailingIcon={<ArrowRight className="size-3.5" />}
         onClick={() => void signIn()}
-        className="w-full"
+        className="rounded-none"
       />
       {error && <InlineMessage>{error}</InlineMessage>}
     </div>

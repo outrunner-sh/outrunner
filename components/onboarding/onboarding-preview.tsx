@@ -4,12 +4,13 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, RotateCcw } from "lucide-react";
 
 import { OnboardingFlow } from "@/components/onboarding/onboarding-flow";
-import type { OnboardingEnv, OnboardingRepo } from "@/lib/onboarding/types";
+import type { OnboardingEnv } from "@/lib/onboarding/types";
+import type { ImportScan, ImportSource, ScannedSession } from "@/lib/runtime/import-scan";
 
 /**
  * The onboarding flow on mock data, with a panel to switch the situation it
- * meets: Mac app or browser, tools missing, Claude Code logged out, a Claude
- * connect that fails. For building the screens without an account; served only
+ * meets: Mac app or browser, tools missing, Claude Code logged out, work on
+ * the Mac to import, plans on sale or not. For building the screens without an account; served only
  * with ONBOARDING_PREVIEW=1 outside production.
  */
 export function OnboardingPreview() {
@@ -35,9 +36,8 @@ type Scenario = {
   surface: "desktop" | "browser";
   tools: "all" | "no-tmux" | "no-claude" | "claude-setup-fails";
   claudeCode: "logged-in" | "logged-out" | "login-fails";
-  claudeConnected: "no" | "yes";
-  repos: "many" | "few" | "none";
-  imports: "some" | "none";
+  imports: "some" | "old" | "none";
+  billing: "on" | "off";
   outrunnerModels: "yes" | "no";
 };
 
@@ -45,9 +45,8 @@ const DEFAULT_SCENARIO: Scenario = {
   surface: "desktop",
   tools: "all",
   claudeCode: "logged-out",
-  claudeConnected: "no",
-  repos: "many",
   imports: "some",
+  billing: "on",
   outrunnerModels: "yes",
 };
 
@@ -66,30 +65,61 @@ const OPTIONS: { [K in keyof Scenario]: { label: string; values: [Scenario[K], s
     label: "Claude Code",
     values: [["logged-in", "Logged in"], ["logged-out", "Logged out"], ["login-fails", "Login fails"]],
   },
-  claudeConnected: { label: "Claude for cloud", values: [["no", "Not connected"], ["yes", "Connected"]] },
-  repos: { label: "GitHub repos", values: [["many", "Many"], ["few", "Two"], ["none", "None"]] },
-  imports: { label: "Work to import", values: [["some", "Found"], ["none", "None"]] },
+  imports: { label: "Work to import", values: [["some", "Found"], ["old", "Only old"], ["none", "None"]] },
+  billing: { label: "Plans", values: [["on", "On sale"], ["off", "Not sold"]] },
   outrunnerModels: { label: "Outrunner models", values: [["yes", "On the server"], ["no", "Not set up"]] },
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const REPOS: OnboardingRepo[] = [
-  "neevai-labs/outrunner",
-  "neevai-labs/interface",
-  "neevai-labs/neev-ai",
-  "sajdakabir/dotfiles",
-  "sajdakabir/blog",
-  "neevai-labs/landing",
-  "neevai-labs/docs",
-  "sajdakabir/notes",
-  "neevai-labs/infra",
-].map((fullName, i) => ({
-  id: String(i + 1),
-  fullName,
-  private: i % 3 !== 1,
-  pushedAt: new Date(Date.now() - i * 86_400_000).toISOString(),
-}));
+const DAY = 86_400_000;
+
+/** A session the scan found: in `repo`, from `source`, last worked in `daysAgo`. */
+function scanned(i: number, repo: string, source: ImportSource, daysAgo: number, title: string): ScannedSession {
+  const agent = source === "codex-cli" ? "codex" : "claude";
+  return {
+    key: `${agent}:s${i}`,
+    source,
+    agent,
+    sessionId: `s${i}`,
+    title,
+    cwd: `/Users/sajdakabir/code/${repo.split("/")[1]}`,
+    worktree: `/Users/sajdakabir/code/${repo.split("/")[1]}`,
+    repo,
+    branch: `sajdakabir/${title.toLowerCase().split(" ").slice(0, 2).join("-")}`,
+    checkedOut: true,
+    dirty: i % 2 === 0,
+    unpushed: i % 3,
+    transcript: "/t",
+    transcriptBytes: 40_000 * (i + 1),
+    updatedAt: new Date(Date.now() - daysAgo * DAY).toISOString(),
+  };
+}
+
+const SESSIONS: ScannedSession[] = [
+  scanned(1, "neevai-labs/outrunner", "conductor", 0.1, "Onboarding import step"),
+  scanned(2, "neevai-labs/outrunner", "claude-cli", 2, "Fix sidebar refresh"),
+  scanned(3, "neevai-labs/outrunner", "codex-cli", 6, "Plans step copy"),
+  scanned(4, "neevai-labs/interface", "claude-cli", 1, "Dark mode tokens"),
+  scanned(5, "neevai-labs/interface", "conductor", 45, "Old landing tweaks"),
+  scanned(6, "sajdakabir/blog", "codex-cli", 12, "New post layout"),
+  scanned(7, "neevai-labs/docs", "conductor", 90, "Docs migration"),
+];
+
+function mockScan(imports: Scenario["imports"]): ImportScan | null {
+  if (imports === "none") return null;
+  const sessions = imports === "old" ? SESSIONS.filter((s) => s.key.endsWith("5") || s.key.endsWith("7")) : SESSIONS;
+  return {
+    version: 1,
+    scannedAt: new Date().toISOString(),
+    sources: [],
+    sessions,
+    projects: [],
+    config: { items: [], mcpServers: [], plugins: [] },
+  };
+}
+
+const PRICES = { pro_monthly: 20, pro_yearly: 200, max_monthly: 100, max_yearly: 1000 };
 
 function mockEnv(s: Scenario): OnboardingEnv {
   // "Check again" after a missing tool finds it installed, as if the user ran
@@ -106,6 +136,7 @@ function mockEnv(s: Scenario): OnboardingEnv {
     user: { name: "Sajda Kabir", login: "sajdakabir", avatarUrl: null },
     desktop: s.surface === "desktop",
     outrunnerModels: s.outrunnerModels === "yes",
+    prices: s.billing === "on" ? PRICES : null,
     async checkMac() {
       await wait(checks === 0 ? 900 : 300);
       const fixed = checks++ > 0;
@@ -148,17 +179,24 @@ function mockEnv(s: Scenario): OnboardingEnv {
       await wait(300);
       return { path: "/Users/sajdakabir/code/outrunner", name: "outrunner", git: true, branch: "main" };
     },
-    async claudeConnected() {
-      await wait(400);
-      return s.claudeConnected === "yes";
-    },
-    async listRepos() {
-      await wait(800);
-      return s.repos === "none" ? [] : s.repos === "few" ? REPOS.slice(0, 2) : REPOS;
-    },
     async findImports() {
       await wait(1500);
-      return s.surface === "desktop" && s.imports === "some" ? { sessions: 14, sources: ["conductor", "claude-cli"] } : null;
+      return s.surface === "desktop" ? mockScan(s.imports) : null;
+    },
+    async importSessions(sessions, onProgress) {
+      // Each one uploads, then saves; the last one picked fails, to show how.
+      for (const session of sessions) onProgress({ key: session.key, state: "waiting" });
+      for (const [i, session] of sessions.entries()) {
+        onProgress({ key: session.key, state: "uploading", branch: session.branch });
+        await wait(900);
+        onProgress({ key: session.key, state: "saving", branch: session.branch });
+        await wait(400);
+        onProgress(
+          i === sessions.length - 1 && sessions.length > 1
+            ? { key: session.key, state: "failed", message: "Couldn't upload its conversation. Try again." }
+            : { key: session.key, state: "done", workspaceId: `w-${i}` },
+        );
+      }
     },
     async finish(input) {
       await wait(1500);

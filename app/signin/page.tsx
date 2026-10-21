@@ -35,25 +35,20 @@ export default async function SignInPage({
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-xs space-y-10">
+      <div className="space-y-10">
         {/* The home screen's wordmark, so signing in already looks like the app. */}
-        <div className="space-y-3 text-center">
-          <p aria-hidden className="select-none font-display text-6xl leading-none text-foreground/25">
-            outrunner
-          </p>
-          <h1 className="text-sm text-muted-foreground">Sign in to run your coding agents.</h1>
+        <p aria-hidden className="select-none font-display text-7xl leading-none text-foreground/25">
+          outrunner
+        </p>
+        <div className="space-y-6">
+          <h1 className="text-sm text-muted-foreground">Sign in to continue.</h1>
+          {message && (
+            <p role="alert" className="text-xs text-destructive">
+              {message}
+            </p>
+          )}
+          <SignInButton next={target} />
         </div>
-
-        {message && (
-          <div
-            role="alert"
-            className="border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-xs"
-          >
-            {message}
-          </div>
-        )}
-
-        <SignInButton next={target} />
       </div>
     </main>
   );

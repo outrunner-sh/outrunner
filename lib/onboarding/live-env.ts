@@ -1,3 +1,5 @@
+import { BILLING_PATH } from "@/lib/billing/checkout";
+import { stripePage } from "@/lib/billing/client";
 import {
   cancelClaudeLogin as cancelClaudeCodeLogin,
   importScan,
@@ -13,18 +15,11 @@ import {
   setsUpClaude,
   setUpClaudeCode,
 } from "@/lib/desktop/local-runtime";
-import { reachOutrunner } from "@/lib/http/request-json";
+import { importSessions } from "@/lib/imports/client";
+import { liveImportDeps } from "@/lib/imports/live";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { importFound } from "@/lib/onboarding/import-offer";
-import type {
-  CloudSession,
-  OnboardingEnv,
-  OnboardingFinish,
-  OnboardingRepo,
-  OnboardingUser,
-} from "@/lib/onboarding/types";
-import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
-import type { Project } from "@/lib/runtime/types";
+import type { CloudNext, OnboardingEnv, OnboardingFinish, OnboardingUser } from "@/lib/onboarding/types";
+import { PROVIDERS_SETTINGS_HREF } from "@/lib/settings-links";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -34,9 +29,13 @@ const LOGIN_CHECK_MS = 3000;
 /**
  * Onboarding on the real thing: the Mac app's bridge for this Mac, and the
  * app's own APIs for the cloud. Each action is the same one the rest of the app
- * uses (the new-session form, Settings → Providers), not a parallel copy.
+ * uses (the new-session form, the import page, Settings → Billing), not a
+ * parallel copy.
  */
-export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean }): OnboardingEnv {
+export function liveEnv(
+  user: OnboardingUser,
+  server: { outrunnerModels: boolean; prices: Record<string, number> | null },
+): OnboardingEnv {
   let loginStopped = false;
 
   return {
@@ -45,6 +44,7 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
     // Whether a cloud session may start without the user's Claude, on
     // Outrunner's models: the server knows, from its OpenRouter key.
     outrunnerModels: server.outrunnerModels,
+    prices: server.prices,
 
     async checkMac() {
       const status = await localStatus();
@@ -95,41 +95,18 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       return { path: folder.path, name: folder.name, git: folder.git, branch: folder.branch };
     },
 
-    async claudeConnected() {
-      const res = await fetch("/api/settings/claude").catch(() => null);
-      if (!res?.ok) return false;
-      return Boolean(((await res.json()) as { connected?: boolean }).connected);
-    },
-
-    async listRepos() {
-      const res = await reachOutrunner("/api/github/repositories");
-      const data = (await res.json().catch(() => ({}))) as {
-        repositories?: { githubRepoId: number; fullName: string; private: boolean; pushedAt: string | null }[];
-        error?: string;
-      };
-      if (!res.ok) throw new Error(data.error ?? "Could not load your GitHub repositories.");
-      return (data.repositories ?? [])
-        .map(
-          (r): OnboardingRepo => ({
-            id: String(r.githubRepoId),
-            fullName: r.fullName,
-            private: r.private,
-            pushedAt: r.pushedAt ?? "",
-          }),
-        )
-        .sort((a, b) => b.pushedAt.localeCompare(a.pushedAt));
-    },
-
     async findImports() {
       // A scan that fails only means nothing is offered: /import scans again.
-      return importFound(await importScan().catch(() => null));
+      return importScan().catch(() => null);
     },
 
-    async finish(input) {
-      const href =
-        input.target === "mac" ? await startOnMac(input, server.outrunnerModels) : await finishInCloud(input);
-      await markOnboarded();
-      return href;
+    async importSessions(sessions, onProgress) {
+      // Each session's repository becomes a project as the server plans it.
+      await importSessions(sessions, {}, liveImportDeps(onProgress));
+    },
+
+    finish(input) {
+      return input.target === "mac" ? startOnMac(input, server.outrunnerModels) : finishInCloud(input.next);
     },
 
     async skip() {
@@ -169,54 +146,27 @@ async function startOnMac(
       throw error;
     }
   }
+  await markOnboarded();
   return `/local/${workspaceId}${promptQuery(prompt)}`;
 }
 
 /**
- * Connect the chosen repositories, as the repository picker does, then go
- * where the user chose: a first session in one of them, as the new-session
- * form starts one, on the model chosen; the import; or home.
+ * Leave onboarding where the user chose. A plan goes to Stripe's checkout,
+ * which comes back to Settings → Billing; it is asked for before onboarding
+ * is marked done, so a checkout that can't start leaves the user here to try
+ * again. In the Mac app Stripe opens in the browser, and the app goes to
+ * Billing to show the plan when they're back; in a browser this page is
+ * leaving, so there is nowhere else to go.
  */
-async function finishInCloud({
-  repoIds,
-  session,
-  next = "home",
-}: Extract<OnboardingFinish, { target: "cloud" }>): Promise<string> {
-  if (session && !repoIds.includes(session.repoId)) throw new Error("Choose that repository first.");
-  const projects = repoIds.length > 0 ? await connectRepos(repoIds) : [];
-  if (!session) return next === "import" ? "/import" : "/";
-  const project = projects.find((p) => String(p.githubRepoId) === session.repoId);
-  if (!project) throw new Error("Could not find that repository after connecting it.");
-  return startInCloud(project, session);
-}
-
-async function connectRepos(repoIds: string[]): Promise<Project[]> {
-  const synced = await reachOutrunner("/api/projects/sync", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ repoIds: repoIds.map(Number) }),
-  });
-  const body = (await synced.json().catch(() => ({}))) as { projects?: Project[]; error?: string };
-  if (!synced.ok) throw new Error(body.error ?? "Could not connect those repositories.");
-  return body.projects ?? [];
-}
-
-async function startInCloud(project: Project, { prompt = "", model }: CloudSession): Promise<string> {
-  const created = await reachOutrunner(`/api/projects/${project.id}/workspaces`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    // Claude, when the user has it: the first of its models. Otherwise none,
-    // so the session starts on the menu's default, Outrunner's.
-    body: JSON.stringify({
-      branch: "",
-      ...(model === "claude" && { provider: "claude", model: CLAUDE_MODELS[0].id }),
-    }),
-  });
-  const result = (await created.json().catch(() => ({}))) as { workspace?: { id: string }; error?: string };
-  if (!created.ok || !result.workspace) {
-    throw new Error(result.error ?? "Could not start the session. Please try again.");
+async function finishInCloud(next: CloudNext): Promise<string | null> {
+  if (next.to === "plan") {
+    const url = await stripePage("/api/billing/checkout", { plan: next.plan, interval: next.interval });
+    await markOnboarded();
+    window.location.assign(url);
+    return isDesktopApp() ? BILLING_PATH : null;
   }
-  return `/workspaces/${result.workspace.id}${promptQuery(prompt)}`;
+  await markOnboarded();
+  return next.to === "providers" ? PROVIDERS_SETTINGS_HREF : "/";
 }
 
 /** The session page sends `?prompt=` as the first message; none, no query. */

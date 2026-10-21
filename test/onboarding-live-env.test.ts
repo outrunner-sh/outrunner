@@ -26,7 +26,8 @@ function stubFetch(routes: Record<string, (body: unknown) => [number, unknown]>)
 }
 
 /** A server without Outrunner's models: cloud sessions need Claude. */
-const noModels = { outrunnerModels: false };
+const noModels = { outrunnerModels: false, prices: null };
+const withModels = { outrunnerModels: true, prices: null };
 
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -37,128 +38,65 @@ test("outside the Mac app, onboarding knows it is not on the desktop", () => {
 });
 
 test("cloud setup offers to skip Claude only where the server runs Outrunner's models", () => {
-  assert.equal(liveEnv(user, { outrunnerModels: true }).outrunnerModels, true);
+  assert.equal(liveEnv(user, withModels).outrunnerModels, true);
   // Without an OpenRouter key the server refuses a cloud session without Claude.
   assert.equal(liveEnv(user, noModels).outrunnerModels, false);
 });
 
-test("repositories come from GitHub, most recently pushed first", async () => {
-  stubFetch({
-    "GET /api/github/repositories": () => [
-      200,
-      {
-        repositories: [
-          { githubRepoId: 1, fullName: "ada/old", private: false, pushedAt: "2026-01-01T00:00:00Z" },
-          { githubRepoId: 2, fullName: "ada/new", private: true, pushedAt: "2026-10-01T00:00:00Z" },
-          { githubRepoId: 3, fullName: "ada/never", private: false, pushedAt: null },
-        ],
-      },
-    ],
-  });
-  const repos = await liveEnv(user, noModels).listRepos();
-  assert.deepEqual(
-    repos.map((r) => [r.id, r.fullName, r.private]),
-    [
-      ["2", "ada/new", true],
-      ["1", "ada/old", false],
-      ["3", "ada/never", false],
-    ],
-  );
+test("going on free, or to bring their own models, marks onboarding done and goes there", async () => {
+  for (const [next, href] of [
+    [{ to: "home" }, "/"],
+    [{ to: "providers" }, "/settings/providers"],
+  ] as const) {
+    const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
+    assert.equal(await liveEnv(user, noModels).finish({ target: "cloud", next }), href);
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ["POST /api/onboarding/complete"]);
+  }
 });
 
-test("a failed repository listing says why", async () => {
-  stubFetch({ "GET /api/github/repositories": () => [409, { error: "Sign out and back in to GitHub." }] });
-  await assert.rejects(liveEnv(user, noModels).listRepos(), /Sign out and back in/);
+/** A browser page, or the Mac app's, whose navigations are recorded. */
+function fakePage(desktop: boolean): string[] {
+  const assigned: string[] = [];
+  (globalThis as Record<string, unknown>).window = {
+    ...(desktop && { __RUNTIME_DESKTOP__: true }),
+    location: { assign: (url: string) => assigned.push(url) },
+  };
+  return assigned;
+}
+
+test("a plan opens Stripe's checkout, onboarding marked done first", async () => {
+  const stripe = "https://checkout.stripe.com/c/pay/cs_test_1";
+  for (const [desktop, href] of [
+    // The browser page is leaving for Stripe: nowhere else to go.
+    [false, null],
+    // The Mac app opens Stripe in the browser, and shows Billing meanwhile.
+    [true, "/settings/billing"],
+  ] as const) {
+    const assigned = fakePage(desktop);
+    const calls = stubFetch({
+      "POST /api/billing/checkout": () => [200, { url: stripe, kind: "checkout" }],
+      "POST /api/onboarding/complete": () => [200, { ok: true }],
+    });
+    const out = await liveEnv(user, noModels).finish({
+      target: "cloud",
+      next: { to: "plan", plan: "pro", interval: "year" },
+    });
+    assert.equal(out, href, `desktop=${desktop}`);
+    assert.deepEqual(calls.map((c) => c.url), ["/api/billing/checkout", "/api/onboarding/complete"]);
+    assert.deepEqual(calls[0].body, { plan: "pro", interval: "year" });
+    assert.deepEqual(assigned, [stripe]);
+  }
 });
 
-test("finishing connects the picked repositories and goes home, with no session", async () => {
-  const calls = stubFetch({
-    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-7", githubRepoId: 7 }, { id: "p-9", githubRepoId: 9 }] }],
-    "POST /api/onboarding/complete": () => [200, { ok: true }],
-  });
-  assert.equal(await liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["9", "7"] }), "/");
-  assert.deepEqual(
-    calls.map((c) => `${c.method} ${c.url}`),
-    ["POST /api/projects/sync", "POST /api/onboarding/complete"],
-  );
-  assert.deepEqual(calls[0].body, { repoIds: [9, 7] });
-});
-
-test("finishing toward the import goes there; with nothing picked, nothing is connected", async () => {
-  const calls = stubFetch({ "POST /api/onboarding/complete": () => [200, { ok: true }] });
-  assert.equal(await liveEnv(user, noModels).finish({ target: "cloud", repoIds: [], next: "import" }), "/import");
-  assert.deepEqual(calls.map((c) => c.url), ["/api/onboarding/complete"]);
-});
-
-test("a first session starts in its repository, on the user's Claude when they chose it", async () => {
-  const calls = stubFetch({
-    "POST /api/projects/sync": () => [
-      200,
-      { projects: [{ id: "p-7", githubRepoId: 7 }, { id: "p-9", githubRepoId: 9 }] },
-    ],
-    "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-1" } }],
-    "POST /api/onboarding/complete": () => [200, { ok: true }],
-  });
-  const href = await liveEnv(user, noModels).finish({
-    target: "cloud",
-    repoIds: ["7", "9"],
-    session: { repoId: "9", model: "claude", prompt: "Fix the flaky test" },
-  });
-  assert.equal(href, "/workspaces/w-1?prompt=Fix+the+flaky+test");
-  assert.deepEqual(
-    calls.map((c) => `${c.method} ${c.url}`),
-    ["POST /api/projects/sync", "POST /api/projects/p-9/workspaces", "POST /api/onboarding/complete"],
-  );
-  // The user's Claude, named: without it the server's default is Outrunner's.
-  assert.deepEqual(calls[1].body, { branch: "", provider: "claude", model: "opus" });
-});
-
-test("a first session on Outrunner's models names none, leaving the server's default", async () => {
-  const calls = stubFetch({
-    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-9", githubRepoId: 9 }] }],
-    "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-3" } }],
-    "POST /api/onboarding/complete": () => [200, { ok: true }],
-  });
-  const href = await liveEnv(user, { outrunnerModels: true }).finish({
-    target: "cloud",
-    repoIds: ["9"],
-    session: { repoId: "9", model: "outrunner" },
-  });
-  // No first message: the session opens without a query.
-  assert.equal(href, "/workspaces/w-3");
-  assert.deepEqual(calls[1].body, { branch: "" });
-});
-
-test("a session in a repository that wasn't picked is refused before anything is connected", async () => {
-  const calls = stubFetch({});
+test("a checkout that can't start says why and leaves onboarding unfinished", async () => {
+  const assigned = fakePage(false);
+  const calls = stubFetch({ "POST /api/billing/checkout": () => [502, { error: "Couldn't reach Stripe. Try again in a moment." }] });
   await assert.rejects(
-    liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["7"], session: { repoId: "9", model: "claude" } }),
-    /Choose that repository first/,
-  );
-  assert.equal(calls.length, 0);
-});
-
-test("a refused first session shows the server's reason and leaves onboarding unmarked", async () => {
-  const calls = stubFetch({
-    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-9", githubRepoId: 9 }] }],
-    "POST /api/projects/p-9/workspaces": () => [
-      409,
-      { error: "Connect Claude in Settings before creating a workspace." },
-    ],
-  });
-  await assert.rejects(
-    liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["9"], session: { repoId: "9", model: "claude" } }),
-    /Connect Claude in Settings/,
+    liveEnv(user, noModels).finish({ target: "cloud", next: { to: "plan", plan: "max", interval: "month" } }),
+    /Couldn't reach Stripe/,
   );
   assert.ok(!calls.some((c) => c.url === "/api/onboarding/complete"));
-});
-
-test("repositories that can't be connected say why, and onboarding stays unfinished", async () => {
-  const calls = stubFetch({
-    "POST /api/projects/sync": () => [409, { error: "Sign out and back in to GitHub." }],
-  });
-  await assert.rejects(liveEnv(user, noModels).finish({ target: "cloud", repoIds: ["9"] }), /Sign out and back in/);
-  assert.ok(!calls.some((c) => c.url === "/api/onboarding/complete"));
+  assert.deepEqual(assigned, []);
 });
 
 test("skipping marks onboarding done and goes home", async () => {
@@ -206,7 +144,7 @@ test("a Mac that isn't logged in starts its session on Outrunner's model", async
     "POST /api/outrunner-models/key": () => [200, { key }],
     "POST /api/onboarding/complete": () => [200, {}],
   });
-  const href = await liveEnv(user, { outrunnerModels: true }).finish({ target: "mac", folder });
+  const href = await liveEnv(user, withModels).finish({ target: "mac", folder });
   const id = agent[0].body && (agent[0].body as { workspaceId: string }).workspaceId;
   assert.equal(href, `/local/${id}`);
   // Created, then put on the model before anything launches it.
@@ -227,7 +165,7 @@ test("a logged-in Mac, or a server without Outrunner's models, keeps the Mac's o
     [false, false],
   ] as const) {
     const agent = fakeMac(loggedIn);
-    await liveEnv(user, { outrunnerModels }).finish({ target: "mac", folder });
+    await liveEnv(user, { outrunnerModels, prices: null }).finish({ target: "mac", folder });
     assert.deepEqual(agent.map((a) => a.path), ["/workspaces"], `loggedIn=${loggedIn} models=${outrunnerModels}`);
   }
 });
@@ -239,7 +177,7 @@ test("a session that can't get Outrunner's model is removed, not left on a login
     "POST /api/outrunner-models/key": () => [503, { error: "Outrunner's models are not set up on this server." }],
   });
   await assert.rejects(
-    liveEnv(user, { outrunnerModels: true }).finish({ target: "mac", folder }),
+    liveEnv(user, withModels).finish({ target: "mac", folder }),
     /not set up on this server/,
   );
   const id = (agent[0].body as { workspaceId: string }).workspaceId;
@@ -287,28 +225,22 @@ function fakeScan(answer: () => unknown) {
   };
 }
 
-test("work to import is found on this Mac, counting only what can move", async () => {
+test("the Mac's scan is what onboarding offers to import from", async () => {
   // Outside the Mac app there's nothing to scan.
   assert.equal(await liveEnv(user, noModels).findImports(), null);
-  fakeScan(() =>
-    scanWith([
-      { source: "conductor" },
-      { source: "claude-cli" },
-      { source: "conductor" },
-      { source: "codex-cli", skip: "no-github-remote" },
-    ]),
+  fakeScan(() => scanWith([{ source: "conductor" }, { source: "codex-cli", skip: "no-github-remote" }]));
+  const scan = await liveEnv(user, noModels).findImports();
+  assert.deepEqual(
+    scan?.sessions.map((s) => s.source),
+    ["conductor", "codex-cli"],
   );
-  assert.deepEqual(await liveEnv(user, noModels).findImports(), { sessions: 3, sources: ["conductor", "claude-cli"] });
 });
 
-test("a scan that finds only what can't move, or fails, offers no import", async () => {
-  fakeScan(() => scanWith([{ source: "conductor", skip: "no-github-remote" }]));
-  assert.equal(await liveEnv(user, noModels).findImports(), null);
+test("a scan that fails, or answers what the web app can't read, offers no import", async () => {
   fakeScan(() => {
     throw new Error("scan failed");
   });
   assert.equal(await liveEnv(user, noModels).findImports(), null);
-  // An answer the web app can't read is no offer either.
   fakeScan(() => ({ version: 2 }));
   assert.equal(await liveEnv(user, noModels).findImports(), null);
 });

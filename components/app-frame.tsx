@@ -30,6 +30,8 @@ export type FrameChrome = {
   collapsed: boolean;
   /** The projects folded shut in the sidebar, from their cookie. */
   folded: string[];
+  /** The "Get started" checklist skipped, from its cookie. */
+  getStartedSkipped: boolean;
 };
 
 /** Where the choice was kept before the cookie, read once to carry it over. */
@@ -154,6 +156,9 @@ export function AppFrame({
                 onCollapse={() => setAndRemember(true)}
                 searchSignal={searchSignal}
                 initialFolded={look?.folded ?? NO_FOLDED}
+                // Null until the cookies land: the checklist waits rather than
+                // show itself to someone who skipped it.
+                getStartedSkipped={look ? look.getStartedSkipped : null}
               />
             )}
           </div>

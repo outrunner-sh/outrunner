@@ -40,6 +40,62 @@ export type ImportProgress = {
   message?: string;
 };
 
+/** Each state as a session's row shows it. */
+export const IMPORT_STATE_LABELS: Record<ImportState, string> = {
+  waiting: "Waiting",
+  uploading: "Uploading",
+  saving: "Saving",
+  done: "Imported",
+  skipped: "Skipped",
+  failed: "Failed",
+};
+
+/** What the user agrees to by importing a session, said where they pick. */
+export const IMPORT_UPLOAD_NOTE =
+  "Each session's unpushed commits, uncommitted changes and full conversation are uploaded to your Outrunner cloud. A conversation can include anything its agent read, secrets too.";
+
+/** What a session brings with it, for its row: "2 unpushed commits · 0.1 MB conversation". */
+export function sessionFacts(s: ScannedSession): string[] {
+  return [
+    s.unpushed > 0 && `${s.unpushed} unpushed ${s.unpushed === 1 ? "commit" : "commits"}`,
+    s.checkedOut && s.dirty && "uncommitted changes",
+    !s.checkedOut && "its folder is on another branch: committed work only",
+    `${(s.transcriptBytes / 1_000_000).toFixed(1)} MB conversation`,
+  ].filter((fact): fact is string => typeof fact === "string");
+}
+
+/**
+ * What is left of `progress` once a run has ended: the sessions that never
+ * started are dropped. {@link importSessions} reports every picked session as
+ * "waiting" before it plans them, so a plan that fails leaves them all on
+ * "Waiting", reading as an import still under way. Nothing is waiting once
+ * the run is over, so the state only ever means that.
+ */
+export function withoutUnstarted(progress: Record<string, ImportProgress>): Record<string, ImportProgress> {
+  return Object.fromEntries(Object.entries(progress).filter(([, p]) => p.state !== "waiting"));
+}
+
+/**
+ * How an import went, in a few words: "2 imported, 1 failed". Sessions still
+ * under way read as "Importing… 1 of 3 done". Empty with nothing to say.
+ */
+export function importSummary(progress: ImportProgress[]): string {
+  if (progress.length === 0) return "";
+  const count = (state: ImportState) => progress.filter((p) => p.state === state).length;
+  const ended = count("done") + count("skipped") + count("failed");
+  if (ended < progress.length) return `Importing… ${ended} of ${progress.length} done`;
+  return (
+    [
+      [count("done"), "imported"],
+      [count("skipped"), "skipped"],
+      [count("failed"), "failed"],
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, what]) => `${n} ${what}`)
+    .join(", ");
+}
+
 export type ImportDeps = {
   plan(request: ImportPlanRequest): Promise<ImportPlanItem[]>;
   /** The desktop app's capture and upload: the capture, or why it can't. */

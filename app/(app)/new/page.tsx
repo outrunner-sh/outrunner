@@ -17,6 +17,7 @@ export const unstable_instant = {
       cookies: [
         { name: "sidebar-collapsed", value: null },
         { name: "sidebar-folded", value: null },
+        { name: "get-started-skipped", value: null },
       ],
     },
     {
@@ -24,6 +25,7 @@ export const unstable_instant = {
       cookies: [
         { name: "sidebar-collapsed", value: null },
         { name: "sidebar-folded", value: null },
+        { name: "get-started-skipped", value: null },
       ],
     },
   ],
