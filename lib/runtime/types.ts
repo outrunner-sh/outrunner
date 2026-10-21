@@ -307,17 +307,23 @@ export interface RuntimeProvider {
    */
   sandboxAlive(sandboxId: string): Promise<boolean>;
 
-  /** Workspace changes compared with the worktree's current branch HEAD. */
+  /**
+   * Workspace changes since the branch left `baseBranch`, committed or not.
+   * Without a base, only the changes not yet committed on top of HEAD.
+   */
   listChangedFiles(input: {
     workspaceId: string;
     sandboxId: string;
+    baseBranch?: string;
   }): Promise<ChangedFile[]>;
 
-  /** A bounded, text-only diff for one provider-validated changed file. */
+  /** A bounded, text-only diff for one provider-validated changed file,
+   *  measured from the same base as `listChangedFiles`. */
   readChangedFileDiff(input: {
     workspaceId: string;
     sandboxId: string;
     path: string;
+    baseBranch?: string;
   }): Promise<string>;
 
   commitWorkspace(input: CommitWorkspaceInput): Promise<CommitWorkspaceResult>;

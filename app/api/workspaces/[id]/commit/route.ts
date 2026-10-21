@@ -69,7 +69,8 @@ export async function POST(request: Request, context: RouteContext) {
   };
 
   // Build the commit-only IO from the provider (daytona: box + worktree path;
-  // otherwise: the workspace sandbox). Neither branch exposes a push.
+  // otherwise: the workspace sandbox). Neither branch exposes a push. Changes
+  // are listed without a base branch: only uncommitted ones are left to commit.
   let io: CommitIO;
   if (isComputerProvider(provider)) {
     const computer = await getRuntimeComputerByProject(workspace.projectId);

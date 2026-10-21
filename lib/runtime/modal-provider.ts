@@ -189,20 +189,29 @@ export class ModalRuntimeProvider implements RuntimeProvider {
   async listChangedFiles(input: {
     workspaceId: string;
     sandboxId: string;
+    baseBranch?: string;
   }): Promise<ChangedFile[]> {
     const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
     const worktree = await this.worktreePath(sandbox);
-    return gitListChangedFiles(this.gitExec(sandbox), { worktree });
+    return gitListChangedFiles(this.gitExec(sandbox), {
+      worktree,
+      baseBranch: input.baseBranch,
+    });
   }
 
   async readChangedFileDiff(input: {
     workspaceId: string;
     sandboxId: string;
     path: string;
+    baseBranch?: string;
   }): Promise<string> {
     const sandbox = await this.client.sandboxes.fromId(input.sandboxId);
     const worktree = await this.worktreePath(sandbox);
-    return readFileDiff(this.gitExec(sandbox), { worktree, path: input.path });
+    return readFileDiff(this.gitExec(sandbox), {
+      worktree,
+      path: input.path,
+      baseBranch: input.baseBranch,
+    });
   }
 
   async commitWorkspace(
