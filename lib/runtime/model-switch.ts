@@ -3,6 +3,8 @@ import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/ope
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import {
   checkEffortApplied,
+  CLAUDE_DEFAULT_MODEL,
+  DEFAULT_EFFORT,
   type Effort,
   EffortUnsupportedError,
   type KeyHolder,
@@ -56,8 +58,9 @@ export class NoStartingModelError extends Error {
  * default (lib/runtime/session-models.ts defaultModel). When the default
  * can't be had (no key, a provider refusing, a box whose agent predates
  * switching or the provider), or there is none, the session starts on the
- * user's Claude login instead, or fails without one; a model the user chose
- * fails rather than quietly becoming another. Returns who it starts on.
+ * user's Claude login instead, on CLAUDE_DEFAULT_MODEL at DEFAULT_EFFORT, or
+ * fails without one; a model the user chose fails rather than quietly
+ * becoming another. Returns who it starts on.
  */
 export async function startingModel(deps: {
   /** Resolves to the agent's answer, which says the effort it applied. */
@@ -78,6 +81,16 @@ export async function startingModel(deps: {
     const req = await setModelRequest(model, deps.keyFor, effort);
     checkEffortApplied(req, await deps.setModel(req));
   };
+  // Nothing picked, on the user's Claude. Best effort: a box whose agent
+  // predates switching, or efforts, still starts, on Claude Code's own.
+  const putOnClaudeDefault = async () => {
+    try {
+      const req = await setModelRequest(CLAUDE_DEFAULT_MODEL, deps.keyFor, DEFAULT_EFFORT);
+      checkEffortApplied(req, await deps.setModel(req));
+    } catch (error) {
+      console.warn("A new session starts on Claude Code's own default model: the agent couldn't set Opus", error);
+    }
+  };
   if (!chosen || chosen.provider === "claude") {
     if (!deps.hasClaude) {
       throw new NoStartingModelError(
@@ -86,8 +99,8 @@ export async function startingModel(deps: {
           : "Outrunner's models aren't available on this server. Connect Claude in Settings to start a session.",
       );
     }
-    // The menu's Claude model, or none: the session's own default.
     if (chosen) await put(chosen);
+    else await putOnClaudeDefault();
     return "claude";
   }
   try {
@@ -96,6 +109,7 @@ export async function startingModel(deps: {
   } catch (error) {
     if (deps.hasClaude && !deps.model) {
       console.warn(`A new session starts on Claude: its default, ${chosen.id} (${chosen.provider}), was unavailable`, error);
+      await putOnClaudeDefault();
       return "claude";
     }
     throw new NoStartingModelError(startFailure(error, chosen));

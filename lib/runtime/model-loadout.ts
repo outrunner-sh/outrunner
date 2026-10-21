@@ -9,6 +9,7 @@
  */
 
 import {
+  DEFAULT_EFFORT,
   type Effort,
   isEffort,
   modelChoice,
@@ -92,6 +93,14 @@ export function loadoutEffort(loadout: ModelLoadout, model: LoadoutEntry): Effor
   return loadout.models.find((e) => sameEntry(e, model))?.effort;
 }
 
+/** The effort `model` runs at when picked: the loadout's for it (null: the
+ *  model's own, as Settings shows it), else DEFAULT_EFFORT. Only a model that
+ *  takes one gets it (takesEffort). */
+export function effortOnPick(loadout: ModelLoadout | undefined, model: LoadoutEntry): Effort | null {
+  const entry = loadout?.models.find((e) => sameEntry(e, model));
+  return entry ? (entry.effort ?? null) : DEFAULT_EFFORT;
+}
+
 /** `entry` set to run at `effort`, or at its own with null. A model not in
  *  the loadout, or one that takes no effort, is left as it is. */
 export function setEntryEffort(loadout: ModelLoadout, entry: LoadoutEntry, effort: Effort | null): ModelLoadout {
@@ -104,15 +113,18 @@ export function setEntryEffort(loadout: ModelLoadout, entry: LoadoutEntry, effor
   return { ...loadout, models };
 }
 
-/** `entry` added at the end, or taken out; the default goes with it. */
+/** `entry` added at the end, at DEFAULT_EFFORT where it takes one, or taken
+ *  out; the default goes with it. */
 export function toggleEntry(loadout: ModelLoadout, entry: LoadoutEntry): ModelLoadout {
   if (loadout.models.some((e) => sameEntry(e, entry))) {
     const models = loadout.models.filter((e) => !sameEntry(e, entry));
     return { models, default: sameEntry(loadout.default, entry) ? null : loadout.default };
   }
   if (loadout.models.length >= LOADOUT_MAX) return loadout;
+  const added: LoadoutEntry = { provider: entry.provider, id: entry.id };
+  if (takesEffort(entry)) added.effort = DEFAULT_EFFORT;
   // The first model picked is the default until another is made it.
-  return { models: [...loadout.models, entry], default: loadout.default ?? entry };
+  return { models: [...loadout.models, added], default: loadout.default ?? added };
 }
 
 /**

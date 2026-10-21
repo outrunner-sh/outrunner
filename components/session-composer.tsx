@@ -25,8 +25,9 @@ import {
   type TypedModelProvider,
 } from "@/lib/runtime/custom-models";
 import { EffortMeter, effortName } from "@/components/effort-meter";
-import { loadoutEffort, loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
+import { effortOnPick, loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
 import {
+  DEFAULT_EFFORT,
   type Effort,
   EFFORT_LABELS,
   EFFORTS,
@@ -350,10 +351,9 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
       key={`${m.provider}:${m.id}`}
       // Always sent, even for the ticked family: the session may run an
       // older model of it, and the agent ignores a switch to what it has.
-      // The same model keeps its effort; another runs at the loadout's for it.
-      onSelect={() =>
-        choice.onChange(m, isCurrent(m) ? choice.effort : (choice.loadout && loadoutEffort(choice.loadout, m)) ?? null)
-      }
+      // The same model keeps its effort; another runs at the loadout's for
+      // it, else DEFAULT_EFFORT.
+      onSelect={() => choice.onChange(m, isCurrent(m) ? choice.effort : effortOnPick(choice.loadout, m))}
     >
       <ModelIcon provider={m.provider} />
       <span className="flex-1 truncate">{m.label}</span>
@@ -465,7 +465,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
         }}
         onChoose={(provider, id) => {
           rememberCustomModel(provider, id);
-          choice.onChange({ id, label: id, provider }, null);
+          choice.onChange({ id, label: id, provider }, DEFAULT_EFFORT);
         }}
       />
     </>
