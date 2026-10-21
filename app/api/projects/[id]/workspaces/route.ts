@@ -5,6 +5,7 @@ import { after, NextResponse } from "next/server";
 import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
+import { getProjectEnvironment } from "@/lib/db/project-environment";
 import { planFor } from "@/lib/billing/entitlements";
 import {
   agentAuthStore,
@@ -30,6 +31,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { isValidBranchName } from "@/lib/runtime/git";
+import { deliverProjectEnvironment } from "@/lib/runtime/project-environment";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import { agentOf, defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
 import {
@@ -335,11 +337,8 @@ async function provisionWorkspace({
         userId: owner.id,
       };
       const agent = new AgentClient(target);
-      const signIn = sessionAuthClient(
-        agent,
-        identity,
-        boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id),
-      );
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id);
+      const signIn = sessionAuthClient(agent, identity, upgrade);
       // Before the session is made: an agent too old for Codex would make a
       // Claude Code session of it. One that is, is upgraded in place.
       await readyBox(signIn, agentId, auth);
@@ -356,6 +355,15 @@ async function provisionWorkspace({
       );
       // Before the first launch, so the agent starts signed in.
       await deliverSessionAuth(signIn, agentId, auth);
+      // And with its project's variables, its setup run once as it starts.
+      await deliverProjectEnvironment(
+        {
+          features: async () => (await agent.health(identity)).features ?? [],
+          upgrade,
+          setEnvironment: (req) => agent.setEnvironment(identity, req),
+        },
+        await getProjectEnvironment(owner.id, project.id),
+      );
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
         setModel: (req) => agent.setModel(identity, req),
