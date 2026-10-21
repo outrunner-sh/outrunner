@@ -98,6 +98,9 @@ type Service struct {
 	// runCommand runs a helper an agent needs before a launch (`codex
 	// login`); tests stand in for it.
 	runCommand func(ctx context.Context, env []string, stdin string, argv ...string) ([]byte, error)
+	// claudeHelp is the installed Claude Code's --help, for the flags it
+	// takes (claudeTakes).
+	claudeHelp claudeHelp
 
 	// factsWriteMu serializes updateFacts' read-modify-writes.
 	factsWriteMu sync.Mutex
