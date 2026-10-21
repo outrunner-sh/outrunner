@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { mapWithConcurrency } from "@/lib/concurrency";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { getGitHubRepository, listGitHubRepositories, type GitHubRepository } from "@/lib/github/client";
+import { connectRepositories } from "@/lib/github/connect";
 import { githubErrorResponse } from "@/lib/github/http";
 import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
@@ -13,8 +13,6 @@ export const dynamic = "force-dynamic";
 
 /** Repositories one request may connect by id; the picker sends one. */
 const MAX_SELECTION = 100;
-/** Lookups of selected repositories run at once. */
-const LOOKUP_CONCURRENCY = 6;
 
 /**
  * Connect repositories as projects.
@@ -63,12 +61,13 @@ export async function POST(request: Request) {
   try {
     const token = await requireGithubToken(owner.id);
     let repositories: GitHubRepository[];
+    let synced: number;
     let complete = true;
     if (selection) {
-      const found = await mapWithConcurrency(selection, LOOKUP_CONCURRENCY, (id) =>
-        getGitHubRepository(token, id),
-      );
-      repositories = found.filter((repo): repo is GitHubRepository => repo !== null);
+      ({ repositories, synced } = await connectRepositories(owner.id, token, selection, {
+        lookup: getGitHubRepository,
+        upsert: upsertProjects,
+      }));
       if (repositories.length === 0) {
         return NextResponse.json(
           { error: "Your GitHub account can't see that repository any more. Refresh the list and try again." },
@@ -82,8 +81,8 @@ export async function POST(request: Request) {
       });
       repositories = list.repositories;
       complete = list.complete;
+      synced = await upsertProjects(owner.id, repositories);
     }
-    const synced = await upsertProjects(owner.id, repositories);
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
     return NextResponse.json({
