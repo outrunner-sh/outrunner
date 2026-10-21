@@ -4,11 +4,11 @@ import Link from "next/link";
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
-import { getStartedSteps, showGetStarted } from "@/lib/nav/get-started";
+import { getStartedSteps, rememberGetStartedSkipped, showGetStarted } from "@/lib/nav/get-started";
 import { cn } from "@/lib/utils";
 
-/** Where the card's own state is kept on this device: skipped, and folded. */
-const SKIPPED_KEY = "outrunner.get-started.skipped";
+/** Folded shut, kept on this device: it only moves the card's own rows, so it
+ *  is not worth a cookie the server has to read. Skipping is (get-started.ts). */
 const FOLDED_KEY = "outrunner.get-started.folded";
 const CHANGED = "outrunner:get-started";
 
@@ -40,16 +40,27 @@ function useStoredFlag(key: string, onServer: boolean): [boolean, (on: boolean) 
 /**
  * "Get started" in the sidebar: a short checklist for a new user (lib/nav/
  * get-started.ts), each step a link to where it's done. It goes once every
- * step is, or when the user skips it. Skipped on the server, so a user who
- * skipped it never sees it flash in.
+ * step is, or when the user skips it. Skipping is a cookie the app layout
+ * reads, so a user who skipped it never sees it flash in.
  */
-export function GetStarted({ projects, sessions }: { projects: number; sessions: number }) {
-  const [skipped, setSkipped] = useStoredFlag(SKIPPED_KEY, true);
+export function GetStarted({
+  projects,
+  sessions,
+  skipped,
+}: {
+  projects: number;
+  sessions: number;
+  /** Skipped before, from its cookie; null until that is read. */
+  skipped: boolean | null;
+}) {
+  const [skippedHere, setSkippedHere] = useState(false);
   const [folded, setFolded] = useStoredFlag(FOLDED_KEY, false);
   const [claudeConnected, setClaudeConnected] = useState<boolean | null>(null);
+  // Not known yet counts as away: nothing shows until the cookie says it should.
+  const away = skipped !== false || skippedHere;
 
   useEffect(() => {
-    if (skipped) return;
+    if (away) return;
     let cancelled = false;
     const read = async () => {
       try {
@@ -68,10 +79,10 @@ export function GetStarted({ projects, sessions }: { projects: number; sessions:
       cancelled = true;
       window.removeEventListener("focus", read);
     };
-  }, [skipped]);
+  }, [away]);
 
   const steps = getStartedSteps({ projects, sessions, claudeConnected });
-  if (!showGetStarted(steps, skipped)) return null;
+  if (!showGetStarted(steps, away)) return null;
   const done = steps.filter((s) => s.done).length;
 
   return (
@@ -122,7 +133,10 @@ export function GetStarted({ projects, sessions }: { projects: number; sessions:
           <div className="border-t border-border/60 px-3 py-2">
             <button
               type="button"
-              onClick={() => setSkipped(true)}
+              onClick={() => {
+                rememberGetStartedSkipped();
+                setSkippedHere(true);
+              }}
               className="text-xs text-muted-foreground hover:text-foreground"
             >
               Skip

@@ -62,6 +62,7 @@ export function AppSidebar({
   onCollapse,
   searchSignal = 0,
   initialFolded = [],
+  getStartedSkipped = null,
 }: {
   /** What it lists hasn't arrived yet (a cold start): rows held by a skeleton. */
   loading?: boolean;
@@ -74,6 +75,8 @@ export function AppSidebar({
   searchSignal?: number;
   /** The projects folded shut, by group key (from their cookie). */
   initialFolded?: string[];
+  /** The "Get started" checklist skipped (from its cookie); null until read. */
+  getStartedSkipped?: boolean | null;
 }) {
   const pathname = usePathname();
   const active = activeSessionId(pathname);
@@ -228,7 +231,11 @@ export function AppSidebar({
 
       {/* Counted once both lists are in, so no step reads undone as they land. */}
       {!loading && local.state !== "loading" && (
-        <GetStarted projects={projects.length} sessions={workspaces.length + local.sessions.length} />
+        <GetStarted
+          projects={projects.length}
+          sessions={workspaces.length + local.sessions.length}
+          skipped={getStartedSkipped}
+        />
       )}
       <OutrunnerAllowance />
       <AppUpdate />

@@ -6,6 +6,7 @@ import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 
@@ -55,6 +56,7 @@ async function ChromeData() {
       value={{
         collapsed: jar.get(SIDEBAR_COOKIE)?.value === "1",
         folded: readFoldedProjects(jar.get(FOLDED_PROJECTS_COOKIE)?.value),
+        getStartedSkipped: jar.get(GET_STARTED_COOKIE)?.value === "1",
       }}
     />
   );
