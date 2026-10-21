@@ -170,6 +170,12 @@ type workspaceFacts struct {
 	CreatedAt string `json:"createdAt,omitempty"`
 }
 
+// GitUser is the git identity for commits in a workspace.
+type GitUser struct {
+	Name  string
+	Email string
+}
+
 // CreateInput is what Create needs to provision one workspace.
 type CreateInput struct {
 	WorkspaceID string
@@ -188,6 +194,8 @@ type CreateInput struct {
 	// Agent is the coding agent the session runs (ValidAgent); empty is
 	// Claude. Recorded at the first Create only.
 	Agent string
+	// GitUser is the git identity for commits; nil uses the system default.
+	GitUser *GitUser
 }
 
 func NewService(root string) *Service {
@@ -212,9 +220,13 @@ func NewService(root string) *Service {
 // and excludes the Runtime agent's control-plane secret and launch variables.
 // This prevents an interactive shell from reading RUNTIME_AGENT_SECRET via
 // `env`, while keeping non-sensitive OS settings such as PATH and HOME.
+//
+// The user's GitHub token (GH_TOKEN) stays, for `gh`, and git is pointed at it
+// for github.com only (githubCredentialEnv), so the agent can push its branch.
 func sessionEnvironment(base []string) ([]string, []string) {
 	env := make([]string, 0, len(base))
 	secrets := make([]string, 0, 2)
+	hasGitHub := false
 	for _, entry := range base {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok {
@@ -223,14 +235,28 @@ func sessionEnvironment(base []string) ([]string, []string) {
 		switch key {
 		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT":
 			continue
-		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY":
+		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN":
 			if value != "" {
 				secrets = append(secrets, value)
+				hasGitHub = hasGitHub || key == "GH_TOKEN"
 			}
 		}
 		env = append(env, entry)
 	}
+	if hasGitHub {
+		// Last, so these win over any the box set itself.
+		env = append(withoutEnv(env, "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"), githubCredentialEnv...)
+	}
 	return env, secrets
+}
+
+// githubCredentialEnv has git answer github.com's credential prompt with
+// $GH_TOKEN, as the environment's config (GIT_CONFIG_COUNT): nothing written
+// to the box's .gitconfig, and no other host ever handed the token.
+var githubCredentialEnv = []string{
+	"GIT_CONFIG_COUNT=1",
+	"GIT_CONFIG_KEY_0=credential.https://github.com.helper",
+	`GIT_CONFIG_VALUE_0=!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f`,
 }
 
 // RedactionSecrets returns a defensive copy of values that must not be sent to
@@ -388,6 +414,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	// Configure git author so commits are attributed to the Outrunner user.
+	if in.GitUser != nil && in.GitUser.Name != "" && in.GitUser.Email != "" {
+		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.name", in.GitUser.Name).Run()
+		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.email", in.GitUser.Email).Run()
 	}
 	return worktree, nil
 }

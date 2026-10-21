@@ -53,7 +53,7 @@ import {
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
-import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
@@ -150,11 +150,11 @@ export async function POST(request: Request, context: RouteContext) {
 
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  // Either credential kind is fine; an empty env means none was set, unless
+  // Either credential kind is fine; without one none was set, unless
   // the session gets one of its own. Sessions start on Outrunner's models (on
   // the user's own OpenRouter key, or the server's), so only without those is
   // Claude a must. Codex runs on its own sign-in, resolved above.
-  const hasClaude = agentId === "claude" && (Object.keys(sessionEnv).length > 0 || auth.credential !== null);
+  const hasClaude = agentId === "claude" && (hasClaudeCredential(sessionEnv) || auth.credential !== null);
   const menu = await modelMenu(owner.id);
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
@@ -317,6 +317,15 @@ async function provisionWorkspace({
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
       let endedBox = endedBoxOf(currentComputer, provider.name);
+      const needsNewComputer =
+        !currentComputer?.daytonaSandboxId ||
+        currentComputer.status !== "ready";
+
+      // Show "allocate" phase only when provisioning a new computer
+      if (needsNewComputer) {
+        await setPhase("allocate");
+      }
+
       if (currentComputer?.status === "ready" && currentComputer.daytonaSandboxId) {
         const sandboxId = currentComputer.daytonaSandboxId;
         const madeBy = computerMadeBy(currentComputer);
@@ -348,9 +357,11 @@ async function provisionWorkspace({
       // Initial provisioning clones the mirror. Every later workspace refreshes
       // it before the agent branches from the project's default branch.
       if (!ensured.provisioned) {
+        await setPhase("clone");
         await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
       }
 
+      await setPhase("worktree");
       const target = await provider.agentTarget(
         computer.daytonaSandboxId,
         ensured.agentSecret,
@@ -378,10 +389,13 @@ async function provisionWorkspace({
           branch: workspace.branch,
           // Named only for Codex: Claude Code is every agent's default.
           ...(agentId !== "claude" && { agent: agentId }),
+          // Configure git author so commits are attributed to the user.
+          ...(owner.email && { gitUser: { name: owner.name, email: owner.email } }),
         },
         identity,
       );
       // Before the first launch, so the agent starts signed in.
+      await setPhase("secrets");
       await deliverSessionAuth(signIn, agentId, auth);
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
@@ -392,6 +406,7 @@ async function provisionWorkspace({
         effort: chosenEffort,
         fallback: defaultModel(menu),
       });
+      await setPhase("health_check");
       await agent.startWorkspace(identity);
 
       const ready = await settle({

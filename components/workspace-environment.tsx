@@ -1,37 +1,47 @@
 "use client";
 
 import {
+  ArrowUpRight,
   ChevronDown,
   ChevronRight,
   Cloud,
   GitBranch,
+  GitMerge,
   GitPullRequest,
   Monitor,
   PanelRightClose,
   Plus,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceChanges } from "@/components/workspace-changes";
-import { WorkspacePublishPanel } from "@/components/workspace-publish-panel";
+import type { SessionSender } from "@/components/workspace-session";
+import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
+import type { PullRequestStatus } from "@/lib/github/client";
 import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
+import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
+import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";
 import { cn } from "@/lib/utils";
 
 /**
  * The session's Environment: where it runs, its changes, its branch and its
  * pull request, one quiet row each. Changes opens the file list in place; the
- * branch and pull request rows unfold their details beneath them. The terminal
- * docks below, in the studio's slot, not here.
+ * branch row unfolds its details beneath it, and the pull request row asks the
+ * agent for one, then links to the pull request it opens. The terminal docks
+ * below, in the studio's slot, not here.
  */
 export function WorkspaceEnvironment({
   workspace,
   local,
   pullRequest,
   isReady,
+  sender,
   terminalOpen,
   onClose,
 }: {
@@ -39,6 +49,8 @@ export function WorkspaceEnvironment({
   local?: LocalSession;
   pullRequest: WorkspacePullRequest | null;
   isReady: boolean;
+  /** Sends into the session while it can (Create PR's prompt). */
+  sender: SessionSender | null;
   /** The terminal below is expanded: the rows then take only their height. */
   terminalOpen: boolean;
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
@@ -59,14 +71,12 @@ export function WorkspaceEnvironment({
     returning.current = true;
     setView("overview");
   };
-  const [open, setOpen] = useState<"branch" | "pr" | null>(null);
+  const [branchOpen, setBranchOpen] = useState(false);
   const changes = useWorkspaceChanges({ workspaceId: workspace.id, local: local !== undefined, active: isReady });
   const summary = environmentSummary(workspace, local);
-  const unfold = (row: "branch" | "pr") => setOpen((current) => (current === row ? null : row));
 
   // Both views stay mounted, the one not in use hidden: leaving the overview
-  // for Changes (or folding the PR row) must not throw away a pull request
-  // being written there.
+  // for Changes must not stop the watch for a pull request being opened.
   return (
     <>
       {view === "changes" && (
@@ -110,14 +120,14 @@ export function WorkspaceEnvironment({
         </EnvRow>
 
         <EnvRow
-          onClick={() => unfold("branch")}
-          expanded={open === "branch"}
+          onClick={() => setBranchOpen((current) => !current)}
+          expanded={branchOpen}
           icon={<GitBranch />}
-          right={<ChevronDown className={cn("transition-transform", open === "branch" && "rotate-180")} />}
+          right={<ChevronDown className={cn("transition-transform", branchOpen && "rotate-180")} />}
         >
           <span className="truncate">{summary.branch ?? "No branch"}</span>
         </EnvRow>
-        {open === "branch" && (
+        {branchOpen && (
           <dl className="studio-env-details">
             {summary.branch ? (
               <>
@@ -136,34 +146,283 @@ export function WorkspaceEnvironment({
           </dl>
         )}
 
-        {/* Publishing goes through the server, which reaches cloud worktrees
-            only; a local session's branch stays in the folder's repository. */}
+        {/* Cloud sessions only: the instructions go as an attachment, which a
+            session on this Mac can't take. */}
         {!local && summary.branch && (
-          <>
-            <EnvRow
-              onClick={() => unfold("pr")}
-              expanded={open === "pr"}
-              icon={<GitPullRequest />}
-              right={<ChevronDown className={cn("transition-transform", open === "pr" && "rotate-180")} />}
-            >
-              {pullRequest ? `PR #${pullRequest.number}` : "Create PR"}
-            </EnvRow>
-            {/* Folded, not unmounted: the draft survives closing the row. */}
-            <div hidden={open !== "pr"} className="studio-env-unfold">
-              <WorkspacePublishPanel
-                workspaceId={workspace.id}
-                branch={summary.branch}
-                baseBranch={summary.baseBranch ?? workspace.baseBranch}
-                pullRequest={pullRequest}
-                active={isReady}
-                defaultTitle={workspace.title}
-              />
-            </div>
-          </>
+          <PullRequestRow
+            workspaceId={workspace.id}
+            branch={summary.branch}
+            baseBranch={summary.baseBranch ?? workspace.baseBranch}
+            uncommitted={isReady && changes.files ? changes.files.length : null}
+            pullRequest={pullRequest}
+            sender={isReady ? sender : null}
+          />
         )}
       </div>
     </>
   );
+}
+
+/** How often, and for how long, the row looks for the pull request the agent
+ *  was asked to open. Long enough for an agent that commits, pushes and writes
+ *  a description; the page looking again on its next load covers the rest. */
+const PR_POLL_MS = 15_000;
+const PR_WAIT_MS = 10 * 60_000;
+/** How often an open pull request's status (checks, mergeability) is re-read. */
+const PR_STATUS_POLL_MS = 30_000;
+/** How long Merge waits for its confirming second click. */
+const MERGE_CONFIRM_MS = 4_000;
+
+type RowError = { message: string; reconnect: boolean };
+
+/**
+ * The session's pull request. Without one, Create PR asks the session's agent
+ * to open it, as Conductor does: the prompt "Create a PR" with
+ * `PR instructions.md` attached, sent through the session like a message typed
+ * in the composer; the row then watches GitHub for it. With one, the row links
+ * to it, says where it stands, and offers Merge once it is green.
+ */
+function PullRequestRow({
+  workspaceId,
+  branch,
+  baseBranch,
+  uncommitted,
+  pullRequest,
+  sender,
+}: {
+  workspaceId: string;
+  branch: string;
+  baseBranch: string;
+  /** Files changed and not committed, null while unknown. */
+  uncommitted: number | null;
+  pullRequest: WorkspacePullRequest | null;
+  sender: SessionSender | null;
+}) {
+  const router = useRouter();
+  const [found, setFound] = useState<WorkspacePullRequest | null>(null);
+  const [status, setStatus] = useState<PullRequestStatus | null>(null);
+  const [phase, setPhase] = useState<"idle" | "sending" | "waiting">("idle");
+  const [error, setError] = useState<RowError | null>(null);
+  const opened = found ?? pullRequest;
+  const hasPullRequest = opened !== null;
+  // Looked for every PR_POLL_MS while the agent is at it, re-read every
+  // PR_STATUS_POLL_MS while open, and left alone once merged or closed.
+  const settled = status !== null && status.state !== "open";
+  const pollMs = hasPullRequest ? (settled ? null : PR_STATUS_POLL_MS) : phase === "waiting" ? PR_POLL_MS : null;
+
+  // Also looks once on opening: the agent may have opened one since the page
+  // loaded, or without being asked. Only a sign-in GitHub refused is worth
+  // saying; anything else, the next look may get past, and a status that
+  // couldn't be read keeps the last one.
+  useEffect(() => {
+    let live = true;
+    const look = async () => {
+      const result = await lookUpPullRequest(workspaceId);
+      if (!live) return;
+      if (result.pullRequest) {
+        if (!hasPullRequest) {
+          setFound(result.pullRequest);
+          setPhase("idle");
+          router.refresh();
+        }
+        if (result.status) setStatus(result.status);
+      } else if (result.reconnect) {
+        setError({ message: result.error ?? "Reconnect GitHub to see the pull request.", reconnect: true });
+      }
+    };
+    void look();
+    if (pollMs === null) return () => void (live = false);
+    const poll = setInterval(() => void look(), pollMs);
+    const giveUp = hasPullRequest ? undefined : setTimeout(() => setPhase("idle"), PR_WAIT_MS);
+    return () => {
+      live = false;
+      clearInterval(poll);
+      clearTimeout(giveUp);
+    };
+  }, [hasPullRequest, pollMs, workspaceId, router]);
+
+  const errorLine = error && (
+    <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
+      {error.message}
+      {error.reconnect && <GitHubReconnectLink />}
+    </p>
+  );
+
+  if (opened) {
+    return (
+      <>
+        <OpenedPullRequestRow
+          workspaceId={workspaceId}
+          pullRequest={opened}
+          status={status}
+          onStatus={setStatus}
+          onError={setError}
+        />
+        {errorLine}
+      </>
+    );
+  }
+
+  async function createPr() {
+    if (!sender || phase !== "idle") return;
+    setPhase("sending");
+    setError(null);
+    let attachment: { id: string };
+    try {
+      const instructions = prInstructions({ branch, baseBranch, uncommitted });
+      attachment = await uploadAttachment(
+        new File([instructions], PR_INSTRUCTIONS_FILENAME, { type: "text/markdown" }),
+      );
+    } catch (uploadError) {
+      const reason = uploadError instanceof Error ? uploadError.message : "Upload failed";
+      setError({ message: `Could not attach the PR instructions: ${reason}.`, reconnect: false });
+      setPhase("idle");
+      return;
+    }
+    // A send that fails says why in the chat, as the composer's do.
+    const sent = await sender.send(PR_PROMPT, [attachment.id]);
+    if (!sent) void fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" }).catch(() => {});
+    setPhase(sent ? "waiting" : "idle");
+  }
+
+  const busy = phase !== "idle";
+  return (
+    <>
+      <EnvRow
+        onClick={() => void createPr()}
+        disabled={!sender}
+        busy={busy}
+        icon={<GitPullRequest />}
+        title={
+          !sender
+            ? "Available once the session is connected"
+            : phase === "waiting"
+              ? "The agent is creating the pull request; it shows here once it's open"
+              : `Ask the agent to commit, push ${branch} and open a pull request into ${baseBranch}`
+        }
+        right={busy ? <Spinner label="Creating pull request" /> : undefined}
+      >
+        {busy ? "Creating PR…" : "Create PR"}
+      </EnvRow>
+      {errorLine}
+    </>
+  );
+}
+
+/** The verdict's colour in the row. */
+const VERDICT_TONE: Record<PullRequestVerdict["tone"], string> = {
+  ready: "text-positive",
+  pending: "text-white/45",
+  problem: "text-destructive",
+  done: "text-white/45",
+};
+
+/**
+ * `#99 ↗  Ready to merge  [Merge]`, after Conductor's bar. Merge takes a
+ * second click to confirm, and merges the head commit the status was read at.
+ */
+function OpenedPullRequestRow({
+  workspaceId,
+  pullRequest,
+  status,
+  onStatus,
+  onError,
+}: {
+  workspaceId: string;
+  pullRequest: WorkspacePullRequest;
+  status: PullRequestStatus | null;
+  onStatus: (status: PullRequestStatus) => void;
+  onError: (error: RowError | null) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const verdict = status ? pullRequestVerdict(status) : null;
+
+  useEffect(() => {
+    if (!confirming) return;
+    const reset = setTimeout(() => setConfirming(false), MERGE_CONFIRM_MS);
+    return () => clearTimeout(reset);
+  }, [confirming]);
+
+  async function merge() {
+    if (!status || merging) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    setMerging(true);
+    onError(null);
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/pull-request/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ headSha: status.headSha }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        status?: PullRequestStatus | null;
+        error?: string;
+        reconnect?: boolean;
+      };
+      if (!response.ok) {
+        onError({ message: result.error ?? "Could not merge the pull request.", reconnect: result.reconnect === true });
+        return;
+      }
+      onStatus(result.status ?? { ...status, state: "merged" });
+    } catch {
+      onError({ message: "Could not reach Outrunner. Please try again.", reconnect: false });
+    } finally {
+      setMerging(false);
+    }
+  }
+
+  return (
+    <EnvRow
+      icon={<GitPullRequest />}
+      right={
+        verdict?.canMerge && (
+          <button
+            type="button"
+            onClick={() => void merge()}
+            aria-busy={merging || undefined}
+            className="studio-env-merge"
+            title={`Merge #${pullRequest.number} into ${pullRequest.baseBranch} on GitHub`}
+          >
+            {merging ? <Spinner label="Merging" /> : <GitMerge />}
+            {merging ? "Merging" : confirming ? "Confirm merge" : "Merge"}
+          </button>
+        )
+      }
+    >
+      <a
+        href={pullRequest.url}
+        target="_blank"
+        rel="noreferrer"
+        title={`Open pull request #${pullRequest.number} on GitHub`}
+        className="studio-env-pr-link"
+      >
+        #{pullRequest.number}
+        <ArrowUpRight />
+      </a>
+      {verdict && <span className={cn("ml-3 truncate text-sm", VERDICT_TONE[verdict.tone])}>{verdict.label}</span>}
+    </EnvRow>
+  );
+}
+
+/** The session's pull request and its status as the server finds them, or
+ *  why it couldn't. */
+async function lookUpPullRequest(workspaceId: string): Promise<{
+  pullRequest?: WorkspacePullRequest | null;
+  status?: PullRequestStatus | null;
+  error?: string;
+  reconnect?: boolean;
+}> {
+  try {
+    const response = await fetch(`/api/workspaces/${workspaceId}/pull-request`, { cache: "no-store" });
+    return (await response.json().catch(() => ({}))) as Awaited<ReturnType<typeof lookUpPullRequest>>;
+  } catch {
+    return {};
+  }
 }
 
 /** The Changes row's `+3 −0`, or what stands in for it. */
@@ -181,7 +440,8 @@ function ChangesCount({ changes, active }: { changes: WorkspaceChangesState; act
 }
 
 /** One row: icon, what it is, and a count or chevron on the right. With
- *  `onClick` it is a button; `expanded` marks one that unfolds details. */
+ *  `onClick` it is a button: `expanded` marks one that unfolds details, `busy`
+ *  one at work, which ignores clicks. */
 function EnvRow({
   ref,
   icon,
@@ -189,6 +449,8 @@ function EnvRow({
   title,
   onClick,
   expanded,
+  disabled,
+  busy,
   children,
 }: {
   ref?: React.Ref<HTMLButtonElement>;
@@ -197,6 +459,8 @@ function EnvRow({
   title?: string;
   onClick?: () => void;
   expanded?: boolean;
+  disabled?: boolean;
+  busy?: boolean;
   children: React.ReactNode;
 }) {
   const content = (
@@ -213,8 +477,18 @@ function EnvRow({
       </div>
     );
   }
+  // Busy is not disabled: the button keeps its focus and just ignores clicks.
   return (
-    <button ref={ref} type="button" onClick={onClick} title={title} aria-expanded={expanded} className="studio-env-row is-action">
+    <button
+      ref={ref}
+      type="button"
+      onClick={busy ? undefined : onClick}
+      title={title}
+      aria-expanded={expanded}
+      aria-busy={busy || undefined}
+      disabled={disabled}
+      className="studio-env-row is-action disabled:cursor-not-allowed disabled:opacity-50"
+    >
       {content}
     </button>
   );
