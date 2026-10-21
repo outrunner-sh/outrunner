@@ -87,7 +87,7 @@ export function WorkspaceSession({
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const attachment = useSessionAttachment(workspaceId, local, agent);
   const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
-  const conversation = useConversationStream(attachment);
+  const conversation = useConversationStream(attachment, workspaceId);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
