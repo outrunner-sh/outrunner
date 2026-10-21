@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -109,7 +111,12 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	for _, g := range claude.Gateways() {
 		gateways = append(gateways, string(g))
 	}
-	writeJSON(w, http.StatusOK, protocol.Health{Status: "ok", Gateways: gateways, Agents: s.ws.Agents()})
+	writeJSON(w, http.StatusOK, protocol.Health{
+		Status:   "ok",
+		Gateways: gateways,
+		Agents:   s.ws.Agents(),
+		Features: []string{protocol.FeatureImports},
+	})
 }
 
 // authed verifies the Bearer Runtime token before invoking a control handler.
@@ -236,6 +243,10 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Branch == "" || len(req.Downloads) == 0 {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "restore requires a branch and download URLs")
+		return
+	}
+	if err := validImportRestore(req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	if err := s.ws.CheckAgent(req.Agent); err != nil {
@@ -854,3 +865,22 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func intptr(v int) *int { return &v }
+
+// validImportRestore checks what a restore of an imported session adds: a
+// known encoding, a bundle branch that can't be read as a refspec of more
+// than one ref, and an absolute folder to move the conversation from.
+func validImportRestore(req protocol.RestoreWorkspaceRequest) error {
+	for _, d := range req.Downloads {
+		if d.Encoding != "" && d.Encoding != "gzip" {
+			return fmt.Errorf("unknown encoding %q for %s", d.Encoding, d.Artifact)
+		}
+	}
+	if ref := req.BundleRef; ref != "" &&
+		(strings.HasPrefix(ref, "-") || strings.ContainsAny(ref, ": \t\n~^?*[\\") || strings.Contains(ref, "..")) {
+		return fmt.Errorf("invalid bundle branch %q", ref)
+	}
+	if o := req.OriginWorktree; o != "" && (!path.IsAbs(o) || path.Clean(o) != o || o == "/") {
+		return fmt.Errorf("invalid origin folder %q", o)
+	}
+	return nil
+}

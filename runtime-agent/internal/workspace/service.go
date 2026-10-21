@@ -1076,10 +1076,12 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	}
 	worktree := s.worktreePath(workspaceID)
 	in := snapshot.MaterializeInput{
-		MirrorPath:   s.mirrorPath(),
-		WorktreePath: worktree,
-		Branch:       req.Branch,
-		Downloads:    req.Downloads,
+		MirrorPath:     s.mirrorPath(),
+		WorktreePath:   worktree,
+		Branch:         req.Branch,
+		BundleRef:      req.BundleRef,
+		OriginWorktree: req.OriginWorktree,
+		Downloads:      req.Downloads,
 	}
 	switch {
 	case codexSession:

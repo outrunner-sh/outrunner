@@ -166,10 +166,12 @@ type ArchiveWorkspaceRequest struct {
 
 // RestoreDownload is one signed download URL for a Snapshot artifact the agent
 // needs to rebuild a Session: `artifact` is one of bundle/patch/conversation,
-// or a Codex session's optional rollout.
+// or a Codex session's optional rollout. Encoding "gzip" is an artifact stored
+// compressed (an imported session's), decompressed as it downloads.
 type RestoreDownload struct {
 	Artifact string `json:"artifact"`
 	URL      string `json:"url"`
+	Encoding string `json:"encoding,omitempty"`
 }
 
 // RestoreWorkspaceRequest carries what the agent needs to rebuild an archived
@@ -191,16 +193,29 @@ type RestoreWorkspaceRequest struct {
 	// Auth is the session's own credential, recorded before it relaunches
 	// (validated like POST /workspaces/{id}/auth).
 	Auth *SetAuthRequest `json:"auth,omitempty"`
+	// BundleRef is the branch as the bundle names it, when the session is
+	// restored onto another name (an import whose branch was taken).
+	BundleRef string `json:"bundleRef,omitempty"`
+	// OriginWorktree is the folder an imported session worked in on its Mac:
+	// the conversation's working directories under it move to the worktree.
+	OriginWorktree string `json:"originWorktree,omitempty"`
 }
 
 // Health is what the unauthenticated GET /health says: that the agent is up,
-// the gateways it can run a session through, and the agents it can run.
-// Gateways and Agents are absent from agents older than each.
+// the gateways it can run a session through, the agents it can run, and the
+// features it has. Each list is absent from agents older than it.
 type Health struct {
 	Status   string   `json:"status"`
 	Gateways []string `json:"gateways,omitempty"`
 	Agents   []string `json:"agents,omitempty"`
+	// Features are what this agent can do that an older one can't, for the
+	// control plane to upgrade a box before asking for one (FeatureImports).
+	Features []string `json:"features,omitempty"`
 }
+
+// FeatureImports is restoring an imported session: compressed downloads, a
+// bundle's branch under another name, and the conversation's folder moved.
+const FeatureImports = "restore-imports"
 
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {

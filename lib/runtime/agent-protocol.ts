@@ -67,13 +67,19 @@ export type PtyServerMessage = z.infer<typeof PtyServerMessage>;
 export const AgentName = z.enum(["claude", "codex"]);
 export type AgentName = z.infer<typeof AgentName>;
 
+/** What an agent can do that an older one can't: `restore-imports` restores
+ *  an imported session (compressed downloads, its branch renamed, its
+ *  conversation moved to the worktree). */
+export const AGENT_FEATURE_IMPORTS = "restore-imports";
+
 /** GET /health (unauthenticated): the agent is up, and what it can run a
- *  session on. `gateways` and `agents` are absent from agents older than
- *  each: those run OpenRouter alone, and Claude alone. */
+ *  session on. `gateways`, `agents` and `features` are absent from agents
+ *  older than each: those run OpenRouter alone, and Claude alone. */
 export const AgentHealth = z.object({
   status: z.literal("ok"),
   gateways: z.array(z.string()).optional(),
   agents: z.array(AgentName).optional(),
+  features: z.array(z.string()).optional(),
 });
 export type AgentHealth = z.infer<typeof AgentHealth>;
 
@@ -184,6 +190,8 @@ export type ArchiveWorkspaceRequest = z.infer<typeof ArchiveWorkspaceRequest>;
 export const RestoreDownload = z.object({
   artifact: z.enum([...RESTORE_ARTIFACTS, ...OPTIONAL_ARTIFACTS]),
   url: z.string().url(),
+  /** How the artifact is stored: "gzip" for an imported session's. */
+  encoding: z.literal("gzip").optional(),
 });
 export type RestoreDownload = z.infer<typeof RestoreDownload>;
 
@@ -206,6 +214,11 @@ export const RestoreWorkspaceRequest = z
     agent: AgentName.optional(),
     /** The session's own credential, recorded before it relaunches. */
     auth: SetAuthRequest.optional(),
+    /** The branch as the bundle names it, when restored onto another name. */
+    bundleRef: z.string().min(1).optional(),
+    /** The folder an imported session worked in on its Mac; the
+     *  conversation's working directories move from it to the worktree. */
+    originWorktree: z.string().startsWith("/").optional(),
   })
   .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",
