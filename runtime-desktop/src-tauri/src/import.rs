@@ -27,6 +27,23 @@ const ARTIFACT_KINDS: [&str; 4] = ["bundle", "patch", "conversation", "rollout"]
 /// Where signed upload URLs for imported sessions point, in the snapshot bucket.
 const UPLOAD_PATH: &str = "/storage/v1/object/upload/sign/workspace-snapshots/archives/";
 
+/// Outrunner's own storage host. Pinned to the one project, not to
+/// `*.supabase.co`: anyone can create a Supabase project, so a suffix match
+/// would let a page that got into the window upload the user's code to a
+/// bucket of their own. `OUTRUNNER_STORAGE_HOST` overrides it, for a custom
+/// domain or another project (a staging one, or a developer's).
+const STORAGE_HOST: &str = "butbnitdpiehgwqggowr.supabase.co";
+
+/// The host uploads may go to.
+fn storage_host() -> String {
+    if let Ok(host) = std::env::var("OUTRUNNER_STORAGE_HOST") {
+        if !host.trim().is_empty() {
+            return host.trim().to_string();
+        }
+    }
+    STORAGE_HOST.to_string()
+}
+
 /// Every session on this Mac that could move to the cloud, and why any can't.
 #[tauri::command]
 pub async fn import_scan() -> Result<serde_json::Value, String> {
@@ -40,7 +57,7 @@ pub async fn import_session(key: String, uploads: HashMap<String, String>) -> Re
     if !valid_key(&key) {
         return Err("invalid-session-key".into());
     }
-    check_uploads(&uploads)?;
+    check_uploads(&uploads, &storage_host())?;
     let out = std::env::temp_dir().join(format!("outrunner-import-{}", random_hex(8)));
     create_private_dir(&out)?;
     let _cleanup = RemoveOnDrop(out.clone());
@@ -90,7 +107,7 @@ fn valid_key(key: &str) -> bool {
 }
 
 /// Each upload is for an artifact a capture makes, to Outrunner's storage.
-fn check_uploads(uploads: &HashMap<String, String>) -> Result<(), String> {
+fn check_uploads(uploads: &HashMap<String, String>, storage_host: &str) -> Result<(), String> {
     if uploads.is_empty() {
         return Err("no-uploads".into());
     }
@@ -98,27 +115,24 @@ fn check_uploads(uploads: &HashMap<String, String>) -> Result<(), String> {
         if !ARTIFACT_KINDS.contains(&kind.as_str()) {
             return Err(format!("unknown-artifact: {kind}"));
         }
-        if !allowed_upload(url) {
+        if !allowed_upload_to(url, storage_host) {
             return Err(format!("upload-not-allowed: {kind}"));
         }
     }
     Ok(())
 }
 
-/// A signed upload URL into the snapshot bucket on Supabase (or on the host
-/// `OUTRUNNER_STORAGE_HOST` names, for a custom domain); a debug build also
-/// takes a local Supabase. Nothing that could step out of the bucket's
-/// archives.
-fn allowed_upload(raw: &str) -> bool {
+/// A signed upload URL into the snapshot bucket on `storage_host`, Outrunner's
+/// own (see [`storage_host`]); a debug build also takes a local Supabase.
+/// Nothing that could step out of the bucket's archives. The host is passed
+/// in rather than read here, so this tests without the process environment.
+fn allowed_upload_to(raw: &str, storage_host: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(raw) else {
         return false;
     };
     let host = url.host_str().unwrap_or_default();
     let storage = match url.scheme() {
-        "https" => {
-            host.ends_with(".supabase.co")
-                || std::env::var("OUTRUNNER_STORAGE_HOST").is_ok_and(|h| !h.is_empty() && h == host)
-        }
+        "https" => !storage_host.is_empty() && host == storage_host,
         "http" => cfg!(debug_assertions) && matches!(host, "127.0.0.1" | "localhost"),
         _ => false,
     };
@@ -168,7 +182,7 @@ mod tests {
     #[test]
     fn uploads_go_only_to_the_snapshot_bucket() {
         let ok = "https://abc.supabase.co/storage/v1/object/upload/sign/workspace-snapshots/archives/u/w/t/conversation.jsonl?token=x";
-        assert!(allowed_upload(ok));
+        assert!(allowed_upload_to(ok, "abc.supabase.co"));
         for bad in [
             "https://evil.example/storage/v1/object/upload/sign/workspace-snapshots/archives/u/w/t/x",
             "https://abc.supabase.co.evil.example/storage/v1/object/upload/sign/workspace-snapshots/archives/x",
@@ -178,12 +192,25 @@ mod tests {
             "https://user@abc.supabase.co/storage/v1/object/upload/sign/workspace-snapshots/archives/x",
             "file:///etc/passwd",
         ] {
-            assert!(!allowed_upload(bad), "{bad}");
+            assert!(!allowed_upload_to(bad, "abc.supabase.co"), "{bad}");
         }
-        let uploads = HashMap::from([("conversation".to_string(), ok.to_string())]);
-        assert!(check_uploads(&uploads).is_ok());
-        let unknown = HashMap::from([("ssh-key".to_string(), ok.to_string())]);
-        assert!(check_uploads(&unknown).is_err());
-        assert!(check_uploads(&HashMap::new()).is_err());
+        // Only the one configured project, not any Supabase one: anyone can
+        // make a project, so a page that got into the window must not be able
+        // to name theirs.
+        assert!(!allowed_upload_to(ok, STORAGE_HOST), "another project's bucket");
+        assert!(!allowed_upload_to(ok, ""), "no host configured");
+        let mine = ok.replace("abc.supabase.co", STORAGE_HOST);
+        assert!(allowed_upload_to(&mine, STORAGE_HOST));
+    }
+
+    #[test]
+    fn uploads_are_for_an_artifact_a_capture_makes() {
+        let host = "abc.supabase.co";
+        let mine = format!("https://{host}{UPLOAD_PATH}u/w/t/conversation.jsonl?token=x");
+        let one = |kind: &str| HashMap::from([(kind.to_string(), mine.clone())]);
+        assert!(check_uploads(&one("conversation"), host).is_ok());
+        assert!(check_uploads(&one("ssh-key"), host).is_err());
+        assert!(check_uploads(&one("conversation"), "other.supabase.co").is_err());
+        assert!(check_uploads(&HashMap::new(), host).is_err());
     }
 }
