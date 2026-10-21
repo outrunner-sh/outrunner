@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { MAX_RECONNECT_ATTEMPTS, reconnectPlan } from "@/lib/runtime/reconnect";
+import { dropNarration, reconnectPlan } from "@/lib/runtime/reconnect";
 import { StreamProtocolError, subscribeEventsWs } from "@/lib/runtime/session-client";
 
 import type { SessionAttachment } from "./use-session-attachment";
@@ -18,6 +18,9 @@ export type ConversationStreamState = {
   reconnecting: { attempt: number; max: number; since: number } | null;
   /** Automatic retry gave up; the session itself is untouched on its box. */
   lost: boolean;
+  /** A reconnect the user asked for is under way: the "lost connection" notice
+   *  stays (its button spinning) rather than blinking "Reconnecting…". */
+  retrying: boolean;
   /** A frame the browser couldn't read, by the reference it was logged under.
    *  Stays set until the page reloads: the frame's event is missing from the
    *  timeline, and resuming from the cursor would not bring it back. */
@@ -100,6 +103,12 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
   // Consecutive failed reconnects (reset by any received frame). A ref, not
   // reducer state, so the onClose closure reads the live count, not a stale one.
   const reconnectAttemptsRef = useRef(0);
+  // A reconnect this user asked for. It keeps the "lost connection" notice on
+  // screen — its button spinning — until it lands; the automatic retry stays
+  // quiet rather than blinking "Reconnecting…" over the button just pressed.
+  // A fresh close (its socket dying too) hands the story back to the automatic
+  // narration, and so does the first frame of a retry that lands.
+  const [manualRetry, setManualRetry] = useState(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -118,12 +127,14 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
         if (id && id !== "0") lastEventIdRef.current = id;
         // A live frame means this connection is healthy: clear the backoff.
         reconnectAttemptsRef.current = 0;
+        setManualRetry(false);
         dispatch({ kind: "frame-received" });
       },
       {
         lastEventId: lastEventIdRef.current,
         onClose: () => {
           if (!active) return;
+          setManualRetry(false);
           const attempt = (reconnectAttemptsRef.current += 1);
           dispatch({ kind: "closed", attempt, at: Date.now() });
           const plan = reconnectPlan(attempt);
@@ -205,16 +216,19 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
   }, [attachmentStatus, ws.error, ws.closed, events.length]);
 
   // A failed /session refetch is its own error with its own message, so the
-  // reconnect notices give way to it.
-  const dropped = ws.closed && attachmentStatus !== "error";
-  const reconnecting =
-    dropped && !ws.gaveUp && ws.since !== null
-      ? { attempt: ws.attempt, max: MAX_RECONNECT_ATTEMPTS, since: ws.since }
-      : null;
-
+  // reconnect notices give way to it. What the drop says on screen — the
+  // automatic retry's narration, or lost — is reconnect.ts' to decide.
+  const { reconnecting, lost } = dropNarration({
+    dropped: ws.closed && attachmentStatus !== "error",
+    gaveUp: ws.gaveUp,
+    manual: manualRetry,
+    attempt: ws.attempt,
+    since: ws.since,
+  });
   // A manual reconnect starts a fresh retry budget, as the idle re-arm does;
   // otherwise the next drop after giving up would give up at once.
   const refreshStream = useCallback(() => {
+    setManualRetry(true);
     reconnectAttemptsRef.current = 0;
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     dispatch({ kind: "rearm" });
@@ -226,7 +240,8 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
     status,
     error: ws.error ?? attachmentError,
     reconnecting,
-    lost: dropped && ws.gaveUp,
+    lost,
+    retrying: manualRetry,
     protocolErrorRef: ws.protocolErrorRef,
     refresh: refreshStream,
   };

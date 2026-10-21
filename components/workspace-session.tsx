@@ -347,7 +347,15 @@ export function WorkspaceSession({
           tone="warning"
           title="Lost connection to this session"
           detail="It's still running on its box, so nothing is lost."
-          actions={[{ label: "Reconnect", icon: <RotateCw />, primary: true, onClick: refresh }]}
+          actions={[
+            {
+              label: "Reconnect",
+              icon: <RotateCw className={conversation.retrying ? "is-working" : undefined} />,
+              primary: true,
+              disabled: conversation.retrying,
+              onClick: refresh,
+            },
+          ]}
         />
       ) : (
         conversation.reconnecting && <ReconnectingNotice {...conversation.reconnecting} />

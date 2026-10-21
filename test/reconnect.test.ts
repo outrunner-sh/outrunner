@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  dropNarration,
   MAX_RECONNECT_ATTEMPTS,
   RECONNECT_BASE_MS,
   RECONNECT_MAX_MS,
@@ -32,4 +33,34 @@ test("reconnectPlan retries through the whole budget then gives up", () => {
   }
   assert.deepEqual(reconnectPlan(MAX_RECONNECT_ATTEMPTS + 1), { retry: false });
   assert.deepEqual(reconnectPlan(MAX_RECONNECT_ATTEMPTS + 5), { retry: false });
+});
+
+test("a dropped stream narrates its automatic retries", () => {
+  const auto = dropNarration({ dropped: true, gaveUp: false, manual: false, attempt: 2, since: 1000 });
+  assert.deepEqual(auto.reconnecting, { attempt: 2, max: MAX_RECONNECT_ATTEMPTS, since: 1000 });
+  assert.equal(auto.lost, false);
+});
+
+test("a dropped stream whose retries are exhausted is lost", () => {
+  const gone = dropNarration({ dropped: true, gaveUp: true, manual: false, attempt: 7, since: 1000 });
+  assert.equal(gone.reconnecting, null);
+  assert.equal(gone.lost, true);
+});
+
+test("a retry the user asked for doesn't blink to Reconnecting", () => {
+  const manual = dropNarration({ dropped: true, gaveUp: true, manual: true, attempt: 0, since: 1000 });
+  assert.equal(manual.reconnecting, null, "the automatic narration stays quiet");
+  assert.equal(manual.lost, true, "the lost connection notice stays, its button spinning");
+});
+
+test("a close while a manual retry is under way hands the story back to the automatic one", () => {
+  // The hook clears `manual` on a fresh close; what is left narrates itself.
+  const back = dropNarration({ dropped: true, gaveUp: false, manual: false, attempt: 1, since: 2000 });
+  assert.deepEqual(back.reconnecting, { attempt: 1, max: MAX_RECONNECT_ATTEMPTS, since: 2000 });
+  assert.equal(back.lost, false);
+});
+
+test("nothing is narrated while the attachment itself has the answer", () => {
+  const quiet = dropNarration({ dropped: false, gaveUp: true, manual: true, attempt: 0, since: null });
+  assert.deepEqual(quiet, { reconnecting: null, lost: false });
 });

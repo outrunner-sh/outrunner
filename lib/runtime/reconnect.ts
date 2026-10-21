@@ -35,3 +35,41 @@ export function reconnectPlan(attempt: number): ReconnectPlan {
   const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS);
   return { retry: true, delayMs };
 }
+
+/** What to say on screen about a dropped stream. */
+export type DropNarration = {
+  /** Set while the automatic reconnect loop is running after a drop. */
+  reconnecting: { attempt: number; max: number; since: number } | null;
+  /** The automatic retries are exhausted (or a manual one is under way):
+   *  "lost connection", with the way back. */
+  lost: boolean;
+};
+
+/**
+ * What a dropped stream should say on screen. The automatic retry narrates
+ * itself ("Reconnecting… attempt N of M"); one the user asked for does not —
+ * its "lost connection" notice stays, button spinning, until it lands, rather
+ * than blinking "Reconnecting…" over the button the user just pressed.
+ */
+export function dropNarration(input: {
+  /** The socket closed, and the attachment itself hasn't failed. */
+  dropped: boolean;
+  /** Automatic retry gave up after MAX_RECONNECT_ATTEMPTS. */
+  gaveUp: boolean;
+  /** A reconnect the user asked for is under way. */
+  manual: boolean;
+  /** Consecutive failed reconnects so far this run; 0 before the first. */
+  attempt: number;
+  /** When this run of drops began (ms), null before the first close. */
+  since: number | null;
+}): DropNarration {
+  if (!input.dropped) return { reconnecting: null, lost: false };
+  if (input.manual) return { reconnecting: null, lost: true };
+  return {
+    reconnecting:
+      !input.gaveUp && input.since !== null
+        ? { attempt: input.attempt, max: MAX_RECONNECT_ATTEMPTS, since: input.since }
+        : null,
+    lost: input.gaveUp,
+  };
+}
