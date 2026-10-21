@@ -53,6 +53,7 @@ import { cn } from "@/lib/utils";
  * this Mac's folders together, newest activity first), then the user.
  */
 export function AppSidebar({
+  loading = false,
   projects,
   workspaces,
   ownerLogin,
@@ -61,6 +62,8 @@ export function AppSidebar({
   searchSignal = 0,
   initialFolded = [],
 }: {
+  /** What it lists hasn't arrived yet (a cold start): rows held by a skeleton. */
+  loading?: boolean;
   projects: NavProject[];
   workspaces: Workspace[];
   ownerLogin: string;
@@ -94,7 +97,9 @@ export function AppSidebar({
   const shown = filterSidebarGroups(groups, query);
 
   // Projects folded shut with their chevron, remembered across visits.
-  const [folded, setFolded] = useState(initialFolded);
+  // Toggled here; else as the cookie had them, once read.
+  const [foldedChoice, setFolded] = useState<string[] | null>(null);
+  const folded = foldedChoice ?? initialFolded;
   const toggleFolded = (key: string) => {
     const next = folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key];
     setFolded(next);
@@ -179,9 +184,15 @@ export function AppSidebar({
             <FolderPlus className="size-4" />
           </Link>
         </div>
-        {/* This Mac's sessions are read from the agent after the page loads, so
-            the list waits for them rather than reshuffling as they land. */}
-        <SkeletonSwap ready={local.state !== "loading"} skeleton={<SidebarSkeleton />} label="Sessions" className="mt-2">
+        {/* What it lists streams in on a cold start, and this Mac's sessions are
+            read from the agent after the page loads, so the list waits for
+            both rather than reshuffling as they land. */}
+        <SkeletonSwap
+          ready={!loading && local.state !== "loading"}
+          skeleton={<SidebarSkeleton />}
+          label="Sessions"
+          className="mt-2"
+        >
           <div className="space-y-3">
             {shown.length === 0 ? (
               <p className="px-2 py-1 text-sm text-muted-foreground">

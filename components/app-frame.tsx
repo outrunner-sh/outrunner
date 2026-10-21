@@ -7,10 +7,30 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
+import { useServerAnswer } from "@/components/server-answer";
 import { isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import { startNewSession } from "@/lib/session/new-session-reset";
-import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import type { AppData } from "@/lib/session/session-view";
 import { cn } from "@/lib/utils";
+
+/** What the layout reads for the frame, streamed in (app/(app)/layout.tsx). */
+export type FrameData = {
+  appData: AppData;
+  ownerLogin: string;
+  ownerAvatarUrl: string | null;
+};
+
+/**
+ * How the sidebar was left, from cookies alone — so it arrives ahead of
+ * {@link FrameData}, whose queries would otherwise hold the collapse back
+ * until after the first paint (app/(app)/layout.tsx).
+ */
+export type FrameChrome = {
+  /** The sidebar collapsed, from its cookie. */
+  collapsed: boolean;
+  /** The projects folded shut in the sidebar, from their cookie. */
+  folded: string[];
+};
 
 /** Where the choice was kept before the cookie, read once to carry it over. */
 const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
@@ -31,40 +51,34 @@ const CollapsedSidebar = createContext<{
  * (CollapsedSidebarButtons), so there the rail steps aside and the session
  * runs edge to edge. Below the `sm` breakpoint the sidebar is hidden, as the
  * pages were built for.
+ *
+ * The frame and the page show at once, even on a cold start; what the sidebar
+ * lists (`server`, answering {@link FrameData}) streams in, its rows held by a
+ * skeleton until then, and the pages render from it as it lands. How the
+ * sidebar was left (`chrome`, answering {@link FrameChrome}) is read from
+ * cookies alone, so the collapse lands first and the sidebar never opens wide
+ * and snaps shut.
  */
 export function AppFrame({
-  projects,
-  hiddenProjects,
-  workspaces,
-  pullRequests,
-  ownerLogin,
-  ownerAvatarUrl,
-  initialCollapsed = false,
-  initialFolded = [],
+  chrome,
+  server,
   children,
 }: {
-  /** The repositories listed to start sessions in. */
-  projects: Project[];
-  /** Hidden ones a session belongs to, for naming it. */
-  hiddenProjects: Project[];
-  workspaces: Workspace[];
-  /** Each session's pull request, by workspace id. */
-  pullRequests: Record<string, WorkspacePullRequest>;
-  ownerLogin: string;
-  ownerAvatarUrl: string | null;
-  /** From the cookie, read by the layout on the server. */
-  initialCollapsed?: boolean;
-  /** The projects folded shut in the sidebar, from their cookie. */
-  initialFolded?: string[];
+  chrome: React.ReactNode;
+  server: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
+  const [frame, slot] = useServerAnswer<FrameData>(server);
+  const [look, chromeSlot] = useServerAnswer<FrameChrome>(chrome);
+  // The collapse the user toggled here; else the cookie's, once read.
+  const [collapsedChoice, setCollapsed] = useState<boolean | null>(null);
+  const collapsed = collapsedChoice ?? look?.collapsed ?? false;
   // The pages render from what the sidebar has: a click shows its session at once.
-  const appData = useMemo(
-    () => ({ projects, hiddenProjects, workspaces, pullRequests }),
-    [projects, hiddenProjects, workspaces, pullRequests],
+  const appData = frame?.appData ?? null;
+  const sidebarProjects = useMemo(
+    () => (appData ? [...appData.projects, ...appData.hiddenProjects] : []),
+    [appData],
   );
-  const sidebarProjects = useMemo(() => [...projects, ...hiddenProjects], [projects, hiddenProjects]);
   const router = useRouter();
   const pathname = usePathname();
   // Decided by the path, not by the studio being on screen: the rail must not
@@ -132,13 +146,14 @@ export function AppFrame({
               </div>
             ) : (
               <AppSidebar
+                loading={frame === null}
                 projects={sidebarProjects}
-                workspaces={workspaces}
-                ownerLogin={ownerLogin}
-                ownerAvatarUrl={ownerAvatarUrl}
+                workspaces={appData?.workspaces ?? NO_WORKSPACES}
+                ownerLogin={frame?.ownerLogin ?? ""}
+                ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
                 onCollapse={() => setAndRemember(true)}
                 searchSignal={searchSignal}
-                initialFolded={initialFolded}
+                initialFolded={look?.folded ?? NO_FOLDED}
               />
             )}
           </div>
@@ -147,6 +162,8 @@ export function AppFrame({
           <AppDataProvider value={appData}>{children}</AppDataProvider>
         </main>
       </div>
+      {chromeSlot}
+      {slot}
     </CollapsedSidebar.Provider>
   );
 }
@@ -204,3 +221,6 @@ function SidebarButtons({ className, expand }: { className?: string; expand: () 
     </div>
   );
 }
+
+const NO_WORKSPACES: AppData["workspaces"] = [];
+const NO_FOLDED: string[] = [];

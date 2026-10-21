@@ -24,6 +24,15 @@ export const SIDEBAR_COOKIE = "sidebar-collapsed";
 /** The projects folded shut in the sidebar, by group key: a cookie for the
  *  same reason as {@link SIDEBAR_COOKIE}. */
 export const FOLDED_PROJECTS_COOKIE = "sidebar-folded";
+
+/**
+ * Both are read by the app layout for the frame, so every instant page under
+ * it has to name them in its `unstable_instant` samples or the build stops.
+ * The names are repeated there rather than imported from here: a segment
+ * config is read by static analysis, which cannot follow a constant. Declared
+ * absent, which is the shell's case — it is prerendered once, for nobody in
+ * particular, and each visitor's own values stream in.
+ */
 /** A cookie holds about 4 KB; folder paths are long. The latest folds win. */
 const MAX_FOLDED = 40;
 

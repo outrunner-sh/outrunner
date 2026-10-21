@@ -21,6 +21,7 @@ export function HomeSessionRoute() {
     <NewSessionCreator
       key={asked}
       projects={projects}
+      projectsKnown={data !== null}
       initialProjectId={lastSessionProjectId(projects, data?.workspaces ?? [])}
     />
   );
@@ -44,8 +45,6 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const listed = data?.projects ?? [];
   const requested = [...(data?.hiddenProjects ?? []), ...(answered ? [answered] : [])].find((p) => p.id === project);
   const projects = requested && !listed.some((p) => p.id === requested.id) ? [requested, ...listed] : listed;
-  // Once a hidden repository asked for turns up, the form starts over on it.
-  const known = project === undefined || projects.some((p) => p.id === project);
 
   return (
     <>
@@ -53,8 +52,11 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         // A new form per "New Session" and per target: arriving while already
         // on /new must not keep the repository, folder or cloud/Mac choice the
         // open form was switched to.
-        key={`${project ?? ""}\n${folder}\n${asked}\n${known}`}
+        key={`${project ?? ""}\n${folder}\n${asked}`}
         projects={projects}
+        // A hidden repository asked for may still be on its way from the
+        // server: the form picks it up as it lands, until one is picked.
+        projectsKnown={data !== null}
         initialProjectId={project}
         showBack
       />

@@ -12,8 +12,20 @@ import type { Project } from "@/lib/runtime/types";
 export const unstable_instant = {
   prefetch: "static",
   samples: [
-    { searchParams: { project: null, folder: null } },
-    { searchParams: { project: "sample", folder: null } },
+    {
+      searchParams: { project: null, folder: null },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+      ],
+    },
+    {
+      searchParams: { project: "sample", folder: null },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+      ],
+    },
   ],
 };
 

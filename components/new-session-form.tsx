@@ -31,9 +31,12 @@ const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foregr
  */
 export function NewSessionForm({
   projects: listed,
+  projectsKnown = true,
   initialProjectId,
 }: {
   projects: Project[];
+  /** False until the list arrives (a cold start): it is not yet "none". */
+  projectsKnown?: boolean;
   /** Repo to preselect (the last-used project). Falls back to the first. */
   initialProjectId?: string;
 }) {
@@ -53,7 +56,7 @@ export function NewSessionForm({
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
   // No repositories only blocks the cloud; a local session needs none.
-  const noRepositories = !local && projects.length === 0;
+  const noRepositories = projectsKnown && !local && projects.length === 0;
   const details = newSessionDetails(
     local
       ? { kind: "local", folder: where.folder.state === "ok" ? where.folder.folder : null }
@@ -184,7 +187,9 @@ export function NewSessionForm({
                 }
               : undefined
           }
-          canSend={!isCreating && (local ? where.localFolder !== null : selected != null)}
+          // Typing starts at once, the list still on its way included (a send
+          // before it lands gives the prompt back).
+          canSend={!isCreating && (local ? where.localFolder !== null : selected != null || !projectsKnown)}
           placeholder="What would you like to work on?"
           disabledPlaceholder={
             local && where.blocker

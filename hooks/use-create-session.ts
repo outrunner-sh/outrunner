@@ -38,7 +38,10 @@ function localBranch(workspaceId: string): string {
  */
 export function useCreateSession(projects: Project[], initialProjectId?: string) {
   const router = useRouter();
-  const [projectId, setProjectId] = useState(() => pickInitialProject(projects, initialProjectId));
+  // The one picked here; until then the one the form starts on, which follows
+  // the list as it arrives (a cold start streams it in).
+  const [pickedId, setProjectId] = useState<string | null>(null);
+  const projectId = pickedId ?? pickInitialProject(projects, initialProjectId);
   // Repositories connected from the picker on this screen: the page's own list
   // has them only after it reloads.
   const [connected, setConnected] = useState<Project[]>([]);

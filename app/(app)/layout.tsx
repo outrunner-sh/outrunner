@@ -1,6 +1,8 @@
 import { cookies } from "next/headers";
+import { Suspense } from "react";
 
-import { AppFrame } from "@/components/app-frame";
+import { AppFrame, type FrameChrome, type FrameData } from "@/components/app-frame";
+import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
@@ -15,12 +17,52 @@ import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/typ
  * render from the same data (components/app-data.tsx), so a click in the
  * sidebar shows its session without asking the server first.
  *
- * Signed out, it renders the page alone: each page redirects to sign-in with
- * its own `next`, which a layout redirect would lose.
+ * The frame itself reads nothing: it shows at once, even on a cold start, and
+ * what the sidebar lists streams in under Suspense (SidebarData). Signed out
+ * is the proxy's to catch; a signed-in user who isn't the owner gets an empty
+ * sidebar while the page under it sends them to sign-in.
+ *
+ * How the sidebar was left (ChromeData) is a boundary of its own, ahead of the
+ * list it holds: it reads cookies and nothing else, so a sidebar left
+ * collapsed is collapsed from the first paint rather than opening wide and
+ * snapping shut once the queries answer (lib/nav/sidebar.ts).
  */
-export default async function AppLayout({ children }: { children: React.ReactNode }) {
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <AppFrame
+      chrome={
+        <Suspense fallback={null}>
+          <ChromeData />
+        </Suspense>
+      }
+      server={
+        <Suspense fallback={null}>
+          <SidebarData />
+        </Suspense>
+      }
+    >
+      {children}
+    </AppFrame>
+  );
+}
+
+/** The sidebar as the user left it: its cookies, read without asking Supabase
+ *  or the database, so this lands before {@link SidebarData} does. */
+async function ChromeData() {
+  const jar = await cookies();
+  return (
+    <ServerAnswer<FrameChrome>
+      value={{
+        collapsed: jar.get(SIDEBAR_COOKIE)?.value === "1",
+        folded: readFoldedProjects(jar.get(FOLDED_PROJECTS_COOKIE)?.value),
+      }}
+    />
+  );
+}
+
+async function SidebarData() {
   const owner = await getOwnerSafe();
-  if (!owner) return children;
+  if (!owner) return null;
 
   // The sidebar is auxiliary: a failed load shows an empty list, never an error
   // page in place of the session the user opened.
@@ -41,23 +83,20 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       return [];
     }),
   ]);
-  const jar = await cookies();
-  const collapsed = jar.get(SIDEBAR_COOKIE)?.value === "1";
-  const folded = readFoldedProjects(jar.get(FOLDED_PROJECTS_COOKIE)?.value);
 
   return (
-    <AppFrame
-      projects={listed}
-      hiddenProjects={hidden}
-      workspaces={workspaces}
-      pullRequests={Object.fromEntries(pullRequests.map((pr) => [pr.workspaceId, pr]))}
-      ownerLogin={owner.githubLogin}
-      ownerAvatarUrl={owner.avatarUrl}
-      initialCollapsed={collapsed}
-      initialFolded={folded}
-    >
-      {children}
-    </AppFrame>
+    <ServerAnswer<FrameData>
+      value={{
+        appData: {
+          projects: listed,
+          hiddenProjects: hidden,
+          workspaces,
+          pullRequests: Object.fromEntries(pullRequests.map((pr) => [pr.workspaceId, pr])),
+        },
+        ownerLogin: owner.githubLogin,
+        ownerAvatarUrl: owner.avatarUrl,
+      }}
+    />
   );
 }
 

@@ -8,7 +8,16 @@ import { RouteLoading } from "@/components/route-states";
  *  sample session opened from the sidebar (no first prompt). */
 export const unstable_instant = {
   prefetch: "static",
-  samples: [{ params: { id: "sample" }, searchParams: { prompt: null } }],
+  samples: [
+    {
+      params: { id: "sample" },
+      searchParams: { prompt: null },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+      ],
+    },
+  ],
 };
 
 /**

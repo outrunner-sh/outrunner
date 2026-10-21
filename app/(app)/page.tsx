@@ -6,7 +6,17 @@ import { getOwnerSafe } from "@/lib/auth/owner";
 import { needsOnboarding } from "@/lib/onboarding/server";
 
 /** Home never waits on the server: the build checks it. */
-export const unstable_instant = { prefetch: "static" };
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [
+    {
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+      ],
+    },
+  ],
+};
 
 /**
  * Home is the new-session screen: every session is in the sidebar, so the page
