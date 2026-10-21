@@ -34,6 +34,7 @@ import {
   agentOf,
   defaultModel,
   type Effort,
+  EffortUnsupportedError,
   requestedEffort,
   requestedModel,
   type SessionModel,
@@ -438,8 +439,12 @@ async function provisionWorkspace({
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
     // The session page shows this: say what to do where the user can fix it.
+    // A Claude model's effort is set on the way to the user's own Claude, which
+    // startingModel leaves unwrapped: its message says to update the box.
     const errorMessage =
-      error instanceof NoStartingModelError || error instanceof OutdatedComputerError
+      error instanceof NoStartingModelError ||
+      error instanceof OutdatedComputerError ||
+      error instanceof EffortUnsupportedError
         ? error.message
         : "Provisioning failed. Check Outrunner's setup and try again.";
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
