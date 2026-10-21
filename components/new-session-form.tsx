@@ -2,7 +2,7 @@
 
 import { GitBranch, GitFork } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
@@ -10,7 +10,7 @@ import { SessionComposer } from "@/components/session-composer";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
-import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
+import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { loadoutDefault, loadoutEffort } from "@/lib/runtime/model-loadout";
 import { agentOf, defaultModel, type Effort, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
@@ -43,16 +43,7 @@ export function NewSessionForm({
   // none picked, what it starts on anyway: the menu's default on the cloud,
   // and on a Mac whose Claude Code isn't logged in; otherwise that Mac's
   // Claude Code default.
-  const [menu, setMenu] = useState<OutrunnerModels | null>(null);
-  useEffect(() => {
-    let live = true;
-    void outrunnerModels().then((answer) => {
-      if (live) setMenu(answer);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
+  const menu = useOutrunnerModels();
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(null);

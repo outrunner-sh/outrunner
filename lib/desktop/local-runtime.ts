@@ -1,4 +1,5 @@
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { sharedResource } from "@/lib/client/shared-resource";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
@@ -275,50 +276,51 @@ export async function putOnDefaultModel(workspaceId: string): Promise<void> {
   await putOnModel(workspaceId, model);
 }
 
-/** What the user's model menu offers (GET /api/outrunner-models), and whether
- *  a session can start without their Claude; asked once per page load, or
- *  again after Settings → Providers changes a key. */
 /** The model menu, whether a session can start without the user's Claude,
  *  and the user's loadout (Settings → Default models). */
 export type OutrunnerModels = ModelMenu & { available: boolean; loadout: ModelLoadout };
 const NO_MODELS: OutrunnerModels = { outrunner: false, allowance: false, keys: [], available: false, loadout: EMPTY_LOADOUT };
-let outrunnerModelsAnswer: Promise<OutrunnerModels> | null = null;
-export function outrunnerModels(): Promise<OutrunnerModels> {
-  outrunnerModelsAnswer ??= fetch("/api/outrunner-models")
-    .then((res): Promise<Record<string, unknown>> | Record<string, unknown> => (res.ok ? res.json() : {}))
-    .then((data): OutrunnerModels => {
-      const keys = Array.isArray(data.keys)
-        ? data.keys.filter(isProviderId)
-        : // A server from before providers says only whether there's an OpenRouter key.
-          data.ownKey === true
-          ? (["openrouter"] as ProviderId[])
-          : [];
-      const outrunner = typeof data.outrunner === "boolean" ? data.outrunner : data.serverModels === true;
-      return {
-        outrunner,
-        allowance: data.allowance === true,
-        keys,
-        available: data.available === true,
-        // A server from before loadouts sends none.
-        loadout: parseLoadout(data.loadout),
-      };
-    })
-    .catch(() => {
-      outrunnerModelsAnswer = null; // a failed look is asked again next time
-      return NO_MODELS;
-    });
-  return outrunnerModelsAnswer;
+
+/** What the user's model menu offers (GET /api/outrunner-models), and whether
+ *  a session can start without their Claude; asked once per page load, or
+ *  again after Settings → Providers changes a key. One answer for the page:
+ *  read it with useSharedResource to show the last one at once. A failed look
+ *  is asked again next time. */
+export const OUTRUNNER_MODELS = sharedResource<OutrunnerModels>(
+  () =>
+    fetch("/api/outrunner-models")
+      .then((res): Promise<Record<string, unknown>> | Record<string, unknown> => (res.ok ? res.json() : {}))
+      .then(parseOutrunnerModels),
+  NO_MODELS,
+);
+
+function parseOutrunnerModels(data: Record<string, unknown>): OutrunnerModels {
+  const keys = Array.isArray(data.keys)
+    ? data.keys.filter(isProviderId)
+    : // A server from before providers says only whether there's an OpenRouter key.
+      data.ownKey === true
+      ? (["openrouter"] as ProviderId[])
+      : [];
+  const outrunner = typeof data.outrunner === "boolean" ? data.outrunner : data.serverModels === true;
+  return {
+    outrunner,
+    allowance: data.allowance === true,
+    keys,
+    available: data.available === true,
+    // A server from before loadouts sends none.
+    loadout: parseLoadout(data.loadout),
+  };
 }
 
-/** Whether this user can start a session without their Claude. */
-export function outrunnerModelsAvailable(): Promise<boolean> {
-  return outrunnerModels().then((answer) => answer.available);
+/** The menu, looked up if not yet held; none on offer when it can't be. */
+export function outrunnerModels(): Promise<OutrunnerModels> {
+  return OUTRUNNER_MODELS.ensure().catch(() => NO_MODELS);
 }
 
 /** Ask again next time: one of the user's keys, or their loadout, has just
  *  changed. */
 export function forgetOutrunnerModels(): void {
-  outrunnerModelsAnswer = null;
+  OUTRUNNER_MODELS.invalidate();
 }
 
 /**

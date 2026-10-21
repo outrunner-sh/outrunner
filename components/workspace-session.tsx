@@ -35,11 +35,20 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
-import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
+import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
+import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 import { cn } from "@/lib/utils";
+
+const MENU_UNTIL_ANSWERED: OutrunnerModels = {
+  outrunner: true,
+  allowance: false,
+  keys: [],
+  available: true,
+  loadout: EMPTY_LOADOUT,
+};
 
 export function WorkspaceSession({
   workspaceId,
@@ -174,23 +183,9 @@ export function WorkspaceSession({
   // actually ran.
   const [switching, setSwitching] = useState(false);
   // What the model menu offers: Outrunner's models, the user's own keys
-  // (Settings → Providers), and their Claude.
-  const [menu, setMenu] = useState<OutrunnerModels>({
-    outrunner: true,
-    allowance: false,
-    keys: [],
-    available: true,
-    loadout: EMPTY_LOADOUT,
-  });
-  useEffect(() => {
-    let live = true;
-    void outrunnerModels().then((answer) => {
-      if (live) setMenu(answer);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
+  // (Settings → Providers), and their Claude. Until the first answer, as if
+  // all were on offer.
+  const menu = useOutrunnerModels() ?? MENU_UNTIL_ANSWERED;
   // Whose entry the menu ticks when a model is offered by two: the one last
   // picked here, else the one a new session starts on.
   const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
