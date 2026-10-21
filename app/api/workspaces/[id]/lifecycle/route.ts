@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
+import { releaseProjectBox } from "@/lib/billing/release-box.deps";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
 import { optionalGithubToken } from "@/lib/github/token";
 import {
@@ -31,6 +32,7 @@ import { defaultModel, type RecordedModel } from "@/lib/runtime/session-models";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
@@ -229,6 +231,8 @@ async function archiveDaytonaWorkspace(
     from: "archiving",
     patch: { status: "archived", errorMessage: null },
   });
+  // The last session off its box frees it: paused now, not when idle.
+  if (completed) after(() => releaseProjectBox(provider, workspace.projectId));
   return completed
     ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
     : lifecycleReconciliationRequired("archive");
@@ -262,7 +266,7 @@ async function restoreDaytonaWorkspace(
   }
   // A box may be about to start (the project's box may be gone): the plan's
   // hours and box count get their say before anything changes.
-  const gate = await cloudBoxStartGate(owner, provider.name);
+  const gate = await cloudBoxStartGate(owner, provider.name, workspace.projectId);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
   const transitioned = await startTransition(workspace, ["archived"], "restoring");
   if (!transitioned) return lifecycleConflict();
@@ -297,6 +301,10 @@ async function restoreDaytonaWorkspace(
     // — otherwise restore would fail instead of rebuilding on a fresh box (the
     // whole point of portable Restore). Mirrors the create flow.
     const currentComputer = await getRuntimeComputerByProject(project.id);
+    // The box that ended (paused while idle, or once its last session was
+    // archived), for a provider that brings it back on the disk it left, so
+    // the restore resumes it rather than leaving it behind for a new one.
+    let endedBox = endedBoxOf(currentComputer, provider.name);
     if (
       currentComputer?.status === "ready" &&
       currentComputer.daytonaSandboxId &&
@@ -306,6 +314,7 @@ async function restoreDaytonaWorkspace(
         currentComputer.id,
         currentComputer.daytonaSandboxId,
       );
+      endedBox = currentComputer.daytonaSandboxId;
     }
 
     // How the session's agent signs in, as the user picks now, and the model
@@ -324,6 +333,7 @@ async function restoreDaytonaWorkspace(
       sessionEnv,
       // The plan's box cap, enforced by the claim in the database.
       maxLiveComputers: gate.cap,
+      ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
     });
     const computer = ensured.computer;
     if (!computer.daytonaSandboxId) {
@@ -527,10 +537,13 @@ async function destroyDaytonaWorkspace(
   provider: ComputerRuntimeProvider,
   owner: Owner,
 ) {
-  return endWorkspace(workspace, async () => {
+  const response = await endWorkspace(workspace, async () => {
     const { agent, identity } = await daytonaAgent(workspace, provider, owner);
     await agent.destroyWorkspace(identity);
   });
+  // The last session off its box frees it: paused now, not when idle.
+  if (response.ok) after(() => releaseProjectBox(provider, workspace.projectId));
+  return response;
 }
 
 /**

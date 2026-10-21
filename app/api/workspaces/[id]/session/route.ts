@@ -228,7 +228,7 @@ async function bringBack(
   if (!project) throw new Error(`Project ${computer.projectId} not found`);
   // A box is about to start: the plan's hours and box count get their say,
   // and the claim in the database enforces the cap.
-  const gate = await cloudBoxStartGate(owner, provider.name);
+  const gate = await cloudBoxStartGate(owner, provider.name, project.id);
   if ("denial" in gate) throw new CloudLimitError(gate.denial);
   const ensured = await ensureProjectRuntimeComputer(provider, {
     projectId: project.id,

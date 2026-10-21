@@ -149,6 +149,18 @@ export async function closeInterval(id: string, at: Date): Promise<void> {
   if (error) throw error;
 }
 
+/** End `sandboxId`'s open interval at `at`, if it has one (a box has at most
+ *  one open). */
+export async function closeIntervalOf(sandboxId: string, at: Date): Promise<void> {
+  const supabase = createSupabaseAdminClient();
+  const { error } = await supabase
+    .from("compute_intervals")
+    .update({ ended_at: at.toISOString() })
+    .eq("sandbox_id", sandboxId)
+    .is("ended_at", null);
+  if (error) throw error;
+}
+
 /** Every ready computer on a box Outrunner pays for. */
 export async function meteredReadyComputers(): Promise<MeteredComputer[]> {
   const supabase = createSupabaseAdminClient();

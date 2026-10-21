@@ -9,6 +9,7 @@ import {
   isPlanLimitError,
   liveMeteredComputers,
   type MeteredComputerRow,
+  projectBoxLive,
   STALE_PROVISION_MS,
 } from "@/lib/billing/limits";
 import { PLANS } from "@/lib/billing/plans";
@@ -21,7 +22,8 @@ const box = (
   status: RuntimeComputerStatus,
   provider: ProviderName | null,
   updatedAt: string,
-): MeteredComputerRow => ({ status, provider, updatedAt });
+  projectId = "p-1",
+): MeteredComputerRow => ({ projectId, status, provider, updatedAt });
 
 test("the plan's cloud hours are a denial only once used up", () => {
   assert.equal(hoursDenial(PLANS.free, 9.99), null);
@@ -54,6 +56,19 @@ test("a live box: ready, or provisioning while fresh, and never the owner's own"
     ),
     2,
   );
+});
+
+// The gate's box count refuses only a session that would start a box: one on
+// a project whose box is live shares it.
+test("a project's box is live only when its own computer is", () => {
+  const atCap = [box("ready", null, "x", "p-1"), box("provisioning", "neev", fresh.toISOString(), "p-2")];
+  assert.equal(projectBoxLive(atCap, "p-1", now), true);
+  assert.equal(projectBoxLive(atCap, "p-2", now), true);
+  assert.equal(projectBoxLive(atCap, "p-3", now), false);
+  // Its box paused, or its provision died: a session there starts one.
+  assert.equal(projectBoxLive([box("stopped", null, "x", "p-1")], "p-1", now), false);
+  const stale = new Date(now.getTime() - STALE_PROVISION_MS - 1).toISOString();
+  assert.equal(projectBoxLive([box("provisioning", null, stale, "p-1")], "p-1", now), false);
 });
 
 test("only explicitly configured plan-limit exemptions are exempt", () => {

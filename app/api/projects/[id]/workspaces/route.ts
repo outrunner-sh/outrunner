@@ -219,7 +219,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   // A box may be about to start: the plan's hours and box count get their say
   // before anything is created.
-  const gate = await cloudBoxStartGate(owner, provider.name);
+  const gate = await cloudBoxStartGate(owner, provider.name, project.id);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
 
   let workspace;
