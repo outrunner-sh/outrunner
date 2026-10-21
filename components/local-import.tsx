@@ -2,6 +2,7 @@
 
 import { CloudUpload, RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { AgentSetupPicker } from "@/components/import-setup-picker";
@@ -9,39 +10,32 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { postJson } from "@/lib/client/post-json";
-import { importConfig, importScan, importSession } from "@/lib/desktop/local-runtime";
+import { importConfig, importScan } from "@/lib/desktop/local-runtime";
 import {
   type ConfigPick,
   configInScan,
   configPickSecrets,
   hasConfigPick,
+  IMPORT_STATE_LABELS,
+  IMPORT_UPLOAD_NOTE,
   importAgentConfig,
   importSessions,
+  importSummary,
   type ImportProgress,
   offeredSessions,
+  sessionFacts,
   skipText,
 } from "@/lib/imports/client";
+import { liveImportDeps } from "@/lib/imports/live";
 import { isDesktopApp } from "@/lib/is-desktop";
 import {
   IMPORT_SOURCE_LABELS,
-  type ImportCommitRequest,
   type ImportConfigCommitRequest,
-  type ImportPlanItem,
-  type ImportPlanRequest,
   type ImportScan,
   type ScannedSession,
 } from "@/lib/runtime/import-scan";
 
 const noopSubscribe = () => () => {};
-
-const STATE_LABEL: Record<ImportProgress["state"], string> = {
-  waiting: "Waiting",
-  uploading: "Uploading",
-  saving: "Saving",
-  done: "Imported",
-  skipped: "Skipped",
-  failed: "Failed",
-};
 
 /**
  * Moving work from this Mac to the cloud: the desktop app finds sessions
@@ -52,6 +46,7 @@ const STATE_LABEL: Record<ImportProgress["state"], string> = {
  * form offers it as the project's first session starts.
  */
 export function LocalImport() {
+  const router = useRouter();
   const desktop = useSyncExternalStore(noopSubscribe, isDesktopApp, () => false);
   // Each "Scan again" is a new round; a round is scanning until its result
   // lands, and the last scan stays on screen meanwhile.
@@ -65,6 +60,8 @@ export function LocalImport() {
   const [consent, setConsent] = useState(false);
   const [setupNote, setSetupNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [importing, setImporting] = useState(false);
+  // The sessions the last Import ran, for its summary under the button.
+  const [lastRun, setLastRun] = useState<string[]>([]);
 
   useEffect(() => {
     if (!desktop) return;
@@ -127,23 +124,20 @@ export function LocalImport() {
       // The setup first: quick, and what the sessions start with.
       if (pickedSetup) await importSetup();
       if (picked.size === 0) return;
+      setLastRun([...picked]);
       await importSessions(
         importable.filter((s) => picked.has(s.key)),
         { branchAs: Object.fromEntries(Object.entries(branchAs).filter(([k, v]) => picked.has(k) && v.trim())) },
-        {
-          plan: async (request: ImportPlanRequest) =>
-            (await postJson<{ items: ImportPlanItem[] }>("/api/imports", request)).items,
-          capture: importSession,
-          commit: (request: ImportCommitRequest) =>
-            postJson<{ workspace: { id: string } }>("/api/imports/commit", request),
-          onProgress: (p) => setProgress((current) => ({ ...current, [p.key]: p })),
-        },
+        liveImportDeps((p) => setProgress((current) => ({ ...current, [p.key]: p }))),
       );
       setPicked(new Set());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setImporting(false);
+      // The sidebar is the layout's, read on the server: without this the
+      // imported sessions don't show in it until the next navigation.
+      router.refresh();
     }
   };
 
@@ -159,6 +153,10 @@ export function LocalImport() {
   }
 
   const found = scan?.sources.filter((s) => s.found) ?? [];
+  const lastProgress = lastRun.flatMap((key) => progress[key] ?? []);
+  const runSummary =
+    importSummary(lastProgress) +
+    (!importing && lastProgress.some((p) => p.state === "done") ? ". They're in the sidebar, under their projects." : "");
   return (
     <Page
       action={
@@ -228,10 +226,7 @@ export function LocalImport() {
       )}
 
       <div className="space-y-3 border-t border-border/60 pt-4">
-        <p className="max-w-xl text-xs text-muted-foreground">
-          Each session&apos;s unpushed commits, uncommitted changes and full conversation are uploaded to your
-          Outrunner cloud. A conversation can include anything its agent read, secrets too.
-        </p>
+        <p className="max-w-xl text-xs text-muted-foreground">{IMPORT_UPLOAD_NOTE}</p>
         {secrets && (
           <label className="flex max-w-xl items-start gap-2 text-xs">
             <input type="checkbox" className="mt-0.5" checked={consent} onChange={() => setConsent(!consent)} />
@@ -241,7 +236,12 @@ export function LocalImport() {
             </span>
           </label>
         )}
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-3">
+          {runSummary && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {runSummary}
+            </p>
+          )}
           <Button disabled={!canImport} onClick={() => void start()}>
             <CloudUpload />
             {importing ? "Importing…" : "Import"}
@@ -281,12 +281,7 @@ function SessionRow({
   progress?: ImportProgress;
   disabled: boolean;
 }) {
-  const facts = [
-    s.unpushed > 0 && `${s.unpushed} unpushed ${s.unpushed === 1 ? "commit" : "commits"}`,
-    s.checkedOut && s.dirty && "uncommitted changes",
-    !s.checkedOut && "its folder is on another branch: committed work only",
-    `${(s.transcriptBytes / 1_000_000).toFixed(1)} MB conversation`,
-  ].filter(Boolean);
+  const facts = sessionFacts(s);
   return (
     <li className="flex items-start gap-3 p-3">
       <input
@@ -318,7 +313,7 @@ function SessionRow({
         {progress && (
           <p className="text-xs">
             <span className={progress.state === "failed" ? "text-destructive" : undefined}>
-              {STATE_LABEL[progress.state]}
+              {IMPORT_STATE_LABELS[progress.state]}
             </span>
             {progress.branch && progress.branch !== s.branch && ` as ${progress.branch}`}
             {progress.message && ` · ${progress.message}`}
