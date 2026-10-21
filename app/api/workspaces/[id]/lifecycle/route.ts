@@ -18,6 +18,8 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_IMPORTS } from "@/lib/runtime/agent-protocol";
+import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { restoreSignedIn, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
@@ -277,6 +279,8 @@ async function restoreDaytonaWorkspace(
       ).map(async ({ artifact, file }) => ({
         artifact,
         url: await mintSnapshotDownloadUrl(storage, `${storagePath}${file}`, userId),
+        // An imported session's artifacts are stored compressed.
+        ...(manifest.encodings?.[file] && { encoding: manifest.encodings[file] }),
       })),
     );
 
@@ -338,6 +342,14 @@ async function restoreDaytonaWorkspace(
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
     const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, userId);
+    if (manifest.origin) {
+      await requireFeature(
+        { features: async () => (await agent.health(identity)).features ?? [], upgrade },
+        AGENT_FEATURE_IMPORTS,
+        "restore a session imported from a Mac",
+      );
+    }
+    const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, (credential) =>
       agent.restoreWorkspace(identity, {
         branch: workspace.branch,
@@ -346,6 +358,8 @@ async function restoreDaytonaWorkspace(
         downloads,
         ...(workspace.agent !== "claude" && { agent: workspace.agent }),
         ...(credential && { auth: credential }),
+        ...(bundleRef && { bundleRef }),
+        ...(manifest.origin && { originWorktree: manifest.origin.worktree }),
       }),
     );
 

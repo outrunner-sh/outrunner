@@ -18,7 +18,7 @@ import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
 type ReplayData = {
   snapshotId: string;
   manifest: SnapshotManifest;
-  cast: Cast;
+  cast: Cast | null;
   events: AgentEvent[];
   patch: string;
   summary: WorkspaceSummary | null;
@@ -113,7 +113,7 @@ export function WorkspaceReplay({
       )}
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2">
-        <CastPanel cast={data?.cast ?? null} />
+        <CastPanel cast={data?.cast ?? null} imported={data?.manifest.origin !== undefined} />
         <div className="replay-panel">
           <div className="replay-panel-head">Conversation</div>
           <SkeletonSwap
@@ -134,7 +134,7 @@ export function WorkspaceReplay({
   );
 }
 
-function CastPanel({ cast }: { cast: Cast | null }) {
+function CastPanel({ cast, imported }: { cast: Cast | null; imported: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const player = useCastPlayer(cast, containerRef);
 
@@ -166,6 +166,11 @@ function CastPanel({ cast }: { cast: Cast | null }) {
         </span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto bg-black p-2">
+        {imported && !cast ? (
+          <p className="text-muted-foreground p-2 text-xs">
+            No terminal recording: this session was imported from a Mac.
+          </p>
+        ) : null}
         <div ref={containerRef} />
       </div>
     </div>

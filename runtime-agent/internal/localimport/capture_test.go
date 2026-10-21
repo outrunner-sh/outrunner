@@ -1,13 +1,13 @@
 package localimport
 
 import (
-	"compress/gzip"
 	"context"
-	"io"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"runtime-agent/internal/protocol"
@@ -15,11 +15,15 @@ import (
 )
 
 // A session captured on a Mac restores on a box that has never seen the
-// checkout: a mirror cloned from GitHub, plus the capture's artifacts. The
+// checkout: a mirror cloned from GitHub, plus the capture's artifacts as they
+// are stored. Its conversation now works in the box's worktree, and the
 // checkout itself is left exactly as it was.
 func TestCaptureRestoresOnAFreshBox(t *testing.T) {
 	cases := []struct {
 		name string
+		// restoreAs is the branch the box restores it on, when the import's
+		// was taken in the cloud.
+		restoreAs string
 		// setup puts the clone on branch "feature" as the case needs and
 		// returns the files the restored worktree must have.
 		setup func(t *testing.T, clone, origin string) map[string]string
@@ -50,6 +54,16 @@ func TestCaptureRestoresOnAFreshBox(t *testing.T) {
 			},
 		},
 		{
+			name:      "restored under another branch name",
+			restoreAs: "feature-imported",
+			setup: func(t *testing.T, clone, _ string) map[string]string {
+				gitIn(t, clone, "checkout", "-q", "-b", "feature")
+				writeFile(t, filepath.Join(clone, "app.txt"), "renamed\n")
+				gitIn(t, clone, "commit", "-q", "-am", "renamed")
+				return map[string]string{"app.txt": "renamed\n"}
+			},
+		},
+		{
 			name: "every commit already pushed",
 			setup: func(t *testing.T, clone, origin string) map[string]string {
 				gitIn(t, clone, "checkout", "-q", "-b", "feature")
@@ -70,7 +84,7 @@ func TestCaptureRestoresOnAFreshBox(t *testing.T) {
 			}
 			origin := repoWithOrigin(t, clone)
 			want := tc.setup(t, clone, origin)
-			conversation := writeClaudeSession(t, home, clone, "s-1",
+			writeClaudeSession(t, home, clone, "s-1",
 				claudeLineJSON(t, "user", clone, "feature", "2026-10-20T10:00:00Z", "build the feature"),
 				claudeLineJSON(t, "assistant", clone, "feature", "2026-10-20T10:01:00Z", "done"),
 			)
@@ -92,10 +106,16 @@ func TestCaptureRestoresOnAFreshBox(t *testing.T) {
 			gitIn(t, box, "clone", "-q", "--bare", origin, mirror)
 			worktree := filepath.Join(box, "workspaces", "ws-1")
 			restored := filepath.Join(box, "conversation.jsonl")
+			branch, bundleRef := c.Session.Branch, ""
+			if tc.restoreAs != "" {
+				branch, bundleRef = tc.restoreAs, c.Session.Branch
+			}
 			err = snapshot.Materialize(context.Background(), snapshot.MaterializeInput{
 				MirrorPath:       mirror,
 				WorktreePath:     worktree,
-				Branch:           c.Session.Branch,
+				Branch:           branch,
+				BundleRef:        bundleRef,
+				OriginWorktree:   c.Session.Worktree,
 				ConversationDest: restored,
 				Downloads:        serveArtifacts(t, c),
 			})
@@ -106,13 +126,16 @@ func TestCaptureRestoresOnAFreshBox(t *testing.T) {
 			if got := gitIn(t, worktree, "rev-parse", "HEAD"); got != c.LastCommit {
 				t.Errorf("restored HEAD %s, want the branch tip %s", got, c.LastCommit)
 			}
+			if got := gitIn(t, worktree, "symbolic-ref", "--short", "HEAD"); got != branch {
+				t.Errorf("restored on %s, want %s", got, branch)
+			}
 			for name, content := range want {
 				data, err := os.ReadFile(filepath.Join(worktree, name))
 				if err != nil || string(data) != content {
 					t.Errorf("restored %s = %q (%v), want %q", name, data, err, content)
 				}
 			}
-			assertSameFile(t, restored, conversation)
+			assertConversationIn(t, restored, worktree, 2)
 			if got := gitIn(t, clone, "status", "--porcelain"); got != statusBefore {
 				t.Errorf("the checkout's status changed:\n%s\nwas:\n%s", got, statusBefore)
 			}
@@ -123,8 +146,8 @@ func TestCaptureRestoresOnAFreshBox(t *testing.T) {
 	}
 }
 
-// serveArtifacts serves a capture's artifacts as signed URLs would, already
-// decompressed: what Restore downloads once it reads a gzip-encoded artifact.
+// serveArtifacts serves a capture's artifacts as signed URLs would: the bytes
+// stored, each download saying how they are encoded.
 func serveArtifacts(t *testing.T, c Capture) []protocol.RestoreDownload {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -133,42 +156,34 @@ func serveArtifacts(t *testing.T, c Capture) []protocol.RestoreDownload {
 			http.NotFound(w, r)
 			return
 		}
-		file, err := os.Open(a.Path)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		defer file.Close()
-		var body io.Reader = file
-		if a.Encoding == EncodingGzip {
-			gz, err := gzip.NewReader(file)
-			if err != nil {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-			body = gz
-		}
-		_, _ = io.Copy(w, body)
+		http.ServeFile(w, r, a.Path)
 	}))
 	t.Cleanup(server.Close)
 	var downloads []protocol.RestoreDownload
-	for kind := range c.Artifacts {
-		downloads = append(downloads, protocol.RestoreDownload{Artifact: kind, URL: server.URL + "/" + kind})
+	for kind, a := range c.Artifacts {
+		downloads = append(downloads, protocol.RestoreDownload{Artifact: kind, URL: server.URL + "/" + kind, Encoding: a.Encoding})
 	}
 	return downloads
 }
 
-func assertSameFile(t *testing.T, got, want string) {
+// assertConversationIn checks a restored conversation has its records and
+// that every one now works in worktree.
+func assertConversationIn(t *testing.T, path, worktree string, records int) {
 	t.Helper()
-	a, err := os.ReadFile(got)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(want)
-	if err != nil {
-		t.Fatal(err)
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != records {
+		t.Fatalf("restored %d records, want %d:\n%s", len(lines), records, data)
 	}
-	if string(a) != string(b) {
-		t.Errorf("%s differs from %s", got, want)
+	for _, line := range lines {
+		var rec struct {
+			Cwd string `json:"cwd"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil || rec.Cwd != worktree {
+			t.Errorf("restored record works in %q (%v), want %q", rec.Cwd, err, worktree)
+		}
 	}
 }
