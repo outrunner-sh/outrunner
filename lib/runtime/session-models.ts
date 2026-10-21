@@ -101,9 +101,10 @@ export function providerModels(provider: ProviderId): SessionModel[] {
 export type ModelMenu = { outrunner: boolean; allowance: boolean; keys: ProviderId[] };
 
 /** The menu: Outrunner's models first, where the server has them; then each
- *  provider the user has a key for; the user's Claude; Codex last. With
- *  `agent` (a running session's), only what that agent runs. */
-export function modelGroups(menu: ModelMenu, agent?: AgentId): ModelGroup[] {
+ *  provider the user has a key for; the user's Claude, and Codex last, each
+ *  only where `accounts` (connectedAccounts) has it. With `agent` (a running
+ *  session's), only what that agent runs. */
+export function modelGroups(menu: ModelMenu, accounts: readonly AgentId[], agent?: AgentId): ModelGroup[] {
   const groups: ModelGroup[] = [];
   if (menu.outrunner) {
     groups.push({
@@ -122,8 +123,12 @@ export function modelGroups(menu: ModelMenu, agent?: AgentId): ModelGroup[] {
       custom: true,
     });
   }
-  groups.push({ label: "Claude account", provider: "claude", models: CLAUDE_MODELS, custom: false });
-  groups.push({ label: "Codex", provider: "codex", models: CODEX_MODELS, custom: true });
+  if (accounts.includes("claude")) {
+    groups.push({ label: "Claude account", provider: "claude", models: CLAUDE_MODELS, custom: false });
+  }
+  if (accounts.includes("codex")) {
+    groups.push({ label: "Codex", provider: "codex", models: CODEX_MODELS, custom: true });
+  }
   return agent ? groups.filter((group) => agentOf(group.provider) === agent) : groups;
 }
 

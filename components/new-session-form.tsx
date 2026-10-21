@@ -13,6 +13,8 @@ import { useCreateSession } from "@/hooks/use-create-session";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
+import { AGENT_IDS } from "@/lib/agents/registry";
+import { accountsHere } from "@/lib/desktop/local-runtime";
 import { effortOnPick, loadoutDefault } from "@/lib/runtime/model-loadout";
 import {
   agentOf,
@@ -78,13 +80,17 @@ export function NewSessionForm({
       : { kind: "cloud", project: selected },
   );
 
-  const groups = menu
-    ? modelGroups(menu).filter(
-        // A Mac whose Claude Code isn't logged in has no Claude account to run.
-        (group) => !(local && where.outrunnerModel && group.provider === "claude"),
-      )
+  // The user's own accounts a session here runs on (Settings → Providers):
+  // their models are offered only where connected, and a way to connect the
+  // rest instead.
+  const accounts = menu
+    ? accountsHere(menu.agents, local, where.runtime.state === "ready" ? where.runtime.status : null)
     : [];
-  const onDefault = local ? where.outrunnerModel : menu?.available === true;
+  const groups = menu ? modelGroups(menu, accounts) : [];
+  const connect = menu ? AGENT_IDS.filter((agent) => !accounts.includes(agent)) : [];
+  // Without the user's Claude here, a session starts on the menu's default:
+  // Outrunner's model, or one on their key.
+  const onDefault = !accounts.includes("claude") || (local ? where.outrunnerModel : menu?.available === true);
   // The loadout's default (Settings → Default models) where the menu offers
   // it here; else what a session starts on without one: the menu's default,
   // or, where it starts on the user's Claude, Opus.
@@ -180,7 +186,7 @@ export function NewSessionForm({
               ? createLocal(
                   text,
                   where.localFolder,
-                  where.outrunnerModel,
+                  onDefault,
                   startModel,
                   where.runtime.state === "ready" ? where.runtime.status : null,
                   effort,
@@ -191,9 +197,10 @@ export function NewSessionForm({
           }
           model={startsOn?.id}
           modelChoice={
-            groups.length > 0
+            groups.length > 0 || connect.length > 0
               ? {
                   groups,
+                  connect,
                   effort,
                   onChange: (model, effort) => {
                     setPicked(model);

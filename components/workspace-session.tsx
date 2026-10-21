@@ -11,7 +11,13 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
-import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
+import {
+  accountsHere,
+  localAgentRequest,
+  localTarget,
+  messageForLocalError,
+  putOnModel,
+} from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import {
   livePrompts,
@@ -289,8 +295,13 @@ export function WorkspaceSession({
       )
       .finally(() => setStopping(false));
   };
+  // The user's own accounts this session can switch to. A local session's
+  // agent is already running on this Mac, so its own login there counts.
+  const accounts = accountsHere(menu.agents, local, null);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(menu, agent),
+    groups: modelGroups(menu, accounts, agent),
+    // The session's own agent's account, where it isn't connected here.
+    connect: accounts.includes(agent) ? [] : [agent],
     effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
