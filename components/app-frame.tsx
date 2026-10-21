@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { PanelLeftOpen, Plus } from "lucide-react";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
-import { SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import { isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
@@ -14,10 +14,16 @@ import { cn } from "@/lib/utils";
 /** Where the choice was kept before the cookie, read once to carry it over. */
 const LEGACY_KEYS = ["sidebar-collapsed", "home-sidebar-collapsed"];
 
+/** The collapsed sidebar, for whichever header shows its buttons. */
+const CollapsedSidebar = createContext<{ collapsed: boolean; expand: () => void } | null>(null);
+
 /**
  * Sidebar + page. Collapsing leaves a narrow rail (expand, new session) rather
- * than nothing, so no page has to make room for a floating button. Below the
- * `sm` breakpoint the sidebar is hidden, as the pages were built for.
+ * than nothing, so no page has to make room for a floating button. A session's
+ * page has a header of its own that shows those buttons instead
+ * (CollapsedSidebarButtons), so there the rail steps aside and the session
+ * runs edge to edge. Below the `sm` breakpoint the sidebar is hidden, as the
+ * pages were built for.
  */
 export function AppFrame({
   projects,
@@ -40,6 +46,10 @@ export function AppFrame({
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const router = useRouter();
+  const pathname = usePathname();
+  // Decided by the path, not by the studio being on screen: the rail must not
+  // flash in while one session's page loads in place of another's.
+  const railless = collapsed && isStudioPath(pathname);
   // Bumped by ⌘K: the sidebar opens its search field on each change.
   const [searchSignal, setSearchSignal] = useState(0);
 
@@ -82,46 +92,69 @@ export function AppFrame({
   }, []);
 
   return (
-    <div
-      className={cn(
-        "grid h-dvh grid-cols-1 overflow-hidden bg-background",
-        collapsed ? "sm:grid-cols-[48px_minmax(0,1fr)]" : "sm:grid-cols-[264px_minmax(0,1fr)]",
-      )}
-    >
-      <div className="hidden min-h-0 sm:block">
-        {collapsed ? (
-          <div className="flex h-full flex-col items-center gap-2 border-r border-border/60 bg-sidebar pt-5">
-            <button
-              type="button"
-              onClick={() => setAndRemember(false)}
-              aria-label="Expand sidebar"
-              title="Expand sidebar"
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <PanelLeftOpen className="size-4" />
-            </button>
-            <Link
-              href="/new"
-              aria-label="New session"
-              title="New session (⌘N)"
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <Plus className="size-4" />
-            </Link>
-          </div>
-        ) : (
-          <AppSidebar
-            projects={projects}
-            workspaces={workspaces}
-            ownerLogin={ownerLogin}
-            ownerAvatarUrl={ownerAvatarUrl}
-            onCollapse={() => setAndRemember(true)}
-            searchSignal={searchSignal}
-            initialFolded={initialFolded}
-          />
+    <CollapsedSidebar.Provider value={{ collapsed, expand: () => setAndRemember(false) }}>
+      <div
+        className={cn(
+          "grid h-dvh grid-cols-1 overflow-hidden bg-background",
+          railless
+            ? "sm:grid-cols-1"
+            : collapsed
+              ? "sm:grid-cols-[48px_minmax(0,1fr)]"
+              : "sm:grid-cols-[264px_minmax(0,1fr)]",
         )}
+      >
+        {!railless && (
+          <div className="hidden min-h-0 sm:block">
+            {collapsed ? (
+              <div className="h-full border-r border-border/60 bg-sidebar pt-5">
+                <CollapsedSidebarButtons className="flex flex-col items-center gap-2" />
+              </div>
+            ) : (
+              <AppSidebar
+                projects={projects}
+                workspaces={workspaces}
+                ownerLogin={ownerLogin}
+                ownerAvatarUrl={ownerAvatarUrl}
+                onCollapse={() => setAndRemember(true)}
+                searchSignal={searchSignal}
+                initialFolded={initialFolded}
+              />
+            )}
+          </div>
+        )}
+        <main className="relative min-h-0 min-w-0 overflow-y-auto">{children}</main>
       </div>
-      <main className="relative min-h-0 min-w-0 overflow-y-auto">{children}</main>
+    </CollapsedSidebar.Provider>
+  );
+}
+
+/**
+ * Expand and new session, while the sidebar is collapsed (nothing otherwise):
+ * in the rail, or in a session's header where the rail steps aside. Hidden
+ * below `sm`, where the sidebar is too.
+ */
+export function CollapsedSidebarButtons({ className }: { className?: string }) {
+  const sidebar = useContext(CollapsedSidebar);
+  if (!sidebar?.collapsed) return null;
+  return (
+    <div className={cn("max-sm:hidden", className)}>
+      <button
+        type="button"
+        onClick={sidebar.expand}
+        aria-label="Expand sidebar"
+        title="Expand sidebar"
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <PanelLeftOpen className="size-4" />
+      </button>
+      <Link
+        href="/new"
+        aria-label="New session"
+        title="New session (⌘N)"
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <Plus className="size-4" />
+      </Link>
     </div>
   );
 }
