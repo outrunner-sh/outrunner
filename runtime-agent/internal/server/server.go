@@ -415,8 +415,12 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a gateway needs its key, and only a gateway takes one")
 		return
 	}
+	if req.Effort != "" && !claude.ValidEffort(req.Effort) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid effort")
+		return
+	}
 	err = s.ws.SetModel(r.Context(), r.PathValue("id"), workspace.ModelChoice{
-		Model: req.Model, Gateway: gateway, Token: req.Token,
+		Model: req.Model, Gateway: gateway, Token: req.Token, Effort: req.Effort,
 	}, "")
 	switch {
 	case errors.Is(err, workspace.ErrUnknownWorkspace):
@@ -426,8 +430,13 @@ func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, workspace.ErrSessionBusy), errors.Is(err, workspace.ErrSessionUnchecked),
 		errors.Is(err, workspace.ErrModelUnsupported):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
-	default:
+	case err != nil:
 		respond(w, req.Model, err)
+	default:
+		// The effort is always answered, empty or not: an agent from before
+		// efforts answers without it, which tells the web app the effort it
+		// asked for wasn't applied.
+		writeJSON(w, http.StatusOK, map[string]string{"result": req.Model, "effort": req.Effort})
 	}
 }
 
