@@ -95,34 +95,18 @@ export function toolResultText(content: unknown): string {
 }
 
 export interface ResultSummary {
-  /** The full normalized text, for the expanded view. */
+  /** The full normalized text, as the row shows it. */
   text: string;
-  /** A single-line preview for the collapsed header. */
-  preview: string;
-  /** Whether there's more to reveal than the preview shows. */
-  truncated: boolean;
-  /** Total line count, useful as an at-a-glance size cue. */
+  /** Total line count, as an at-a-glance size cue; 0 when there is no output
+   *  at all, which the row says in words. */
   lineCount: number;
 }
 
-const PREVIEW_CHARS = 140;
-
-/** Collapse a tool result into a preview + expandable full text. */
+/** A tool result as its row shows it: the text, and how many lines of it. */
 export function summarizeToolResult(content: unknown): ResultSummary {
   const text = toolResultText(content);
   const trimmed = text.trim();
-  const lineCount = trimmed === "" ? 0 : trimmed.split("\n").length;
-  const firstLine = trimmed.split("\n", 1)[0] ?? "";
-
-  let preview = firstLine;
-  let truncated = lineCount > 1;
-  if (preview.length > PREVIEW_CHARS) {
-    preview = `${preview.slice(0, PREVIEW_CHARS)}…`;
-    truncated = true;
-  }
-  if (trimmed === "") preview = "(empty result)";
-
-  return { text, preview, truncated, lineCount };
+  return { text, lineCount: trimmed === "" ? 0 : trimmed.split("\n").length };
 }
 
 /** Format a token count with thousands separators; "—" for missing values. */

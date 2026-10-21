@@ -249,7 +249,7 @@ function ToolOutput({ content }: { content: unknown }) {
         Output
         {lineCount > 1 && <span className="tabular-nums">{lineCount} lines</span>}
       </div>
-      <pre className="max-h-96 overflow-auto whitespace-pre-wrap">{text.trim() === "" ? "(empty result)" : text}</pre>
+      <pre className="max-h-96 overflow-auto whitespace-pre-wrap">{lineCount === 0 ? "(empty result)" : text}</pre>
     </>
   );
 }

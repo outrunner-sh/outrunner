@@ -56,30 +56,16 @@ test("toolResultText normalizes strings, block arrays, and objects", () => {
   assert.equal(toolResultText({ code: 1 }), '{\n  "code": 1\n}');
 });
 
-test("summarizeToolResult previews the first line and flags truncation", () => {
-  const single = summarizeToolResult("just one line");
-  assert.equal(single.preview, "just one line");
-  assert.equal(single.truncated, false);
-  assert.equal(single.lineCount, 1);
-
-  const multi = summarizeToolResult("line 1\nline 2\nline 3");
-  assert.equal(multi.preview, "line 1");
-  assert.equal(multi.truncated, true);
-  assert.equal(multi.lineCount, 3);
-});
-
-test("summarizeToolResult truncates an overlong first line", () => {
-  const long = "x".repeat(200);
-  const result = summarizeToolResult(long);
-  assert.ok(result.preview.endsWith("…"));
-  assert.ok(result.preview.length < long.length);
-  assert.equal(result.truncated, true);
-});
-
-test("summarizeToolResult labels empty output", () => {
-  const empty = summarizeToolResult("   ");
-  assert.equal(empty.preview, "(empty result)");
-  assert.equal(empty.lineCount, 0);
+test("summarizeToolResult keeps the text and counts its lines", () => {
+  assert.deepEqual(summarizeToolResult("just one line"), { text: "just one line", lineCount: 1 });
+  assert.deepEqual(summarizeToolResult("line 1\nline 2\nline 3"), {
+    text: "line 1\nline 2\nline 3",
+    lineCount: 3,
+  });
+  // Surrounding blank space is not a line of output: no output at all is 0,
+  // which the row says in words rather than showing.
+  assert.equal(summarizeToolResult("   ").lineCount, 0);
+  assert.equal(summarizeToolResult("\n\nout\n\n").lineCount, 1);
 });
 
 test("formatTokens adds separators and handles missing values", () => {
