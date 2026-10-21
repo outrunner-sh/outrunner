@@ -116,6 +116,16 @@ export function rememberedFirstPrompt(storage: PromptStorage | null, workspaceId
   }
 }
 
+/** Hand the waiting prompt from one session to another, as Start over does:
+ * the copy moves, so only the fresh session can send it. */
+export function handOverFirstPrompt(storage: PromptStorage | null, from: string, to: string): FirstPrompt | null {
+  const first = rememberedFirstPrompt(storage, from);
+  if (!first) return null;
+  rememberFirstPrompt(storage, to, first);
+  forgetFirstPrompt(storage, from);
+  return first;
+}
+
 /** The session's first prompt has gone (or never will): drop the kept copy. */
 export function forgetFirstPrompt(storage: PromptStorage | null, workspaceId: string): void {
   if (!storage) return;

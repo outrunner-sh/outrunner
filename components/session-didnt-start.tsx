@@ -9,7 +9,7 @@ import { RouteMessage } from "@/components/route-states";
 import { InlineMessage } from "@/components/ui/notice";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import type { Workspace } from "@/lib/runtime/types";
-import { firstPromptQuery, rememberFirstPrompt, rememberedFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
+import { firstPromptQuery, handOverFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 
 /**
  * Start a fresh session on `workspace`'s repository in its place, carrying over
@@ -37,16 +37,21 @@ export function useStartOver(workspace: Workspace) {
       };
       if (!res.ok || !body.workspace) {
         setRetryError({ message: body.error ?? "Couldn't start a new session.", href: body.settingsHref });
+        // Only a failure re-enables the button: this session's page is
+        // staying on screen, so the reason belongs where the user is.
+        setRetrying(false);
         return;
       }
       setRetryError(null);
-      const first = rememberedFirstPrompt(tabStorage(), workspace.id);
-      if (first) rememberFirstPrompt(tabStorage(), body.workspace.id, first);
+      // The waiting prompt moves to the fresh session: this one can never
+      // send it.
+      const first = handOverFirstPrompt(tabStorage(), workspace.id, body.workspace.id);
       router.push(`/workspaces/${body.workspace.id}${first ? firstPromptQuery(first) : ""}`);
       router.refresh();
+      // retrying stays true: this page is about to be the fresh session's,
+      // and until it is, a second click must not start another one.
     } catch {
       setRetryError({ message: "Couldn't reach Outrunner. Check your connection and try again." });
-    } finally {
       setRetrying(false);
     }
   };
