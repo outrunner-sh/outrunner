@@ -37,6 +37,7 @@ import {
   type Effort,
   modelGroups,
   type ModelProvider,
+  runsOnOwnAccount,
   type SessionModel,
   takesEffort,
 } from "@/lib/runtime/session-models";
@@ -305,7 +306,7 @@ export function WorkspaceSession({
       // A local switch relaunches the session on this Mac: signed in as the
       // user picks now first, as the server does for a cloud one.
       (local
-        ? deliverLocalAgentAuth(workspaceId, agent).then(() => putOnModel(workspaceId, model, next))
+        ? deliverLocalAgentAuth(workspaceId, agent, runsOnOwnAccount(model)).then(() => putOnModel(workspaceId, model, next))
         : switchCloudModel(workspaceId, model, next))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });

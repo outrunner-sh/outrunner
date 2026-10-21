@@ -27,14 +27,15 @@ export class LocalAgentAuthError extends Error {
   }
 }
 
-/** What the server says the agent signs in with, for a session on this Mac. */
-async function resolveLocal(agent: AgentId): Promise<ResolvedAuth> {
+/** What the server says the agent signs in with, for a session on this Mac;
+ *  `ownAccount` as resolveAgentAuth takes it. */
+async function resolveLocal(agent: AgentId, ownAccount: boolean): Promise<ResolvedAuth> {
   let res: Response;
   try {
     res = await fetch("/api/agents/session-auth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent }),
+      body: JSON.stringify({ agent, ownAccount }),
     });
   } catch {
     throw new Error("Could not reach Outrunner. Please try again.");
@@ -54,10 +55,16 @@ async function resolveLocal(agent: AgentId): Promise<ResolvedAuth> {
  * A pick with no credential (the Mac's own login) takes a saved one away. An
  * app from before session credentials can't relay that, and has none saved
  * to take away, so that refusal is no failure; it is for a credential, which
- * the session would otherwise run without.
+ * the session would otherwise run without. `ownAccount` false: the session
+ * runs a model on a key (runsOnOwnAccount), so a pick that can't sign it in
+ * doesn't stop it.
  */
-export async function deliverLocalAgentAuth(workspaceId: string, agent: AgentId): Promise<ResolvedAuth> {
-  const auth = await resolveLocal(agent);
+export async function deliverLocalAgentAuth(
+  workspaceId: string,
+  agent: AgentId,
+  ownAccount: boolean,
+): Promise<ResolvedAuth> {
+  const auth = await resolveLocal(agent, ownAccount);
   const target = localTarget(workspaceId);
   const path = `/workspaces/${workspaceId}/auth`;
   if (auth.credential) {
@@ -72,9 +79,15 @@ export async function deliverLocalAgentAuth(workspaceId: string, agent: AgentId)
  * Sign a new local session's agent in. Codex must be on this Mac whichever way
  * it signs in, and signed in there when the pick is the Mac's own login.
  * Claude Code's own login is checked where it always was (the new-session
- * page). `status` is what the Mac app last reported.
+ * page). `status` is what the Mac app last reported; `ownAccount` as
+ * deliverLocalAgentAuth takes it.
  */
-export async function signInLocalAgent(workspaceId: string, agent: AgentId, status: LocalStatus | null): Promise<void> {
+export async function signInLocalAgent(
+  workspaceId: string,
+  agent: AgentId,
+  status: LocalStatus | null,
+  ownAccount: boolean,
+): Promise<void> {
   if (agent === "codex" && status) {
     const href = providerSettingsHref(agent);
     if (!status.agents) throw new LocalAgentAuthError("Update the Outrunner app to run Codex on this Mac.", href);
@@ -85,7 +98,7 @@ export async function signInLocalAgent(workspaceId: string, agent: AgentId, stat
       );
     }
   }
-  const auth = await deliverLocalAgentAuth(workspaceId, agent);
+  const auth = await deliverLocalAgentAuth(workspaceId, agent, ownAccount);
   if (agent === "codex" && !auth.credential && status && localAgentState(status, agent) === "logged-out") {
     throw new LocalAgentAuthError(
       `Sign ${AGENTS[agent].label} in on this Mac first, in Settings → Providers → ${AGENTS[agent].label}.`,

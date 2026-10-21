@@ -21,6 +21,7 @@ import {
   checkEffortApplied,
   requestedEffort,
   requestedModel,
+  runsOnOwnAccount,
   setModelRequest,
 } from "@/lib/runtime/session-models";
 
@@ -116,7 +117,12 @@ export async function POST(request: Request, context: RouteContext) {
     // The switch relaunches the session: signed in as the user picks now, so
     // a key replaced since is the one it relaunches on.
     const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
-    await signInSession(sessionAuthClient(agent, identity, upgrade), workspace.agent, agentAuthStore(owner.id));
+    await signInSession(
+      sessionAuthClient(agent, identity, upgrade),
+      workspace.agent,
+      agentAuthStore(owner.id),
+      runsOnOwnAccount(model),
+    );
   } catch (error) {
     const failure = signInFailure(error);
     if (failure) return NextResponse.json(failure, { status: 409 });

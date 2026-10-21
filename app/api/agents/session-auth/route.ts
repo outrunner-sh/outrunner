@@ -14,7 +14,9 @@ import { isSameOriginRequest } from "@/lib/http/guards";
  * (/api/outrunner-models/key). POST, same-origin, never cached: it can hold a
  * credential.
  *
- * 409 with `settingsHref` when the pick can't run: its key isn't saved.
+ * 409 with `settingsHref` when the pick can't run: its key isn't saved. With
+ * `ownAccount: false` (the session runs a model on a key), no credential
+ * instead.
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -22,10 +24,12 @@ export async function POST(request: Request) {
   }
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
-  const body = (await request.json().catch(() => null)) as { agent?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { agent?: unknown; ownAccount?: unknown } | null;
   if (!isAgentId(body?.agent)) return NextResponse.json({ error: "Choose one of the agents." }, { status: 400 });
+  // False only when said: a page from before it always ran on the account.
+  const ownAccount = body.ownAccount !== false;
   try {
-    const auth = await resolveAgentAuth(agentAuthStore(owner.id), body.agent, "local");
+    const auth = await resolveAgentAuth(agentAuthStore(owner.id), body.agent, "local", { ownAccount });
     return NextResponse.json(auth, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     if (error instanceof AgentAuthError) {

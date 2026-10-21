@@ -52,6 +52,12 @@ export function agentOf(provider: ModelProvider): AgentId {
   return provider === "codex" ? "codex" : "claude";
 }
 
+/** Whether `model` runs on the user's own account of its agent (their
+ *  Claude, or Codex's sign-in), rather than on a key Claude Code is pointed at. */
+export function runsOnOwnAccount(model: { provider: ModelProvider }): boolean {
+  return model.provider === "claude" || model.provider === "codex";
+}
+
 /** The listed models on the user's key for `provider`. */
 export function providerModels(provider: ProviderId): SessionModel[] {
   return PROVIDERS[provider].models.map((m) => ({ ...m, provider }));

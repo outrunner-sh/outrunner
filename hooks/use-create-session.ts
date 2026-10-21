@@ -17,6 +17,7 @@ import {
   CLAUDE_DEFAULT_MODEL,
   DEFAULT_EFFORT,
   type Effort,
+  runsOnOwnAccount,
   type SessionModel,
   takesEffort,
 } from "@/lib/runtime/session-models";
@@ -179,7 +180,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         return;
       }
       try {
-        await signInLocalAgent(workspaceId, agent, status);
+        // On Outrunner's model, or another on a key, it needs no account.
+        await signInLocalAgent(workspaceId, agent, status, model ? runsOnOwnAccount(model) : !onOutrunnerModel);
       } catch (error) {
         void localAgentRequest(target, "POST", `/workspaces/${workspaceId}/destroy`).catch(() => {});
         fail(error, "Could not sign the session's agent in.");
