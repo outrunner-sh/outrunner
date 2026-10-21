@@ -11,6 +11,7 @@ import {
   Monitor,
   PanelRightClose,
   Plus,
+  ScanSearch,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -27,14 +28,20 @@ import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
 import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
 import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";
+import {
+  REVIEW_INSTRUCTIONS_FILENAME,
+  REVIEW_PROMPT,
+  reviewInstructions,
+} from "@/lib/session/review-instructions";
 import { cn } from "@/lib/utils";
 
 /**
- * The session's Environment: where it runs, its changes, its branch and its
- * pull request, one quiet row each. Changes opens the file list in place; the
- * branch row unfolds its details beneath it, and the pull request row asks the
- * agent for one, then links to the pull request it opens. The terminal docks
- * below, in the studio's slot, not here.
+ * The session's Environment: where it runs, its changes, its branch, its pull
+ * request and a review, one quiet row each. Changes opens the file list in
+ * place; the branch row unfolds its details beneath it, the pull request row
+ * asks the agent for one and then links to the pull request it opens, and
+ * Review asks the agent to review the change. The terminal docks below, in the
+ * studio's slot, not here.
  */
 export function WorkspaceEnvironment({
   workspace,
@@ -49,7 +56,7 @@ export function WorkspaceEnvironment({
   local?: LocalSession;
   pullRequest: WorkspacePullRequest | null;
   isReady: boolean;
-  /** Sends into the session while it can (Create PR's prompt). */
+  /** Sends into the session while it can (the Create PR and Review prompts). */
   sender: SessionSender | null;
   /** The terminal below is expanded: the rows then take only their height. */
   terminalOpen: boolean;
@@ -146,17 +153,24 @@ export function WorkspaceEnvironment({
           </dl>
         )}
 
-        {/* Cloud sessions only: the instructions go as an attachment, which a
-            session on this Mac can't take. */}
+        {/* Cloud sessions only: both rows hand the agent their instructions as
+            an attachment, which a session on this Mac can't take. */}
         {!local && summary.branch && (
-          <PullRequestRow
-            workspaceId={workspace.id}
-            branch={summary.branch}
-            baseBranch={summary.baseBranch ?? workspace.baseBranch}
-            uncommitted={isReady && changes.files ? changes.files.length : null}
-            pullRequest={pullRequest}
-            sender={isReady ? sender : null}
-          />
+          <>
+            <PullRequestRow
+              workspaceId={workspace.id}
+              branch={summary.branch}
+              baseBranch={summary.baseBranch ?? workspace.baseBranch}
+              uncommitted={isReady && changes.files ? changes.files.length : null}
+              pullRequest={pullRequest}
+              sender={isReady ? sender : null}
+            />
+            <ReviewRow
+              baseBranch={summary.baseBranch ?? workspace.baseBranch}
+              pullRequestNumber={pullRequest?.number ?? null}
+              sender={isReady ? sender : null}
+            />
+          </>
         )}
       </div>
     </>
@@ -174,6 +188,92 @@ const PR_STATUS_POLL_MS = 30_000;
 const MERGE_CONFIRM_MS = 4_000;
 
 type RowError = { message: string; reconnect: boolean };
+
+/**
+ * Hand the agent a job the way Conductor does: a short prompt with the steps
+ * attached as a markdown file, sent through the session like a message typed
+ * in the composer. Shared by Create PR and Review so the two cannot drift.
+ *
+ * `error` is set only for a failure the chat won't show: a send that fails
+ * says why there, and its orphaned attachment is cleaned up here.
+ */
+async function askAgent(
+  sender: SessionSender,
+  prompt: string,
+  filename: string,
+  instructions: string,
+): Promise<{ sent: boolean; error?: string }> {
+  let attachment: { id: string };
+  try {
+    attachment = await uploadAttachment(new File([instructions], filename, { type: "text/markdown" }));
+  } catch (uploadError) {
+    const reason = uploadError instanceof Error ? uploadError.message : "Upload failed";
+    return { sent: false, error: `Could not attach ${filename}: ${reason}.` };
+  }
+  const sent = await sender.send(prompt, [attachment.id]);
+  if (!sent) void fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" }).catch(() => {});
+  return { sent };
+}
+
+/**
+ * Review asks the session's agent to review the change, as Conductor's Review
+ * request does: the prompt "Review my changes" with `Review request.md`
+ * attached. The findings come back as the agent's final message, so unlike
+ * Create PR this row has nothing to watch for once the prompt is away.
+ */
+function ReviewRow({
+  baseBranch,
+  pullRequestNumber,
+  sender,
+}: {
+  baseBranch: string;
+  /** The open pull request under review, where the session has one. */
+  pullRequestNumber: number | null;
+  sender: SessionSender | null;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function review() {
+    if (!sender || busy) return;
+    setBusy(true);
+    setError(null);
+    const result = await askAgent(
+      sender,
+      REVIEW_PROMPT,
+      REVIEW_INSTRUCTIONS_FILENAME,
+      reviewInstructions({ baseBranch, pullRequestNumber }),
+    );
+    setError(result.error ?? null);
+    setBusy(false);
+  }
+
+  return (
+    <>
+      <EnvRow
+        onClick={() => void review()}
+        disabled={!sender}
+        busy={busy}
+        icon={<ScanSearch />}
+        title={
+          !sender
+            ? "Available once the session is connected"
+            : pullRequestNumber === null
+              ? `Ask the agent to review everything that differs from ${baseBranch}`
+              : `Ask the agent to review pull request #${pullRequestNumber}`
+        }
+        right={busy ? <Spinner label="Asking for a review" /> : undefined}
+      >
+        {busy ? "Asking for a review…" : "Review"}
+      </EnvRow>
+      {error && (
+        <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
 
 /**
  * The session's pull request. Without one, Create PR asks the session's agent
@@ -267,22 +367,14 @@ function PullRequestRow({
     if (!sender || phase !== "idle") return;
     setPhase("sending");
     setError(null);
-    let attachment: { id: string };
-    try {
-      const instructions = prInstructions({ branch, baseBranch, uncommitted });
-      attachment = await uploadAttachment(
-        new File([instructions], PR_INSTRUCTIONS_FILENAME, { type: "text/markdown" }),
-      );
-    } catch (uploadError) {
-      const reason = uploadError instanceof Error ? uploadError.message : "Upload failed";
-      setError({ message: `Could not attach the PR instructions: ${reason}.`, reconnect: false });
-      setPhase("idle");
-      return;
-    }
-    // A send that fails says why in the chat, as the composer's do.
-    const sent = await sender.send(PR_PROMPT, [attachment.id]);
-    if (!sent) void fetch(`/api/attachments/${attachment.id}`, { method: "DELETE" }).catch(() => {});
-    setPhase(sent ? "waiting" : "idle");
+    const result = await askAgent(
+      sender,
+      PR_PROMPT,
+      PR_INSTRUCTIONS_FILENAME,
+      prInstructions({ branch, baseBranch, uncommitted }),
+    );
+    if (result.error) setError({ message: result.error, reconnect: false });
+    setPhase(result.sent ? "waiting" : "idle");
   }
 
   const busy = phase !== "idle";
