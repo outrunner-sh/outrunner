@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, FileText, Plus, Search, Settings2, X } from "lucide-react";
+import { ArrowUp, Check, FileText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -78,6 +78,7 @@ export function SessionComposer({
   model,
   modelChoice,
   allowAttachments = true,
+  stop,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -95,6 +96,9 @@ export function SessionComposer({
   /** False hides attaching. Attachments are delivered by the server, which
    *  cannot reach a local session's worktree on the user's Mac. */
   allowAttachments?: boolean;
+  /** Stopping the turn under way, shown beside send (and on Escape) while
+   *  there is one to stop. */
+  stop?: { onStop: () => void; stopping: boolean };
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -263,6 +267,9 @@ export function SessionComposer({
           if (event.key === "Enter" && !event.shiftKey && !isImeKeydown(event.nativeEvent)) {
             event.preventDefault();
             submit();
+          } else if (event.key === "Escape" && stop && !stop.stopping && !isImeKeydown(event.nativeEvent)) {
+            event.preventDefault();
+            stop.onStop();
           }
         }}
       />
@@ -296,14 +303,28 @@ export function SessionComposer({
             model && <span className="studio-composer-model">{modelLabel(model)}</span>
           )}
         </span>
-        <button
-          type="submit"
-          className="studio-composer-send"
-          disabled={!canSend || sending || !hasSomethingToSend || attachments.busy}
-          aria-label="Send"
-        >
-          <ArrowUp />
-        </button>
+        <span>
+          {stop && (
+            <button
+              type="button"
+              className="studio-composer-stop"
+              onClick={stop.onStop}
+              disabled={stop.stopping}
+              aria-label="Stop"
+              title="Stop (Esc)"
+            >
+              {stop.stopping ? <Spinner /> : <Square />}
+            </button>
+          )}
+          <button
+            type="submit"
+            className="studio-composer-send"
+            disabled={!canSend || sending || !hasSomethingToSend || attachments.busy}
+            aria-label="Send"
+          >
+            <ArrowUp />
+          </button>
+        </span>
       </div>
     </form>
   );

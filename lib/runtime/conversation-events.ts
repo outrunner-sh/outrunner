@@ -56,12 +56,22 @@ export function messageText(event: AgentEvent): string {
     .trim();
 }
 
+/** How Claude Code records a turn stopped by Escape: a user message of this
+ *  text, ending "]" or " for tool use]". Not a prompt. */
+const INTERRUPTED = "[Request interrupted by user";
+
+/** Whether an event is Claude Code's record of a stopped turn. */
+export function isInterruption(event: AgentEvent): boolean {
+  return event.t === "message" && event.role === "user" && messageText(event).startsWith(INTERRUPTED);
+}
+
 /** The text-bearing user prompts the stream has recorded, in order, each as
  *  typed (without the header naming its attachments). Excludes Claude's
- *  tool-result turns, which are logged as role:"user" but carry no prompt text. */
+ *  tool-result turns, which are logged as role:"user" but carry no prompt text,
+ *  and its records of a stopped turn. */
 export function userPrompts(events: AgentEvent[]): string[] {
   return events
-    .filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "")
+    .filter((e) => e.t === "message" && e.role === "user" && messageText(e) !== "" && !isInterruption(e))
     .map((e) => promptWithoutAttachments(messageText(e)));
 }
 
@@ -75,7 +85,7 @@ export function userPromptCount(events: AgentEvent[]): number {
  *  tool-result turns (role "user", no text) and a prompt of only files. */
 export function firstUserPrompt(events: AgentEvent[]): string | null {
   for (const event of events) {
-    if (event.t !== "message" || event.role !== "user") continue;
+    if (event.t !== "message" || event.role !== "user" || isInterruption(event)) continue;
     const text = promptWithoutAttachments(messageText(event));
     if (text) return text;
   }

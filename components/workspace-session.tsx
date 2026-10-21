@@ -259,11 +259,33 @@ export function WorkspaceSession({
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
   const shownModel = picked && !repliedSincePick ? picked.model : activeModel;
+  // Stopping the turn under way (the composer's stop button): the agent
+  // presses Escape in the session and answers once the turn has stopped.
+  const [stopping, setStopping] = useState(false);
+  // The prompts recorded when a turn was last stopped: the turn is over until
+  // the next, even where the agent records nothing of the stop (Codex).
+  const [stoppedAt, setStoppedAt] = useState<number | null>(null);
   // A prompt the stream hasn't recorded yet is a turn starting. The agent
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
   const delivered = userPromptCount(conversation.events);
   const working =
-    claudeIsWorking(conversation.events) || pending.some((p) => pendingShows(p, delivered));
+    pending.some((p) => pendingShows(p, delivered)) ||
+    (claudeIsWorking(conversation.events) && stoppedAt !== delivered);
+  const stop = () => {
+    setStopping(true);
+    setSendError(null);
+    (local
+      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
+      : stopCloudTurn(workspaceId)
+    )
+      .then(() => setStoppedAt(userPromptCount(eventsRef.current)))
+      .catch((error: unknown) =>
+        setSendError(
+          local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
+        ),
+      )
+      .finally(() => setStopping(false));
+  };
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
     effort,
@@ -389,6 +411,7 @@ export function WorkspaceSession({
         <div className="studio-convo-body">
           <ConversationTimeline
             events={timelineEvents}
+            working={working}
             placeholder={conversationPlaceholder({
               events: timelineEvents.length,
               attachment: attachment.status,
@@ -447,6 +470,7 @@ export function WorkspaceSession({
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
+        stop={attached && working ? { onStop: stop, stopping } : undefined}
       />
     </div>
   );
@@ -492,6 +516,15 @@ async function switchCloudModel(workspaceId: string, model: SessionModel, effort
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't switch models. Please try again.");
+}
+
+/** Stop a cloud session's turn. The server reaches the session's agent, as
+ *  for a prompt. */
+async function stopCloudTurn(workspaceId: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
 }
 
 /** Who served a session's model when it was last picked here (a convenience:

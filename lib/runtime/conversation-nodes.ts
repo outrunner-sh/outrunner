@@ -1,4 +1,5 @@
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
+import { isInterruption } from "@/lib/runtime/conversation-events";
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
@@ -9,6 +10,8 @@ export type ConversationNode =
   | { kind: "state"; key: string; state: string }
   | { kind: "usage"; key: string; event: Extract<AgentEvent, { t: "usage" }> }
   | { kind: "prompt"; key: string; text: string }
+  /** The user stopped the turn. */
+  | { kind: "interrupted"; key: string }
   | { kind: "prose"; key: string; text: string; at: string }
   | { kind: "thought"; key: string; seconds: number | null }
   | {
@@ -44,6 +47,11 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
     }
     if (event.t === "usage") {
       nodes.push({ kind: "usage", key: `us-${ei}`, event });
+      return;
+    }
+    if (isInterruption(event)) {
+      nodes.push({ kind: "interrupted", key: `${event.uuid}-${ei}` });
+      previousAt = event.timestamp;
       return;
     }
     event.content.forEach((block, bi) => {

@@ -44,3 +44,15 @@ test("a thought's length needs both times, a second or more, running forwards", 
   assert.equal(thoughtSeconds("not a time", "2026-10-21T10:00:00Z"), null);
   assert.equal(thoughtSeconds("2026-10-21T10:00:00Z", "2026-10-21T10:00:16.6Z"), 17);
 });
+
+test("a stopped turn shows as one row, not as the user's prompt", () => {
+  const nodes = conversationNodes([
+    message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "fix it" }]),
+    message("assistant", "2026-10-21T10:00:05Z", [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }]),
+    message("user", "2026-10-21T10:00:06Z", [{ type: "text", text: "[Request interrupted by user for tool use]" }]),
+  ]);
+  assert.deepEqual(
+    nodes.map((n) => n.kind),
+    ["prompt", "tool", "interrupted"],
+  );
+});
