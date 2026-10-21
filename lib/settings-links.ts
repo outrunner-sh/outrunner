@@ -25,6 +25,9 @@ export function isProviderTab(value: unknown): value is ProviderTab {
 
 export const PROVIDERS_SETTINGS_HREF = "/settings/providers";
 
+/** Settings → Usage: Outrunner's models, and what the user's own keys spent. */
+export const USAGE_SETTINGS_HREF = "/settings/usage";
+
 /** Where a link to Settings → Providers lands: a tab, and on an agent's tab,
  *  the way of signing in to show. */
 export type ProviderPlace = { tab: ProviderTab; method?: AuthMethodId };

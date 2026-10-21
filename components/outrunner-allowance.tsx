@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import { AllowanceBar } from "@/components/allowance-bar";
 import type { AllowanceView } from "@/lib/openrouter/allowance";
-import { providerSettingsHref } from "@/lib/settings-links";
+import { providerSettingsHref, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
 
 /**
  * How much of their allowance on Outrunner's models the user has used, as a
@@ -42,7 +42,10 @@ export function OutrunnerAllowance() {
   if (!view) return null;
   return (
     <div className="space-y-1.5 px-2 pb-3">
-      <AllowanceBar view={view} />
+      {/* The whole picture, with the user's own keys, is in Settings → Usage. */}
+      <Link href={USAGE_SETTINGS_HREF} className="block rounded-sm hover:opacity-80">
+        <AllowanceBar view={view} />
+      </Link>
       {view.state === "out" ? (
         <p className="text-xs text-muted-foreground">
           You&apos;ve used your included usage.{" "}
