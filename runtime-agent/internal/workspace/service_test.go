@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -164,6 +165,46 @@ func TestSessionEnvironmentExcludesAgentControlSecrets(t *testing.T) {
 	}
 	if !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN=claude-secret") || len(secrets) != 1 || secrets[0] != "claude-secret" {
 		t.Fatalf("Claude credential was not retained safely: env=%q secrets=%q", got, secrets)
+	}
+}
+
+// The user's GitHub token reaches the session for gh, is masked in the
+// terminal, and answers git's credential prompt for github.com and nowhere
+// else: run through real git, as the agent's `git push` would.
+func TestSessionEnvironmentGivesGitTheGitHubTokenForGitHubOnly(t *testing.T) {
+	env, secrets := sessionEnvironment([]string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + t.TempDir(),
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=credential.helper",
+		"GIT_CONFIG_VALUE_0=!echo password=the-box-own",
+		"GH_TOKEN=gho_user",
+	})
+	if !slices.Contains(env, "GH_TOKEN=gho_user") || !slices.Contains(secrets, "gho_user") {
+		t.Fatalf("GitHub token not kept and masked: env=%q secrets=%q", env, secrets)
+	}
+
+	fill := func(host string) string {
+		cmd := exec.Command("git", "credential", "fill")
+		cmd.Env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1")
+		cmd.Stdin = strings.NewReader("protocol=https\nhost=" + host + "\n\n")
+		out, _ := cmd.Output()
+		return string(out)
+	}
+	if got := fill("github.com"); !strings.Contains(got, "password=gho_user") {
+		t.Fatalf("git did not get the token for github.com: %q", got)
+	}
+	if got := fill("example.com"); strings.Contains(got, "gho_user") {
+		t.Fatalf("git handed the token to another host: %q", got)
+	}
+}
+
+func TestSessionEnvironmentWithoutGitHubTokenLeavesGitAlone(t *testing.T) {
+	env, _ := sessionEnvironment([]string{"PATH=/usr/bin", "GH_TOKEN="})
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_CONFIG_") {
+			t.Fatalf("git configured without a token: %q", env)
+		}
 	}
 }
 
