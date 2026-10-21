@@ -83,15 +83,13 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
   return (
     <div className="space-y-2">
-      {/* Minimal, like the rest of first run: an amber line, no fill. */}
+      {/* The app's primary button (light on dark), not near-black on black. */}
       <LoadingButton
         size="default"
-        variant="outline"
         status={loading ? "pending" : "idle"}
         labels={{ idle: "Continue with GitHub", pending: "Opening GitHub" }}
         icon={<GitHubMark />}
         onClick={() => void signIn()}
-        className="border-amber-500/50 bg-transparent shadow-none hover:border-amber-500 hover:bg-transparent dark:border-amber-500/50 dark:bg-transparent dark:hover:border-amber-500 dark:hover:bg-transparent"
       />
       {error && <p className="text-destructive text-xs">{error}</p>}
     </div>

@@ -37,7 +37,7 @@ export default async function SignInPage({
     <main className="flex min-h-screen items-center justify-center px-6">
       <div className="space-y-10">
         {/* The home screen's wordmark, so signing in already looks like the app. */}
-        <p aria-hidden className="select-none font-display text-7xl leading-none text-foreground">
+        <p aria-hidden className="select-none font-display text-7xl leading-none text-foreground/25">
           outrunner
         </p>
         <div className="space-y-6">
