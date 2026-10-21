@@ -58,7 +58,7 @@ import {
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
-import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
@@ -148,11 +148,14 @@ export async function POST(request: Request, context: RouteContext) {
 
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  // Either credential kind is fine; without one none was set, unless
-  // the session gets one of its own. Sessions start on Outrunner's models (on
-  // the user's own OpenRouter key, or the server's), so only without those is
-  // Claude a must. Codex runs on its own sign-in, resolved above.
-  const hasClaude = agentId === "claude" && (hasClaudeCredential(sessionEnv) || auth.credential !== null);
+  // Whether it can run on the user's Claude: only as they picked it (or, with
+  // no pick, on what they saved), which `auth` holds. Never on the box's own
+  // environment instead, which may hold a key the user didn't pick, or one
+  // since removed: a session falling back on it would be billed to the wrong
+  // account. Sessions start on Outrunner's models (on the user's own
+  // OpenRouter key, or the server's), so only without those is Claude a
+  // must. Codex runs on its own sign-in, resolved above.
+  const hasClaude = agentId === "claude" && auth.credential !== null;
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
