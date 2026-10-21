@@ -12,10 +12,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
-import { initGitRepository, isGitRepository, pickLocalFolder, type LocalFolder } from "@/lib/desktop/local-runtime";
+import { startSessionAt } from "@/hooks/use-session-location";
+import { initGitRepository, isGitRepository, pickLocalFolder } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { newSessionHref } from "@/lib/nav/sidebar";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 const noopSubscribe = () => () => {};
@@ -34,11 +33,6 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
   const desktop = useSyncExternalStore(noopSubscribe, isDesktopApp, () => false);
   const onMac = LOCAL_SESSIONS && desktop;
 
-  function startInFolder(folder: LocalFolder) {
-    startNextSessionIn(folder.path);
-    router.push(newSessionHref({ kind: "local", folder: folder.path }, Date.now().toString(36)));
-  }
-
   /** A folder from the Mac's dialog; with `asNewProject`, made a git
    *  repository first unless it already is one. */
   async function openFolder(asNewProject: boolean) {
@@ -46,7 +40,8 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
     try {
       const folder = await pickLocalFolder();
       if (!folder) return; // cancelled
-      startInFolder(asNewProject && !isGitRepository(folder) ? await initGitRepository(folder.path) : folder);
+      const opened = asNewProject && !isGitRepository(folder) ? await initGitRepository(folder.path) : folder;
+      startSessionAt(router, { kind: "local", folder: opened.path });
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "Couldn't open that folder.");
     }
@@ -55,18 +50,19 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
   function opened(result: OpenedProject) {
     setGithubOpen(false);
     if (result.kind === "mac") {
-      startInFolder(result.folder);
+      startSessionAt(router, { kind: "local", folder: result.folder.path });
       return;
     }
-    startNextSessionInCloud();
-    router.push(newSessionHref({ kind: "cloud", projectId: result.project.id }, Date.now().toString(36)));
+    startSessionAt(router, { kind: "cloud", projectId: result.project.id });
     // The sidebar and the form read projects on the server: show this one.
     router.refresh();
   }
 
   return (
     <div className="relative">
-      <DropdownMenu>
+      {/* Not modal: a modal menu that closes as its item opens the dialog
+          fights the dialog for focus, and can leave the page unclickable. */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"

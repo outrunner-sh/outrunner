@@ -21,6 +21,10 @@ test("a pasted repository reference becomes its owner/name", () => {
     ["git@github.com:acme/tool.git", "acme/tool"],
     ["ssh://git@github.com/acme/tool.git", "acme/tool"],
     ["https://GitHub.com/Acme/Tool.js", "Acme/Tool.js"],
+    ["git+https://github.com/acme/tool.git", "acme/tool"],
+    ["git+ssh://git@github.com/acme/tool.git", "acme/tool"],
+    // An Enterprise Managed User's account.
+    ["https://github.com/jane_acme/tool", "jane_acme/tool"],
   ];
   for (const [input, expected] of cases) assert.equal(parseGitHubRepoInput(input), expected, input);
 });
@@ -40,6 +44,10 @@ test("anything that isn't a GitHub repository is refused", () => {
     "-acme/tool",
     "acme/-tool",
     "ac me/tool",
+    "https://github.com/orgs/acme/repositories",
+    "https://github.com/apps/some-app",
+    "https://github.com/settings/applications",
+    "_acme/tool",
   ]) {
     assert.equal(parseGitHubRepoInput(input), null, input);
   }
