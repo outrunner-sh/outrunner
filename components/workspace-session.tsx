@@ -26,12 +26,26 @@ import {
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
-import { defaultModel, modelGroups, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  defaultModel,
+  type Effort,
+  modelGroups,
+  type ModelProvider,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
+import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 import { cn } from "@/lib/utils";
+
+/** Sends a prompt into the session as the composer does, resolving whether it
+ *  went: handed out (WorkspaceSession's `onSender`) while the session can send. */
+export type SessionSender = {
+  send: (text: string, attachmentIds?: string[]) => Promise<boolean>;
+};
 
 export function WorkspaceSession({
   workspaceId,
@@ -43,6 +57,7 @@ export function WorkspaceSession({
   untitled = false,
   initialPrompt,
   initialAttachmentIds,
+  onSender,
 }: {
   workspaceId: string;
   /** The coding agent the session runs: its model menu offers only models
@@ -65,6 +80,9 @@ export function WorkspaceSession({
   initialPrompt?: string;
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
+  /** Given a sender while the session can send, null when it no longer can:
+   *  for prompts from outside the composer (Create PR). Must be stable. */
+  onSender?: (sender: SessionSender | null) => void;
 }) {
   const router = useRouter();
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
@@ -149,6 +167,19 @@ export function WorkspaceSession({
     );
   };
 
+  // Create PR, in the Environment panel, sends through here too: its prompt
+  // gets the composer's bubble and error. The sender reads `send` as of the
+  // last render, so handing it out once per connection is enough.
+  const sendRef = useRef(send);
+  useEffect(() => {
+    sendRef.current = send;
+  });
+  useEffect(() => {
+    if (!canSend || !onSender) return;
+    onSender({ send: (text, attachmentIds) => sendRef.current(text, attachmentIds) });
+    return () => onSender(null);
+  }, [canSend, onSender]);
+
   // The model of the most recent assistant turn — shown in the composer so it
   // reflects what's actually running, not a hardcoded label.
   const activeModel = useMemo<string | undefined>(() => {
@@ -187,6 +218,8 @@ export function WorkspaceSession({
   // picked here, else the one a new session starts on.
   const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
+  // The effort it runs at, as last put on from here (lib/session/picked-effort.ts).
+  const [effort, setEffort] = useState<Effort | null>(() => rememberedEffort(workspaceId));
   const repliedSincePick =
     picked !== null &&
     conversation.events
@@ -200,6 +233,7 @@ export function WorkspaceSession({
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
+    effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
@@ -208,18 +242,22 @@ export function WorkspaceSession({
       : working
         ? `Switch models once ${AGENTS[agent].label} has finished this turn`
         : null,
-    onChange: (model) => {
+    onChange: (model, pickedEffort) => {
+      // What the agent is told: an effort goes only with a model that takes one.
+      const next = takesEffort(model) ? pickedEffort : null;
       setSwitching(true);
       setSendError(null);
       // A local switch relaunches the session on this Mac: signed in as the
       // user picks now first, as the server does for a cloud one.
       (local
-        ? deliverLocalAgentAuth(workspaceId, agent).then(() => putOnModel(workspaceId, model))
-        : switchCloudModel(workspaceId, model))
+        ? deliverLocalAgentAuth(workspaceId, agent).then(() => putOnModel(workspaceId, model, next))
+        : switchCloudModel(workspaceId, model, next))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });
           setProviderPicked(model.provider);
           rememberPickedProvider(workspaceId, model.provider);
+          setEffort(next);
+          rememberEffort(workspaceId, next);
         })
         .catch((error: unknown) =>
           setSendError(
@@ -382,11 +420,11 @@ export function WorkspaceSession({
 
 /** Switch a cloud session's model. The server adds the key the model needs
  *  and calls the session's agent, so the key stays off the browser. */
-async function switchCloudModel(workspaceId: string, model: SessionModel): Promise<void> {
+async function switchCloudModel(workspaceId: string, model: SessionModel, effort: Effort | null): Promise<void> {
   const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: model.provider, model: model.id }),
+    body: JSON.stringify({ provider: model.provider, model: model.id, ...(effort && { effort }) }),
   });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };

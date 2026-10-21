@@ -16,7 +16,13 @@ import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
-import { agentOf, requestedModel, setModelRequest } from "@/lib/runtime/session-models";
+import {
+  agentOf,
+  checkEffortApplied,
+  requestedEffort,
+  requestedModel,
+  setModelRequest,
+} from "@/lib/runtime/session-models";
 
 export const dynamic = "force-dynamic";
 
@@ -37,10 +43,17 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Sign in to switch models." }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as { provider?: unknown; model?: unknown; key?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as
+    | { provider?: unknown; model?: unknown; key?: unknown; effort?: unknown }
+    | null;
   const model = requestedModel(body);
   if (!model) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+  }
+  // None: the model's own.
+  const effort = requestedEffort(body);
+  if (effort === null) {
+    return NextResponse.json({ error: "Choose one of the offered efforts." }, { status: 400 });
   }
 
   const { id } = await context.params;
@@ -80,7 +93,7 @@ export async function POST(request: Request, context: RouteContext) {
   // OpenRouter, so only for a switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder));
+    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder), effort);
   } catch (error) {
     return modelKeyErrorResponse(error, `Model: could not get the ${model.provider} key of ${owner.id}`);
   }
@@ -114,12 +127,12 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
-    await agent.setModel(identity, req);
+    checkEffortApplied(req, await agent.setModel(identity, req));
   } catch (error) {
     const { status, message } = switchFailure(error, model);
     if (status >= 500) console.error(`Model: switch failed for ${workspace.id}`, error);
     return NextResponse.json({ error: message }, { status });
   }
-  return NextResponse.json({ model: req.model });
+  return NextResponse.json({ model: req.model, effort: req.effort ?? null });
 }
 

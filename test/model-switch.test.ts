@@ -5,7 +5,7 @@ import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AllowanceSpentError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { NoStartingModelError, startingModel, switchFailure } from "@/lib/runtime/model-switch";
 import { NoProviderKeyError } from "@/lib/providers/errors";
-import { OUTRUNNER_MODELS, type SetModelRequest } from "@/lib/runtime/session-models";
+import { EffortUnsupportedError, modelChoice, OUTRUNNER_MODELS, type SetModelRequest } from "@/lib/runtime/session-models";
 
 const GLM = OUTRUNNER_MODELS[0];
 
@@ -229,4 +229,33 @@ test("with no default to start on, the session starts on the user's Claude, or s
     startingModel({ setModel: async () => assert.fail("reached the agent"), keyFor: async () => "k", hasClaude: false, fallback: null }),
     (error: unknown) => error instanceof NoStartingModelError && /Connect Claude/.test(error.message),
   );
+});
+
+test("a session starts at the effort picked for its model, never the fallback's", async () => {
+  const sent: SetModelRequest[] = [];
+  // The agent answers with the effort it applied.
+  const setModel = async (req: SetModelRequest) => {
+    sent.push(req);
+    return { result: req.model, effort: req.effort ?? "" };
+  };
+  const opus = modelChoice("claude", "opus")!;
+  await startingModel({ setModel, model: opus, effort: "max", fallback: GLM, keyFor: async () => KEY, hasClaude: true });
+  await startingModel({ setModel, effort: "max", fallback: GLM, keyFor: async () => KEY, hasClaude: true });
+  assert.deepEqual(sent, [
+    { model: "opus", effort: "max" },
+    { model: "z-ai/glm-5.3", gateway: "openrouter", token: KEY },
+  ]);
+});
+
+test("a box too old for efforts says to update, and fails rather than run at another", async () => {
+  const old = async () => ({ result: "opus" });
+  await assert.rejects(
+    startingModel({ setModel: old, model: modelChoice("claude", "opus")!, effort: "high", fallback: null, keyFor: async () => KEY, hasClaude: true }),
+    (error: unknown) => error instanceof EffortUnsupportedError,
+  );
+  await assert.rejects(
+    startingModel({ setModel: old, model: modelChoice("codex", "gpt-6-sol")!, effort: "high", fallback: null, keyFor: async () => KEY, hasClaude: true }),
+    (error: unknown) => error instanceof NoStartingModelError && /too old to set the effort/.test(error.message),
+  );
+  assert.deepEqual(switchFailure(new EffortUnsupportedError(), GLM), { status: 409, message: new EffortUnsupportedError().message });
 });

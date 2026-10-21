@@ -8,21 +8,9 @@
  */
 
 import { getGithubToken } from "@/lib/db/credentials";
+import { MissingGithubTokenError } from "@/lib/github/client";
 
-/**
- * The user has no usable GitHub token. Recoverable, and always by the same
- * action: sign out and back in so the OAuth round trip mints a fresh one.
- *
- * Reached when the user last signed in before the `repo` scope was requested,
- * when they revoked the app on GitHub's side, or when a stored token could not
- * be decrypted (see lib/db/credentials.ts).
- */
-export class MissingGithubTokenError extends Error {
-  constructor() {
-    super("Connect your GitHub account: sign out and back in to grant repository access.");
-    this.name = "MissingGithubTokenError";
-  }
-}
+export { MissingGithubTokenError };
 
 /**
  * The signed-in user's GitHub token, or throw {@link MissingGithubTokenError}.

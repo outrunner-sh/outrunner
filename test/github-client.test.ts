@@ -2,21 +2,18 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
 import {
-  findOrCreatePullRequest,
+  findPullRequest,
   getGitHubRepository,
+  getPullRequestStatus,
+  mergePullRequest,
+  GitHubReconnectError,
   GitHubSyncError,
   listGitHubRepositories,
+  MissingGithubTokenError,
 } from "@/lib/github/client";
+import { githubErrorResponse } from "@/lib/github/http";
 
 const realFetch = globalThis.fetch;
-
-/** Stub global fetch with a handler that receives the request method. */
-function setFetch(handler: (method: string) => Response): void {
-  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
-    const method = (args[1]?.method ?? "GET").toString();
-    return Promise.resolve(handler(method));
-  }) as typeof fetch;
-}
 
 /** Stub global fetch with a handler that receives the GET URL. */
 function setFetchByUrl(handler: (url: URL) => Response): URL[] {
@@ -57,14 +54,12 @@ function reposPage(records: unknown[], init: { lastPage?: number; headers?: Reco
   return new Response(JSON.stringify(records), { status: 200, headers });
 }
 
-const PR_INPUT = {
-  token: "gh-test-token",
-  repoFullName: "owner/repo",
-  headBranch: "runtime/x",
-  baseBranch: "main",
-  title: "t",
-  body: "",
-};
+const PR_LOOKUP = { token: "gh-test-token", repoFullName: "acme/repo", headBranch: "runtime/x" };
+
+/** A /pulls record as GitHub sends it. */
+function apiPull(number: number, base = "main") {
+  return { number, html_url: `https://gh/pr/${number}`, title: `PR ${number}`, base: { ref: base } };
+}
 
 beforeEach(() => {
   process.env.GITHUB_PAT = "ghp_test";
@@ -73,46 +68,107 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test("findOrCreatePullRequest returns an existing open PR without creating one", async () => {
-  let posts = 0;
-  setFetch((method) => {
-    if (method === "POST") {
-      posts += 1;
-      return new Response("{}", { status: 201 });
-    }
-    return new Response(JSON.stringify([{ number: 7, html_url: "https://gh/pr/7" }]), { status: 200 });
-  });
+test("findPullRequest asks for the branch's newest PR in any state, from the repo's owner", async () => {
+  const seen = setFetchByUrl(() => new Response(JSON.stringify([apiPull(7, "develop")]), { status: 200 }));
 
-  const pr = await findOrCreatePullRequest(PR_INPUT);
-  assert.deepEqual(pr, { number: 7, url: "https://gh/pr/7" });
-  assert.equal(posts, 0);
+  const pr = await findPullRequest(PR_LOOKUP);
+  assert.deepEqual(pr, { number: 7, url: "https://gh/pr/7", title: "PR 7", baseBranch: "develop" });
+  const url = seen[0];
+  assert.equal(url.pathname, "/repos/acme/repo/pulls");
+  // A merged or closed PR still counts: the agent may finish before a look.
+  assert.equal(url.searchParams.get("state"), "all");
+  assert.equal(url.searchParams.get("head"), "acme:runtime/x");
+  assert.equal(url.searchParams.get("direction"), "desc");
 });
 
-test("findOrCreatePullRequest creates a PR when none exists", async () => {
-  setFetch((method) =>
-    method === "POST"
-      ? new Response(JSON.stringify({ number: 9, html_url: "https://gh/pr/9" }), { status: 201 })
-      : new Response("[]", { status: 200 }),
+test("findPullRequest is null while the branch has no PR", async () => {
+  setFetchByUrl(() => new Response("[]", { status: 200 }));
+  assert.equal(await findPullRequest(PR_LOOKUP), null);
+});
+
+test("findPullRequest says to reconnect when GitHub rejects the token", async () => {
+  setFetchByUrl(() => new Response("{}", { status: 401 }));
+  await assert.rejects(findPullRequest(PR_LOOKUP), GitHubReconnectError);
+});
+
+/** Stub global fetch by path, recording each request's method and body. */
+function setFetchByPath(routes: Record<string, (method: string) => Response>) {
+  const seen: { method: string; path: string; body: unknown }[] = [];
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = new URL(String(input));
+    const method = init?.method ?? "GET";
+    seen.push({ method, path: url.pathname, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const route = routes[url.pathname];
+    return Promise.resolve(route ? route(method) : new Response("{}", { status: 404 }));
+  }) as typeof fetch;
+  return seen;
+}
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+test("getPullRequestStatus counts check runs and commit statuses together", async () => {
+  setFetchByPath({
+    "/repos/acme/repo/pulls/7": () =>
+      json({ state: "open", merged: false, draft: false, mergeable_state: "unstable", head: { sha: "s1" } }),
+    "/repos/acme/repo/commits/s1/check-runs": () =>
+      json({
+        check_runs: [
+          { status: "completed", conclusion: "success" },
+          { status: "completed", conclusion: "skipped" },
+          { status: "completed", conclusion: "timed_out" },
+          { status: "in_progress", conclusion: null },
+        ],
+      }),
+    "/repos/acme/repo/commits/s1/status": () => json({ state: "failure", statuses: [{ state: "error" }, { state: "pending" }] }),
+  });
+
+  const status = await getPullRequestStatus({ token: "t", repoFullName: "acme/repo", number: 7 });
+  assert.deepEqual(status, {
+    state: "open",
+    draft: false,
+    mergeableState: "unstable",
+    headSha: "s1",
+    checks: { passing: 2, failing: 2, pending: 2 },
+  });
+});
+
+test("getPullRequestStatus: no commit statuses is nothing pending, and a merged PR says merged", async () => {
+  setFetchByPath({
+    "/repos/acme/repo/pulls/7": () => json({ state: "closed", merged: true, mergeable_state: "unknown", head: { sha: "s1" } }),
+    "/repos/acme/repo/commits/s1/check-runs": () => json({ check_runs: [] }),
+    // GitHub's combined state with no statuses at all is "pending".
+    "/repos/acme/repo/commits/s1/status": () => json({ state: "pending", statuses: [] }),
+  });
+
+  const status = await getPullRequestStatus({ token: "t", repoFullName: "acme/repo", number: 7 });
+  assert.equal(status.state, "merged");
+  assert.deepEqual(status.checks, { passing: 0, failing: 0, pending: 0 });
+});
+
+test("mergePullRequest merges at the seen commit, by the first method the repo allows", async () => {
+  const seen = setFetchByPath({
+    "/repos/acme/repo": () => json({ allow_merge_commit: false, allow_squash_merge: true, allow_rebase_merge: true }),
+    "/repos/acme/repo/pulls/7/merge": () => json({ merged: true }),
+  });
+
+  await mergePullRequest({ token: "t", repoFullName: "acme/repo", number: 7, headSha: "s1" });
+  const merge = seen.find((request) => request.path.endsWith("/merge"));
+  assert.equal(merge?.method, "PUT");
+  assert.deepEqual(merge?.body, { sha: "s1", merge_method: "squash" });
+});
+
+test("mergePullRequest passes on GitHub's reason when the branch moved", async () => {
+  setFetchByPath({
+    "/repos/acme/repo": () => json({}),
+    "/repos/acme/repo/pulls/7/merge": () =>
+      json({ message: "Head branch was modified. Review and try the merge again." }, 409),
+  });
+
+  await assert.rejects(
+    mergePullRequest({ token: "t", repoFullName: "acme/repo", number: 7, headSha: "old" }),
+    (error: unknown) =>
+      error instanceof GitHubSyncError && /Head branch was modified/.test(error.message),
   );
-
-  const pr = await findOrCreatePullRequest(PR_INPUT);
-  assert.deepEqual(pr, { number: 9, url: "https://gh/pr/9" });
-});
-
-test("findOrCreatePullRequest re-looks up the PR on a 422 (concurrent create)", async () => {
-  let lookups = 0;
-  setFetch((method) => {
-    if (method === "POST") return new Response("{}", { status: 422 });
-    lookups += 1;
-    // First lookup empty (so we attempt create), second finds the racing PR.
-    return new Response(
-      JSON.stringify(lookups >= 2 ? [{ number: 5, html_url: "https://gh/pr/5" }] : []),
-      { status: 200 },
-    );
-  });
-
-  const pr = await findOrCreatePullRequest(PR_INPUT);
-  assert.deepEqual(pr, { number: 5, url: "https://gh/pr/5" });
 });
 
 test("listGitHubRepositories reads every page the first one names, newest push first", async () => {
@@ -188,15 +244,45 @@ test("listGitHubRepositories stops at 100 pages without failing", async () => {
   assert.equal(list.complete, false);
 });
 
-test("listGitHubRepositories fails on a rejected token with a safe message", async () => {
-  setFetchByUrl(() => new Response('{"message":"Bad credentials"}', { status: 401 }));
+/** What `listGitHubRepositories` throws when GitHub answers `status`. */
+async function listingError(status: number): Promise<unknown> {
+  setFetchByUrl(() => new Response('{"message":"Bad credentials"}', { status }));
+  return listGitHubRepositories("t").then(
+    () => assert.fail("expected the listing to fail"),
+    (error: unknown) => error,
+  );
+}
 
-  await assert.rejects(listGitHubRepositories("t"), (error: unknown) => {
-    assert.ok(error instanceof GitHubSyncError);
-    assert.equal(error.status, 401);
-    assert.equal(error.message, "GitHub could not authorize the configured token.");
-    return true;
+test("a 401 means the token is dead: the route asks the user to reconnect", async () => {
+  const error = await listingError(401);
+  assert.ok(error instanceof GitHubReconnectError);
+  assert.equal(error.status, 401);
+
+  const response = githubErrorResponse(error, "fallback");
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), {
+    error: "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    reconnect: true,
   });
+});
+
+test("a 403 (rate limit, no access) is not a reconnect: signing in again would not fix it", async () => {
+  const error = await listingError(403);
+  assert.ok(error instanceof GitHubSyncError);
+  assert.ok(!(error instanceof GitHubReconnectError));
+
+  const body = await githubErrorResponse(error, "fallback").json();
+  assert.equal(body.reconnect, undefined);
+});
+
+test("no stored token also asks the user to reconnect; anything else is the fallback", async () => {
+  const missing = githubErrorResponse(new MissingGithubTokenError(), "fallback");
+  assert.equal(missing.status, 409);
+  assert.equal((await missing.json()).reconnect, true);
+
+  const other = githubErrorResponse(new Error("db down"), "fallback");
+  assert.equal(other.status, 500);
+  assert.deepEqual(await other.json(), { error: "fallback" });
 });
 
 test("getGitHubRepository: null for what the token can't see, an error for a rate limit", async () => {

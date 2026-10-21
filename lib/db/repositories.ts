@@ -60,6 +60,16 @@ export async function getProject(id: string): Promise<Project | null> {
   return data ? toProject(data) : null;
 }
 
+/** Projects by id, hidden ones included, in one query. */
+export async function getProjects(ids: string[]): Promise<Project[]> {
+  if (ids.length === 0) return [];
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("projects").select("*").in("id", ids);
+
+  if (error) throw error;
+  return (data ?? []).map(toProject);
+}
+
 /** Upsert the repositories returned by GitHub, keyed on (owner, repo id). */
 export async function upsertProjects(
   ownerId: string,

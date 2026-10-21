@@ -99,6 +99,45 @@ export function defaultModel(menu: ModelMenu): SessionModel | null {
   return provider ? providerModels(provider)[0] : null;
 }
 
+/** How hard a model thinks, lowest first: the levels Claude Code's --effort
+ *  and Codex's model_reasoning_effort both take (claude.Efforts). */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
+export const EFFORT_LABELS: Record<Effort, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+export function isEffort(value: unknown): value is Effort {
+  return typeof value === "string" && (EFFORTS as readonly string[]).includes(value);
+}
+
+/** The Claude account's models that take an effort. Haiku isn't one: Claude
+ *  Code sends no effort for a model without it, so a pick would do nothing. */
+const CLAUDE_EFFORT_MODELS = new Set(["opus", "sonnet"]);
+
+/**
+ * Whether a model runs at an effort the user picks: Opus and Sonnet on the
+ * user's Claude, and Codex's models. One through a gateway runs at its own:
+ * Claude Code knows nothing of another provider's model's reasoning, so an
+ * effort there would show a choice the model never gets.
+ */
+export function takesEffort(model: { provider: ModelProvider; id: string }): boolean {
+  if (model.provider === "codex") return true;
+  return model.provider === "claude" && CLAUDE_EFFORT_MODELS.has(model.id);
+}
+
+/** A request body's effort: undefined when it names none, null when it names
+ *  one that isn't a level. */
+export function requestedEffort(body: { effort?: unknown } | null): Effort | null | undefined {
+  if (body?.effort === undefined || body.effort === null) return undefined;
+  return isEffort(body.effort) ? body.effort : null;
+}
+
 /** A model id the agent takes (claude.ValidModel): up to 100 characters, no
  *  leading dash, nothing a shell or a flag could make more of. */
 const MODEL_ID = /^(?!-)[A-Za-z0-9\-._:/[\]~]{1,100}$/;
@@ -166,8 +205,8 @@ export function matchModel(
 }
 
 /** The agent's POST /workspaces/:id/model body: with a gateway, the session
- *  runs through it on `token`. */
-export type SetModelRequest = { model: string; gateway?: ProviderId; token?: string };
+ *  runs through it on `token`; with an effort, at it. */
+export type SetModelRequest = { model: string; gateway?: ProviderId; token?: string; effort?: Effort };
 
 /** Who holds the key a model runs on: Outrunner, or one of the user's own. */
 export type KeyHolder = Exclude<ModelProvider, "claude" | "codex">;
@@ -176,15 +215,35 @@ export type KeyHolder = Exclude<ModelProvider, "claude" | "codex">;
  * The agent request that puts a session on `model`: Outrunner's through
  * OpenRouter on Outrunner's key, a provider's through that provider on the
  * user's key (both from `keyFor`), and the user's Claude, or Codex, on how
- * the session's agent signs in, with no key asked for.
+ * the session's agent signs in, with no key asked for. `effort` goes with a
+ * model that takes one (takesEffort); any other runs at its own.
  */
 export async function setModelRequest(
   model: SessionModel,
   keyFor: (holder: KeyHolder) => Promise<string>,
+  effort?: Effort | null,
 ): Promise<SetModelRequest> {
-  if (model.provider === "claude" || model.provider === "codex") return { model: model.id };
+  const at = effort && takesEffort(model) ? { effort } : {};
+  if (model.provider === "claude" || model.provider === "codex") return { model: model.id, ...at };
   const gateway: ProviderId = model.provider === "outrunner" ? "openrouter" : model.provider;
-  return { model: model.id, gateway, token: await keyFor(model.provider) };
+  return { model: model.id, gateway, token: await keyFor(model.provider), ...at };
+}
+
+/** An agent from before efforts: it switched the model, but ran it at the
+ *  model's own effort, not the one asked for. */
+export class EffortUnsupportedError extends Error {
+  constructor() {
+    super("This session's Outrunner is too old to set the effort. Update Outrunner and try again.");
+    this.name = "EffortUnsupportedError";
+  }
+}
+
+/** Check the agent's answer to `req`: one that knows efforts says which it
+ *  applied, and an older one says none. */
+export function checkEffortApplied(req: SetModelRequest, answer: unknown): void {
+  if (!req.effort) return;
+  const applied = answer && typeof answer === "object" ? (answer as { effort?: unknown }).effort : undefined;
+  if (applied !== req.effort) throw new EffortUnsupportedError();
 }
 
 /** An agent's refusal of a provider it doesn't know: one released before it. */

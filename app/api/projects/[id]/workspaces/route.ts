@@ -32,7 +32,15 @@ import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { isValidBranchName } from "@/lib/runtime/git";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
-import { agentOf, defaultModel, requestedModel, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  agentOf,
+  defaultModel,
+  type Effort,
+  EffortUnsupportedError,
+  requestedEffort,
+  requestedModel,
+  type SessionModel,
+} from "@/lib/runtime/session-models";
 import {
   deliverSessionAuth,
   OutdatedComputerError,
@@ -47,7 +55,7 @@ import {
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
-import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, hasClaudeCredential, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
@@ -104,7 +112,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
-  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown };
+  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown; effort?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -114,6 +122,11 @@ export async function POST(request: Request, context: RouteContext) {
   const chosenModel = requestedModel(body);
   if (chosenModel === null) {
     return NextResponse.json({ error: "Choose one of the offered models." }, { status: 400 });
+  }
+  // Picked with it; none, the model's own.
+  const chosenEffort = requestedEffort(body);
+  if (chosenEffort === null) {
+    return NextResponse.json({ error: "Choose one of the offered efforts." }, { status: 400 });
   }
   // Codex for Codex's models, Claude Code for every other, and for none.
   const agentId = agentOf(chosenModel?.provider ?? "claude");
@@ -128,11 +141,11 @@ export async function POST(request: Request, context: RouteContext) {
 
   const githubToken = await optionalGithubToken(owner.id);
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
-  // Either credential kind is fine; an empty env means none was set, unless
+  // Either credential kind is fine; without one none was set, unless
   // the session gets one of its own. Sessions start on Outrunner's models (on
   // the user's own OpenRouter key, or the server's), so only without those is
   // Claude a must. Codex runs on its own sign-in, resolved above.
-  const hasClaude = agentId === "claude" && (Object.keys(sessionEnv).length > 0 || auth.credential !== null);
+  const hasClaude = agentId === "claude" && (hasClaudeCredential(sessionEnv) || auth.credential !== null);
   const menu = await modelMenu(owner.id);
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
@@ -225,6 +238,7 @@ export async function POST(request: Request, context: RouteContext) {
       hasClaude,
       menu,
       chosenModel,
+      chosenEffort,
       agentId,
       auth,
     }),
@@ -251,6 +265,7 @@ async function provisionWorkspace({
   hasClaude,
   menu,
   chosenModel,
+  chosenEffort,
   agentId,
   auth,
 }: {
@@ -266,6 +281,8 @@ async function provisionWorkspace({
   menu: Awaited<ReturnType<typeof modelMenu>>;
   /** Checked by the request: an offered model, or none for the default. */
   chosenModel: SessionModel | undefined;
+  /** Picked with it, or none for the model's own. */
+  chosenEffort: Effort | undefined;
   /** The agent the session runs, and what it signs in with. */
   agentId: AgentId;
   auth: ResolvedAuth;
@@ -291,6 +308,15 @@ async function provisionWorkspace({
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
       let endedBox = endedBoxOf(currentComputer, provider.name);
+      const needsNewComputer =
+        !currentComputer?.daytonaSandboxId ||
+        currentComputer.status !== "ready";
+
+      // Show "allocate" phase only when provisioning a new computer
+      if (needsNewComputer) {
+        await setPhase("allocate");
+      }
+
       if (currentComputer?.status === "ready" && currentComputer.daytonaSandboxId) {
         const sandboxId = currentComputer.daytonaSandboxId;
         const madeBy = computerMadeBy(currentComputer);
@@ -322,9 +348,11 @@ async function provisionWorkspace({
       // Initial provisioning clones the mirror. Every later workspace refreshes
       // it before the agent branches from the project's default branch.
       if (!ensured.provisioned) {
+        await setPhase("clone");
         await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
       }
 
+      await setPhase("worktree");
       const target = await provider.agentTarget(
         computer.daytonaSandboxId,
         ensured.agentSecret,
@@ -349,10 +377,13 @@ async function provisionWorkspace({
           branch: workspace.branch,
           // Named only for Codex: Claude Code is every agent's default.
           ...(agentId !== "claude" && { agent: agentId }),
+          // Configure git author so commits are attributed to the user.
+          ...(owner.email && { gitUser: { name: owner.name, email: owner.email } }),
         },
         identity,
       );
       // Before the first launch, so the agent starts signed in.
+      await setPhase("secrets");
       await deliverSessionAuth(signIn, agentId, auth);
       // And with the user's own setup and its project's environment.
       await setUpSession(agent, identity, upgrade, owner.id, project.id);
@@ -362,8 +393,10 @@ async function provisionWorkspace({
         keyFor: (holder) => modelKey(owner.id, holder),
         hasClaude,
         model: chosenModel,
+        effort: chosenEffort,
         fallback: defaultModel(menu),
       });
+      await setPhase("health_check");
       await agent.startWorkspace(identity);
 
       const ready = await settle({
@@ -409,8 +442,12 @@ async function provisionWorkspace({
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
     // The session page shows this: say what to do where the user can fix it.
+    // A Claude model's effort is set on the way to the user's own Claude, which
+    // startingModel leaves unwrapped: its message says to update the box.
     const errorMessage =
-      error instanceof NoStartingModelError || error instanceof OutdatedComputerError
+      error instanceof NoStartingModelError ||
+      error instanceof OutdatedComputerError ||
+      error instanceof EffortUnsupportedError
         ? error.message
         : "Provisioning failed. Check Outrunner's setup and try again.";
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>

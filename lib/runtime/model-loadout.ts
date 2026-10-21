@@ -8,10 +8,19 @@
  * Imports only the menu, so the browser and the tests use it as is.
  */
 
-import { modelChoice, type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  type Effort,
+  isEffort,
+  modelChoice,
+  type ModelGroup,
+  type ModelProvider,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
 
-/** One model in the loadout: whose, and which. */
-export type LoadoutEntry = { provider: ModelProvider; id: string };
+/** One model in the loadout: whose, which, and the effort it runs at when
+ *  picked (none: the model's own; only on a model that takes one). */
+export type LoadoutEntry = { provider: ModelProvider; id: string; effort?: Effort };
 
 export type ModelLoadout = {
   /** In the order the picker shows them. */
@@ -33,9 +42,13 @@ export function sameEntry(a: LoadoutEntry | null | undefined, b: LoadoutEntry | 
  *  choice is; null for anything else. */
 function parseEntry(raw: unknown): LoadoutEntry | null {
   if (!raw || typeof raw !== "object") return null;
-  const { provider, id } = raw as { provider?: unknown; id?: unknown };
+  const { provider, id, effort } = raw as { provider?: unknown; id?: unknown; effort?: unknown };
   const model = modelChoice(provider, id);
-  return model ? { provider: model.provider, id: model.id } : null;
+  if (!model) return null;
+  const entry: LoadoutEntry = { provider: model.provider, id: model.id };
+  // An effort the model doesn't take is dropped, not kept to mislead.
+  if (isEffort(effort) && takesEffort(model)) entry.effort = effort;
+  return entry;
 }
 
 /**
@@ -71,6 +84,24 @@ export function loadoutModels(loadout: ModelLoadout, groups: ModelGroup[]): Sess
  *  menu offers it now. */
 export function loadoutDefault(loadout: ModelLoadout, groups: ModelGroup[]): SessionModel | undefined {
   return loadout.default ? offeredModel(groups, loadout.default) : undefined;
+}
+
+/** The effort the loadout runs `model` at; undefined when it isn't in the
+ *  loadout, or runs at its own. */
+export function loadoutEffort(loadout: ModelLoadout, model: LoadoutEntry): Effort | undefined {
+  return loadout.models.find((e) => sameEntry(e, model))?.effort;
+}
+
+/** `entry` set to run at `effort`, or at its own with null. A model not in
+ *  the loadout, or one that takes no effort, is left as it is. */
+export function setEntryEffort(loadout: ModelLoadout, entry: LoadoutEntry, effort: Effort | null): ModelLoadout {
+  if (!takesEffort(entry) || !loadout.models.some((e) => sameEntry(e, entry))) return loadout;
+  const models = loadout.models.map((e): LoadoutEntry => {
+    if (!sameEntry(e, entry)) return e;
+    const bare = { provider: e.provider, id: e.id };
+    return effort ? { ...bare, effort } : bare;
+  });
+  return { ...loadout, models };
 }
 
 /** `entry` added at the end, or taken out; the default goes with it. */

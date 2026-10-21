@@ -17,19 +17,23 @@ const InstallHint = "npm install -g @openai/codex@0.146.0"
 
 // Command is the argv that launches Codex in a session, or with sessionID
 // continues that conversation (`codex resume <id>` appends to the same
-// rollout). model is -m; empty keeps Codex's default. instructions (the
+// rollout). model is -m, and effort its model_reasoning_effort; empty keeps
+// Codex's default for either. instructions (the
 // orientation) are added to Codex's own developer instructions, never in place
 // of them.
 //
 // The update check is off: a launch must never stop at an offer to upgrade,
 // which the readiness wait doesn't answer and the first prompt would.
-func Command(mode claude.PermissionMode, sessionID, model, instructions string) []string {
+func Command(mode claude.PermissionMode, sessionID, model, effort, instructions string) []string {
 	argv := []string{"codex"}
 	if sessionID != "" {
 		argv = append(argv, "resume", sessionID)
 	}
 	if model != "" {
 		argv = append(argv, "-m", model)
+	}
+	if effort != "" {
+		argv = append(argv, "-c", "model_reasoning_effort="+TOMLString(effort))
 	}
 	argv = append(argv, "-c", "check_for_update_on_startup=false")
 	if instructions != "" {

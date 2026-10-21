@@ -150,6 +150,15 @@ export const SetAuthRequest = z
   });
 export type SetAuthRequest = z.infer<typeof SetAuthRequest>;
 
+/** Git user identity for commits. When provided, the agent configures git
+ *  user.name and user.email in the worktree so commits are attributed to the
+ *  Outrunner user rather than a generic identity. */
+export const GitUser = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+});
+export type GitUser = z.infer<typeof GitUser>;
+
 export const CreateWorkspaceRequest = z.object({
   workspaceId: z.string().min(1),
   repoFullName: z.string().min(1),
@@ -167,6 +176,8 @@ export const CreateWorkspaceRequest = z.object({
    *  repeated one never changes it. An agent from before agents ignores it
    *  and runs Claude: check `agents` on /health first. */
   agent: AgentName.optional(),
+  /** Git user identity for commits; omitted uses the system default. */
+  gitUser: GitUser.optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
