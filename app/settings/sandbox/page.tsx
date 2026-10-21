@@ -3,7 +3,7 @@ import { Suspense } from "react";
 
 import { SandboxSettingsForm } from "@/components/sandbox-settings";
 import { SettingsLoading } from "@/components/settings-loading";
-import { getOwner } from "@/lib/auth/owner";
+import { getOwnerSafe } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import { getSandboxSettings } from "@/lib/db/credentials";
 import { providerName } from "@/lib/env";
@@ -21,7 +21,7 @@ export default function SandboxSettings() {
 }
 
 async function SandboxSection() {
-  const owner = await getOwner();
+  const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/sandbox");
 
   return (

@@ -3,7 +3,7 @@ import { Suspense } from "react";
 
 import { BillingSettings, type ShownSubscription } from "@/components/billing-settings";
 import { SettingsLoading } from "@/components/settings-loading";
-import { getOwner } from "@/lib/auth/owner";
+import { getOwnerSafe } from "@/lib/auth/owner";
 import { customerIdFor, subscriptionsFor } from "@/lib/billing/billing-store";
 import { billingMode } from "@/lib/billing/mode";
 import { PLANS } from "@/lib/billing/plans";
@@ -25,7 +25,7 @@ export default function BillingSettingsPage({ searchParams }: { searchParams: Se
 }
 
 async function BillingSection({ searchParams }: { searchParams: SearchParams }) {
-  const owner = await getOwner();
+  const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/billing");
   const { checkout } = await searchParams;
 
