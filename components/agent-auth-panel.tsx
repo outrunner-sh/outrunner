@@ -8,6 +8,7 @@ import { ClaudeConnection } from "@/components/claude-connection";
 import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
 import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
+import { AGENT_AUTH_CHOICES } from "@/lib/client/agent-auth-choices";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import type { KeyProviderId } from "@/lib/providers/registry";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
@@ -74,6 +75,7 @@ export function AgentAuthPanel({
       });
       const data = (await res.json().catch(() => null)) as { choices?: AgentAuthChoices; error?: string } | null;
       if (!res.ok || !data?.choices) throw new Error(data?.error ?? "Couldn't save that. Try again.");
+      AGENT_AUTH_CHOICES.invalidate();
       // This agent's only: another tab's reply, sent before a pick there
       // landed, mustn't undo it.
       onChoice(agent, data.choices[agent]);

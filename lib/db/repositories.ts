@@ -568,6 +568,15 @@ export async function getWorkspacePullRequest(
   return data ? toWorkspacePullRequest(data) : null;
 }
 
+/** The pull requests of these workspaces, in one query. */
+export async function listWorkspacePullRequests(workspaceIds: string[]): Promise<WorkspacePullRequest[]> {
+  if (workspaceIds.length === 0) return [];
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("pull_requests").select("*").in("workspace_id", workspaceIds);
+  if (error) throw error;
+  return (data ?? []).map(toWorkspacePullRequest);
+}
+
 export async function createWorkspacePullRequest(input: {
   ownerId: string;
   workspaceId: string;
