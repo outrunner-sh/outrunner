@@ -167,6 +167,9 @@ export type EventSubscription = {
 export type EventSubscribeOptions = {
   /** Cursor to resume from; if set, appended as `?lastEventId=<id>`. */
   lastEventId?: string | null;
+  /** The session this stream belongs to, so a reported fault can be found in
+   *  the server's log. */
+  workspaceId?: string;
   /** Called on browser-detected connection loss (close OR transport error); the
    *  hook debounces these into one URL refresh + re-subscribe. */
   onClose?: () => void;
@@ -176,6 +179,30 @@ export type EventSubscribeOptions = {
    *  `onClose`), so an idle socket reap never surfaces here. */
   onError?: (error: Error) => void;
 };
+
+/** A fault's ref is what the user reads out; it goes to the server too, so the
+ * code matches a server log line and not only the browser console. Best
+ * effort: the browser's line still has it if this can't go out. */
+function reportFault(
+  workspaceId: string | undefined,
+  error: StreamProtocolError,
+  meta: { eventId?: string; eventType?: string; issues?: unknown[] },
+): void {
+  void fetch("/api/client-errors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    keepalive: true,
+    body: JSON.stringify({
+      where: "events-stream",
+      ref: error.ref,
+      message: error.message,
+      ...(workspaceId && { workspaceId }),
+      ...meta,
+    }),
+  }).catch(() => {
+    // The browser console still has the ref.
+  });
+}
 
 /**
  * Subscribe to the Workspace Session's AgentEvent stream over a WebSocket.
@@ -216,6 +243,7 @@ export function subscribeEventsWs(
     } catch {
       const error = new StreamProtocolError("Malformed events frame payload");
       console.warn(error.message, { ref: error.ref });
+      reportFault(options.workspaceId, error, {});
       options.onError?.(error);
       return;
     }
@@ -231,6 +259,11 @@ export function subscribeEventsWs(
         issues: parsed.error.issues,
         eventId: typeof frame.id === "string" ? frame.id : undefined,
         eventType: typeof data?.t === "string" ? data.t : undefined,
+      });
+      reportFault(options.workspaceId, error, {
+        eventId: typeof frame.id === "string" ? frame.id : undefined,
+        eventType: typeof data?.t === "string" ? data.t : undefined,
+        issues: parsed.error.issues.slice(0, 20),
       });
       options.onError?.(error);
       return;

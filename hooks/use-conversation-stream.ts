@@ -87,7 +87,7 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
  * hook re-fetches URLs, but the cursor survives so subscribeEvents starts
  * from exactly where we left off.
  */
-export function useConversationStream(attachment: SessionAttachment): ConversationStreamState {
+export function useConversationStream(attachment: SessionAttachment, workspaceId?: string): ConversationStreamState {
   const {
     urls,
     status: attachmentStatus,
@@ -132,6 +132,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
       },
       {
         lastEventId: lastEventIdRef.current,
+        workspaceId,
         onClose: () => {
           if (!active) return;
           setManualRetry(false);
@@ -166,7 +167,7 @@ export function useConversationStream(attachment: SessionAttachment): Conversati
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       sub.dispose();
     };
-  }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl]);
+  }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl, workspaceId]);
 
   // Idle recovery. A backgrounded/hidden webview (the desktop app hides to the
   // tray) can have its socket suspended, so every backoff retry fails and we
