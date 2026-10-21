@@ -29,6 +29,11 @@ export type AuthCredential =
   | { kind: "provider-key"; provider: KeyProviderId }
   | { kind: "own-login" };
 
+/** Where sessions can run on the user's own account of an agent
+ *  (lib/agents/resolve.ts agentConnection): on a box, and on the Mac, where
+ *  `"mac-login"` is as the agent's CLI there is logged in. */
+export type AgentConnection = { cloud: boolean; local: boolean | "mac-login" };
+
 export type AuthMethod = {
   id: AuthMethodId;
   /** The card's name. */

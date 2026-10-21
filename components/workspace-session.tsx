@@ -11,7 +11,13 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
-import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
+import {
+  accountsHere,
+  localAgentRequest,
+  localTarget,
+  messageForLocalError,
+  putOnModel,
+} from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import {
   livePrompts,
@@ -37,6 +43,8 @@ import {
   type Effort,
   modelGroups,
   type ModelProvider,
+  parseAgentConnections,
+  runsOnOwnAccount,
   type SessionModel,
   takesEffort,
 } from "@/lib/runtime/session-models";
@@ -54,6 +62,7 @@ const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   keys: [],
   available: true,
   loadout: EMPTY_LOADOUT,
+  agents: parseAgentConnections(undefined),
 };
 
 /** Sends a prompt into the session as the composer does, resolving whether it
@@ -286,8 +295,13 @@ export function WorkspaceSession({
       )
       .finally(() => setStopping(false));
   };
+  // The user's own accounts this session can switch to. A local session's
+  // agent is already running on this Mac, so its own login there counts.
+  const accounts = accountsHere(menu.agents, local, null);
   const modelChoice: ModelChoice = {
-    groups: modelGroups(menu, agent),
+    groups: modelGroups(menu, accounts, agent),
+    // The session's own agent's account, where it isn't connected here.
+    connect: accounts.includes(agent) ? [] : [agent],
     effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
@@ -305,7 +319,7 @@ export function WorkspaceSession({
       // A local switch relaunches the session on this Mac: signed in as the
       // user picks now first, as the server does for a cloud one.
       (local
-        ? deliverLocalAgentAuth(workspaceId, agent).then(() => putOnModel(workspaceId, model, next))
+        ? deliverLocalAgentAuth(workspaceId, agent, runsOnOwnAccount(model)).then(() => putOnModel(workspaceId, model, next))
         : switchCloudModel(workspaceId, model, next))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });

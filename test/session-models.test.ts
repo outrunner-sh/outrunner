@@ -1,18 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { AGENT_IDS, type AgentConnection, type AgentId } from "@/lib/agents/registry";
 import {
   agentOf,
   checkEffortApplied,
+  connectedAccounts,
   defaultModel,
   EffortUnsupportedError,
   matchModel,
   modelChoice,
   modelGroups,
   modelLabel,
+  parseAgentConnections,
   predatesProvider,
   requestedEffort,
   requestedModel,
+  runsOnOwnAccount,
   setModelRequest,
   takesEffort,
   type ModelMenu,
@@ -20,7 +24,7 @@ import {
 import { usableProviders } from "@/lib/providers/registry";
 
 const OUTRUNNER_ONLY: ModelMenu = { outrunner: true, allowance: true, keys: [] };
-const GROUPS = modelGroups(OUTRUNNER_ONLY);
+const GROUPS = modelGroups(OUTRUNNER_ONLY, AGENT_IDS);
 
 test("a Claude account reply matches its family's alias", () => {
   assert.equal(matchModel(GROUPS, "claude-opus-5")?.id, "opus");
@@ -47,7 +51,7 @@ test("the label drops Claude's release date only", () => {
 });
 
 test("the menu: Outrunner's where the server has them, each provider the user has a key for, Claude, then Codex", () => {
-  const labels = (menu: ModelMenu) => modelGroups(menu).map((g) => g.label);
+  const labels = (menu: ModelMenu) => modelGroups(menu, AGENT_IDS).map((g) => g.label);
   assert.deepEqual(labels(OUTRUNNER_ONLY), ["Outrunner · included", "Claude account", "Codex"]);
   assert.deepEqual(labels({ ...OUTRUNNER_ONLY, allowance: false }), ["Outrunner", "Claude account", "Codex"]);
   // In the registry's order, whatever order the keys come in.
@@ -61,7 +65,7 @@ test("the menu: Outrunner's where the server has them, each provider the user ha
   // No server key: Outrunner's models aren't offered, so nothing on the menu 503s.
   assert.deepEqual(labels({ outrunner: false, allowance: false, keys: [] }), ["Claude account", "Codex"]);
 
-  const groups = modelGroups({ outrunner: true, allowance: false, keys: ["zai"] });
+  const groups = modelGroups({ outrunner: true, allowance: false, keys: ["zai"] }, AGENT_IDS);
   assert.deepEqual(
     groups.map((g) => g.custom),
     [false, true, false, true],
@@ -133,7 +137,7 @@ test("a model switches through its provider on the key that provider's holder gi
 });
 
 test("a model offered by two is ticked on the provider it was picked on", () => {
-  const groups = modelGroups({ outrunner: true, allowance: true, keys: ["openrouter"] });
+  const groups = modelGroups({ outrunner: true, allowance: true, keys: ["openrouter"] }, AGENT_IDS);
   assert.equal(matchModel(groups, "z-ai/glm-5.3", "openrouter")?.provider, "openrouter");
   assert.equal(matchModel(groups, "z-ai/glm-5.3", "outrunner")?.provider, "outrunner");
   // No preference: the first offered.
@@ -162,11 +166,11 @@ test("a saved key that can't be opened isn't offered, so it's never a new sessio
 test("a running session's menu offers only what its agent runs", () => {
   const menu: ModelMenu = { outrunner: true, allowance: false, keys: ["zai"] };
   assert.deepEqual(
-    modelGroups(menu, "claude").map((g) => g.provider),
+    modelGroups(menu, AGENT_IDS, "claude").map((g) => g.provider),
     ["outrunner", "zai", "claude"],
   );
   assert.deepEqual(
-    modelGroups(menu, "codex").map((g) => g.provider),
+    modelGroups(menu, AGENT_IDS, "codex").map((g) => g.provider),
     ["codex"],
   );
   assert.equal(agentOf("codex"), "codex");
@@ -216,4 +220,49 @@ test("an agent that doesn't say it applied the effort predates efforts", () => {
   for (const answer of [{ result: "opus" }, { result: "opus", effort: "" }, undefined, "opus"]) {
     assert.throws(() => checkEffortApplied({ model: "opus", effort: "max" }, answer), EffortUnsupportedError);
   }
+});
+
+test("the user's own Claude and Codex are offered only where connected", () => {
+  const labels = (accounts: AgentId[], agent?: AgentId) =>
+    modelGroups(OUTRUNNER_ONLY, accounts, agent).map((g) => g.label);
+  // Nothing connected: Outrunner's alone, and its first model is the default.
+  assert.deepEqual(labels([]), ["Outrunner · included"]);
+  assert.deepEqual(labels(["codex"]), ["Outrunner · included", "Codex"]);
+  // A running Codex session whose Codex was disconnected has nothing to switch to.
+  assert.deepEqual(labels([], "codex"), []);
+});
+
+test("where an account is connected: everywhere on a saved credential, on the Mac by its own login", () => {
+  const connections = (claude: AgentConnection, codex: AgentConnection) => ({ claude, codex });
+  const saved: AgentConnection = { cloud: true, local: true };
+  const none: AgentConnection = { cloud: false, local: false };
+  const macLogin: AgentConnection = { cloud: false, local: "mac-login" };
+  const loggedIn = (who: AgentId[]) => (agent: AgentId) => who.includes(agent);
+
+  // Disconnected: nowhere, whatever the Mac is logged in to.
+  assert.deepEqual(connectedAccounts(connections(none, none), "cloud", loggedIn(AGENT_IDS)), []);
+  assert.deepEqual(connectedAccounts(connections(none, none), "local", loggedIn(AGENT_IDS)), []);
+  // Saved: everywhere, the Mac's login aside.
+  assert.deepEqual(connectedAccounts(connections(saved, none), "cloud", loggedIn([])), ["claude"]);
+  assert.deepEqual(connectedAccounts(connections(saved, none), "local", loggedIn([])), ["claude"]);
+  // The Mac's own login: on the Mac only, and only where it is logged in.
+  assert.deepEqual(connectedAccounts(connections(macLogin, macLogin), "cloud", loggedIn(AGENT_IDS)), []);
+  assert.deepEqual(connectedAccounts(connections(macLogin, macLogin), "local", loggedIn(["codex"])), ["codex"]);
+});
+
+test("a server that says nothing of connections is taken to have them all", () => {
+  const all = { claude: { cloud: true, local: true }, codex: { cloud: true, local: true } };
+  assert.deepEqual(parseAgentConnections(undefined), all);
+  assert.deepEqual(parseAgentConnections({ claude: { cloud: "yes" } }), all);
+  assert.deepEqual(
+    parseAgentConnections({ claude: { cloud: false, local: false }, codex: { cloud: false, local: "mac-login" } }),
+    { claude: { cloud: false, local: false }, codex: { cloud: false, local: "mac-login" } },
+  );
+});
+
+test("only Claude's and Codex's own models run on the user's account", () => {
+  assert.equal(runsOnOwnAccount({ provider: "claude" }), true);
+  assert.equal(runsOnOwnAccount({ provider: "codex" }), true);
+  assert.equal(runsOnOwnAccount({ provider: "outrunner" }), false);
+  assert.equal(runsOnOwnAccount({ provider: "anthropic" }), false);
 });

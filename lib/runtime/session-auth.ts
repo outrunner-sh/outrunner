@@ -12,6 +12,7 @@ import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import {
   AgentAuthError,
   type AgentAuthStore,
+  resignInNeedsAccount,
   resolveAgentAuth,
   type ResolvedAuth,
   type SessionCredential,
@@ -167,11 +168,17 @@ export async function deliverSessionAuth(client: SessionAuthClient, agent: Agent
 
 /**
  * Sign an existing cloud session's agent in again before it relaunches (an
- * attach that starts it, a resume), as the user picks now: a key replaced, or
- * a pick changed, since it was made takes effect.
+ * attach that starts it, a resume, a switch), as the user picks now: a key
+ * replaced, or a pick changed, since it was made takes effect. `ownAccount`
+ * as resolveAgentAuth takes it: by default, as {@link resignInNeedsAccount}.
  */
-export async function signInSession(client: SessionAuthClient, agent: AgentId, store: AgentAuthStore): Promise<void> {
-  const auth = await resolveAgentAuth(store, agent, "cloud");
+export async function signInSession(
+  client: SessionAuthClient,
+  agent: AgentId,
+  store: AgentAuthStore,
+  ownAccount = resignInNeedsAccount(agent),
+): Promise<void> {
+  const auth = await resolveAgentAuth(store, agent, "cloud", { ownAccount });
   await readyBox(client, agent, auth);
   await deliverSessionAuth(client, agent, auth);
 }
@@ -183,3 +190,4 @@ export function signInFailure(error: unknown): { error: string; settingsHref?: s
   if (error instanceof OutdatedComputerError) return { error: error.message };
   return null;
 }
+

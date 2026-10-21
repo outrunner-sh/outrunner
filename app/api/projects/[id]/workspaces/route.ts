@@ -40,6 +40,7 @@ import {
   EffortUnsupportedError,
   requestedEffort,
   requestedModel,
+  runsOnOwnAccount,
   type SessionModel,
 } from "@/lib/runtime/session-models";
 import {
@@ -129,10 +130,16 @@ export async function POST(request: Request, context: RouteContext) {
   }
   // Codex for Codex's models, Claude Code for every other, and for none.
   const agentId = agentOf(chosenModel?.provider ?? "claude");
+  const menu = await modelMenu(owner.id);
+  // What it starts on: the model chosen, else the menu's default, else the
+  // user's Claude (startingModel). On a model on a key, Claude Code needs no
+  // account of the user's: one they haven't connected doesn't stop it.
+  const startsOn = chosenModel ?? defaultModel(menu);
+  const ownAccount = !startsOn || runsOnOwnAccount(startsOn);
   // How it signs in, said before a box is set up for it, not after.
   let auth: ResolvedAuth;
   try {
-    auth = await resolveAgentAuth(agentAuthStore(owner.id), agentId, "cloud");
+    auth = await resolveAgentAuth(agentAuthStore(owner.id), agentId, "cloud", { ownAccount });
   } catch (error) {
     if (!(error instanceof AgentAuthError)) throw error;
     return NextResponse.json({ error: error.message, settingsHref: error.settingsHref }, { status: 409 });
@@ -145,7 +152,6 @@ export async function POST(request: Request, context: RouteContext) {
   // the user's own OpenRouter key, or the server's), so only without those is
   // Claude a must. Codex runs on its own sign-in, resolved above.
   const hasClaude = agentId === "claude" && (hasClaudeCredential(sessionEnv) || auth.credential !== null);
-  const menu = await modelMenu(owner.id);
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }

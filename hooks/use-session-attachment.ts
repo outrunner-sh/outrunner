@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentId } from "@/lib/agents/registry";
+import { resignInNeedsAccount } from "@/lib/agents/resolve";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import {
   localAgentRequest,
@@ -51,7 +52,7 @@ export type SessionAttachment = {
  * in as the user picks now.
  */
 async function localSessionUrls(target: LocalTarget, agent: AgentId): Promise<SessionUrls> {
-  await deliverLocalAgentAuth(target.workspaceId, agent);
+  await deliverLocalAgentAuth(target.workspaceId, agent, resignInNeedsAccount(agent));
   await localAgentRequest(target, "POST", `/workspaces/${target.workspaceId}/start`);
   let summary: WorkspaceSummary | undefined;
   try {

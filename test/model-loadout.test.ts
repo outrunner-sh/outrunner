@@ -13,6 +13,7 @@ import {
   setEntryEffort,
   toggleEntry,
 } from "@/lib/runtime/model-loadout";
+import { AGENT_IDS } from "@/lib/agents/registry";
 import { modelGroups } from "@/lib/runtime/session-models";
 
 const OPUS = { provider: "claude", id: "opus" } as const;
@@ -38,12 +39,15 @@ test("a stored or requested loadout is made sound", () => {
 test("the picker shows what the menu offers now, in the loadout's order", () => {
   const loadout = parseLoadout({ models: [LUNA, GLM, OPUS], default: GLM });
   // No Z.ai key: its model is kept in the loadout but not shown, nor started on.
-  const noKey = modelGroups({ outrunner: false, allowance: false, keys: [] });
+  const noKey = modelGroups({ outrunner: false, allowance: false, keys: [] }, AGENT_IDS);
   assert.deepEqual(loadoutModels(loadout, noKey).map((m) => m.id), ["gpt-6-luna", "opus"]);
   assert.equal(loadoutDefault(loadout, noKey), undefined);
-  const withKey = modelGroups({ outrunner: false, allowance: false, keys: ["zai"] });
+  const withKey = modelGroups({ outrunner: false, allowance: false, keys: ["zai"] }, AGENT_IDS);
   assert.deepEqual(loadoutModels(loadout, withKey).map((m) => m.id), ["gpt-6-luna", "glm-5.3", "opus"]);
   assert.equal(loadoutDefault(loadout, withKey)?.id, "glm-5.3");
+  // Claude not connected: Opus is kept too, but not shown.
+  const noClaude = modelGroups({ outrunner: false, allowance: false, keys: [] }, ["codex"]);
+  assert.deepEqual(loadoutModels(loadout, noClaude).map((m) => m.id), ["gpt-6-luna"]);
   // A typed id stays offered where its group takes typed ids.
   const typed = parseLoadout({ models: [{ provider: "codex", id: "gpt-7-preview" }] });
   assert.equal(loadoutModels(typed, noKey)[0]?.label, "gpt-7-preview");
@@ -63,7 +67,7 @@ test("picking, unpicking and ordering", () => {
 });
 
 test("search finds a model by its name or its id", () => {
-  const all = modelGroups({ outrunner: false, allowance: false, keys: [] }).flatMap((g) => g.models);
+  const all = modelGroups({ outrunner: false, allowance: false, keys: [] }, AGENT_IDS).flatMap((g) => g.models);
   assert.deepEqual(searchModels(all, "luna").map((m) => m.id), ["gpt-6-luna"]);
   assert.deepEqual(searchModels(all, "OPUS").map((m) => m.id), ["opus"]);
   assert.equal(searchModels(all, "  ").length, all.length);

@@ -39,6 +39,8 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
+import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
 
 /**
@@ -68,6 +70,9 @@ export type ModelChoice = {
   /** The user's loadout (Settings → Default models): shown first, in place of
    *  the groups, where it has a model the menu offers. */
   loadout?: ModelLoadout;
+  /** Agents whose own accounts aren't connected here, so their models aren't
+   *  in `groups`: each offered as a link to connect it instead. */
+  connect: AgentId[];
 };
 
 export function SessionComposer({
@@ -456,6 +461,19 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                 ) : [],
               )
             : null}
+          {!searching && choice.connect.length > 0 ? (
+            <>
+              <DropdownMenuSeparator />
+              {choice.connect.map((agent) => (
+                <DropdownMenuItem key={`connect:${agent}`} asChild>
+                  <Link href={providerSettingsHref(agent)}>
+                    <AgentIcon agent={agent} />
+                    <span className="flex-1 truncate">Connect {AGENTS[agent].label}</span>
+                  </Link>
+                </DropdownMenuItem>
+              ))}
+            </>
+          ) : null}
           {current && effort !== undefined ? (
             <>
               <DropdownMenuSeparator />
