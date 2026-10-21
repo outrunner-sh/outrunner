@@ -90,7 +90,7 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
   return (
     <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-xl font-semibold text-foreground">Default models</h1>
+        <h1 className="text-lg font-semibold text-foreground">Default models</h1>
         <p className="text-sm text-muted-foreground">
           Choose the models the chat picker shows, and the one new sessions start on.
         </p>

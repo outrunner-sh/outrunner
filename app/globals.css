@@ -225,7 +225,6 @@
 /* The Environment panel: quiet rows on the chat's black, the terminal docked beneath. */
 .studio-env { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--studio-bg); }
 .studio-env-body { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; padding-top: 8px; overflow-y: auto; }
-.studio-env-body.is-compact { flex: 0 1 auto; }
 .studio-env-label { display: flex; align-items: center; justify-content: space-between; height: 32px; padding: 0 20px; color: rgba(255,255,255,.55); font-size: 13px; }
 .studio-env-close { display: none; padding: 4px; border-radius: 6px; color: rgba(255,255,255,.5); background: transparent; cursor: pointer; }
 .studio-env-close:hover { color: var(--studio-text); background: rgba(255,255,255,.06); }
@@ -251,14 +250,6 @@
 .studio-env-merge svg { width: 13px; height: 13px; }
 .studio-env-merge:focus-visible { outline: 2px solid color-mix(in oklab, var(--color-positive) 60%, transparent); outline-offset: 2px; }
 .studio-env-merge[aria-busy="true"] { cursor: progress; }
-.studio-env-terminal-slot { display: contents; }
-.studio-env-terminal { display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; margin-top: 8px; border-top: 1px solid rgba(255,255,255,.07); background: var(--studio-bg); }
-.studio-env-terminal.is-open { flex: 1 1 0; min-height: 200px; }
-.studio-env-terminal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: 40px; padding: 0 12px 0 16px; }
-.studio-env-terminal-toggle { display: inline-flex; align-items: center; gap: 8px; color: rgba(255,255,255,.55); background: transparent; font-size: 12px; cursor: pointer; }
-.studio-env-terminal-toggle:hover { color: var(--studio-text); }
-.studio-env-terminal-toggle svg { width: 14px; height: 14px; }
-.studio-env-terminal .studio-live-terminal { background: #000; }
 /* Conductor-style changes: a single scrollable list of files, each an inline
    expandable diff (no separate select-a-file pane). */
 /* Scoped to wide screens so it can't out-specify the responsive breakpoints
@@ -288,10 +279,6 @@
 .studio-convo-body { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 
 /* The live PTY terminal panel — deliberately darkest. */
-.studio-terminal-role { display:inline-flex; align-items:center; gap:6px; color:#9a9a9a; font:10px var(--font-geist-mono); }.studio-terminal-role svg { width:12px; }
-.studio-term-reconnect { display:grid; width:22px; height:22px; margin-left:4px; place-items:center; border:1px solid rgba(255,255,255,.12); border-radius:6px; color:#b9b9b9; background:transparent; cursor:pointer; }.studio-term-reconnect:hover { color:#fff; background:rgba(255,255,255,.08); }.studio-term-reconnect svg { width:12px; }
-.studio-live-terminal { flex:1; min-height:0; padding:7px 4px 4px 8px; overflow:hidden; background:#080808; }.studio-live-terminal .xterm { height:100%; }
-.studio-terminal-exit { margin:0; padding:8px 11px; border-top:1px solid rgba(210,153,34,.3); color:var(--studio-amber); background:#1c1a12; font-size:10px; }
 
 /* Markdown chat rendering — dark palette. */
 .md-body { color: #e4e2e1; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
@@ -431,7 +418,6 @@
 /* Keyboard focus in the studio: a quiet ring on everything you can reach. */
 .studio-env-row:focus-visible,
 .studio-diff-file-head:focus-visible,
-.studio-env-terminal-toggle:focus-visible,
 .studio-env-close:focus-visible,
 .studio-icon-button:focus-visible,
 .studio-composer-footer button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }

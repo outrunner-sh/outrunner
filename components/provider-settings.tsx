@@ -55,11 +55,23 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
     forgetOutrunnerModels();
   }
 
+  function changeChoice(agent: AgentId, method: AgentAuthChoices[AgentId]) {
+    setChoices((current) => ({ ...current, [agent]: method }));
+    // The menu offers an agent's models only where its pick is connected.
+    forgetOutrunnerModels();
+  }
+
+  function changeClaude(next: ClaudeTokenMeta) {
+    setClaude(next);
+    // Connecting or disconnecting Claude adds or takes away its models.
+    forgetOutrunnerModels();
+  }
+
   return (
-    <section className="space-y-10">
+    <section className="space-y-8">
       <div className="space-y-1">
-        <h1 className="text-xl font-semibold text-foreground">Providers (BYOK)</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold text-foreground">Providers (BYOK)</h1>
+        <p className="text-[13px] text-muted-foreground">
           How your coding agents sign in, and your own API keys. Models on them are billed by each provider, not
           counted against your Outrunner plan.
         </p>
@@ -94,13 +106,13 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
                 keys={keys}
                 claude={claude}
                 initialMethod={place?.tab === id ? place.method : undefined}
-                onChoice={(agent, method) => setChoices((current) => ({ ...current, [agent]: method }))}
+                onChoice={changeChoice}
                 onKeys={changeKeys}
-                onClaude={setClaude}
+                onClaude={changeClaude}
               />
             ) : (
               <div className="space-y-6">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-[13px] text-muted-foreground">
                   {PROVIDERS[id].description} Its models run in Claude Code.
                 </p>
                 <ApiKeyCard provider={id} stored={keys[id]} onChange={(next) => changeKeys(next, id)} />

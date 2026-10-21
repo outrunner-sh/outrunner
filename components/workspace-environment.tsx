@@ -49,7 +49,6 @@ export function WorkspaceEnvironment({
   pullRequest,
   isReady,
   sender,
-  terminalOpen,
   onClose,
 }: {
   workspace: Workspace;
@@ -58,8 +57,6 @@ export function WorkspaceEnvironment({
   isReady: boolean;
   /** Sends into the session while it can (the Create PR and Review prompts). */
   sender: SessionSender | null;
-  /** The terminal below is expanded: the rows then take only their height. */
-  terminalOpen: boolean;
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
   onClose: () => void;
 }) {
@@ -97,7 +94,7 @@ export function WorkspaceEnvironment({
           />
         </div>
       )}
-      <div hidden={view === "changes"} className={cn("studio-env-body", terminalOpen && "is-compact")}>
+      <div hidden={view === "changes"} className="studio-env-body">
         <div className="studio-env-label">
           Environment
           <button type="button" onClick={onClose} className="studio-env-close" title="Hide environment" aria-label="Hide environment">
