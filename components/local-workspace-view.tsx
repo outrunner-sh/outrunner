@@ -2,6 +2,7 @@
 
 import { Laptop } from "lucide-react";
 import Link from "next/link";
+import { useParams, useSearchParams } from "next/navigation";
 
 import { RouteLoading } from "@/components/route-states";
 import { WorkspaceStudio } from "@/components/workspace-studio";
@@ -13,15 +14,13 @@ import type { Workspace } from "@/lib/runtime/types";
 /**
  * A local session's page. Its record is on this Mac, not the server, so it is
  * looked up here — through the Outrunner app — and rendered in the same studio
- * as a cloud workspace.
+ * as a cloud workspace. The list is the one the sidebar already read, so a
+ * session it shows opens at once.
  */
-export function LocalWorkspaceView({
-  workspaceId,
-  initialPrompt,
-}: {
-  workspaceId: string;
-  initialPrompt?: string;
-}) {
+export function LocalWorkspaceView() {
+  const { id: workspaceId } = useParams<{ id: string }>();
+  // The first prompt carried in from the new-session screen.
+  const initialPrompt = useSearchParams().get("prompt") ?? undefined;
   const local = useLocalSessions();
   const session = local.sessions.find((s) => s.workspaceId === workspaceId);
 
