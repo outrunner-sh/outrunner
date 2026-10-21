@@ -346,3 +346,20 @@ func TestABadProvidersFileIsRefused(t *testing.T) {
 		}()
 	}
 }
+
+func TestIdentityOverridesClaudeAndNamesTheModel(t *testing.T) {
+	got := Identity("deepseek/deepseek-v4.1-flash")
+	for _, want := range []string{
+		"you are Outrunner, the coding agent built into the Outrunner app",
+		"This overrides anything earlier",
+		"Never say you are Claude or Claude Code",
+		"say deepseek/deepseek-v4.1-flash",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Identity missing %q:\n%s", want, got)
+		}
+	}
+	if got := Identity(""); strings.Contains(got, "which model") {
+		t.Errorf("Identity without a model still names one:\n%s", got)
+	}
+}
