@@ -179,6 +179,22 @@ test("a pick a rescan no longer offers is not imported, and a skipped one never 
   });
 });
 
+test("a workspace archived in Conductor is neither offered nor listed as blocked", async () => {
+  const { offeredSessions } = await import("@/lib/imports/client");
+  const live = session("claude:live", { conductorState: "ready" });
+  const cli = session("claude:cli", { conductorState: undefined });
+  const gone = session("claude:gone", { skip: { reason: "worktree-missing" } });
+  const { importable, blocked } = offeredSessions([
+    live,
+    session("claude:put-away", { conductorState: "archived" }),
+    cli,
+    gone,
+    session("claude:put-away-gone", { conductorState: "archived", skip: { reason: "worktree-missing" } }),
+  ]);
+  assert.deepEqual(importable.map((s) => s.key), ["claude:live", "claude:cli"]);
+  assert.deepEqual(blocked.map((s) => s.key), ["claude:gone"]);
+});
+
 test("secrets need agreement; scripts, items and plugins alone don't", async () => {
   const { picksSecrets, hasEnvironmentPick, hasConfigPick } = await import("@/lib/imports/client");
   const none = { items: [], mcp: [], plugins: false };

@@ -18,6 +18,7 @@ import {
   importEnvironments,
   importSessions,
   type ImportProgress,
+  offeredSessions,
   picksInScan,
   picksSecrets,
   skipText,
@@ -105,10 +106,7 @@ export function LocalImport() {
   const rescan = () => setRound((r) => r + 1);
   const shownError = error ?? result?.error ?? null;
 
-  const [importable, blocked] = useMemo(() => {
-    const sessions = scan?.sessions ?? [];
-    return [sessions.filter((s) => !s.skip), sessions.filter((s) => s.skip)];
-  }, [scan]);
+  const { importable, blocked } = useMemo(() => offeredSessions(scan?.sessions ?? []), [scan]);
 
   const toggle = (key: string) =>
     setPicked((current) => {

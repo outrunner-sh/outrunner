@@ -31,6 +31,9 @@ const (
 	SourceOutrunnerLocal = "outrunner-local"
 )
 
+// ConductorArchived is the state of a workspace archived in Conductor.
+const ConductorArchived = "archived"
+
 // The agents a session can run, as Outrunner names them.
 const (
 	AgentClaude = "claude"
@@ -115,7 +118,8 @@ type Session struct {
 	StartedAt       string `json:"startedAt,omitempty"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
 	LastMessage     string `json:"lastMessage,omitempty"`
-	// ConductorState is the Conductor workspace's state ("ready", "archived").
+	// ConductorState is the Conductor workspace's state ("ready"; an
+	// "archived" one is never offered).
 	ConductorState string `json:"conductorState,omitempty"`
 	Skip           *Skip  `json:"skip,omitempty"`
 }
@@ -193,6 +197,12 @@ func discover(ctx context.Context, opts Options, key string) ([]Session, []Sourc
 				continue
 			}
 			seen[s.Key] = true
+			// A workspace archived in Conductor is work the user put away: it
+			// isn't offered. Seen all the same, so the same conversation found
+			// again among Claude Code's or Codex's own isn't offered either.
+			if s.ConductorState == ConductorArchived {
+				continue
+			}
 			found = append(found, s)
 		}
 	}

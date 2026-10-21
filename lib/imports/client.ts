@@ -169,6 +169,16 @@ export function picksSecrets(envs: EnvironmentPick[], config: ConfigPick): boole
 }
 
 /**
+ * The sessions a scan offers, and those it names that can't be imported. A
+ * workspace archived in Conductor is neither: it is work the user put away.
+ * (A scan from an app before it left them out still lists them.)
+ */
+export function offeredSessions(sessions: ScannedSession[]): { importable: ScannedSession[]; blocked: ScannedSession[] } {
+  const live = sessions.filter((s) => s.conductorState !== "archived");
+  return { importable: live.filter((s) => !s.skip), blocked: live.filter((s) => s.skip) };
+}
+
+/**
  * The picks a scan still offers. "Scan again" can drop a project or an item —
  * its pick stays in state but stops rendering, so without this the Import
  * button stays enabled with nothing visibly checked and a repository that is
