@@ -90,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/restore", s.authed(s.restoreWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
+	mux.HandleFunc("POST /workspaces/{id}/interrupt", s.authed(s.interrupt))
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
@@ -408,6 +409,19 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, "sent", s.ws.SendMessage(r.PathValue("id"), req.Content))
+}
+
+// interrupt stops the turn the workspace's session is running, if any.
+func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	err := s.ws.Interrupt(r.Context(), r.PathValue("id"))
+	if errors.Is(err, workspace.ErrNotInterrupted) {
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+		return
+	}
+	respond(w, "interrupted", err)
 }
 
 // setModel switches the workspace's session to another model, relaunching a

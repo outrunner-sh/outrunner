@@ -114,6 +114,17 @@ func (e *jcodeEngine) SendMessage(workspaceID, content string) error {
 	return e.client.SendMessage(js.jcodeID, content)
 }
 
+// Interrupt stops the turn a workspace's session is running.
+func (e *jcodeEngine) Interrupt(ctx context.Context, workspaceID string) error {
+	e.mu.Lock()
+	js, ok := e.byWS[workspaceID]
+	e.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("jcode: no session for workspace %s", workspaceID)
+	}
+	return e.client.Cancel(ctx, js.jcodeID)
+}
+
 // StopSession stops consuming a workspace's events and closes its log. The jcode
 // session persists on the bridge; only Runtime's view of it is torn down.
 func (e *jcodeEngine) StopSession(workspaceID string) {
