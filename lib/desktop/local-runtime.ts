@@ -452,17 +452,20 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   local_codex_login: "This version of the Outrunner app can't log Codex in. Update the app, then try again.",
 };
 
+const OLDER_APP = "This version of the Outrunner app can't do that yet. Update the app, then try again.";
+
 /** Human-readable message for an error the app returned; `agent` is the CLI a
  *  login error is about. */
 export function messageForLocalError(error: unknown, agent: AgentId = "claude"): string {
   const raw = error instanceof Error ? error.message : String(error ?? "");
   // Tauri's refusal of a command the app doesn't have.
   const missing = /^(\w+) not allowed\. Command not found$/.exec(raw);
-  if (missing) {
-    return NEEDS_NEWER_APP[missing[1]] ?? "This version of the Outrunner app can't do that yet. Update the app, then try again.";
-  }
+  if (missing) return NEEDS_NEWER_APP[missing[1]] ?? OLDER_APP;
   const code = raw.split(":")[0];
   switch (code) {
+    case "route-not-allowed":
+      // The app's own allowlist of agent routes, from before this one.
+      return OLDER_APP;
     case "agent-missing":
       return "This build of the Outrunner app has no local agent. Update the app to run sessions locally.";
     case "agent-did-not-start":

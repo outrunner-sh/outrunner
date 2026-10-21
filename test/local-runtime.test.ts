@@ -228,6 +228,11 @@ test("an app too old for the page says to update it, not Tauri's refusal", () =>
   assert.match(messageForLocalError("local_something_new not allowed. Command not found"), /Update the app/);
   // A refusal for another reason stays as it was.
   assert.match(messageForLocalError("local_status not allowed on origin [https://x]"), /not allowed on origin/);
+  // An app whose list of agent routes predates the page's call.
+  assert.equal(
+    messageForLocalError(new Error("route-not-allowed: POST /workspaces/6f1c/auth")),
+    "This version of the Outrunner app can't do that yet. Update the app, then try again.",
+  );
 });
 
 // ---------------------------------------------------------------------------
