@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -268,10 +268,14 @@ fn spawn_agent() -> Result<Agent, String> {
 
 /// The last non-empty line written to `path` after byte `from`, cut to a
 /// sentence's length: what a failed start said, not an older run's output.
+/// The log is only ever appended to, across every start the app has made, so
+/// this reads only from `from`: everything before it is an older run's.
 fn last_line_since(path: &Path, from: u64) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    let new = bytes.get(usize::try_from(from).ok()?..)?;
-    let line = String::from_utf8_lossy(new).lines().map(str::trim).filter(|line| !line.is_empty()).next_back()?.to_string();
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let line = String::from_utf8_lossy(&bytes).lines().map(str::trim).filter(|line| !line.is_empty()).next_back()?.to_string();
     Some(if line.chars().count() > 200 { format!("{}…", line.chars().take(200).collect::<String>()) } else { line })
 }
 
@@ -1607,6 +1611,9 @@ mod tests {
         assert_eq!(long.chars().count(), 201);
         assert!(long.ends_with('…'));
 
+        // A from past the end (the log was cleared between runs) reads nothing.
+        let past = std::fs::metadata(&log).unwrap().len() + 10;
+        assert_eq!(last_line_since(&log, past), None);
         assert_eq!(last_line_since(&dir.join("missing.log"), 0), None);
     }
 
