@@ -38,9 +38,12 @@ export function QuestionCard({
   const cardRef = useRef<HTMLDivElement>(null);
   const otherRef = useRef<HTMLInputElement>(null);
 
-  // Focused when it shows, so the keys answer at once.
+  // Focused when it shows, so the keys answer at once: unless the user is
+  // typing elsewhere (the terminal), where a digit would pick an option. The
+  // composer it replaces has gone, leaving the focus on the page.
   useEffect(() => {
-    if (!hidden) cardRef.current?.focus();
+    const active = document.activeElement;
+    if (!hidden && (active === null || active === document.body)) cardRef.current?.focus();
   }, [hidden]);
 
   const current = questions[page];
