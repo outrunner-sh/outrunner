@@ -4,14 +4,29 @@ import { CloudUpload, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
+import { AgentSetupPicker, EnvironmentPicker } from "@/components/import-setup-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { importScan, importSession } from "@/lib/desktop/local-runtime";
-import { importSessions, type ImportProgress, skipText } from "@/lib/imports/client";
+import { importConfig, importEnvironment, importScan, importSession } from "@/lib/desktop/local-runtime";
+import {
+  type ConfigPick,
+  type EnvironmentPick,
+  hasConfigPick,
+  hasEnvironmentPick,
+  importAgentConfig,
+  importEnvironments,
+  importSessions,
+  type ImportProgress,
+  picksInScan,
+  picksSecrets,
+  skipText,
+} from "@/lib/imports/client";
 import { isDesktopApp } from "@/lib/is-desktop";
 import type {
   ImportCommitRequest,
+  ImportConfigCommitRequest,
+  ImportEnvCapture,
   ImportPlanItem,
   ImportPlanRequest,
   ImportScan,
@@ -49,9 +64,11 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 /**
- * Moving sessions from this Mac to the cloud: the desktop app finds them
- * (Conductor, Claude Code, Codex), the user picks some, and each becomes an
- * archived cloud session, resumed from its page.
+ * Moving work from this Mac to the cloud: the desktop app finds sessions
+ * (Conductor, Claude Code, Codex), projects' environments and the user's own
+ * agent setup; the user picks what to bring. Each session becomes an archived
+ * cloud session, resumed from its page; environments and setup are kept,
+ * encrypted, for the sessions to start with.
  */
 export function LocalImport() {
   const desktop = useSyncExternalStore(noopSubscribe, isDesktopApp, () => false);
@@ -63,6 +80,10 @@ export function LocalImport() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [branchAs, setBranchAs] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<Record<string, ImportProgress>>({});
+  const [envPicks, setEnvPicks] = useState<Record<string, EnvironmentPick>>({});
+  const [rawConfigPick, setConfigPick] = useState<ConfigPick>({ items: [], mcp: [], plugins: false });
+  const [consent, setConsent] = useState(false);
+  const [setupNotes, setSetupNotes] = useState<Array<{ ok: boolean; text: string }>>([]);
   const [importing, setImporting] = useState(false);
 
   useEffect(() => {
@@ -97,10 +118,50 @@ export function LocalImport() {
       return next;
     });
 
+  // Only what this scan still offers: a pick the last scan had but this one
+  // doesn't no longer shows, so it must not be imported either.
+  const { envs: envList, config: configPick } = useMemo(
+    () => picksInScan(envPicks, rawConfigPick, scan),
+    [envPicks, rawConfigPick, scan],
+  );
+  const secrets = picksSecrets(envList, configPick);
+  const pickedSetup = envList.some(hasEnvironmentPick) || hasConfigPick(configPick);
+  const canImport = (picked.size > 0 || pickedSetup) && (!secrets || consent) && !scanning && !importing;
+
+  const importSetup = async () => {
+    const notes: Array<{ ok: boolean; text: string }> = [];
+    const envs = await importEnvironments(envList, {
+      read: (repo, pick) => importEnvironment(repo, pick),
+      save: (capture: ImportEnvCapture) => postJson<{ refused: string[] }>("/api/imports/environment", capture),
+    });
+    for (const r of envs) {
+      notes.push({ ok: r.ok, text: `${r.repo}'s environment: ${r.ok ? "kept" : "not imported"}${r.message ? `. ${r.message}` : ""}` });
+    }
+    if (hasConfigPick(configPick)) {
+      const config = await importAgentConfig(configPick, {
+        plan: async () => (await postJson<{ upload: { path: string; url: string } }>("/api/imports/config", {})).upload,
+        capture: importConfig,
+        commit: (request: ImportConfigCommitRequest) => postJson("/api/imports/config/commit", request),
+      });
+      notes.push({ ok: config.ok, text: `Your agent setup: ${config.ok ? "kept" : "not imported"}${config.message ? `. ${config.message}` : ""}` });
+    }
+    setSetupNotes(notes);
+    if (notes.every((n) => n.ok)) {
+      setEnvPicks({});
+      setConfigPick({ items: [], mcp: [], plugins: false });
+      // With the picks gone, the agreement they were made under goes too:
+      // the next secret picked has to be agreed to on its own.
+      setConsent(false);
+    }
+  };
+
   const start = async () => {
     setImporting(true);
     setError(null);
     try {
+      // The environments and setup first: quick, and what the sessions start with.
+      if (pickedSetup) await importSetup();
+      if (picked.size === 0) return;
       await importSessions(
         importable.filter((s) => picked.has(s.key)),
         { branchAs: Object.fromEntries(Object.entries(branchAs).filter(([k, v]) => picked.has(k) && v.trim())) },
@@ -193,15 +254,48 @@ export function LocalImport() {
         </details>
       )}
 
-      <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-4">
+      {scan && (
+        <>
+          <EnvironmentPicker
+            projects={scan.projects}
+            picks={envPicks}
+            onChange={(pick) => setEnvPicks((current) => ({ ...current, [pick.repo]: pick }))}
+            disabled={importing}
+          />
+          <AgentSetupPicker config={scan.config} pick={configPick} onChange={setConfigPick} disabled={importing} />
+        </>
+      )}
+
+      {setupNotes.length > 0 && (
+        <ul className="space-y-1 text-xs">
+          {setupNotes.map((note) => (
+            <li key={note.text} className={note.ok ? "text-muted-foreground" : "text-destructive"}>
+              {note.text}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="space-y-3 border-t border-border/60 pt-4">
         <p className="max-w-xl text-xs text-muted-foreground">
           Each session&apos;s unpushed commits, uncommitted changes and full conversation are uploaded to your
           Outrunner cloud. A conversation can include anything its agent read, secrets too.
         </p>
-        <Button disabled={picked.size === 0 || scanning || importing} onClick={() => void start()}>
-          <CloudUpload />
-          {importing ? "Importing…" : `Import${picked.size > 0 ? ` ${picked.size}` : ""}`}
-        </Button>
+        {secrets && (
+          <label className="flex max-w-xl items-start gap-2 text-xs">
+            <input type="checkbox" className="mt-0.5" checked={consent} onChange={() => setConsent(!consent)} />
+            <span>
+              Store the variables, files and MCP keys I picked, encrypted, in Outrunner&apos;s cloud, and give them to
+              my cloud sessions, where the agent can read them.
+            </span>
+          </label>
+        )}
+        <div className="flex justify-end">
+          <Button disabled={!canImport} onClick={() => void start()}>
+            <CloudUpload />
+            {importing ? "Importing…" : "Import"}
+          </Button>
+        </div>
       </div>
     </Page>
   );
