@@ -6,6 +6,7 @@ import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { loadRepositoryBrowse } from "@/lib/github/browse";
 import { getGitHubRepository, type GitHubRepository, type GitHubRepositoryList } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
+import { isGitHubFullName } from "@/lib/github/listing";
 import { reconcileProjects } from "@/lib/github/reconcile-projects";
 import { cachedRepositoryBrowse, forgetRepositoryBrowse } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
@@ -13,7 +14,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 
 export const dynamic = "force-dynamic";
 
-/** Repositories one request may connect by id; the picker sends one. */
+/** Repositories one request may connect by name or id; the pickers send one. */
 const MAX_SELECTION = 100;
 /** Lookups of selected repositories run at once. */
 const LOOKUP_CONCURRENCY = 6;
@@ -21,11 +22,13 @@ const LOOKUP_CONCURRENCY = 6;
 /**
  * Connect repositories as projects.
  *
- * With `{ repoIds: [...] }`, only those repositories are connected — the picker
- * posts the user's selection, so browsing hundreds of repositories does not
- * turn all of them into projects. Each is looked up on GitHub by id rather than
- * trusting the posted ids: a repository the token cannot see must not become a
- * project row. With no body, every repository the user's GitHub token can
+ * With `{ repoIds: [...] }` and/or `{ fullNames: ["owner/name", ...] }` (a
+ * pasted URL), only those repositories are connected — the picker posts the
+ * user's selection, so browsing hundreds of repositories does not turn all of
+ * them into projects. Each is looked up on GitHub rather than trusting what
+ * was posted: a repository the token cannot see must not become a project
+ * row. `repoIds` in the response are the ones connected (a renamed
+ * repository's name resolves to its current one). With no body, every repository the user's GitHub token can
  * reach is connected (the original bulk behaviour, still used by the plain
  * "Sync repositories" button).
  */
@@ -44,16 +47,19 @@ export async function POST(request: Request) {
 
   // An absent or unparseable body means "connect everything"; only an explicit
   // array narrows the selection.
-  let selection: number[] | null = null;
-  const body = (await request.json().catch(() => null)) as { repoIds?: unknown } | null;
-  if (body && Array.isArray(body.repoIds)) {
-    const ids = body.repoIds.filter(
+  let selection: Array<number | string> | null = null;
+  const body = (await request.json().catch(() => null)) as { repoIds?: unknown; fullNames?: unknown } | null;
+  if (body && (Array.isArray(body.repoIds) || Array.isArray(body.fullNames))) {
+    const ids = (Array.isArray(body.repoIds) ? body.repoIds : []).filter(
       (id): id is number => typeof id === "number" && Number.isSafeInteger(id) && id > 0,
     );
-    if (ids.length === 0) {
+    const names = (Array.isArray(body.fullNames) ? body.fullNames : []).filter(
+      (name): name is string => typeof name === "string" && isGitHubFullName(name),
+    );
+    if (ids.length + names.length === 0) {
       return NextResponse.json({ error: "Select at least one repository." }, { status: 400 });
     }
-    selection = [...new Set(ids)];
+    selection = [...new Set<number | string>([...ids, ...names])];
     if (selection.length > MAX_SELECTION) {
       return NextResponse.json(
         { error: `Connect at most ${MAX_SELECTION} repositories at a time.` },
@@ -67,13 +73,17 @@ export async function POST(request: Request) {
     let repositories: GitHubRepository[];
     let list: GitHubRepositoryList | null = null;
     if (selection) {
-      const found = await mapWithConcurrency(selection, LOOKUP_CONCURRENCY, (id) =>
-        getGitHubRepository(token, id),
+      const found = await mapWithConcurrency(selection, LOOKUP_CONCURRENCY, (ref) =>
+        getGitHubRepository(token, ref),
       );
-      repositories = found.filter((repo): repo is GitHubRepository => repo !== null);
+      // An id and a name (or two spellings of one) can be the same repository,
+      // and one upsert must not write a row twice.
+      const byId = new Map<number, GitHubRepository>();
+      for (const repo of found) if (repo) byId.set(repo.githubRepoId, repo);
+      repositories = [...byId.values()];
       if (repositories.length === 0) {
         return NextResponse.json(
-          { error: "Your GitHub account can't see that repository any more. Refresh the list and try again." },
+          { error: "Your GitHub account can't see that repository. Check the name, or refresh the list." },
           { status: 404 },
         );
       }
@@ -101,6 +111,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       synced,
       discovered: repositories.length,
+      repoIds: repositories.map((repo) => repo.githubRepoId),
       complete: list?.complete ?? true,
       projects: await listProjects(),
     });
