@@ -80,7 +80,7 @@ test("without Outrunner's models, a Claude login starts the session instead", as
     }),
   );
   assert.equal(on, "claude");
-  assert.equal(sent, 0, "nothing reached the agent");
+  assert.equal(sent, 1, "only the Claude default reached the agent");
 });
 
 test("a box too old to switch falls back to Claude, or says why without it", async () => {
@@ -221,10 +221,14 @@ test("a chosen provider without a saved key, or an agent older than it, says so"
 });
 
 test("with no default to start on, the session starts on the user's Claude, or says what's missing", async () => {
-  let sent = 0;
-  const on = await startingModel({ setModel: async () => sent++, keyFor: async () => assert.fail("asked for a key"), hasClaude: true, fallback: null });
+  const sent: SetModelRequest[] = [];
+  const setModel = async (req: SetModelRequest) => {
+    sent.push(req);
+    return { result: req.model, effort: req.effort };
+  };
+  const on = await startingModel({ setModel, keyFor: async () => assert.fail("asked for a key"), hasClaude: true, fallback: null });
   assert.equal(on, "claude");
-  assert.equal(sent, 0, "the session's own Claude default, untouched");
+  assert.deepEqual(sent, [{ model: "opus", effort: "high" }], "the newest Opus, at high effort");
   await assert.rejects(
     startingModel({ setModel: async () => assert.fail("reached the agent"), keyFor: async () => "k", hasClaude: false, fallback: null }),
     (error: unknown) => error instanceof NoStartingModelError && /Connect Claude/.test(error.message),
@@ -258,4 +262,17 @@ test("a box too old for efforts says to update, and fails rather than run at ano
     (error: unknown) => error instanceof NoStartingModelError && /too old to set the effort/.test(error.message),
   );
   assert.deepEqual(switchFailure(new EffortUnsupportedError(), GLM), { status: 409, message: new EffortUnsupportedError().message });
+});
+
+test("a box that can't put Claude on Opus still starts the session, on Claude Code's own", async () => {
+  const refusals = [
+    async () => {
+      throw new AgentRequestError(404);
+    },
+    // Switched, but too old to set the effort.
+    async () => ({ result: "opus" }),
+  ];
+  for (const setModel of refusals) {
+    assert.equal(await quiet(() => startingModel({ setModel, keyFor: async () => KEY, hasClaude: true, fallback: null })), "claude");
+  }
 });

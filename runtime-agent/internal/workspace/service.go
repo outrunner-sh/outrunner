@@ -969,6 +969,79 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	return fmt.Errorf("prompt not confirmed delivered after %d attempts", submitAttempts)
 }
 
+// ErrNotInterrupted is a stop that couldn't be confirmed: the session's screen
+// couldn't be read, or still shows the turn running after Escape.
+var ErrNotInterrupted = errors.New("couldn't stop the turn; try again")
+
+const (
+	// interruptTimeout bounds one Interrupt's tmux commands.
+	interruptTimeout = 10 * time.Second
+	// interruptSettle is how long a turn has to stop after Escape.
+	interruptSettle    = 3 * time.Second
+	interruptPollEvery = 200 * time.Millisecond
+)
+
+// Interrupt stops the turn a session is running, as Escape does in its
+// terminal (Claude Code's and Codex's both), and so a question it waits on.
+// Escape is pressed only while the screen shows either, and once: on an idle
+// prompt box it does nothing useful, and twice opens Claude's rewind menu. An
+// idle session is already stopped. The stop is confirmed by the screen, the
+// turn's "esc to interrupt" footer gone, or reported as ErrNotInterrupted.
+//
+// It takes the send lock, so a stop clicked while a prompt is being delivered
+// stops the turn that prompt starts, rather than racing its Enter.
+func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
+	if s.jcode != nil {
+		return s.jcode.Interrupt(ctx, workspaceID)
+	}
+	if _, ok := s.getFacts(workspaceID); !ok {
+		return ErrUnknownWorkspace
+	}
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	defer lock.Unlock()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptTimeout)
+	defer cancel()
+	name := sessionName(workspaceID)
+	running, err := s.tmux.SessionExists(ctx, name)
+	if err != nil {
+		return fmt.Errorf("%w (%v)", ErrNotInterrupted, err)
+	}
+	if !running {
+		return nil // no agent, no turn
+	}
+	a := s.agentFor(workspaceID)
+	stopped := func() (bool, error) {
+		pane, err := s.tmux.CapturePane(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		return !a.isBusy(pane) && !a.awaitsAnswer(pane), nil
+	}
+	if idle, err := stopped(); err != nil {
+		return fmt.Errorf("%w (its screen could not be read: %v)", ErrNotInterrupted, err)
+	} else if idle {
+		return nil
+	}
+	if err := s.tmux.SendKey(ctx, name, "Escape"); err != nil {
+		return fmt.Errorf("%w (%v)", ErrNotInterrupted, err)
+	}
+	deadline := time.Now().Add(interruptSettle)
+	for {
+		select {
+		case <-ctx.Done():
+			return ErrNotInterrupted
+		case <-time.After(interruptPollEvery):
+		}
+		if idle, err := stopped(); err == nil && idle {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return ErrNotInterrupted
+		}
+	}
+}
+
 // errAwaitsAnswer is a send held back from a menu Claude is showing.
 var errAwaitsAnswer = errors.New("Claude is waiting for an answer in the terminal (a question or a permission prompt). Answer it there, then send again")
 

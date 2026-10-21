@@ -124,6 +124,12 @@ export class AgentClient {
     });
   }
 
+  /** Stop the turn the workspace's session is running, as Escape does in its
+   *  terminal; a session not running one is already stopped. */
+  interrupt(identity: WorkspaceIdentity): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/interrupt`, identity);
+  }
+
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(
       `/workspaces/${identity.workspaceId}/resume`,

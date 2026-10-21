@@ -12,7 +12,14 @@ import {
   type LocalFolder,
   type LocalStatus,
 } from "@/lib/desktop/local-runtime";
-import { agentOf, type Effort, type SessionModel, takesEffort } from "@/lib/runtime/session-models";
+import {
+  agentOf,
+  CLAUDE_DEFAULT_MODEL,
+  DEFAULT_EFFORT,
+  type Effort,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
@@ -112,7 +119,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       }
       const first = { prompt, attachmentIds };
       rememberFirstPrompt(tabStorage(), result.workspace.id, first);
-      rememberEffort(result.workspace.id, effort);
+      // None picked: the server's default, which on the user's Claude runs at
+      // DEFAULT_EFFORT (a model that takes none doesn't show it).
+      rememberEffort(result.workspace.id, model ? effort : DEFAULT_EFFORT);
       router.push(`/workspaces/${result.workspace.id}${firstPromptQuery(first)}`);
       router.refresh();
       resolve(true);
@@ -177,7 +186,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         return;
       }
       // The model picked on this screen; without one, Outrunner's where this
-      // Mac's Claude Code isn't logged in.
+      // Mac's Claude Code isn't logged in, else Opus on it.
+      let startedAt = effort;
       if (model || onOutrunnerModel) {
         try {
           await (model ? putOnModel(workspaceId, model, effort) : putOnDefaultModel(workspaceId));
@@ -186,8 +196,17 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
           fail(error, "Outrunner's models are unavailable right now.");
           return;
         }
+      } else {
+        // Best effort, as on the cloud: an agent too old to switch, or to set
+        // an effort, still starts the session, on Claude Code's own default.
+        try {
+          await putOnModel(workspaceId, CLAUDE_DEFAULT_MODEL, DEFAULT_EFFORT);
+          startedAt = DEFAULT_EFFORT;
+        } catch (error) {
+          console.warn("A local session starts on Claude Code's own default model: the agent couldn't set Opus", error);
+        }
       }
-      rememberEffort(workspaceId, effort);
+      rememberEffort(workspaceId, startedAt);
       router.push(`/local/${workspaceId}${firstPromptQuery({ prompt, attachmentIds: [] })}`);
       resolve(true);
     }));

@@ -12,11 +12,11 @@ import { ConversationTimeline, claudeIsWorking } from "@/components/conversation
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import { localAgentRequest, localTarget, messageForLocalError, putOnModel } from "@/lib/desktop/local-runtime";
-import { firstUserPrompt, userPromptCount } from "@/lib/runtime/conversation-events";
+import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import {
-  anchorPending,
   livePrompts,
   pendingShows,
+  settlePending,
   type PendingPrompt,
 } from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
@@ -140,10 +140,11 @@ export function WorkspaceSession({
     eventsRef.current = conversation.events;
   }, [conversation.events]);
 
-  /** The prompt has reached the session: hold its bubble until the stream has
-   *  recorded one more prompt than the history it answered with. */
-  const anchor = (pendingId: string) =>
-    setPending((prev) => anchorPending(prev, pendingId, userPromptCount(eventsRef.current)));
+  /** The prompt has reached the session, handed over at `sentAt` recorded
+   *  prompts: drop its bubble if the stream already has it, else hold it until
+   *  the stream records one more prompt than the history it answered with. */
+  const anchor = (pendingId: string, sentAt: number) =>
+    setPending((prev) => settlePending(prev, pendingId, userPrompts(eventsRef.current), sentAt));
 
   const send = (text: string, attachmentIds: string[] = []) => {
     const trimmed = text.trim();
@@ -180,6 +181,8 @@ export function WorkspaceSession({
     pendingId: string,
     failed: (message: string) => boolean,
   ) => {
+    // The stream may record the prompt before the session answers.
+    const sentAt = userPromptCount(eventsRef.current);
     if (local) {
       return localAgentRequest(
         localTarget(workspaceId),
@@ -188,7 +191,7 @@ export function WorkspaceSession({
         { content: text },
       ).then(
         () => {
-          anchor(pendingId);
+          anchor(pendingId, sentAt);
           return true;
         },
         (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
@@ -202,7 +205,7 @@ export function WorkspaceSession({
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
         if (!res.ok) return failed(body.error ?? "Could not send that message.");
-        anchor(pendingId);
+        anchor(pendingId, sentAt);
         // The first prompt just named this session: re-read the sidebar.
         if (body.titled) router.refresh();
         return true;
@@ -256,11 +259,33 @@ export function WorkspaceSession({
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
   const shownModel = picked && !repliedSincePick ? picked.model : activeModel;
+  // Stopping the turn under way (the composer's stop button): the agent
+  // presses Escape in the session and answers once the turn has stopped.
+  const [stopping, setStopping] = useState(false);
+  // The prompts recorded when a turn was last stopped: the turn is over until
+  // the next, even where the agent records nothing of the stop (Codex).
+  const [stoppedAt, setStoppedAt] = useState<number | null>(null);
   // A prompt the stream hasn't recorded yet is a turn starting. The agent
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
   const delivered = userPromptCount(conversation.events);
   const working =
-    claudeIsWorking(conversation.events) || pending.some((p) => pendingShows(p, delivered));
+    pending.some((p) => pendingShows(p, delivered)) ||
+    (claudeIsWorking(conversation.events) && stoppedAt !== delivered);
+  const stop = () => {
+    setStopping(true);
+    setSendError(null);
+    (local
+      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
+      : stopCloudTurn(workspaceId)
+    )
+      .then(() => setStoppedAt(userPromptCount(eventsRef.current)))
+      .catch((error: unknown) =>
+        setSendError(
+          local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
+        ),
+      )
+      .finally(() => setStopping(false));
+  };
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
     effort,
@@ -386,6 +411,7 @@ export function WorkspaceSession({
         <div className="studio-convo-body">
           <ConversationTimeline
             events={timelineEvents}
+            working={working}
             placeholder={conversationPlaceholder({
               events: timelineEvents.length,
               attachment: attachment.status,
@@ -444,6 +470,7 @@ export function WorkspaceSession({
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
+        stop={attached && working ? { onStop: stop, stopping } : undefined}
       />
     </div>
   );
@@ -489,6 +516,15 @@ async function switchCloudModel(workspaceId: string, model: SessionModel, effort
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't switch models. Please try again.");
+}
+
+/** Stop a cloud session's turn. The server reaches the session's agent, as
+ *  for a prompt. */
+async function stopCloudTurn(workspaceId: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");
 }
 
 /** Who served a session's model when it was last picked here (a convenience:

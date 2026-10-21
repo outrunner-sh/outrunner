@@ -13,8 +13,16 @@ import { useCreateSession } from "@/hooks/use-create-session";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
-import { loadoutDefault, loadoutEffort } from "@/lib/runtime/model-loadout";
-import { agentOf, defaultModel, type Effort, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
+import { effortOnPick, loadoutDefault } from "@/lib/runtime/model-loadout";
+import {
+  agentOf,
+  CLAUDE_DEFAULT_MODEL,
+  DEFAULT_EFFORT,
+  defaultModel,
+  type Effort,
+  modelGroups,
+  type SessionModel,
+} from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
@@ -46,14 +54,14 @@ export function NewSessionForm({
     useCreateSession(listed, initialProjectId);
   // The model the session starts on, picked in the composer as in a session;
   // none picked, what it starts on anyway: the menu's default on the cloud,
-  // and on a Mac whose Claude Code isn't logged in; otherwise that Mac's
-  // Claude Code default.
+  // and on a Mac whose Claude Code isn't logged in; otherwise the user's
+  // Claude, on CLAUDE_DEFAULT_MODEL.
   const menu = useOutrunnerModels();
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(null);
   // The effort picked in the composer; undefined until one is, when the
-  // loadout's for the model it starts on shows.
+  // loadout's for the model it starts on shows, else DEFAULT_EFFORT.
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
@@ -78,12 +86,13 @@ export function NewSessionForm({
     : [];
   const onDefault = local ? where.outrunnerModel : menu?.available === true;
   // The loadout's default (Settings → Default models) where the menu offers
-  // it here; else what a session starts on without one.
+  // it here; else what a session starts on without one: the menu's default,
+  // or, where it starts on the user's Claude, Opus.
   const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
-  const startsOn = picked ?? chosenDefault ?? (onDefault && menu ? defaultModel(menu) : null);
+  const startsOn = picked ?? chosenDefault ?? (menu ? (onDefault ? defaultModel(menu) : CLAUDE_DEFAULT_MODEL) : null);
   const startModel = picked ?? chosenDefault ?? undefined;
   const effort =
-    pickedEffort !== undefined ? pickedEffort : (startsOn && menu && loadoutEffort(menu.loadout, startsOn)) || null;
+    pickedEffort !== undefined ? pickedEffort : startsOn ? effortOnPick(menu?.loadout, startsOn) : DEFAULT_EFFORT;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one

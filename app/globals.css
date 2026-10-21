@@ -177,6 +177,7 @@
 .studio-composer-footer svg { width:14px; height:14px; flex-shrink:0; }
 .studio-composer-footer .studio-composer-send { color:#0a0a0a; border-color:#ededed; background:#ededed; }
 .studio-composer-footer .studio-composer-send:hover:not(:disabled) { color:#0a0a0a; border-color:#fff; background:#fff; }
+.studio-composer-footer .studio-composer-stop svg:not(.spinner) { width:10px; height:10px; fill:currentColor; }
 .studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); border-color:rgba(255,255,255,.14); background:transparent; }
 
 /* An effort as a row of bars (components/effort-meter.tsx): lit up to its
