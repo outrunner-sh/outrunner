@@ -8,7 +8,15 @@
  * database (lib/db/agent-auth.ts is the real one).
  */
 
-import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod, type RunTarget } from "@/lib/agents/registry";
+import {
+  type AgentConnection,
+  AGENTS,
+  type AgentId,
+  type AuthCredential,
+  type AuthMethodId,
+  authMethod,
+  type RunTarget,
+} from "@/lib/agents/registry";
 import { PROVIDERS } from "@/lib/providers/registry";
 import { anthropicEnvVar } from "@/lib/runtime/anthropic-env";
 import { providerSettingsHref } from "@/lib/settings-links";
@@ -106,30 +114,76 @@ function sessionCredential(credential: AuthCredential, token: string): SessionCr
   }
 }
 
+/** A pick this release knows; a later one's is no pick. */
+function knownPick(agent: AgentId, state: AgentAuthState): AuthMethodId | null {
+  return state.choice && authMethod(agent, state.choice) ? state.choice : null;
+}
+
 /**
  * What `agent` runs on for a session on `target`. Throws an
  * {@link AgentAuthError} when the user's pick can't run there: it runs on the
- * Mac only, or its credential isn't saved (or can't be opened).
+ * Mac only, or its credential isn't saved (or can't be opened). With
+ * `ownAccount` false (the session runs a model on Outrunner's key or one of
+ * the user's, which Claude Code reaches without signing in), a pick that
+ * can't run there is no error: the session runs signed in to nothing.
  */
 export async function resolveAgentAuth(
   store: AgentAuthStore,
   agent: AgentId,
   target: RunTarget,
+  { ownAccount = true }: { ownAccount?: boolean } = {},
 ): Promise<ResolvedAuth> {
   const state = await store.load(agent);
-  // A pick this release doesn't know (a later one's) is no pick.
-  const picked = state.choice && authMethod(agent, state.choice) ? state.choice : null;
+  const picked = knownPick(agent, state);
   const method = picked ?? fallbackMethod(agent, target, state);
+  const unsigned: ResolvedAuth = { method: null, credential: null, picked: false };
+  const cantRun = (method: AuthMethodId, reason: AgentAuthReason) => {
+    if (ownAccount) throw new AgentAuthError(agent, method, reason);
+    return unsigned;
+  };
   if (!method) {
     // Codex has nothing else to run on; Claude Code still has the box's own
     // setup and the model providers.
-    if (agent === "codex") throw new AgentAuthError(agent, "api-key", "not-connected");
-    return { method: null, credential: null, picked: false };
+    if (agent === "codex") return cantRun("api-key", "not-connected");
+    return unsigned;
   }
   const way = authMethod(agent, method)!;
-  if (!way.targets.includes(target)) throw new AgentAuthError(agent, method, "local-only");
+  if (!way.targets.includes(target)) return cantRun(method, "local-only");
   if (way.credential.kind === "own-login") return { method, credential: null, picked: picked !== null };
   const token = state.open(way.credential);
-  if (!token) throw new AgentAuthError(agent, method, "not-connected");
+  if (!token) return cantRun(method, "not-connected");
   return { method, credential: sessionCredential(way.credential, token), picked: picked !== null };
+}
+
+/**
+ * Whether signing an existing session's agent in again, its model not known,
+ * must have the agent's own account. Codex runs only on it. Claude Code may be
+ * on a model on a key, which needs none: a session started on Outrunner's
+ * models still opens after the user disconnects Claude, signed in to nothing.
+ */
+export function resignInNeedsAccount(agent: AgentId): boolean {
+  return agent !== "claude";
+}
+
+/**
+ * Where sessions can run on the user's own account of `agent` (Settings →
+ * Providers), for the model menu: on a box (`cloud`), and on the Mac
+ * (`local`: always, never, or `"mac-login"`, where the agent's CLI there is
+ * logged in). Connected means the way picked has its credential saved, or is
+ * the Mac's own login; with no pick, a credential saved for some way. With
+ * nothing picked or saved, it is not connected anywhere, as Settings shows
+ * it, though a session on the Mac would still run on the Mac's own login.
+ */
+export async function agentConnection(store: AgentAuthStore, agent: AgentId): Promise<AgentConnection> {
+  const state = await store.load(agent);
+  const picked = knownPick(agent, state);
+  if (!picked) {
+    // With no pick, a session on the Mac runs on its own login (fallbackMethod).
+    const saved = fallbackMethod(agent, "cloud", state) !== null;
+    return { cloud: saved, local: saved ? "mac-login" : false };
+  }
+  const way = authMethod(agent, picked)!;
+  if (way.credential.kind === "own-login") return { cloud: false, local: "mac-login" };
+  const saved = state.open(way.credential) !== null;
+  return { cloud: saved && way.targets.includes("cloud"), local: saved && way.targets.includes("local") };
 }
