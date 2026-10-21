@@ -27,12 +27,11 @@ import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
-import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
+import { startSessionAt } from "@/hooks/use-session-location";
 import {
   activeSessionId,
   buildSidebarGroups,
   filterSidebarGroups,
-  newSessionHref,
   relativeTime,
   rememberFoldedProjects,
   type SessionDeletion,
@@ -243,13 +242,9 @@ function WorkspaceGroup({
   const listId = useId();
   const router = useRouter();
   const { start } = group;
-  // Set the form's cloud/Mac choice, then open a fresh form for this target
-  // (newSessionHref: a new key each click, even for the URL already open).
+  // A fresh form for this target, even for the URL already open.
   const startHere = () => {
-    if (!start) return;
-    if (start.kind === "local") startNextSessionIn(start.folder);
-    else startNextSessionInCloud();
-    router.push(newSessionHref(start, Date.now().toString(36)));
+    if (start) startSessionAt(router, start);
   };
   const Icon = group.local ? Laptop : Folder;
   return (

@@ -20,6 +20,7 @@ import {
   type LocalFolder,
 } from "@/lib/desktop/local-runtime";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
+import { newSessionHref } from "@/lib/nav/sidebar";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 export type SessionLocation = "cloud" | "local";
@@ -231,6 +232,21 @@ export function useSessionLocation(agent: AgentId = "claude") {
 }
 
 export type SessionLocationState = ReturnType<typeof useSessionLocation>;
+
+/** Where a new session is started from a "+": a connected repository in the
+ *  cloud, or a folder on this Mac. */
+export type SessionStart = { kind: "cloud"; projectId: string } | { kind: "local"; folder: string };
+
+/**
+ * Open a fresh new-session form on `start`: set the form's cloud/Mac choice to
+ * match, then push its page with a new key each time (newSessionHref), so a
+ * form already open is replaced rather than kept as it was switched to.
+ */
+export function startSessionAt(router: { push: (href: string) => void }, start: SessionStart): void {
+  if (start.kind === "local") startNextSessionIn(start.folder);
+  else startNextSessionInCloud();
+  router.push(newSessionHref(start, Date.now().toString(36)));
+}
 
 /** Make the next new session start on this Mac, in `folder` — what a folder's
  *  "+" in the sidebar does before opening the new-session page. */

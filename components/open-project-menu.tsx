@@ -12,10 +12,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
+import { startSessionAt } from "@/hooks/use-session-location";
 import { pickLocalFolder } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import { newSessionHref } from "@/lib/nav/sidebar";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 const noopSubscribe = () => () => {};
@@ -38,8 +37,7 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
     try {
       const folder = await pickLocalFolder();
       if (!folder) return; // cancelled
-      startNextSessionIn(folder.path);
-      router.push(newSessionHref({ kind: "local", folder: folder.path }, Date.now().toString(36)));
+      startSessionAt(router, { kind: "local", folder: folder.path });
     } catch (error) {
       setFolderError(error instanceof Error ? error.message : "Couldn't open that folder.");
     }
@@ -47,7 +45,9 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
 
   return (
     <>
-      <DropdownMenu>
+      {/* Not modal: a modal menu that closes as its item opens the dialog
+          fights the dialog for focus, and can leave the page unclickable. */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
@@ -76,8 +76,7 @@ export function OpenProjectMenu({ viewerLogin }: { viewerLogin: string | null })
         viewerLogin={viewerLogin}
         onOpened={(project) => {
           setGithubOpen(false);
-          startNextSessionInCloud();
-          router.push(newSessionHref({ kind: "cloud", projectId: project.id }, Date.now().toString(36)));
+          startSessionAt(router, { kind: "cloud", projectId: project.id });
           // The sidebar and the form read projects on the server: show this one.
           router.refresh();
         }}
