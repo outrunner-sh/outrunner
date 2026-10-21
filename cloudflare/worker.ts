@@ -31,6 +31,8 @@ interface Env {
   CREDENTIALS_ENCRYPTION_KEY: string;
   /** Optional allowlist. BLANK MEANS OPEN — note the polarity. */
   RUNTIME_OWNER_GITHUB_LOGIN?: string;
+  /** Optional plan-limit exemptions; blank means nobody is exempt. */
+  RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN?: string;
   /**
    * Outrunner's own models (lib/openrouter/keys.ts), which new cloud sessions
    * start on. Without either, a session needs the user's Claude. The
@@ -97,6 +99,9 @@ export class OutrunnerControlPlane extends Container<Env> {
       // Blank/unset admits everyone, which is the intent for open sign-up.
       ...(env.RUNTIME_OWNER_GITHUB_LOGIN
         ? { RUNTIME_OWNER_GITHUB_LOGIN: env.RUNTIME_OWNER_GITHUB_LOGIN }
+        : {}),
+      ...(env.RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN
+        ? { RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN: env.RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN }
         : {}),
       ...(env.OPENROUTER_MANAGEMENT_KEY ? { OPENROUTER_MANAGEMENT_KEY: env.OPENROUTER_MANAGEMENT_KEY } : {}),
       ...(env.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: env.OPENROUTER_API_KEY } : {}),

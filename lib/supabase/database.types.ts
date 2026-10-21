@@ -580,6 +580,8 @@ export type Database = {
           requested_project_id: string;
           requested_agent_secret: string;
           requested_image_version?: string;
+          /** The plan's cap on the owner's running boxes; null when none applies. */
+          max_live_computers?: number | null;
         };
         Returns: Array<{
           runtime_computer_id: string;

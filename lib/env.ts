@@ -21,8 +21,10 @@ type EnvKey =
   // Multi-user: AES-256-GCM key sealing per-user credentials at rest
   // (lib/crypto/secret-box.ts). 32 bytes, base64 or hex — `openssl rand -base64 32`.
   | "CREDENTIALS_ENCRYPTION_KEY"
-  // Single-user guard
+  // Sign-in allowlist (blank means open sign-up)
   | "RUNTIME_OWNER_GITHUB_LOGIN"
+  // Optional GitHub logins exempt from plan limits only (not an access allowlist).
+  | "RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN"
   // Modal
   | "MODAL_TOKEN_ID"
   | "MODAL_TOKEN_SECRET"

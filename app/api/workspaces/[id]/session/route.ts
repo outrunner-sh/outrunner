@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { getOwner } from "@/lib/auth/owner";
+import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
+import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { agentAuthStore, getSandboxSettings } from "@/lib/db/credentials";
 import {
   getProject,
@@ -91,8 +92,11 @@ export async function POST(request: Request, context: RouteContext) {
     // A box that ended on its own (Modal, after a day) comes back on the disk
     // it left, so the session opens where it was.
     try {
-      computer = (await bringBack(provider, computer, owner.id)) ?? computer;
+      computer = (await bringBack(provider, computer, owner)) ?? computer;
     } catch (error) {
+      if (error instanceof CloudLimitError) return NextResponse.json(error.denial, { status: 403 });
+      const refused = isPlanLimitError(error);
+      if (refused) return NextResponse.json({ error: refused.message, settingsHref: UPGRADE_HREF }, { status: 403 });
       console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
       return NextResponse.json(
         { error: "Could not restart this session's sandbox. Try again." },
@@ -207,7 +211,7 @@ export async function POST(request: Request, context: RouteContext) {
 async function bringBack(
   provider: ComputerRuntimeProvider,
   computer: RuntimeComputer,
-  userId: string,
+  owner: Owner,
 ): Promise<RuntimeComputer | null> {
   if (computerMadeBy(computer) !== provider.name) return null;
   let ended = endedBoxOf(computer, provider.name);
@@ -220,15 +224,20 @@ async function bringBack(
   }
   const project = await getProject(computer.projectId);
   if (!project) throw new Error(`Project ${computer.projectId} not found`);
+  // A box is about to start: the plan's hours and box count get their say,
+  // and the claim in the database enforces the cap.
+  const gate = await cloudBoxStartGate(owner, provider.name);
+  if ("denial" in gate) throw new CloudLimitError(gate.denial);
   const ensured = await ensureProjectRuntimeComputer(provider, {
     projectId: project.id,
     repoFullName: project.fullName,
-    githubToken: await optionalGithubToken(userId),
-    sessionEnv: await runtimeSessionEnvironment(userId),
+    githubToken: await optionalGithubToken(owner.id),
+    sessionEnv: await runtimeSessionEnvironment(owner.id),
     // The owner's size now, as a new box on this provider would get, within
     // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
-    size: boxSizeOn(sandboxOf(provider.name), (await getSandboxSettings(userId)).boxSize, await planFor(userId)),
+    size: boxSizeOn(sandboxOf(provider.name), (await getSandboxSettings(owner.id)).boxSize, await planFor(owner.id)),
     previousSandboxId: ended,
+    maxLiveComputers: gate.cap,
   });
   return ensured.computer;
 }

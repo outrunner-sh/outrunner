@@ -19,6 +19,9 @@ export type RuntimeComputerProvisioner = {
 type Claim = (input: {
   projectId: string;
   agentSecret: string;
+  /** The plan's cap on the owner's running boxes, enforced where the claim
+   *  is atomic; null when none applies. */
+  maxLiveComputers: number | null;
 }) => Promise<{ computer: RuntimeComputer; shouldProvision: boolean }>;
 
 export type EnsureRuntimeComputerDependencies = {
@@ -55,6 +58,9 @@ export type EnsureRuntimeComputerInput = {
   /** The project's box that ended on its own, for a provider that brings one
    *  back on the disk it left (ProvisionComputerInput.previousSandboxId). */
   previousSandboxId?: string;
+  /** The plan's cap on the owner's running boxes, enforced by the claim in
+   *  the database; null or unset when none applies. */
+  maxLiveComputers?: number | null;
 };
 
 export type EnsuredRuntimeComputer = {
@@ -82,6 +88,7 @@ export async function ensureRuntimeComputer(
   const claim = await deps.claim({
     projectId: input.projectId,
     agentSecret,
+    maxLiveComputers: input.maxLiveComputers ?? null,
   });
 
   if (!claim.shouldProvision) {

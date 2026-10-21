@@ -6,6 +6,7 @@ import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
+import { cloudBoxStartGate, isPlanLimitError } from "@/lib/billing/limits";
 import {
   agentAuthStore,
   getSandboxSettings,
@@ -208,6 +209,11 @@ export async function POST(request: Request, context: RouteContext) {
     return needsClaude("Connect Claude in Settings before creating a workspace.");
   }
 
+  // A box may be about to start: the plan's hours and box count get their say
+  // before anything is created.
+  const gate = await cloudBoxStartGate(owner, provider.name);
+  if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
+
   let workspace;
   try {
     workspace = await createWorkspaceRow({
@@ -243,6 +249,7 @@ export async function POST(request: Request, context: RouteContext) {
       hasClaude,
       menu,
       chosenModel,
+      maxLiveComputers: gate.cap,
       chosenEffort,
       agentId,
       auth,
@@ -270,6 +277,7 @@ async function provisionWorkspace({
   hasClaude,
   menu,
   chosenModel,
+  maxLiveComputers,
   chosenEffort,
   agentId,
   auth,
@@ -286,6 +294,8 @@ async function provisionWorkspace({
   menu: Awaited<ReturnType<typeof modelMenu>>;
   /** Checked by the request: an offered model, or none for the default. */
   chosenModel: SessionModel | undefined;
+  /** The plan's box cap, enforced by the claim in the database; null when none applies. */
+  maxLiveComputers: number | null;
   /** Picked with it, or none for the model's own. */
   chosenEffort: Effort | undefined;
   /** The agent the session runs, and what it signs in with. */
@@ -348,6 +358,7 @@ async function provisionWorkspace({
         githubToken,
         sessionEnv,
         size: boxSizeOn(sandboxSettings.sandbox, sandboxSettings.boxSize, await planFor(owner.id)),
+        maxLiveComputers,
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
@@ -456,12 +467,17 @@ async function provisionWorkspace({
     // or else the step it stopped at and why, so the cause isn't only in the
     // log. A Claude model's effort is set on the way to the user's own Claude,
     // which startingModel leaves unwrapped: its message says to update the box.
+    // The plan's cap can refuse a start mid-flight (a simultaneous start won
+    // the slot first): say so, rather than blame the setup.
+    const refused = isPlanLimitError(error);
     const errorMessage =
       error instanceof NoStartingModelError ||
       error instanceof OutdatedComputerError ||
       error instanceof EffortUnsupportedError
         ? error.message
-        : provisionFailureMessage(error, phase, secrets);
+        : refused
+          ? refused.message
+          : provisionFailureMessage(error, phase, secrets);
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );

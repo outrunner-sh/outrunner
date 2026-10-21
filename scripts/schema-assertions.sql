@@ -442,3 +442,114 @@ begin
   end if;
   raise notice 'ok: user_credentials has the model allowance columns';
 end $$;
+
+-- 20. A plan's box cap is enforced inside the claim, and only where a box
+-- would start: a claim that reuses its project's ready box passes at the
+-- cap; one that would start another box is refused; the owner's own Daytona
+-- doesn't count; and a null cap remains uncapped for an exempt start.
+-- Whatever role an earlier block left, seed as the superuser.
+reset role;
+
+insert into projects (owner_id, github_repo_id, full_name, owner, name)
+values ('11111111-1111-1111-1111-111111111111', 142, 'immadsahin/runtime-b', 'immadsahin', 'runtime-b'),
+       ('11111111-1111-1111-1111-111111111111', 143, 'immadsahin/runtime-c', 'immadsahin', 'runtime-c'),
+       ('11111111-1111-1111-1111-111111111111', 144, 'immadsahin/runtime-d', 'immadsahin', 'runtime-d');
+
+insert into runtime_computers (owner_id, project_id, status, daytona_sandbox_id)
+select '11111111-1111-1111-1111-111111111111', id, 'ready', 'box-cap-a'
+from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 42;
+insert into runtime_computers (owner_id, project_id, status, daytona_sandbox_id)
+select '11111111-1111-1111-1111-111111111111', id, 'ready', 'box-cap-b'
+from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 142;
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  ready_project uuid;
+  fresh_project uuid;
+  another_project uuid;
+  claimed record;
+begin
+  select id into ready_project from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 42;
+  select id into fresh_project from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 143;
+  select id into another_project from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 144;
+
+  -- Reusing the project's ready box passes at the cap: no box would start.
+  select * into claimed from claim_runtime_computer(ready_project, 'agent-secret-1', 'v1', 1);
+  if claimed.should_provision then
+    raise exception 'FAIL: a ready box was said to need provision';
+  end if;
+
+  -- Starting another box is refused.
+  begin
+    perform claim_runtime_computer(fresh_project, 'agent-secret-2', 'v1', 2);
+    raise exception 'FAIL: a claim beyond the plan cap was allowed';
+  exception when others then
+    if sqlerrcode <> 'P4BX1' then
+      raise;
+    end if;
+  end;
+
+  -- The owner's own Daytona doesn't count toward the cap.
+  update runtime_computers set provider = 'user-daytona' where daytona_sandbox_id = 'box-cap-b';
+  perform claim_runtime_computer(fresh_project, 'agent-secret-3', 'v1', 2);
+  if not exists (select 1 from runtime_computers where project_id = fresh_project and status = 'provisioning') then
+    raise exception 'FAIL: the claim did not start a box within the cap';
+  end if;
+
+  -- A null cap is no cap: the deployment's owners.
+  perform claim_runtime_computer(another_project, 'agent-secret-4', 'v1', null);
+  if not exists (select 1 from runtime_computers where project_id = another_project and status = 'provisioning') then
+    raise exception 'FAIL: an uncapped claim did not start a box';
+  end if;
+
+  -- Keep the SQL count aligned with the TypeScript cases in
+  -- test/billing-limits.test.ts: ready and fresh provisioning count, stale
+  -- provisioning and the user's own Daytona/Modal do not.
+  update runtime_computers
+  set status = 'stopped'
+  where owner_id = '11111111-1111-1111-1111-111111111111';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: stopped boxes were counted';
+  end if;
+  update runtime_computers
+  set status = 'ready', provider = null, updated_at = now()
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 1 then
+    raise exception 'FAIL: a ready Outrunner box was not counted';
+  end if;
+
+  update runtime_computers
+  set status = 'provisioning', updated_at = now() - interval '1 minute'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 1 then
+    raise exception 'FAIL: a fresh provisioning box was not counted';
+  end if;
+
+  update runtime_computers
+  set updated_at = now() - interval '11 minutes'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a stale provisioning box was counted';
+  end if;
+
+  update runtime_computers
+  set status = 'ready', provider = 'user-daytona'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a user-owned Daytona box was counted';
+  end if;
+
+  update runtime_computers
+  set provider = 'user-modal'
+  where daytona_sandbox_id = 'box-cap-a';
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a user-owned Modal box was counted';
+  end if;
+
+  raise notice 'ok: the plan''s box cap holds in the claim, where a box would start';
+end $$;
+
+reset role;
