@@ -34,6 +34,7 @@ fn main() {
                 "local_socket_close",
                 "import_scan",
                 "import_session",
+                "import_environment",
                 "update_status",
                 "restart_to_update",
             ]),

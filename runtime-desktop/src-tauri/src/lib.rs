@@ -192,6 +192,7 @@ pub fn run() {
             local_runtime::local_socket_close,
             import::import_scan,
             import::import_session,
+            import::import_environment,
             updater::update_status,
             updater::restart_to_update,
         ])
