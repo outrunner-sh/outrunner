@@ -24,3 +24,18 @@ export function checkModalToken(value: unknown): { token: ModalToken } | { error
   }
   return { token: { tokenId: id, tokenSecret: secret } };
 }
+
+/**
+ * The parts of a token in pasted text that's more than a bare value: Modal's
+ * "Token created" dialog only copies the whole `modal token set --token-id ak-…
+ * --token-secret as-… --profile=…` command, and `.env` lines are
+ * `MODAL_TOKEN_ID=ak-…`. Null for a single bare value (or something being
+ * typed), which goes in the field as it is.
+ */
+export function modalTokenInText(text: string): Partial<ModalToken> | null {
+  if (!/[\s=]/.test(text.trim())) return null;
+  const tokenId = text.match(/(?<![A-Za-z0-9-])ak-[A-Za-z0-9]+/)?.[0];
+  const tokenSecret = text.match(/(?<![A-Za-z0-9-])as-[A-Za-z0-9]+/)?.[0];
+  if (!tokenId && !tokenSecret) return null;
+  return { ...(tokenId ? { tokenId } : {}), ...(tokenSecret ? { tokenSecret } : {}) };
+}
