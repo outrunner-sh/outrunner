@@ -40,6 +40,11 @@ function cleanBlock(raw: Record<string, unknown>): ContentBlock {
   for (const key of STRING_KEYS) {
     if (typeof raw[key] === "string" && raw[key] !== "") out[key] = raw[key];
   }
+  // Claude names a tool result's call `tool_use_id`; the logs Runtime writes
+  // itself (a Codex translation) say `toolUseId`. Mirrors the Go rawBlock.
+  if (!("toolUseId" in out) && typeof raw.tool_use_id === "string" && raw.tool_use_id !== "") {
+    out.toolUseId = raw.tool_use_id;
+  }
   for (const key of RAW_KEYS) {
     if (key in raw) out[key] = raw[key];
   }
