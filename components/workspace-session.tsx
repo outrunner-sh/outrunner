@@ -41,6 +41,11 @@ import { useSessionAttachment } from "@/hooks/use-session-attachment";
 import { useSessionTerminal } from "@/hooks/use-session-terminal";
 import { cn } from "@/lib/utils";
 
+/** A send that didn't go: why, and how to try it again. `retry` is set only
+ * where its text never was in the composer's box (a session's first prompt),
+ * so the box's Retry sends the original rather than an empty box. */
+type FailedSend = { message: string; retry?: () => void };
+
 export function WorkspaceSession({
   workspaceId,
   projectId,
@@ -87,10 +92,10 @@ export function WorkspaceSession({
   // streams back on the Conversation SSE. So input readiness and errors come
   // from the session attachment + conversation stream, not the terminal (which
   // stays available only as an optional shell panel).
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<FailedSend | null>(null);
   // A model switch that didn't happen: which model, why, and where to fix it.
   const [switchError, setSwitchError] = useState<{ label: string; message: string; href?: string } | null>(null);
-  // A failed send is shown by the composer, beside the prompt it gave back.
+  // A failed send is shown by the composer, with a way to send it again: the box's own text comes back to it; a session's first prompt, which never was in the box, retries its original.
   // A dropped stream gets its own notice (retrying, then lost) instead of the
   // strip, so a handshake failure mid-retry doesn't flash red.
   const streamDropped = conversation.reconnecting !== null || conversation.lost;
@@ -114,7 +119,7 @@ export function WorkspaceSession({
   // confuse the match.
   const [pending, setPending] = useState<{ id: string; text: string; expect: number }[]>([]);
 
-  const send = (text: string, attachmentIds: string[] = []) => {
+  const send = (text: string, attachmentIds: string[] = [], retry?: () => void) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
     if (trimmed) {
@@ -134,7 +139,7 @@ export function WorkspaceSession({
     // composer gets the text back (it awaits the `false`).
     const failed = (message: string) => {
       setPending((prev) => prev.filter((p) => p.id !== pendingId));
-      setSendError(message);
+      setSendError({ message, retry });
       return false;
     };
     if (local) {
@@ -305,16 +310,28 @@ export function WorkspaceSession({
     // fire on ready, not a render cascade. Another mount of this session may be
     // sending it still: sendFirstPromptOnce waits on that one instead.
     const sessionPath = window.location.pathname;
-    void sendFirstPromptOnce(workspaceId, () => send(first.prompt, first.attachmentIds)).then((outcome) => {
-      // Forget it only once the POST is accepted, so a failed delivery leaves
-      // it in place for a reload to retry. Remove just the first prompt's
-      // params (preserving any history state), not the whole query string,
-      // and only while this session is still the page: a send that lands
-      // after the user moved on must not rewrite another page's URL.
-      if (outcome === "failed") return;
+    // The prompt went: forget the kept copy, and the URL's params (only while
+    // this session is still the page, preserving any history state), so a
+    // reload can't send it again. Nothing is forgotten until the POST is
+    // accepted, so a failed delivery leaves it in place for a retry or a reload.
+    const itWent = () => {
       if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
       const url = new URL(window.location.href);
       if (url.pathname === sessionPath) window.history.replaceState(window.history.state, "", withoutFirstPrompt(url));
+    };
+    // Send it, cleaning up only once it lands. A failed send keeps its Retry.
+    const attempt = (): Promise<boolean> =>
+      send(first.prompt, first.attachmentIds, retry).then((landed) => {
+        if (landed) itWent();
+        return landed;
+      });
+    // The composer's Retry re-enters through the same once-per-tab gate as
+    // the first try, so a retry racing a remounted page still sends it once.
+    const retry = (): void => void sendFirstPromptOnce(workspaceId, attempt);
+    void sendFirstPromptOnce(workspaceId, attempt).then((outcome) => {
+      // Another page of this tab sent it first: its send cleaned up after
+      // itself, but this URL may still be the one carrying the prompt.
+      if (outcome === "already") itWent();
     });
     // send/terminal are stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -434,8 +451,9 @@ export function WorkspaceSession({
         model={shownModel}
         modelChoice={modelChoice}
         allowAttachments={!local}
-        sendError={connectionError ? null : sendError}
+        sendError={connectionError ? null : (sendError?.message ?? null)}
         onDismissSendError={() => setSendError(null)}
+        onRetrySendError={sendError?.retry}
       />
     </div>
   );

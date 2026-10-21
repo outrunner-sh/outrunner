@@ -65,6 +65,7 @@ export function SessionComposer({
   allowAttachments = true,
   sendError = null,
   onDismissSendError,
+  onRetrySendError,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -86,6 +87,11 @@ export function SessionComposer({
    *  offers to send it again or edit it first. */
   sendError?: string | null;
   onDismissSendError?: () => void;
+  /** Retry a send that didn't come from the box: a session's first prompt
+   *  fails while the box is still empty, so its Retry sends the original
+   *  again through here. Without this, Retry sends the box, which a failed
+   *  send has put its text back into. */
+  onRetrySendError?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -190,7 +196,7 @@ export function SessionComposer({
         <InlineMessage
           className="studio-composer-message"
           actions={[
-            { label: "Retry", onClick: submit, disabled: !canSend },
+            { label: "Retry", onClick: onRetrySendError ?? submit, disabled: !canSend },
             {
               label: "Edit",
               onClick: () => {
