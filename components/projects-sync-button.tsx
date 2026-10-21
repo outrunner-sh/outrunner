@@ -4,10 +4,16 @@ import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { cn } from "@/lib/utils";
 
-type SyncResponse = { synced?: number; discovered?: number; error?: string };
+type SyncResponse = {
+  synced?: number;
+  discovered?: number;
+  error?: string;
+  reconnect?: boolean;
+};
 
 /** How long "Synced" / "Try again" stays on the button before it settles. */
 const SETTLE_MS = 1400;
@@ -25,6 +31,7 @@ export function ProjectsSyncButton({
   const router = useRouter();
   const [status, setStatus] = useState<ActionStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [reconnect, setReconnect] = useState(false);
 
   useEffect(() => {
     if (status !== "success" && status !== "error") return;
@@ -35,6 +42,7 @@ export function ProjectsSyncButton({
   async function sync() {
     setStatus("pending");
     setMessage(null);
+    setReconnect(false);
     let response: Response;
     try {
       response = await fetch("/api/projects/sync", { method: "POST" });
@@ -47,6 +55,7 @@ export function ProjectsSyncButton({
     if (!response.ok) {
       setStatus("error");
       setMessage(result.error ?? "Repository sync failed. Please try again.");
+      setReconnect(result.reconnect === true);
       return;
     }
     const discovered = result.discovered ?? 0;
@@ -72,6 +81,7 @@ export function ProjectsSyncButton({
       />
       <p aria-live="polite" className="text-muted-foreground min-h-4 max-w-64 text-xs">
         {message}
+        {reconnect && <GitHubReconnectLink />}
       </p>
     </div>
   );

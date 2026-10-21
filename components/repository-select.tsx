@@ -3,6 +3,7 @@
 import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
 import type { Project } from "@/lib/runtime/types";
@@ -16,6 +17,15 @@ type Repo = {
 };
 
 type Listing = { repositories: Repo[]; connected: number[] };
+
+/** A failed request's message, and whether only reconnecting GitHub fixes it. */
+type PickerError = { message: string; reconnect: boolean };
+
+/** Read the API's error body (`reconnect` set when the token is the problem). */
+async function readError(res: Response, fallback: string): Promise<PickerError> {
+  const data = (await res.json().catch(() => ({}))) as { error?: string; reconnect?: boolean };
+  return { message: data.error ?? fallback, reconnect: data.reconnect === true };
+}
 
 /**
  * Pick the repository a session runs in — from everything on the user's GitHub,
@@ -60,7 +70,7 @@ export function RepositorySelect({
   const [open, setOpen] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<PickerError | null>(null);
   const [query, setQuery] = useState("");
   const [connectingId, setConnectingId] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -80,11 +90,14 @@ export function RepositorySelect({
       const res = await fetch("/api/github/repositories", {
         cache: force ? "no-store" : "default",
       });
-      const data = (await res.json()) as Partial<Listing> & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not load repositories.");
+      if (!res.ok) {
+        setError(await readError(res, "Could not load repositories."));
+        return;
+      }
+      const data = (await res.json()) as Partial<Listing>;
       setListing({ repositories: data.repositories ?? [], connected: data.connected ?? [] });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load repositories.");
+    } catch {
+      setError({ message: "Could not load repositories.", reconnect: false });
     } finally {
       setLoading(false);
     }
@@ -156,15 +169,21 @@ export function RepositorySelect({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repoIds: [repo.githubRepoId] }),
       });
-      const data = (await res.json()) as { projects?: Project[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Could not connect that repository.");
+      if (!res.ok) {
+        setError(await readError(res, "Could not connect that repository."));
+        return;
+      }
+      const data = (await res.json()) as { projects?: Project[] };
       const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
-      if (!created) throw new Error("Connected, but the project did not come back.");
+      if (!created) {
+        setError({ message: "Connected, but the project did not come back.", reconnect: false });
+        return;
+      }
       onSelect?.(created);
       setOpen(false);
       triggerRef.current?.focus();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not connect that repository.");
+    } catch {
+      setError({ message: "Could not connect that repository.", reconnect: false });
     } finally {
       setConnectingId(null);
     }
@@ -271,7 +290,10 @@ export function RepositorySelect({
           </div>
 
           {error && (
-            <p className="text-destructive border-border border-t px-3 py-2 text-xs">{error}</p>
+            <p className="text-destructive border-border border-t px-3 py-2 text-xs">
+              {error.message}
+              {error.reconnect && <GitHubReconnectLink />}
+            </p>
           )}
 
           <div className="border-border relative border-t">
