@@ -356,16 +356,38 @@ export function checkLocalFolder(path: string): Promise<LocalFolder> {
 }
 
 /**
- * Clone a repository picked from GitHub (`owner/name`) into ~/outrunner/repos,
- * or use the clone made before, as the folder a local session works in. The
- * user's GitHub token goes to the app for this clone only, so private
- * repositories clone too.
+ * Clone a repository picked from GitHub (`owner/name`) into the clone location
+ * (see {@link cloneLocation}), or use the clone made before, as the folder a
+ * local session works in. The user's GitHub token goes to the app for this
+ * clone only, so private repositories clone too.
  */
 export async function cloneLocalRepository(fullName: string): Promise<LocalFolder> {
   const res = await fetch("/api/github/clone-token", { method: "POST" });
   const data = (await res.json().catch(() => null)) as { token?: string; error?: string } | null;
   if (!res.ok || !data?.token) throw new Error(data?.error ?? "Couldn't reach GitHub for that repository.");
   return call<LocalFolder>("local_clone_repo", { fullName, token: data.token });
+}
+
+/** Where the app clones repositories: a folder the user chose, else
+ *  ~/outrunner/repos (`chosen: false`). */
+export type CloneLocation = { path: string; chosen: boolean };
+
+export function cloneLocation(): Promise<CloneLocation> {
+  return call<CloneLocation>("local_clone_location");
+}
+
+/** Ask where to clone repositories (the app's own dialog, which is the only
+ *  way to set it); null when the user cancels. */
+export function pickCloneLocation(): Promise<CloneLocation | null> {
+  return call<CloneLocation | null>("local_pick_clone_location");
+}
+
+/**
+ * Make a folder the user chose a git repository on `branch`, its files (if
+ * any) the first commit, so its sessions get worktrees.
+ */
+export function initGitRepository(path: string, branch = "main"): Promise<LocalFolder> {
+  return call<LocalFolder>("local_git_init", { path, branch });
 }
 
 /** This Mac's local sessions, newest first. They live only on this Mac. */
@@ -422,6 +444,11 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   local_clone_repo:
     "This version of the Outrunner app can't clone repositories. Update the app, or choose a folder on this Mac instead.",
   local_codex_login: "This version of the Outrunner app can't log Codex in. Update the app, then try again.",
+  local_clone_location:
+    "This version of the Outrunner app clones into ~/outrunner/repos only. Update the app to choose where.",
+  local_pick_clone_location:
+    "This version of the Outrunner app clones into ~/outrunner/repos only. Update the app to choose where.",
+  local_git_init: "This version of the Outrunner app can't make a folder a git repository. Update the app, then try again.",
 };
 
 /** Human-readable message for an error the app returned; `agent` is the CLI a
@@ -449,13 +476,23 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
       return said ? `Couldn't clone that repository. git said: ${said}` : "Couldn't clone that repository.";
     }
     case "git-missing":
-      return "Cloning needs git. Install the Xcode Command Line Tools (run `xcode-select --install`), then try again.";
+      return "This needs git. Install the Xcode Command Line Tools (run `xcode-select --install`), then try again.";
     case "repo-folders-taken":
-      return "~/outrunner/repos already has folders of that name. Move some away and try again.";
+      return "The clone location already has folders of that name. Move some away, or choose another location.";
     case "repo-invalid":
       return "That isn't a GitHub repository name.";
     case "repo-folder":
-      return "Couldn't make a folder in ~/outrunner/repos for it.";
+      return "Couldn't make a folder for it in the clone location.";
+    case "already-git":
+      return "That folder is already in a git repository.";
+    case "branch-invalid":
+      return "That isn't a branch name git allows.";
+    case "git-identity":
+      return "git needs your name and email for the first commit. Run `git config --global user.name \"Your Name\"` and `git config --global user.email you@example.com`, then try again.";
+    case "git-failed": {
+      const said = raw.slice("git-failed:".length).trim();
+      return said ? `git couldn't do that. It said: ${said}` : "git couldn't do that.";
+    }
     case "folder-not-chosen":
     case "folder-required":
       // The app only works in folders picked in its own dialog.

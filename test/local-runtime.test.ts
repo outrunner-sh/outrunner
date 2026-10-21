@@ -176,6 +176,17 @@ test("app error codes become sentences; agent messages pass through", () => {
   assert.equal(messageForLocalError("agent: worktree add: branch exists"), "worktree add: branch exists");
 });
 
+test("making a git repository says what stopped it", () => {
+  assert.match(messageForLocalError("already-git"), /already in a git repository/);
+  assert.match(messageForLocalError("git-identity"), /git config --global user\.name/);
+  assert.equal(
+    messageForLocalError("git-failed:fatal: could not lock config file"),
+    "git couldn't do that. It said: fatal: could not lock config file",
+  );
+  // Clone messages no longer assume the default location.
+  assert.doesNotMatch(messageForLocalError("repo-folders-taken"), /outrunner\/repos/);
+});
+
 test("an app too old for the page says to update it, not Tauri's refusal", () => {
   // As Tauri words it for a command missing from the app (tauri 2.11).
   const clone = messageForLocalError(new Error("local_clone_repo not allowed. Command not found"));
