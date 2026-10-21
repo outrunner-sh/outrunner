@@ -9,7 +9,7 @@ import { RouteMessage } from "@/components/route-states";
 import { InlineMessage } from "@/components/ui/notice";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import type { Workspace } from "@/lib/runtime/types";
-import { firstPromptQuery, handOverFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
+import { firstPromptQuery, handOverFirstPrompt, tabStorage, withoutFirstPrompt } from "@/lib/session/first-prompt";
 
 /**
  * Start a fresh session on `workspace`'s repository in its place, carrying over
@@ -46,6 +46,9 @@ export function useStartOver(workspace: Workspace) {
       // The waiting prompt moves to the fresh session: this one can never
       // send it.
       const first = handOverFirstPrompt(tabStorage(), workspace.id, body.workspace.id);
+      // Its URL too: Back to this session, once its setup finishes after all,
+      // would otherwise send the prompt the fresh one already has.
+      window.history.replaceState(window.history.state, "", withoutFirstPrompt(new URL(window.location.href)));
       router.push(`/workspaces/${body.workspace.id}${first ? firstPromptQuery(first) : ""}`);
       router.refresh();
       // retrying stays true: this page is about to be the fresh session's,
