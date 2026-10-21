@@ -92,6 +92,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
         icon={<GitHubMark />}
         trailingIcon={<ArrowRight className="size-3.5" />}
         onClick={() => void signIn()}
+        className="rounded-none"
       />
       {error && <p className="text-destructive text-xs">{error}</p>}
     </div>
