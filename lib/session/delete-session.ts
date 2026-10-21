@@ -1,5 +1,16 @@
+import { store, useStore } from "@/lib/client/store";
 import { localAgentRequest, localTarget } from "@/lib/desktop/local-runtime";
 import type { SessionDeletion } from "@/lib/nav/sidebar";
+
+/** Sessions deleted from this page. A session's page can outlive it (kept
+ *  hidden for going back to), and must then say it is gone rather than show
+ *  what it last knew. */
+const DELETED = store<ReadonlySet<string>>(new Set());
+const NONE: ReadonlySet<string> = new Set();
+
+export function useDeletedSession(id: string): boolean {
+  return useStore(DELETED, NONE).has(id);
+}
 
 /**
  * Delete a session for good: a cloud one through the server (the lifecycle
@@ -18,7 +29,10 @@ export async function deleteSession(id: string, deletion: SessionDeletion): Prom
     } catch {
       throw new Error("Could not reach Outrunner. Check your connection and try again.");
     }
-    if (res.ok) return;
+    if (res.ok) {
+      DELETED.set(new Set([...DELETED.get(), id]));
+      return;
+    }
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? "Could not delete this session. Please try again.");
   }

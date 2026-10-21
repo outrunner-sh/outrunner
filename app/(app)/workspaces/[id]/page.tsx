@@ -1,29 +1,40 @@
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 
-import { ServerSessionView, SessionRoute } from "@/components/session-route";
+import { RouteLoading } from "@/components/route-states";
+import { ServerAnswer } from "@/components/server-answer";
+import { SessionRoute } from "@/components/session-route";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
 import { getProjectOnce } from "@/lib/db/request-cache";
+import type { SessionView } from "@/lib/session/session-view";
 
-export const dynamic = "force-dynamic";
+/** A click on a session never waits on the server: the build checks it, on a
+ *  sample session opened from the sidebar (no first prompt). */
+export const unstable_instant = {
+  prefetch: "static",
+  samples: [{ params: { id: "sample" }, searchParams: { prompt: null, attachment: null } }],
+};
 
 type Params = Promise<{ id: string }>;
 
 /**
  * A cloud session. It renders from the sidebar's data at once (SessionRoute);
  * the server's read streams in behind it, for a session the sidebar doesn't
- * have yet and to turn one that is gone into not-found.
+ * have yet and to turn one that is gone into not-found. (The outer boundary is
+ * for a page load, where the URL is read on the client.)
  */
 export default function WorkspacePage({ params }: { params: Params }) {
   return (
-    <SessionRoute
-      server={
-        <Suspense fallback={null}>
-          <ServerSession params={params} />
-        </Suspense>
-      }
-    />
+    <Suspense fallback={<RouteLoading label="Opening session" />}>
+      <SessionRoute
+        server={
+          <Suspense fallback={null}>
+            <ServerSession params={params} />
+          </Suspense>
+        }
+      />
+    </Suspense>
   );
 }
 
@@ -42,5 +53,5 @@ async function ServerSession({ params }: { params: Params }) {
   ]);
   if (!project) notFound();
 
-  return <ServerSessionView view={{ workspace, projectName: project.fullName, pullRequest }} />;
+  return <ServerAnswer<SessionView> value={{ workspace, projectName: project.fullName, pullRequest }} />;
 }
