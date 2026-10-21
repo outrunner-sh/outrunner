@@ -8,23 +8,10 @@
  */
 
 import { ImportError } from "@/lib/imports/commit";
+import { settableEnv } from "@/lib/imports/settable-env";
 import type { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
 
-/** Variables a session's environment may not set: the agent refuses them
- *  too (runtime-agent/internal/workspace/environment.go, checked against
- *  this list by its tests through agent-protocol.fixtures.json). */
-export const RESERVED_ENV = [
-  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "PWD", "TMPDIR", "LANG", "TERM", "TMUX", "TMUX_PANE",
-  "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_MODEL", "OPENAI_API_KEY", "CODEX_HOME", "DISABLE_AUTOUPDATER",
-] as const;
-
-const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-
-/** Whether a session's environment may set `name`. */
-export function settableEnv(name: string): boolean {
-  return ENV_NAME.test(name) && !(RESERVED_ENV as readonly string[]).includes(name) && !name.startsWith("RUNTIME_");
-}
+export { RESERVED_ENV, settableEnv } from "@/lib/imports/settable-env";
 
 /** The bounds the agent holds a session's environment to. */
 const MAX_ENV_BYTES = 256 * 1024;

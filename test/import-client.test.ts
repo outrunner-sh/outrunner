@@ -186,9 +186,31 @@ test("a workspace archived in Conductor is neither offered nor listed as blocked
 test("a project's environment on the Mac is found by its repository, in any case", async () => {
   const { environmentFor } = await import("@/lib/imports/client");
   const app = { repo: "Ada/App", vars: [{ name: "APP_TOKEN", shared: false }], files: [] };
-  assert.equal(environmentFor([app], "ada/app"), app);
+  assert.deepEqual(environmentFor([app], "ada/app"), app);
   assert.equal(environmentFor([app], "ada/other"), null);
   assert.equal(environmentFor([], "ada/app"), null);
+});
+
+test("a variable a cloud session may not set is never offered", async () => {
+  const { environmentFor } = await import("@/lib/imports/client");
+  const vars = [
+    { name: "APP_TOKEN", shared: false },
+    // The server drops each of these, so offering them would say they were
+    // kept when they weren't.
+    { name: "PATH", shared: true },
+    { name: "OPENAI_API_KEY", shared: true },
+    { name: "RUNTIME_BOX", shared: false },
+  ];
+  assert.deepEqual(environmentFor([{ repo: "ada/app", vars, files: [] }], "ada/app"), {
+    repo: "ada/app",
+    vars: [{ name: "APP_TOKEN", shared: false }],
+    files: [],
+  });
+  // Nothing left to pick is nothing to offer: no empty panel on the form.
+  assert.equal(environmentFor([{ repo: "ada/app", vars: [{ name: "PATH", shared: true }], files: [] }], "ada/app"), null);
+  // Its files or its scripts alone are still worth offering.
+  const scripts = { repo: "ada/app", vars: [{ name: "PATH", shared: true }], files: [], scripts: { setup: "make" } };
+  assert.deepEqual(environmentFor([scripts], "ada/app"), { ...scripts, vars: [] });
 });
 
 test("secrets need agreement; scripts, items and plugins alone don't", async () => {

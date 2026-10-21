@@ -8,6 +8,7 @@
  */
 
 import { mapWithConcurrency } from "@/lib/concurrency";
+import { settableEnv } from "@/lib/imports/settable-env";
 import type {
   ImportCapture,
   ImportCommitRequest,
@@ -188,9 +189,18 @@ export function offeredSessions(sessions: ScannedSession[]): { importable: Scann
   return { importable: live.filter((s) => !s.skip), blocked: live.filter((s) => s.skip) };
 }
 
-/** The environment the Mac has for `repo` (owner/name, in any case), or null. */
+/**
+ * The environment the Mac has for `repo` (owner/name, in any case), or null
+ * when it has none to offer. A variable a cloud session may not set is left
+ * out: the server drops it on the way, so offering it would say it was kept
+ * when it wasn't.
+ */
 export function environmentFor(projects: ScannedProjectEnv[], repo: string): ScannedProjectEnv | null {
-  return projects.find((p) => p.repo.toLowerCase() === repo.toLowerCase()) ?? null;
+  const project = projects.find((p) => p.repo.toLowerCase() === repo.toLowerCase());
+  if (!project) return null;
+  const vars = project.vars.filter((v) => settableEnv(v.name));
+  if (vars.length === 0 && project.files.length === 0 && !project.scripts) return null;
+  return { ...project, vars };
 }
 
 /**
