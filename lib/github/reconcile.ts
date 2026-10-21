@@ -9,8 +9,14 @@ export type ProjectReconcilePlan = {
    * and GitHub lists them again.
    */
   refresh: GitHubRepository[];
-  /** Repositories of projects GitHub stopped listing, to mark lost. */
-  lost: number[];
+  /**
+   * Repositories of projects GitHub stopped listing. Not yet lost: the
+   * listing holds only repositories the user owns, collaborates on, or has
+   * through an organization, so a public one connected by id, or one the user
+   * stopped collaborating on, is missing yet still readable. Each is looked up
+   * before it is marked (lib/github/reconcile-projects.ts).
+   */
+  missing: number[];
 };
 
 /** Whether two timestamps name the same instant: Postgres hands back
@@ -40,7 +46,7 @@ function detailsChanged(project: Project, repo: GitHubRepository): boolean {
  * GitHub's repository id, so a renamed or transferred repository is the same
  * project with new details, not one lost and another found.
  *
- * A project missing from the listing is marked lost only when the listing is
+ * A project is reported missing from the listing only when the listing is
  * the whole answer: complete, and with no organization left out for single
  * sign-on. Otherwise the repository may simply not have been read, and a
  * project wrongly marked lost would read as access taken away.
@@ -53,14 +59,40 @@ export function planProjectReconcile(
   const wholeAnswer = list.complete && list.ssoPartialOrgIds.length === 0;
 
   const refresh: GitHubRepository[] = [];
-  const lost: number[] = [];
+  const missing: number[] = [];
   for (const project of projects) {
     const repo = byId.get(project.githubRepoId);
     if (repo) {
       if (project.accessLostAt !== null || detailsChanged(project, repo)) refresh.push(repo);
-    } else if (wholeAnswer && project.accessLostAt === null) {
-      lost.push(project.githubRepoId);
+    } else if (wholeAnswer) {
+      // Lost ones too: one that became public is readable again.
+      missing.push(project.githubRepoId);
     }
   }
+  return { refresh, missing };
+}
+
+/**
+ * What the individual lookups of missing projects settle: `found[i]` is what
+ * GitHub returned for `checked[i]`, null when the user can't see it. Unseen
+ * ones are lost; seen ones (public, outside the listing) are not, and are
+ * refreshed if their details changed or they had been marked lost.
+ */
+export function settleMissing(
+  projects: readonly Project[],
+  checked: readonly number[],
+  found: readonly (GitHubRepository | null)[],
+): { refresh: GitHubRepository[]; lost: number[] } {
+  const refresh: GitHubRepository[] = [];
+  const lost: number[] = [];
+  checked.forEach((id, i) => {
+    const repo = found[i];
+    if (!repo) {
+      lost.push(id);
+      return;
+    }
+    const project = projects.find((p) => p.githubRepoId === id);
+    if (project && (project.accessLostAt !== null || detailsChanged(project, repo))) refresh.push(repo);
+  });
   return { refresh, lost };
 }

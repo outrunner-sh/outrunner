@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { GitHubRepository, GitHubRepositoryList } from "@/lib/github/client";
-import { planProjectReconcile } from "@/lib/github/reconcile";
+import { planProjectReconcile, settleMissing } from "@/lib/github/reconcile";
 import type { Project } from "@/lib/runtime/types";
 
 function repo(id: number, over: Partial<GitHubRepository> = {}): GitHubRepository {
@@ -54,7 +54,7 @@ function list(repositories: GitHubRepository[], over: Partial<GitHubRepositoryLi
 test("nothing changed on GitHub: nothing to write", () => {
   assert.deepEqual(planProjectReconcile([project(1), project(2)], list([repo(1), repo(2), repo(3)])), {
     refresh: [],
-    lost: [],
+    missing: [],
   });
 });
 
@@ -65,15 +65,15 @@ test("new details, and a rename, are written back to the same project", () => {
   const plan = planProjectReconcile([project(1), project(2)], list([renamed, pushed]));
 
   assert.deepEqual(plan.refresh, [renamed, pushed]);
-  assert.deepEqual(plan.lost, []);
+  assert.deepEqual(plan.missing, []);
 });
 
-test("a project GitHub stops listing is marked lost, once", () => {
+test("projects GitHub stops listing are reported missing, lost ones too (to look up again)", () => {
   const plan = planProjectReconcile(
     [project(1), project(2), project(3, { accessLostAt: "2026-10-10T00:00:00Z" })],
     list([repo(1)]),
   );
-  assert.deepEqual(plan.lost, [2]);
+  assert.deepEqual(plan.missing, [2, 3]);
 });
 
 test("a lost project GitHub lists again is restored", () => {
@@ -81,11 +81,22 @@ test("a lost project GitHub lists again is restored", () => {
   assert.deepEqual(plan.refresh, [repo(1)]);
 });
 
-test("a listing that may be short marks nothing lost, but still refreshes what it read", () => {
+test("a listing that may be short reports nothing missing, but still refreshes what it read", () => {
   const pushed = repo(1, { pushedAt: "2026-10-05T00:00:00Z" });
   for (const short of [{ complete: false }, { ssoPartialOrgIds: [42] }]) {
     const plan = planProjectReconcile([project(1), project(2)], list([pushed], short));
-    assert.deepEqual(plan.lost, [], JSON.stringify(short));
+    assert.deepEqual(plan.missing, [], JSON.stringify(short));
     assert.deepEqual(plan.refresh, [pushed]);
   }
+});
+
+test("a missing project GitHub still shows on its own (public) isn't lost; one it doesn't is", () => {
+  const publicRepo = repo(2, { private: false });
+  const settled = settleMissing(
+    [project(1), project(2), project(3, { accessLostAt: "2026-10-10T00:00:00Z" })],
+    [1, 2, 3],
+    [null, publicRepo, repo(3)],
+  );
+  // 2's details changed (now public); 3 was lost and is readable again.
+  assert.deepEqual(settled, { refresh: [publicRepo, repo(3)], lost: [1] });
 });
