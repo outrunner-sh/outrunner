@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
 import {
-  findOrCreatePullRequest,
+  findPullRequest,
   getGitHubRepository,
   GitHubReconnectError,
   GitHubSyncError,
@@ -12,14 +12,6 @@ import {
 import { githubErrorResponse } from "@/lib/github/http";
 
 const realFetch = globalThis.fetch;
-
-/** Stub global fetch with a handler that receives the request method. */
-function setFetch(handler: (method: string) => Response): void {
-  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
-    const method = (args[1]?.method ?? "GET").toString();
-    return Promise.resolve(handler(method));
-  }) as typeof fetch;
-}
 
 /** Stub global fetch with a handler that receives the GET URL. */
 function setFetchByUrl(handler: (url: URL) => Response): URL[] {
@@ -60,14 +52,12 @@ function reposPage(records: unknown[], init: { lastPage?: number; headers?: Reco
   return new Response(JSON.stringify(records), { status: 200, headers });
 }
 
-const PR_INPUT = {
-  token: "gh-test-token",
-  repoFullName: "owner/repo",
-  headBranch: "runtime/x",
-  baseBranch: "main",
-  title: "t",
-  body: "",
-};
+const PR_LOOKUP = { token: "gh-test-token", repoFullName: "acme/repo", headBranch: "runtime/x" };
+
+/** A /pulls record as GitHub sends it. */
+function apiPull(number: number, base = "main") {
+  return { number, html_url: `https://gh/pr/${number}`, title: `PR ${number}`, base: { ref: base } };
+}
 
 beforeEach(() => {
   process.env.GITHUB_PAT = "ghp_test";
@@ -76,46 +66,27 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-test("findOrCreatePullRequest returns an existing open PR without creating one", async () => {
-  let posts = 0;
-  setFetch((method) => {
-    if (method === "POST") {
-      posts += 1;
-      return new Response("{}", { status: 201 });
-    }
-    return new Response(JSON.stringify([{ number: 7, html_url: "https://gh/pr/7" }]), { status: 200 });
-  });
+test("findPullRequest asks for the branch's newest PR in any state, from the repo's owner", async () => {
+  const seen = setFetchByUrl(() => new Response(JSON.stringify([apiPull(7, "develop")]), { status: 200 }));
 
-  const pr = await findOrCreatePullRequest(PR_INPUT);
-  assert.deepEqual(pr, { number: 7, url: "https://gh/pr/7" });
-  assert.equal(posts, 0);
+  const pr = await findPullRequest(PR_LOOKUP);
+  assert.deepEqual(pr, { number: 7, url: "https://gh/pr/7", title: "PR 7", baseBranch: "develop" });
+  const url = seen[0];
+  assert.equal(url.pathname, "/repos/acme/repo/pulls");
+  // A merged or closed PR still counts: the agent may finish before a look.
+  assert.equal(url.searchParams.get("state"), "all");
+  assert.equal(url.searchParams.get("head"), "acme:runtime/x");
+  assert.equal(url.searchParams.get("direction"), "desc");
 });
 
-test("findOrCreatePullRequest creates a PR when none exists", async () => {
-  setFetch((method) =>
-    method === "POST"
-      ? new Response(JSON.stringify({ number: 9, html_url: "https://gh/pr/9" }), { status: 201 })
-      : new Response("[]", { status: 200 }),
-  );
-
-  const pr = await findOrCreatePullRequest(PR_INPUT);
-  assert.deepEqual(pr, { number: 9, url: "https://gh/pr/9" });
+test("findPullRequest is null while the branch has no PR", async () => {
+  setFetchByUrl(() => new Response("[]", { status: 200 }));
+  assert.equal(await findPullRequest(PR_LOOKUP), null);
 });
 
-test("findOrCreatePullRequest re-looks up the PR on a 422 (concurrent create)", async () => {
-  let lookups = 0;
-  setFetch((method) => {
-    if (method === "POST") return new Response("{}", { status: 422 });
-    lookups += 1;
-    // First lookup empty (so we attempt create), second finds the racing PR.
-    return new Response(
-      JSON.stringify(lookups >= 2 ? [{ number: 5, html_url: "https://gh/pr/5" }] : []),
-      { status: 200 },
-    );
-  });
-
-  const pr = await findOrCreatePullRequest(PR_INPUT);
-  assert.deepEqual(pr, { number: 5, url: "https://gh/pr/5" });
+test("findPullRequest says to reconnect when GitHub rejects the token", async () => {
+  setFetchByUrl(() => new Response("{}", { status: 401 }));
+  await assert.rejects(findPullRequest(PR_LOOKUP), GitHubReconnectError);
 });
 
 test("listGitHubRepositories reads every page the first one names, newest push first", async () => {

@@ -110,23 +110,9 @@ function githubHeaders(token: string) {
 }
 
 async function fetchGitHub(url: URL, token: string): Promise<Response> {
-  return githubRequest("GET", url, token);
-}
-
-async function githubRequest(
-  method: "GET" | "POST",
-  url: URL,
-  token: string,
-  body?: unknown,
-): Promise<Response> {
   try {
     return await fetch(url, {
-      method,
-      headers: {
-        ...githubHeaders(token),
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: githubHeaders(token),
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -144,40 +130,6 @@ function rejected(response: Response, what: string, message: string): GitHubSync
   console.error(`GitHub ${what} was rejected`, { status: response.status });
   if (isTokenRejected(response.status)) return new GitHubReconnectError(undefined, response.status);
   return new GitHubSyncError(message, response.status);
-}
-
-/**
- * The GitHub login that owns `token`, read from `/user`. Used by the publish
- * path to confirm a stored per-user token still belongs to the account that
- * granted it.
- */
-async function fetchTokenLogin(token: string): Promise<string> {
-  const identity = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
-  if (!identity.ok) {
-    console.error("GitHub token identity request was rejected", {
-      status: identity.status,
-    });
-    if (isTokenRejected(identity.status)) {
-      throw new GitHubReconnectError(undefined, identity.status);
-    }
-    throw new GitHubSyncError(
-      "GitHub could not verify your account. Please try again.",
-      identity.status,
-    );
-  }
-
-  let login: unknown;
-  try {
-    login = ((await identity.json()) as { login?: unknown }).login;
-  } catch (error) {
-    console.error("GitHub returned an unreadable token identity", error);
-    throw new GitHubSyncError("GitHub returned an invalid response.");
-  }
-
-  if (typeof login !== "string") {
-    throw new GitHubSyncError("GitHub returned an invalid response.");
-  }
-  return login;
 }
 
 function nonEmpty(value: unknown): value is string {
@@ -370,108 +322,38 @@ export async function getGitHubRepository(
 }
 
 // ---------------------------------------------------------------------------
-// M9 publish: verify the token owner, then find-or-create one pull request.
+// The pull request a session's agent opened for its branch.
 // ---------------------------------------------------------------------------
 
-export type WorkspacePullRequestRef = { number: number; url: string };
+export type WorkspacePullRequestRef = {
+  number: number;
+  url: string;
+  title: string;
+  baseBranch: string;
+};
 
 /**
- * Re-confirm the user's stored GitHub token still belongs to them, immediately
- * before it is used to push a branch and open a PR.
- *
- * Still worth doing now that tokens are per-user: a stored provider_token can
- * be revoked from GitHub's side, or go stale against an account rename. Failing
- * here produces "reconnect your GitHub account" instead of a confusing 401 from
- * the middle of a push.
+ * The newest pull request from `headBranch` in the repository, open or not, or
+ * null when there is none. The agent opens it (Create PR asks it to), so this
+ * only looks: a merged or closed one still counts, since a session's branch is
+ * its own and never reused.
  */
-export async function verifyTokenOwner(
-  token: string,
-  expectedOwnerLogin: string,
-): Promise<void> {
-  const tokenLogin = await fetchTokenLogin(token);
-  if (tokenLogin.toLowerCase() !== expectedOwnerLogin.toLowerCase()) {
-    throw new GitHubReconnectError(
-      "Your GitHub connection is out of date. Sign out and back in to reconnect.",
-    );
-  }
-}
-
-/**
- * Return the existing open PR for `headBranch`, or create one. Making this
- * idempotent (lookup before create, and re-lookup on GitHub's 422 for an
- * already-existing PR) lets the publish route retry safely.
- */
-export async function findOrCreatePullRequest(input: {
+export async function findPullRequest(input: {
   token: string;
   repoFullName: string;
   headBranch: string;
-  baseBranch: string;
-  title: string;
-  body: string;
-}): Promise<WorkspacePullRequestRef> {
-  const { token } = input;
+}): Promise<WorkspacePullRequestRef | null> {
   const [owner] = input.repoFullName.split("/");
-
-  const existing = await findOpenPullRequest(input, owner, token);
-  if (existing) return existing;
-
-  const response = await githubRequest(
-    "POST",
-    new URL(`/repos/${input.repoFullName}/pulls`, GITHUB_API_URL),
-    token,
-    {
-      title: input.title,
-      head: input.headBranch,
-      base: input.baseBranch,
-      body: input.body,
-    },
-  );
-
-  if (response.status === 422) {
-    // A concurrent publish, or "no commits between base and head".
-    const retried = await findOpenPullRequest(input, owner, token);
-    if (retried) return retried;
-    throw new GitHubSyncError(
-      "GitHub could not open a pull request. Ensure the branch has commits that differ from the base.",
-      422,
-    );
-  }
-  if (!response.ok) {
-    console.error("GitHub pull request creation was rejected", {
-      status: response.status,
-    });
-    if (isTokenRejected(response.status)) {
-      throw new GitHubReconnectError(undefined, response.status);
-    }
-    throw new GitHubSyncError(
-      response.status === 403
-        ? "GitHub did not allow opening a pull request on this repository."
-        : "GitHub could not open a pull request. Please try again.",
-      response.status,
-    );
-  }
-  return toPullRequestRef(await readJson(response));
-}
-
-async function findOpenPullRequest(
-  input: { repoFullName: string; headBranch: string; baseBranch: string },
-  owner: string,
-  token: string,
-): Promise<WorkspacePullRequestRef | null> {
   const url = new URL(`/repos/${input.repoFullName}/pulls`, GITHUB_API_URL);
   url.searchParams.set("head", `${owner}:${input.headBranch}`);
-  url.searchParams.set("base", input.baseBranch);
-  url.searchParams.set("state", "open");
+  url.searchParams.set("state", "all");
+  url.searchParams.set("sort", "created");
+  url.searchParams.set("direction", "desc");
+  url.searchParams.set("per_page", "1");
 
-  const response = await fetchGitHub(url, token);
+  const response = await fetchGitHub(url, input.token);
   if (!response.ok) {
-    console.error("GitHub pull request lookup was rejected", {
-      status: response.status,
-    });
-    throw new GitHubSyncError(
-      "GitHub could not look up existing pull requests. Please try again.",
-      response.status,
-    );
+    throw rejected(response, "pull request lookup", "GitHub could not look up the pull request. Please try again.");
   }
   const list = await readJson(response);
   if (!Array.isArray(list) || list.length === 0) return null;
@@ -488,13 +370,20 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function toPullRequestRef(record: unknown): WorkspacePullRequestRef {
-  const pr = (record ?? {}) as { number?: unknown; html_url?: unknown };
+  const pr = (record ?? {}) as {
+    number?: unknown;
+    html_url?: unknown;
+    title?: unknown;
+    base?: { ref?: unknown };
+  };
   if (
     typeof pr.number !== "number" ||
     !Number.isInteger(pr.number) ||
-    typeof pr.html_url !== "string"
+    typeof pr.html_url !== "string" ||
+    typeof pr.title !== "string" ||
+    typeof pr.base?.ref !== "string"
   ) {
     throw new GitHubSyncError("GitHub returned an invalid pull request record.");
   }
-  return { number: pr.number, url: pr.html_url };
+  return { number: pr.number, url: pr.html_url, title: pr.title, baseBranch: pr.base.ref };
 }
