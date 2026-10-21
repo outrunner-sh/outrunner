@@ -222,6 +222,16 @@ type WorkspaceSnapshotRow = {
   updated_at: string;
 };
 
+type WorkspaceImportRow = {
+  owner_id: string;
+  workspace_id: string;
+  session_key: string;
+  source: string;
+  conversation_sha256: string;
+  imported_at: string;
+  created_at: string;
+};
+
 // Multi-user — each user's own GitHub and Anthropic credentials, sealed with
 // AES-256-GCM (lib/crypto/secret-box.ts). Service-role only: the table has RLS
 // enabled with NO policy, so anon/authenticated match nothing. Reach it through
@@ -421,6 +431,20 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "workspace_snapshots_owner_workspace_fkey";
+            columns: ["owner_id", "workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "workspaces";
+            referencedColumns: ["owner_id", "id"];
+          },
+        ];
+      };
+      workspace_imports: {
+        Row: WorkspaceImportRow;
+        Insert: Insert<WorkspaceImportRow, "owner_id" | "workspace_id" | "session_key" | "source" | "conversation_sha256">;
+        Update: Partial<WorkspaceImportRow>;
+        Relationships: [
+          {
+            foreignKeyName: "workspace_imports_owner_workspace_fkey";
             columns: ["owner_id", "workspace_id"];
             isOneToOne: false;
             referencedRelation: "workspaces";
