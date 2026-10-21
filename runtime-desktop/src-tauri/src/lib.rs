@@ -226,6 +226,10 @@ pub fn run() {
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(720.0, 480.0)
                 .initialization_script(INIT_JS)
+                // Files dropped on the window go to the page, as in a browser:
+                // the composer takes images that way. Tauri's own handler would
+                // keep them for drag-drop events the app doesn't listen for.
+                .disable_drag_drop_handler()
                 // A reload drops the page's ends of any relayed local-session
                 // sockets; close ours so none keeps the terminal's writer slot.
                 .on_page_load(|window, payload| {

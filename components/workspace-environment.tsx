@@ -496,7 +496,11 @@ function OpenedPullRequestRow({
         #{pullRequest.number}
         <ArrowUpRight />
       </a>
-      {verdict && <span className={cn("ml-3 truncate text-sm", VERDICT_TONE[verdict.tone])}>{verdict.label}</span>}
+      {/* Ready to merge goes without saying beside Merge, and left in it was
+          cut to "Ready to …". */}
+      {verdict && !verdict.canMerge && (
+        <span className={cn("ml-3 truncate text-sm", VERDICT_TONE[verdict.tone])}>{verdict.label}</span>
+      )}
     </EnvRow>
   );
 }
@@ -524,7 +528,7 @@ function ChangesCount({ changes, active }: { changes: WorkspaceChangesState; act
   if (changes.files === null) return <Spinner label="Loading changes" />;
   const totals = changeTotals(changes.files);
   return (
-    <span title={`${totals.files} file${totals.files === 1 ? "" : "s"} changed`}>
+    <span title={`${totals.files} file${totals.files === 1 ? "" : "s"} changed`} className="font-mono text-xs tabular-nums">
       <span className="text-positive">+{totals.additions}</span>{" "}
       <span className="text-destructive">-{totals.deletions}</span>
     </span>
