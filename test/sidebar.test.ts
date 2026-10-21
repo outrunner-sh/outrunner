@@ -9,6 +9,7 @@ import {
   filterSidebarGroups,
   FOLDED_PROJECTS_COOKIE,
   foldedProjectsCookie,
+  isStudioPath,
   newSessionHref,
   readFoldedProjects,
   relativeTime,
@@ -257,6 +258,17 @@ test("the active session is read from session paths only", () => {
   assert.equal(activeSessionId("/"), undefined);
   assert.equal(activeSessionId("/new"), undefined);
   assert.equal(activeSessionId("/settings/general"), undefined);
+});
+
+test("only a session's own page is a studio path", () => {
+  assert.equal(isStudioPath("/workspaces/abc"), true);
+  assert.equal(isStudioPath("/workspaces/abc/"), true);
+  assert.equal(isStudioPath("/local/xyz"), true);
+  // Its replay has no studio header to hold the sidebar's buttons.
+  assert.equal(isStudioPath("/workspaces/abc/replay"), false);
+  assert.equal(isStudioPath("/workspaces"), false);
+  assert.equal(isStudioPath("/"), false);
+  assert.equal(isStudioPath("/new"), false);
 });
 
 test("relative times step from now through minutes, hours, days, weeks, months, years", () => {
