@@ -166,7 +166,7 @@ test("waitForAgentHealth resolves once the probe returns 200", async () => {
   ]);
   // Override exec to fail twice then succeed, and serve the log tail.
   box.io.exec = async (command) => {
-    if (command.includes("curl")) {
+    if (command.includes("/health")) {
       probes += 1;
       return { stdout: probes >= 3 ? "200" : "000", exitCode: 0 };
     }
@@ -180,7 +180,7 @@ test("waitForAgentHealth resolves once the probe returns 200", async () => {
 
 test("waitForAgentHealth throws with the log tail when the agent never binds", async () => {
   const box = fakeBox([
-    { match: (c) => c.includes("curl"), result: { stdout: "000", exitCode: 0 } },
+    { match: (c) => c.includes("/health"), result: { stdout: "000", exitCode: 0 } },
     { match: (c) => c.includes("cat"), result: { stdout: "panic: bad secret", exitCode: 0 } },
   ]);
   await assert.rejects(
@@ -194,7 +194,7 @@ test("deployAgent runs upload → prep → launch → health in order", async ()
   const io: BoxIO = {
     exec: async (command) => {
       if (command.includes("gunzip")) order.push("prep");
-      if (command.includes("curl")) {
+      if (command.includes("/health")) {
         order.push("health");
         return { stdout: "200", exitCode: 0 };
       }
@@ -326,7 +326,7 @@ test("deployClaude runs install → upload → prep → seed → launch → heal
       if (command.includes("pkill")) order.push("stop");
       if (command.includes("gunzip")) order.push("prep");
       if (command.includes(".claude.json")) order.push("seed");
-      if (command.includes("curl")) {
+      if (command.includes("/health")) {
         order.push("health");
         return { stdout: "200", exitCode: 0 };
       }
@@ -358,7 +358,7 @@ test("deployClaude doesn't upload an agent the box has already (a restored one)"
         return { stdout: `${createHash("sha256").update(binary).digest("hex")}\n`, exitCode: 0 };
       }
       if (command.includes("gunzip")) order.push("prep");
-      if (command.includes("curl")) return { stdout: "200", exitCode: 0 };
+      if (command.includes("/health")) return { stdout: "200", exitCode: 0 };
       return { stdout: "", exitCode: 0 };
     },
     launch: async () => {
@@ -438,7 +438,7 @@ test("deployJcode runs creds → install → bridge → agent → health in orde
       if (command.includes("npm i @1jehuang/jcode-sdk")) { order.push("install"); return { stdout: "/tmp/node_modules/@1jehuang/jcode-linux-x64/bin/jcode", exitCode: 0 }; }
       if (command.includes("test -S")) { order.push("socket"); return { stdout: "yes", exitCode: 0 }; }
       if (command.includes("gunzip")) { order.push("prep"); return { stdout: "", exitCode: 0 }; }
-      if (command.includes("curl")) { order.push("health"); return { stdout: "200", exitCode: 0 }; }
+      if (command.includes("/health")) { order.push("health"); return { stdout: "200", exitCode: 0 }; }
       return { stdout: "", exitCode: 0 };
     },
     launch: async (command) => { order.push(command.includes("api-bridge") ? "bridge" : "agent"); },
