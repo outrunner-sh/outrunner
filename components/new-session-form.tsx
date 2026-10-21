@@ -59,6 +59,9 @@ export function NewSessionForm({
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
   const environment = useFirstSessionEnvironment(selected, !local);
+  // A send is under way: the environment is being kept, or the session made.
+  // What it was sent with must not change under it.
+  const busy = isCreating || environment.keeping;
   // No repositories only blocks the cloud; a local session needs none.
   const noRepositories = projectsKnown && !local && projects.length === 0;
   const details = newSessionDetails(
@@ -114,15 +117,15 @@ export function NewSessionForm({
           </div>
         ) : (
           <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
-            {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />}
+            {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={busy} className={CHIP_BUTTON} />}
             {local ? (
-              <LocalRepositoryButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
+              <LocalRepositoryButton state={where} disabled={busy} className={CHIP_BUTTON} />
             ) : (
               <RepositorySelect
                 projects={projects}
                 selectedProjectId={projectId}
                 onSelect={selectProject}
-                disabled={isCreating}
+                disabled={busy}
                 triggerClassName={CHIP_BUTTON}
               />
             )}
@@ -142,7 +145,7 @@ export function NewSessionForm({
         )}
 
         <LocalBlocker state={where} className="mt-4 text-center" />
-        {!local && !noRepositories && <EnvironmentOffer environment={environment} disabled={isCreating || environment.keeping} />}
+        {!local && !noRepositories && <EnvironmentOffer environment={environment} disabled={busy} />}
       </div>
 
       <div className="shrink-0">
@@ -188,7 +191,7 @@ export function NewSessionForm({
                     setPickedEffort(effort);
                   },
                   switching: false,
-                  disabledReason: isCreating ? "Starting the session" : null,
+                  disabledReason: busy ? "Starting the session" : null,
                   preferredProvider: startsOn?.provider,
                   loadout: menu?.loadout,
                 }
