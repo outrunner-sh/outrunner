@@ -41,7 +41,7 @@ func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[
 	// Payload artifacts first; the manifest LAST — its arrival marks the Snapshot
 	// complete, so it must never precede an artifact it points at.
 	for _, artifact := range payloadArtifacts {
-		if err := putFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
+		if err := PutFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
 			return fmt.Errorf("upload %s: %w", artifact, err)
 		}
 	}
@@ -51,11 +51,11 @@ func uploadAll(ctx context.Context, uploads []protocol.ArchiveUpload, paths map[
 		if paths[artifact] == "" {
 			continue
 		}
-		if err := putFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
+		if err := PutFile(ctx, byArtifact[artifact], paths[artifact]); err != nil {
 			return fmt.Errorf("upload %s: %w", artifact, err)
 		}
 	}
-	if err := putFile(ctx, byArtifact["manifest"], paths["manifest"]); err != nil {
+	if err := PutFile(ctx, byArtifact["manifest"], paths["manifest"]); err != nil {
 		return fmt.Errorf("upload manifest: %w", err)
 	}
 	return nil
@@ -71,8 +71,8 @@ func uploadFor(uploads []protocol.ArchiveUpload, artifact string) string {
 	return ""
 }
 
-// putFile streams a file to a signed upload URL with an HTTP PUT.
-func putFile(ctx context.Context, url, path string) error {
+// PutFile streams a file to a signed upload URL with an HTTP PUT.
+func PutFile(ctx context.Context, url, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -97,10 +97,20 @@ func putFile(ctx context.Context, url, path string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
+		return &StatusError{Status: resp.StatusCode, Body: string(body)}
 	}
 	// Drain the body so the transport can reuse the connection for the next of the
 	// six sequential uploads (avoids a fresh TLS handshake per artifact).
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
+}
+
+// StatusError is an upload the storage answered with other than success.
+type StatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("unexpected status %d: %s", e.Status, e.Body)
 }

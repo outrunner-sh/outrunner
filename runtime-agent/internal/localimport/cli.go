@@ -25,8 +25,9 @@ const (
 var keyPattern = regexp.MustCompile(`^(claude|codex):[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
 // Main runs `runtime-agent import scan` or `runtime-agent import capture
-// --key <key> --out <empty folder>`, printing its result as JSON on stdout.
-func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// --key <key> --out <empty folder> [--upload]`, printing its result as JSON
+// on stdout.
+func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: runtime-agent import scan | capture --key <key> --out <dir>")
 		return ExitUsage
@@ -50,6 +51,7 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		flags.SetOutput(stderr)
 		key := flags.String("key", "", "the session's key, from a scan")
 		out := flags.String("out", "", "an empty folder to write the artifacts in")
+		upload := flags.Bool("upload", false, "upload each artifact to the URL stdin names for its kind, as a JSON object")
 		if flags.Parse(args[1:]) != nil {
 			return ExitUsage
 		}
@@ -61,11 +63,22 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "capture: --out", err)
 			return ExitUsage
 		}
+		// The URLs carry their tokens, so they come on stdin, not argv.
+		var urls map[string]string
+		if *upload {
+			if err := json.NewDecoder(stdin).Decode(&urls); err != nil {
+				fmt.Fprintln(stderr, "capture: --upload needs a JSON object of upload URLs on stdin:", err)
+				return ExitUsage
+			}
+		}
 		capture, err := CaptureSession(ctx, opts, *key, *out)
 		var skip *SkipError
 		if errors.As(err, &skip) {
 			printJSON(stdout, stderr, map[string]Skip{"skip": skip.Skip})
 			return ExitSkipped
+		}
+		if err == nil && *upload {
+			err = Upload(ctx, capture, urls)
 		}
 		if err != nil {
 			fmt.Fprintln(stderr, "capture:", err)
