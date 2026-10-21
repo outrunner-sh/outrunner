@@ -50,6 +50,12 @@ const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   loadout: EMPTY_LOADOUT,
 };
 
+/** Sends a prompt into the session as the composer does, resolving whether it
+ *  went: handed out (WorkspaceSession's `onSender`) while the session can send. */
+export type SessionSender = {
+  send: (text: string, attachmentIds?: string[]) => Promise<boolean>;
+};
+
 export function WorkspaceSession({
   workspaceId,
   agent = "claude",
@@ -60,6 +66,7 @@ export function WorkspaceSession({
   untitled = false,
   initialPrompt,
   initialAttachmentIds,
+  onSender,
 }: {
   workspaceId: string;
   /** The coding agent the session runs: its model menu offers only models
@@ -82,6 +89,9 @@ export function WorkspaceSession({
   initialPrompt?: string;
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
+  /** Given a sender while the session can send, null when it no longer can:
+   *  for prompts from outside the composer (Create PR). Must be stable. */
+  onSender?: (sender: SessionSender | null) => void;
 }) {
   const router = useRouter();
   const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
@@ -165,6 +175,19 @@ export function WorkspaceSession({
       () => failed("Could not reach Outrunner. Check your connection and send it again."),
     );
   };
+
+  // Create PR, in the Environment panel, sends through here too: its prompt
+  // gets the composer's bubble and error. The sender reads `send` as of the
+  // last render, so handing it out once per connection is enough.
+  const sendRef = useRef(send);
+  useEffect(() => {
+    sendRef.current = send;
+  });
+  useEffect(() => {
+    if (!canSend || !onSender) return;
+    onSender({ send: (text, attachmentIds) => sendRef.current(text, attachmentIds) });
+    return () => onSender(null);
+  }, [canSend, onSender]);
 
   // The model of the most recent assistant turn — shown in the composer so it
   // reflects what's actually running, not a hardcoded label.
