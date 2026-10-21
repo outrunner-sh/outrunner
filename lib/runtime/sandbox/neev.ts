@@ -5,6 +5,7 @@ import { Neev, NotFoundError, type Sandbox } from "@neevcloud/sdk";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { codexInstallCommand } from "@/lib/runtime/codex-cli";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
+import { ghInstallCommand } from "@/lib/runtime/github-cli";
 import type { GitExec } from "@/lib/runtime/git";
 import {
   asUserArgs,
@@ -64,6 +65,7 @@ export function neevPrepareScript(): string {
     step("apt install", "apt-get install -y -q tmux git-lfs ripgrep jq"),
     step("claude code", "command -v claude >/dev/null || npm install -g @anthropic-ai/claude-code"),
     step("codex", codexInstallCommand({ sudo: false })),
+    step("github cli", ghInstallCommand({ sudo: false })),
     step("user", `id -u ${BOX_USER} >/dev/null 2>&1 || useradd -m -s /bin/bash ${BOX_USER}`),
     'echo "[$(date +%T)] done"',
   ].join("\n");
