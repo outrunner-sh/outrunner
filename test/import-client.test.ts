@@ -144,10 +144,9 @@ test("the picked setup is archived to the planned place and committed with it", 
   assert.deepEqual([mcpOnly, planned], [{ ok: true }, 0]);
 });
 
-test("a pick a rescan no longer offers is not imported, and a skipped one never is", async () => {
-  const { picksInScan } = await import("@/lib/imports/client");
+test("a setup pick a rescan no longer offers is not imported, and a skipped one never is", async () => {
+  const { configInScan } = await import("@/lib/imports/client");
   const scan = {
-    projects: [{ repo: "ada/app", vars: [], files: [] }],
     config: {
       items: [
         { id: "claude-md", kind: "claude-md" as const, name: "CLAUDE.md", path: "", bytes: 0 },
@@ -160,34 +159,71 @@ test("a pick a rescan no longer offers is not imported, and a skipped one never 
       plugins: [],
     },
   };
-  const picks = {
-    "ada/app": { repo: "ada/app", vars: ["APP_TOKEN"], files: [], scripts: false },
-    // The last scan had it; this one doesn't.
-    "ada/gone": { repo: "ada/gone", vars: ["GONE"], files: ["api/.env"], scripts: true },
-  };
   const config = { items: ["claude-md", "skill:huge", "skill:vanished"], mcp: ["tracker", "onlyhere"], plugins: true };
 
-  assert.deepEqual(picksInScan(picks, config, scan), {
-    envs: [{ repo: "ada/app", vars: ["APP_TOKEN"], files: [], scripts: false }],
-    // No plugins in this scan, so a plugins pick from an earlier one is dropped.
-    config: { items: ["claude-md"], mcp: ["tracker"], plugins: false },
-  });
+  // No plugins in this scan, so a plugins pick from an earlier one is dropped.
+  assert.deepEqual(configInScan(config, scan), { items: ["claude-md"], mcp: ["tracker"], plugins: false });
   // Before the first scan lands nothing is picked, so Import stays disabled.
-  assert.deepEqual(picksInScan(picks, config, null), {
-    envs: [],
-    config: { items: [], mcp: [], plugins: false },
+  assert.deepEqual(configInScan(config, null), { items: [], mcp: [], plugins: false });
+});
+
+test("a workspace archived in Conductor is neither offered nor listed as blocked", async () => {
+  const { offeredSessions } = await import("@/lib/imports/client");
+  const live = session("claude:live", { conductorState: "ready" });
+  const cli = session("claude:cli", { conductorState: undefined });
+  const gone = session("claude:gone", { skip: { reason: "worktree-missing" } });
+  const { importable, blocked } = offeredSessions([
+    live,
+    session("claude:put-away", { conductorState: "archived" }),
+    cli,
+    gone,
+    session("claude:put-away-gone", { conductorState: "archived", skip: { reason: "worktree-missing" } }),
+  ]);
+  assert.deepEqual(importable.map((s) => s.key), ["claude:live", "claude:cli"]);
+  assert.deepEqual(blocked.map((s) => s.key), ["claude:gone"]);
+});
+
+test("a project's environment on the Mac is found by its repository, in any case", async () => {
+  const { environmentFor } = await import("@/lib/imports/client");
+  const app = { repo: "Ada/App", vars: [{ name: "APP_TOKEN", shared: false }], files: [] };
+  assert.deepEqual(environmentFor([app], "ada/app"), app);
+  assert.equal(environmentFor([app], "ada/other"), null);
+  assert.equal(environmentFor([], "ada/app"), null);
+});
+
+test("a variable a cloud session may not set is never offered", async () => {
+  const { environmentFor } = await import("@/lib/imports/client");
+  const vars = [
+    { name: "APP_TOKEN", shared: false },
+    // The server drops each of these, so offering them would say they were
+    // kept when they weren't.
+    { name: "PATH", shared: true },
+    { name: "OPENAI_API_KEY", shared: true },
+    { name: "RUNTIME_BOX", shared: false },
+  ];
+  assert.deepEqual(environmentFor([{ repo: "ada/app", vars, files: [] }], "ada/app"), {
+    repo: "ada/app",
+    vars: [{ name: "APP_TOKEN", shared: false }],
+    files: [],
   });
+  // Nothing left to pick is nothing to offer: no empty panel on the form.
+  assert.equal(environmentFor([{ repo: "ada/app", vars: [{ name: "PATH", shared: true }], files: [] }], "ada/app"), null);
+  // Its files or its scripts alone are still worth offering.
+  const scripts = { repo: "ada/app", vars: [{ name: "PATH", shared: true }], files: [], scripts: { setup: "make" } };
+  assert.deepEqual(environmentFor([scripts], "ada/app"), { ...scripts, vars: [] });
 });
 
 test("secrets need agreement; scripts, items and plugins alone don't", async () => {
-  const { picksSecrets, hasEnvironmentPick, hasConfigPick } = await import("@/lib/imports/client");
+  const { environmentPickSecrets, configPickSecrets, hasEnvironmentPick, hasConfigPick } = await import(
+    "@/lib/imports/client"
+  );
   const none = { items: [], mcp: [], plugins: false };
   const scriptsOnly = { repo: "ada/app", vars: [], files: [], scripts: true };
-  assert.equal(picksSecrets([scriptsOnly], none), false);
-  assert.equal(picksSecrets([scriptsOnly], { ...none, items: ["claude-md"], plugins: true }), false);
-  assert.equal(picksSecrets([{ ...scriptsOnly, vars: ["APP_TOKEN"] }], none), true);
-  assert.equal(picksSecrets([{ ...scriptsOnly, files: ["api/.env"] }], none), true);
-  assert.equal(picksSecrets([], { ...none, mcp: ["tracker"] }), true);
+  assert.equal(environmentPickSecrets(scriptsOnly), false);
+  assert.equal(configPickSecrets({ ...none, items: ["claude-md"], plugins: true }), false);
+  assert.equal(environmentPickSecrets({ ...scriptsOnly, vars: ["APP_TOKEN"] }), true);
+  assert.equal(environmentPickSecrets({ ...scriptsOnly, files: ["api/.env"] }), true);
+  assert.equal(configPickSecrets({ ...none, mcp: ["tracker"] }), true);
   // Still something to import, though it needs no agreement.
   assert.equal(hasEnvironmentPick(scriptsOnly), true);
   assert.equal(hasEnvironmentPick({ ...scriptsOnly, scripts: false }), false);

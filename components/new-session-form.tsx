@@ -4,11 +4,13 @@ import { GitBranch, GitFork } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { useCreateSession } from "@/hooks/use-create-session";
+import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { loadoutDefault, loadoutEffort } from "@/lib/runtime/model-loadout";
@@ -55,6 +57,11 @@ export function NewSessionForm({
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
+  // A repository's first cloud session can bring its environment from this Mac.
+  const environment = useFirstSessionEnvironment(selected, !local);
+  // A send is under way: the environment is being kept, or the session made.
+  // What it was sent with must not change under it.
+  const busy = isCreating || environment.keeping;
   // No repositories only blocks the cloud; a local session needs none.
   const noRepositories = projectsKnown && !local && projects.length === 0;
   const details = newSessionDetails(
@@ -110,15 +117,15 @@ export function NewSessionForm({
           </div>
         ) : (
           <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
-            {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={isCreating} className={CHIP_BUTTON} />}
+            {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={busy} className={CHIP_BUTTON} />}
             {local ? (
-              <LocalRepositoryButton state={where} disabled={isCreating} className={CHIP_BUTTON} />
+              <LocalRepositoryButton state={where} disabled={busy} className={CHIP_BUTTON} />
             ) : (
               <RepositorySelect
                 projects={projects}
                 selectedProjectId={projectId}
                 onSelect={selectProject}
-                disabled={isCreating}
+                disabled={busy}
                 triggerClassName={CHIP_BUTTON}
               />
             )}
@@ -138,6 +145,7 @@ export function NewSessionForm({
         )}
 
         <LocalBlocker state={where} className="mt-4 text-center" />
+        {!local && !noRepositories && <EnvironmentOffer environment={environment} disabled={busy} />}
       </div>
 
       <div className="shrink-0">
@@ -168,7 +176,9 @@ export function NewSessionForm({
                   where.runtime.state === "ready" ? where.runtime.status : null,
                   effort,
                 )
-              : create(text, attachmentIds, startModel, effort)
+              : // Kept first, so the session's box starts with it; one that
+                // fails keeps the prompt, and the session isn't started.
+                environment.keep().then((kept) => kept && create(text, attachmentIds, startModel, effort))
           }
           model={startsOn?.id}
           modelChoice={
@@ -181,7 +191,7 @@ export function NewSessionForm({
                     setPickedEffort(effort);
                   },
                   switching: false,
-                  disabledReason: isCreating ? "Starting the session" : null,
+                  disabledReason: busy ? "Starting the session" : null,
                   preferredProvider: startsOn?.provider,
                   loadout: menu?.loadout,
                 }
@@ -189,12 +199,19 @@ export function NewSessionForm({
           }
           // Typing starts at once, the list still on its way included (a send
           // before it lands gives the prompt back).
-          canSend={!isCreating && (local ? where.localFolder !== null : selected != null || !projectsKnown)}
+          canSend={
+            !isCreating &&
+            (local
+              ? where.localFolder !== null
+              : (selected != null || !projectsKnown) && (!environment.secrets || environment.consent))
+          }
           placeholder="What would you like to work on?"
           disabledPlaceholder={
             local && where.blocker
               ? where.blocker
-              : noRepositories
+              : !local && environment.secrets && !environment.consent
+                ? "Agree to store the environment above to start…"
+                : noRepositories
                 ? "Sync a repository to start…"
                 : "Pick a repository above to start…"
           }
@@ -202,5 +219,43 @@ export function NewSessionForm({
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * The repository's environment on this Mac, offered as its first cloud session
+ * starts: what is picked is kept, encrypted, as the session is started, and
+ * this and every later session of the project starts with it.
+ */
+function EnvironmentOffer({ environment: env, disabled }: { environment: FirstSessionEnvironment; disabled: boolean }) {
+  if (!env.offer || !env.pick) return null;
+  return (
+    <section className="mt-8 w-full max-w-xl space-y-3 rounded-lg border border-border/60 p-4 text-left">
+      <div>
+        <h2 className="text-sm font-medium">Bring {env.offer.repo}&apos;s environment from this Mac</h2>
+        <p className="text-muted-foreground text-xs">
+          Pick what this project&apos;s cloud sessions start with. Kept encrypted, for this one and every one after.
+        </p>
+      </div>
+      <div className="max-h-56 overflow-auto">
+        <ProjectEnvironmentPicker project={env.offer} pick={env.pick} onChange={env.setPick} disabled={disabled} />
+      </div>
+      {env.secrets && (
+        <label className="flex items-start gap-2 text-xs">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={env.consent}
+            onChange={() => env.setConsent(!env.consent)}
+            disabled={disabled}
+          />
+          <span>
+            Store the variables and files I picked, encrypted, in Outrunner&apos;s cloud, and give them to this
+            project&apos;s cloud sessions, where the agent can read them.
+          </span>
+        </label>
+      )}
+      {env.error && <p className="text-destructive text-xs">{env.error}</p>}
+    </section>
   );
 }
