@@ -3,11 +3,9 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { optionalEnv } from "@/lib/env";
-import {
-  GitHubSyncError,
-  listGitHubRepositories,
-} from "@/lib/github/client";
-import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
+import { listGitHubRepositories } from "@/lib/github/client";
+import { githubErrorResponse } from "@/lib/github/response";
+import { requireGithubToken } from "@/lib/github/token";
 
 export const dynamic = "force-dynamic";
 
@@ -73,12 +71,8 @@ export async function POST(request: Request) {
     // project id in the same round trip to start a session on it.
     return NextResponse.json({ synced, discovered: all.length, projects: await listProjects() });
   } catch (error) {
-    if (error instanceof MissingGithubTokenError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    if (error instanceof GitHubSyncError) {
-      return NextResponse.json({ error: error.message }, { status: 502 });
-    }
+    const githubError = githubErrorResponse(error);
+    if (githubError) return githubError;
 
     console.error("Repository sync failed", error);
     return NextResponse.json(

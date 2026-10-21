@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { listProjects } from "@/lib/db/repositories";
-import { GitHubSyncError, listGitHubRepositories } from "@/lib/github/client";
-import { MissingGithubTokenError, requireGithubToken } from "@/lib/github/token";
+import { listGitHubRepositories } from "@/lib/github/client";
+import { githubErrorResponse } from "@/lib/github/response";
+import { requireGithubToken } from "@/lib/github/token";
 
 export const dynamic = "force-dynamic";
 
@@ -44,12 +45,8 @@ export async function GET() {
       connected: projects.map((p) => p.githubRepoId),
     });
   } catch (error) {
-    if (error instanceof MissingGithubTokenError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    if (error instanceof GitHubSyncError) {
-      return NextResponse.json({ error: error.message }, { status: 502 });
-    }
+    const githubError = githubErrorResponse(error);
+    if (githubError) return githubError;
     console.error("Could not list GitHub repositories", error);
     return NextResponse.json(
       { error: "Could not reach GitHub. Please try again." },

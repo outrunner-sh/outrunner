@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 
-import { findOrCreatePullRequest } from "@/lib/github/client";
+import {
+  findOrCreatePullRequest,
+  GitHubReconnectError,
+  GitHubSyncError,
+  listGitHubRepositories,
+  MissingGithubTokenError,
+} from "@/lib/github/client";
+import { githubErrorResponse } from "@/lib/github/response";
 
 const realFetch = globalThis.fetch;
 
@@ -69,4 +76,44 @@ test("findOrCreatePullRequest re-looks up the PR on a 422 (concurrent create)", 
 
   const pr = await findOrCreatePullRequest(PR_INPUT);
   assert.deepEqual(pr, { number: 5, url: "https://gh/pr/5" });
+});
+
+/** What `listGitHubRepositories` throws when GitHub answers `status`. */
+async function listingError(status: number): Promise<unknown> {
+  setFetch(() => new Response("{}", { status }));
+  return listGitHubRepositories("gh-test-token").then(
+    () => assert.fail("expected the listing to fail"),
+    (error: unknown) => error,
+  );
+}
+
+test("a 401 means the token is dead: the route asks the user to reconnect", async () => {
+  const error = await listingError(401);
+  assert.ok(error instanceof GitHubReconnectError);
+
+  const response = githubErrorResponse(error);
+  assert.equal(response?.status, 502);
+  assert.deepEqual(await response?.json(), {
+    error: "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    reconnect: true,
+  });
+});
+
+test("a 403 (rate limit, no access) is not a reconnect: signing in again would not fix it", async () => {
+  const error = await listingError(403);
+  assert.ok(error instanceof GitHubSyncError);
+  assert.ok(!(error instanceof GitHubReconnectError));
+
+  const body = await githubErrorResponse(error)?.json();
+  assert.equal(body.reconnect, undefined);
+});
+
+test("no stored token also asks the user to reconnect", async () => {
+  const response = githubErrorResponse(new MissingGithubTokenError());
+  assert.equal(response?.status, 409);
+  assert.equal((await response?.json()).reconnect, true);
+});
+
+test("an error that is not GitHub's is left to the route", () => {
+  assert.equal(githubErrorResponse(new Error("db down")), null);
 });

@@ -40,6 +40,45 @@ export class GitHubSyncError extends Error {
   }
 }
 
+/**
+ * The user has no usable GitHub token. Recoverable, and always by the same
+ * action: sign out and back in so the OAuth round trip mints a fresh one.
+ *
+ * Reached when the user last signed in before the `repo` scope was requested,
+ * or when a stored token could not be decrypted (see lib/db/credentials.ts).
+ * Lives here, beside the other GitHub errors, so code that maps errors to
+ * responses need not pull in the credential store; lib/github/token re-exports it.
+ */
+export class MissingGithubTokenError extends Error {
+  constructor() {
+    super("Connect your GitHub account: sign out and back in to grant repository access.");
+    this.name = "MissingGithubTokenError";
+  }
+}
+
+/**
+ * GitHub refused the user's stored token: revoked, superseded, or minted for
+ * another account. Only a fresh OAuth sign-in replaces it, so routes flag this
+ * one and the UI links the user to Settings → Account to reconnect.
+ */
+export class GitHubReconnectError extends GitHubSyncError {
+  constructor(
+    message = "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    status?: number,
+  ) {
+    super(message, status);
+    this.name = "GitHubReconnectError";
+  }
+}
+
+/**
+ * GitHub no longer accepts the token itself. Only 401: a 403 means a rate limit
+ * or a repository this token cannot touch, which reconnecting would not fix.
+ */
+function isTokenRejected(status: number): boolean {
+  return status === 401;
+}
+
 const GITHUB_API_URL = "https://api.github.com";
 const PER_PAGE = 100;
 const MAX_PAGES = 100;
@@ -92,7 +131,13 @@ async function fetchTokenLogin(token: string): Promise<string> {
     console.error("GitHub token identity request was rejected", {
       status: identity.status,
     });
-    throw new GitHubSyncError("GitHub could not authorize the configured token.");
+    if (isTokenRejected(identity.status)) {
+      throw new GitHubReconnectError(undefined, identity.status);
+    }
+    throw new GitHubSyncError(
+      "GitHub could not verify your account. Please try again.",
+      identity.status,
+    );
   }
 
   let login: unknown;
@@ -165,10 +210,11 @@ export async function listGitHubRepositories(
       console.error("GitHub repository request was rejected", {
         status: response.status,
       });
+      if (isTokenRejected(response.status)) {
+        throw new GitHubReconnectError(undefined, response.status);
+      }
       throw new GitHubSyncError(
-        response.status === 401 || response.status === 403
-          ? "GitHub could not authorize the configured token."
-          : "GitHub could not list repositories. Please try again.",
+        "GitHub could not list repositories. Please try again.",
         response.status,
       );
     }
@@ -216,7 +262,7 @@ export async function verifyTokenOwner(
 ): Promise<void> {
   const tokenLogin = await fetchTokenLogin(token);
   if (tokenLogin.toLowerCase() !== expectedOwnerLogin.toLowerCase()) {
-    throw new GitHubSyncError(
+    throw new GitHubReconnectError(
       "Your GitHub connection is out of date. Sign out and back in to reconnect.",
     );
   }
@@ -266,9 +312,12 @@ export async function findOrCreatePullRequest(input: {
     console.error("GitHub pull request creation was rejected", {
       status: response.status,
     });
+    if (isTokenRejected(response.status)) {
+      throw new GitHubReconnectError(undefined, response.status);
+    }
     throw new GitHubSyncError(
-      response.status === 401 || response.status === 403
-        ? "GitHub could not authorize the configured token."
+      response.status === 403
+        ? "GitHub did not allow opening a pull request on this repository."
         : "GitHub could not open a pull request. Please try again.",
       response.status,
     );
