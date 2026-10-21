@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/codex"
+	"runtime-agent/internal/transcript"
 )
 
 // A Codex session's conversation is its rollout, which Codex writes in its
@@ -93,10 +94,10 @@ func (s *Service) codexRollout(workspaceID string) string {
 	}
 	sessions := filepath.Join(s.codexHomeFor(workspaceID), "sessions")
 	var found string
-	var meta rolloutMeta
+	var meta transcript.RolloutMeta
 	if s.codexHomeFor(workspaceID) == s.codexHome(workspaceID) {
-		found = newestRollout(sessions)
-		meta, _ = readRolloutMeta(found)
+		found = transcript.NewestRollout(sessions)
+		meta, _ = transcript.ReadRolloutMeta(found)
 	} else {
 		found, meta = s.findRollout(workspaceID, f, sessions)
 	}
@@ -110,13 +111,13 @@ func (s *Service) codexRollout(workspaceID string) string {
 }
 
 // findRollout looks for a session's rollout in the user's Codex home.
-func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions string) (string, rolloutMeta) {
+func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions string) (string, transcript.RolloutMeta) {
 	since, err := time.Parse(time.RFC3339Nano, f.CodexLaunchedAt)
 	if err != nil {
 		// Launched by an agent that has since restarted: the session is no
 		// older than its facts.
 		if since, err = time.Parse(time.RFC3339, f.CreatedAt); err != nil {
-			return "", rolloutMeta{}
+			return "", transcript.RolloutMeta{}
 		}
 	}
 	since = since.Add(-rolloutFindSlack)
@@ -124,7 +125,7 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 	claimed := s.claimedRollouts(workspaceID)
 	type candidate struct {
 		file    string
-		meta    rolloutMeta
+		meta    transcript.RolloutMeta
 		started time.Time
 	}
 	var candidates []candidate
@@ -141,14 +142,14 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 			if claimed[file] {
 				continue
 			}
-			meta, err := readRolloutMeta(file)
+			meta, err := transcript.ReadRolloutMeta(file)
 			if err != nil || meta.ID == "" || realPath(meta.Cwd) != worktree {
 				continue
 			}
 			// When its conversation began, not when its file last changed: a
 			// Codex the user already had running in this folder writes to its
 			// older rollout too.
-			started, ok := meta.started()
+			started, ok := meta.Started()
 			if !ok {
 				continue
 			}
@@ -158,7 +159,7 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 		}
 	}
 	if len(candidates) == 0 {
-		return "", rolloutMeta{}
+		return "", transcript.RolloutMeta{}
 	}
 	// The earliest begun since the launch is the likeliest the session's,
 	// should the user have started Codex in the same folder since.
@@ -180,57 +181,6 @@ func (s *Service) claimedRollouts(workspaceID string) map[string]bool {
 		}
 	}
 	return claimed
-}
-
-// newestRollout is the most recently written rollout under a sessions folder.
-func newestRollout(sessions string) string {
-	var newest string
-	var newestMod time.Time
-	_ = filepath.WalkDir(sessions, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || filepath.Ext(path) != ".jsonl" {
-			return nil
-		}
-		if info, err := d.Info(); err == nil && info.ModTime().After(newestMod) {
-			newest, newestMod = path, info.ModTime()
-		}
-		return nil
-	})
-	return newest
-}
-
-// rolloutMeta is what a rollout's first line, its session_meta, says.
-type rolloutMeta struct {
-	ID  string `json:"id"`
-	Cwd string `json:"cwd"`
-	// Timestamp is when the conversation began (RFC 3339).
-	Timestamp string `json:"timestamp"`
-}
-
-// started is when the rollout's conversation began; false when its
-// session_meta doesn't say, which leaves no way to tell it from an older one.
-func (m rolloutMeta) started() (time.Time, bool) {
-	t, err := time.Parse(time.RFC3339Nano, m.Timestamp)
-	return t, err == nil
-}
-
-func readRolloutMeta(path string) (rolloutMeta, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return rolloutMeta{}, err
-	}
-	defer file.Close()
-	line, err := bufio.NewReader(file).ReadBytes('\n')
-	if err != nil {
-		return rolloutMeta{}, err // not even a whole first line yet
-	}
-	var first struct {
-		Type    string      `json:"type"`
-		Payload rolloutMeta `json:"payload"`
-	}
-	if err := json.Unmarshal(line, &first); err != nil || first.Type != "session_meta" {
-		return rolloutMeta{}, err
-	}
-	return first.Payload, nil
 }
 
 // realPath resolves symlinks, keeping the path as given when it can't be.
