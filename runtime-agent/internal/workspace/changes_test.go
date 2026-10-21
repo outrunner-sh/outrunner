@@ -36,6 +36,12 @@ func TestParseChangedFiles(t *testing.T) {
 		t.Errorf("parseChangedFiles =\n%+v\nwant\n%+v", got, want)
 	}
 
+	// `git grep -c -z` prints "path\0count\n"; a path may hold a newline.
+	lines := parseLineCounts("a.txt\x002\nsub/new\nline.txt\x003\ntab\there.txt\x001\n")
+	if want := map[string]int{"a.txt": 2, "sub/new\nline.txt": 3, "tab\there.txt": 1}; !reflect.DeepEqual(lines, want) {
+		t.Errorf("parseLineCounts = %v, want %v", lines, want)
+	}
+
 	var many strings.Builder
 	for i := 0; i <= maxChangedFiles; i++ {
 		fmt.Fprintf(&many, "f%d\x00", i)
@@ -81,17 +87,19 @@ func TestChangesAndDiffOfALocalWorktree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(worktree, "notes.txt"), []byte("n\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// An untracked text file counts its lines; an untracked binary stays at 0.
+	if err := os.WriteFile(filepath.Join(worktree, "blob.bin"), []byte{0, '\n', 0, '\n'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	files, err := s.Changes(context.Background(), "ws-diff")
-	if err != nil {
-		t.Fatalf("Changes: %v", err)
+	want := []protocol.ChangedFile{
+		{Path: "README.md", Status: "modified", Additions: 1},
+		{Path: "blob.bin", Status: "untracked"},
+		{Path: "notes.txt", Status: "untracked", Additions: 1},
 	}
-	statuses := map[string]string{}
-	for _, f := range files {
-		statuses[f.Path] = f.Status
-	}
-	if statuses["README.md"] != "modified" || statuses["notes.txt"] != "untracked" || len(files) != 2 {
-		t.Fatalf("Changes = %+v", files)
+	if err != nil || !reflect.DeepEqual(files, want) {
+		t.Fatalf("Changes = %+v, %v; want %+v", files, err, want)
 	}
 
 	diff, err := s.FileDiff(context.Background(), "ws-diff", "README.md")
@@ -134,9 +142,10 @@ func TestChangesAndDiffOfALocalWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	files, err = s.Changes(context.Background(), "ws-diff")
-	want := []protocol.ChangedFile{
+	want = []protocol.ChangedFile{
 		{Path: "README.md", Status: "modified", Additions: 1},
 		{Path: "notes.txt", Status: "added", Additions: 1},
+		{Path: "blob.bin", Status: "untracked"},
 	}
 	if err != nil || !reflect.DeepEqual(files, want) {
 		t.Fatalf("Changes after a commit = %+v, %v; want %+v", files, err, want)
@@ -151,7 +160,8 @@ func TestChangesAndDiffOfALocalWorktree(t *testing.T) {
 	facts.BaseBranch = "no-such-branch"
 	s.setFacts("ws-diff", facts)
 	files, err = s.Changes(context.Background(), "ws-diff")
-	if err != nil || !reflect.DeepEqual(files, want[:1]) {
-		t.Errorf("Changes without a base = %+v, %v; want %+v", files, err, want[:1])
+	uncommitted := []protocol.ChangedFile{want[0], want[2]}
+	if err != nil || !reflect.DeepEqual(files, uncommitted) {
+		t.Errorf("Changes without a base = %+v, %v; want %+v", files, err, uncommitted)
 	}
 }

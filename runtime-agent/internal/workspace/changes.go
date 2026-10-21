@@ -60,7 +60,52 @@ func (s *Service) changeSet(ctx context.Context, workspaceID string) ([]protocol
 	if err != nil {
 		return nil, "", err
 	}
-	return parseChangedFiles(nameStatus, numstat, untracked), base, nil
+	files := parseChangedFiles(nameStatus, numstat, untracked)
+	s.countUntrackedLines(ctx, worktree, files)
+	return files, base, nil
+}
+
+// countUntrackedLines sets each untracked file's additions to its line count,
+// as a diff against nothing would. One `git grep` counts them all: the empty
+// pattern matches every line and -I skips binaries, which stay at 0. The
+// counts are a nicety, so a grep that fails or matches nothing leaves them at 0.
+func (s *Service) countUntrackedLines(ctx context.Context, worktree string, files []protocol.ChangedFile) {
+	args := []string{"--literal-pathspecs", "grep", "--untracked", "--no-color", "-I", "-c", "-z", "-e", "", "--"}
+	var untracked []int
+	for i, f := range files {
+		if f.Status == "untracked" {
+			untracked = append(untracked, i)
+			args = append(args, f.Path)
+		}
+	}
+	if len(untracked) == 0 {
+		return
+	}
+	out, err := s.gitRaw(ctx, worktree, args...)
+	if err != nil {
+		return
+	}
+	counts := parseLineCounts(out)
+	for _, i := range untracked {
+		files[i].Additions = counts[files[i].Path]
+	}
+}
+
+// parseLineCounts reads `git grep -c -z`, which prints "path\0count\n" per
+// file. A path may hold a newline but a count cannot, so the first newline
+// after each count starts the next path.
+func parseLineCounts(output string) map[string]int {
+	counts := map[string]int{}
+	fields := strings.Split(output, "\x00")
+	path := fields[0]
+	for _, field := range fields[1:] {
+		count, next, _ := strings.Cut(field, "\n")
+		if n, err := strconv.Atoi(count); err == nil && path != "" && n >= 0 {
+			counts[path] = n
+		}
+		path = next
+	}
+	return counts
 }
 
 // changeBase is where a change set is measured from: the commit the branch
