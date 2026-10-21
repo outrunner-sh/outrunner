@@ -101,7 +101,62 @@
           "vars": [],
           "files": []
         }
-      ]
+      ],
+      "config": {
+        "items": [
+          {
+            "id": "claude-md",
+            "kind": "claude-md",
+            "name": "CLAUDE.md",
+            "path": ".claude/CLAUDE.md",
+            "bytes": 4858
+          },
+          {
+            "id": "skill:review",
+            "kind": "skill",
+            "name": "review",
+            "path": ".claude/skills/review",
+            "bytes": 20480,
+            "omitted": 1
+          },
+          {
+            "id": "skill:huge",
+            "kind": "skill",
+            "name": "huge",
+            "path": ".claude/skills/huge",
+            "bytes": 20971520,
+            "skip": {
+              "reason": "too-large",
+              "detail": "over 10 MB"
+            }
+          }
+        ],
+        "mcpServers": [
+          {
+            "name": "tracker",
+            "transport": "http",
+            "url": "https://mcp.example/mcp",
+            "envNames": [],
+            "headerNames": [
+              "Authorization"
+            ]
+          },
+          {
+            "name": "figma",
+            "transport": "http",
+            "url": "http://localhost:3845/mcp",
+            "envNames": [],
+            "headerNames": [],
+            "skip": {
+              "reason": "unportable-mcp",
+              "detail": "it is served on this Mac"
+            }
+          }
+        ],
+        "plugins": [
+          "review@market"
+        ]
+      }
     }
   ],
   "Capture": [
@@ -174,6 +229,40 @@
       "repo": "ada/scratch",
       "env": {},
       "files": {}
+    }
+  ],
+  "ConfigCapture": [
+    {
+      "archive": {
+        "name": "agent-config.tar.gz",
+        "path": "/tmp/x/agent-config.tar.gz",
+        "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+        "size": 32007,
+        "encoding": "gzip"
+      },
+      "items": [
+        "claude-md",
+        "skill:review"
+      ],
+      "mcpServers": {
+        "tracker": {
+          "type": "http",
+          "url": "https://mcp.example/mcp",
+          "headers": {
+            "Authorization": "Bearer tok"
+          }
+        }
+      },
+      "settings": {
+        "enabledPlugins": {
+          "review@market": true
+        }
+      }
+    },
+    {
+      "items": [],
+      "mcpServers": {},
+      "settings": {}
     }
   ]
 }
