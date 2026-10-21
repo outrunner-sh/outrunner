@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
+import { claudeInstallCommand } from "@/lib/runtime/claude-cli";
 import { codexInstallCommand } from "@/lib/runtime/codex-cli";
 import { ghInstallCommand } from "@/lib/runtime/github-cli";
 import type { ProvisionStage, StageTiming, ProvisionTimings } from "@/lib/runtime/types";
@@ -445,23 +446,27 @@ async function resetJcode(io: BoxIO, root: string): Promise<void> {
 // Claude Code engine deploy
 //
 // The default (non-jcode) engine runs the real `claude` CLI in tmux on the box.
-// Daytona's base image already ships the Claude Code CLI + node, so we only add
-// tmux (+ a couple tools) at provision, then launch the agent in Claude mode (no
-// RUNTIME_ENGINE) rooted at $HOME, seeding its env with the subscription
-// credential so each Claude session authenticates. No frozen snapshot required.
+// Daytona's base image already ships node and a Claude Code CLI (too old a one:
+// 2.1.19 in daytonaio/sandbox:0.8.0), so at provision we bring Claude up to the
+// pinned version and add tmux (+ a couple tools), then launch the agent in
+// Claude mode (no RUNTIME_ENGINE) rooted at $HOME, seeding its env with the
+// subscription credential so each Claude session authenticates. No frozen
+// snapshot required.
 // ---------------------------------------------------------------------------
 
 /** Install what the Claude-in-tmux engine needs beyond the base image (which
- *  already has `claude` + node), and Codex. `apt-get update` first: the base
- *  ships a stale cache where tmux otherwise reports "no installation
- *  candidate". Each is skipped when it's already there: a backend may install
- *  them while preparing the box (Neev does, as root, since its sandboxes have
- *  no usable sudo). */
+ *  already has node), Claude Code at least at its pinned version, and Codex.
+ *  `apt-get update` first: the base ships a stale cache where tmux otherwise
+ *  reports "no installation candidate". Each is skipped when it's already
+ *  there: a backend may install them while preparing the box (Neev does, as
+ *  root, since its sandboxes have no usable sudo). */
 export function claudeInstallScript(): string {
   return (
     "{ command -v tmux >/dev/null && command -v jq >/dev/null || { " +
     "sudo apt-get update -q && " +
     "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tmux git-lfs ripgrep jq; }; } && " +
+    claudeInstallCommand({ sudo: true }) +
+    " && " +
     codexInstallCommand({ sudo: true }) +
     " && " +
     ghInstallCommand({ sudo: true })

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Neev, NotFoundError, type Sandbox } from "@neevcloud/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
+import { claudeInstallCommand } from "@/lib/runtime/claude-cli";
 import { codexInstallCommand } from "@/lib/runtime/codex-cli";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import { ghInstallCommand } from "@/lib/runtime/github-cli";
@@ -63,7 +64,7 @@ export function neevPrepareScript(): string {
     "export DEBIAN_FRONTEND=noninteractive",
     step("apt update", "apt-get update -q"),
     step("apt install", "apt-get install -y -q tmux git-lfs ripgrep jq"),
-    step("claude code", "command -v claude >/dev/null || npm install -g @anthropic-ai/claude-code"),
+    step("claude code", claudeInstallCommand({ sudo: false })),
     step("codex", codexInstallCommand({ sudo: false })),
     step("github cli", ghInstallCommand({ sudo: false })),
     step("user", `id -u ${BOX_USER} >/dev/null 2>&1 || useradd -m -s /bin/bash ${BOX_USER}`),

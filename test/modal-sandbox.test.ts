@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { InvalidError, NotFoundError, SnapshotCreationError, TimeoutError } from "modal";
 
+import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
 import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 import { AGENT_PORT } from "@/lib/runtime/daytona/deploy";
 import { GH_VERSION } from "@/lib/runtime/github-cli";
@@ -31,8 +32,10 @@ test("the image has what the agent needs, and the user Claude runs as", () => {
   for (const part of ["tmux", "jq", "useradd -m", "claude.ai/install.sh"]) {
     assert.ok(setup.includes(part), `the image lacks ${part}`);
   }
-  // Installed by the box user, so Claude Code can update itself.
+  // Installed by the box user, so Claude Code can update itself, from the
+  // pinned version the deploy then finds already there.
   assert.match(setup, /su - runtime -c '[^']*install\.sh/);
+  assert.ok(setup.includes(`install.sh | bash -s ${CLAUDE_CODE_VERSION}'`), "the image lacks the pinned Claude Code");
   // Codex at the version the agent reads, for every user.
   assert.ok(setup.includes(`RUN npm install -g ${CODEX_PACKAGE}`), "the image lacks the pinned Codex");
   // `gh` for the orientation's `gh pr create`: not in node:22-bookworm, nor in
