@@ -105,8 +105,9 @@ export function SessionComposer({
   /** False hides attaching. Attachments are delivered by the server, which
    *  cannot reach a local session's worktree on the user's Mac. */
   allowAttachments?: boolean;
-  /** Why the last send didn't go. Its text is back in the box, so the line
-   *  offers to send it again or edit it first. */
+  /** Why the last send didn't go. A send from the box has its text back
+   *  there, so the line offers to send it again or edit it first; one that
+   *  didn't come from the box (onRetrySendError) offers Retry alone. */
   sendError?: string | null;
   onDismissSendError?: () => void;
   /** Retry a send that didn't come from the box: a session's first prompt
@@ -222,13 +223,19 @@ export function SessionComposer({
           className="studio-composer-message"
           actions={[
             { label: "Retry", onClick: onRetrySendError ?? submit, disabled: !canSend },
-            {
-              label: "Edit",
-              onClick: () => {
-                onDismissSendError?.();
-                textareaRef.current?.focus();
-              },
-            },
+            // Edit is for text the failure put back in the box. A send that
+            // never came from it (a first prompt) has nothing there to edit.
+            ...(onRetrySendError
+              ? []
+              : [
+                  {
+                    label: "Edit",
+                    onClick: () => {
+                      onDismissSendError?.();
+                      textareaRef.current?.focus();
+                    },
+                  },
+                ]),
           ]}
         >
           Not sent · {sendError}
