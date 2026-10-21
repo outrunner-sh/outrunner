@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { importSessions, type ImportProgress } from "@/lib/imports/client";
+import { importSessions, importSummary, type ImportProgress } from "@/lib/imports/client";
 import { ImportCapture, ImportCommitRequest, type ScannedSession } from "@/lib/runtime/import-scan";
 
 const fixtures = JSON.parse(readFileSync(path.join(process.cwd(), "lib/runtime/import-scan.fixtures.json"), "utf8"));
@@ -229,4 +229,12 @@ test("secrets need agreement; scripts, items and plugins alone don't", async () 
   assert.equal(hasEnvironmentPick({ ...scriptsOnly, scripts: false }), false);
   assert.equal(hasConfigPick({ ...none, plugins: true }), true);
   assert.equal(hasConfigPick(none), false);
+});
+
+test("an import's summary counts how it went, or how far it has got", () => {
+  const p = (key: string, state: ImportProgress["state"]): ImportProgress => ({ key, state });
+  assert.equal(importSummary([]), "");
+  assert.equal(importSummary([p("a", "done"), p("b", "uploading"), p("c", "waiting")]), "Importing… 1 of 3 done");
+  assert.equal(importSummary([p("a", "done"), p("b", "done"), p("c", "failed")]), "2 imported, 1 failed");
+  assert.equal(importSummary([p("a", "skipped")]), "1 skipped");
 });
