@@ -1,4 +1,5 @@
 import { githubLogin, isOwner } from "@/lib/auth/allowlist";
+import { getAuthUser } from "@/lib/auth/owner";
 import { listWorkspacesOnce } from "@/lib/db/request-cache";
 import type { OnboardingUser } from "@/lib/onboarding/types";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -12,10 +13,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export async function getOnboardingUser(): Promise<
   (OnboardingUser & { onboardedAt: string | null }) | null
 > {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getAuthUser();
   if (!user || !isOwner(user)) return null;
 
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
