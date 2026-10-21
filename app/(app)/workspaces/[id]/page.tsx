@@ -13,7 +13,16 @@ import type { SessionView } from "@/lib/session/session-view";
  *  sample session opened from the sidebar (no first prompt). */
 export const unstable_instant = {
   prefetch: "static",
-  samples: [{ params: { id: "sample" }, searchParams: { prompt: null, attachment: null } }],
+  samples: [
+    {
+      params: { id: "sample" },
+      searchParams: { prompt: null, attachment: null },
+      cookies: [
+        { name: "sidebar-collapsed", value: null },
+        { name: "sidebar-folded", value: null },
+      ],
+    },
+  ],
 };
 
 type Params = Promise<{ id: string }>;
