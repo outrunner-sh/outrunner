@@ -4,6 +4,7 @@ import {
   startClaudeLogin,
 } from "@/lib/desktop/connect-claude";
 import {
+  agentCli,
   cancelClaudeLogin as cancelClaudeCodeLogin,
   localAgentRequest,
   localStatus,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
 import type { FirstSession, OnboardingEnv, OnboardingRepo, OnboardingUser } from "@/lib/onboarding/types";
+import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -97,6 +99,14 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       const res = await fetch("/api/settings/claude").catch(() => null);
       if (!res?.ok) return false;
       return Boolean(((await res.json()) as { connected?: boolean }).connected);
+    },
+
+    async claudeOnMac() {
+      // A bridge that fails, or an app that can't tell, is no sign of Claude.
+      const status = await localStatus().catch(() => null);
+      if (!status) return false;
+      const cli = agentCli(status, "claude");
+      return cli.path !== null && cli.loggedIn === true;
     },
 
     async connectClaude() {
@@ -197,9 +207,9 @@ async function startOnMac({ prompt = "", folder }: FirstSession, outrunnerModels
 
 /**
  * Connect the chosen repository, then start the session there, as the
- * new-session form does (its sync and create calls).
+ * new-session form does (its sync and create calls), on the model chosen.
  */
-async function startInCloud({ prompt = "", repoId }: FirstSession): Promise<string> {
+async function startInCloud({ prompt = "", repoId, model }: FirstSession): Promise<string> {
   if (!repoId) throw new Error("Choose a repository first.");
   const synced = await fetch("/api/projects/sync", {
     method: "POST",
@@ -214,7 +224,12 @@ async function startInCloud({ prompt = "", repoId }: FirstSession): Promise<stri
   const created = await fetch(`/api/projects/${project.id}/workspaces`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ branch: "" }),
+    // Claude, when the user has it: the first of its models. Otherwise none,
+    // so the session starts on the menu's default, Outrunner's.
+    body: JSON.stringify({
+      branch: "",
+      ...(model === "claude" && { provider: "claude", model: CLAUDE_MODELS[0].id }),
+    }),
   });
   const result = (await created.json().catch(() => ({}))) as { workspace?: { id: string }; error?: string };
   if (!created.ok || !result.workspace) {

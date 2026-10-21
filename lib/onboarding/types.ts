@@ -65,6 +65,9 @@ export type OnboardingEnv = {
   pickFolder(): Promise<OnboardingFolder | null>;
   /** Whether a Claude credential is already stored for cloud sessions. */
   claudeConnected(): Promise<boolean>;
+  /** Whether Claude Code is logged in on this Mac, a sign the user has Claude
+   *  to connect; false outside the Mac app, or when it can't tell. */
+  claudeOnMac(): Promise<boolean>;
   /** Connect Claude (`claude setup-token`); resolves once the token is saved. */
   connectClaude(): Promise<void>;
   cancelConnectClaude(): void;

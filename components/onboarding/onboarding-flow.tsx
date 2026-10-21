@@ -3,9 +3,10 @@
 import { useCallback, useState } from "react";
 import { ArrowLeft, ArrowRight, Cloud, Laptop, Loader2, Terminal } from "lucide-react";
 
-import { CloudSetup, type CloudModel } from "@/components/onboarding/cloud-setup";
+import { CloudSetup } from "@/components/onboarding/cloud-setup";
 import { MacSetup } from "@/components/onboarding/mac-setup";
 import { Button } from "@/components/ui/button";
+import type { CloudModel } from "@/lib/onboarding/claude-choice";
 import type { OnboardingEnv, OnboardingFolder, RunTarget } from "@/lib/onboarding/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { cn } from "@/lib/utils";
@@ -140,7 +141,9 @@ export function OnboardingFlow({
               detail={
                 target === "mac"
                   ? "A few things local sessions need. Each one checks itself."
-                  : "Connect Claude and pick the repository to work in."
+                  : env.outrunnerModels
+                    ? "Pick the repository your first session works in."
+                    : "Connect Claude and pick the repository to work in."
               }
             />
             {target === "mac" ? (

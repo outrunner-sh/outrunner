@@ -152,6 +152,10 @@ function mockEnv(s: Scenario): OnboardingEnv {
       await wait(400);
       return s.claudeConnected === "yes";
     },
+    async claudeOnMac() {
+      await wait(900);
+      return s.surface === "desktop" && !noClaude && s.claudeCode === "logged-in";
+    },
     async connectClaude() {
       cancelled = false;
       await wait(3000);

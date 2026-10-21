@@ -5,14 +5,15 @@ import { Lock, Search } from "lucide-react";
 
 import { ChecklistRow } from "@/components/onboarding/checklist-row";
 import { ConnectClaudeRow } from "@/components/onboarding/connect-claude-row";
+import { type CloudModel, claudeOffer, startingCloudModel } from "@/lib/onboarding/claude-choice";
 import type { OnboardingEnv, OnboardingRepo } from "@/lib/onboarding/types";
 
-export type CloudModel = "claude" | "outrunner" | null;
-
 /**
- * Everything a cloud session needs: Claude connected (or, where the server runs
- * Outrunner's own models, Skip: sessions start on those) and the GitHub
- * repository it works in.
+ * Everything a cloud session needs: the GitHub repository it works in, and a
+ * model to run. That's Outrunner's own unless the user has Claude: one already
+ * connected is used, and one logged in to Claude Code on this Mac is offered.
+ * Where the server has no models of its own, Claude is a must
+ * (lib/onboarding/claude-choice.ts).
  */
 export function CloudSetup({
   env,
@@ -30,18 +31,23 @@ export function CloudSetup({
   onRepoId: (id: string) => void;
   onReady: (ready: boolean) => void;
 }) {
-  // Null until the stored connection has been checked.
-  const [checked, setChecked] = useState(false);
+  // Each null until checked.
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [onMac, setOnMac] = useState<boolean | null>(null);
   const [repos, setRepos] = useState<OnboardingRepo[] | null>(null);
   const [repoError, setRepoError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
     let live = true;
-    void env.claudeConnected().then((connected) => {
+    const { outrunnerModels } = env;
+    void env.claudeConnected().then((found) => {
       if (!live) return;
-      if (connected) onModel("claude");
-      setChecked(true);
+      setConnected(found);
+      onModel(startingCloudModel({ connected: found, outrunnerModels }));
+    });
+    void env.claudeOnMac().then((found) => {
+      if (live) setOnMac(found);
     });
     env.listRepos().then(
       (list) => {
@@ -58,6 +64,7 @@ export function CloudSetup({
     };
   }, [env, onModel]);
 
+  const offer = claudeOffer({ connected, onMac, outrunnerModels: env.outrunnerModels });
   const ready = model !== null && repoId !== null;
   useEffect(() => onReady(ready), [ready, onReady]);
 
@@ -70,20 +77,6 @@ export function CloudSetup({
 
   return (
     <div className="border-border/60 bg-card/30 overflow-hidden rounded-xl border">
-      <ConnectClaudeRow
-        env={env}
-        connected={model === "claude" ? true : checked ? false : null}
-        onConnected={() => onModel("claude")}
-        {...(env.outrunnerModels && {
-          todo: "Use your Claude Pro or Max subscription, or skip: sessions then start on Outrunner's model.",
-          skipped:
-            model === "outrunner"
-              ? "Skipped. Sessions start on Outrunner's model. Connect Claude anytime in Settings."
-              : undefined,
-          onSkip: () => onModel("outrunner"),
-        })}
-      />
-
       <ChecklistRow
         state={repos === null ? "working" : repoError ? "problem" : repoId !== null ? "done" : "todo"}
         title="Choose a repository"
@@ -138,6 +131,19 @@ export function CloudSetup({
           </div>
         )}
       </ChecklistRow>
+
+      {/* Below the repositories: on the Mac its check can land a moment
+          later, and a row appearing here moves nothing the user is reading. */}
+      {offer !== "hidden" && (
+        <ConnectClaudeRow
+          env={env}
+          connected={model === "claude" ? true : connected === null ? null : false}
+          onConnected={() => onModel("claude")}
+          {...(offer === "optional" && {
+            optional: "Optional. Sessions start on Outrunner's models; connect to use your Claude Pro or Max subscription instead.",
+          })}
+        />
+      )}
     </div>
   );
 }

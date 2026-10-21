@@ -92,6 +92,18 @@ test("a cloud start connects the chosen repository, starts there, and marks onbo
     ["POST /api/projects/sync", "POST /api/projects/p-9/workspaces", "POST /api/onboarding/complete"],
   );
   assert.deepEqual(calls[0].body, { repoIds: [9] });
+  // The user's Claude, named: without it the server's default is Outrunner's.
+  assert.deepEqual(calls[1].body, { branch: "", provider: "claude", model: "opus" });
+});
+
+test("a cloud start on Outrunner's models names none, leaving the server's default", async () => {
+  const calls = stubFetch({
+    "POST /api/projects/sync": () => [200, { projects: [{ id: "p-9", githubRepoId: 9 }] }],
+    "POST /api/projects/p-9/workspaces": () => [200, { workspace: { id: "w-3" } }],
+    "POST /api/onboarding/complete": () => [200, { ok: true }],
+  });
+  await liveEnv(user, { outrunnerModels: true }).start({ target: "cloud", repoId: "9", model: "outrunner" });
+  assert.deepEqual(calls[1].body, { branch: "" });
 });
 
 test("a refused cloud start shows the server's reason and leaves onboarding unmarked", async () => {
@@ -202,4 +214,32 @@ test("a session that can't get Outrunner's model is removed, not left on a login
   const id = (agent[0].body as { workspaceId: string }).workspaceId;
   await new Promise((resolve) => setTimeout(resolve, 0)); // the destroy is fire-and-forget
   assert.deepEqual(agent.map((a) => a.path), ["/workspaces", `/workspaces/${id}/destroy`]);
+});
+
+test("Claude counts as on this Mac only when Claude Code there says it's logged in", async () => {
+  // Outside the Mac app there is nothing to ask.
+  assert.equal(await liveEnv(user, noModels).claudeOnMac(), false);
+  for (const [loggedIn, found] of [
+    [true, true],
+    [false, false],
+    [null, false], // the app can't tell: no sign of Claude
+  ] as const) {
+    fakeMac(loggedIn);
+    assert.equal(await liveEnv(user, noModels).claudeOnMac(), found, `loggedIn=${loggedIn}`);
+  }
+});
+
+test("a Mac bridge that fails is no sign of Claude", async () => {
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: {
+      core: {
+        invoke: async () => {
+          throw new Error("bridge down");
+        },
+        Channel: class {},
+      },
+    },
+  };
+  assert.equal(await liveEnv(user, noModels).claudeOnMac(), false);
 });
