@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"runtime-agent/internal/ask"
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/jcode"
@@ -104,6 +105,13 @@ type Service struct {
 	// codexTails translate the running Codex sessions' rollouts.
 	codexTailsMu sync.Mutex
 	codexTails   map[string]*codexTail
+
+	// asks holds the questions sessions are waiting on the user to answer
+	// (ask.go).
+	asks *ask.Broker
+	// RelayExecutable is this binary, which a session's agent launches as
+	// its ask_user relay; empty launches sessions without the tool.
+	RelayExecutable string
 }
 
 // UseJcode switches the service to the jcode engine, driving workspaces through
@@ -214,6 +222,7 @@ func NewService(root string) *Service {
 		lookPath:   exec.LookPath,
 		runCommand: runCommand,
 		codexTails: map[string]*codexTail{},
+		asks:       ask.NewBroker(),
 	}
 }
 
@@ -1405,6 +1414,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	s.removeEnvironment(workspaceID)
+	s.forgetAsk(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()
