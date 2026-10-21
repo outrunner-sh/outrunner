@@ -409,5 +409,42 @@
       "model": "gpt-6-luna",
       "agent": "codex"
     }
+  ],
+  "ReservedEnv": [
+    [
+      "PATH",
+      "HOME",
+      "USER",
+      "LOGNAME",
+      "SHELL",
+      "PWD",
+      "TMPDIR",
+      "LANG",
+      "TERM",
+      "TMUX",
+      "TMUX_PANE",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "ANTHROPIC_MODEL",
+      "OPENAI_API_KEY",
+      "CODEX_HOME",
+      "DISABLE_AUTOUPDATER"
+    ]
+  ],
+  "SetEnvironmentRequest": [
+    {
+      "env": {
+        "DATABASE_URL": "postgres://u:p@db/app"
+      },
+      "files": {
+        "apps/backend/.env": "JWT_SECRET=x\n"
+      },
+      "setup": "bun install"
+    },
+    {
+      "env": {}
+    }
   ]
 }

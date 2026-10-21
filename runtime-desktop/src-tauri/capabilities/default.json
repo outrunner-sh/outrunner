@@ -36,6 +36,7 @@
     "allow-local-socket-close",
     "allow-import-scan",
     "allow-import-session",
+    "allow-import-environment",
     "allow-update-status",
     "allow-restart-to-update"
   ]

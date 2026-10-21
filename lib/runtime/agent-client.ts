@@ -17,6 +17,7 @@ import {
   RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
   SetAuthRequest,
+  SetEnvironmentRequest,
   WorkspaceSummary,
 } from "@/lib/runtime/agent-protocol";
 import { mintRuntimeToken } from "@/lib/runtime/runtime-token";
@@ -136,6 +137,11 @@ export class AgentClient {
    *  error envelope; one that doesn't know the session, 404 NOT_FOUND. */
   setAuth(identity: WorkspaceIdentity, req: SetAuthRequest): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/auth`, identity, SetAuthRequest.parse(req));
+  }
+
+  /** Give the session its project's environment, before it launches. */
+  setEnvironment(identity: WorkspaceIdentity, req: SetEnvironmentRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/environment`, identity, SetEnvironmentRequest.parse(req));
   }
 
   /** What the box's agent can run (GET /health, which needs no token; the

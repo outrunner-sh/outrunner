@@ -2,7 +2,7 @@ import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { cliReason } from "@/lib/desktop/cli-reason";
 import { isDesktopApp } from "@/lib/is-desktop";
 import { isProviderId, type ProviderId } from "@/lib/providers/registry";
-import { ImportCapture, ImportCaptureSkip, ImportScan, type ImportSkip } from "@/lib/runtime/import-scan";
+import { ImportCapture, ImportCaptureSkip, ImportEnvCapture, ImportScan, type ImportSkip } from "@/lib/runtime/import-scan";
 import { EMPTY_LOADOUT, type ModelLoadout, parseLoadout } from "@/lib/runtime/model-loadout";
 import {
   checkEffortApplied,
@@ -161,6 +161,15 @@ export async function importSession(
   const result = await call<unknown>("import_session", { key, uploads });
   const skipped = ImportCaptureSkip.safeParse(result);
   return skipped.success ? skipped.data : ImportCapture.parse(result);
+}
+
+/** The values of what the user picked of a repository's environment on this
+ *  Mac: variables by name, .env files by path, and its scripts. */
+export async function importEnvironment(
+  repo: string,
+  pick: { vars: string[]; files: string[]; scripts: boolean },
+): Promise<ImportEnvCapture> {
+  return ImportEnvCapture.parse(await call<unknown>("import_environment", { repo, ...pick }));
 }
 
 /** What this Mac has for local sessions; null outside the desktop app. */
@@ -446,6 +455,7 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   local_codex_login: "This version of the Outrunner app can't log Codex in. Update the app, then try again.",
   import_scan: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
   import_session: "This version of the Outrunner app can't import sessions. Update the app, then try again.",
+  import_environment: "This version of the Outrunner app can't import a project's environment. Update the app, then try again.",
 };
 
 /** Human-readable message for an error the app returned; `agent` is the CLI a
@@ -501,6 +511,10 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
       const said = raw.slice("import-failed:".length).trim();
       return said ? `The import failed: ${said}` : "The import failed. Try again.";
     }
+    case "invalid-repo":
+    case "invalid-variable":
+    case "invalid-file":
+    case "too-many":
     case "invalid-session-key":
     case "upload-not-allowed":
     case "unknown-artifact":

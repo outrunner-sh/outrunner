@@ -232,6 +232,19 @@ type WorkspaceImportRow = {
   created_at: string;
 };
 
+type ProjectEnvironmentRow = {
+  owner_id: string;
+  project_id: string;
+  secrets_ciphertext: string | null;
+  env_names: string[];
+  file_paths: string[];
+  setup_script: string | null;
+  run_script: string | null;
+  archive_script: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 // Multi-user — each user's own GitHub and Anthropic credentials, sealed with
 // AES-256-GCM (lib/crypto/secret-box.ts). Service-role only: the table has RLS
 // enabled with NO policy, so anon/authenticated match nothing. Reach it through
@@ -437,6 +450,12 @@ export type Database = {
             referencedColumns: ["owner_id", "id"];
           },
         ];
+      };
+      project_environment: {
+        Row: ProjectEnvironmentRow;
+        Insert: Insert<ProjectEnvironmentRow, "owner_id" | "project_id">;
+        Update: Partial<ProjectEnvironmentRow>;
+        Relationships: [];
       };
       workspace_imports: {
         Row: WorkspaceImportRow;

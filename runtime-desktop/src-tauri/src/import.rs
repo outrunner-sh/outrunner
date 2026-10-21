@@ -73,6 +73,64 @@ pub async fn import_session(key: String, uploads: HashMap<String, String>) -> Re
     run_import(args, Some(stdin)).await
 }
 
+/// The values of what the user picked of `repo`'s environment on this Mac:
+/// Conductor's variables by name, .env files by their path in the checkout,
+/// and its scripts. Only what a scan offered is read.
+#[tauri::command]
+pub async fn import_environment(
+    repo: String,
+    vars: Vec<String>,
+    files: Vec<String>,
+    scripts: bool,
+) -> Result<serde_json::Value, String> {
+    if !valid_repo(&repo) {
+        return Err("invalid-repo".into());
+    }
+    if vars.len() > 500 || files.len() > 100 {
+        return Err("too-many".into());
+    }
+    if let Some(bad) = vars.iter().find(|v| !valid_env_name(v)) {
+        return Err(format!("invalid-variable: {bad}"));
+    }
+    if let Some(bad) = files.iter().find(|f| !valid_checkout_path(f)) {
+        return Err(format!("invalid-file: {bad}"));
+    }
+    let mut args = vec!["env".into(), "--repo".into(), repo];
+    if !vars.is_empty() {
+        args.extend(["--vars".into(), vars.join(",")]);
+    }
+    if !files.is_empty() {
+        args.extend(["--files".into(), files.join(",")]);
+    }
+    if scripts {
+        args.push("--scripts".into());
+    }
+    run_import(args, None).await
+}
+
+/// A GitHub repository, "owner/name".
+fn valid_repo(repo: &str) -> bool {
+    static REPO: OnceLock<Regex> = OnceLock::new();
+    REPO.get_or_init(|| Regex::new(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9._-]+$").unwrap())
+        .is_match(repo)
+}
+
+/// A variable name as a scan gives one; no comma, which would split it.
+fn valid_env_name(name: &str) -> bool {
+    static NAME: OnceLock<Regex> = OnceLock::new();
+    NAME.get_or_init(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$").unwrap()).is_match(name)
+}
+
+/// A relative path that stays in the checkout, with no comma.
+fn valid_checkout_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 512
+        && !path.starts_with('/')
+        && !path.contains(',')
+        && !path.contains('\0')
+        && path.split('/').all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
 /// Run `runtime-agent import <args>` off the async runtime, feeding `stdin`.
 async fn run_import(args: Vec<String>, stdin: Option<Vec<u8>>) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -176,6 +234,17 @@ mod tests {
         assert!(valid_key("codex:0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000"));
         for bad in ["claude:../../etc/passwd", "claude:", "gpt:abc", "claude:a b", "--key", "claude:-x"] {
             assert!(!valid_key(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn environment_picks_stay_names_and_checkout_paths() {
+        assert!(valid_repo("ada/app.js"));
+        assert!(!valid_repo("ada/app;rm") && !valid_repo("../x") && !valid_repo("-x/y"));
+        assert!(valid_env_name("DATABASE_URL") && !valid_env_name("A,B") && !valid_env_name("1X"));
+        assert!(valid_checkout_path("apps/backend/.env"));
+        for bad in ["/etc/passwd", "../.ssh/id_rsa", "a/../../b", "a,b", "./x", "a//b", ""] {
+            assert!(!valid_checkout_path(bad), "{bad}");
         }
     }
 

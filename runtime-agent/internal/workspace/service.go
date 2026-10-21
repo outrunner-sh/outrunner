@@ -264,7 +264,7 @@ var githubCredentialEnv = []string{
 // a browser in terminal output.
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
-	return append(secrets, s.authFiles().tokens()...)
+	return append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
 }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
@@ -498,6 +498,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.startSetup(workspaceID, worktree, env)
 	s.forgetStagedPrompt(workspaceID) // the old composer went with the old session
 	// Record from launch (before the readiness wait) so the cast captures Claude's
 	// startup output too.
@@ -744,6 +745,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
 	}
+	s.startSetup(workspaceID, worktree, env)
 	s.continueRecorder(ctx, workspaceID)
 	if err := s.waitReady(ctx, a, name); err != nil {
 		return "", a.exited(worktree)
@@ -1328,6 +1330,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	_ = os.Remove(s.factsPath(workspaceID))
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
+	s.removeEnvironment(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))
 	s.summariesMu.Lock()
