@@ -11,6 +11,9 @@ import { mapWithConcurrency } from "@/lib/concurrency";
 import type {
   ImportCapture,
   ImportCommitRequest,
+  ImportConfigCapture,
+  ImportConfigCommitRequest,
+  ImportEnvCapture,
   ImportPlanItem,
   ImportPlanRequest,
   ImportSkip,
@@ -141,4 +144,69 @@ const SKIP_TEXT: Record<SkipReason, string> = {
 /** What to tell the user of a skip: why, and the detail when there is one. */
 export function skipText(skip: ImportSkip): string {
   return skip.detail ? `${SKIP_TEXT[skip.reason]} (${skip.detail})` : SKIP_TEXT[skip.reason];
+}
+
+/** What of a repository's environment the user picked. */
+export type EnvironmentPick = { repo: string; vars: string[]; files: string[]; scripts: boolean };
+
+export type EnvironmentDeps = {
+  /** The desktop app's read of the picked values. */
+  read(repo: string, pick: Omit<EnvironmentPick, "repo">): Promise<ImportEnvCapture>;
+  save(capture: ImportEnvCapture): Promise<{ refused: string[] }>;
+};
+
+/** One repository's environment imported, or why not. */
+export type EnvironmentResult = { repo: string; ok: boolean; message?: string };
+
+/** Import each picked repository's environment, one after another. */
+export async function importEnvironments(picks: EnvironmentPick[], deps: EnvironmentDeps): Promise<EnvironmentResult[]> {
+  const results: EnvironmentResult[] = [];
+  for (const { repo, ...pick } of picks) {
+    if (pick.vars.length === 0 && pick.files.length === 0 && !pick.scripts) continue;
+    try {
+      const { refused } = await deps.save(await deps.read(repo, pick));
+      results.push({
+        repo,
+        ok: true,
+        ...(refused.length > 0 && { message: `Left out ${refused.join(", ")}: cloud sessions set those themselves.` }),
+      });
+    } catch (error) {
+      results.push({ repo, ok: false, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
+}
+
+/** What of the user's own agent setup they picked. */
+export type ConfigPick = { items: string[]; mcp: string[]; plugins: boolean };
+
+export type ConfigDeps = {
+  /** Where to upload the archive. */
+  plan(): Promise<{ path: string; url: string }>;
+  /** The desktop app's archive and upload, and read of the MCP servers. */
+  capture(pick: ConfigPick & { upload: string | null }): Promise<ImportConfigCapture | { skip: ImportSkip }>;
+  commit(request: ImportConfigCommitRequest): Promise<unknown>;
+};
+
+/** Import the user's picked setup; it replaces any imported before. */
+export async function importAgentConfig(pick: ConfigPick, deps: ConfigDeps): Promise<{ ok: boolean; message?: string }> {
+  if (pick.items.length === 0 && pick.mcp.length === 0 && !pick.plugins) return { ok: true };
+  try {
+    const upload = pick.items.length > 0 ? await deps.plan() : null;
+    const captured = await deps.capture({ ...pick, upload: upload?.url ?? null });
+    if ("skip" in captured) return { ok: false, message: skipText(captured.skip) };
+    if (upload && !captured.archive) throw new Error("The app made no archive of your setup. Update the app, then try again.");
+    await deps.commit({
+      ...(upload &&
+        captured.archive && {
+          archive: { path: upload.path, sha256: captured.archive.sha256, size: captured.archive.size },
+        }),
+      items: captured.items,
+      mcpServers: captured.mcpServers as ImportConfigCommitRequest["mcpServers"],
+      settings: captured.settings,
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
 }

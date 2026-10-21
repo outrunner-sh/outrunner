@@ -71,3 +71,75 @@ test("each picked session is planned, captured, uploaded and committed, or says 
   const first = commits[0] as ImportCommitRequest;
   assert.deepEqual([first.branch, first.bundleRef, first.artifacts.patch.encoding], ["mine", "feature", "gzip"]);
 });
+
+test("each repository's picked environment is read on the Mac and kept, one failing alone", async () => {
+  const { importEnvironments } = await import("@/lib/imports/client");
+  const saved: string[] = [];
+  const results = await importEnvironments(
+    [
+      { repo: "ada/app", vars: ["APP_TOKEN", "PATH"], files: ["api/.env"], scripts: true },
+      { repo: "ada/none", vars: [], files: [], scripts: false },
+      { repo: "ada/gone", vars: ["X"], files: [], scripts: false },
+    ],
+    {
+      read: async (repo, pick) => {
+        if (repo === "ada/gone") throw new Error("nothing of ada/gone's environment is on this Mac any more");
+        return { repo, env: Object.fromEntries(pick.vars.map((v) => [v, "x"])), files: { "api/.env": "A=1\n" } };
+      },
+      save: async (capture) => {
+        saved.push(capture.repo);
+        return { refused: capture.env.PATH ? ["PATH"] : [] };
+      },
+    },
+  );
+  assert.deepEqual(saved, ["ada/app"]);
+  assert.deepEqual(results, [
+    { repo: "ada/app", ok: true, message: "Left out PATH: cloud sessions set those themselves." },
+    { repo: "ada/gone", ok: false, message: "nothing of ada/gone's environment is on this Mac any more" },
+  ]);
+});
+
+test("the picked setup is archived to the planned place and committed with it", async () => {
+  const { importAgentConfig } = await import("@/lib/imports/client");
+  const sha = `sha256:${"5".repeat(64)}`;
+  const commits: unknown[] = [];
+  const result = await importAgentConfig(
+    { items: ["claude-md"], mcp: ["tracker"], plugins: false },
+    {
+      plan: async () => ({ path: "archives/u/agent-config/a.tar.gz", url: "https://upload" }),
+      capture: async (pick) => {
+        assert.equal(pick.upload, "https://upload");
+        return {
+          archive: { name: "agent-config.tar.gz", path: "/tmp/x", sha256: sha, size: 7, encoding: "gzip" },
+          items: pick.items,
+          mcpServers: { tracker: { url: "https://mcp" } },
+          settings: {},
+        };
+      },
+      commit: async (req) => void commits.push(req),
+    },
+  );
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(commits, [
+    {
+      archive: { path: "archives/u/agent-config/a.tar.gz", sha256: sha, size: 7 },
+      items: ["claude-md"],
+      mcpServers: { tracker: { url: "https://mcp" } },
+      settings: {},
+    },
+  ]);
+  // MCP servers alone need no archive, and nothing picked does nothing.
+  let planned = 0;
+  const mcpOnly = await importAgentConfig(
+    { items: [], mcp: ["tracker"], plugins: false },
+    {
+      plan: async () => {
+        planned++;
+        return { path: "", url: "" };
+      },
+      capture: async () => ({ items: [], mcpServers: { tracker: {} }, settings: {} }),
+      commit: async () => {},
+    },
+  );
+  assert.deepEqual([mcpOnly, planned], [{ ok: true }, 0]);
+});
