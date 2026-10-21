@@ -13,6 +13,7 @@ import {
 import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
 import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 import { AGENT_PORT, type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
+import { ghInstallCommand } from "@/lib/runtime/github-cli";
 import type { GitExec } from "@/lib/runtime/git";
 import {
   asUserArgs,
@@ -64,6 +65,7 @@ export const MODAL_IMAGE_SETUP = [
   `RUN useradd -m -s /bin/bash ${BOX_USER}`,
   `RUN su - ${BOX_USER} -c 'curl -fsSL https://claude.ai/install.sh | bash'`,
   `RUN npm install -g ${CODEX_PACKAGE}`,
+  `RUN ${ghInstallCommand({ sudo: false })}`,
 ];
 
 /** A Modal token: Settings → API Tokens in Modal. */

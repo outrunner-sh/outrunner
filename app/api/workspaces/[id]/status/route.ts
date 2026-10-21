@@ -21,5 +21,9 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
-  return NextResponse.json({ status: workspace.status });
+  return NextResponse.json({
+    status: workspace.status,
+    phase: workspace.phase,
+    computerId: workspace.computerId,
+  });
 }

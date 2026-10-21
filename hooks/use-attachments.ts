@@ -76,7 +76,7 @@ export function useAttachments() {
           setItem(key, { status: "error", error: `Larger than ${mb} MB` });
           continue;
         }
-        void upload(file).then(
+        void uploadAttachment(file).then(
           (attachment) => {
             const entry = staged.current.get(key);
             if (!entry) {
@@ -132,7 +132,7 @@ export function useAttachments() {
 
 /** Upload one file. A failure reads as a sentence, never a parser error: the
  *  server (or a proxy in front of it) may answer with an HTML page. */
-async function upload(file: File): Promise<{ id: string; filename: string }> {
+export async function uploadAttachment(file: File): Promise<{ id: string; filename: string }> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch("/api/attachments", { method: "POST", body: form });

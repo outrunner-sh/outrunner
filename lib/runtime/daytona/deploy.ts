@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 import { codexInstallCommand } from "@/lib/runtime/codex-cli";
+import { ghInstallCommand } from "@/lib/runtime/github-cli";
 import type { ProvisionStage, StageTiming, ProvisionTimings } from "@/lib/runtime/types";
 
 /** The single port the agent listens on; the preview URL is derived from it. */
@@ -461,7 +462,9 @@ export function claudeInstallScript(): string {
     "{ command -v tmux >/dev/null && command -v jq >/dev/null || { " +
     "sudo apt-get update -q && " +
     "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tmux git-lfs ripgrep jq; }; } && " +
-    codexInstallCommand({ sudo: true })
+    codexInstallCommand({ sudo: true }) +
+    " && " +
+    ghInstallCommand({ sudo: true })
   );
 }
 
