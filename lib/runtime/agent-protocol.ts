@@ -67,6 +67,30 @@ export type PtyServerMessage = z.infer<typeof PtyServerMessage>;
 export const AgentName = z.enum(["claude", "codex"]);
 export type AgentName = z.infer<typeof AgentName>;
 
+/** POST /workspaces/{id}/environment: a session's project variables, sourced
+ *  by its launch; its checkout's .env files, under $CONDUCTOR_ROOT_PATH (and
+ *  in the worktree when there's no setup script); and the setup script its
+ *  next launch runs once. */
+export const SetEnvironmentRequest = z
+  .object({
+    env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string()),
+    /** Files the checkout kept out of git (its .env files), by path in it. */
+    files: z
+      .record(
+        z.string().refine((p) => !p.startsWith("/") && !p.split("/").some((s) => s === ".." || s === "." || s === ""), {
+          message: "a path in the checkout",
+        }),
+        z.string(),
+      )
+      .optional(),
+    setup: z.string().max(64 * 1024).optional(),
+  })
+  .strict();
+export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
+
+/** The agent takes a session's environment (POST /workspaces/{id}/environment). */
+export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
+
 /** What an agent can do that an older one can't: `restore-imports` restores
  *  an imported session (compressed downloads, its branch renamed, its
  *  conversation moved to the worktree). */
@@ -434,6 +458,10 @@ export const PROTOCOL_SCHEMAS = {
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  SetEnvironmentRequest,
+  /** The variables a session's environment may not set; lib/imports/
+   *  environment.ts and the agent each hold the list, checked against this. */
+  ReservedEnv: z.array(z.string()),
 } as const;
 
 export type ProtocolSchemaName = keyof typeof PROTOCOL_SCHEMAS;

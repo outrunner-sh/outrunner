@@ -213,6 +213,21 @@ type Health struct {
 	Features []string `json:"features,omitempty"`
 }
 
+// SetEnvironmentRequest gives a session its project's environment: the
+// variables its launch exports and the setup script its next launch runs
+// once in its worktree. Empty removes them. (POST /workspaces/{id}/environment)
+type SetEnvironmentRequest struct {
+	Env map[string]string `json:"env"`
+	// Files are files a checkout keeps out of git (its .env files), by path
+	// in it: the setup script finds them under $CONDUCTOR_ROOT_PATH, and a
+	// session with no setup script gets them in its worktree.
+	Files map[string]string `json:"files,omitempty"`
+	Setup string            `json:"setup,omitempty"`
+}
+
+// FeatureEnvironment is POST /workspaces/{id}/environment.
+const FeatureEnvironment = "session-environment"
+
 // FeatureImports is restoring an imported session: compressed downloads, a
 // bundle's branch under another name, and the conversation's folder moved.
 const FeatureImports = "restore-imports"

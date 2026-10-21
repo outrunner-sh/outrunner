@@ -92,6 +92,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
+	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -115,7 +116,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment},
 	})
 }
 
@@ -468,6 +469,22 @@ func (s *Server) setAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, req.Kind, err)
+}
+
+func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.SetEnvironmentRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
+	if errors.Is(err, workspace.ErrInvalidEnvironment) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
+	respond(w, "set", err)
 }
 
 // validAuth checks a session credential as set or restored: a known kind, and

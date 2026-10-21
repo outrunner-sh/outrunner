@@ -69,6 +69,10 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &ArchiveWorkspaceRequest{})
 	case "RestoreWorkspaceRequest":
 		return json.Unmarshal(raw, &RestoreWorkspaceRequest{})
+	case "SetEnvironmentRequest":
+		return json.Unmarshal(raw, &SetEnvironmentRequest{})
+	case "ReservedEnv":
+		return json.Unmarshal(raw, &[]string{})
 	case "ErrorResponse":
 		return json.Unmarshal(raw, &ErrorResponse{})
 	case "SessionUrls":
