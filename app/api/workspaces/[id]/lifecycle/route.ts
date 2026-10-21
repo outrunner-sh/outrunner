@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
+import { releaseProjectBox } from "@/lib/billing/release-box.deps";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
 import { optionalGithubToken } from "@/lib/github/token";
 import {
@@ -230,6 +231,8 @@ async function archiveDaytonaWorkspace(
     from: "archiving",
     patch: { status: "archived", errorMessage: null },
   });
+  // The last session off its box frees it: paused now, not when idle.
+  if (completed) after(() => releaseProjectBox(provider, workspace.projectId));
   return completed
     ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
     : lifecycleReconciliationRequired("archive");
@@ -534,10 +537,13 @@ async function destroyDaytonaWorkspace(
   provider: ComputerRuntimeProvider,
   owner: Owner,
 ) {
-  return endWorkspace(workspace, async () => {
+  const response = await endWorkspace(workspace, async () => {
     const { agent, identity } = await daytonaAgent(workspace, provider, owner);
     await agent.destroyWorkspace(identity);
   });
+  // The last session off its box frees it: paused now, not when idle.
+  if (response.ok) after(() => releaseProjectBox(provider, workspace.projectId));
+  return response;
 }
 
 /**
