@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // Exit codes of `runtime-agent import`. A skipped session is not a failure of
@@ -29,7 +30,7 @@ var keyPattern = regexp.MustCompile(`^(claude|codex):[A-Za-z0-9][A-Za-z0-9_-]{0,
 // on stdout.
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: runtime-agent import scan | capture --key <key> --out <dir>")
+		fmt.Fprintln(stderr, "usage: runtime-agent import scan | capture --key <key> --out <dir> [--upload] | env --repo <owner/name> [--vars a,b] [--files p,q] [--scripts]")
 		return ExitUsage
 	}
 	home, err := os.UserHomeDir()
@@ -85,9 +86,40 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return ExitFailed
 		}
 		return printJSON(stdout, stderr, capture)
+	case "env":
+		flags := flag.NewFlagSet("env", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		repo := flags.String("repo", "", "the repository, owner/name, as a scan gave it")
+		vars := flags.String("vars", "", "the variables to read, comma-separated")
+		files := flags.String("files", "", "the files to read, comma-separated paths from a scan")
+		scripts := flags.Bool("scripts", false, "include the repository's scripts")
+		if flags.Parse(args[1:]) != nil {
+			return ExitUsage
+		}
+		if parseGitHubRemote("https://github.com/"+*repo) == "" {
+			fmt.Fprintln(stderr, "env: --repo must be owner/name")
+			return ExitUsage
+		}
+		capture, err := CaptureEnv(ctx, opts, *repo, EnvPick{Vars: list(*vars), Files: list(*files), Scripts: *scripts})
+		if err != nil {
+			fmt.Fprintln(stderr, "env:", err)
+			return ExitFailed
+		}
+		return printJSON(stdout, stderr, capture)
 	}
 	fmt.Fprintf(stderr, "unknown import command %q\n", args[0])
 	return ExitUsage
+}
+
+// list splits a comma-separated flag, dropping empties.
+func list(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 // emptyDir accepts an absolute path to an existing, empty folder.

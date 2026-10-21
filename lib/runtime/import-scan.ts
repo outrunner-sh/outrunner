@@ -74,6 +74,33 @@ export const ScannedSession = z
   .strict();
 export type ScannedSession = z.infer<typeof ScannedSession>;
 
+const EnvName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]*$/);
+/** A path in a checkout: relative, and never out of it. */
+const CheckoutPath = z
+  .string()
+  .min(1)
+  .max(512)
+  .refine((p) => !p.startsWith("/") && !p.split("/").some((part) => part === ".." || part === "." || part === ""), {
+    message: "a path in the checkout",
+  });
+
+export const ProjectScripts = z
+  .object({ setup: z.string().optional(), run: z.string().optional(), archive: z.string().optional() })
+  .strict();
+export type ProjectScripts = z.infer<typeof ProjectScripts>;
+
+/** What a repository's cloud sessions could take from the Mac: names only. */
+export const ScannedProjectEnv = z
+  .object({
+    repo: RepoFullName,
+    root: z.string().optional(),
+    vars: z.array(z.object({ name: EnvName, shared: z.boolean() }).strict()),
+    files: z.array(z.object({ path: CheckoutPath, names: z.array(EnvName), bytes: z.number().int() }).strict()),
+    scripts: ProjectScripts.optional(),
+  })
+  .strict();
+export type ScannedProjectEnv = z.infer<typeof ScannedProjectEnv>;
+
 export const ImportScan = z
   .object({
     version: z.literal(1),
@@ -82,6 +109,7 @@ export const ImportScan = z
       z.object({ id: ImportSource, found: z.boolean(), skip: ImportSkip.optional() }).strict(),
     ),
     sessions: z.array(ScannedSession),
+    projects: z.array(ScannedProjectEnv),
   })
   .strict();
 export type ImportScan = z.infer<typeof ImportScan>;
@@ -112,6 +140,17 @@ export const ImportCapture = z
 export type ImportCapture = z.infer<typeof ImportCapture>;
 
 export const ImportCaptureSkip = z.object({ skip: ImportSkip }).strict();
+
+/** The values of what the user picked of a repository's environment. */
+export const ImportEnvCapture = z
+  .object({
+    repo: RepoFullName,
+    env: z.record(EnvName, z.string()),
+    files: z.record(CheckoutPath, z.string()),
+    scripts: ProjectScripts.optional(),
+  })
+  .strict();
+export type ImportEnvCapture = z.infer<typeof ImportEnvCapture>;
 
 // ---------------------------------------------------------------------------
 // The import routes.
@@ -202,3 +241,8 @@ export const ImportCommitRequest = z
   .strict()
   .refine((v) => v.key === `${v.agent}:${v.sessionId}`, { message: "key must be <agent>:<sessionId>", path: ["key"] });
 export type ImportCommitRequest = z.infer<typeof ImportCommitRequest>;
+
+/** POST /api/imports/environment: a repository's picked environment, values
+ *  and all, to keep sealed for its cloud sessions. */
+export const ImportEnvironmentRequest = ImportEnvCapture;
+export type ImportEnvironmentRequest = ImportEnvCapture;

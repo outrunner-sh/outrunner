@@ -25,6 +25,7 @@ func TestFixturesRoundTrip(t *testing.T) {
 		"Scan":        func() any { return new(Scan) },
 		"Capture":     func() any { return new(Capture) },
 		"CaptureSkip": func() any { return new(map[string]Skip) },
+		"EnvCapture":  func() any { return new(EnvCapture) },
 	}
 	for name, examples := range groups {
 		newValue, ok := decoders[name]

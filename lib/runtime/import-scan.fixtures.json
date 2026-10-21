@@ -4,13 +4,25 @@
       "version": 1,
       "scannedAt": "2026-10-21T12:00:00Z",
       "sources": [
-        { "id": "conductor", "found": true },
-        { "id": "claude-cli", "found": true },
-        { "id": "codex-cli", "found": false },
+        {
+          "id": "conductor",
+          "found": true
+        },
+        {
+          "id": "claude-cli",
+          "found": true
+        },
+        {
+          "id": "codex-cli",
+          "found": false
+        },
         {
           "id": "conductor",
           "found": true,
-          "skip": { "reason": "unknown-conductor-schema", "detail": "this Conductor has no sessions.claude_session_id" }
+          "skip": {
+            "reason": "unknown-conductor-schema",
+            "detail": "this Conductor has no sessions.claude_session_id"
+          }
         }
       ],
       "sessions": [
@@ -50,7 +62,44 @@
           "transcriptBytes": 5120,
           "startedAt": "2026-10-20T09:00:00Z",
           "updatedAt": "2026-10-20T09:05:00Z",
-          "skip": { "reason": "no-github-remote", "detail": "/Users/ada/scratch is not a git repository" }
+          "skip": {
+            "reason": "no-github-remote",
+            "detail": "/Users/ada/scratch is not a git repository"
+          }
+        }
+      ],
+      "projects": [
+        {
+          "repo": "ada/millerp",
+          "root": "/Users/ada/Downloads/millerp",
+          "vars": [
+            {
+              "name": "APP_TOKEN",
+              "shared": false
+            },
+            {
+              "name": "OPENAI_API_KEY",
+              "shared": true
+            }
+          ],
+          "files": [
+            {
+              "path": "apps/backend/.env",
+              "names": [
+                "DATABASE_URL",
+                "JWT_SECRET"
+              ],
+              "bytes": 412
+            }
+          ],
+          "scripts": {
+            "setup": "bun install\nln -sf $CONDUCTOR_ROOT_PATH/apps/backend/.env apps/backend/.env"
+          }
+        },
+        {
+          "repo": "ada/scratch",
+          "vars": [],
+          "files": []
         }
       ]
     }
@@ -101,6 +150,30 @@
     }
   ],
   "CaptureSkip": [
-    { "skip": { "reason": "too-large", "detail": "the branch's unpushed history is over 1 GB" } }
+    {
+      "skip": {
+        "reason": "too-large",
+        "detail": "the branch's unpushed history is over 1 GB"
+      }
+    }
+  ],
+  "EnvCapture": [
+    {
+      "repo": "ada/millerp",
+      "env": {
+        "APP_TOKEN": "tok"
+      },
+      "files": {
+        "apps/backend/.env": "DATABASE_URL=postgres://u:p@db/app\n"
+      },
+      "scripts": {
+        "setup": "bun install"
+      }
+    },
+    {
+      "repo": "ada/scratch",
+      "env": {},
+      "files": {}
+    }
   ]
 }

@@ -188,18 +188,9 @@ func conductorSessions(ctx context.Context, opts Options, rollouts map[string]st
 // readConductor reads Conductor's sessions, after checking it has the columns
 // they are read from.
 func readConductor(ctx context.Context, db string) ([]conductorRow, *Skip) {
-	present := map[string]bool{}
-	var columns []struct {
-		Table  string `json:"tbl"`
-		Column string `json:"col"`
-	}
-	err := sqliteJSON(ctx, db, `SELECT m.name AS tbl, p.name AS col FROM sqlite_master m
-		JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND m.name IN ('repos', 'workspaces', 'sessions')`, &columns)
+	present, err := conductorColumns(ctx, db)
 	if err != nil {
 		return nil, &Skip{Reason: SkipSourceUnreadable, Detail: err.Error()}
-	}
-	for _, c := range columns {
-		present[c.Table+"."+c.Column] = true
 	}
 	var missing []string
 	col := func(table, alias, name string) string {
@@ -238,6 +229,25 @@ func readConductor(ctx context.Context, db string) ([]conductorRow, *Skip) {
 		return nil, &Skip{Reason: SkipSourceUnreadable, Detail: err.Error()}
 	}
 	return rows, nil
+}
+
+// conductorColumns are the "table.column"s Conductor's database has, of the
+// tables an import reads.
+func conductorColumns(ctx context.Context, db string) (map[string]bool, error) {
+	var columns []struct {
+		Table  string `json:"tbl"`
+		Column string `json:"col"`
+	}
+	err := sqliteJSON(ctx, db, `SELECT m.name AS tbl, p.name AS col FROM sqlite_master m
+		JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND m.name IN ('repos', 'workspaces', 'sessions', 'env_vars')`, &columns)
+	if err != nil {
+		return nil, err
+	}
+	present := map[string]bool{}
+	for _, c := range columns {
+		present[c.Table+"."+c.Column] = true
+	}
+	return present, nil
 }
 
 // sqliteJSON runs a read-only query on a database through the sqlite3 CLI
