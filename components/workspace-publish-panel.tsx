@@ -4,6 +4,7 @@ import { ExternalLink, GitPullRequest } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
@@ -32,6 +33,7 @@ export function WorkspacePublishPanel({
   const [title, setTitle] = useState(defaultTitle ?? branch);
   const [body, setBody] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [reconnect, setReconnect] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [created, setCreated] = useState<WorkspacePullRequest | null>(pullRequest);
 
@@ -58,6 +60,7 @@ export function WorkspacePublishPanel({
     if (publishing || !active) return;
     setPublishing(true);
     setMessage(null);
+    setReconnect(false);
     void (async () => {
       try {
         const response = await fetch(`/api/workspaces/${workspaceId}/publish`, {
@@ -68,9 +71,11 @@ export function WorkspacePublishPanel({
         const result = (await response.json().catch(() => ({}))) as {
           pullRequest?: WorkspacePullRequest;
           error?: string;
+          reconnect?: boolean;
         };
         if (!response.ok || !result.pullRequest) {
           setMessage(result.error ?? "Could not publish this workspace. Please try again.");
+          setReconnect(result.reconnect === true);
           return;
         }
         setCreated(result.pullRequest);
@@ -130,6 +135,7 @@ export function WorkspacePublishPanel({
         {message && (
           <p aria-live="polite" className="text-destructive text-xs">
             {message}
+            {reconnect && <GitHubReconnectLink />}
           </p>
         )}
       </div>

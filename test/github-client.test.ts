@@ -4,9 +4,12 @@ import { afterEach, beforeEach, test } from "node:test";
 import {
   findOrCreatePullRequest,
   getGitHubRepository,
+  GitHubReconnectError,
   GitHubSyncError,
   listGitHubRepositories,
+  MissingGithubTokenError,
 } from "@/lib/github/client";
+import { githubErrorResponse } from "@/lib/github/http";
 
 const realFetch = globalThis.fetch;
 
@@ -188,15 +191,45 @@ test("listGitHubRepositories stops at 100 pages without failing", async () => {
   assert.equal(list.complete, false);
 });
 
-test("listGitHubRepositories fails on a rejected token with a safe message", async () => {
-  setFetchByUrl(() => new Response('{"message":"Bad credentials"}', { status: 401 }));
+/** What `listGitHubRepositories` throws when GitHub answers `status`. */
+async function listingError(status: number): Promise<unknown> {
+  setFetchByUrl(() => new Response('{"message":"Bad credentials"}', { status }));
+  return listGitHubRepositories("t").then(
+    () => assert.fail("expected the listing to fail"),
+    (error: unknown) => error,
+  );
+}
 
-  await assert.rejects(listGitHubRepositories("t"), (error: unknown) => {
-    assert.ok(error instanceof GitHubSyncError);
-    assert.equal(error.status, 401);
-    assert.equal(error.message, "GitHub could not authorize the configured token.");
-    return true;
+test("a 401 means the token is dead: the route asks the user to reconnect", async () => {
+  const error = await listingError(401);
+  assert.ok(error instanceof GitHubReconnectError);
+  assert.equal(error.status, 401);
+
+  const response = githubErrorResponse(error, "fallback");
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), {
+    error: "Your GitHub connection has expired. Sign out and back in to reconnect.",
+    reconnect: true,
   });
+});
+
+test("a 403 (rate limit, no access) is not a reconnect: signing in again would not fix it", async () => {
+  const error = await listingError(403);
+  assert.ok(error instanceof GitHubSyncError);
+  assert.ok(!(error instanceof GitHubReconnectError));
+
+  const body = await githubErrorResponse(error, "fallback").json();
+  assert.equal(body.reconnect, undefined);
+});
+
+test("no stored token also asks the user to reconnect; anything else is the fallback", async () => {
+  const missing = githubErrorResponse(new MissingGithubTokenError(), "fallback");
+  assert.equal(missing.status, 409);
+  assert.equal((await missing.json()).reconnect, true);
+
+  const other = githubErrorResponse(new Error("db down"), "fallback");
+  assert.equal(other.status, 500);
+  assert.deepEqual(await other.json(), { error: "fallback" });
 });
 
 test("getGitHubRepository: null for what the token can't see, an error for a rate limit", async () => {

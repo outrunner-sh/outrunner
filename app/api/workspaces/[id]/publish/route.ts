@@ -10,9 +10,9 @@ import {
 } from "@/lib/db/repositories";
 import {
   findOrCreatePullRequest,
-  GitHubSyncError,
   verifyTokenOwner,
 } from "@/lib/github/client";
+import { githubErrorResponse } from "@/lib/github/http";
 import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -69,6 +69,7 @@ export async function POST(request: Request, context: RouteContext) {
       {
         error:
           "Connect your GitHub account to publish: sign out and back in to grant repository access.",
+        reconnect: true,
       },
       { status: 409 },
     );
@@ -97,15 +98,7 @@ export async function POST(request: Request, context: RouteContext) {
     await verifyTokenOwner(githubToken, owner.githubLogin);
   } catch (error) {
     console.error(`Workspace ${id} publish token check failed`, error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof GitHubSyncError
-            ? error.message
-            : "GitHub could not authorize the configured token.",
-      },
-      { status: 502 },
-    );
+    return githubErrorResponse(error, "Could not verify your GitHub connection. Please try again.");
   }
 
   try {
@@ -187,15 +180,7 @@ export async function POST(request: Request, context: RouteContext) {
     });
   } catch (error) {
     console.error(`Workspace ${id} pull request failed`, error);
-    return NextResponse.json(
-      {
-        error:
-          error instanceof GitHubSyncError
-            ? error.message
-            : "Could not open a pull request. Please try again.",
-      },
-      { status: 502 },
-    );
+    return githubErrorResponse(error, "Could not open a pull request. Please try again.");
   }
 
   try {
