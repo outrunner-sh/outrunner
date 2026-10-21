@@ -144,10 +144,9 @@ test("the picked setup is archived to the planned place and committed with it", 
   assert.deepEqual([mcpOnly, planned], [{ ok: true }, 0]);
 });
 
-test("a pick a rescan no longer offers is not imported, and a skipped one never is", async () => {
-  const { picksInScan } = await import("@/lib/imports/client");
+test("a setup pick a rescan no longer offers is not imported, and a skipped one never is", async () => {
+  const { configInScan } = await import("@/lib/imports/client");
   const scan = {
-    projects: [{ repo: "ada/app", vars: [], files: [] }],
     config: {
       items: [
         { id: "claude-md", kind: "claude-md" as const, name: "CLAUDE.md", path: "", bytes: 0 },
@@ -160,23 +159,12 @@ test("a pick a rescan no longer offers is not imported, and a skipped one never 
       plugins: [],
     },
   };
-  const picks = {
-    "ada/app": { repo: "ada/app", vars: ["APP_TOKEN"], files: [], scripts: false },
-    // The last scan had it; this one doesn't.
-    "ada/gone": { repo: "ada/gone", vars: ["GONE"], files: ["api/.env"], scripts: true },
-  };
   const config = { items: ["claude-md", "skill:huge", "skill:vanished"], mcp: ["tracker", "onlyhere"], plugins: true };
 
-  assert.deepEqual(picksInScan(picks, config, scan), {
-    envs: [{ repo: "ada/app", vars: ["APP_TOKEN"], files: [], scripts: false }],
-    // No plugins in this scan, so a plugins pick from an earlier one is dropped.
-    config: { items: ["claude-md"], mcp: ["tracker"], plugins: false },
-  });
+  // No plugins in this scan, so a plugins pick from an earlier one is dropped.
+  assert.deepEqual(configInScan(config, scan), { items: ["claude-md"], mcp: ["tracker"], plugins: false });
   // Before the first scan lands nothing is picked, so Import stays disabled.
-  assert.deepEqual(picksInScan(picks, config, null), {
-    envs: [],
-    config: { items: [], mcp: [], plugins: false },
-  });
+  assert.deepEqual(configInScan(config, null), { items: [], mcp: [], plugins: false });
 });
 
 test("a workspace archived in Conductor is neither offered nor listed as blocked", async () => {
@@ -195,15 +183,25 @@ test("a workspace archived in Conductor is neither offered nor listed as blocked
   assert.deepEqual(blocked.map((s) => s.key), ["claude:gone"]);
 });
 
+test("a project's environment on the Mac is found by its repository, in any case", async () => {
+  const { environmentFor } = await import("@/lib/imports/client");
+  const app = { repo: "Ada/App", vars: [{ name: "APP_TOKEN", shared: false }], files: [] };
+  assert.equal(environmentFor([app], "ada/app"), app);
+  assert.equal(environmentFor([app], "ada/other"), null);
+  assert.equal(environmentFor([], "ada/app"), null);
+});
+
 test("secrets need agreement; scripts, items and plugins alone don't", async () => {
-  const { picksSecrets, hasEnvironmentPick, hasConfigPick } = await import("@/lib/imports/client");
+  const { environmentPickSecrets, configPickSecrets, hasEnvironmentPick, hasConfigPick } = await import(
+    "@/lib/imports/client"
+  );
   const none = { items: [], mcp: [], plugins: false };
   const scriptsOnly = { repo: "ada/app", vars: [], files: [], scripts: true };
-  assert.equal(picksSecrets([scriptsOnly], none), false);
-  assert.equal(picksSecrets([scriptsOnly], { ...none, items: ["claude-md"], plugins: true }), false);
-  assert.equal(picksSecrets([{ ...scriptsOnly, vars: ["APP_TOKEN"] }], none), true);
-  assert.equal(picksSecrets([{ ...scriptsOnly, files: ["api/.env"] }], none), true);
-  assert.equal(picksSecrets([], { ...none, mcp: ["tracker"] }), true);
+  assert.equal(environmentPickSecrets(scriptsOnly), false);
+  assert.equal(configPickSecrets({ ...none, items: ["claude-md"], plugins: true }), false);
+  assert.equal(environmentPickSecrets({ ...scriptsOnly, vars: ["APP_TOKEN"] }), true);
+  assert.equal(environmentPickSecrets({ ...scriptsOnly, files: ["api/.env"] }), true);
+  assert.equal(configPickSecrets({ ...none, mcp: ["tracker"] }), true);
   // Still something to import, though it needs no agreement.
   assert.equal(hasEnvironmentPick(scriptsOnly), true);
   assert.equal(hasEnvironmentPick({ ...scriptsOnly, scripts: false }), false);

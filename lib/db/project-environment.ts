@@ -48,6 +48,20 @@ export async function getProjectEnvironment(ownerId: string, projectId: string):
   };
 }
 
+/** Whether the owner has kept any environment for the project; false before
+ *  the migration that adds it. Reads no secrets. */
+export async function hasProjectEnvironment(ownerId: string, projectId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("project_environment")
+    .select("project_id")
+    .eq("owner_id", ownerId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+  if (error && probeStatus(error) === "missing") return false;
+  if (error) throw error;
+  return data !== null;
+}
+
 /** Add variables, files and scripts to a project's environment: a variable
  *  of the same name, a file at the same path, or a script given, replaces the
  *  one there. */
