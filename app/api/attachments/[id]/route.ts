@@ -4,8 +4,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { deleteAttachment } from "@/lib/db/attachments";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

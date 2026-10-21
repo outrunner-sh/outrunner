@@ -18,8 +18,6 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 
-export const dynamic = "force-dynamic";
-
 const MAX_TITLE = 256;
 const MAX_BODY = 8_000;
 type RouteContext = { params: Promise<{ id: string }> };

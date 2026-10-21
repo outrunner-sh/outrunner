@@ -8,8 +8,6 @@ import { toListing } from "@/lib/github/listing";
 import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 
-export const dynamic = "force-dynamic";
-
 /**
  * The repositories this user could connect, read live from GitHub.
  *

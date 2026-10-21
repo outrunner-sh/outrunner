@@ -9,8 +9,6 @@ import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
-export const dynamic = "force-dynamic";
-
 /** Repositories one request may connect by id; the picker sends one. */
 const MAX_SELECTION = 100;
 /** Lookups of selected repositories run at once. */

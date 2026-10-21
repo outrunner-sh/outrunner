@@ -3,8 +3,6 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getWorkspace } from "@/lib/db/repositories";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

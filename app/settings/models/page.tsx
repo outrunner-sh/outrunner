@@ -6,8 +6,6 @@ import { modelMenu } from "@/lib/db/credentials";
 import { getModelLoadout } from "@/lib/db/model-loadout";
 import { modelGroups } from "@/lib/runtime/session-models";
 
-export const dynamic = "force-dynamic";
-
 /** Settings → Default models: the models the chat picker shows first, and
  *  the one a new session starts on. */
 export default async function DefaultModels() {

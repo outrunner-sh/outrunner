@@ -3,8 +3,6 @@ import { redirect } from "next/navigation";
 import { SettingsNav } from "@/components/settings-nav";
 import { getOwnerSafe } from "@/lib/auth/owner";
 
-export const dynamic = "force-dynamic";
-
 /** Two-pane settings: a section nav on the left, the selected section on the
  *  right. Owner-gated like the rest of the control plane. */
 export default async function SettingsLayout({

@@ -22,8 +22,6 @@ import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/s
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer } from "@/lib/runtime/types";
 
-export const dynamic = "force-dynamic";
-
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
 export const maxDuration = 60;

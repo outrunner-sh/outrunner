@@ -5,8 +5,6 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { githubErrorResponse } from "@/lib/github/http";
 import { requireGithubToken } from "@/lib/github/token";
 
-export const dynamic = "force-dynamic";
-
 /**
  * The signed-in user's GitHub token, for the Mac app to clone a repository
  * they picked for a local session (NEE-55): only the page can hand it to the

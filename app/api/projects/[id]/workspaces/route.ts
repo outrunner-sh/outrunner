@@ -61,8 +61,6 @@ import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { providerSettingsHref } from "@/lib/settings-links";
 
-export const dynamic = "force-dynamic";
-
 // Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror, in
 // after() once the response has gone. maxDuration caps the per-request
 // wall-clock, after() included, on serverless hosts (a no-op on a long-running

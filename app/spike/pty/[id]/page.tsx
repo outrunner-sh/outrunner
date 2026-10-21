@@ -5,8 +5,6 @@ import { getWorkspace } from "@/lib/db/repositories";
 
 import { PtySpikeClient } from "./pty-spike-client";
 
-export const dynamic = "force-dynamic";
-
 /**
  * PHASE-1 spike route — proves the PTY transport end-to-end against a real
  * Daytona box. Not linked from any nav; not the Workspace Experience. Delete

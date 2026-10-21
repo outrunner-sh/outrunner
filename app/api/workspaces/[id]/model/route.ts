@@ -24,8 +24,6 @@ import {
   setModelRequest,
 } from "@/lib/runtime/session-models";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

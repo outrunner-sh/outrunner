@@ -13,8 +13,6 @@ import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 
-export const dynamic = "force-dynamic";
-
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**

@@ -6,8 +6,6 @@ import { planFor } from "@/lib/billing/entitlements";
 import { getSandboxSettings } from "@/lib/db/credentials";
 import { providerName } from "@/lib/env";
 
-export const dynamic = "force-dynamic";
-
 /** Settings → Sandbox: Outrunner's sandboxes, or the user's own Daytona or Modal. */
 export default async function SandboxSettings() {
   const owner = await getOwner();

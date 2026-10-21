@@ -6,8 +6,6 @@ import { getAgentAuthChoices, getProviderKeyStatuses, settleClaudeSlot } from "@
 import { getClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 import { parseProviderPlace } from "@/lib/settings-links";
 
-export const dynamic = "force-dynamic";
-
 /** Settings → Providers (BYOK): how each coding agent signs in, and the
  *  user's own keys for model providers, a tab each. */
 export default async function ProviderSettings({

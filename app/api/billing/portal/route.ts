@@ -7,8 +7,6 @@ import { checkoutDeps } from "@/lib/billing/stripe-deps";
 import { requireEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
-export const dynamic = "force-dynamic";
-
 /** Manage a plan: answers `{ url }`, Stripe's customer portal for the user,
  *  to change plan, cancel, update a card, or see invoices. */
 export async function POST(request: Request) {
