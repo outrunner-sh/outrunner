@@ -26,10 +26,11 @@
   --ring: oklch(0.708 0 0);
   --success: oklch(0.627 0.17 149.2);
   --warning: oklch(0.769 0.157 70.08);
+  --sidebar: oklch(0.985 0 0);
 }
 
 .dark {
-  --background: #0A0A0A;
+  --background: #060505;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -50,6 +51,7 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.696 0.17 162.48);
   --warning: oklch(0.769 0.157 70.08);
+  --sidebar: #0B0B0A;
 }
 
 @theme inline {
@@ -78,6 +80,7 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-sidebar: var(--sidebar);
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --font-display: var(--font-pixel), var(--font-geist-mono), ui-monospace, monospace;
@@ -108,8 +111,8 @@
    text on the black composer in light mode). The app is dark only — see the
    ThemeProvider in app/layout.tsx. */
 :root {
-  --studio-bg: #0A0A0A;
-  --studio-panel: #0A0A0A;
+  --studio-bg: #060505;
+  --studio-panel: #060505;
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
   --studio-selected: #232323;

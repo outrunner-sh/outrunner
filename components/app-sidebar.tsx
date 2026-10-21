@@ -124,7 +124,7 @@ export function AppSidebar({
   };
 
   return (
-    <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 px-3 pb-3 pt-5">
+    <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 bg-sidebar px-3 pb-3 pt-5">
       <div className="flex items-center justify-between px-2">
         <Link href="/" className="flex items-center gap-2 font-mono text-sm font-semibold text-foreground">
           <Terminal className="size-4" />

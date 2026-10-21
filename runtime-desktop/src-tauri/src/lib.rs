@@ -138,9 +138,9 @@ fn deliver_callback(app: &tauri::AppHandle, site: &str, query: &str) {
 /// and can route sign-in through the system browser.
 const INIT_JS: &str = "window.__RUNTIME_DESKTOP__ = true;";
 
-/// The app's background (globals.css `--background`, #0A0A0A), for the window
+/// The app's background (globals.css `--background`, #060505), for the window
 /// behind the page and its title bar.
-const APP_BACKGROUND: Color = Color(10, 10, 10, 255);
+const APP_BACKGROUND: Color = Color(6, 5, 5, 255);
 
 /// Reveal + focus the main window (from the tray, dock, or a second launch).
 fn show_main(app: &tauri::AppHandle) {
