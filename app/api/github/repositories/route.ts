@@ -5,6 +5,7 @@ import { listProjects } from "@/lib/db/repositories";
 import { listGitHubRepositories } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { toListing } from "@/lib/github/listing";
+import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 
 export const dynamic = "force-dynamic";
@@ -17,20 +18,24 @@ export const dynamic = "force-dynamic";
  * project row. Connecting is the separate, explicit act (POST /api/projects/sync
  * with the chosen ids).
  *
+ * A listing read in the last few seconds is reused (lib/github/repository-cache.ts);
+ * `?fresh=1` (the picker's Refresh) reads it anew.
+ *
  * `connected` lists the github_repo_ids already synced, so the picker can show
  * them as checked rather than offering to add them twice. `complete` and
  * `ssoPartialOrgIds` say whether GitHub may have left some out.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const owner = await getOwner();
   if (!owner) {
     return NextResponse.json({ error: "Sign in to browse repositories." }, { status: 401 });
   }
+  const fresh = new URL(request.url).searchParams.get("fresh") === "1";
 
   try {
     const token = await requireGithubToken(owner.id);
     const [list, projects] = await Promise.all([
-      listGitHubRepositories(token),
+      cachedRepositoryList(owner.id, () => listGitHubRepositories(token), { fresh }),
       listProjects(),
     ]);
 

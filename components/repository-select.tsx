@@ -71,9 +71,9 @@ export function RepositorySelect({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/github/repositories", {
-        cache: force ? "no-store" : "default",
-      });
+      // Refresh asks GitHub again; otherwise a listing from the last few
+      // seconds is fine (app/api/github/repositories).
+      const res = await fetch(force ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
       const data = (await res.json()) as Partial<Listing> & { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Could not load repositories.");
       setListing({ repositories: data.repositories ?? [], connected: data.connected ?? [] });

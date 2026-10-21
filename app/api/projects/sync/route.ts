@@ -5,6 +5,7 @@ import { mapWithConcurrency } from "@/lib/concurrency";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { getGitHubRepository, listGitHubRepositories, type GitHubRepository } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
+import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
@@ -75,7 +76,10 @@ export async function POST(request: Request) {
         );
       }
     } else {
-      const list = await listGitHubRepositories(token);
+      // A fresh listing, which the picker then reuses for its next few seconds.
+      const list = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
+        fresh: true,
+      });
       repositories = list.repositories;
       complete = list.complete;
     }
