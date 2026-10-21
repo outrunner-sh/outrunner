@@ -83,7 +83,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
   return (
     <div className="space-y-2">
-      {/* Minimal, like the rest of first run: a line, not a filled slab. */}
+      {/* Minimal, like the rest of first run: an amber line, no fill. */}
       <LoadingButton
         size="default"
         variant="outline"
@@ -91,7 +91,7 @@ export function SignInButton({ next = "/" }: { next?: string }) {
         labels={{ idle: "Continue with GitHub", pending: "Opening GitHub" }}
         icon={<GitHubMark />}
         onClick={() => void signIn()}
-        className="w-full"
+        className="w-full border-amber-500/50 bg-transparent shadow-none hover:border-amber-500 hover:bg-transparent dark:border-amber-500/50 dark:bg-transparent dark:hover:border-amber-500 dark:hover:bg-transparent"
       />
       {error && <p className="text-destructive text-xs">{error}</p>}
     </div>

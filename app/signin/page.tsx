@@ -45,7 +45,7 @@ export default async function SignInPage({
             <h1 className="text-sm text-muted-foreground">Run fleets of coding agents in the cloud.</h1>
           </div>
 
-          <div className="space-y-4 rounded-xl border border-border/60 p-5">
+          <div className="space-y-4">
             {message && (
               <p role="alert" className="rounded-md border border-destructive/40 px-3 py-2 text-xs text-destructive">
                 {message}
