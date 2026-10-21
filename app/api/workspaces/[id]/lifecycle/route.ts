@@ -31,6 +31,7 @@ import { defaultModel, type RecordedModel } from "@/lib/runtime/session-models";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
@@ -297,6 +298,10 @@ async function restoreDaytonaWorkspace(
     // — otherwise restore would fail instead of rebuilding on a fresh box (the
     // whole point of portable Restore). Mirrors the create flow.
     const currentComputer = await getRuntimeComputerByProject(project.id);
+    // The box that ended (paused while idle, or once its last session was
+    // archived), for a provider that brings it back on the disk it left, so
+    // the restore resumes it rather than leaving it behind for a new one.
+    let endedBox = endedBoxOf(currentComputer, provider.name);
     if (
       currentComputer?.status === "ready" &&
       currentComputer.daytonaSandboxId &&
@@ -306,6 +311,7 @@ async function restoreDaytonaWorkspace(
         currentComputer.id,
         currentComputer.daytonaSandboxId,
       );
+      endedBox = currentComputer.daytonaSandboxId;
     }
 
     // How the session's agent signs in, as the user picks now, and the model
@@ -324,6 +330,7 @@ async function restoreDaytonaWorkspace(
       sessionEnv,
       // The plan's box cap, enforced by the claim in the database.
       maxLiveComputers: gate.cap,
+      ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
     });
     const computer = ensured.computer;
     if (!computer.daytonaSandboxId) {
