@@ -32,6 +32,7 @@ import {
   type BoxIO,
   type ExecResult,
 } from "@/lib/runtime/daytona/deploy";
+import { GH_VERSION } from "@/lib/runtime/github-cli";
 
 /** A scripted BoxIO: exec returns queued results by matching a predicate. */
 function fakeBox(
@@ -180,7 +181,7 @@ test("waitForAgentHealth resolves once the probe returns 200", async () => {
 
 test("waitForAgentHealth throws with the log tail when the agent never binds", async () => {
   const box = fakeBox([
-    { match: (c) => c.includes("/health"), result: { stdout: "000", exitCode: 0 } },
+    { match: (c) => c.includes("curl"), result: { stdout: "000", exitCode: 0 } },
     { match: (c) => c.includes("cat"), result: { stdout: "panic: bad secret", exitCode: 0 } },
   ]);
   await assert.rejects(
@@ -230,6 +231,21 @@ test("claudeInstallScript installs the pinned Codex, after the tools", () => {
   assert.ok(s.indexOf("apt-get install") < s.indexOf("npm install"), "tools first");
 });
 
+// `gh` is what the agent's orientation tells it to open pull requests with, and
+// the box's GH_TOKEN signs it in. No base image has it and Debian doesn't ship
+// it, so the deploy installs the release itself.
+test("claudeInstallScript installs the pinned gh, for the architecture the box reports", () => {
+  const s = claudeInstallScript();
+  assert.ok(s.includes(`/v${GH_VERSION}/gh_${GH_VERSION}_linux_$arch.tar.gz`), "installs the pinned gh");
+  // uname, not dpkg: the mapping must cover both architectures a box runs on.
+  assert.match(s, /x86_64\) arch=amd64;; aarch64\|arm64\) arch=arm64;;/);
+  // Whole release down before anything is unpacked, so a cut connection can't
+  // leave a half-written gh on the PATH.
+  assert.ok(s.indexOf("-o \"$tmp/gh.tar.gz\"") < s.indexOf("tar -xzf"), "downloads before unpacking");
+  assert.ok(s.includes("sudo install -m 0755"), "installs it as root, world-executable");
+  assert.ok(s.includes("/usr/local/bin/gh"), "puts gh on every user's PATH");
+});
+
 test("claudeInstallScript fails when the tools can't be installed, whatever Codex does", async () => {
   const { execFileSync } = await import("node:child_process");
   const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
@@ -250,10 +266,11 @@ test("claudeInstallScript skips the install when the box already has the tools",
   const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  // A PATH with tmux, jq and codex present, and a sudo that records being called.
+  // A PATH with tmux, jq, codex and gh present, and a sudo that records being
+  // called: every install is guarded, so none of them runs.
   const bin = mkdtempSync(join(tmpdir(), "install-"));
   const called = join(bin, "sudo-called");
-  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["codex", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["codex", "exit 0"], ["gh", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   }
