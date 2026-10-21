@@ -223,9 +223,13 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
-    // (Generated branches can't collide.)
+    // (Generated branches can't collide.) If that lookup itself fails, the
+    // row's own failure is still the answer to give, not a thrown one.
     if (requestedBranch && isUniqueViolation(error)) {
-      const holder = await liveWorkspaceOnBranch(owner.id, project.id, requestedBranch);
+      const holder = await liveWorkspaceOnBranch(owner.id, project.id, requestedBranch).catch((lookupError) => {
+        console.error("Couldn't look up the session on that branch", lookupError);
+        return null;
+      });
       if (holder) return branchTakenResponse({ id: holder.id, label: workspaceLabel(holder) });
     }
     return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
