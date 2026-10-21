@@ -30,7 +30,7 @@ export function RepositorySelect({
   onSelect,
   onPick,
   label,
-  extra,
+  extras = [],
   disabled,
   triggerClassName,
 }: {
@@ -45,8 +45,8 @@ export function RepositorySelect({
   onPick?: (repo: RepositoryListing) => void;
   /** What the trigger shows in place of the selected project. */
   label?: { text: string; title?: string; icon: React.ReactNode };
-  /** One more row under the list, such as choosing a folder instead. */
-  extra?: { label: string; icon: React.ReactNode; onClick: () => void };
+  /** More rows under the list, such as choosing a folder instead. */
+  extras?: { label: string; icon: React.ReactNode; onClick: () => void }[];
   disabled?: boolean;
   /** Replaces the trigger's default look, to sit in a row of other pickers. */
   triggerClassName?: string;
@@ -207,18 +207,21 @@ export function RepositorySelect({
               repository look like one that isn't there. */}
           {listing && <RepositoryAccessNotes access={listing.access} complete={listing.complete} />}
 
-          {extra && (
+          {extras.length > 0 && (
             <div className="border-border border-t">
-              <button
-                type="button"
-                onClick={() => {
-                  setOpen(false);
-                  extra.onClick();
-                }}
-                className="hover:bg-accent flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
-              >
-                {extra.icon} {extra.label}
-              </button>
+              {extras.map((extra) => (
+                <button
+                  key={extra.label}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    extra.onClick();
+                  }}
+                  className="hover:bg-accent flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
+                >
+                  {extra.icon} {extra.label}
+                </button>
+              ))}
             </div>
           )}
 

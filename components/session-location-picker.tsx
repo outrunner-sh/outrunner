@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Cloud, Folder, FolderGit2, FolderOpen, Laptop } from "lucide-react";
+import { Check, ChevronDown, Cloud, Folder, FolderGit2, FolderOpen, GitBranchPlus, Laptop } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -97,10 +97,11 @@ export function LocalRepositoryButton({
   disabled?: boolean;
   className?: string;
 }) {
-  const { folder, chooseFolder, chooseRepository } = state;
+  const { folder, chooseFolder, chooseRepository, makeGitRepository, gitInit } = state;
   const chosen = folder.state === "ok" ? folder.folder : null;
   const cloning = folder.state === "cloning" ? folder.repo : null;
-  const icon = cloning ? (
+  const initializing = gitInit.state === "running";
+  const icon = cloning || initializing ? (
     <Spinner label="Cloning" className="size-4 shrink-0" />
   ) : chosen?.git === false ? (
     <Folder className="size-4 shrink-0" />
@@ -109,7 +110,7 @@ export function LocalRepositoryButton({
   );
   return (
     <RepositorySelect
-      disabled={disabled || cloning !== null}
+      disabled={disabled || cloning !== null || initializing}
       triggerClassName={className}
       onPick={(repo) => void chooseRepository(repo.fullName)}
       label={{
@@ -117,11 +118,24 @@ export function LocalRepositoryButton({
         title: chosen ? `${chosen.path}\nClick to choose another` : "A repository from GitHub, or a folder on this Mac",
         icon,
       }}
-      extra={{
-        label: "Choose a folder on this Mac…",
-        icon: <FolderOpen className="size-4" />,
-        onClick: () => void chooseFolder(),
-      }}
+      extras={[
+        {
+          label: "Choose a folder on this Mac…",
+          icon: <FolderOpen className="size-4" />,
+          onClick: () => void chooseFolder(),
+        },
+        // Not a git repository yet: sessions work in it directly, without a
+        // worktree each. One click makes it one, its files the first commit.
+        ...(chosen && !chosen.git
+          ? [
+              {
+                label: `Make ${chosen.name} a git repository`,
+                icon: <GitBranchPlus className="size-4" />,
+                onClick: () => void makeGitRepository(chosen.path),
+              },
+            ]
+          : []),
+      ]}
     />
   );
 }
@@ -140,13 +154,17 @@ export function LocalBlocker({
   state: SessionLocationState;
   className?: string;
 }) {
-  const { blocker, needsClaudeLogin, outrunnerModel, claudeLogin, claudeSetup } = state;
-  if (!blocker && !outrunnerModel) return null;
+  const { blocker, needsClaudeLogin, outrunnerModel, claudeLogin, claudeSetup, gitInit } = state;
+  const gitInitFailed = gitInit.state === "error" ? gitInit.message : null;
+  if (!blocker && !outrunnerModel && !gitInitFailed) return null;
   const { login, start, cancel } = claudeLogin;
   const action = "font-medium text-foreground underline underline-offset-4 hover:opacity-80";
   return (
     <p aria-live="polite" className={cn("text-xs text-muted-foreground", className)}>
-      {(needsClaudeLogin || (outrunnerModel && !blocker)) && login.state === "waiting" ? (
+      {gitInitFailed && !blocker ? (
+        // Making the folder a git repository failed; it still works as it is.
+        gitInitFailed
+      ) : (needsClaudeLogin || (outrunnerModel && !blocker)) && login.state === "waiting" ? (
         <>
           Approve the login in your browser…{" "}
           <button type="button" onClick={cancel} className={action}>

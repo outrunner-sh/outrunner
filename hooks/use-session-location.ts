@@ -9,6 +9,7 @@ import {
   cloneLocalRepository,
   claudeSetupNeeded,
   claudeSetupText,
+  initGitRepository,
   needsClaudeLogin,
   outrunnerModelsAvailable,
   pickLocalFolder,
@@ -35,7 +36,8 @@ export type FolderChoice =
 
 const LOCATION_KEY = "outrunner:session-location";
 
-function savedLocation(): SessionLocation {
+/** Where the last session ran, which the next starts as. */
+export function savedLocation(): SessionLocation {
   try {
     return window.localStorage.getItem(LOCATION_KEY) === "local" ? "local" : "cloud";
   } catch {
@@ -122,6 +124,12 @@ export function useSessionLocation(agent: AgentId = "claude") {
     }
   }, []);
 
+  // Making the chosen folder a git repository (makeGitRepository, below); a
+  // new folder chosen clears what it said about the last one.
+  const [gitInit, setGitInit] = useState<{ state: "idle" | "running" } | { state: "error"; message: string }>({
+    state: "idle",
+  });
+
   // Stops the re-check below. A folder picked while it runs wins, so the stale
   // answer must not overwrite the pick, nor its failure wipe the new path.
   const stopCheck = useRef(() => {});
@@ -155,6 +163,7 @@ export function useSessionLocation(agent: AgentId = "claude") {
   }, [location]);
 
   const chooseFolder = useCallback(async () => {
+    setGitInit({ state: "idle" });
     try {
       const folder = await pickLocalFolder();
       if (!folder) return; // cancelled
@@ -174,6 +183,7 @@ export function useSessionLocation(agent: AgentId = "claude") {
   // A repository picked from GitHub: its clone in ~/outrunner/repos is the
   // folder, made (or brought up to date) now.
   const chooseRepository = useCallback(async (fullName: string) => {
+    setGitInit({ state: "idle" });
     stopCheck.current();
     setFound({ path: "", picked: true, choice: { state: "cloning", repo: fullName } });
     try {
@@ -186,6 +196,21 @@ export function useSessionLocation(agent: AgentId = "claude") {
         picked: true,
         choice: { state: "error", message: error instanceof Error ? error.message : String(error) },
       });
+    }
+  }, []);
+
+  // The chosen folder isn't a git repository: make it one, so its sessions
+  // get worktrees. A failure keeps the folder chosen and says why.
+  const makeGitRepository = useCallback(async (path: string) => {
+    setGitInit({ state: "running" });
+    try {
+      const folder = await initGitRepository(path);
+      stopCheck.current();
+      rememberFolder(folder.path);
+      setFound({ path: folder.path, picked: true, choice: { state: "ok", folder } });
+      setGitInit({ state: "idle" });
+    } catch (error) {
+      setGitInit({ state: "error", message: error instanceof Error ? error.message : String(error) });
     }
   }, []);
 
@@ -205,6 +230,9 @@ export function useSessionLocation(agent: AgentId = "claude") {
     folder,
     chooseFolder,
     chooseRepository,
+    /** Make the chosen folder a git repository (it isn't one yet). */
+    makeGitRepository,
+    gitInit,
     /** Why a local session cannot start yet; null when it can (or for cloud). */
     blocker,
     /** The blocker is Claude Code needing a login, which the page can start. */
