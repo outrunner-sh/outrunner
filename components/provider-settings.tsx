@@ -55,6 +55,18 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
     forgetOutrunnerModels();
   }
 
+  function changeChoice(agent: AgentId, method: AgentAuthChoices[AgentId]) {
+    setChoices((current) => ({ ...current, [agent]: method }));
+    // The menu offers an agent's models only where its pick is connected.
+    forgetOutrunnerModels();
+  }
+
+  function changeClaude(next: ClaudeTokenMeta) {
+    setClaude(next);
+    // Connecting or disconnecting Claude adds or takes away its models.
+    forgetOutrunnerModels();
+  }
+
   return (
     <section className="space-y-8">
       <div className="space-y-1">
@@ -94,9 +106,9 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
                 keys={keys}
                 claude={claude}
                 initialMethod={place?.tab === id ? place.method : undefined}
-                onChoice={(agent, method) => setChoices((current) => ({ ...current, [agent]: method }))}
+                onChoice={changeChoice}
                 onKeys={changeKeys}
-                onClaude={setClaude}
+                onClaude={changeClaude}
               />
             ) : (
               <div className="space-y-6">

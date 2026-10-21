@@ -394,10 +394,12 @@ export function outrunnerModels(): Promise<OutrunnerModels> {
   return OUTRUNNER_MODELS.ensure().catch(() => NO_MODELS);
 }
 
-/** Ask again next time: one of the user's keys, or their loadout, has just
- *  changed. */
+/** Ask again, now: one of the user's keys, their loadout, or how an agent
+ *  signs in has just changed. Asked at once rather than when a menu next
+ *  mounts, so going back to one shows the new answer instead of the old. */
 export function forgetOutrunnerModels(): void {
   OUTRUNNER_MODELS.invalidate();
+  void OUTRUNNER_MODELS.refresh();
 }
 
 /**
