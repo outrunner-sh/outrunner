@@ -21,6 +21,7 @@
 // registration and takes an ordinary http entry in the provider's allowlist.
 
 mod claude_login;
+mod import;
 mod local_runtime;
 mod managed_claude;
 mod updater;
@@ -189,6 +190,8 @@ pub fn run() {
             local_runtime::local_socket_open,
             local_runtime::local_socket_send,
             local_runtime::local_socket_close,
+            import::import_scan,
+            import::import_session,
             updater::update_status,
             updater::restart_to_update,
         ])

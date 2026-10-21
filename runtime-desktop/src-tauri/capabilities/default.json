@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: shell basics, the native Claude connect commands, the local agent CLI logins, the local-session relay, and the sidebar's Update button.",
+  "description": "Main window: shell basics, the native Claude connect commands, the local agent CLI logins, the local-session relay, the import of this Mac's sessions, and the sidebar's Update button.",
   "windows": [
     "main"
   ],
@@ -34,6 +34,8 @@
     "allow-local-socket-open",
     "allow-local-socket-send",
     "allow-local-socket-close",
+    "allow-import-scan",
+    "allow-import-session",
     "allow-update-status",
     "allow-restart-to-update"
   ]
