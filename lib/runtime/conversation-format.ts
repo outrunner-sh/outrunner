@@ -16,6 +16,16 @@ function field(input: unknown, key: string): string | null {
   return null;
 }
 
+/** A string field as written, blank or not; "" when absent. For text whose
+ *  every line counts (an edit's old and new text), unlike `field`. */
+function text(input: unknown, key: string): string {
+  if (input && typeof input === "object" && key in input) {
+    const value = (input as Record<string, unknown>)[key];
+    if (typeof value === "string") return value;
+  }
+  return "";
+}
+
 /**
  * A concise, human-readable summary of a tool call — the single most relevant
  * argument for the common Claude Code tools (the command, the file, the query).
@@ -121,15 +131,124 @@ export function formatTokens(value: number | undefined | null): string {
   return value.toLocaleString("en-US");
 }
 
-/** Tools that change files: a run with any of them edited something. */
-const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+/** What kind of step a tool call is, for its row's icon. */
+export type ToolKind = "command" | "create" | "edit" | "read" | "search" | "web" | "agent" | "todo" | "other";
 
-/** The verb a collapsed run of Claude's work leads with: what the run did
- *  that matters most. A change outranks a command, which outranks reading;
- *  a run of reasoning alone "Thought". */
-export function activityVerb(toolNames: readonly string[]): "Edited" | "Ran" | "Explored" | "Thought" {
-  if (toolNames.length === 0) return "Thought";
-  if (toolNames.some((name) => EDIT_TOOLS.has(name))) return "Edited";
-  if (toolNames.includes("Bash")) return "Ran";
-  return "Explored";
+export interface ToolRowSummary {
+  kind: ToolKind;
+  /** The row's words: a command's description, a file's name, a query. */
+  label: string;
+  /** The label is code (a raw command, a pattern), set in mono. */
+  mono: boolean;
+  /** The full path or command behind a shortened label, for its tooltip. */
+  title: string | null;
+  /** Lines added and removed, for a call that changes a file. */
+  stats: LineStats | null;
+}
+
+export interface LineStats {
+  added: number;
+  removed: number;
+}
+
+/**
+ * One tool call as a row of the conversation: an edit by its file's name and
+ * the lines it changed, a command by the description Claude gave it (else
+ * the command itself), a search by its pattern.
+ */
+export function toolRow(name: string, input: unknown): ToolRowSummary {
+  const path = field(input, "file_path") ?? field(input, "notebook_path");
+  const file = (kind: ToolKind, stats: LineStats | null = null): ToolRowSummary => ({
+    kind,
+    label: path ? baseName(path) : name,
+    mono: false,
+    title: path,
+    stats,
+  });
+  switch (name) {
+    case "Bash": {
+      const command = field(input, "command");
+      const description = field(input, "description");
+      if (description) return { kind: "command", label: description, mono: false, title: command, stats: null };
+      return { kind: "command", label: command ?? name, mono: command !== null, title: null, stats: null };
+    }
+    case "Write":
+      return file("create", { added: lineCount(text(input, "content")), removed: 0 });
+    case "Edit":
+      return file("edit", lineDelta(text(input, "old_string"), text(input, "new_string")));
+    case "MultiEdit":
+      return file("edit", multiEditStats(input));
+    case "NotebookEdit":
+      return file("edit");
+    case "Read":
+      return file("read");
+  }
+  const summary = describeToolUse(name, input);
+  const kind: ToolKind =
+    name === "Grep" || name === "Glob" || name === "LS"
+      ? "search"
+      : name === "WebFetch" || name === "WebSearch"
+        ? "web"
+        : name === "Task" || name === "Agent"
+          ? "agent"
+          : name === "TodoWrite"
+            ? "todo"
+            : "other";
+  if (kind === "agent" && summary) return { kind, label: summary, mono: false, title: null, stats: null };
+  return {
+    kind,
+    label: summary ? `${name} ${summary}` : name,
+    mono: kind === "search" && summary !== null,
+    title: null,
+    stats: null,
+  };
+}
+
+/** A path's last segment (either separator), or the path when it has none. */
+function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+/** Lines in a file's text: none when empty, a final newline not starting another. */
+function lineCount(content: string): number {
+  return content === "" ? 0 : content.replace(/\n$/, "").split("\n").length;
+}
+
+/** Lines an edit adds and removes: the lines either side of the change that
+ *  the old and new text share are not counted, as a diff would not. */
+export function lineDelta(oldText: string, newText: string): LineStats {
+  const before = oldText === "" ? [] : oldText.split("\n");
+  const after = newText === "" ? [] : newText.split("\n");
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let end = 0;
+  while (
+    end < before.length - start &&
+    end < after.length - start &&
+    before[before.length - 1 - end] === after[after.length - 1 - end]
+  ) {
+    end++;
+  }
+  return { added: after.length - start - end, removed: before.length - start - end };
+}
+
+/** A MultiEdit's lines, summed over its edits; none when it has no readable edits. */
+function multiEditStats(input: unknown): LineStats | null {
+  const edits = input && typeof input === "object" ? (input as Record<string, unknown>).edits : undefined;
+  if (!Array.isArray(edits)) return null;
+  return edits.reduce<LineStats>(
+    (total, edit) => {
+      const { added, removed } = lineDelta(text(edit, "old_string"), text(edit, "new_string"));
+      return { added: total.added + added, removed: total.removed + removed };
+    },
+    { added: 0, removed: 0 },
+  );
+}
+
+/** A thought's row: "Thought for 9s", "Thought for 1m 5s", or just "Thought". */
+export function thoughtLabel(seconds: number | null): string {
+  if (seconds === null) return "Thought";
+  if (seconds < 60) return `Thought for ${seconds}s`;
+  const rest = seconds % 60;
+  return `Thought for ${Math.floor(seconds / 60)}m${rest ? ` ${rest}s` : ""}`;
 }

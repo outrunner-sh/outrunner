@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  activityVerb,
   describeToolUse,
   formatTokens,
+  lineDelta,
   summarizeToolResult,
+  thoughtLabel,
   toolResultText,
+  toolRow,
 } from "@/lib/runtime/conversation-format";
 
 test("describeToolUse pulls the primary argument for common tools", () => {
@@ -88,21 +90,66 @@ test("formatTokens adds separators and handles missing values", () => {
   assert.equal(formatTokens(Number.NaN), "—");
 });
 
-test("a run of reasoning alone is Thought", () => {
-  assert.equal(activityVerb([]), "Thought");
+test("a command reads as Claude's description of it, else as the command in mono", () => {
+  const described = toolRow("Bash", { command: "pnpm test", description: "Run the tests" });
+  assert.deepEqual(
+    [described.kind, described.label, described.mono, described.title],
+    ["command", "Run the tests", false, "pnpm test"],
+  );
+  const bare = toolRow("Bash", { command: "pnpm test" });
+  assert.deepEqual([bare.label, bare.mono], ["pnpm test", true]);
+  // No command at all: the tool's name, not mono.
+  assert.deepEqual([toolRow("Bash", {}).label, toolRow("Bash", {}).mono], ["Bash", false]);
 });
 
-test("a run that changed files is Edited, whatever else it did", () => {
-  assert.equal(activityVerb(["Read", "Bash", "Edit"]), "Edited");
-  assert.equal(activityVerb(["Write"]), "Edited");
-  assert.equal(activityVerb(["MultiEdit"]), "Edited");
-  assert.equal(activityVerb(["NotebookEdit"]), "Edited");
+test("a file step reads as the file's name, its full path in the tooltip", () => {
+  const read = toolRow("Read", { file_path: "/repo/components/a.tsx" });
+  assert.deepEqual([read.kind, read.label, read.title, read.stats], ["read", "a.tsx", "/repo/components/a.tsx", null]);
+  assert.equal(toolRow("Read", { file_path: "C:\\repo\\b.ts" }).label, "b.ts");
+  assert.equal(toolRow("Edit", {}).label, "Edit");
 });
 
-test("a run that ran commands without editing is Ran", () => {
-  assert.equal(activityVerb(["Read", "Bash"]), "Ran");
+test("a new file counts its lines as added, a final newline not starting another", () => {
+  assert.deepEqual(toolRow("Write", { file_path: "/a.ts", content: "one\ntwo\n" }).stats, { added: 2, removed: 0 });
+  assert.deepEqual(toolRow("Write", { file_path: "/a.ts", content: "" }).stats, { added: 0, removed: 0 });
+  assert.equal(toolRow("Write", { file_path: "/a.ts" }).kind, "create");
 });
 
-test("a run that only read and searched is Explored", () => {
-  assert.equal(activityVerb(["Read", "Grep", "Glob", "WebFetch"]), "Explored");
+test("an edit counts only the lines that changed, not those around them it repeats", () => {
+  assert.deepEqual(lineDelta("a\nb\nc", "a\nB\nc"), { added: 1, removed: 1 });
+  assert.deepEqual(lineDelta("a\nc", "a\nb\nc"), { added: 1, removed: 0 });
+  assert.deepEqual(lineDelta("a\nb\nc", "a\nc"), { added: 0, removed: 1 });
+  assert.deepEqual(lineDelta("", "x\ny"), { added: 2, removed: 0 });
+  assert.deepEqual(lineDelta("same", "same"), { added: 0, removed: 0 });
+  // A repeated line on both sides is counted once, not matched twice.
+  assert.deepEqual(lineDelta("x", "x\nx"), { added: 1, removed: 0 });
+  // Whitespace-only text is still text.
+  assert.deepEqual(toolRow("Edit", { file_path: "/a", old_string: "  ", new_string: "x" }).stats, { added: 1, removed: 1 });
+});
+
+test("a multi-edit sums its edits, and has no count without readable edits", () => {
+  const input = {
+    file_path: "/a.ts",
+    edits: [
+      { old_string: "a", new_string: "b" },
+      { old_string: "", new_string: "c\nd" },
+    ],
+  };
+  assert.deepEqual(toolRow("MultiEdit", input).stats, { added: 3, removed: 1 });
+  assert.equal(toolRow("MultiEdit", { file_path: "/a.ts" }).stats, null);
+});
+
+test("other tools read as their name and primary argument", () => {
+  const grep = toolRow("Grep", { pattern: "TODO" });
+  assert.deepEqual([grep.kind, grep.label, grep.mono], ["search", "Grep TODO", true]);
+  assert.deepEqual([toolRow("WebSearch", { query: "zod" }).kind, toolRow("WebSearch", { query: "zod" }).label], ["web", "WebSearch zod"]);
+  assert.equal(toolRow("Agent", { description: "Find the bug" }).label, "Find the bug");
+  assert.deepEqual([toolRow("mcp__x__y", {}).kind, toolRow("mcp__x__y", {}).label], ["other", "mcp__x__y"]);
+});
+
+test("a thought says how long it took, when known", () => {
+  assert.equal(thoughtLabel(null), "Thought");
+  assert.equal(thoughtLabel(9), "Thought for 9s");
+  assert.equal(thoughtLabel(60), "Thought for 1m");
+  assert.equal(thoughtLabel(125), "Thought for 2m 5s");
 });
