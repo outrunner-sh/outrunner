@@ -319,6 +319,15 @@ async function provisionWorkspace({
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
       let endedBox = endedBoxOf(currentComputer, provider.name);
+      const needsNewComputer =
+        !currentComputer?.daytonaSandboxId ||
+        currentComputer.status !== "ready";
+
+      // Show "allocate" phase only when provisioning a new computer
+      if (needsNewComputer) {
+        await setPhase("allocate");
+      }
+
       if (currentComputer?.status === "ready" && currentComputer.daytonaSandboxId) {
         const sandboxId = currentComputer.daytonaSandboxId;
         const madeBy = computerMadeBy(currentComputer);
@@ -350,9 +359,11 @@ async function provisionWorkspace({
       // Initial provisioning clones the mirror. Every later workspace refreshes
       // it before the agent branches from the project's default branch.
       if (!ensured.provisioned) {
+        await setPhase("clone");
         await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
       }
 
+      await setPhase("worktree");
       const target = await provider.agentTarget(
         computer.daytonaSandboxId,
         ensured.agentSecret,
@@ -380,10 +391,13 @@ async function provisionWorkspace({
           branch: workspace.branch,
           // Named only for Codex: Claude Code is every agent's default.
           ...(agentId !== "claude" && { agent: agentId }),
+          // Configure git author so commits are attributed to the user.
+          ...(owner.email && { gitUser: { name: owner.name, email: owner.email } }),
         },
         identity,
       );
       // Before the first launch, so the agent starts signed in.
+      await setPhase("secrets");
       await deliverSessionAuth(signIn, agentId, auth);
       // Before the first launch, so Claude starts on it rather than switching.
       await startingModel({
@@ -394,6 +408,7 @@ async function provisionWorkspace({
         effort: chosenEffort,
         fallback: defaultModel(menu),
       });
+      await setPhase("health_check");
       await agent.startWorkspace(identity);
 
       const ready = await settle({

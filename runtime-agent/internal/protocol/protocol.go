@@ -54,6 +54,12 @@ type PtyServerMessage struct {
 	Code   *int  `json:"code,omitempty"`
 }
 
+// GitUser is the git identity for commits in a workspace.
+type GitUser struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
 // CreateWorkspaceRequest is the control-plane request to provision a workspace.
 type CreateWorkspaceRequest struct {
 	WorkspaceID  string `json:"workspaceId"`
@@ -76,6 +82,8 @@ type CreateWorkspaceRequest struct {
 	// Agent is the coding agent the session runs: "claude" or "codex"; empty
 	// is Claude. Recorded by the first create; a repeated one never changes it.
 	Agent string `json:"agent,omitempty"`
+	// GitUser is the git identity for commits; nil uses the system default.
+	GitUser *GitUser `json:"gitUser,omitempty"`
 }
 
 // SetModelRequest switches a workspace's session to another model. With a

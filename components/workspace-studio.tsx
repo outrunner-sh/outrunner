@@ -58,7 +58,7 @@ export function WorkspaceStudio({
   const setup = useWorkspaceSetup(workspace, !isLocal);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
-  const offline = offlineCopy({ workspace, isReady, stalled: setup === "stalled" });
+  const offline = offlineCopy({ workspace, isReady, stalled: setup.state === "stalled" });
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
@@ -107,13 +107,15 @@ export function WorkspaceStudio({
               initialPrompt={initialPrompt}
               initialAttachmentIds={initialAttachmentIds}
             />
-          ) : setup === "running" ? (
+          ) : setup.state === "running" ? (
             <div className="studio-offline">
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <WorkspaceCreating
                   projectName={projectName ?? workspaceLabel(workspace)}
                   branch={workspace.baseBranch}
                   startedAt={workspace.createdAt}
+                  phase={setup.phase}
+                  hasExistingComputer={setup.hasComputer}
                 />
               </div>
               <SessionComposer

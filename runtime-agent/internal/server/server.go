@@ -151,6 +151,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	var gitUser *workspace.GitUser
+	if req.GitUser != nil {
+		gitUser = &workspace.GitUser{Name: req.GitUser.Name, Email: req.GitUser.Email}
+	}
 	worktree, err := s.ws.Create(r.Context(), workspace.CreateInput{
 		WorkspaceID:    req.WorkspaceID,
 		Branch:         req.Branch,
@@ -160,6 +164,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		Title:          req.Title,
 		Model:          req.Model,
 		Agent:          req.Agent,
+		GitUser:        gitUser,
 	})
 	switch {
 	case errors.Is(err, workspace.ErrBypassInFolder):
