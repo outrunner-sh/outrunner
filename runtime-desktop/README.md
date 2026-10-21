@@ -15,8 +15,8 @@ deploy. Local sessions are the one exception, below.
   bundled Chromium, so the app is a few MB).
 - **Tray icon + menu**: Show Runtime · New Workspace · Reload · Quit.
 - **Left-click the tray** toggles the window.
-- **Hide-to-tray**: closing the window keeps the app (and your session)
-  running in the tray; use *Quit Runtime* to actually exit.
+- **Closing the window quits** the app. Claude sessions survive in tmux and
+  reattach on the next launch.
 - **Single instance**: launching again focuses the existing window.
 - **Self-update** (`src-tauri/src/updater.rs`): release builds check for a new
   version shortly after launch and every 6 hours, install it in the background,
