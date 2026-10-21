@@ -9,8 +9,6 @@ import { ImportConfigCommitRequest } from "@/lib/runtime/import-scan";
 import { SNAPSHOT_BUCKET } from "@/lib/runtime/storage/snapshots";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Keep the user's picked setup — the archive the desktop app uploaded, their
  * MCP servers (sealed) and plugin settings — for their cloud computers,

@@ -6,8 +6,6 @@ import { planConfig } from "@/lib/imports/config";
 import { SNAPSHOT_BUCKET } from "@/lib/runtime/storage/snapshots";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-export const dynamic = "force-dynamic";
-
 /** Where the desktop app uploads the archive of the user's picked setup. */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
