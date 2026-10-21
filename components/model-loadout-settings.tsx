@@ -4,17 +4,20 @@ import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
+import { EffortPicker } from "@/components/effort-meter";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import {
   LOADOUT_MAX,
   type LoadoutEntry,
   loadoutModels,
   type ModelLoadout,
+  loadoutEffort,
   moveEntry,
   sameEntry,
+  setEntryEffort,
   toggleEntry,
 } from "@/lib/runtime/model-loadout";
-import { type ModelGroup, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
+import { type ModelGroup, type ModelProvider, type SessionModel, takesEffort } from "@/lib/runtime/session-models";
 import { cn } from "@/lib/utils";
 
 /** A model's mark: its agent's for Claude Code's and Codex's own, its
@@ -97,7 +100,8 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
         <div className="space-y-1">
           <h2 className="text-sm font-medium text-foreground">Loadout</h2>
           <p className="text-xs text-muted-foreground">
-            Click a model to make it the default. Up to {LOADOUT_MAX}; search in the picker finds the rest.
+            Click a model to make it the default, and its bars to set how hard it thinks. Up to {LOADOUT_MAX}; search
+            in the picker finds the rest.
           </p>
         </div>
         {picked.length === 0 && hidden.length === 0 ? (
@@ -115,7 +119,10 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
                     onClick={() => change({ ...loadout, default: { provider: m.provider, id: m.id } })}
                     aria-pressed={isDefault}
                     title={isDefault ? "The default" : "Make it the default"}
-                    className="flex h-24 w-full cursor-pointer flex-col justify-between p-3 text-left transition-colors hover:bg-muted/30"
+                    className={cn(
+                      "flex h-24 w-full cursor-pointer flex-col justify-between p-3 text-left transition-colors hover:bg-muted/30",
+                      takesEffort(m) && "h-28 pb-9",
+                    )}
                   >
                     <span className="flex items-start justify-between">
                       <ModelIcon provider={m.provider} />
@@ -127,6 +134,16 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
                     </span>
                     <span className="truncate font-mono text-[13px] text-foreground">{m.label}</span>
                   </button>
+                  {/* Beside the card's button, not in it: a button can't hold another. */}
+                  {takesEffort(m) ? (
+                    <span className="absolute bottom-3 left-3">
+                      <EffortPicker
+                        effort={loadoutEffort(loadout, m) ?? null}
+                        onChange={(effort) => change(setEntryEffort(loadout, m, effort))}
+                        label={`${m.label} effort`}
+                      />
+                    </span>
+                  ) : null}
                   <span className="absolute right-1.5 bottom-1.5 hidden gap-0.5 group-focus-within:flex group-hover:flex">
                     <IconButton label={`Move ${m.label} earlier`} disabled={i === 0} onClick={() => change(moveEntry(loadout, m, -1, picked))}>
                       <ChevronLeft />

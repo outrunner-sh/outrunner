@@ -26,7 +26,15 @@ import {
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { isProviderId } from "@/lib/providers/registry";
 import { EMPTY_LOADOUT } from "@/lib/runtime/model-loadout";
-import { defaultModel, modelGroups, type ModelProvider, type SessionModel } from "@/lib/runtime/session-models";
+import {
+  defaultModel,
+  type Effort,
+  modelGroups,
+  type ModelProvider,
+  type SessionModel,
+  takesEffort,
+} from "@/lib/runtime/session-models";
+import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
@@ -187,6 +195,8 @@ export function WorkspaceSession({
   // picked here, else the one a new session starts on.
   const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
+  // The effort it runs at, as last put on from here (lib/session/picked-effort.ts).
+  const [effort, setEffort] = useState<Effort | null>(() => rememberedEffort(workspaceId));
   const repliedSincePick =
     picked !== null &&
     conversation.events
@@ -200,6 +210,7 @@ export function WorkspaceSession({
     claudeIsWorking(conversation.events) || pending.some((p) => delivered < p.expect);
   const modelChoice: ModelChoice = {
     groups: modelGroups(menu, agent),
+    effort,
     loadout: menu.loadout,
     preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
     switching,
@@ -208,18 +219,22 @@ export function WorkspaceSession({
       : working
         ? `Switch models once ${AGENTS[agent].label} has finished this turn`
         : null,
-    onChange: (model) => {
+    onChange: (model, pickedEffort) => {
+      // What the agent is told: an effort goes only with a model that takes one.
+      const next = takesEffort(model) ? pickedEffort : null;
       setSwitching(true);
       setSendError(null);
       // A local switch relaunches the session on this Mac: signed in as the
       // user picks now first, as the server does for a cloud one.
       (local
-        ? deliverLocalAgentAuth(workspaceId, agent).then(() => putOnModel(workspaceId, model))
-        : switchCloudModel(workspaceId, model))
+        ? deliverLocalAgentAuth(workspaceId, agent).then(() => putOnModel(workspaceId, model, next))
+        : switchCloudModel(workspaceId, model, next))
         .then(() => {
           setPicked({ model: model.id, events: conversation.events.length });
           setProviderPicked(model.provider);
           rememberPickedProvider(workspaceId, model.provider);
+          setEffort(next);
+          rememberEffort(workspaceId, next);
         })
         .catch((error: unknown) =>
           setSendError(
@@ -382,11 +397,11 @@ export function WorkspaceSession({
 
 /** Switch a cloud session's model. The server adds the key the model needs
  *  and calls the session's agent, so the key stays off the browser. */
-async function switchCloudModel(workspaceId: string, model: SessionModel): Promise<void> {
+async function switchCloudModel(workspaceId: string, model: SessionModel, effort: Effort | null): Promise<void> {
   const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ provider: model.provider, model: model.id }),
+    body: JSON.stringify({ provider: model.provider, model: model.id, ...(effort && { effort }) }),
   });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };

@@ -11,8 +11,8 @@ import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/comp
 import { useCreateSession } from "@/hooks/use-create-session";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { outrunnerModels, type OutrunnerModels } from "@/lib/desktop/local-runtime";
-import { loadoutDefault } from "@/lib/runtime/model-loadout";
-import { agentOf, defaultModel, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
+import { loadoutDefault, loadoutEffort } from "@/lib/runtime/model-loadout";
+import { agentOf, defaultModel, type Effort, modelGroups, type SessionModel } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
@@ -56,6 +56,9 @@ export function NewSessionForm({
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(null);
+  // The effort picked in the composer; undefined until one is, when the
+  // loadout's for the model it starts on shows.
+  const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
   // No repositories only blocks the cloud; a local session needs none.
@@ -78,6 +81,8 @@ export function NewSessionForm({
   const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
   const startsOn = picked ?? chosenDefault ?? (onDefault && menu ? defaultModel(menu) : null);
   const startModel = picked ?? chosenDefault ?? undefined;
+  const effort =
+    pickedEffort !== undefined ? pickedEffort : (startsOn && menu && loadoutEffort(menu.loadout, startsOn)) || null;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one
@@ -167,15 +172,20 @@ export function NewSessionForm({
                   where.outrunnerModel,
                   startModel,
                   where.runtime.state === "ready" ? where.runtime.status : null,
+                  effort,
                 )
-              : create(text, attachmentIds, startModel)
+              : create(text, attachmentIds, startModel, effort)
           }
           model={startsOn?.id}
           modelChoice={
             groups.length > 0
               ? {
                   groups,
-                  onChange: setPicked,
+                  effort,
+                  onChange: (model, effort) => {
+                    setPicked(model);
+                    setPickedEffort(effort);
+                  },
                   switching: false,
                   disabledReason: isCreating ? "Starting the session" : null,
                   preferredProvider: startsOn?.provider,
