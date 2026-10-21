@@ -83,9 +83,10 @@ export function SignInButton({ next = "/" }: { next?: string }) {
 
   return (
     <div className="space-y-2">
-      {/* The app's primary button (light on dark), not near-black on black. */}
+      {/* Minimal, like the rest of first run: a line, not a filled slab. */}
       <LoadingButton
         size="default"
+        variant="outline"
         status={loading ? "pending" : "idle"}
         labels={{ idle: "Continue with GitHub", pending: "Opening GitHub" }}
         icon={<GitHubMark />}
