@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/transcript"
 	"runtime-agent/internal/workspace"
 )
 
@@ -31,26 +32,6 @@ func mintToken(claims protocol.RuntimeTokenClaims, secret string) string {
 	mac.Write([]byte(signing))
 	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	return signing + "." + sig
-}
-
-// slugFor mirrors workspace.claudeProjectDir's slug (unexported). If either
-// drifts the test fails clearly, which is the correct signal — the slug format
-// is contract. Symlinks are resolved like Claude does: t.TempDir() is under
-// /var on macOS, which is really /private/var.
-func slugFor(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
-	}
-	b := make([]byte, len(path))
-	for i := 0; i < len(path); i++ {
-		c := path[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
-			b[i] = c
-		} else {
-			b[i] = '-'
-		}
-	}
-	return string(b)
 }
 
 // serverFixture stands up a real Server backed by a temp root, isolates
@@ -81,7 +62,7 @@ func newServerFixture(t *testing.T) *serverFixture {
 	if err := os.MkdirAll(worktree, 0o755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
-	logDir := filepath.Join(home, ".claude", "projects", slugFor(worktree))
+	logDir := transcript.ClaudeProjectDir(home, worktree)
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		t.Fatalf("mkdir logdir: %v", err)
 	}

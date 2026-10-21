@@ -23,6 +23,7 @@ import (
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/tmux"
+	"runtime-agent/internal/transcript"
 )
 
 // sessions is the part of tmux the service drives, behind an interface so tests
@@ -1101,7 +1102,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	}
 	if in.RolloutDest != "" {
 		// `codex resume` finds it by the id its first line names.
-		meta, err := readRolloutMeta(in.RolloutDest)
+		meta, err := transcript.ReadRolloutMeta(in.RolloutDest)
 		if err != nil || meta.ID != sessionID {
 			return "", fmt.Errorf("cannot restore: the snapshot's rollout is not session %s", sessionID)
 		}
@@ -1148,7 +1149,7 @@ func (s *Service) conversationDest(worktree, sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(claudeProjectDir(home, worktree), sessionID+".jsonl"), nil
+	return filepath.Join(transcript.ClaudeProjectDir(home, worktree), sessionID+".jsonl"), nil
 }
 
 // sessionID returns the session id Restore resumes by: a Codex session's
