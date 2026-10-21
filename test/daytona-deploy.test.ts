@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 
+import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
+
 import {
   AGENT_BINARY_PATH,
   AGENT_GZ_PATH,
@@ -266,17 +268,81 @@ test("claudeInstallScript skips the install when the box already has the tools",
   const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { tmpdir } = await import("node:os");
-  // A PATH with tmux, jq, codex and gh present, and a sudo that records being
-  // called: every install is guarded, so none of them runs.
+  // A PATH with tmux, jq, a newer claude, codex and gh present, and a sudo
+  // that records being called: every install is guarded, so none of them runs.
   const bin = mkdtempSync(join(tmpdir(), "install-"));
   const called = join(bin, "sudo-called");
-  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["codex", "exit 0"], ["gh", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
+  for (const [name, body] of [["tmux", "exit 0"], ["jq", "exit 0"], ["claude", "echo '2.1.999 (Claude Code)'"], ["codex", "exit 0"], ["gh", "exit 0"], ["sudo", `touch ${called}; exit 1`]]) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
     chmodSync(join(bin, name), 0o755);
   }
   execFileSync("/bin/sh", ["-c", claudeInstallScript()], { env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` } });
   const { existsSync } = await import("node:fs");
   assert.equal(existsSync(called), false, "sudo was not called");
+});
+
+/** A box whose `claude` reports the version in a file, whose sudo runs what
+ *  it's given, and whose npm "installs" Claude by writing the version it was
+ *  asked for there (or, `npmTakes` false, leaves the old one first on the
+ *  PATH). With no version, `claude` fails as a missing one would. Every other
+ *  tool is already there. */
+function claudeBox(version: string | null, npmTakes = true) {
+  const bin = mkdtempSync(join(tmpdir(), "claude-box-"));
+  const file = join(bin, "claude-version");
+  const npmLog = join(bin, "npm-log");
+  if (version) writeFileSync(file, version);
+  const tools: [string, string][] = [
+    ["tmux", "exit 0"],
+    ["jq", "exit 0"],
+    ["codex", "exit 0"],
+    ["gh", "exit 0"],
+    ["claude", `[ -f ${file} ] || exit 127; echo "$(cat ${file}) (Claude Code)"`],
+    ["sudo", `"$@"`],
+    ["npm", `echo "$*" >> ${npmLog}; ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"}`],
+  ];
+  for (const [name, body] of tools) {
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  }
+  const run = () =>
+    spawnSync("/bin/sh", ["-c", claudeInstallScript()], {
+      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+      encoding: "utf8",
+    });
+  const npm = () => { try { return readFileSync(npmLog, "utf8"); } catch { return ""; } };
+  return { run, npm, version: () => readFileSync(file, "utf8").trim() };
+}
+
+// Daytona's base image ships Claude Code 2.1.19, which stops at once on
+// --effort: the deploy brings it up to the pinned version.
+test("claudeInstallScript brings an old Claude Code up to the pinned version", () => {
+  const box = claudeBox("2.1.19");
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(box.npm().trim(), `install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`);
+  assert.equal(box.version(), CLAUDE_CODE_VERSION);
+});
+
+test("claudeInstallScript installs Claude Code where there is none", () => {
+  const box = claudeBox(null);
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(box.version(), CLAUDE_CODE_VERSION);
+});
+
+test("claudeInstallScript leaves a newer Claude Code alone, and the pinned one too", () => {
+  for (const version of ["2.1.999", "2.2.0", CLAUDE_CODE_VERSION]) {
+    const box = claudeBox(version);
+    const result = box.run();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(box.npm(), "", `npm ran for ${version}`);
+  }
+});
+
+test("claudeInstallScript fails when the old Claude Code still comes first after the install", () => {
+  const box = claudeBox("2.1.19", false);
+  const result = box.run();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, new RegExp(`Could not bring Claude Code \\(2\\.1\\.19\\) up to ${CLAUDE_CODE_VERSION.replaceAll(".", "\\.")}`));
 });
 
 test("claudeAgentLaunchScript roots the agent + Claude HOME at the box home", () => {
