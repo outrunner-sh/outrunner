@@ -30,6 +30,7 @@ import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client"
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { isValidBranchName } from "@/lib/runtime/git";
+import { provisionFailureMessage } from "@/lib/runtime/provision-failure";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
@@ -292,9 +293,14 @@ async function provisionWorkspace({
   };
   // Phases only: even the last stays "provisioning", so the ready below, with
   // the box's details, still finds the session setting up.
-  const setPhase = async (phase: ProvisionPhase) => {
-    await settle({ status: "provisioning", phase });
+  // The step a failure stopped at, for the session page.
+  let phase: ProvisionPhase | null = null;
+  const setPhase = async (next: ProvisionPhase) => {
+    phase = next;
+    await settle({ status: "provisioning", phase: next });
   };
+  // Cut from any error the session page shows.
+  const secrets: (string | undefined)[] = [githubToken, auth.credential?.token, ...Object.values(sessionEnv)];
 
   try {
     if (isComputerProvider(provider)) {
@@ -339,6 +345,7 @@ async function provisionWorkspace({
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });
       const computer = ensured.computer;
+      secrets.push(ensured.agentSecret);
       if (!computer.daytonaSandboxId) {
         throw new Error("Ready Runtime Computer has no sandbox id.");
       }
@@ -439,15 +446,16 @@ async function provisionWorkspace({
     });
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
-    // The session page shows this: say what to do where the user can fix it.
-    // A Claude model's effort is set on the way to the user's own Claude, which
-    // startingModel leaves unwrapped: its message says to update the box.
+    // The session page shows this: say what to do where the user can fix it,
+    // or else the step it stopped at and why, so the cause isn't only in the
+    // log. A Claude model's effort is set on the way to the user's own Claude,
+    // which startingModel leaves unwrapped: its message says to update the box.
     const errorMessage =
       error instanceof NoStartingModelError ||
       error instanceof OutdatedComputerError ||
       error instanceof EffortUnsupportedError
         ? error.message
-        : "Provisioning failed. Check Outrunner's setup and try again.";
+        : provisionFailureMessage(error, phase, secrets);
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );

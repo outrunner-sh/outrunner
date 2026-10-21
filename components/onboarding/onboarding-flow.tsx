@@ -239,8 +239,7 @@ function Welcome({ name, onMac, onNext }: { name: string; onMac: boolean; onNext
       <div className="space-y-2">
         <h1 className="text-xl font-semibold">Welcome, {name.split(" ")[0]}</h1>
         <p className="text-muted-foreground mx-auto max-w-sm text-sm">
-          Run many Claude Code agents in parallel, {onMac ? "on this Mac or in the cloud" : "in the cloud"}.
-          Two minutes of setup, then you&apos;re in.
+          Run fleets of coding agents {onMac ? "on this Mac or in the cloud" : "in the cloud"}.
         </p>
       </div>
       <Button size="lg" onClick={onNext}>
