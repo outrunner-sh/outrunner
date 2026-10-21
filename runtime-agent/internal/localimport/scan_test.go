@@ -126,6 +126,35 @@ func TestScanReadsConductorAcrossVersions(t *testing.T) {
 	}
 }
 
+// A workspace archived in Conductor isn't offered: not as Conductor's, and not
+// as the Claude Code session its transcript also is. Its live neighbour is.
+func TestScanLeavesOutConductorsArchivedWorkspaces(t *testing.T) {
+	home, opts := testHome(t)
+	clone := filepath.Join(home, "app")
+	repoWithOrigin(t, clone)
+	gitIn(t, clone, "checkout", "-q", "-b", "feature")
+	conductorDB(t, opts, "conductor-current.sql", fmt.Sprintf(`
+		UPDATE workspaces SET workspace_path = '%[1]s';
+		INSERT INTO workspaces (local_id, repository_id, directory_name, branch, state, workspace_path)
+			VALUES ('w2', 'r1', 'app-old', 'feature', 'archived', '%[1]s');
+		INSERT INTO sessions (id, workspace_id, claude_session_id, agent_type) VALUES ('cs2', 'w2', 's-2', 'claude');
+	`, clone))
+	for _, id := range []string{"s-1", "s-2"} {
+		writeClaudeSession(t, home, clone, id, claudeLineJSON(t, "user", clone, "feature", "2026-10-20T10:00:00Z", "hi"))
+	}
+
+	scan := Run(context.Background(), opts)
+
+	if s := sessionByKey(t, scan, "claude:s-1"); s.Source != SourceConductor {
+		t.Errorf("live workspace's session = %+v, want it offered as Conductor's", s)
+	}
+	for _, s := range scan.Sessions {
+		if s.Key == "claude:s-2" {
+			t.Errorf("archived workspace's session offered: %+v", s)
+		}
+	}
+}
+
 // A Conductor whose database this importer can't read says so, and every
 // other source is still scanned.
 func TestScanSurvivesAnUnknownConductor(t *testing.T) {

@@ -23,7 +23,7 @@ async function providers(userId: string) {
 }
 
 /** Run a change, answering the database's refusal as JSON the page can show. */
-function changing(change: () => Promise<NextResponse>): Promise<NextResponse> {
+function changing(change: () => Promise<NextResponse>): Promise<Response> {
   return savingSettings("provider settings", change);
 }
 

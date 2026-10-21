@@ -5,10 +5,6 @@ import type { ConfigPick, EnvironmentPick } from "@/lib/imports/client";
 import { skipText } from "@/lib/imports/client";
 import type { ProjectScripts, ScannedAgentConfig, ScannedProjectEnv } from "@/lib/runtime/import-scan";
 
-export function emptyEnvPick(repo: string): EnvironmentPick {
-  return { repo, vars: [], files: [], scripts: false };
-}
-
 /** A repository's scripts as one listing, each under its name. */
 function scriptsText(scripts: ProjectScripts): string {
   return [
@@ -44,83 +40,62 @@ function Check({
 }
 
 /**
- * Each repository's environment on the Mac — Conductor's variables, the .env
+ * A repository's environment on the Mac — Conductor's variables, the .env
  * files its checkout keeps out of git, Conductor's scripts — offered by name.
  */
-export function EnvironmentPicker({
-  projects,
-  picks,
+export function ProjectEnvironmentPicker({
+  project: p,
+  pick,
   onChange,
   disabled,
 }: {
-  projects: ScannedProjectEnv[];
-  picks: Record<string, EnvironmentPick>;
+  project: ScannedProjectEnv;
+  pick: EnvironmentPick;
   onChange: (pick: EnvironmentPick) => void;
   disabled: boolean;
 }) {
-  if (projects.length === 0) return null;
   return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-medium">Project environments</h2>
-      <p className="text-xs text-muted-foreground">
-        Variables and files your cloud sessions start with. Kept encrypted, per project.
-      </p>
-      <ul className="divide-y divide-border/60 rounded-md border border-border/60">
-        {projects.map((p) => {
-          const pick = picks[p.repo] ?? emptyEnvPick(p.repo);
-          return (
-            <li key={p.repo} className="space-y-2 p-3">
-              <div className="text-sm font-medium">{p.repo}</div>
-              {p.vars.map((v) => (
-                <Check
-                  key={`var:${v.name}`}
-                  checked={pick.vars.includes(v.name)}
-                  onChange={() => onChange({ ...pick, vars: toggled(pick.vars, v.name) })}
-                  disabled={disabled}
-                >
-                  <code className="text-xs">{v.name}</code>{" "}
-                  <span className="text-xs text-muted-foreground">
-                    Conductor variable{v.shared ? ", set for every repository" : ""}
-                  </span>
-                </Check>
-              ))}
-              {p.files.map((f) => (
-                <Check
-                  key={`file:${f.path}`}
-                  checked={pick.files.includes(f.path)}
-                  onChange={() => onChange({ ...pick, files: toggled(pick.files, f.path) })}
-                  disabled={disabled}
-                >
-                  <code className="text-xs">{f.path}</code>{" "}
-                  <span className="text-xs text-muted-foreground">
-                    {f.names.length > 0 ? f.names.join(", ") : "sets nothing readable"}
-                  </span>
-                </Check>
-              ))}
-              {p.scripts && (
-                // The listing sits outside the label: it scrolls, and a
-                // click in it to read or scroll must not toggle the pick.
-                <div className="space-y-1">
-                  <Check
-                    checked={pick.scripts}
-                    onChange={() => onChange({ ...pick, scripts: !pick.scripts })}
-                    disabled={disabled}
-                  >
-                    Conductor&apos;s scripts{" "}
-                    <span className="text-xs text-muted-foreground">
-                      (the setup script runs as each cloud session starts)
-                    </span>
-                  </Check>
-                  <pre className="ml-6 max-h-32 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
-                    {scriptsText(p.scripts)}
-                  </pre>
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <div className="space-y-2">
+      {p.vars.map((v) => (
+        <Check
+          key={`var:${v.name}`}
+          checked={pick.vars.includes(v.name)}
+          onChange={() => onChange({ ...pick, vars: toggled(pick.vars, v.name) })}
+          disabled={disabled}
+        >
+          <code className="text-xs">{v.name}</code>{" "}
+          <span className="text-xs text-muted-foreground">
+            Conductor variable{v.shared ? ", set for every repository" : ""}
+          </span>
+        </Check>
+      ))}
+      {p.files.map((f) => (
+        <Check
+          key={`file:${f.path}`}
+          checked={pick.files.includes(f.path)}
+          onChange={() => onChange({ ...pick, files: toggled(pick.files, f.path) })}
+          disabled={disabled}
+        >
+          <code className="text-xs">{f.path}</code>{" "}
+          <span className="text-xs text-muted-foreground">
+            {f.names.length > 0 ? f.names.join(", ") : "sets nothing readable"}
+          </span>
+        </Check>
+      ))}
+      {p.scripts && (
+        // The listing sits outside the label: it scrolls, and a click in it
+        // to read or scroll must not toggle the pick.
+        <div className="space-y-1">
+          <Check checked={pick.scripts} onChange={() => onChange({ ...pick, scripts: !pick.scripts })} disabled={disabled}>
+            Conductor&apos;s scripts{" "}
+            <span className="text-xs text-muted-foreground">(the setup script runs as each cloud session starts)</span>
+          </Check>
+          <pre className="ml-6 max-h-32 overflow-auto rounded bg-muted p-2 text-xs whitespace-pre-wrap">
+            {scriptsText(p.scripts)}
+          </pre>
+        </div>
+      )}
+    </div>
   );
 }
 

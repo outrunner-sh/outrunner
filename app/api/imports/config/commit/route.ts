@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { saveAgentConfig } from "@/lib/db/agent-config";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 import { ImportError } from "@/lib/imports/commit";
 import { commitConfig } from "@/lib/imports/config";
 import { ImportConfigCommitRequest } from "@/lib/runtime/import-scan";
@@ -48,6 +49,8 @@ export async function POST(request: Request) {
     if (error instanceof ImportError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    const notUpdated = databaseNotUpdated(error, "an imported setup");
+    if (notUpdated) return notUpdated;
     console.error("Could not keep an imported setup", error);
     return NextResponse.json({ error: "Could not keep your settings. Please try again." }, { status: 502 });
   }

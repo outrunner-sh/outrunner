@@ -8,6 +8,7 @@
  */
 
 import { mapWithConcurrency } from "@/lib/concurrency";
+import { settableEnv } from "@/lib/imports/settable-env";
 import type {
   ImportCapture,
   ImportCommitRequest,
@@ -151,6 +152,11 @@ export function skipText(skip: ImportSkip): string {
 /** What of a repository's environment the user picked. */
 export type EnvironmentPick = { repo: string; vars: string[]; files: string[]; scripts: boolean };
 
+/** Nothing of a repository's environment picked. */
+export function emptyEnvPick(repo: string): EnvironmentPick {
+  return { repo, vars: [], files: [], scripts: false };
+}
+
 /** Whether a repository's pick asks for anything. */
 export function hasEnvironmentPick(pick: { vars: string[]; files: string[]; scripts: boolean }): boolean {
   return pick.vars.length > 0 || pick.files.length > 0 || pick.scripts;
@@ -161,35 +167,55 @@ export function hasConfigPick(pick: ConfigPick): boolean {
   return pick.items.length > 0 || pick.mcp.length > 0 || pick.plugins;
 }
 
-/** Whether anything picked carries secrets, so the user must agree first:
- *  variables and the files out of git hold them, and an MCP server's settings
- *  carry its keys. Scripts, items and plugin names don't. */
-export function picksSecrets(envs: EnvironmentPick[], config: ConfigPick): boolean {
-  return envs.some((e) => e.vars.length > 0 || e.files.length > 0) || config.mcp.length > 0;
+/** Whether a repository's pick carries secrets, so the user must agree
+ *  first: variables and the files out of git hold them; scripts don't. */
+export function environmentPickSecrets(pick: EnvironmentPick): boolean {
+  return pick.vars.length > 0 || pick.files.length > 0;
+}
+
+/** Whether a setup pick carries secrets: an MCP server's settings carry its
+ *  keys; items and plugin names don't. */
+export function configPickSecrets(pick: ConfigPick): boolean {
+  return pick.mcp.length > 0;
 }
 
 /**
- * The picks a scan still offers. "Scan again" can drop a project or an item —
- * its pick stays in state but stops rendering, so without this the Import
- * button stays enabled with nothing visibly checked and a repository that is
- * gone is still read off the Mac.
+ * The sessions a scan offers, and those it names that can't be imported. A
+ * workspace archived in Conductor is neither: it is work the user put away.
+ * (A scan from an app before it left them out still lists them.)
  */
-export function picksInScan(
-  picks: Record<string, EnvironmentPick>,
-  config: ConfigPick,
-  scan: { projects: ScannedProjectEnv[]; config: ScannedAgentConfig } | null,
-): { envs: EnvironmentPick[]; config: ConfigPick } {
-  if (!scan) return { envs: [], config: { items: [], mcp: [], plugins: false } };
-  const repos = new Set(scan.projects.map((p) => p.repo));
+export function offeredSessions(sessions: ScannedSession[]): { importable: ScannedSession[]; blocked: ScannedSession[] } {
+  const live = sessions.filter((s) => s.conductorState !== "archived");
+  return { importable: live.filter((s) => !s.skip), blocked: live.filter((s) => s.skip) };
+}
+
+/**
+ * The environment the Mac has for `repo` (owner/name, in any case), or null
+ * when it has none to offer. A variable a cloud session may not set is left
+ * out: the server drops it on the way, so offering it would say it was kept
+ * when it wasn't.
+ */
+export function environmentFor(projects: ScannedProjectEnv[], repo: string): ScannedProjectEnv | null {
+  const project = projects.find((p) => p.repo.toLowerCase() === repo.toLowerCase());
+  if (!project) return null;
+  const vars = project.vars.filter((v) => settableEnv(v.name));
+  if (vars.length === 0 && project.files.length === 0 && !project.scripts) return null;
+  return { ...project, vars };
+}
+
+/**
+ * The setup picks a scan still offers. "Scan again" can drop an item — its
+ * pick stays in state but stops rendering, so without this the Import button
+ * stays enabled with nothing visibly checked.
+ */
+export function configInScan(config: ConfigPick, scan: { config: ScannedAgentConfig } | null): ConfigPick {
+  if (!scan) return { items: [], mcp: [], plugins: false };
   const items = new Set(scan.config.items.filter((i) => !i.skip).map((i) => i.id));
   const servers = new Set(scan.config.mcpServers.filter((s) => !s.skip).map((s) => s.name));
   return {
-    envs: Object.values(picks).filter((p) => repos.has(p.repo)),
-    config: {
-      items: config.items.filter((id) => items.has(id)),
-      mcp: config.mcp.filter((name) => servers.has(name)),
-      plugins: config.plugins && scan.config.plugins.length > 0,
-    },
+    items: config.items.filter((id) => items.has(id)),
+    mcp: config.mcp.filter((name) => servers.has(name)),
+    plugins: config.plugins && scan.config.plugins.length > 0,
   };
 }
 
