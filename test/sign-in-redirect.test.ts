@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { signInRedirect, type SignedIn } from "@/lib/auth/sign-in-redirect";
+import { isShellPrefetch, signInRedirect, type SignedIn } from "@/lib/auth/sign-in-redirect";
 
 const page = (pathname: string, signedIn: SignedIn = false, search = "", method = "GET") =>
   signInRedirect({ method, pathname, search, signedIn });
@@ -55,4 +55,11 @@ test("`next` can never point off the site", () => {
   // protocol-relative `next`.
   assert.equal(page("//evil.com"), "/signin");
   assert.equal(page("/\\evil.com"), "/signin");
+});
+
+test("the router prefetching a page's shell is told apart from a page load", () => {
+  assert.equal(isShellPrefetch(new Headers({ "next-router-prefetch": "1" })), true);
+  assert.equal(isShellPrefetch(new Headers({ "Next-Router-Segment-Prefetch": "/_tree" })), true);
+  assert.equal(isShellPrefetch(new Headers({ rsc: "1" })), false);
+  assert.equal(isShellPrefetch(new Headers()), false);
 });

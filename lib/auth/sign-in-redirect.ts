@@ -36,3 +36,14 @@ export function signInRedirect(request: {
   const next = safeRelativePath(`${pathname}${search}`);
   return next === "/" ? "/signin" : `/signin?next=${encodeURIComponent(next)}`;
 }
+
+/**
+ * Whether a request is the router prefetching a page's static shell (a link
+ * coming into view). The shell holds nothing of anyone's, so it needs neither
+ * the session refresh nor the sign-in gate: skipping both keeps a sidebar full
+ * of links from asking Supabase once per link. The click that follows is a
+ * real request, and gets both.
+ */
+export function isShellPrefetch(headers: Headers): boolean {
+  return headers.has("next-router-prefetch") || headers.has("next-router-segment-prefetch");
+}
