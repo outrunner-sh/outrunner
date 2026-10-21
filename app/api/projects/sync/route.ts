@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { mapWithConcurrency } from "@/lib/concurrency";
-import { listProjects, upsertProjects } from "@/lib/db/repositories";
+import { listProjects, unhideProjects, upsertProjects } from "@/lib/db/repositories";
 import { loadRepositoryBrowse } from "@/lib/github/browse";
 import { getGitHubRepository, type GitHubRepository, type GitHubRepositoryList } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
@@ -103,6 +103,8 @@ export async function POST(request: Request) {
         console.error("Could not bring projects up to date with GitHub", error);
       });
     } else {
+      // Picked to open: a project hidden earlier comes back into the list.
+      await unhideProjects(repositories.map((repo) => repo.githubRepoId));
       // Just connected from their own lookups, newer than any listing cached.
       forgetRepositoryBrowse(owner.id);
     }

@@ -107,6 +107,25 @@ export async function upsertProjects(
 }
 
 /**
+ * Show the user's hidden projects for these repositories again: they picked
+ * the repository to open, so it must not stay out of the list (and out of
+ * the answer the picker finds its project in). Only an explicit connect does
+ * this; a sync or a refresh leaves hidden projects hidden.
+ */
+export async function unhideProjects(githubRepoIds: number[]): Promise<void> {
+  if (githubRepoIds.length === 0) return;
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ hidden_at: null })
+    .in("github_repo_id", githubRepoIds)
+    .not("hidden_at", "is", null);
+
+  if (error) throw error;
+}
+
+/**
  * Mark the user's projects for these repositories as ones their GitHub
  * account no longer sees. Already-marked ones keep when that was first seen.
  */
