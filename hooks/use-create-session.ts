@@ -58,7 +58,9 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
   // link (settings for a missing key, the session that already holds a
   // branch), so the error can offer the way out instead of only naming the
   // problem.
-  const [messageAction, setMessageAction] = useState<{ label: string; href: string } | null>(null);
+  // `step` is a fix to make before this session can start (settings); a
+  // `refusal` points at what is in the way, and opening it starts nothing.
+  const [messageAction, setMessageAction] = useState<{ label: string; href: string; kind: "step" | "refusal" } | null>(null);
   const [isCreating, startCreating] = useTransition();
 
   const known = useMemo(
@@ -117,8 +119,8 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         // The server names the page that fixes it, when one does (a missing
         // GitHub grant is fixed by signing in again; a taken branch, by
         // opening the session that holds it).
-        if (result.settingsHref) setMessageAction({ label: "Open settings", href: result.settingsHref });
-        else if (result.sessionHref) setMessageAction({ label: "Open that session", href: result.sessionHref });
+        if (result.settingsHref) setMessageAction({ label: "Open settings", href: result.settingsHref, kind: "step" });
+        else if (result.sessionHref) setMessageAction({ label: "Open that session", href: result.sessionHref, kind: "refusal" });
         resolve(false);
         return;
       }
@@ -165,7 +167,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
       const agent = agentOf(model?.provider ?? "claude");
       const fail = (error: unknown, fallback: string) => {
         setMessage(error instanceof Error ? error.message : fallback);
-        if (error instanceof LocalAgentAuthError) setMessageAction({ label: "Open settings", href: error.settingsHref });
+        if (error instanceof LocalAgentAuthError) setMessageAction({ label: "Open settings", href: error.settingsHref, kind: "step" });
         resolve(false);
       };
       try {

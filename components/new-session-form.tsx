@@ -165,13 +165,16 @@ export function NewSessionForm({
 
       <div className="shrink-0">
         {message && (
-          // A failure with a way out is a step to take first, not an error.
+          // A failure with a fix to make first is a step, not an error. One
+          // that points at what is in the way (a taken branch) still didn't start.
           <Notice
             className="mx-auto w-[calc(100%-32px)] max-w-[720px]"
-            tone={messageAction ? "info" : "error"}
-            title={messageAction ? "One step before this session starts" : "Couldn't start the session"}
+            tone={messageAction?.kind === "step" ? "info" : "error"}
+            title={messageAction?.kind === "step" ? "One step before this session starts" : "Couldn't start the session"}
             detail={message}
-            actions={messageAction ? [{ ...messageAction, primary: true }] : undefined}
+            actions={
+              messageAction ? [{ label: messageAction.label, href: messageAction.href, primary: true }] : undefined
+            }
           />
         )}
         <SessionComposer
