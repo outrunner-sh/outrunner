@@ -16,6 +16,7 @@ import {
   LISTING_WORKSPACE_ID,
   RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
+  SetAgentConfigRequest,
   SetAuthRequest,
   SetEnvironmentRequest,
   WorkspaceSummary,
@@ -137,6 +138,11 @@ export class AgentClient {
    *  error envelope; one that doesn't know the session, 404 NOT_FOUND. */
   setAuth(identity: WorkspaceIdentity, req: SetAuthRequest): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/auth`, identity, SetAuthRequest.parse(req));
+  }
+
+  /** Install the user's own agent setup on the computer. */
+  setAgentConfig(identity: WorkspaceIdentity, req: SetAgentConfigRequest): Promise<unknown> {
+    return this.post("/config", identity, SetAgentConfigRequest.parse(req), AGENT_LIFECYCLE_TIMEOUT_MS);
   }
 
   /** Give the session its project's environment, before it launches. */

@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { deliverProjectEnvironment } from "@/lib/runtime/project-environment";
+import type { AgentConfig } from "@/lib/db/agent-config";
+import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 
 function box(features: string[]) {
-  const sent: unknown[] = [];
+  const sent: Array<[string, unknown]> = [];
   return {
     sent,
     client: {
       features: async () => features,
-      setEnvironment: async (req: unknown) => {
-        sent.push(req);
-      },
+      setEnvironment: async (req: unknown) => void sent.push(["environment", req]),
+      setAgentConfig: async (req: unknown) => void sent.push(["config", req]),
     },
   };
 }
@@ -23,21 +23,44 @@ const environment = {
   run: null,
   archive: null,
 };
+const sha = `sha256:${"5".repeat(64)}`;
+const agentConfig: AgentConfig = {
+  archive: { path: "archives/u/agent-config/a.tar.gz", sha256: sha, size: 10 },
+  items: ["claude-md"],
+  mcpServers: { tracker: { type: "http", url: "https://mcp.example" } },
+  settings: {},
+};
+const all = ["session-environment", "agent-config"];
+const downloadUrl = async (path: string) => `https://storage/${path}`;
 
-test("a project's variables and setup reach a box that takes them", async () => {
-  const b = box(["session-environment"]);
-  await deliverProjectEnvironment(b.client, environment);
-  assert.deepEqual(b.sent, [{ env: { API_TOKEN: "tok" }, files: { "api/.env": "DATABASE_URL=x\n" }, setup: "pnpm install" }]);
+test("the user's setup and the project's environment reach a box that takes them", async () => {
+  const b = box(all);
+  await deliverSessionSetup(b.client, { environment, agentConfig, downloadUrl });
+  assert.deepEqual(b.sent, [
+    [
+      "config",
+      {
+        version: sha,
+        url: "https://storage/archives/u/agent-config/a.tar.gz",
+        sha256: sha,
+        mcpServers: { tracker: { type: "http", url: "https://mcp.example" } },
+        settings: {},
+      },
+    ],
+    ["environment", { env: { API_TOKEN: "tok" }, files: { "api/.env": "DATABASE_URL=x\n" }, setup: "pnpm install" }],
+  ]);
 });
 
-test("nothing is sent for no environment, and an old box launches without it", async () => {
-  for (const [features, env] of [
-    [["session-environment"], null],
-    [["session-environment"], { env: {}, files: {}, setup: null, run: null, archive: null }],
-    [[], environment],
-  ] as const) {
-    const b = box([...features]);
-    await deliverProjectEnvironment(b.client, env);
-    assert.deepEqual(b.sent, []);
-  }
+test("nothing is sent for none, and what an old box can't take is skipped", async () => {
+  const empty = box(all);
+  await deliverSessionSetup(empty.client, {
+    environment: { env: {}, files: {}, setup: null, run: null, archive: null },
+    agentConfig: { archive: null, items: [], mcpServers: {}, settings: {} },
+    downloadUrl,
+  });
+  assert.deepEqual(empty.sent, []);
+
+  const old = box(["session-environment"]);
+  await deliverSessionSetup(old.client, { environment, agentConfig, downloadUrl });
+  assert.deepEqual(old.sent.map(([kind]) => kind), ["environment"]);
 });

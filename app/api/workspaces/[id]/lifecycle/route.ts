@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { resolveAgentAuth } from "@/lib/agents/resolve";
 import { getOwner } from "@/lib/auth/owner";
 import { agentAuthStore } from "@/lib/db/credentials";
-import { getProjectEnvironment } from "@/lib/db/project-environment";
 import { optionalGithubToken } from "@/lib/github/token";
 import {
   createWorkspaceSnapshot,
@@ -21,7 +20,7 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_IMPORTS } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
-import { deliverProjectEnvironment } from "@/lib/runtime/project-environment";
+import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { restoreSignedIn, sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
@@ -352,14 +351,7 @@ async function restoreDaytonaWorkspace(
       );
     }
     // Before the restore, which launches the session at once.
-    await deliverProjectEnvironment(
-      {
-        features: async () => (await agent.health(identity)).features ?? [],
-        upgrade,
-        setEnvironment: (req) => agent.setEnvironment(identity, req),
-      },
-      await getProjectEnvironment(userId, project.id),
-    );
+    await setUpSession(agent, identity, upgrade, userId, project.id);
     const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, (credential) =>
       agent.restoreWorkspace(identity, {

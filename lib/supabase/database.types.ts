@@ -245,6 +245,19 @@ type ProjectEnvironmentRow = {
   updated_at: string;
 };
 
+type UserAgentConfigRow = {
+  user_id: string;
+  archive_path: string | null;
+  archive_sha256: string | null;
+  archive_size: number | null;
+  items: string[];
+  mcp_ciphertext: string | null;
+  mcp_names: string[];
+  settings: Json;
+  created_at: string;
+  updated_at: string;
+};
+
 // Multi-user — each user's own GitHub and Anthropic credentials, sealed with
 // AES-256-GCM (lib/crypto/secret-box.ts). Service-role only: the table has RLS
 // enabled with NO policy, so anon/authenticated match nothing. Reach it through
@@ -450,6 +463,12 @@ export type Database = {
             referencedColumns: ["owner_id", "id"];
           },
         ];
+      };
+      user_agent_config: {
+        Row: UserAgentConfigRow;
+        Insert: Insert<UserAgentConfigRow, "user_id">;
+        Update: Partial<UserAgentConfigRow>;
+        Relationships: [];
       };
       project_environment: {
         Row: ProjectEnvironmentRow;
