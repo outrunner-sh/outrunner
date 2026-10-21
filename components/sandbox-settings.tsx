@@ -73,8 +73,8 @@ export function SandboxSettingsForm({
   const [settings, setSettings] = useState(initial);
   const [shown, setShown] = useState<SandboxChoice>(initial.sandbox);
   const [status, setStatus] = useState<ActionStatus>("idle");
-  // The change that didn't save, as a line names it. Cleared by that change's
-  // own success, replaced by a newer failure, dismissed by hand.
+  // The change that didn't land, as its line names it. Cleared by that
+  // change's own success, replaced by a newer failure, dismissed by hand.
   const [error, setError] = useState<SaveFailure | null>(null);
   // Changes go out one at a time, in the order made: a save that is still
   // checking a key mustn't land after, and undo, a switch made since. Each
@@ -84,9 +84,11 @@ export function SandboxSettingsForm({
   const busy = status === "pending";
 
   /** Send a change, after any before it; the answer is the settings as the
-   *  server has them. `body` is made as it goes out. */
+   *  server has them. `body` is made as it goes out. A change that fails is
+   *  called what it was: a removal isn't a save. */
   function send(subject: string, method: "PUT" | "DELETE", body?: () => object, query = ""): Promise<boolean> {
     setStatus("pending");
+    const verb = method === "DELETE" ? "remove" : "save";
     const run = queue.current.then(async () => {
       try {
         const data = await requestJson<SandboxSettings>(`/api/settings/sandbox${query}`, {
@@ -95,15 +97,24 @@ export function SandboxSettingsForm({
           has: (d) => d.sandbox !== undefined,
         });
         inUseNow.current = data.sandbox;
-        // What saved clears its own failure — the line names the change, and
+        // What landed clears its own failure — the line names the change, and
         // only that change's success retires it. Anything else that failed is
-        // still unsaved, whatever just landed.
-        setError((current) => saveOutcome(current, { subject, ok: true }));
+        // still unmade, whatever just landed.
+        setError((current) => saveOutcome(current, { verb, subject, ok: true }));
         setSettings(data);
         setStatus("success");
         return true;
       } catch (e) {
-        setError(saveOutcome(null, { subject, ok: false, message: e instanceof Error ? e.message : "Couldn't save that." }));
+        setError(
+          saveOutcome(null, {
+            verb,
+            subject,
+            ok: false,
+            // The line already says "Couldn't <verb> <subject>"; the why
+            // doesn't say it again.
+            message: e instanceof Error ? e.message : "Outrunner didn't say why.",
+          }),
+        );
         setStatus("error");
         return false;
       }
@@ -202,7 +213,7 @@ export function SandboxSettingsForm({
 
       {error ? (
         <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>
-          Couldn&apos;t save {error.subject}: {error.message}
+          Couldn&apos;t {error.verb} {error.subject}: {error.message}
         </InlineMessage>
       ) : null}
     </section>
