@@ -90,8 +90,11 @@ export async function POST(request: Request) {
     }
     const synced = await upsertProjects(owner.id, repositories);
     if (list) {
-      // Everything was just read: a project GitHub no longer lists is marked lost.
-      await reconcileProjects(owner.id, token, await listProjects(), list);
+      // Everything was just read: a project GitHub no longer lists is marked
+      // lost. Follow-up work: the repositories are saved whatever it says.
+      await reconcileProjects(owner.id, token, await listProjects(), list).catch((error: unknown) => {
+        console.error("Could not bring projects up to date with GitHub", error);
+      });
     } else {
       // Just connected from their own lookups, newer than any listing cached.
       forgetRepositoryList(owner.id);
