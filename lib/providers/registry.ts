@@ -62,9 +62,9 @@ export const PROVIDERS: Record<KeyProviderId, Provider> = {
     keyPlaceholder: "Paste your OpenRouter API key (sk-or-…)",
     keysUrl: "https://openrouter.ai/settings/keys",
     keysPage: "OpenRouter → Keys",
+    usageUrl: "https://openrouter.ai/activity",
     // Replaced by a check that also refuses a management key
     // (lib/providers/check.ts).
-    usageUrl: "https://openrouter.ai/activity",
     check: { url: "https://openrouter.ai/api/v1/key", auth: "bearer" },
     models: [
       { id: "z-ai/glm-5.3", label: "GLM 5.3" },
