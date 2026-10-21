@@ -41,6 +41,21 @@ export function sanitizeBranch(branch: string): string {
   return branch.replace(/[^a-zA-Z0-9._-]/g, "-");
 }
 
+/** A branch name a session may be created on: plain characters only, none of
+ *  the forms git refuses or a refspec could misread. */
+export function isValidBranchName(branch: string): boolean {
+  return (
+    branch.length >= 1 &&
+    branch.length <= 128 &&
+    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch) &&
+    !branch.includes("..") &&
+    !branch.includes("//") &&
+    !branch.endsWith(".") &&
+    !branch.endsWith("/") &&
+    !branch.endsWith(".lock")
+  );
+}
+
 /** Reject traversal, absolute paths, and Git pathspec magic before using a
  * caller-supplied path as a Git argument. */
 export function isSafeRelativePath(filePath: string): boolean {
