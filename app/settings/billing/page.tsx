@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
 import { BillingSettings, type ShownSubscription } from "@/components/billing-settings";
+import { SettingsLoading } from "@/components/settings-loading";
 import { getOwner } from "@/lib/auth/owner";
 import { customerIdFor, subscriptionsFor } from "@/lib/billing/billing-store";
 import { billingMode } from "@/lib/billing/mode";
@@ -8,12 +10,21 @@ import { PLANS } from "@/lib/billing/plans";
 import { listedPricesUsd } from "@/lib/billing/stripe-deps";
 import { currentSubscription, planFromSubscriptions } from "@/lib/billing/subscriptions";
 
+/** Opens at once, its data streaming in behind: the build checks it. */
+export const unstable_instant = { prefetch: "static" };
+
+type SearchParams = Promise<{ checkout?: string }>;
+
 /** Settings → Billing: the user's plan, and Stripe's pages to change it. */
-export default async function BillingSettingsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ checkout?: string }>;
-}) {
+export default function BillingSettingsPage({ searchParams }: { searchParams: SearchParams }) {
+  return (
+    <Suspense fallback={<SettingsLoading title="Billing" />}>
+      <BillingSection searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function BillingSection({ searchParams }: { searchParams: SearchParams }) {
   const owner = await getOwner();
   if (!owner) redirect("/signin?next=/settings/billing");
   const { checkout } = await searchParams;
