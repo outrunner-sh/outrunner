@@ -248,7 +248,7 @@ export function ClaudeConnection({
               />
               <LoadingButton
                 status={busy ? "pending" : "idle"}
-                labels={{ idle: "Connect", pending: "Connecting" }}
+                labels={{ idle: "Connect" }}
                 disabled={!code.trim()}
                 onClick={() => void finish()}
               />
@@ -261,7 +261,7 @@ export function ClaudeConnection({
             <LoadingButton
               variant="outline"
               status={busy || waiting ? "pending" : "idle"}
-              labels={{ idle: "Reconnect", pending: "Reconnecting" }}
+              labels={{ idle: "Reconnect" }}
               onClick={() => void connect()}
             />
           ) : null}
@@ -273,7 +273,7 @@ export function ClaudeConnection({
         <div className="space-y-2">
           <LoadingButton
             status={busy ? "pending" : "idle"}
-            labels={{ idle: "Connect Claude", pending: "Connecting" }}
+            labels={{ idle: "Connect Claude" }}
             onClick={() => void connect()}
           />
           <p className="text-xs text-muted-foreground">

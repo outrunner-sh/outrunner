@@ -126,7 +126,7 @@ export function WorkspacePublishPanel({
         <LoadingButton
           type="submit"
           status={publishing ? "pending" : message ? "error" : "idle"}
-          labels={{ idle: "Publish pull request", pending: "Publishing" }}
+          labels={{ idle: "Publish pull request" }}
           icon={<GitPullRequest />}
           disabled={!active || title.trim().length === 0}
         />

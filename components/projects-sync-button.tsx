@@ -69,7 +69,7 @@ export function ProjectsSyncButton({
     <div className={cn("flex flex-col gap-1.5", alignment)}>
       <LoadingButton
         status={status}
-        labels={{ idle: "Sync repositories", pending: "Syncing", success: "Synced" }}
+        labels={{ idle: "Sync repositories", success: "Synced" }}
         icon={<RefreshCw />}
         onClick={() => void sync()}
       />

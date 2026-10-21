@@ -28,7 +28,10 @@ export function LoadingButton({
 }: {
   status: ActionStatus;
   /** `idle` is also the accessible name; the rest default to it, "Done" and
-   *  the idle label again. A failed button keeps its label rather than turning
+   *  the idle label again. While it works a button keeps its idle label and
+   *  turns its icon: a `pending` label is for a wait that is a different step
+   *  than the click (Opening GitHub), not the same verb said again
+   *  (Publishing). A failed button keeps its label rather than turning
    *  red: the caller shows the reason beside it (InlineMessage). */
   labels: { idle: string; pending?: string; success?: string; error?: string };
   /** Shown beside the idle label. */

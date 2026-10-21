@@ -189,7 +189,7 @@ export function SandboxSettingsForm({
           <LoadingButton
             variant="outline"
             status={busy ? "pending" : "idle"}
-            labels={{ idle: `Use ${SANDBOXES[shown].label} for new sessions`, pending: "Saving" }}
+            labels={{ idle: `Use ${SANDBOXES[shown].label} for new sessions` }}
             disabled={!ready(shown) || busy}
             onClick={() => {
               const next = shown;
@@ -301,7 +301,7 @@ function SandboxCredential({
             ) : null}
             <LoadingButton
               status={busy ? "pending" : "idle"}
-              labels={{ idle: "Save", pending: "Checking" }}
+              labels={{ idle: "Save" }}
               disabled={!typed}
               onClick={() => void save()}
             />

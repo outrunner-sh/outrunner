@@ -48,7 +48,7 @@ export function HomeUserMenu({
   );
 }
 
-/** Log out, staying open with "Signing out" until the redirect lands (the
+/** Log out, staying open with its icon turning until the redirect lands (the
  *  menu would otherwise close at once, with nothing to say it worked). */
 function SignOutItem() {
   const { pending } = useFormStatus();
@@ -56,7 +56,7 @@ function SignOutItem() {
     <DropdownMenuItem asChild onSelect={(event) => event.preventDefault()}>
       <button type="submit" className="w-full" aria-busy={pending || undefined} disabled={pending}>
         {pending ? <Spinner /> : <LogOut />}
-        {pending ? "Signing out" : "Log out"}
+        Log out
       </button>
     </DropdownMenuItem>
   );
