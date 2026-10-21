@@ -1,12 +1,16 @@
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { markProjectsAccessLost, upsertProjects } from "@/lib/db/repositories";
 import { getGitHubRepository, type GitHubRepositoryList } from "@/lib/github/client";
-import { planProjectReconcile, settleMissing } from "@/lib/github/reconcile";
+import { lookupWindow, planProjectReconcile, settleMissing } from "@/lib/github/reconcile";
 import type { Project } from "@/lib/runtime/types";
 
 /** Missing projects looked up per reconcile; any beyond wait for the next. */
 const MAX_MISSING_LOOKUPS = 20;
 const LOOKUP_CONCURRENCY = 6;
+
+/** Where each user's next window of lookups starts (lookupWindow). Per
+ *  process, like the listing cache: a restart only starts the round again. */
+const lookupCursors = new Map<string, number>();
 
 /**
  * Bring the user's connected projects up to date with a listing of their
@@ -29,9 +33,16 @@ export async function reconcileProjects(
 ): Promise<void> {
   const plan = planProjectReconcile(projects, list);
 
-  const checked = plan.missing.slice(0, MAX_MISSING_LOOKUPS);
-  const found = await mapWithConcurrency(checked, LOOKUP_CONCURRENCY, (id) => getGitHubRepository(token, id));
-  const settled = settleMissing(projects, checked, found);
+  const batch = lookupWindow(plan.missing, lookupCursors.get(ownerId) ?? 0, MAX_MISSING_LOOKUPS);
+  lookupCursors.set(ownerId, batch.nextCursor);
+  const found = await mapWithConcurrency(batch.ids, LOOKUP_CONCURRENCY, (id) =>
+    // One failed lookup (a rate limit) leaves that project for next time.
+    getGitHubRepository(token, id).catch((error: unknown) => {
+      console.error("Could not look up a missing project's repository", { id, error });
+      return undefined;
+    }),
+  );
+  const settled = settleMissing(projects, batch.ids, found);
 
   // Already-lost ones are marked again harmlessly: the first time stays.
   await Promise.all([

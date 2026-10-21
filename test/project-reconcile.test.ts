@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { GitHubRepository, GitHubRepositoryList } from "@/lib/github/client";
-import { planProjectReconcile, settleMissing } from "@/lib/github/reconcile";
+import { lookupWindow, planProjectReconcile, settleMissing } from "@/lib/github/reconcile";
 import type { Project } from "@/lib/runtime/types";
 
 function repo(id: number, over: Partial<GitHubRepository> = {}): GitHubRepository {
@@ -99,4 +99,26 @@ test("a missing project GitHub still shows on its own (public) isn't lost; one i
   );
   // 2's details changed (now public); 3 was lost and is readable again.
   assert.deepEqual(settled, { refresh: [publicRepo, repo(3)], lost: [1] });
+});
+
+test("a failed lookup settles nothing for that project", () => {
+  assert.deepEqual(settleMissing([project(1)], [1], [undefined]), { refresh: [], lost: [] });
+});
+
+test("lookups move round every missing project, a window at a time", () => {
+  assert.deepEqual(lookupWindow([3, 1, 2], 5, 20), { ids: [1, 2, 3], nextCursor: 0 });
+
+  const missing = [5, 4, 3, 2, 1];
+  const seen: number[][] = [];
+  let cursor = 0;
+  for (let i = 0; i < 3; i += 1) {
+    const batch = lookupWindow(missing, cursor, 2);
+    seen.push(batch.ids);
+    cursor = batch.nextCursor;
+  }
+  assert.deepEqual(seen, [
+    [1, 2],
+    [3, 4],
+    [5, 1],
+  ]);
 });

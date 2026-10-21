@@ -73,21 +73,41 @@ export function planProjectReconcile(
 }
 
 /**
+ * Which of the missing projects' repositories to look up this time, at most
+ * `max`, and where the next time starts: a window that moves round them all,
+ * so with more than `max` missing every one is reached in turn rather than
+ * the same few each time. By id, so the order holds between calls.
+ */
+export function lookupWindow(
+  missing: readonly number[],
+  cursor: number,
+  max: number,
+): { ids: number[]; nextCursor: number } {
+  const ordered = [...missing].sort((a, b) => a - b);
+  if (ordered.length <= max) return { ids: ordered, nextCursor: 0 };
+  const start = cursor % ordered.length;
+  const ids = Array.from({ length: max }, (_, i) => ordered[(start + i) % ordered.length]);
+  return { ids, nextCursor: (start + max) % ordered.length };
+}
+
+/**
  * What the individual lookups of missing projects settle: `found[i]` is what
- * GitHub returned for `checked[i]`, null when the user can't see it. Unseen
- * ones are lost; seen ones (public, outside the listing) are not, and are
- * refreshed if their details changed or they had been marked lost.
+ * GitHub returned for `checked[i]` — null when the user can't see it,
+ * undefined when the lookup failed. Unseen ones are lost; seen ones (public,
+ * outside the listing) are not, and are refreshed if their details changed
+ * or they had been marked lost; failed ones wait for the next time.
  */
 export function settleMissing(
   projects: readonly Project[],
   checked: readonly number[],
-  found: readonly (GitHubRepository | null)[],
+  found: readonly (GitHubRepository | null | undefined)[],
 ): { refresh: GitHubRepository[]; lost: number[] } {
   const refresh: GitHubRepository[] = [];
   const lost: number[] = [];
   checked.forEach((id, i) => {
     const repo = found[i];
-    if (!repo) {
+    if (repo === undefined) return;
+    if (repo === null) {
       lost.push(id);
       return;
     }
