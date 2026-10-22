@@ -17,7 +17,8 @@ import { boxSize, isBoxSizeId } from "@/lib/runtime/box-sizes";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { daytonaAcceptsKey } from "@/lib/runtime/sandbox/daytona";
-import { modalAcceptsToken, type ModalToken } from "@/lib/runtime/sandbox/modal";
+import { modalAcceptsToken } from "@/lib/runtime/sandbox/modal";
+import { checkModalToken } from "@/lib/runtime/sandbox/modal-token";
 
 /**
  * Where the user's cloud sessions run (Settings → Sandbox): Outrunner's
@@ -33,18 +34,6 @@ import { modalAcceptsToken, type ModalToken } from "@/lib/runtime/sandbox/modal"
 const MIN_KEY_LENGTH = 20;
 const MAX_KEY_LENGTH = 500;
 const CHOICES: readonly SandboxChoice[] = ["outrunner", "daytona", "modal"];
-/** A Modal token's id and secret, as Modal → Settings → API Tokens shows them. */
-const MODAL_TOKEN_ID = /^ak-[A-Za-z0-9]{8,100}$/;
-const MODAL_TOKEN_SECRET = /^as-[A-Za-z0-9]{8,100}$/;
-
-/** The token in a PUT's `modalToken`, if it is shaped like one. */
-function modalTokenIn(value: unknown): ModalToken | null {
-  if (!value || typeof value !== "object") return null;
-  const { tokenId, tokenSecret } = value as Record<string, unknown>;
-  const id = typeof tokenId === "string" ? tokenId.trim() : "";
-  const secret = typeof tokenSecret === "string" ? tokenSecret.trim() : "";
-  return MODAL_TOKEN_ID.test(id) && MODAL_TOKEN_SECRET.test(secret) ? { tokenId: id, tokenSecret: secret } : null;
-}
 
 function invalid(error: string) {
   return NextResponse.json({ error }, { status: 400 });
@@ -107,12 +96,9 @@ export async function PUT(request: Request) {
     }
 
     if (body.modalToken !== undefined) {
-      const token = modalTokenIn(body.modalToken);
-      if (!token) {
-        return invalid(
-          "That doesn't look like a Modal token: an id (ak-…) and a secret (as-…), from Modal → Settings → API Tokens.",
-        );
-      }
+      const checked = checkModalToken(body.modalToken);
+      if ("error" in checked) return invalid(checked.error);
+      const { token } = checked;
       let accepted: boolean;
       try {
         accepted = await modalAcceptsToken(token);

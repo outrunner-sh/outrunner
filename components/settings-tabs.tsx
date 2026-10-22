@@ -51,7 +51,7 @@ export function SettingsTabs<Id extends string>({
       role="tablist"
       aria-label={label}
       onKeyDown={onKeyDown}
-      className="flex gap-5 overflow-x-auto border-b border-border/60"
+      className="flex gap-4 overflow-x-auto border-b border-border/60"
     >
       {ids.map((id) => {
         const selected = id === active;
@@ -69,7 +69,7 @@ export function SettingsTabs<Id extends string>({
             tabIndex={selected ? 0 : -1}
             onClick={() => onOpen(id)}
             className={cn(
-              "-mb-px flex shrink-0 cursor-pointer items-center gap-2 border-b-2 pb-2.5 text-sm whitespace-nowrap transition-colors",
+              "-mb-px flex shrink-0 cursor-pointer items-center gap-2 border-b-2 pb-2 text-[13px] whitespace-nowrap transition-colors",
               selected
                 ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",

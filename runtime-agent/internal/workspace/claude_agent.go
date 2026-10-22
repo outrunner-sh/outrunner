@@ -157,7 +157,7 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 		argv = claude.Command(mode, orientation)
 	}
 	// Claude's own flags first: the env files below wrap the command.
-	argv = claude.WithEffort(argv, f.Effort)
+	argv = claude.WithEffort(argv, s.claudeEffort(workspaceID, f.Effort))
 	argv = withAgentConfig(argv)
 	argv = append(argv, s.claudeAskArgs(workspaceID)...)
 	if f.Gateway != claude.NoGateway {

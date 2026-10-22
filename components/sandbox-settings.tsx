@@ -15,6 +15,7 @@ import { saveOutcome, type SaveFailure } from "@/lib/settings/save-error";
 import type { SandboxChoice, SandboxSettings, StoredKey } from "@/lib/db/credentials";
 import { requestJson } from "@/lib/http/request-json";
 import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
+import { modalTokenInText, type ModalToken } from "@/lib/runtime/sandbox/modal-token";
 import { cn } from "@/lib/utils";
 
 type OwnSandbox = Exclude<SandboxChoice, "outrunner">;
@@ -135,7 +136,7 @@ export function SandboxSettingsForm({
   return (
     <section className="space-y-6">
       <div className="space-y-1">
-        <h1 className="text-xl font-semibold text-foreground">Sandbox</h1>
+        <h1 className="text-lg font-semibold text-foreground">Sandbox</h1>
         <p className="text-sm text-muted-foreground">Where your cloud sessions run.</p>
       </div>
 
@@ -221,7 +222,7 @@ export function SandboxSettingsForm({
 }
 
 /** What a credential save sends: a Daytona key, or a Modal token. */
-type CredentialBody = { daytonaKey: string } | { modalToken: { tokenId: string; tokenSecret: string } };
+type CredentialBody = { daytonaKey: string } | { modalToken: ModalToken };
 
 /**
  * One own sandbox's credential: whether it's saved (its last 4, never the
@@ -262,6 +263,15 @@ function SandboxCredential({
       setReplacing(false);
     }
   }
+  /** A Modal field's input: pasted `modal token set …` (or `.env` lines) goes
+   *  to the fields it has a part for, and the field it was pasted in doesn't
+   *  keep the rest; anything else is the field's own value. */
+  const modalInput = (field: keyof ModalToken) => (value: string) => {
+    const found = modalTokenInText(value);
+    if (!found) return field === "tokenId" ? setTokenId(value) : setKey(value);
+    if (found.tokenId !== undefined || field === "tokenId") setTokenId(found.tokenId ?? "");
+    if (found.tokenSecret !== undefined || field === "tokenSecret") setKey(found.tokenSecret ?? "");
+  };
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "Enter") void save();
   };
@@ -288,7 +298,7 @@ function SandboxCredential({
             {modal ? (
               <KeyInput
                 value={tokenId}
-                onChange={setTokenId}
+                onChange={modalInput("tokenId")}
                 onKeyDown={onKeyDown}
                 placeholder="Token ID (ak-…)"
                 label="Modal token ID"
@@ -297,7 +307,7 @@ function SandboxCredential({
             ) : null}
             <KeyInput
               value={key}
-              onChange={setKey}
+              onChange={modal ? modalInput("tokenSecret") : setKey}
               onKeyDown={onKeyDown}
               placeholder={modal ? "Token secret (as-…)" : "Paste your Daytona API key"}
               label={modal ? "Modal token secret" : "Daytona API key"}

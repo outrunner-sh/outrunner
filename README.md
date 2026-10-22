@@ -1,7 +1,7 @@
-# Runtime
+# Outrunner
 
 
-Runtime runs the real Claude Code CLI in a persistent cloud workspace you drive
+Outrunner runs the real Claude Code CLI in a persistent cloud workspace you drive
 from the browser. You get a live terminal and a structured conversation you can
 close your laptop on and reconnect to — the agent keeps running. Conductor-style
 workflow, but the session lives in the cloud, not on your machine.
@@ -32,7 +32,7 @@ Phase 0 (architecture validated end-to-end on Daytona) and Milestone 1
 2. Apply `supabase/migrations/*.sql` in filename order (Supabase SQL editor or CLI).
 3. `pnpm install && pnpm dev`
 
-`GITHUB_PAT` is server-only, must belong to the configured Runtime owner, and
+`GITHUB_PAT` is server-only, must belong to the configured Outrunner owner, and
 needs repo **Metadata: Read**, **Contents: Read/write**, and **Pull requests:
 Read/write**. Keep it out of `NEXT_PUBLIC_*` and commits.
 

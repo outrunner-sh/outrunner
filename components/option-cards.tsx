@@ -51,7 +51,7 @@ export function OptionCards<Id extends string>({
   }
 
   return (
-    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className="grid grid-cols-3 gap-3">
+    <div role="tablist" aria-label={label} onKeyDown={onKeyDown} className="grid grid-cols-3 gap-2">
       {options.map(({ id, label: name, icon: Icon, connected }) => {
         const isChosen = id === chosen;
         const isShown = id === shown;
@@ -68,7 +68,7 @@ export function OptionCards<Id extends string>({
             disabled={busy}
             onClick={() => onSelect(id)}
             className={cn(
-              "relative flex h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border text-sm transition-colors disabled:cursor-wait",
+              "relative flex h-16 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border text-[13px] transition-colors disabled:cursor-wait",
               isShown
                 ? "border-foreground/40 bg-muted/50 text-foreground"
                 : "border-border/60 text-muted-foreground hover:bg-muted/30 hover:text-foreground",
@@ -76,17 +76,17 @@ export function OptionCards<Id extends string>({
           >
             {isChosen ? (
               <>
-                <Check aria-hidden className="absolute top-2.5 right-2.5 size-4 text-foreground" />
+                <Check aria-hidden className="absolute top-2 right-2 size-3.5 text-foreground" />
                 <span className="sr-only">({chosenLabel})</span>
               </>
             ) : null}
             {connected && !isChosen ? (
               <>
-                <span aria-hidden className="absolute top-3.5 right-3.5 size-1.5 rounded-full bg-positive" />
+                <span aria-hidden className="absolute top-3 right-3 size-1.5 rounded-full bg-positive" />
                 <span className="sr-only">(connected)</span>
               </>
             ) : null}
-            <Icon aria-hidden className="size-5" />
+            <Icon aria-hidden className="size-4" />
             <span className={cn(isChosen && "font-medium")}>{name}</span>
           </button>
         );

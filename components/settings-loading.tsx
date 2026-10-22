@@ -5,7 +5,7 @@ import { SkeletonRows } from "@/components/ui/skeleton-swap";
 export function SettingsLoading({ title }: { title: string }) {
   return (
     <section className="space-y-6" aria-busy>
-      <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+      <h1 className="text-lg font-semibold text-foreground">{title}</h1>
       <SkeletonRows rows={5} rowHeight={36} />
     </section>
   );

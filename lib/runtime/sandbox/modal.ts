@@ -11,6 +11,7 @@ import {
 } from "modal";
 
 import { boxSize, DEFAULT_BOX_SIZE } from "@/lib/runtime/box-sizes";
+import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
 import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 import { AGENT_PORT, type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import { ghInstallCommand } from "@/lib/runtime/github-cli";
@@ -23,6 +24,7 @@ import {
   type SandboxBackend,
   type SandboxBox,
 } from "@/lib/runtime/sandbox/backend";
+import type { ModalToken } from "@/lib/runtime/sandbox/modal-token";
 
 /**
  * Modal sandboxes, in a user's own Modal account on their token (Settings →
@@ -57,19 +59,19 @@ const BOX_HOME = `/home/${BOX_USER}`;
 
 export const MODAL_BASE_IMAGE = "node:22-bookworm";
 /** What the agent needs on top of node:22 (git and curl are in it). Claude
- *  Code is installed for the box user, so it can keep itself up to date;
+ *  Code is installed for the box user at the pinned version, so it can keep
+ *  itself up to date from there (and the deploy's own check passes);
  *  Codex for every user, at the version the agent is built for. */
 export const MODAL_IMAGE_SETUP = [
   "RUN apt-get update && apt-get install -y --no-install-recommends tmux git-lfs ripgrep jq " +
     "&& rm -rf /var/lib/apt/lists/*",
   `RUN useradd -m -s /bin/bash ${BOX_USER}`,
-  `RUN su - ${BOX_USER} -c 'curl -fsSL https://claude.ai/install.sh | bash'`,
+  `RUN su - ${BOX_USER} -c 'curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION}'`,
   `RUN npm install -g ${CODEX_PACKAGE}`,
   `RUN ${ghInstallCommand({ sudo: false })}`,
 ];
 
-/** A Modal token: Settings → API Tokens in Modal. */
-export type ModalToken = { tokenId: string; tokenSecret: string };
+export type { ModalToken };
 
 /** Keeps a file where a box can download it: a signed URL, and the file's
  *  sha256 for the box to check it by (lib/runtime/storage/box-uploads.ts). */

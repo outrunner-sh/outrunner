@@ -390,13 +390,15 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     });
   }
 
-  /** Git projection for one interactive worktree on the shared computer. */
+  /** Git projection for one interactive worktree on the shared computer: its
+   *  changes since `baseBranch`, or only the uncommitted ones without it. */
   async listWorkspaceChangedFiles(
     sandboxId: string,
     worktreePath: string,
+    baseBranch?: string,
   ): Promise<ChangedFile[]> {
     const box = await this.backend.get(sandboxId);
-    return listChangedFiles(box.gitExec, { worktree: worktreePath });
+    return listChangedFiles(box.gitExec, { worktree: worktreePath, baseBranch });
   }
 
   /** Bounded diff for one changed path in an interactive worktree. */
@@ -404,11 +406,13 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     sandboxId: string,
     worktreePath: string,
     filePath: string,
+    baseBranch?: string,
   ): Promise<string> {
     const box = await this.backend.get(sandboxId);
     return readFileDiff(box.gitExec, {
       worktree: worktreePath,
       path: filePath,
+      baseBranch,
     });
   }
 

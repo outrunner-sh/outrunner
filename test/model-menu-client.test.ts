@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { forgetOutrunnerModels, outrunnerModels } from "@/lib/desktop/local-runtime";
+import { forgetOutrunnerModels, OUTRUNNER_MODELS, outrunnerModels } from "@/lib/desktop/local-runtime";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
-  forgetOutrunnerModels();
+  // Out of date for the next test, without looking again here.
+  OUTRUNNER_MODELS.invalidate();
 });
 
+/** Answers every look with `body`; says how many looks there were. */
 function answer(body: unknown) {
-  globalThis.fetch = (async () => new Response(JSON.stringify(body))) as typeof fetch;
+  const looks = { count: 0 };
+  globalThis.fetch = (async () => {
+    looks.count += 1;
+    return new Response(JSON.stringify(body));
+  }) as typeof fetch;
+  return looks;
 }
 
 /** A server from before connections, said nothing of: all assumed. */
@@ -84,4 +91,17 @@ test("an unreachable server isn't kept either", async () => {
   }) as typeof fetch;
   assert.equal((await outrunnerModels()).available, false);
   assert.equal((await outrunnerModels()).available, true);
+});
+
+test("forgetting the menu looks again at once, so a menu shown next has the new answer", async () => {
+  answer({ outrunner: true, keys: [], available: true, agents: { claude: { cloud: false, local: false } } });
+  assert.equal((await outrunnerModels()).agents.claude.cloud, false);
+
+  // Claude just connected in Settings → Providers.
+  const looks = answer({ outrunner: true, keys: [], available: true, agents: { claude: { cloud: true, local: true } } });
+  forgetOutrunnerModels();
+  assert.equal(looks.count, 1);
+  // A menu mounting meanwhile shares that look rather than starting another.
+  assert.equal((await outrunnerModels()).agents.claude.cloud, true);
+  assert.equal(looks.count, 1);
 });

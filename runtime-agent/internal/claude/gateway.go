@@ -18,7 +18,19 @@ const (
 	// OpenRouter serves Claude, GLM and other models behind one key: the
 	// gateway Outrunner's own models run through.
 	OpenRouter Gateway = "openrouter"
+	// Anthropic is Anthropic's own API, on the user's key: Claude's models.
+	Anthropic Gateway = "anthropic"
 )
+
+// SpeaksAsOutrunner reports whether a session through g is told it is
+// Outrunner's agent (Identity) rather than left calling itself Claude Code:
+// any gateway but Anthropic's, as those serve other companies' models (GLM,
+// Kimi, DeepSeek), which Claude Code's own prompt would otherwise have claim
+// to be Claude. A session on the user's own Claude, or on Anthropic's API, is
+// Claude, and says so.
+func (g Gateway) SpeaksAsOutrunner() bool {
+	return g != NoGateway && g != Anthropic
+}
 
 // The variables Claude reads a gateway's key from: a bearer token for most,
 // an API key for Anthropic's own API.

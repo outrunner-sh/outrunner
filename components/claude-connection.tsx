@@ -296,7 +296,7 @@ export function ClaudeConnection({
           </p>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
+        <p className="text-[13px] text-muted-foreground">
           Open Outrunner in the desktop app to connect your Claude subscription.
         </p>
       )}

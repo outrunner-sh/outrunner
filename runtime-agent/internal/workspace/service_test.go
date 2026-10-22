@@ -42,6 +42,30 @@ func TestOrientationOmitsBaseWhenFactsMissing(t *testing.T) {
 	}
 }
 
+// A session on another company's model through a gateway answers as Outrunner;
+// one on Claude, by the user's login or on Anthropic's API, stays Claude.
+func TestOrientationSaysOutrunnerOnlyOffClaude(t *testing.T) {
+	s := NewService(t.TempDir())
+	for _, tc := range []struct {
+		facts workspaceFacts
+		want  bool
+	}{
+		{workspaceFacts{Model: "deepseek/deepseek-v4.1-flash", Gateway: claude.OpenRouter}, true},
+		{workspaceFacts{Model: "glm-5.3", Gateway: "zai"}, true},
+		{workspaceFacts{Model: "claude-opus-5", Gateway: claude.Anthropic}, false},
+		{workspaceFacts{Model: "opus"}, false},
+	} {
+		s.setFacts("ws", tc.facts)
+		got := s.orientation("ws", "/work/ws")
+		if has := strings.Contains(got, claude.Identity(tc.facts.Model)); has != tc.want {
+			t.Errorf("%+v: identity in orientation = %v, want %v:\n%s", tc.facts, has, tc.want, got)
+		}
+		if !strings.Contains(got, "in the /work/ws directory") {
+			t.Errorf("%+v: orientation lost its workspace lines:\n%s", tc.facts, got)
+		}
+	}
+}
+
 func TestCreateRecordsFacts(t *testing.T) {
 	s := NewService(t.TempDir())
 	// Create's git worktree step fails (no mirror), but facts are recorded first.

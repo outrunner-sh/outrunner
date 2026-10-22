@@ -1,11 +1,8 @@
 "use client";
 
-import "@xterm/xterm/css/xterm.css";
-
-import { ChevronRight, RefreshCw, RotateCw, TerminalSquare, Users } from "lucide-react";
+import { RotateCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
@@ -65,8 +62,6 @@ import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
-import { useSessionTerminal } from "@/hooks/use-session-terminal";
-import { cn } from "@/lib/utils";
 
 /** A send that didn't go: why, and how to try it again. `retry` is set only
  * where its text never was in the composer's box (a session's first prompt),
@@ -93,9 +88,6 @@ export function WorkspaceSession({
   projectId,
   agent = "claude",
   local = false,
-  showTerminal,
-  onToggleTerminal,
-  terminalSlot,
   untitled = false,
   initialPrompt,
   initialAttachmentIds,
@@ -110,13 +102,6 @@ export function WorkspaceSession({
   /** A local session: everything then goes through the Outrunner app to the
    *  agent on this Mac, instead of through the server. */
   local?: boolean;
-  /** Whether the collapsible live terminal is revealed (owned by the studio). */
-  showTerminal: boolean;
-  onToggleTerminal: () => void;
-  /** Where the terminal docks: the bottom of the studio's Environment panel.
-   *  The terminal shares this session's attachment, so it is rendered here
-   *  and portalled there; null until the panel has mounted. */
-  terminalSlot: HTMLElement | null;
   /** A cloud session with no title yet, which takes one from the first prompt
    *  in its history (sessions from before titles were saved). */
   untitled?: boolean;
@@ -129,15 +114,12 @@ export function WorkspaceSession({
   onSender?: (sender: SessionSender | null) => void;
 }) {
   const router = useRouter();
-  const [terminalContainer, setTerminalContainer] = useState<HTMLDivElement | null>(null);
   const attachment = useSessionAttachment(workspaceId, local, agent);
-  const terminal = useSessionTerminal(attachment, terminalContainer, showTerminal);
   const conversation = useConversationStream(attachment, workspaceId);
 
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
-  // from the session attachment + conversation stream, not the terminal (which
-  // stays available only as an optional shell panel).
+  // from the session attachment + conversation stream.
   const [sendError, setSendError] = useState<FailedSend | null>(null);
   // An answer that didn't go: why, under the card that asked it. The next
   // answer retires it, and the card leaving takes it along.
@@ -492,7 +474,7 @@ export function WorkspaceSession({
       // itself, but this URL may still be the one carrying the prompt.
       if (outcome === "already") itWent();
     });
-    // send/terminal are stable enough; guard prevents a repeat.
+    // send is stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attached, initialPrompt, initialAttachmentIds]);
 
@@ -569,52 +551,6 @@ export function WorkspaceSession({
           />
         </div>
       </section>
-
-      {terminalSlot &&
-        createPortal(
-          <section
-            className={cn("studio-env-terminal", showTerminal && "is-open")}
-            aria-label="Live Claude terminal"
-          >
-            <div className="studio-env-terminal-head">
-              <button
-                type="button"
-                onClick={onToggleTerminal}
-                aria-expanded={showTerminal}
-                title={showTerminal ? "Hide terminal" : "Show terminal"}
-                className="studio-env-terminal-toggle"
-              >
-                <TerminalSquare /> Terminal
-                <ChevronRight className={cn("transition-transform", showTerminal && "rotate-90")} />
-              </button>
-              {showTerminal && (
-                <span className="studio-terminal-role">
-                  <Users /> {terminal.role}
-                  <button
-                    type="button"
-                    onClick={refresh}
-                    className="studio-term-reconnect"
-                    title="Reconnect"
-                  >
-                    <RefreshCw />
-                  </button>
-                </span>
-              )}
-            </div>
-            <div ref={setTerminalContainer} className="studio-live-terminal" hidden={!showTerminal} />
-            {showTerminal && terminal.exitCode !== null && (
-              <Notice
-                tone="warning"
-                className="studio-terminal-exit"
-                title={`${AGENTS[agent].label} stopped`}
-                detail="This session and its files are kept."
-                meta={`exit code ${terminal.exitCode}`}
-                actions={[{ label: "Reconnect", icon: <RotateCw />, primary: true, onClick: refresh }]}
-              />
-            )}
-          </section>,
-          terminalSlot,
-        )}
 
       {question && (
         <QuestionCard

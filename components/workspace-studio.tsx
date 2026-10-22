@@ -1,16 +1,19 @@
 "use client";
 
-import { MessageSquarePlus, PanelRight, PanelRightClose, TerminalSquare } from "lucide-react";
+import { MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
 import { SessionComposer } from "@/components/session-composer";
 import { SessionDidntStart } from "@/components/session-didnt-start";
 import { SetupStalled } from "@/components/setup-stalled";
+import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
 import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
+import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -19,7 +22,7 @@ import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
- *  Environment (changes, branch, pull request, terminal) on the right. The app
+ *  Environment (changes, branch, pull request) on the right. The app
  *  sidebar to its left belongs to the layout (app/(app)/layout.tsx); collapsed,
  *  its buttons sit at the start of this header. */
 export function WorkspaceStudio({
@@ -44,25 +47,12 @@ export function WorkspaceStudio({
   initialAttachmentIds?: string[];
 }) {
   const [rightOpen, setRightOpen] = useState(true);
-  // The live terminal is tucked away by default; it is where Claude's own
-  // prompts are answered — in a local session, every shell-command approval.
-  // (Collapsed also keeps its socket closed: see useSessionTerminal.)
-  const [showTerminal, setShowTerminal] = useState(false);
-  // The bottom of the Environment panel, where the session docks its terminal.
-  const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
   // How the Environment panel's Create PR sends into the session, while it can.
   const [sender, setSender] = useState<SessionSender | null>(null);
-  // The header's terminal button shows it even with the panel closed.
-  const toggleTerminalFromHeader = () => {
-    if (showTerminal && rightOpen) {
-      setShowTerminal(false);
-    } else {
-      setRightOpen(true);
-      setShowTerminal(true);
-    }
-  };
   const isLocal = local !== undefined;
   const { state: setup, phase, hasComputer, keepWaiting } = useWorkspaceSetup(workspace, !isLocal);
+  // An archived session (one imported from a Mac) comes back as it opens.
+  const restore = useRestoreOnOpen(workspace, !isLocal);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
   const offline = offlineCopy({ workspace, isReady });
@@ -85,16 +75,6 @@ export function WorkspaceStudio({
           {place && <span className="studio-title-place">{place}</span>}
         </div>
         <div className="studio-header-actions">
-          {hasLiveSession && (
-            <button
-              className={cn("studio-icon-button", showTerminal && rightOpen && "is-active")}
-              onClick={toggleTerminalFromHeader}
-              title={showTerminal && rightOpen ? "Hide terminal" : "Show terminal"}
-              aria-pressed={showTerminal && rightOpen}
-            >
-              <TerminalSquare />
-            </button>
-          )}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}
@@ -113,9 +93,6 @@ export function WorkspaceStudio({
             projectId={isLocal ? undefined : workspace.projectId}
             agent={workspace.agent}
             local={isLocal}
-            showTerminal={showTerminal}
-            onToggleTerminal={() => setShowTerminal((open) => !open)}
-            terminalSlot={terminalSlot}
             untitled={!isLocal && !workspace.title}
             initialPrompt={initialPrompt}
             initialAttachmentIds={initialAttachmentIds}
@@ -146,6 +123,43 @@ export function WorkspaceStudio({
               }
             />
           </div>
+        ) : restore.state === "restoring" ? (
+          <div className="studio-offline">
+            <div className="studio-empty-chat" role="status">
+              <div className="studio-empty-icon"><Spinner /></div>
+              <h3>Restoring this session</h3>
+              <p>
+                Bringing back its conversation, commits and changes on a cloud computer. It takes a minute or two
+                when the project&apos;s computer has to start.
+              </p>
+            </div>
+            <SessionComposer
+              onSend={() => {}}
+              canSend={false}
+              disabledPlaceholder="The session picks up where it left off once it's restored"
+            />
+          </div>
+        ) : restore.state === "failed" ? (
+          <div className="studio-offline">
+            <div className="studio-empty-chat" role="alert">
+              <div className="studio-empty-icon"><MessageSquarePlus /></div>
+              <h3>This session didn&apos;t restore</h3>
+              <p>{restore.error}</p>
+              <p className="flex justify-center gap-4">
+                {restore.settingsHref && (
+                  <Link href={restore.settingsHref} className="text-(--studio-text) underline underline-offset-4">
+                    Open settings
+                  </Link>
+                )}
+                {restore.retry && (
+                  <button type="button" onClick={restore.retry} className="text-(--studio-text) underline underline-offset-4">
+                    Try again
+                  </button>
+                )}
+              </p>
+            </div>
+            <SessionComposer onSend={() => {}} canSend={false} disabledPlaceholder="Restore the session to continue it" />
+          </div>
         ) : workspace.status === "failed" && !isLocal ? (
           <div className="studio-offline">
             <SessionDidntStart
@@ -166,9 +180,7 @@ export function WorkspaceStudio({
         )}
       </section>
 
-      {/* Hidden rather than unmounted when closed: the terminal docked at its
-          foot keeps its scrollback. The rows above poll for changes, so they
-          mount only while it is open. */}
+      {/* The rows poll for changes, so they mount only while it is open. */}
       <aside className="studio-inspector studio-env" hidden={!rightOpen} aria-label="Environment">
         {rightOpen && (
           <WorkspaceEnvironment
@@ -177,11 +189,9 @@ export function WorkspaceStudio({
             pullRequest={pullRequest}
             isReady={isReady}
             sender={sender}
-            terminalOpen={hasLiveSession && showTerminal}
             onClose={() => setRightOpen(false)}
           />
         )}
-        <div ref={setTerminalSlot} className="studio-env-terminal-slot" />
       </aside>
     </div>
   );
@@ -201,6 +211,15 @@ function offlineCopy({
       title: "This session didn't start",
       detail: workspace.errorMessage ?? "Its setup stopped before it finished. Start a new session to try again.",
       placeholder: "Start a new session to try again",
+    };
+  }
+  if (workspace.status === "archived") {
+    // Restored as it opens (useRestoreOnOpen) on a Runtime Computer; this is
+    // one on a sandbox that can't.
+    return {
+      title: "Session archived",
+      detail: "Restoring it needs a cloud computer, which this session's sandbox is not.",
+      placeholder: "Archived sessions restore on a cloud computer",
     };
   }
   if (isReady) {

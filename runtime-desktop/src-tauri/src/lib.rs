@@ -2,7 +2,7 @@
 //
 // The window loads the hosted Runtime web UI directly (which itself opens the
 // terminal WebSocket straight to the Daytona box), so this native layer stays
-// thin: a tray-resident window, a tray menu, hide-to-tray on close,
+// thin: a window whose close button quits the app, a tray menu,
 // single-instance focus, and self-update for the native parts (updater.rs).
 //
 // Auth: GitHub OAuth is completed in the system browser, not the embedded
@@ -226,6 +226,10 @@ pub fn run() {
                 .inner_size(1200.0, 800.0)
                 .min_inner_size(720.0, 480.0)
                 .initialization_script(INIT_JS)
+                // Files dropped on the window go to the page, as in a browser:
+                // the composer takes images that way. Tauri's own handler would
+                // keep them for drag-drop events the app doesn't listen for.
+                .disable_drag_drop_handler()
                 // A reload drops the page's ends of any relayed local-session
                 // sockets; close ours so none keeps the terminal's writer slot.
                 .on_page_load(|window, payload| {
@@ -354,19 +358,12 @@ pub fn run() {
 
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // Closing the window hides it to the tray instead of quitting; use
-            // the tray's "Quit outrunner" to exit. Keeps the session reachable.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let _ = window.hide();
-                api.prevent_close();
-            }
-        })
         .build(tauri::generate_context!())
         .expect("error while building Outrunner")
         .run(|app, event| {
-            // Stop the local agent on quit. tmux keeps its Claude sessions
-            // running, and the next launch's agent reattaches to them.
+            // Closing the only window quits the app. Stop the local agent on
+            // quit; tmux keeps its Claude sessions running, and the next
+            // launch's agent reattaches to them.
             if let RunEvent::Exit = event {
                 app.state::<local_runtime::LocalRuntime>().shutdown();
             }

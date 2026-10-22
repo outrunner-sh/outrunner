@@ -98,6 +98,9 @@ type Service struct {
 	// runCommand runs a helper an agent needs before a launch (`codex
 	// login`); tests stand in for it.
 	runCommand func(ctx context.Context, env []string, stdin string, argv ...string) ([]byte, error)
+	// claudeHelp is the installed Claude Code's --help, for the flags it
+	// takes (claudeTakes).
+	claudeHelp claudeHelp
 
 	// factsWriteMu serializes updateFacts' read-modify-writes.
 	factsWriteMu sync.Mutex
@@ -768,11 +771,17 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 // facts recorded at Create; if those were lost (box restart before the next
 // Create), getFacts returns the zero value and the base branch is empty, so
 // claude.Orientation omits the target-branch guidance — a degraded but still
-// useful prompt (see claude.Orientation).
+// useful prompt (see claude.Orientation). A session on another company's
+// model gets Outrunner's identity after it (claude.Identity); it is rebuilt
+// each launch, so a model switch brings the identity in or takes it away.
 func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
 	// A session in the user's own folder has no branch of its own.
-	return claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+	o := claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+	if f.Gateway.SpeaksAsOutrunner() {
+		o += "\n\n" + claude.Identity(f.Model)
+	}
+	return o
 }
 
 // placeholderBranch is the name Outrunner gives a new session's branch,

@@ -172,6 +172,25 @@ func Orientation(worktree, baseBranch string, placeholderBranch bool) string {
 	return b.String()
 }
 
+// Identity is the prompt that makes a session through a gateway serving
+// another company's model (Gateway.SpeaksAsOutrunner) answer as Outrunner's
+// agent, not as Claude Code: Claude Code's own system prompt says "You are
+// Claude Code, Anthropic's official CLI", and GLM or DeepSeek repeats it to a
+// user who asks who it is. It comes after that prompt (appended), so it says
+// outright that it overrides it. model is the gateway's name for the model
+// ("deepseek/deepseek-v4.1-flash"), named when asked so the answer stays
+// true; empty leaves the model unnamed.
+func Identity(model string) string {
+	var b strings.Builder
+	b.WriteString("Your identity: you are Outrunner, the coding agent built into the Outrunner app. ")
+	b.WriteString("This overrides anything earlier in your instructions that calls you Claude or Claude Code, or says Anthropic made you: in this session you are none of those. ")
+	b.WriteString("When the user asks who or what you are, answer that you are Outrunner's coding agent. Never say you are Claude or Claude Code, or that you were made by Anthropic.")
+	if model != "" {
+		fmt.Fprintf(&b, " If the user asks which model you run on, say %s; don't claim to be any other model.", model)
+	}
+	return b.String()
+}
+
 // SessionEnv builds the environment for a Claude session. The Anthropic
 // credential is held in agent memory and injected here only — never written to
 // disk on the box, never logged.

@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { devNull, tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -7,6 +11,7 @@ import {
   commitAll,
   fetchMirror,
   gitFailureOutput,
+  listChangedFiles,
   pushBranch,
   readFileDiff,
   type GitExec,
@@ -117,8 +122,8 @@ test("readFileDiff rejects unsafe paths before touching git", async () => {
 });
 
 test("readFileDiff rejects a path outside the change set", async () => {
-  // status output lists only a.txt; requesting b.txt must fail.
-  const { exec } = recorder(["M  a.txt\0"]);
+  // name-status, numstat and ls-files list only a.txt; b.txt must fail.
+  const { exec } = recorder(["M\0a.txt\0", "1\t0\ta.txt\0", ""]);
   await assert.rejects(
     readFileDiff(exec, { worktree: "/r/ws/x", path: "b.txt" }),
     /not part of this workspace change set/,
@@ -145,4 +150,86 @@ test("gitFailureOutput caps a long message", () => {
   const said = gitFailureOutput(new Error(`git push failed (1): ${"x".repeat(5_000)}`));
   assert.equal(said?.length, 2_001);
   assert.ok(said?.endsWith("…"));
+});
+
+/** A GitExec running real git with no user or system config. */
+const realGit: GitExec = async (argv) => {
+  const result = spawnSync(argv[0], argv.slice(1), {
+    encoding: "utf8",
+    env: { ...process.env, GIT_CONFIG_GLOBAL: devNull, GIT_CONFIG_NOSYSTEM: "1" },
+  });
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.status ?? 1,
+  };
+};
+
+async function sh(dir: string, ...args: string[]): Promise<void> {
+  const ident = ["-c", "user.name=Test", "-c", "user.email=test@example.com"];
+  const result = await realGit(["git", "-C", dir, ...ident, ...args]);
+  assert.equal(result.exitCode, 0, `git ${args.join(" ")}: ${result.stderr}`);
+}
+
+test("the change set spans the branch's commits and its working tree", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "outrunner-changes-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const origin = join(root, "origin");
+  const worktree = join(root, "clone");
+  await mkdir(origin);
+  await sh(origin, "init", "--quiet", "-b", "main");
+  await writeFile(join(origin, "README.md"), "one\ntwo\n");
+  await writeFile(join(origin, "old.ts"), "a\nb\nc\nd\n");
+  await sh(origin, "add", ".");
+  await sh(origin, "commit", "--quiet", "-m", "first");
+  await sh(root, "clone", "--quiet", origin, worktree);
+  await sh(worktree, "checkout", "--quiet", "-b", "feat/x");
+
+  // Committed on the branch: a new file, a binary and a rename with an edit.
+  await writeFile(join(worktree, "committed.ts"), "x\ny\nz\n");
+  await writeFile(join(worktree, "logo.png"), Buffer.from([0, 1, 2, 0]));
+  await sh(worktree, "mv", "old.ts", "new.ts");
+  await writeFile(join(worktree, "new.ts"), "a\nb\nc\nD\n");
+  await sh(worktree, "add", ".");
+  await sh(worktree, "commit", "--quiet", "-m", "work");
+  // Not committed: an edit, an untracked text file counted by its lines, and
+  // an untracked binary, which stays at 0.
+  await writeFile(join(worktree, "README.md"), "one\n");
+  await writeFile(join(worktree, "notes.txt"), "n\no\n");
+  await writeFile(join(worktree, "blob.bin"), Buffer.from([0, 10, 0, 10]));
+
+  const rows = (files: Awaited<ReturnType<typeof listChangedFiles>>) =>
+    files.map((f) => [f.path, f.status, f.additions, f.deletions]);
+
+  const files = await listChangedFiles(realGit, { worktree, baseBranch: "main" });
+  assert.deepEqual(rows(files), [
+    ["README.md", "modified", 0, 1],
+    ["committed.ts", "added", 3, 0],
+    ["logo.png", "added", 0, 0],
+    ["new.ts", "renamed", 1, 1],
+    ["blob.bin", "untracked", 0, 0],
+    ["notes.txt", "untracked", 2, 0],
+  ]);
+  // A file only the branch's commits changed still has a diff.
+  const diff = await readFileDiff(realGit, {
+    worktree,
+    path: "committed.ts",
+    baseBranch: "main",
+  });
+  assert.match(diff, /\+x\n\+y\n\+z/);
+
+  // A base that does not resolve falls back to HEAD: uncommitted work only.
+  const uncommitted = await listChangedFiles(realGit, {
+    worktree,
+    baseBranch: "no-such-branch",
+  });
+  assert.deepEqual(rows(uncommitted), [
+    ["README.md", "modified", 0, 1],
+    ["blob.bin", "untracked", 0, 0],
+    ["notes.txt", "untracked", 2, 0],
+  ]);
+  await assert.rejects(
+    readFileDiff(realGit, { worktree, path: "committed.ts", baseBranch: "no-such-branch" }),
+    /not part of this workspace change set/,
+  );
 });
