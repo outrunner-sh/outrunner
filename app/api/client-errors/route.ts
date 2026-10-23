@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { readCappedBody } from "@/lib/http/capped-body";
 import { clientFaultLine, ClientFault } from "@/lib/http/client-error-report";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
@@ -23,11 +24,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
   // A report is a few known fields: one bigger than any we send isn't ours.
-  // Read the body and count its bytes: the header can be absent behind a
-  // proxy, and a chunked body omits it, so the count — with the schema's field
-  // caps — is the real bound, not the header.
-  const raw = await request.text().catch(() => "");
-  if (Buffer.byteLength(raw) > MAX_REPORT_BYTES) {
+  // The read itself is capped (readCappedBody): the header is only a shortcut,
+  // since a proxy may drop it and a chunked body omits it, so a body past the
+  // cap is refused without being read into memory.
+  const raw = await readCappedBody(request, MAX_REPORT_BYTES);
+  if (raw === null) {
     return NextResponse.json({ error: "Malformed report." }, { status: 400 });
   }
   let parsed: unknown = null;
