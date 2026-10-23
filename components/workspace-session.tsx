@@ -658,7 +658,9 @@ function ConnectionNotice({
 }
 
 function ReconnectingNotice({ attempt, max, since }: { attempt: number; max: number; since: number }) {
-  const [now, setNow] = useState(since);
+  // Seeded from the clock, not `since`: the first second shows the run's real
+  // elapsed time rather than a 0:00 that jumps on the next tick.
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const tick = () => setNow(Date.now());
     const timer = setInterval(tick, 1000);

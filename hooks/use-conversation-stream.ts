@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { dropNarration, reconnectPlan } from "@/lib/runtime/reconnect";
+import { dropNarration, rearmedSince, reconnectPlan } from "@/lib/runtime/reconnect";
 import { StreamProtocolError, subscribeEventsWs } from "@/lib/runtime/session-client";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 
@@ -55,7 +55,7 @@ type WsAction =
   | { kind: "frame-received" }
   | { kind: "closed"; attempt: number; at: number }
   | { kind: "gave-up" }
-  | { kind: "rearm" }
+  | { kind: "rearm"; at: number }
   | { kind: "error"; message: string }
   | { kind: "protocol-error"; ref: string };
 
@@ -77,7 +77,10 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
     case "gave-up":
       return { ...state, gaveUp: true };
     case "rearm":
-      return { ...state, attempt: 0, gaveUp: false };
+      // A fresh retry budget starts a fresh clock (rearmedSince): otherwise a
+      // give-up, then a focus an hour later, would time this run from the drop
+      // it recovered from.
+      return { ...state, attempt: 0, gaveUp: false, since: rearmedSince(state.closed, action.at) };
     case "error":
       return { ...state, error: action.message };
     case "protocol-error":
@@ -219,7 +222,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       reconnectAttemptsRef.current = 0;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      dispatch({ kind: "rearm" });
+      dispatch({ kind: "rearm", at: Date.now() });
       reconnect();
     };
     document.addEventListener("visibilitychange", rearm);
@@ -260,7 +263,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     setManualRetry(true);
     reconnectAttemptsRef.current = 0;
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-    dispatch({ kind: "rearm" });
+    dispatch({ kind: "rearm", at: Date.now() });
     refresh();
   }, [dispatch, refresh]);
 

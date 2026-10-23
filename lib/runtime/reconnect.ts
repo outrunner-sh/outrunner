@@ -36,6 +36,17 @@ export function reconnectPlan(attempt: number): ReconnectPlan {
   return { retry: true, delayMs };
 }
 
+/**
+ * The `since` a re-armed retry run starts from. A re-arm after a close (the
+ * socket is down) begins a fresh clock, so the elapsed time counts from this
+ * retry and not from the drop that gave up — a give-up, then a focus an hour
+ * later, would otherwise show an hour on the clock. Re-arming while the socket
+ * is still open has nothing to time.
+ */
+export function rearmedSince(closed: boolean, at: number): number | null {
+  return closed ? at : null;
+}
+
 /** What to say on screen about a dropped stream. */
 export type DropNarration = {
   /** Set while the automatic reconnect loop is running after a drop. */
