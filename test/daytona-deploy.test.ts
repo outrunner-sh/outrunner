@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -287,9 +287,12 @@ test("claudeInstallScript skips the install when the box already has the tools",
  *  false, leaves the old one first on the PATH), and whose sudo runs what it's
  *  given on its own PATH, as the real one's secure_path does: only `env` is on
  *  it, so no npm of the machine's own can stand in. npm's global prefix is
- *  root's unless `ownPrefix`. With no version, `claude` fails as a missing one
+ *  root's unless `ownPrefix`, and its node_modules root's too with `rootsModules`. With no version, `claude` fails as a missing one
  *  would. Every other tool is already there, Codex too unless `codex` is false. */
-function claudeBox(version: string | null, { npmTakes = true, codex = true, ownPrefix = false } = {}) {
+function claudeBox(
+  version: string | null,
+  { npmTakes = true, codex = true, ownPrefix = false, rootsModules = false } = {},
+) {
   const bin = mkdtempSync(join(tmpdir(), "claude-box-"));
   const securePath = mkdtempSync(join(tmpdir(), "secure-path-"));
   symlinkSync("/usr/bin/env", join(securePath, "env"));
@@ -297,6 +300,8 @@ function claudeBox(version: string | null, { npmTakes = true, codex = true, ownP
   const npmLog = join(bin, "npm-log");
   const sudoLog = join(bin, "sudo-log");
   const prefix = ownPrefix ? mkdtempSync(join(tmpdir(), "npm-prefix-")) : join(bin, "root-owned-prefix");
+  if (ownPrefix) for (const dir of ["lib/node_modules", "bin"]) mkdirSync(join(prefix, dir), { recursive: true });
+  if (rootsModules) chmodSync(join(prefix, "lib/node_modules"), 0o555);
   if (version) writeFileSync(file, version);
   const tools: [string, string][] = [
     ["tmux", "exit 0"],
@@ -306,7 +311,8 @@ function claudeBox(version: string | null, { npmTakes = true, codex = true, ownP
     ["sudo", `echo "$*" >> ${sudoLog}; PATH=${securePath} exec "$@"`],
     [
       "npm",
-      `[ "$1" = prefix ] && { echo ${prefix}; exit 0; }; echo "$*" >> ${npmLog}; ` +
+      `[ "$1" = prefix ] && { echo ${prefix}; exit 0; }; [ "$1" = root ] && { echo ${prefix}/lib/node_modules; exit 0; }; ` +
+        `echo "$*" >> ${npmLog}; ` +
         `case "$3" in @anthropic-ai/*) ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"};; esac`,
     ],
   ];
@@ -351,6 +357,14 @@ test("claudeInstallScript installs into a global prefix the user owns without su
   assert.equal(box.version(), CLAUDE_CODE_VERSION);
   assert.match(box.npm(), new RegExp(`install -g ${CODEX_PACKAGE}`));
   assert.equal(box.sudo(), "", "sudo ran");
+});
+
+// A root install into nvm's prefix before leaves its node_modules root's.
+test("claudeInstallScript uses sudo where the user's prefix has root's node_modules", { skip: process.getuid?.() === 0 }, () => {
+  const box = claudeBox("2.1.19", { ownPrefix: true, rootsModules: true });
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(box.sudo(), /npm install -g @anthropic-ai\/claude-code@/);
 });
 
 test("claudeInstallScript installs Claude Code where there is none", () => {
