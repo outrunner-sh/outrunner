@@ -4,6 +4,10 @@ import { getOwner } from "@/lib/auth/owner";
 import { clientFaultLine, ClientFault } from "@/lib/http/client-error-report";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
+/** The body bound: well above any report we send, well below anything worth
+ *  buffering. The schema's own field caps sit inside it. */
+const MAX_REPORT_BYTES = 8 * 1024;
+
 /**
  * Where a browser reports a fault only it could see: a frame that didn't
  * match the protocol. The ref its Notice shows reaches the server's log here,
@@ -19,12 +23,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
   // A report is a few known fields: one bigger than any we send isn't ours.
-  // (The header can be absent behind a proxy — then the schema is the bound.)
-  const length = request.headers.get("content-length");
-  if (length !== null && Number(length) > 8 * 1024) {
+  // Read the body and count its bytes: the header can be absent behind a
+  // proxy, and a chunked body omits it, so the count — with the schema's field
+  // caps — is the real bound, not the header.
+  const raw = await request.text().catch(() => "");
+  if (Buffer.byteLength(raw) > MAX_REPORT_BYTES) {
     return NextResponse.json({ error: "Malformed report." }, { status: 400 });
   }
-  const report = ClientFault.safeParse(await request.json().catch(() => null));
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // The schema reports it as malformed, the same as any other bad shape.
+  }
+  const report = ClientFault.safeParse(parsed);
   if (!report.success) {
     return NextResponse.json({ error: "Malformed report." }, { status: 400 });
   }

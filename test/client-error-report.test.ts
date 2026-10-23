@@ -65,6 +65,19 @@ test("a field holding a line break cannot forge the log's next line", () => {
   );
 });
 
+test("a path deeper than any Zod path is refused", () => {
+  const path = (n: number) => ({ code: "invalid_type", path: Array.from({ length: n }, () => "a"), message: "Expected" });
+  const report = (n: number) =>
+    ClientFault.safeParse({
+      where: "events-stream",
+      ref: "a1b2c3d4",
+      message: SCHEMA_MISMATCH,
+      issues: [path(n)],
+    });
+  assert.equal(report(16).success, true);
+  assert.equal(report(17).success, false);
+});
+
 test("issues carry only what identifies the shape, never a payload value", () => {
   const report = ClientFault.safeParse({
     where: "events-stream",

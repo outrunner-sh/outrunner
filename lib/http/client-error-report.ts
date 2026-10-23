@@ -29,7 +29,9 @@ export const ClientFault = z.object({
     .array(
       z.object({
         code: oneLine(z.string().max(60)),
-        path: z.array(z.union([oneLine(z.string().max(60)), z.number()])),
+        // A Zod path is a few segments deep; the cap keeps a hostile one from
+        // filling the log with segments the schema would never produce.
+        path: z.array(z.union([oneLine(z.string().max(60)), z.number()])).max(16),
         message: oneLine(z.string().max(300)),
       }),
     )
