@@ -59,6 +59,7 @@ import {
 } from "@/lib/runtime/session-models";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
+import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
@@ -629,7 +630,7 @@ function ConnectionNotice({
       />
     );
   }
-  if (code === "box-gone") {
+  if (code === BOX_GONE) {
     return (
       <Notice
         tone="warning"
@@ -641,7 +642,7 @@ function ConnectionNotice({
       />
     );
   }
-  if (code === "box-restore-failed") {
+  if (code === BOX_RESTORE_FAILED) {
     return (
       <Notice
         tone="warning"

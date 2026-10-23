@@ -24,6 +24,7 @@ import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import { signInFailure } from "@/lib/runtime/session-auth";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
+import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
@@ -101,7 +102,7 @@ export async function POST(request: Request, context: RouteContext) {
       if (refused) return NextResponse.json({ error: refused.message, settingsHref: UPGRADE_HREF }, { status: 403 });
       console.error(`Session attach: could not bring back the box for ${workspace.id}`, error);
       return NextResponse.json(
-        { error: "Couldn't restart this session's box. Try again.", code: "box-restore-failed" },
+        { error: "Couldn't restart this session's box. Try again.", code: BOX_RESTORE_FAILED },
         { status: 503 },
       );
     }
@@ -177,7 +178,7 @@ export async function POST(request: Request, context: RouteContext) {
           {
             error:
               "This session's box ended and couldn't be restored, so its uncommitted files are gone. Start a new session.",
-            code: "box-gone",
+            code: BOX_GONE,
           },
           { status: 410 },
         );

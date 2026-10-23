@@ -6,7 +6,8 @@ import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
-import { sendFailureMessage, BOX_GONE } from "@/lib/session/send-failure";
+import { sendFailureMessage } from "@/lib/session/send-failure";
+import { BOX_GONE } from "@/lib/session/session-codes";
 
 type RouteContext = { params: Promise<{ id: string }> };
 

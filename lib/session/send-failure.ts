@@ -1,3 +1,5 @@
+import { BOX_GONE } from "@/lib/session/session-codes";
+
 /** Said when a prompt didn't reach the agent and the agent's words weren't
  *  written for the user. */
 export const SEND_FAILED = "Couldn't deliver that message. Try again.";
@@ -5,11 +7,6 @@ export const SEND_FAILED = "Couldn't deliver that message. Try again.";
 /** Claude holding a question or permission prompt: the one send failure the
  *  agent words for the user, and the only one with something to do first. */
 const AWAITS_ANSWER = /^Claude is waiting for an answer\b/;
-
-/** The code the message route tags a send with when the session's box is gone
- *  (app/api/workspaces/[id]/message/route.ts). Retrying fails the same way
- *  every time, so the composer offers no Retry for it. */
-export const BOX_GONE = "box-gone";
 
 /** Whether a send's failure code means trying again cannot help. */
 export function sendIsDeadEnd(code: string | null | undefined): boolean {
