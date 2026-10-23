@@ -301,6 +301,7 @@ function claudeBox(
   const file = join(bin, "claude-version");
   const npmLog = join(bin, "npm-log");
   const sudoLog = join(bin, "sudo-log");
+  const tries = join(bin, "npm-tries");
   const own = ownPrefix || rootOwned !== "";
   const prefix = own ? mkdtempSync(join(tmpdir(), "npm-prefix-")) : join(bin, "root-owned-prefix");
   if (own) for (const dir of ["lib/node_modules", "bin"]) mkdirSync(join(prefix, dir), { recursive: true });
@@ -318,7 +319,9 @@ function claudeBox(
     [
       "npm",
       // Into the package's scope folder where there is one, else node_modules.
-      `pkg=\${3%@*}; dir=${prefix}/lib/node_modules; ` +
+      `[ "$1" = root ] && { echo ${prefix}/lib/node_modules; exit 0; }; ` +
+        `echo "\${SUDO_USER:+sudo }$*" >> ${tries}; ` +
+        `pkg=\${3%@*}; dir=${prefix}/lib/node_modules; ` +
         `case "$pkg" in @*/*) [ -d "$dir/\${pkg%%/*}" ] && dir="$dir/\${pkg%%/*}";; esac; ` +
         `[ -n "$SUDO_USER" ] || [ -w "$dir" ] || { echo "EACCES: $dir" >&2; exit 243; }; ` +
         `echo "$*" >> ${npmLog}; ` +
@@ -335,7 +338,13 @@ function claudeBox(
       encoding: "utf8",
     });
   const read = (log: string) => { try { return readFileSync(log, "utf8"); } catch { return ""; } };
-  return { run, npm: () => read(npmLog), sudo: () => read(sudoLog), version: () => readFileSync(file, "utf8").trim() };
+  return {
+    run,
+    npm: () => read(npmLog),
+    tries: () => read(tries),
+    sudo: () => read(sudoLog),
+    version: () => readFileSync(file, "utf8").trim(),
+  };
 }
 
 // Daytona's base image ships Claude Code 2.1.19, which stops at once on
@@ -346,6 +355,8 @@ test("claudeInstallScript brings an old Claude Code up to the pinned version", (
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(box.npm().trim(), `install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`);
   assert.equal(box.version(), CLAUDE_CODE_VERSION);
+  // Root's node_modules: no install without sudo, sure to fail, first.
+  assert.equal(box.tries().trim(), `sudo install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`);
 });
 
 // sudo's secure_path leaves out where Daytona's image puts npm: the installs
@@ -355,6 +366,7 @@ test("claudeInstallScript installs Codex where there is none, through sudo's own
   const result = box.run();
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+  assert.match(box.sudo(), new RegExp(`env PATH=.* npm install -g ${CODEX_PACKAGE}`));
 });
 
 // nvm's prefix is the user's: root's files there would break a later install
