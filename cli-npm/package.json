@@ -1,0 +1,23 @@
+{
+  "name": "outrunner",
+  "version": "0.0.0",
+  "description": "Start using Outrunner from your terminal: sign in, connect Claude, and continue in the browser.",
+  "homepage": "https://app.outrunner.sh",
+  "license": "UNLICENSED",
+  "bin": {
+    "outrunner": "bin/outrunner.mjs"
+  },
+  "files": [
+    "bin/outrunner.mjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "outrunner-darwin-arm64": "0.0.0",
+    "outrunner-darwin-x64": "0.0.0",
+    "outrunner-linux-arm64": "0.0.0",
+    "outrunner-linux-x64": "0.0.0",
+    "outrunner-win32-x64": "0.0.0"
+  }
+}

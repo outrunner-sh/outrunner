@@ -1,24 +1,21 @@
 import { NextResponse } from "next/server";
 
+import { getCliOwner } from "@/lib/auth/cli-owner";
 import { getOwner } from "@/lib/auth/owner";
-import { isSameOriginRequest } from "@/lib/http/guards";
+import { ownerOfRequest } from "@/lib/auth/request-owner";
 import { commitImport, ImportError } from "@/lib/imports/commit";
 import { commitDeps } from "@/lib/imports/deps";
 import { ImportCommitRequest } from "@/lib/runtime/import-scan";
 
 /**
- * Finish importing one session whose artifacts the desktop app uploaded where
- * the plan said: it becomes an archived workspace, resumed in the cloud by
- * Restore.
+ * Finish importing one session whose artifacts the desktop app or the CLI
+ * uploaded where the plan said: it becomes an archived workspace, resumed in
+ * the cloud by Restore.
  */
 export async function POST(request: Request) {
-  if (!isSameOriginRequest(request)) {
-    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
-  }
-  const owner = await getOwner();
-  if (!owner) {
-    return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
-  }
+  const signedIn = await ownerOfRequest(request, { cli: getCliOwner, browser: getOwner });
+  if ("response" in signedIn) return signedIn.response;
+  const { owner } = signedIn;
   const parsed = ImportCommitRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "That isn't an import to finish." }, { status: 400 });
