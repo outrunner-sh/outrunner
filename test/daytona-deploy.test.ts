@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 
 import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
+import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 
 import {
   AGENT_BINARY_PATH,
@@ -229,7 +230,7 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
 
 test("claudeInstallScript installs the pinned Codex, after the tools", () => {
   const s = claudeInstallScript();
-  assert.ok(s.includes("sudo npm install -g @openai/codex@"), "installs Codex");
+  assert.ok(s.includes("npm install -g @openai/codex@"), "installs Codex");
   assert.ok(s.indexOf("apt-get install") < s.indexOf("npm install"), "tools first");
 });
 
@@ -281,12 +282,13 @@ test("claudeInstallScript skips the install when the box already has the tools",
   assert.equal(existsSync(called), false, "sudo was not called");
 });
 
-/** A box whose `claude` reports the version in a file, whose sudo runs what
- *  it's given, and whose npm "installs" Claude by writing the version it was
- *  asked for there (or, `npmTakes` false, leaves the old one first on the
- *  PATH). With no version, `claude` fails as a missing one would. Every other
- *  tool is already there. */
-function claudeBox(version: string | null, npmTakes = true) {
+/** A box whose `claude` reports the version in a file, whose npm "installs"
+ *  Claude by writing the version it was asked for there (or, `npmTakes`
+ *  false, leaves the old one first on the PATH), and whose sudo runs what it's
+ *  given on its own PATH, as the real one's secure_path does: npm isn't on it.
+ *  With no version, `claude` fails as a missing one would. Every other tool is
+ *  already there, Codex too unless `codex` is false. */
+function claudeBox(version: string | null, { npmTakes = true, codex = true } = {}) {
   const bin = mkdtempSync(join(tmpdir(), "claude-box-"));
   const file = join(bin, "claude-version");
   const npmLog = join(bin, "npm-log");
@@ -294,12 +296,12 @@ function claudeBox(version: string | null, npmTakes = true) {
   const tools: [string, string][] = [
     ["tmux", "exit 0"],
     ["jq", "exit 0"],
-    ["codex", "exit 0"],
     ["gh", "exit 0"],
     ["claude", `[ -f ${file} ] || exit 127; echo "$(cat ${file}) (Claude Code)"`],
-    ["sudo", `"$@"`],
-    ["npm", `echo "$*" >> ${npmLog}; ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"}`],
+    ["sudo", `PATH=/usr/bin:/bin exec "$@"`],
+    ["npm", `echo "$*" >> ${npmLog}; case "$3" in @anthropic-ai/*) ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"};; esac`],
   ];
+  if (codex) tools.push(["codex", "exit 0"]);
   for (const [name, body] of tools) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
@@ -322,6 +324,15 @@ test("claudeInstallScript brings an old Claude Code up to the pinned version", (
   assert.equal(box.version(), CLAUDE_CODE_VERSION);
 });
 
+// sudo's secure_path leaves out where Daytona's image puts npm: the installs
+// carry the PATH npm was found on through sudo, Codex's as well as Claude's.
+test("claudeInstallScript installs Codex where there is none, through sudo's own PATH", () => {
+  const box = claudeBox(CLAUDE_CODE_VERSION, { codex: false });
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+});
+
 test("claudeInstallScript installs Claude Code where there is none", () => {
   const box = claudeBox(null);
   const result = box.run();
@@ -339,7 +350,7 @@ test("claudeInstallScript leaves a newer Claude Code alone, and the pinned one t
 });
 
 test("claudeInstallScript fails when the old Claude Code still comes first after the install", () => {
-  const box = claudeBox("2.1.19", false);
+  const box = claudeBox("2.1.19", { npmTakes: false });
   const result = box.run();
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, new RegExp(`Could not bring Claude Code \\(2\\.1\\.19\\) up to ${CLAUDE_CODE_VERSION.replaceAll(".", "\\.")}`));
