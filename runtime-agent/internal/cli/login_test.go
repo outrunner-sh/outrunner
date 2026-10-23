@@ -201,14 +201,14 @@ func TestWhoAmIAndLogout(t *testing.T) {
 	_ = SaveConfig(path, Config{URL: app.server.URL, Token: "or_cli_token"})
 
 	var out, errOut bytes.Buffer
-	if code := Main(context.Background(), []string{"--url", app.server.URL, "whoami"}, &out, &errOut); code != 0 {
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "whoami"}, nil, &out, &errOut); code != 0 {
 		t.Fatalf("whoami: %d %s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "immad") {
 		t.Errorf("whoami printed %q", out.String())
 	}
 
-	if code := Main(context.Background(), []string{"--url", app.server.URL, "logout"}, &out, &errOut); code != 0 {
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "logout"}, nil, &out, &errOut); code != 0 {
 		t.Fatalf("logout: %d %s", code, errOut.String())
 	}
 	if app.tokenWorks("or_cli_token") {
@@ -218,7 +218,7 @@ func TestWhoAmIAndLogout(t *testing.T) {
 		t.Error("logout left the token saved")
 	}
 	errOut.Reset()
-	if code := Main(context.Background(), []string{"--url", app.server.URL, "whoami"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "Not signed in") {
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "whoami"}, nil, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "Not signed in") {
 		t.Fatalf("whoami after logout: %d %q", code, errOut.String())
 	}
 }
@@ -229,7 +229,7 @@ func TestATokenIsOnlyForTheAppItCameFrom(t *testing.T) {
 	path, _ := ConfigPath()
 	_ = SaveConfig(path, Config{URL: "https://another.app", Token: "or_cli_token"})
 	var out, errOut bytes.Buffer
-	if code := Main(context.Background(), []string{"--url", app.server.URL, "whoami"}, &out, &errOut); code != 1 {
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "whoami"}, nil, &out, &errOut); code != 1 {
 		t.Fatalf("a token for another app was sent: %d", code)
 	}
 }
