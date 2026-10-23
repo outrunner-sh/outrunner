@@ -2,15 +2,16 @@
  * The plan's limits on cloud sessions, applied where a box starts
  * (lib/billing/plans.ts): hours of Outrunner's boxes in the plan's period,
  * and boxes running at once. A box is what a plan buys and what the limits
- * protect — sessions share one box per project, so
- * `concurrentCloudSessions` counts boxes, as plans.ts defines it and the
- * meter meters it. The Billing page sells the same limit as "sessions".
+ * protect — each session has its own box (a project's sessions from before
+ * share one), so `concurrentCloudSessions` counts boxes, as plans.ts defines
+ * it and the meter meters it. The Billing page sells the same limit as
+ * "sessions".
  *
  * Two-sided on purpose: hours are checked here against the meter
  * (compute_intervals, lib/billing/hours.ts), and the box count is enforced
  * in the database, inside claim_runtime_computer, so two requests that
- * start boxes at the same moment cannot both pass it. A session on a project
- * whose box is already running starts no box, so the count doesn't refuse it.
+ * start boxes at the same moment cannot both pass it. A session whose box is
+ * already running starts no box, so the count doesn't refuse it.
  * At a limit the start is refused with the upgrade link; a box already
  * running is never paused for it (a box is paused when its last session is
  * archived or ended, lib/billing/release-box.ts, and the reconciler pauses
@@ -27,6 +28,7 @@ import type { Owner } from "@/lib/auth/owner";
 import { calendarMonth, hoursUsed } from "@/lib/billing/hours";
 import type { Plan } from "@/lib/billing/plans";
 import { optionalEnv } from "@/lib/env";
+import { type ComputerScope, inScope } from "@/lib/runtime/computer-scope";
 import type { ProviderName, RuntimeComputer } from "@/lib/runtime/types";
 
 /** How a refused start points at a way past the limit. */
@@ -79,7 +81,7 @@ export function boxesDenial(plan: Plan, live: number): CloudLimitDenial | null {
   };
 }
 
-export type MeteredComputerRow = Pick<RuntimeComputer, "projectId" | "status" | "provider" | "updatedAt">;
+export type MeteredComputerRow = Pick<RuntimeComputer, "projectId" | "workspaceId" | "status" | "provider" | "updatedAt">;
 
 /** Whether one of the owner's computers is a box the plan limits: running
  *  (ready, or provisioning while still fresh — a claim whose provision died
@@ -101,14 +103,14 @@ export function liveMeteredComputers(computers: readonly MeteredComputerRow[], n
   return computers.filter((computer) => isLiveMeteredComputer(computer, now)).length;
 }
 
-/** Whether the project's box is one of the live ones: a session there runs
- *  on it, and starts no box of its own. */
-export function projectBoxLive(
+/** Whether the box of `scope` is one of the live ones: the session runs on
+ *  it, and starts no box. A new session (no scope) always starts one. */
+export function boxLive(
   computers: readonly MeteredComputerRow[],
-  projectId: string,
+  scope: ComputerScope | null,
   now: Date,
 ): boolean {
-  return computers.some((computer) => computer.projectId === projectId && isLiveMeteredComputer(computer, now));
+  return scope !== null && computers.some((computer) => inScope(computer, scope) && isLiveMeteredComputer(computer, now));
 }
 
 /** Whether this login appears in the explicit plan-limit exemption list.
@@ -122,19 +124,18 @@ export function exemptFromPlanLimits(
 }
 
 /**
- * May this owner start another of Outrunner's boxes on `provider` for
- * `projectId`? The refusal to answer with, or the cap the claim in the
- * database enforces (null: the owner's own sandbox, or an owner the limits
- * are not for). Called where a box may start: creating a workspace,
- * restoring one, and session attach bringing an ended box back. The box
- * count only refuses when the project has no live box: its sessions share
- * the one it has. Should that box turn out gone, the claim that replaces it
- * still enforces the cap.
+ * May this owner start another of Outrunner's boxes on `provider` for the
+ * box of `scope` (null: a new session's)? The refusal to answer with, or the
+ * cap the claim in the database enforces (null: the owner's own sandbox, or
+ * an owner the limits are not for). Called where a box may start: creating a
+ * workspace, restoring one, and session attach bringing an ended box back.
+ * The box count only refuses when that box isn't already live. Should it turn
+ * out gone, the claim that replaces it still enforces the cap.
  */
 export async function cloudBoxStartGate(
   owner: Owner,
   provider: ProviderName,
-  projectId: string,
+  scope: ComputerScope | null,
 ): Promise<CloudBoxStartGate> {
   // Loaded here, not at the top, so the pure rules above stay testable in the
   // Node test runner: these pull Next's request scope (next/headers) through
@@ -157,7 +158,7 @@ export async function cloudBoxStartGate(
   const hours = hoursDenial(plan, used);
   if (hours) return { denial: hours };
   const computers = await runtimeComputersForOwner(owner.id);
-  if (!projectBoxLive(computers, projectId, now)) {
+  if (!boxLive(computers, scope, now)) {
     const boxes = boxesDenial(plan, liveMeteredComputers(computers, now));
     if (boxes) return { denial: boxes };
   }

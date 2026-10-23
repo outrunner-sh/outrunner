@@ -61,3 +61,30 @@ export async function releaseBoxIfUnused(deps: ReleaseBoxDeps): Promise<boolean>
   await deps.markStopped(computer.id, sandboxId);
   return true;
 }
+
+export type DeleteBoxDeps = {
+  /** The session's own box (lib/runtime/computer-scope.ts), if it has one. */
+  computer(): Promise<Pick<RuntimeComputer, "id" | "daytonaSandboxId"> | null>;
+  delete(sandboxId: string): Promise<void>;
+  /** End the box's open interval, if it has one. */
+  closeInterval(sandboxId: string, at: Date): Promise<void>;
+  /** Record the computer as having no box any more. */
+  markDeleted(computerId: string): Promise<void>;
+  now(): Date;
+};
+
+/**
+ * Delete a session's own box once the session is ended for good: running or
+ * paused, nothing else is on it. Whether there was one to delete. The
+ * interval is closed after the box is gone, so a delete that fails leaves the
+ * box metered, and the reconciler's to pause, rather than running unmetered.
+ */
+export async function deleteOwnBox(deps: DeleteBoxDeps): Promise<boolean> {
+  const computer = await deps.computer();
+  if (!computer?.daytonaSandboxId) return false;
+  const sandboxId = computer.daytonaSandboxId;
+  await deps.delete(sandboxId);
+  await deps.closeInterval(sandboxId, deps.now());
+  await deps.markDeleted(computer.id);
+  return true;
+}

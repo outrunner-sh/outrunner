@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { boxNeeded, releaseBoxIfUnused, type ReleaseBoxDeps } from "@/lib/billing/release-box";
+import { boxNeeded, deleteOwnBox, releaseBoxIfUnused, type ReleaseBoxDeps } from "@/lib/billing/release-box";
 import type { RuntimeComputerStatus, WorkspaceStatus } from "@/lib/runtime/types";
 
 const NOW = new Date("2026-10-22T12:00:00Z");
@@ -53,4 +53,51 @@ test("nothing is paused where there is no ready box, or it can't come back", asy
     assert.equal(await releaseBoxIfUnused(deps), false);
     assert.deepEqual(log, []);
   }
+});
+
+test("an ended session's own box is deleted, then its interval closed, running or paused", async () => {
+  for (const status of ["ready", "stopped"] as const) {
+    const log: string[] = [];
+    const deleted = await deleteOwnBox({
+      computer: async () => ({ id: "c-1", daytonaSandboxId: "sb-1", status }),
+      delete: async (sandboxId) => void log.push(`delete ${sandboxId}`),
+      closeInterval: async (sandboxId, at) => void log.push(`close ${sandboxId} at ${at.toISOString()}`),
+      markDeleted: async (computerId) => void log.push(`deleted ${computerId}`),
+      now: () => NOW,
+    });
+    assert.equal(deleted, true, status);
+    assert.deepEqual(log, ["delete sb-1", `close sb-1 at ${NOW.toISOString()}`, "deleted c-1"], status);
+  }
+});
+
+test("a session with no box of its own has nothing to delete", async () => {
+  const log: string[] = [];
+  for (const computer of [null, { id: "c-1", daytonaSandboxId: null }]) {
+    const deleted = await deleteOwnBox({
+      computer: async () => computer,
+      delete: async () => void log.push("delete"),
+      closeInterval: async () => void log.push("close"),
+      markDeleted: async () => void log.push("mark"),
+      now: () => NOW,
+    });
+    assert.equal(deleted, false);
+  }
+  assert.deepEqual(log, []);
+});
+
+test("a box that won't delete stays metered: its interval is left open", async () => {
+  const log: string[] = [];
+  await assert.rejects(
+    deleteOwnBox({
+      computer: async () => ({ id: "c-1", daytonaSandboxId: "sb-1" }),
+      delete: async () => {
+        throw new Error("Daytona said no");
+      },
+      closeInterval: async () => void log.push("close"),
+      markDeleted: async () => void log.push("mark"),
+      now: () => NOW,
+    }),
+    /Daytona said no/,
+  );
+  assert.deepEqual(log, []);
 });

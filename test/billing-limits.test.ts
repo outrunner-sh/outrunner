@@ -9,7 +9,7 @@ import {
   isPlanLimitError,
   liveMeteredComputers,
   type MeteredComputerRow,
-  projectBoxLive,
+  boxLive,
   STALE_PROVISION_MS,
 } from "@/lib/billing/limits";
 import { PLANS } from "@/lib/billing/plans";
@@ -23,7 +23,8 @@ const box = (
   provider: ProviderName | null,
   updatedAt: string,
   projectId = "p-1",
-): MeteredComputerRow => ({ projectId, status, provider, updatedAt });
+  workspaceId: string | null = null,
+): MeteredComputerRow => ({ projectId, workspaceId, status, provider, updatedAt });
 
 test("the plan's cloud hours are a denial only once used up", () => {
   assert.equal(hoursDenial(PLANS.free, 9.99), null);
@@ -58,17 +59,28 @@ test("a live box: ready, or provisioning while fresh, and never the owner's own"
   );
 });
 
-// The gate's box count refuses only a session that would start a box: one on
-// a project whose box is live shares it.
-test("a project's box is live only when its own computer is", () => {
-  const atCap = [box("ready", null, "x", "p-1"), box("provisioning", "neev", fresh.toISOString(), "p-2")];
-  assert.equal(projectBoxLive(atCap, "p-1", now), true);
-  assert.equal(projectBoxLive(atCap, "p-2", now), true);
-  assert.equal(projectBoxLive(atCap, "p-3", now), false);
-  // Its box paused, or its provision died: a session there starts one.
-  assert.equal(projectBoxLive([box("stopped", null, "x", "p-1")], "p-1", now), false);
+// The gate's box count refuses only a session that would start a box: one
+// whose box is live runs on it.
+test("a session's box is live only when that box is", () => {
+  const boxes = [
+    box("ready", null, "x", "p-1"),
+    box("ready", null, "x", "p-2", "w-own"),
+    box("provisioning", "neev", fresh.toISOString(), "p-3"),
+  ];
+  // A project's shared box from before, for the sessions still on it.
+  assert.equal(boxLive(boxes, { projectId: "p-1" }, now), true);
+  assert.equal(boxLive(boxes, { projectId: "p-3" }, now), true);
+  // A session's own box.
+  assert.equal(boxLive(boxes, { workspaceId: "w-own" }, now), true);
+  assert.equal(boxLive(boxes, { workspaceId: "w-other" }, now), false);
+  // A workspace's own box is not its project's shared one, nor the reverse.
+  assert.equal(boxLive(boxes, { projectId: "p-2" }, now), false);
+  // A new session always starts a box.
+  assert.equal(boxLive(boxes, null, now), false);
+  // Its box paused, or its provision died: the session starts one.
+  assert.equal(boxLive([box("stopped", null, "x", "p-1", "w-1")], { workspaceId: "w-1" }, now), false);
   const stale = new Date(now.getTime() - STALE_PROVISION_MS - 1).toISOString();
-  assert.equal(projectBoxLive([box("provisioning", null, stale, "p-1")], "p-1", now), false);
+  assert.equal(boxLive([box("provisioning", null, stale, "p-1")], { projectId: "p-1" }, now), false);
 });
 
 test("only explicitly configured plan-limit exemptions are exempt", () => {

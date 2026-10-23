@@ -117,7 +117,7 @@ export function WorkspaceStudio({
               <h3>Restoring this session</h3>
               <p>
                 Bringing back its conversation, commits and changes on a cloud computer. It takes a minute or two
-                when the project&apos;s computer has to start.
+                when its computer has to start.
               </p>
             </div>
             <SessionComposer
