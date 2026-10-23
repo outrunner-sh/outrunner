@@ -39,7 +39,7 @@ export function boxImageTag(dockerfile: string): string {
 /** {@link boxImageTag} of box/Dockerfile as committed. Written out rather than
  *  computed, so the app needs no Dockerfile at runtime; its test fails when
  *  the two part. */
-export const BOX_IMAGE_TAG = "38a999b0c2b2";
+export const BOX_IMAGE_TAG = "1e6ddadace5e";
 
 /** Where CI publishes the image, public. */
 export const BOX_IMAGE_REPOSITORY = "ghcr.io/neevai-labs/outrunner-box";

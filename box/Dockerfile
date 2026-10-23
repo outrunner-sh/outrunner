@@ -49,7 +49,10 @@ RUN npm install -g "@openai/codex@${CODEX_VERSION}" && npm cache clean --force
 
 # The user the agent and Claude run as: Claude refuses bypassPermissions as
 # root. Passwordless sudo, so an agent can still install what a repo needs.
+# Its home readable by all (Ubuntu makes it 0750): claude links into it, and a
+# provider may run commands as its own user.
 RUN useradd -m -s /bin/bash runtime \
+  && chmod 0755 /home/runtime \
   && echo 'runtime ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runtime \
   && chmod 0440 /etc/sudoers.d/runtime
 
