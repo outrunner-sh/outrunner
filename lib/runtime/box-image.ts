@@ -39,7 +39,7 @@ export function boxImageTag(dockerfile: string): string {
 /** {@link boxImageTag} of box/Dockerfile as committed. Written out rather than
  *  computed, so the app needs no Dockerfile at runtime; its test fails when
  *  the two part. */
-export const BOX_IMAGE_TAG = "8381b2257027";
+export const BOX_IMAGE_TAG = "38a999b0c2b2";
 
 /** Where CI publishes the image, public. */
 export const BOX_IMAGE_REPOSITORY = "ghcr.io/neevai-labs/outrunner-box";
@@ -52,7 +52,7 @@ export const BOX_IMAGE = `${BOX_IMAGE_REPOSITORY}:${BOX_IMAGE_TAG}`;
  * it is on some other image, and is refused rather than patched.
  */
 export function boxCheckScript(): string {
-  const { claudeCode, codex, gh } = BOX_TOOLS;
+  const { node, claudeCode, codex, gh } = BOX_TOOLS;
   return [
     "fail=0",
     `want() { [ "$3" = "$2" ] || { echo "$1 is \${3:-missing}, expected $2"; fail=1; }; }`,
@@ -61,7 +61,9 @@ export function boxCheckScript(): string {
     `want Codex ${codex} "$(codex --version 2>/dev/null | awk '{print $NF}')"`,
     // "gh version 2.102.1 (2026-…)"
     `want gh ${gh} "$(gh --version 2>/dev/null | awk 'NR==1{print $3}')"`,
-    `for tool in tmux git git-lfs jq rg node npm python3 sudo; do ` +
+    // "v22.11.0": the major is what's pinned (NodeSource gives its latest).
+    `want Node ${node} "$(node --version 2>/dev/null | cut -d. -f1 | cut -c2-)"`,
+    `for tool in tmux git git-lfs jq rg npm python3 sudo; do ` +
       `command -v "$tool" >/dev/null || { echo "$tool is missing"; fail=1; }; done`,
     `exit $fail`,
   ].join("\n");

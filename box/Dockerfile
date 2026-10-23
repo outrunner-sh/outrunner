@@ -55,10 +55,15 @@ RUN useradd -m -s /bin/bash runtime \
 
 # Claude Code's own installer, for the box user, at the pinned version; linked
 # into /usr/local/bin so it's on every PATH (login shell or not, sudo's too).
+# Its updater off, in managed settings (whatever env a provider starts it with)
+# and the env: it would move a long-lived box off the pin after a session.
 USER runtime
 WORKDIR /home/runtime
 RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}"
 USER root
-RUN ln -sf /home/runtime/.local/bin/claude /usr/local/bin/claude
+RUN ln -sf /home/runtime/.local/bin/claude /usr/local/bin/claude \
+  && mkdir -p /etc/claude-code \
+  && echo '{"env":{"DISABLE_AUTOUPDATER":"1"}}' > /etc/claude-code/managed-settings.json
+ENV DISABLE_AUTOUPDATER=1
 
 USER runtime
