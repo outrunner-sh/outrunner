@@ -37,14 +37,15 @@ export function reconnectPlan(attempt: number): ReconnectPlan {
 }
 
 /**
- * The `since` a re-armed retry run starts from. A re-arm after a close (the
- * socket is down) begins a fresh clock, so the elapsed time counts from this
- * retry and not from the drop that gave up — a give-up, then a focus an hour
- * later, would otherwise show an hour on the clock. Re-arming while the socket
- * is still open has nothing to time.
+ * The `since` a re-armed retry run starts from. A re-arm after a give-up
+ * begins a fresh clock, so the elapsed time counts from this retry and not
+ * from the drop it recovered from — a give-up, then a focus an hour later,
+ * would otherwise show an hour on the clock. A re-arm while the automatic
+ * loop is still running keeps the clock it has: that run is the same outage,
+ * and the elapsed time is meant to show how long it has lasted.
  */
-export function rearmedSince(closed: boolean, at: number): number | null {
-  return closed ? at : null;
+export function rearmedSince(prev: { gaveUp: boolean; since: number | null }, at: number): number | null {
+  return prev.gaveUp ? at : prev.since;
 }
 
 /** What to say on screen about a dropped stream. */

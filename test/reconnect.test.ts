@@ -10,12 +10,15 @@ import {
   reconnectPlan,
 } from "@/lib/runtime/reconnect";
 
-test("a re-armed retry run starts its clock fresh", () => {
-  // Re-armed after a give-up (the socket is down): the clock times this run,
-  // not the drop it recovered from.
-  assert.equal(rearmedSince(true, 5_000), 5_000);
-  // Re-armed while the socket is still open: nothing to time.
-  assert.equal(rearmedSince(false, 5_000), null);
+test("a re-armed retry run starts its clock fresh only after a give-up", () => {
+  // Re-armed after a give-up: the clock times this run, not the drop it
+  // recovered from.
+  assert.equal(rearmedSince({ gaveUp: true, since: 1_000 }, 5_000), 5_000);
+  // Re-armed while the automatic loop is still running: the same outage, so
+  // the clock it has keeps counting rather than going back to zero.
+  assert.equal(rearmedSince({ gaveUp: false, since: 1_000 }, 5_000), 1_000);
+  // Nothing dropped yet: nothing to time.
+  assert.equal(rearmedSince({ gaveUp: false, since: null }, 5_000), null);
 });
 
 test("reconnectPlan backs off exponentially from the base delay", () => {

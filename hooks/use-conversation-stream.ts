@@ -77,10 +77,10 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
     case "gave-up":
       return { ...state, gaveUp: true };
     case "rearm":
-      // A fresh retry budget starts a fresh clock (rearmedSince): otherwise a
-      // give-up, then a focus an hour later, would time this run from the drop
-      // it recovered from.
-      return { ...state, attempt: 0, gaveUp: false, since: rearmedSince(state.closed, action.at) };
+      // A fresh retry budget; the clock restarts only if the run had given up
+      // (rearmedSince). A re-arm mid-outage keeps it, so the elapsed time
+      // still shows how long the outage has lasted.
+      return { ...state, attempt: 0, gaveUp: false, since: rearmedSince(state, action.at) };
     case "error":
       return { ...state, error: action.message };
     case "protocol-error":
