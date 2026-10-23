@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -230,7 +230,7 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
 
 test("claudeInstallScript installs the pinned Codex, after the tools", () => {
   const s = claudeInstallScript();
-  assert.ok(s.includes("npm install -g @openai/codex@"), "installs Codex");
+  assert.ok(s.includes(`sudo env "PATH=$PATH" npm install -g @openai/codex@`), "installs Codex through sudo with the shell's PATH");
   assert.ok(s.indexOf("apt-get install") < s.indexOf("npm install"), "tools first");
 });
 
@@ -285,21 +285,30 @@ test("claudeInstallScript skips the install when the box already has the tools",
 /** A box whose `claude` reports the version in a file, whose npm "installs"
  *  Claude by writing the version it was asked for there (or, `npmTakes`
  *  false, leaves the old one first on the PATH), and whose sudo runs what it's
- *  given on its own PATH, as the real one's secure_path does: npm isn't on it.
- *  With no version, `claude` fails as a missing one would. Every other tool is
- *  already there, Codex too unless `codex` is false. */
-function claudeBox(version: string | null, { npmTakes = true, codex = true } = {}) {
+ *  given on its own PATH, as the real one's secure_path does: only `env` is on
+ *  it, so no npm of the machine's own can stand in. npm's global prefix is
+ *  root's unless `ownPrefix`. With no version, `claude` fails as a missing one
+ *  would. Every other tool is already there, Codex too unless `codex` is false. */
+function claudeBox(version: string | null, { npmTakes = true, codex = true, ownPrefix = false } = {}) {
   const bin = mkdtempSync(join(tmpdir(), "claude-box-"));
+  const securePath = mkdtempSync(join(tmpdir(), "secure-path-"));
+  symlinkSync("/usr/bin/env", join(securePath, "env"));
   const file = join(bin, "claude-version");
   const npmLog = join(bin, "npm-log");
+  const sudoLog = join(bin, "sudo-log");
+  const prefix = ownPrefix ? mkdtempSync(join(tmpdir(), "npm-prefix-")) : join(bin, "root-owned-prefix");
   if (version) writeFileSync(file, version);
   const tools: [string, string][] = [
     ["tmux", "exit 0"],
     ["jq", "exit 0"],
     ["gh", "exit 0"],
     ["claude", `[ -f ${file} ] || exit 127; echo "$(cat ${file}) (Claude Code)"`],
-    ["sudo", `PATH=/usr/bin:/bin exec "$@"`],
-    ["npm", `echo "$*" >> ${npmLog}; case "$3" in @anthropic-ai/*) ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"};; esac`],
+    ["sudo", `echo "$*" >> ${sudoLog}; PATH=${securePath} exec "$@"`],
+    [
+      "npm",
+      `[ "$1" = prefix ] && { echo ${prefix}; exit 0; }; echo "$*" >> ${npmLog}; ` +
+        `case "$3" in @anthropic-ai/*) ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"};; esac`,
+    ],
   ];
   if (codex) tools.push(["codex", "exit 0"]);
   for (const [name, body] of tools) {
@@ -310,8 +319,8 @@ function claudeBox(version: string | null, { npmTakes = true, codex = true } = {
       env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
       encoding: "utf8",
     });
-  const npm = () => { try { return readFileSync(npmLog, "utf8"); } catch { return ""; } };
-  return { run, npm, version: () => readFileSync(file, "utf8").trim() };
+  const read = (log: string) => { try { return readFileSync(log, "utf8"); } catch { return ""; } };
+  return { run, npm: () => read(npmLog), sudo: () => read(sudoLog), version: () => readFileSync(file, "utf8").trim() };
 }
 
 // Daytona's base image ships Claude Code 2.1.19, which stops at once on
@@ -331,6 +340,17 @@ test("claudeInstallScript installs Codex where there is none, through sudo's own
   const result = box.run();
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+});
+
+// nvm's prefix is the user's: root's files there would break a later install
+// without sudo.
+test("claudeInstallScript installs into a global prefix the user owns without sudo", () => {
+  const box = claudeBox("2.1.19", { codex: false, ownPrefix: true });
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(box.version(), CLAUDE_CODE_VERSION);
+  assert.match(box.npm(), new RegExp(`install -g ${CODEX_PACKAGE}`));
+  assert.equal(box.sudo(), "", "sudo ran");
 });
 
 test("claudeInstallScript installs Claude Code where there is none", () => {
