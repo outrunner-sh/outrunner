@@ -1,3 +1,4 @@
+import { BOX_TOOLS } from "@/lib/runtime/box-image";
 import { npmInstallGlobal } from "@/lib/runtime/npm-global";
 
 /**
@@ -8,7 +9,7 @@ import { npmInstallGlobal } from "@/lib/runtime/npm-global";
  * left alone: a box's own may be. Bump it with the agent's Claude screens
  * (runtime-agent/internal/workspace) checked on that version.
  */
-export const CLAUDE_CODE_VERSION = "2.1.304";
+export const CLAUDE_CODE_VERSION = BOX_TOOLS.claudeCode;
 
 /** Bring a box's Claude Code up to {@link CLAUDE_CODE_VERSION} where it is
  *  missing or older: npm's global install, which puts `claude` on the PATH

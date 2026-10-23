@@ -1,3 +1,4 @@
+import { BOX_TOOLS } from "@/lib/runtime/box-image";
 import { npmInstallGlobal } from "@/lib/runtime/npm-global";
 
 /**
@@ -6,7 +7,7 @@ import { npmInstallGlobal } from "@/lib/runtime/npm-global";
  * version can change either. Bump it with the agent's Codex fixtures
  * re-recorded on that version.
  */
-export const CODEX_PACKAGE = "@openai/codex@0.146.0";
+export const CODEX_PACKAGE = `@openai/codex@${BOX_TOOLS.codex}`;
 
 /** Install Codex where there is none: npm's global install, which puts
  *  `codex` on the PATH every user has. `sudo` where the installer isn't root.
