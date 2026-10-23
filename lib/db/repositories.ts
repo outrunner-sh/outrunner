@@ -310,16 +310,16 @@ export function getRuntimeComputerByProject(projectId: string): Promise<RuntimeC
 export async function getWorkspaceComputer(
   workspace: Pick<Workspace, "id" | "computerId">,
 ): Promise<RuntimeComputer | null> {
-  const own = await getRuntimeComputer({ workspaceId: workspace.id });
-  if (own || !workspace.computerId) return own;
+  if (!workspace.computerId) return getRuntimeComputer({ workspaceId: workspace.id });
+  // Both in one read: its own box, and the one it records (usually the same).
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .select("*")
-    .eq("id", workspace.computerId)
-    .maybeSingle();
+    .or(`workspace_id.eq.${workspace.id},id.eq.${workspace.computerId}`);
   if (error) throw error;
-  return data ? toRuntimeComputer(data) : null;
+  const rows = (data ?? []).map(toRuntimeComputer);
+  return rows.find((row) => row.workspaceId === workspace.id) ?? rows[0] ?? null;
 }
 
 /** The owner's computers, whatever their state: what a plan's box count is

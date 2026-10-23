@@ -642,6 +642,16 @@ begin
       raise;
     end if;
   end;
+  -- An ended session gets no box back (20261023140000).
+  update workspaces set status = 'destroyed' where id = '33333333-3333-3333-3333-333333333332';
+  begin
+    perform claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-8', 'v1', null);
+    raise exception 'FAIL: a box was claimed for an ended session';
+  exception when others then
+    if SQLERRM <> 'workspace not found' then
+      raise;
+    end if;
+  end;
   raise notice 'ok: each session claims a box of its own, apart from its project''s shared one';
 end $$;
 
