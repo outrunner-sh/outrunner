@@ -62,3 +62,20 @@ test("a chunked body exactly at the cap is kept", async () => {
   const text = await readCappedBody(request, 2048);
   assert.equal(text?.length, 2048);
 });
+
+test("a body that fails partway reads as unusable, not as a thrown error", async () => {
+  // The client dropped mid-body — a tab closing while it reports a fault.
+  // That must not become an exception the route turns into a 500.
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"where":'));
+      controller.error(new Error("connection reset"));
+    },
+  });
+  const request = new Request("https://outrunner.test/x", {
+    method: "POST",
+    body,
+    duplex: "half",
+  } as RequestInit);
+  assert.equal(await readCappedBody(request, 8 * 1024), null);
+});
