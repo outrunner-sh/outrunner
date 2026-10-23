@@ -84,8 +84,9 @@ jobs:
       # The same check every box runs when it comes up, then what only the
       # image promises: it runs as the box user, who has passwordless sudo,
       # and Claude's updater can't move it off the pin.
+      # Every run, a published image too (docker pulls it): the check isn't in
+      # the tag, so a change to it alone must still meet the image.
       - name: Check
-        if: steps.published.outputs.yes != 'true'
         env:
           IMAGE: ${{ steps.box.outputs.image }}
         run: |
