@@ -362,6 +362,28 @@ type AttachmentRow = {
 };
 
 /** Columns the client may supply on insert (defaults fill the rest). */
+// Signing in from the terminal (`outrunner login`): one-time codes the
+// browser hands the CLI, and the tokens the CLI trades them for. Hashes only.
+// Service-role only, like user_credentials (lib/db/cli-tokens.ts).
+type CliLoginCodeRow = {
+  code_hash: string;
+  user_id: string;
+  code_challenge: string;
+  device_name: string;
+  expires_at: string;
+  created_at: string;
+};
+
+type CliTokenRow = {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  device_name: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
 type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
   Partial<Omit<Row, Required | "created_at" | "updated_at">>;
 
@@ -502,6 +524,18 @@ export type Database = {
           "owner_id" | "filename" | "content_type" | "size_bytes" | "storage_path"
         >;
         Update: Partial<AttachmentRow>;
+        Relationships: [];
+      };
+      cli_login_codes: {
+        Row: CliLoginCodeRow;
+        Insert: Insert<CliLoginCodeRow, "code_hash" | "user_id" | "code_challenge" | "device_name" | "expires_at">;
+        Update: Partial<CliLoginCodeRow>;
+        Relationships: [];
+      };
+      cli_tokens: {
+        Row: CliTokenRow;
+        Insert: Insert<CliTokenRow, "user_id" | "token_hash" | "device_name">;
+        Update: Partial<CliTokenRow>;
         Relationships: [];
       };
       user_credentials: {

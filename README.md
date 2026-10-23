@@ -36,6 +36,18 @@ Phase 0 (architecture validated end-to-end on Daytona) and Milestone 1
 needs repo **Metadata: Read**, **Contents: Read/write**, and **Pull requests:
 Read/write**. Keep it out of `NEXT_PUBLIC_*` and commits.
 
+## CLI
+
+`outrunner` (`runtime-agent/cmd/outrunner`) is the command a new user pastes
+into their terminal. It signs the terminal in through the browser
+(`/cli-login`, PKCE, a token kept in `~/.outrunner/cli.json`), then hands
+onboarding to the web app. `outrunner login | logout | whoami` do one step
+each; `--url` or `OUTRUNNER_URL` points it at another app.
+
+```sh
+cd runtime-agent && go run ./cmd/outrunner --url http://localhost:3000
+```
+
 ## Docs
 
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)

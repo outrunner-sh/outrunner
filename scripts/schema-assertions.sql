@@ -553,3 +553,43 @@ begin
 end $$;
 
 reset role;
+
+-- 21. The CLI's sign-in: no user reaches its codes or tokens, even their own
+-- (no grant, and RLS with no policy behind it), and only hashes fit.
+do $$
+begin
+  if has_table_privilege('authenticated', 'cli_tokens', 'select')
+     or has_table_privilege('authenticated', 'cli_login_codes', 'select')
+     or has_table_privilege('anon', 'cli_tokens', 'select') then
+    raise exception 'FAIL: a signed-in user is granted the CLI''s codes or tokens';
+  end if;
+  insert into cli_tokens (user_id, token_hash, device_name)
+  values ('11111111-1111-1111-1111-111111111111', repeat('a', 64), 'Mac');
+  begin
+    insert into cli_tokens (user_id, token_hash, device_name)
+    values ('11111111-1111-1111-1111-111111111111', 'or_cli_not_a_hash', 'Mac');
+    raise exception 'FAIL: cli_tokens kept a token that is not a hash';
+  exception when check_violation then
+    null;
+  end;
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+begin
+  if exists (select 1 from cli_tokens) then
+    raise exception 'FAIL: RLS lets a user read their CLI tokens';
+  end if;
+  begin
+    insert into cli_tokens (user_id, token_hash, device_name)
+    values ('11111111-1111-1111-1111-111111111111', repeat('b', 64), 'Mac');
+    raise exception 'FAIL: a user could give themselves a CLI token';
+  exception when insufficient_privilege then
+    null;
+  end;
+  raise notice 'ok: the CLI''s codes and tokens are the server''s alone, and hashed';
+end $$;
+
+reset role;
