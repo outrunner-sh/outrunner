@@ -42,9 +42,11 @@ Read/write**. Keep it out of `NEXT_PUBLIC_*` and commits.
 terminal. It signs the terminal in through the browser (`/cli-login`, PKCE, a
 token kept in `~/.outrunner/cli.json`), offers to connect their Claude
 subscription when Claude Code is on the computer (it runs `claude setup-token`
-under a PTY and saves the token), then continues onboarding in the browser.
-`outrunner login | claude | whoami | logout` do one step each; `--url` or
-`OUTRUNNER_URL` points it at another app.
+under a PTY and saves the token), offers to import the sessions it finds there
+(Conductor, Claude Code, Codex: the Mac app's import, through the same routes),
+then continues onboarding in the browser. `outrunner login | claude | import |
+whoami | logout` do one step each; `--url` or `OUTRUNNER_URL` points it at
+another app.
 
 The CLI is Go (`runtime-agent/cmd/outrunner`), shipped through npm like
 esbuild: the `outrunner` launcher (`cli-npm/`) and one `outrunner-<os>-<cpu>`

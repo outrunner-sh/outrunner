@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/creack/pty"
 )
 
 const fakeLink = "https://claude.com/cai/oauth/authorize?code=true&client_id=abc&state=xyz"
@@ -117,5 +119,25 @@ func TestClaudeCommandNeedsSigningInFirst(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Main(context.Background(), []string{"--url", "http://127.0.0.1:1", "claude"}, nil, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "outrunner login") {
 		t.Fatalf("got %d %q", code, errOut.String())
+	}
+}
+
+func TestOnlyATerminalIsAskedAnything(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	if isTerminal(devNull) || isTerminal(strings.NewReader("yes\n")) || isTerminal(nil) {
+		t.Error("something that isn't a terminal was taken for one")
+	}
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Skip("no pty here:", err)
+	}
+	defer ptmx.Close()
+	defer tty.Close()
+	if !isTerminal(tty) {
+		t.Error("a terminal wasn't taken for one")
 	}
 }

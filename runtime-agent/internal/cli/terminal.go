@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
+
+	"github.com/creack/pty"
 )
 
 // terminal is where the user answers: one reader of stdin for the whole run,
@@ -33,11 +36,18 @@ func readLines(stdin io.Reader) <-chan string {
 	return lines
 }
 
-// isTerminal is whether stdin is someone typing, not a pipe or a file.
+// isTerminal is whether stdin is someone typing, not a pipe, a file or
+// /dev/null. A character device isn't enough (/dev/null is one): only a
+// terminal has a window size. Windows has no such call here, so there a
+// character device is taken as the console.
 func isTerminal(stdin io.Reader) bool {
 	file, ok := stdin.(*os.File)
 	if !ok {
 		return false
+	}
+	if runtime.GOOS != "windows" {
+		_, _, err := pty.Getsize(file)
+		return err == nil
 	}
 	info, err := file.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0

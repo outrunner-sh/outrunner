@@ -22,6 +22,7 @@ Commands:
   (none)   Sign in if needed, then continue setting up in your browser
   login    Sign this terminal in to Outrunner
   claude   Connect your Claude subscription (runs claude setup-token)
+  import   Bring sessions on this computer to Outrunner (--all for every one)
   logout   Sign this terminal out
   whoami   Show who this terminal is signed in as
 `
@@ -73,6 +74,18 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return logout(ctx, url, path, config, stdout, stderr)
 	case "whoami":
 		return whoami(ctx, url, config, stdout, stderr)
+	case "import":
+		sub := flag.NewFlagSet("import", flag.ContinueOnError)
+		sub.SetOutput(stderr)
+		all := sub.Bool("all", false, "import every session that can be, without asking")
+		if sub.Parse(flags.Args()[1:]) != nil {
+			return 2
+		}
+		if config.Token == "" {
+			fmt.Fprintln(stderr, "Not signed in. Run `outrunner login`.")
+			return 1
+		}
+		return runImport(ctx, url, config, in, *all, false, stdout, stderr)
 	case "claude":
 		if config.Token == "" {
 			fmt.Fprintln(stderr, "Not signed in. Run `outrunner login`.")
@@ -89,8 +102,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 }
 
 // start is the command a new user pastes: sign in, offer to connect Claude
-// when it's on this computer, then the web app takes over onboarding from
-// its first step the user hasn't done.
+// when it's on this computer and to import the sessions here, then the web
+// app takes over onboarding from its first step the user hasn't done.
 func start(ctx context.Context, url, path string, config Config, in terminal, stdout, stderr io.Writer) int {
 	signedIn := false
 	if config.Token != "" {
@@ -119,6 +132,9 @@ func start(ctx context.Context, url, path string, config Config, in terminal, st
 	if code := offerClaude(ctx, url, config, in, stdout, stderr); code != 0 {
 		return code
 	}
+	// What's on this computer comes along if the user wants it; a failed
+	// import doesn't stop onboarding, which can import again.
+	_ = runImport(ctx, url, config, in, false, true, stdout, stderr)
 
 	fmt.Fprintln(stdout, "\nContinue setting up in your browser:")
 	fmt.Fprintf(stdout, "%s/onboarding\n", url)
