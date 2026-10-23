@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
-  getRuntimeComputerByProject,
+  getWorkspaceComputer,
   getWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -73,7 +73,7 @@ export async function POST(request: Request, context: RouteContext) {
   // are listed without a base branch: only uncommitted ones are left to commit.
   let io: CommitIO;
   if (isComputerProvider(provider)) {
-    const computer = await getRuntimeComputerByProject(workspace.projectId);
+    const computer = await getWorkspaceComputer(workspace);
     if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
       return NextResponse.json(
         { error: "The interactive worktree is not available yet." },

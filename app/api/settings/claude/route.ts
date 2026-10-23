@@ -8,20 +8,15 @@ import {
   setClaudeToken,
   type ClaudeTokenMeta,
 } from "@/lib/runtime/credentials/claude-credentials";
+import { checkClaudeToken } from "@/lib/runtime/credentials/claude-token";
 
 /**
  * Per-user Claude Code credential. The owner stores a `claude setup-token`
  * OAuth token so their sandboxes run on their own subscription.
  *
  * GET returns only presence + last-4 metadata; the token itself is never
- * returned once stored. Validation is deliberately lazy (format-only here) —
- * an invalid token surfaces at sandbox launch, not on save.
+ * returned once stored. The token's check is lib/runtime/credentials/claude-token.ts.
  */
-
-// setup-token output is an opaque OAuth token; keep the check permissive so a
-// format change upstream never blocks a valid token — just guard obvious junk.
-const MIN_TOKEN_LENGTH = 20;
-const MAX_TOKEN_LENGTH = 500;
 
 function unauthorized() {
   return NextResponse.json(
@@ -59,29 +54,11 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
   }
 
-  const raw = (body as { token?: unknown })?.token;
-  const token = typeof raw === "string" ? raw.trim() : "";
-  if (
-    token.length < MIN_TOKEN_LENGTH ||
-    token.length > MAX_TOKEN_LENGTH ||
-    /\s/.test(token)
-  ) {
-    return NextResponse.json(
-      { error: "That doesn't look like a Claude token. Paste the value from `claude setup-token`." },
-      { status: 400 },
-    );
-  }
-
-  // An API key is the Anthropic provider's (lib/providers/claude-slot.ts).
-  if (token.startsWith("sk-ant-api")) {
-    return NextResponse.json(
-      { error: "That's an Anthropic API key. Add it in Settings → Providers → Anthropic; this is for your Claude subscription." },
-      { status: 400 },
-    );
-  }
+  const checked = checkClaudeToken((body as { token?: unknown })?.token);
+  if ("error" in checked) return NextResponse.json({ error: checked.error }, { status: 400 });
 
   try {
-    await setClaudeToken(owner.id, token);
+    await setClaudeToken(owner.id, checked.token);
   } catch (error) {
     console.error("Could not save the Claude token", error);
     return NextResponse.json(
@@ -93,7 +70,7 @@ export async function PUT(request: Request) {
   // its own answer.
   const meta: ClaudeTokenMeta = await getClaudeTokenMeta(owner.id).catch((error: unknown) => {
     console.error("Could not re-read the Claude token after saving it", error);
-    return { connected: true, last4: token.slice(-4) };
+    return { connected: true, last4: checked.token.slice(-4) };
   });
   return NextResponse.json(meta);
 }

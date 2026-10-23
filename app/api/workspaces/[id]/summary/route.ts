@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import {
-  getRuntimeComputerByProject,
+  getWorkspaceComputer,
   getWorkspace,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
@@ -45,7 +45,7 @@ export async function GET(_request: Request, context: RouteContext) {
     );
   }
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
+  const computer = await getWorkspaceComputer(workspace);
   if (!computer || !computer.daytonaSandboxId) {
     return NextResponse.json(
       { error: "This project has no Runtime Computer." },

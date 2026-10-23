@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 
 import { CLAUDE_CODE_VERSION } from "@/lib/runtime/claude-cli";
+import { CODEX_PACKAGE } from "@/lib/runtime/codex-cli";
 
 import {
   AGENT_BINARY_PATH,
@@ -229,7 +230,7 @@ test("claudeInstallScript updates apt before installing tmux + tooling", () => {
 
 test("claudeInstallScript installs the pinned Codex, after the tools", () => {
   const s = claudeInstallScript();
-  assert.ok(s.includes("sudo npm install -g @openai/codex@"), "installs Codex");
+  assert.ok(s.includes(`sudo env "PATH=$PATH" npm install -g @openai/codex@`), "installs Codex through sudo with the shell's PATH");
   assert.ok(s.indexOf("apt-get install") < s.indexOf("npm install"), "tools first");
 });
 
@@ -281,25 +282,53 @@ test("claudeInstallScript skips the install when the box already has the tools",
   assert.equal(existsSync(called), false, "sudo was not called");
 });
 
-/** A box whose `claude` reports the version in a file, whose sudo runs what
- *  it's given, and whose npm "installs" Claude by writing the version it was
- *  asked for there (or, `npmTakes` false, leaves the old one first on the
- *  PATH). With no version, `claude` fails as a missing one would. Every other
- *  tool is already there. */
-function claudeBox(version: string | null, npmTakes = true) {
+/** A box whose `claude` reports the version in a file, whose npm "installs"
+ *  Claude by writing the version it was asked for there (or, `npmTakes`
+ *  false, leaves the old one first on the PATH), and whose sudo runs what it's
+ *  given on its own PATH, as the real one's secure_path does: only `env` is on
+ *  it, so no npm of the machine's own can stand in. npm's global prefix is
+ *  root's unless `ownPrefix`; `rootOwned` is a folder in a prefix the user
+ *  owns that a root install left as root's. npm fails, as the real one does,
+ *  to install into a folder it can't write without sudo. With no version, `claude` fails as a missing one
+ *  would. Every other tool is already there, Codex too unless `codex` is false. */
+function claudeBox(
+  version: string | null,
+  { npmTakes = true, codex = true, ownPrefix = false, rootOwned = "" } = {},
+) {
   const bin = mkdtempSync(join(tmpdir(), "claude-box-"));
+  const securePath = mkdtempSync(join(tmpdir(), "secure-path-"));
+  symlinkSync("/usr/bin/env", join(securePath, "env"));
   const file = join(bin, "claude-version");
   const npmLog = join(bin, "npm-log");
+  const sudoLog = join(bin, "sudo-log");
+  const tries = join(bin, "npm-tries");
+  const own = ownPrefix || rootOwned !== "";
+  const prefix = own ? mkdtempSync(join(tmpdir(), "npm-prefix-")) : join(bin, "root-owned-prefix");
+  if (own) for (const dir of ["lib/node_modules", "bin"]) mkdirSync(join(prefix, dir), { recursive: true });
+  if (rootOwned) {
+    mkdirSync(join(prefix, rootOwned), { recursive: true });
+    chmodSync(join(prefix, rootOwned), 0o555);
+  }
   if (version) writeFileSync(file, version);
   const tools: [string, string][] = [
     ["tmux", "exit 0"],
     ["jq", "exit 0"],
-    ["codex", "exit 0"],
     ["gh", "exit 0"],
     ["claude", `[ -f ${file} ] || exit 127; echo "$(cat ${file}) (Claude Code)"`],
-    ["sudo", `"$@"`],
-    ["npm", `echo "$*" >> ${npmLog}; ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"}`],
+    ["sudo", `echo "$*" >> ${sudoLog}; SUDO_USER=box PATH=${securePath} exec "$@"`],
+    [
+      "npm",
+      // Into the package's scope folder where there is one, else node_modules.
+      `[ "$1" = root ] && { echo ${prefix}/lib/node_modules; exit 0; }; ` +
+        `echo "\${SUDO_USER:+sudo }$*" >> ${tries}; ` +
+        `pkg=\${3%@*}; dir=${prefix}/lib/node_modules; ` +
+        `case "$pkg" in @*/*) [ -d "$dir/\${pkg%%/*}" ] && dir="$dir/\${pkg%%/*}";; esac; ` +
+        `[ -n "$SUDO_USER" ] || [ -w "$dir" ] || { echo "EACCES: $dir" >&2; exit 243; }; ` +
+        `echo "$*" >> ${npmLog}; ` +
+        `case "$3" in @anthropic-ai/*) ${npmTakes ? `echo "\${3##*@}" > ${file}` : "true"};; esac`,
+    ],
   ];
+  if (codex) tools.push(["codex", "exit 0"]);
   for (const [name, body] of tools) {
     writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   }
@@ -308,8 +337,14 @@ function claudeBox(version: string | null, npmTakes = true) {
       env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
       encoding: "utf8",
     });
-  const npm = () => { try { return readFileSync(npmLog, "utf8"); } catch { return ""; } };
-  return { run, npm, version: () => readFileSync(file, "utf8").trim() };
+  const read = (log: string) => { try { return readFileSync(log, "utf8"); } catch { return ""; } };
+  return {
+    run,
+    npm: () => read(npmLog),
+    tries: () => read(tries),
+    sudo: () => read(sudoLog),
+    version: () => readFileSync(file, "utf8").trim(),
+  };
 }
 
 // Daytona's base image ships Claude Code 2.1.19, which stops at once on
@@ -320,6 +355,41 @@ test("claudeInstallScript brings an old Claude Code up to the pinned version", (
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(box.npm().trim(), `install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`);
   assert.equal(box.version(), CLAUDE_CODE_VERSION);
+  // Root's node_modules: no install without sudo, sure to fail, first.
+  assert.equal(box.tries().trim(), `sudo install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`);
+});
+
+// sudo's secure_path leaves out where Daytona's image puts npm: the installs
+// carry the PATH npm was found on through sudo, Codex's as well as Claude's.
+test("claudeInstallScript installs Codex where there is none, through sudo's own PATH", () => {
+  const box = claudeBox(CLAUDE_CODE_VERSION, { codex: false });
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(box.npm().trim(), `install -g ${CODEX_PACKAGE}`);
+  assert.match(box.sudo(), new RegExp(`env PATH=.* npm install -g ${CODEX_PACKAGE}`));
+});
+
+// nvm's prefix is the user's: root's files there would break a later install
+// without sudo.
+test("claudeInstallScript installs into a global prefix the user owns without sudo", () => {
+  const box = claudeBox("2.1.19", { codex: false, ownPrefix: true });
+  const result = box.run();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(box.version(), CLAUDE_CODE_VERSION);
+  assert.match(box.npm(), new RegExp(`install -g ${CODEX_PACKAGE}`));
+  assert.equal(box.sudo(), "", "sudo ran");
+});
+
+// A root install into nvm's prefix before leaves what it wrote root's: the
+// whole node_modules, or just Claude's scope folder.
+test("claudeInstallScript goes through sudo where a root install left the user's prefix", { skip: process.getuid?.() === 0 }, () => {
+  for (const rootOwned of ["lib/node_modules", "lib/node_modules/@anthropic-ai"]) {
+    const box = claudeBox("2.1.19", { rootOwned });
+    const result = box.run();
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(box.version(), CLAUDE_CODE_VERSION, rootOwned);
+    assert.match(box.sudo(), /npm install -g @anthropic-ai\/claude-code@/, rootOwned);
+  }
 });
 
 test("claudeInstallScript installs Claude Code where there is none", () => {
@@ -339,7 +409,7 @@ test("claudeInstallScript leaves a newer Claude Code alone, and the pinned one t
 });
 
 test("claudeInstallScript fails when the old Claude Code still comes first after the install", () => {
-  const box = claudeBox("2.1.19", false);
+  const box = claudeBox("2.1.19", { npmTakes: false });
   const result = box.run();
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, new RegExp(`Could not bring Claude Code \\(2\\.1\\.19\\) up to ${CLAUDE_CODE_VERSION.replaceAll(".", "\\.")}`));

@@ -119,6 +119,9 @@ type RuntimeComputerRow = {
   id: string;
   owner_id: string;
   project_id: string;
+  /** The workspace whose own box it is; null for a project's shared box from
+   *  before (20261023130000_workspace_computers.sql). */
+  workspace_id: string | null;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -362,6 +365,28 @@ type AttachmentRow = {
 };
 
 /** Columns the client may supply on insert (defaults fill the rest). */
+// Signing in from the terminal (`outrunner login`): one-time codes the
+// browser hands the CLI, and the tokens the CLI trades them for. Hashes only.
+// Service-role only, like user_credentials (lib/db/cli-tokens.ts).
+type CliLoginCodeRow = {
+  code_hash: string;
+  user_id: string;
+  code_challenge: string;
+  device_name: string;
+  expires_at: string;
+  created_at: string;
+};
+
+type CliTokenRow = {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  device_name: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+};
+
 type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
   Partial<Omit<Row, Required | "created_at" | "updated_at">>;
 
@@ -504,6 +529,18 @@ export type Database = {
         Update: Partial<AttachmentRow>;
         Relationships: [];
       };
+      cli_login_codes: {
+        Row: CliLoginCodeRow;
+        Insert: Insert<CliLoginCodeRow, "code_hash" | "user_id" | "code_challenge" | "device_name" | "expires_at">;
+        Update: Partial<CliLoginCodeRow>;
+        Relationships: [];
+      };
+      cli_tokens: {
+        Row: CliTokenRow;
+        Insert: Insert<CliTokenRow, "user_id" | "token_hash" | "device_name">;
+        Update: Partial<CliTokenRow>;
+        Relationships: [];
+      };
       user_credentials: {
         Row: UserCredentialsRow;
         Insert: Insert<UserCredentialsRow, "user_id">;
@@ -579,6 +616,19 @@ export type Database = {
       claim_billing_lease: {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;
+      };
+      claim_workspace_computer: {
+        Args: {
+          requested_workspace_id: string;
+          requested_agent_secret: string;
+          requested_image_version?: string;
+          /** The plan's cap on the owner's running boxes; null when none applies. */
+          max_live_computers?: number | null;
+        };
+        Returns: Array<{
+          runtime_computer_id: string;
+          should_provision: boolean;
+        }>;
       };
       claim_runtime_computer: {
         Args: {

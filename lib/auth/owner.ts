@@ -33,7 +33,11 @@ export async function getOwner(): Promise<Owner | null> {
   const user = await getAuthUser();
 
   if (!user || !isOwner(user)) return null;
+  return ownerFromUser(user);
+}
 
+/** The owner a Supabase user is, as the app shows them. */
+export function ownerFromUser(user: User): Owner {
   const meta = user.user_metadata as Record<string, unknown> | null;
   const login = githubLogin(user) ?? "";
   // GitHub provides full_name or name in user_metadata from OAuth

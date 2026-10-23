@@ -10,6 +10,7 @@ import {
   toWorkspacePullRequest,
   toWorkspaceSnapshot,
 } from "@/lib/db/mappers";
+import type { ComputerScope } from "@/lib/runtime/computer-scope";
 import type { RecordedModel } from "@/lib/runtime/session-models";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type {
@@ -310,19 +311,43 @@ export async function transitionWorkspace(input: {
 
 // --- runtime computers -----------------------------------------------------
 
-/** The one Runtime Computer for a project, if it has been provisioned. */
-export async function getRuntimeComputerByProject(
-  projectId: string,
+/** The box of `scope`, if one has been claimed: a workspace's own, or a
+ *  project's shared one from before (lib/runtime/computer-scope.ts). */
+export async function getRuntimeComputer(scope: ComputerScope): Promise<RuntimeComputer | null> {
+  const supabase = await createSupabaseServerClient();
+  const query = supabase.from("runtime_computers").select("*");
+  const { data, error } = await ("workspaceId" in scope
+    ? query.eq("workspace_id", scope.workspaceId)
+    : query.eq("project_id", scope.projectId).is("workspace_id", null)
+  ).maybeSingle();
+
+  if (error) throw error;
+  return data ? toRuntimeComputer(data) : null;
+}
+
+/** The project's shared box from before each session had its own, if it has one. */
+export function getRuntimeComputerByProject(projectId: string): Promise<RuntimeComputer | null> {
+  return getRuntimeComputer({ projectId });
+}
+
+/**
+ * The box a workspace's session is on: its own, or, for a session from
+ * before each had its own, the project's shared box it was set up on. Null
+ * when it has none yet (a session setting up, or one archived off a box).
+ */
+export async function getWorkspaceComputer(
+  workspace: Pick<Workspace, "id" | "computerId">,
 ): Promise<RuntimeComputer | null> {
+  if (!workspace.computerId) return getRuntimeComputer({ workspaceId: workspace.id });
+  // Both in one read: its own box, and the one it records (usually the same).
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .select("*")
-    .eq("project_id", projectId)
-    .maybeSingle();
-
+    .or(`workspace_id.eq.${workspace.id},id.eq.${workspace.computerId}`);
   if (error) throw error;
-  return data ? toRuntimeComputer(data) : null;
+  const rows = (data ?? []).map(toRuntimeComputer);
+  return rows.find((row) => row.workspaceId === workspace.id) ?? rows[0] ?? null;
 }
 
 /** The owner's computers, whatever their state: what a plan's box count is
@@ -370,12 +395,14 @@ export async function createRuntimeComputer(input: {
 }
 
 /**
- * Atomically claim the per-project Runtime Computer slot. The SQL function
- * takes a transaction-scoped advisory lock before reading/inserting, while the
- * `unique (project_id)` constraint remains the durable backstop.
+ * Atomically claim the box of `scope`: a workspace's own
+ * (claim_workspace_computer), or a project's shared one from before
+ * (claim_runtime_computer). Each SQL function takes a transaction-scoped
+ * advisory lock before reading/inserting, while a unique index remains the
+ * durable backstop.
  */
 export async function claimRuntimeComputer(input: {
-  projectId: string;
+  scope: ComputerScope;
   agentSecret: string;
   /** The plan's cap on the owner's running boxes, enforced by the claim in
    *  the database (20261019140000_plan_box_limits.sql); null or unset when
@@ -383,17 +410,24 @@ export async function claimRuntimeComputer(input: {
   maxLiveComputers?: number | null;
 }): Promise<{ computer: RuntimeComputer; shouldProvision: boolean }> {
   const supabase = await createSupabaseServerClient();
+  const { scope } = input;
   const call = (withCap: boolean) =>
-    supabase.rpc("claim_runtime_computer", {
-      requested_project_id: input.projectId,
-      requested_agent_secret: input.agentSecret,
-      ...(withCap && { max_live_computers: input.maxLiveComputers ?? null }),
-    });
+    "workspaceId" in scope
+      ? supabase.rpc("claim_workspace_computer", {
+          requested_workspace_id: scope.workspaceId,
+          requested_agent_secret: input.agentSecret,
+          max_live_computers: input.maxLiveComputers ?? null,
+        })
+      : supabase.rpc("claim_runtime_computer", {
+          requested_project_id: scope.projectId,
+          requested_agent_secret: input.agentSecret,
+          ...(withCap && { max_live_computers: input.maxLiveComputers ?? null }),
+        });
 
   let { data, error } = await call(input.maxLiveComputers !== undefined);
-  // Before 20261019140000 takes the argument, the claim still works,
-  // uncapped, until the migration is run.
-  if (error && input.maxLiveComputers !== undefined && error.code === "PGRST202") {
+  // Before 20261019140000 takes the argument, the project's claim still
+  // works, uncapped, until the migration is run.
+  if (error && !("workspaceId" in scope) && input.maxLiveComputers !== undefined && error.code === "PGRST202") {
     console.warn("claim_runtime_computer without the plan's box cap: run the migrations");
     ({ data, error } = await call(false));
   }
@@ -403,7 +437,7 @@ export async function claimRuntimeComputer(input: {
   if (!claim || !data || data.length !== 1) {
     throw new Error("Runtime Computer claim returned an invalid result.");
   }
-  const computer = await getRuntimeComputerByProject(input.projectId);
+  const computer = await getRuntimeComputer(scope);
   if (!computer || computer.id !== claim.runtime_computer_id) {
     throw new Error("Runtime Computer claim was not persisted.");
   }

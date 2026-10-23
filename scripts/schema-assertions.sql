@@ -487,7 +487,7 @@ begin
     perform claim_runtime_computer(fresh_project, 'agent-secret-2', 'v1', 2);
     raise exception 'FAIL: a claim beyond the plan cap was allowed';
   exception when others then
-    if sqlerrcode <> 'P4BX1' then
+    if SQLSTATE <> 'P4BX1' then
       raise;
     end if;
   end;
@@ -529,13 +529,6 @@ begin
   end if;
 
   update runtime_computers
-  set updated_at = now() - interval '11 minutes'
-  where daytona_sandbox_id = 'box-cap-a';
-  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
-    raise exception 'FAIL: a stale provisioning box was counted';
-  end if;
-
-  update runtime_computers
   set status = 'ready', provider = 'user-daytona'
   where daytona_sandbox_id = 'box-cap-a';
   if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
@@ -550,6 +543,171 @@ begin
   end if;
 
   raise notice 'ok: the plan''s box cap holds in the claim, where a box would start';
+end $$;
+
+reset role;
+
+-- A provisioning box whose provision died holds no slot. Backdated with the
+-- updated_at trigger off: it stamps every update, so the box always read fresh.
+alter table runtime_computers disable trigger runtime_computers_set_updated_at;
+update runtime_computers
+set status = 'provisioning', provider = null, updated_at = now() - interval '11 minutes'
+where daytona_sandbox_id = 'box-cap-a';
+alter table runtime_computers enable trigger runtime_computers_set_updated_at;
+
+do $$
+begin
+  if live_metered_computers('11111111-1111-1111-1111-111111111111') <> 0 then
+    raise exception 'FAIL: a stale provisioning box was counted';
+  end if;
+  raise notice 'ok: a stale provisioning box holds no slot';
+end $$;
+
+-- 21. Each session's own box (20261023130000_workspace_computers.sql): claimed
+-- by its workspace, one per workspace, apart from its project's shared box,
+-- and only by the workspace's owner. The plan's cap holds here too.
+insert into workspaces (id, owner_id, project_id, branch)
+select '33333333-3333-3333-3333-333333333331'::uuid, owner_id, id, 'own-box-1'
+from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 143;
+insert into workspaces (id, owner_id, project_id, branch)
+select '33333333-3333-3333-3333-333333333332'::uuid, owner_id, id, 'own-box-2'
+from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 143;
+insert into workspaces (id, owner_id, project_id, branch)
+select '33333333-3333-3333-3333-333333333333'::uuid, owner_id, id, 'not-yours'
+from projects where owner_id = '22222222-2222-2222-2222-222222222222' limit 1;
+
+-- The claim is granted to signed-in users only, which authed stands for.
+grant authenticated to authed;
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  first_claim record;
+  again record;
+  second_claim record;
+  shared_claim record;
+  project uuid;
+begin
+  select project_id into project from workspaces where id = '33333333-3333-3333-3333-333333333331';
+
+  select * into first_claim from claim_workspace_computer('33333333-3333-3333-3333-333333333331', 's-1', 'v1', null);
+  if not first_claim.should_provision then
+    raise exception 'FAIL: a session''s first claim did not start its box';
+  end if;
+  select * into again from claim_workspace_computer('33333333-3333-3333-3333-333333333331', 's-2', 'v1', null);
+  if again.should_provision or again.runtime_computer_id <> first_claim.runtime_computer_id then
+    raise exception 'FAIL: a second claim for one session started another box';
+  end if;
+
+  select * into second_claim from claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-3', 'v1', null);
+  if not second_claim.should_provision or second_claim.runtime_computer_id = first_claim.runtime_computer_id then
+    raise exception 'FAIL: two sessions of one project share a box';
+  end if;
+
+  -- The project's shared box is another row, never a session's own.
+  select * into shared_claim from claim_runtime_computer(project, 's-4', 'v1', null);
+  if shared_claim.runtime_computer_id in (first_claim.runtime_computer_id, second_claim.runtime_computer_id) then
+    raise exception 'FAIL: the project''s shared claim returned a session''s own box';
+  end if;
+  if (select workspace_id from runtime_computers where id = first_claim.runtime_computer_id)
+     <> '33333333-3333-3333-3333-333333333331' then
+    raise exception 'FAIL: a session''s box does not record its workspace';
+  end if;
+
+  -- A box stopped (paused while idle) is claimed back on the same row.
+  update runtime_computers set status = 'stopped' where id = first_claim.runtime_computer_id;
+  select * into again from claim_workspace_computer('33333333-3333-3333-3333-333333333331', 's-5', 'v1', null);
+  if not again.should_provision or again.runtime_computer_id <> first_claim.runtime_computer_id then
+    raise exception 'FAIL: a stopped box was not claimed back on its own row';
+  end if;
+
+  -- Starting a session's box past the plan's cap is refused.
+  update runtime_computers set status = 'ready' where owner_id = '11111111-1111-1111-1111-111111111111';
+  update runtime_computers set status = 'stopped' where id = second_claim.runtime_computer_id;
+  begin
+    perform claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-6', 'v1', 1);
+    raise exception 'FAIL: a session''s box started past the plan''s cap';
+  exception when others then
+    if SQLSTATE <> 'P4BX1' then
+      raise;
+    end if;
+  end;
+
+  begin
+    perform claim_workspace_computer('33333333-3333-3333-3333-333333333333', 's-7', 'v1', null);
+    raise exception 'FAIL: a box was claimed for another owner''s session';
+  exception when others then
+    if SQLERRM <> 'workspace not found' then
+      raise;
+    end if;
+  end;
+  -- An ended session gets no box back (20261023140000).
+  update workspaces set status = 'destroyed' where id = '33333333-3333-3333-3333-333333333332';
+  begin
+    perform claim_workspace_computer('33333333-3333-3333-3333-333333333332', 's-8', 'v1', null);
+    raise exception 'FAIL: a box was claimed for an ended session';
+  exception when others then
+    if SQLERRM <> 'workspace not found' then
+      raise;
+    end if;
+  end;
+  raise notice 'ok: each session claims a box of its own, apart from its project''s shared one';
+end $$;
+
+reset role;
+
+do $$
+begin
+  begin
+    insert into runtime_computers (owner_id, project_id, workspace_id)
+    select owner_id, project_id, id from workspaces where id = '33333333-3333-3333-3333-333333333331';
+    raise exception 'FAIL: a session got a second box';
+  exception when unique_violation then
+    null;
+  end;
+  if has_function_privilege('anon', 'claim_workspace_computer(uuid, text, text, integer)', 'execute') then
+    raise exception 'FAIL: a signed-out caller may claim a box';
+  end if;
+  raise notice 'ok: one box per session, and only signed-in callers may claim one';
+end $$;
+
+-- 22. The CLI's sign-in: no user reaches its codes or tokens, even their own
+-- (no grant, and RLS with no policy behind it), and only hashes fit.
+do $$
+begin
+  if has_table_privilege('authenticated', 'cli_tokens', 'select')
+     or has_table_privilege('authenticated', 'cli_login_codes', 'select')
+     or has_table_privilege('anon', 'cli_tokens', 'select') then
+    raise exception 'FAIL: a signed-in user is granted the CLI''s codes or tokens';
+  end if;
+  insert into cli_tokens (user_id, token_hash, device_name)
+  values ('11111111-1111-1111-1111-111111111111', repeat('a', 64), 'Mac');
+  begin
+    insert into cli_tokens (user_id, token_hash, device_name)
+    values ('11111111-1111-1111-1111-111111111111', 'or_cli_not_a_hash', 'Mac');
+    raise exception 'FAIL: cli_tokens kept a token that is not a hash';
+  exception when check_violation then
+    null;
+  end;
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+begin
+  if exists (select 1 from cli_tokens) then
+    raise exception 'FAIL: RLS lets a user read their CLI tokens';
+  end if;
+  begin
+    insert into cli_tokens (user_id, token_hash, device_name)
+    values ('11111111-1111-1111-1111-111111111111', repeat('b', 64), 'Mac');
+    raise exception 'FAIL: a user could give themselves a CLI token';
+  exception when insufficient_privilege then
+    null;
+  end;
+  raise notice 'ok: the CLI''s codes and tokens are the server''s alone, and hashed';
 end $$;
 
 reset role;

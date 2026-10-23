@@ -6,7 +6,7 @@ import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } fr
 import { getSandboxSettings } from "@/lib/db/credentials";
 import {
   getProject,
-  getRuntimeComputerByProject,
+  getWorkspaceComputer,
   getWorkspace,
   markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
@@ -16,13 +16,14 @@ import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
+import { scopeOf } from "@/lib/runtime/computer-scope";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import { signInFailure } from "@/lib/runtime/session-auth";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
-import type { RuntimeComputer } from "@/lib/runtime/types";
+import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
@@ -82,7 +83,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const query = new URL(request.url).searchParams;
   const warm = query.get("warm") === "1";
-  let computer = await getRuntimeComputerByProject(workspace.projectId);
+  let computer = await getWorkspaceComputer(workspace);
   if (warm && computer && provider.restoresBoxes) {
     const up =
       computer.status === "ready" &&
@@ -93,7 +94,7 @@ export async function POST(request: Request, context: RouteContext) {
     // A box that ended on its own (Modal, after a day) comes back on the disk
     // it left, so the session opens where it was.
     try {
-      computer = (await bringBack(provider, computer, owner)) ?? computer;
+      computer = (await bringBack(provider, workspace, computer, owner)) ?? computer;
     } catch (error) {
       if (error instanceof CloudLimitError) return NextResponse.json(error.denial, { status: 403 });
       const refused = isPlanLimitError(error);
@@ -107,7 +108,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
   if (!computer || !computer.daytonaSandboxId) {
     return NextResponse.json(
-      { error: "This project has no Runtime Computer. Create a workspace first." },
+      { error: "This session has no Runtime Computer. Start a new session." },
       { status: 409 },
     );
   }
@@ -206,13 +207,14 @@ export async function POST(request: Request, context: RouteContext) {
 }
 
 /**
- * The project's computer once its box is up again, when that box ended or
- * another request is bringing it back; null when there's nothing to do (it is
- * up, or it is another provider's). The claim lets one request restore it;
- * the others wait for it.
+ * The session's computer (its own box, or its project's shared one) once its
+ * box is up again, when that box ended or another request is bringing it
+ * back; null when there's nothing to do (it is up, or it is another
+ * provider's). The claim lets one request restore it; the others wait for it.
  */
 async function bringBack(
   provider: ComputerRuntimeProvider,
+  workspace: Workspace,
   computer: RuntimeComputer,
   owner: Owner,
 ): Promise<RuntimeComputer | null> {
@@ -229,10 +231,11 @@ async function bringBack(
   if (!project) throw new Error(`Project ${computer.projectId} not found`);
   // A box is about to start: the plan's hours and box count get their say,
   // and the claim in the database enforces the cap.
-  const gate = await cloudBoxStartGate(owner, provider.name, project.id);
+  const scope = scopeOf(workspace, computer);
+  const gate = await cloudBoxStartGate(owner, provider.name, scope);
   if ("denial" in gate) throw new CloudLimitError(gate.denial);
-  const ensured = await ensureProjectRuntimeComputer(provider, {
-    projectId: project.id,
+  const ensured = await ensureComputer(provider, {
+    scope,
     repoFullName: project.fullName,
     githubToken: await optionalGithubToken(owner.id),
     sessionEnv: await runtimeSessionEnvironment(owner.id),

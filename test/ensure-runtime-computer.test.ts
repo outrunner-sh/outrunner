@@ -12,6 +12,7 @@ function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
   return {
     id: "computer-1",
     projectId: "project-1",
+    workspaceId: "workspace-1",
     status: "provisioning",
     imageVersion: "v1",
     daytonaSandboxId: null,
@@ -57,7 +58,7 @@ function concurrencyHarness() {
       }
       return { computer: row, shouldProvision: false };
     },
-    getByProject: async () => row,
+    get: async () => row,
     readSecret: async () => secret,
     update: async (_id, patch) => {
       assert.ok(row);
@@ -83,7 +84,7 @@ function concurrencyHarness() {
 }
 
 const input = {
-  projectId: "project-1",
+  scope: { workspaceId: "workspace-1" },
   repoFullName: "acme/runtime",
 };
 
@@ -145,7 +146,7 @@ test("the plan's box cap rides along to the claim, null when there is none", asy
   const claim: EnsureRuntimeComputerDependencies["claim"] = async (input) => {
     seen.push(input.maxLiveComputers);
     return harness.deps.claim({
-      projectId: input.projectId,
+      scope: input.scope,
       agentSecret: input.agentSecret,
       maxLiveComputers: input.maxLiveComputers,
     });
@@ -268,4 +269,27 @@ test("cloud hours start when this request's box is up, at the box's own size, an
   // A request that waited on another's provision doesn't start them again.
   await ensureRuntimeComputer(provider, input, deps);
   assert.deepEqual(started, ["sb-new at 4 vCPU"]);
+});
+
+test("the claim and the wait are for the box of the scope asked for", async () => {
+  const harness = concurrencyHarness();
+  const claimed: unknown[] = [];
+  const read: unknown[] = [];
+  const deps: EnsureRuntimeComputerDependencies = {
+    ...harness.deps,
+    claim: async (claim) => (claimed.push(claim.scope), harness.deps.claim(claim)),
+    get: async (scope) => (read.push(scope), harness.deps.get(scope)),
+  };
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async () => ({
+      sandboxId: "daytona-own",
+      agentBaseUrl: "https://agent.example.test",
+      timings: { stages: [{ stage: "sandbox_create", ms: 1 }], totalMs: 1 },
+    }),
+  };
+  const shared = { projectId: "project-1" };
+  await ensureRuntimeComputer(provider, { ...input, scope: shared }, deps);
+  assert.deepEqual(claimed, [shared]);
+  assert.deepEqual(read, [shared]);
 });

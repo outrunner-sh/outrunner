@@ -1,0 +1,105 @@
+name: Box image
+
+# Builds the image every cloud box boots from (box/Dockerfile), checks it has
+# the pinned tools at their versions, and publishes it to GHCR under the tag
+# lib/runtime/box-image.ts names. A tag that's already published is left as
+# it is: the tag is a hash of the Dockerfile and the pinned versions, so the
+# image under it changes only when those do.
+#
+# Pull requests publish too (not a fork's, whose token can't), so a box can
+# be tried on a change before it merges. The package must be public (once, in
+# the org's package settings): every provider, and every user's own Daytona or
+# Modal, pulls it without credentials.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - box/**
+      - lib/runtime/box-image.ts
+      - scripts/box-image.ts
+      - .github/workflows/box-image.yml
+  pull_request:
+    paths:
+      - box/**
+      - lib/runtime/box-image.ts
+      - scripts/box-image.ts
+      - .github/workflows/box-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    name: Build, check and publish
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Everything about the image comes from lib/runtime/box-image.ts.
+      # `image` fails when BOX_IMAGE_TAG isn't box/Dockerfile's.
+      - name: Read the image's tag, versions and check
+        id: box
+        run: |
+          box() {
+            node --experimental-strip-types --disable-warning=ExperimentalWarning \
+              --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \
+              --import ./scripts/test-loader.mjs scripts/box-image.ts "$@"
+          }
+          # Assigned first: a failing $(…) inside echo's argument wouldn't fail the step.
+          image="$(box image)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          box build-args > "$RUNNER_TEMP/build-args"
+          box check > "$RUNNER_TEMP/check.sh"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Is it published already?
+        id: published
+        env:
+          IMAGE: ${{ steps.box.outputs.image }}
+        run: |
+          if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "Already published: $IMAGE"
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # amd64 only: the runtime-agent uploaded onto it is built for amd64.
+      - name: Build
+        if: steps.published.outputs.yes != 'true'
+        env:
+          IMAGE: ${{ steps.box.outputs.image }}
+        run: docker build --platform linux/amd64 $(cat "$RUNNER_TEMP/build-args") -t "$IMAGE" box
+
+      # The same check every box runs when it comes up, then what only the
+      # image promises: it runs as the box user, who has passwordless sudo,
+      # and Claude's updater can't move it off the pin.
+      # Every run, a published image too (docker pulls it): the check isn't in
+      # the tag, so a change to it alone must still meet the image.
+      - name: Check
+        env:
+          IMAGE: ${{ steps.box.outputs.image }}
+        run: |
+          docker run --rm -i "$IMAGE" bash -l < "$RUNNER_TEMP/check.sh"
+          test "$(docker run --rm "$IMAGE" whoami)" = runtime
+          docker run --rm "$IMAGE" sudo -n true
+          docker run --rm "$IMAGE" grep -q '"DISABLE_AUTOUPDATER":"1"' /etc/claude-code/managed-settings.json
+
+      - name: Publish
+        if: >-
+          steps.published.outputs.yes != 'true' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          IMAGE: ${{ steps.box.outputs.image }}
+        run: docker push "$IMAGE"

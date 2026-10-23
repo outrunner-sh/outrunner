@@ -17,6 +17,8 @@ const eslintConfig = defineConfig([
     // wrangler writes a bundled worker here on every deploy. Linting a build
     // artifact produced six warnings that read like real findings.
     "cloudflare/.wrangler/**",
+    // Build output: the staged npm packages (scripts/build-cli.sh), and the like.
+    ".context/**",
   ]),
 ]);
 

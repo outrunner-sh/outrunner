@@ -105,6 +105,8 @@ export function toRuntimeComputer(
   return {
     id: row.id,
     projectId: row.project_id,
+    // `?? null`: a deploy can run before the migration that adds the column.
+    workspaceId: row.workspace_id ?? null,
     status: row.status,
     imageVersion: row.image_version,
     daytonaSandboxId: row.daytona_sandbox_id,
