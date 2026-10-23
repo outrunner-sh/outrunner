@@ -1,3 +1,5 @@
+import { BOX_TOOLS } from "@/lib/runtime/box-image";
+
 /**
  * The GitHub CLI a box installs, pinned: the agent's orientation tells it to
  * open pull requests with `gh pr create` (runtime-agent/internal/claude), and
@@ -5,7 +7,7 @@
  * in none of the base images and not in Debian's repos either, so it comes
  * from its own release, a single static binary.
  */
-export const GH_VERSION = "2.102.1";
+export const GH_VERSION = BOX_TOOLS.gh;
 
 /**
  * Install the GitHub CLI where there is none, into /usr/local/bin so `gh` is

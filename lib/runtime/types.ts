@@ -157,6 +157,9 @@ export type ProvisionTimings = {
 export type RuntimeComputer = {
   id: string;
   projectId: string;
+  /** The workspace whose own box it is; null for a project's box shared by
+   *  its sessions, from before each session had its own. */
+  workspaceId: string | null;
   status: RuntimeComputerStatus;
   /** Frozen image tag this box was built from, e.g. `v1`. */
   imageVersion: string;

@@ -3,7 +3,7 @@ import { SMALL_BOX_CPU } from "@/lib/billing/hours";
 import { isMetered, openInterval } from "@/lib/billing/metering-store";
 import {
   claimRuntimeComputer,
-  getRuntimeComputerByProject,
+  getRuntimeComputer,
   readRuntimeComputerSecret,
   updateRuntimeComputer,
 } from "@/lib/db/repositories";
@@ -17,7 +17,7 @@ import {
 
 const dependencies: EnsureRuntimeComputerDependencies = {
   claim: claimRuntimeComputer,
-  getByProject: getRuntimeComputerByProject,
+  get: getRuntimeComputer,
   readSecret: readRuntimeComputerSecret,
   update: updateRuntimeComputer,
   sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
@@ -34,7 +34,7 @@ const dependencies: EnsureRuntimeComputerDependencies = {
   },
 };
 
-export function ensureProjectRuntimeComputer(
+export function ensureComputer(
   provider: RuntimeComputerProvisioner,
   input: EnsureRuntimeComputerInput,
 ): Promise<EnsuredRuntimeComputer> {

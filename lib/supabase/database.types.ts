@@ -119,6 +119,9 @@ type RuntimeComputerRow = {
   id: string;
   owner_id: string;
   project_id: string;
+  /** The workspace whose own box it is; null for a project's shared box from
+   *  before (20261023130000_workspace_computers.sql). */
+  workspace_id: string | null;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -613,6 +616,19 @@ export type Database = {
       claim_billing_lease: {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;
+      };
+      claim_workspace_computer: {
+        Args: {
+          requested_workspace_id: string;
+          requested_agent_secret: string;
+          requested_image_version?: string;
+          /** The plan's cap on the owner's running boxes; null when none applies. */
+          max_live_computers?: number | null;
+        };
+        Returns: Array<{
+          runtime_computer_id: string;
+          should_provision: boolean;
+        }>;
       };
       claim_runtime_computer: {
         Args: {

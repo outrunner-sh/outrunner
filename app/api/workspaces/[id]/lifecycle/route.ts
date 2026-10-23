@@ -3,14 +3,14 @@ import { after, NextResponse } from "next/server";
 import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
-import { releaseProjectBox } from "@/lib/billing/release-box.deps";
+import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
 import { optionalGithubToken } from "@/lib/github/token";
 import {
   createWorkspaceSnapshot,
   deleteWorkspaceSnapshots,
   getProject,
-  getRuntimeComputerByProject,
+  getWorkspaceComputer,
   getWorkspace,
   listWorkspaceSnapshots,
   markRuntimeComputerStoppedIfReady,
@@ -25,13 +25,14 @@ import { AGENT_FEATURE_IMPORTS, AGENT_FEATURE_RESTORE_MODEL } from "@/lib/runtim
 import { requireFeature } from "@/lib/runtime/box-features";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
+import { scopeOf } from "@/lib/runtime/computer-scope";
 import { recordedModelRequest } from "@/lib/runtime/model-switch";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import { relaunchNeedsAccount, restoreSignedIn, sessionAuthClient, signInFailure } from "@/lib/runtime/session-auth";
 import { defaultModel, type RecordedModel } from "@/lib/runtime/session-models";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
-import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
@@ -232,7 +233,7 @@ async function archiveDaytonaWorkspace(
     patch: { status: "archived", errorMessage: null },
   });
   // The last session off its box frees it: paused now, not when idle.
-  if (completed) after(() => releaseProjectBox(provider, workspace.projectId));
+  if (completed) after(() => releaseWorkspaceBox(provider, workspace, false));
   return completed
     ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
     : lifecycleReconciliationRequired("archive");
@@ -264,9 +265,13 @@ async function restoreDaytonaWorkspace(
       { status: 409 },
     );
   }
-  // A box may be about to start (the project's box may be gone): the plan's
-  // hours and box count get their say before anything changes.
-  const gate = await cloudBoxStartGate(owner, provider.name, workspace.projectId);
+  // The box it restores on: its own (paused when it was archived), or, for a
+  // session from before each had its own, its project's shared one.
+  const currentComputer = await getWorkspaceComputer(workspace);
+  const scope = scopeOf(workspace, currentComputer);
+  // A box may be about to start (the box may be gone): the plan's hours and
+  // box count get their say before anything changes.
+  const gate = await cloudBoxStartGate(owner, provider.name, scope);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
   const transitioned = await startTransition(workspace, ["archived"], "restoring");
   if (!transitioned) return lifecycleConflict();
@@ -296,11 +301,10 @@ async function restoreDaytonaWorkspace(
       })),
     );
 
-    // If the project's persisted box is marked ready but its Daytona sandbox has
+    // If the persisted box is marked ready but its Daytona sandbox has
     // vanished, release the stale claim first so ensure provisions a replacement
     // — otherwise restore would fail instead of rebuilding on a fresh box (the
     // whole point of portable Restore). Mirrors the create flow.
-    const currentComputer = await getRuntimeComputerByProject(project.id);
     // The box that ended (paused while idle, or once its last session was
     // archived), for a provider that brings it back on the disk it left, so
     // the restore resumes it rather than leaving it behind for a new one.
@@ -326,8 +330,8 @@ async function restoreDaytonaWorkspace(
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
     const sessionEnv = await runtimeSessionEnvironment(owner.id);
-    const ensured = await ensureProjectRuntimeComputer(provider, {
-      projectId: project.id,
+    const ensured = await ensureComputer(provider, {
+      scope,
       repoFullName: project.fullName,
       githubToken,
       sessionEnv,
@@ -442,7 +446,7 @@ async function daytonaAgent(
   provider: ComputerRuntimeProvider,
   owner: Owner,
 ): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade?: () => Promise<void> }> {
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
+  const computer = await getWorkspaceComputer(workspace);
   if (!computer?.daytonaSandboxId || computer.status !== "ready") {
     throw new Error("Runtime Computer is not available.");
   }
@@ -541,8 +545,8 @@ async function destroyDaytonaWorkspace(
     const { agent, identity } = await daytonaAgent(workspace, provider, owner);
     await agent.destroyWorkspace(identity);
   });
-  // The last session off its box frees it: paused now, not when idle.
-  if (response.ok) after(() => releaseProjectBox(provider, workspace.projectId));
+  // Its own box goes with it; the last session off a shared box pauses it.
+  if (response.ok) after(() => releaseWorkspaceBox(provider, workspace, true));
   return response;
 }
 
@@ -562,7 +566,7 @@ async function endWorkspace(workspace: Workspace, teardown?: () => Promise<void>
   const transitioned = await startTransition(workspace, [workspace.status], "destroying");
   if (!transitioned) return lifecycleConflict();
 
-  // Best-effort worktree teardown: destroy is terminal, and the shared box may
+  // Best-effort worktree teardown: destroy is terminal, and the box may
   // already be gone (e.g. destroying an ARCHIVED workspace whose Runtime Computer
   // was reclaimed). A missing/failed agent must not block the durable cleanup.
   try {

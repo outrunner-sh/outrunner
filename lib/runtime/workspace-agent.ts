@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getRuntimeComputerByProject, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
+import { getWorkspaceComputer, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
@@ -35,7 +35,7 @@ export async function reachWorkspaceAgent(
   const provider = resolution.provider;
   if (!isComputerProvider(provider)) return fail(needsComputer, 409);
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
+  const computer = await getWorkspaceComputer(workspace);
   if (!computer || !computer.daytonaSandboxId || computer.status !== "ready") {
     return fail("Runtime Computer is not ready.", 409);
   }
