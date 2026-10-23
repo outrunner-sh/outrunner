@@ -1,3 +1,5 @@
+import { npmInstallGlobal } from "@/lib/runtime/npm-global";
+
 /**
  * The oldest Claude Code a box runs, and the version one older than it is
  * brought up to. The agent passes flags an old Claude stops at once on
@@ -17,7 +19,7 @@ export function claudeInstallCommand({ sudo }: { sudo: boolean }): string {
   const pinned = CLAUDE_CODE_VERSION;
   const current = `{ v=$(claude --version 2>/dev/null | cut -d' ' -f1); [ -n "$v" ] && [ "$(printf '%s\\n' ${pinned} "$v" | sort -V | head -n1)" = ${pinned} ]; }`;
   return (
-    `{ ${current} || { ${sudo ? "sudo " : ""}npm install -g @anthropic-ai/claude-code@${pinned} && hash -r && ${current}; } || ` +
+    `{ ${current} || { ${npmInstallGlobal(`@anthropic-ai/claude-code@${pinned}`, { sudo })} && hash -r && ${current}; } || ` +
     `{ echo "Could not bring Claude Code (\${v:-none}) up to ${pinned}"; false; }; }`
   );
 }
