@@ -4,6 +4,7 @@ import type {
   ProvisionedComputer,
   ProvisionComputerInput,
 } from "@/lib/runtime/computer-provider";
+import type { ComputerScope } from "@/lib/runtime/computer-scope";
 import type { BoxResources } from "@/lib/runtime/sandbox/backend";
 import type { ProviderName, RuntimeComputer, RuntimeComputerStatus } from "@/lib/runtime/types";
 
@@ -17,7 +18,7 @@ export type RuntimeComputerProvisioner = {
 };
 
 type Claim = (input: {
-  projectId: string;
+  scope: ComputerScope;
   agentSecret: string;
   /** The plan's cap on the owner's running boxes, enforced where the claim
    *  is atomic; null when none applies. */
@@ -26,7 +27,8 @@ type Claim = (input: {
 
 export type EnsureRuntimeComputerDependencies = {
   claim: Claim;
-  getByProject: (projectId: string) => Promise<RuntimeComputer | null>;
+  /** The box of the scope, as it is now. */
+  get: (scope: ComputerScope) => Promise<RuntimeComputer | null>;
   readSecret: (computerId: string) => Promise<string | null>;
   update: (
     id: string,
@@ -49,7 +51,8 @@ export type EnsureRuntimeComputerDependencies = {
 };
 
 export type EnsureRuntimeComputerInput = {
-  projectId: string;
+  /** Whose box: a workspace's own, or a project's shared one from before. */
+  scope: ComputerScope;
   repoFullName: string;
   githubToken?: string;
   sessionEnv?: Record<string, string>;
@@ -72,11 +75,12 @@ export type EnsuredRuntimeComputer = {
 };
 
 /**
- * Find or lazily provision the single Runtime Computer for a project.
+ * Find or lazily provision the Runtime Computer of a scope: a workspace's own
+ * box, or a project's shared one from before (lib/runtime/computer-scope.ts).
  *
  * The database RPC atomically elects exactly one request to own provision.
  * Non-owners wait on the durable row rather than starting duplicate Daytona
- * boxes. The unique project constraint is deliberately retained as a second,
+ * boxes. A unique index is deliberately retained as a second,
  * database-enforced line of defence.
  */
 export async function ensureRuntimeComputer(
@@ -86,13 +90,13 @@ export async function ensureRuntimeComputer(
 ): Promise<EnsuredRuntimeComputer> {
   const agentSecret = randomBytes(32).toString("hex");
   const claim = await deps.claim({
-    projectId: input.projectId,
+    scope: input.scope,
     agentSecret,
     maxLiveComputers: input.maxLiveComputers ?? null,
   });
 
   if (!claim.shouldProvision) {
-    const computer = await waitForReadyComputer(input.projectId, deps);
+    const computer = await waitForReadyComputer(input.scope, deps);
     const persistedSecret = await deps.readSecret(computer.id);
     if (!persistedSecret) {
       throw new Error("Runtime Computer secret is missing after provisioning.");
@@ -118,7 +122,7 @@ export async function ensureRuntimeComputer(
       errorMessage: null,
       touchActive: true,
     });
-    const computer = await deps.getByProject(input.projectId);
+    const computer = await deps.get(input.scope);
     if (!computer || computer.status !== "ready" || !computer.daytonaSandboxId) {
       throw new Error("Runtime Computer was not persisted as ready.");
     }
@@ -144,12 +148,12 @@ export async function ensureRuntimeComputer(
 }
 
 async function waitForReadyComputer(
-  projectId: string,
+  scope: ComputerScope,
   deps: EnsureRuntimeComputerDependencies,
 ): Promise<RuntimeComputer> {
   const deadline = deps.now() + PROVISION_WAIT_MS;
   while (true) {
-    const computer = await deps.getByProject(projectId);
+    const computer = await deps.get(scope);
     if (!computer) {
       throw new Error("Runtime Computer claim disappeared before provisioning completed.");
     }

@@ -518,6 +518,17 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     }
   }
 
+  /** Tear the box down, or throw: for a caller that must know the box is gone
+   *  before it stops metering it and forgets it. One already gone is gone. */
+  async destroyComputerOrThrow(sandboxId: string): Promise<void> {
+    this.forgetEndpoint(sandboxId);
+    try {
+      await this.backend.delete(sandboxId);
+    } catch (error) {
+      if (!boxGone(error)) throw error;
+    }
+  }
+
   /** Whether a box's agent can be upgraded in place (upgradeAgent): not on
    *  the jcode engine, whose boxes are replaced, not redeployed. */
   get upgradesAgents(): boolean {
@@ -633,4 +644,12 @@ function notWiredYet(op: string): Promise<never> {
         `through AgentClient (wired at the route layer in M2 pt3 / M3).`,
     ),
   );
+}
+
+/** Whether a backend's error says the box isn't there: Daytona's
+ *  DaytonaNotFoundError, or a 404 from any of them. */
+export function boxGone(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { name, status, statusCode } = error as { name?: unknown; status?: unknown; statusCode?: unknown };
+  return (typeof name === "string" && name.endsWith("NotFoundError")) || status === 404 || statusCode === 404;
 }

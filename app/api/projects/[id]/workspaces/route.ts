@@ -19,7 +19,7 @@ import {
 import {
   createWorkspaceRow,
   getProject,
-  getRuntimeComputerByProject,
+  getRuntimeComputer,
   markRuntimeComputerStoppedIfReady,
   recordWorkspaceModel,
   transitionWorkspace,
@@ -60,7 +60,7 @@ import {
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
-import { ensureProjectRuntimeComputer } from "@/lib/runtime/runtime-computer-service";
+import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { optionalGithubToken } from "@/lib/github/token";
@@ -217,9 +217,9 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  // A box may be about to start: the plan's hours and box count get their say
-  // before anything is created.
-  const gate = await cloudBoxStartGate(owner, provider.name, project.id);
+  // A box is about to start, the new session's own: the plan's hours and box
+  // count get their say before anything is created.
+  const gate = await cloudBoxStartGate(owner, provider.name, null);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
 
   let workspace;
@@ -328,11 +328,12 @@ async function provisionWorkspace({
 
   try {
     if (isComputerProvider(provider)) {
-      // A Runtime Computer is intentionally long-lived, but it can still be
-      // removed outside Runtime (or become unavailable after a provider
-      // incident). Only transition the exact ready row we checked so parallel
+      // The session's own box (lib/runtime/computer-scope.ts). New, it has
+      // none yet; a setup started again may find the one it began, ready or
+      // gone. Only transition the exact ready row we checked so parallel
       // requests retain the claim RPC's single-provisioner invariant.
-      const currentComputer = await getRuntimeComputerByProject(project.id);
+      const scope = { workspaceId: workspace.id };
+      const currentComputer = await getRuntimeComputer(scope);
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
       let endedBox = endedBoxOf(currentComputer, provider.name);
@@ -360,8 +361,8 @@ async function provisionWorkspace({
         }
       }
 
-      const ensured = await ensureProjectRuntimeComputer(provider, {
-        projectId: project.id,
+      const ensured = await ensureComputer(provider, {
+        scope,
         repoFullName: project.fullName,
         githubToken,
         sessionEnv,
@@ -375,8 +376,9 @@ async function provisionWorkspace({
         throw new Error("Ready Runtime Computer has no sandbox id.");
       }
 
-      // Initial provisioning clones the mirror. Every later workspace refreshes
-      // it before the agent branches from the project's default branch.
+      // Provisioning clones the mirror. A box set up before (a setup started
+      // again) has it refreshed before the agent branches from the project's
+      // default branch.
       if (!ensured.provisioned) {
         await setPhase("clone");
         await provider.fetchMirror(computer.daytonaSandboxId, githubToken);

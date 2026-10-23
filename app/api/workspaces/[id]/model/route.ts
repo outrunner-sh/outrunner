@@ -4,7 +4,7 @@ import { AGENTS } from "@/lib/agents/registry";
 import { getOwner } from "@/lib/auth/owner";
 import { agentAuthStore, modelKey } from "@/lib/db/credentials";
 import {
-  getRuntimeComputerByProject,
+  getWorkspaceComputer,
   getWorkspace,
   readRuntimeComputerSecret,
   recordWorkspaceModel,
@@ -79,7 +79,7 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const computer = await getRuntimeComputerByProject(workspace.projectId);
+  const computer = await getWorkspaceComputer(workspace);
   if (!computer || !computer.daytonaSandboxId || computer.status !== "ready") {
     return NextResponse.json({ error: "Runtime Computer is not ready." }, { status: 409 });
   }

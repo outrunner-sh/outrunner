@@ -188,3 +188,25 @@ test("two providers for one box share its upgrade; a jcode engine upgrades none"
     else process.env.RUNTIME_ENGINE = saved;
   }
 });
+
+test("a delete that must be known to have worked says so when it hasn't", async () => {
+  const log: string[] = [];
+  const failing = (error: unknown): SandboxBackend => ({
+    ...restoringBackend(log, null),
+    delete: async () => {
+      throw error;
+    },
+  });
+  // The delete everything else uses still swallows it, as before.
+  await new ComputerRuntimeProvider("daytona", failing(new Error("Daytona is down"))).destroyComputer("sb-1");
+  await assert.rejects(
+    () => new ComputerRuntimeProvider("daytona", failing(new Error("Daytona is down"))).destroyComputerOrThrow("sb-1"),
+    /Daytona is down/,
+  );
+  // A box already gone is gone, however its backend says so.
+  const notFound = Object.assign(new Error("no such sandbox"), { name: "DaytonaNotFoundError" });
+  await new ComputerRuntimeProvider("daytona", failing(notFound)).destroyComputerOrThrow("sb-1");
+  await new ComputerRuntimeProvider("daytona", failing({ statusCode: 404 })).destroyComputerOrThrow("sb-1");
+  await new ComputerRuntimeProvider("daytona", restoringBackend(log, null)).destroyComputerOrThrow("sb-2");
+  assert.deepEqual(log, ["sb-2: deleted"]);
+});
