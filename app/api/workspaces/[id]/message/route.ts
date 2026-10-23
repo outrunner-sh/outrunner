@@ -6,7 +6,7 @@ import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
-import { sendFailureMessage } from "@/lib/session/send-failure";
+import { sendFailureMessage, BOX_GONE } from "@/lib/session/send-failure";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -73,14 +73,19 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
     // The agent's 404 (unknown workspace) means the session's box is gone, so
-    // retrying won't help; say so rather than offering a retry.
+    // retrying fails the same way every time. Tag it (BOX_GONE) so the composer
+    // drops Retry and points at a new session instead of offering one.
+    if (error instanceof AgentRequestError && error.status === 404) {
+      return NextResponse.json(
+        { error: "This session isn't running on its computer any more.", code: BOX_GONE },
+        { status: 502 },
+      );
+    }
     return NextResponse.json(
       {
         error:
           error instanceof AgentRequestError
-            ? error.status === 404
-              ? "This session isn't running on its computer any more."
-              : sendFailureMessage(error.error?.message)
+            ? sendFailureMessage(error.error?.message)
             : "Couldn't reach the Runtime Computer. Try again.",
       },
       { status: 502 },

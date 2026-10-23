@@ -6,6 +6,16 @@ export const SEND_FAILED = "Couldn't deliver that message. Try again.";
  *  agent words for the user, and the only one with something to do first. */
 const AWAITS_ANSWER = /^Claude is waiting for an answer\b/;
 
+/** The code the message route tags a send with when the session's box is gone
+ *  (app/api/workspaces/[id]/message/route.ts). Retrying fails the same way
+ *  every time, so the composer offers no Retry for it. */
+export const BOX_GONE = "box-gone";
+
+/** Whether a send's failure code means trying again cannot help. */
+export function sendIsDeadEnd(code: string | null | undefined): boolean {
+  return code === BOX_GONE;
+}
+
 /** What the composer says for a send the agent refused. Its other errors name
  *  internals ("jcode: no session for workspace …", "prompt not confirmed
  *  delivered after 3 attempts"); those go to the server's log, not the page. */

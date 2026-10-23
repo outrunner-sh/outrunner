@@ -86,6 +86,8 @@ export function SessionComposer({
   modelChoice,
   allowAttachments = true,
   sendError = null,
+  sendErrorNoRetry = false,
+  newSessionHref,
   onDismissSendError,
   onRetrySendError,
   stop,
@@ -110,6 +112,11 @@ export function SessionComposer({
    *  there, so the line offers to send it again or edit it first; one that
    *  didn't come from the box (onRetrySendError) offers Retry alone. */
   sendError?: string | null;
+  /** The failure can't be fixed by trying again (the session's box is gone):
+   *  the line offers no Retry, only the way forward. */
+  sendErrorNoRetry?: boolean;
+  /** Where "Continue in a new session" goes, for a send with no retry. */
+  newSessionHref?: string;
   onDismissSendError?: () => void;
   /** Retry a send that didn't come from the box: a session's first prompt
    *  fails while the box is still empty, so its Retry sends the original
@@ -222,22 +229,28 @@ export function SessionComposer({
       {sendError && !sending && (
         <InlineMessage
           className="studio-composer-message"
-          actions={[
-            { label: "Retry", onClick: onRetrySendError ?? submit, disabled: !canSend },
-            // Edit is for text the failure put back in the box. A send that
-            // never came from it (a first prompt) has nothing there to edit.
-            ...(onRetrySendError
-              ? []
+          actions={
+            sendErrorNoRetry
+              ? // Retrying fails the same way every time: offer the way on
+                // instead of a Retry that can't work.
+                [{ label: "Continue in a new session", primary: true, href: newSessionHref ?? "/new" }]
               : [
-                  {
-                    label: "Edit",
-                    onClick: () => {
-                      onDismissSendError?.();
-                      textareaRef.current?.focus();
-                    },
-                  },
-                ]),
-          ]}
+                  { label: "Retry", onClick: onRetrySendError ?? submit, disabled: !canSend },
+                  // Edit is for text the failure put back in the box. A send that
+                  // never came from it (a first prompt) has nothing there to edit.
+                  ...(onRetrySendError
+                    ? []
+                    : [
+                        {
+                          label: "Edit",
+                          onClick: () => {
+                            onDismissSendError?.();
+                            textareaRef.current?.focus();
+                          },
+                        },
+                      ]),
+                ]
+          }
         >
           Not sent · {sendError}
         </InlineMessage>

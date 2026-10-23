@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { LocalRuntimeError, localSendFailure } from "@/lib/desktop/local-runtime";
-import { SEND_FAILED, sendFailureMessage } from "@/lib/session/send-failure";
+import { SEND_FAILED, sendFailureMessage, sendIsDeadEnd } from "@/lib/session/send-failure";
+
+test("a send whose box is gone is a dead end, not something to retry", () => {
+  // The message route's tag for it; the composer drops Retry for these.
+  assert.equal(sendIsDeadEnd("box-gone"), true);
+  for (const other of [null, undefined, "", "box-restore-failed", "agent-did-not-start"]) {
+    assert.equal(sendIsDeadEnd(other), false, String(other));
+  }
+});
 
 test("a send held back for Claude's question says so, as a sentence", () => {
   assert.equal(

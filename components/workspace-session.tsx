@@ -58,6 +58,7 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import { sendIsDeadEnd } from "@/lib/session/send-failure";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
@@ -65,8 +66,9 @@ import { useSessionAttachment } from "@/hooks/use-session-attachment";
 
 /** A send that didn't go: why, and how to try it again. `retry` is set only
  * where its text never was in the composer's box (a session's first prompt),
- * so the box's Retry sends the original rather than an empty box. */
-type FailedSend = { message: string; retry?: () => void };
+ * so the box's Retry sends the original rather than an empty box. `code` is
+ * the route's, when it gave one, so a dead end offers no retry. */
+type FailedSend = { message: string; retry?: () => void; code?: string };
 
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   outrunner: true,
@@ -184,9 +186,9 @@ export function WorkspaceSession({
     // It didn't go: say why, and drop its bubble, which would otherwise stay on
     // screen for good once a resend of the same text lands in its place. The
     // composer gets the text back (it awaits the `false`).
-    const failed = (message: string) => {
+    const failed = (message: string, code?: string) => {
       setPending((prev) => prev.filter((p) => p.id !== pendingId));
-      setSendError({ message, retry });
+      setSendError({ message, retry, code });
       return false;
     };
     return whenAttached().then(
@@ -201,7 +203,7 @@ export function WorkspaceSession({
     text: string,
     attachmentIds: string[],
     pendingId: string,
-    failed: (message: string) => boolean,
+    failed: (message: string, code?: string) => boolean,
   ) => {
     // The stream may record the prompt before the session answers.
     const sentAt = userPromptCount(eventsRef.current);
@@ -225,8 +227,8 @@ export function WorkspaceSession({
       body: JSON.stringify({ content: text, attachmentIds }),
     }).then(
       async (res) => {
-        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
-        if (!res.ok) return failed(body.error ?? "Could not send that message.");
+        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
+        if (!res.ok) return failed(body.error ?? "Could not send that message.", body.code);
         anchor(pendingId, sentAt);
         // The first prompt just named this session: re-read the sidebar.
         if (body.titled) router.refresh();
@@ -580,6 +582,8 @@ export function WorkspaceSession({
           modelChoice={modelChoice}
           allowAttachments={!local}
           sendError={connectionError ? null : (sendError?.message ?? null)}
+          sendErrorNoRetry={sendIsDeadEnd(sendError?.code)}
+          newSessionHref={projectId ? `/new?project=${projectId}` : "/new"}
           onDismissSendError={() => setSendError(null)}
           onRetrySendError={sendError?.retry}
           stop={attached && working ? { onStop: stop, stopping } : undefined}
