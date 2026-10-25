@@ -7,6 +7,7 @@ import { AuthMethodCards } from "@/components/auth-method-cards";
 import { ClaudeConnection } from "@/components/claude-connection";
 import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
+import { LoadingButton } from "@/components/ui/loading-button";
 import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
 import { AGENT_AUTH_CHOICES } from "@/lib/client/agent-auth-choices";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
@@ -62,8 +63,13 @@ export function AgentAuthPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function choose(method: AuthMethodId) {
+  function show(method: AuthMethodId) {
     setShown(method);
+    // A save still under way keeps its error slot for its own reply.
+    if (!saving) setError(null);
+  }
+
+  async function choose(method: AuthMethodId) {
     if (method === chosen) return;
     setSaving(true);
     setError(null);
@@ -97,12 +103,20 @@ export function AgentAuthPanel({
           chosen={chosen}
           shown={shown}
           busy={saving}
-          onChoose={(method) => void choose(method)}
+          onChoose={show}
           label={`How ${label} signs in`}
         />
         <p className="text-[13px] text-muted-foreground">
           {chosen ? way.description : `Choose how ${label} signs in for your sessions. ${way.description}`}
         </p>
+        {shown !== chosen ? (
+          <LoadingButton
+            variant="outline"
+            status={saving ? "pending" : "idle"}
+            labels={{ idle: `Use ${way.label}`, pending: "Saving" }}
+            onClick={() => void choose(shown)}
+          />
+        ) : null}
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
