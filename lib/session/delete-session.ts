@@ -31,8 +31,7 @@ export async function deleteSession(id: string, deletion: SessionDeletion): Prom
       throw new Error("Could not reach Outrunner. Check your connection and try again.");
     }
     if (res.ok) {
-      DELETED.set(new Set([...DELETED.get(), id]));
-      CONVERSATIONS.forget(id);
+      forgetDeleted(id);
       return;
     }
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -43,4 +42,11 @@ export async function deleteSession(id: string, deletion: SessionDeletion): Prom
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : "Could not delete this session.");
   }
+  forgetDeleted(id);
+}
+
+/** A deleted session's kept page says it is gone, and its conversation goes. */
+function forgetDeleted(id: string): void {
+  DELETED.set(new Set([...DELETED.get(), id]));
+  CONVERSATIONS.forget(id);
 }
