@@ -14,6 +14,7 @@ import {
 } from "@/lib/runtime/commit";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { reachableWorktree } from "@/lib/runtime/worktree-access";
 
 const MAX_DESCRIPTION = 8_000;
 type RouteContext = { params: Promise<{ id: string }> };
@@ -73,15 +74,9 @@ export async function POST(request: Request, context: RouteContext) {
   // are listed without a base branch: only uncommitted ones are left to commit.
   let io: CommitIO;
   if (isComputerProvider(provider)) {
-    const computer = await getWorkspaceComputer(workspace);
-    if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
-      return NextResponse.json(
-        { error: "The interactive worktree is not available yet." },
-        { status: 409 },
-      );
-    }
-    const sandboxId = computer.daytonaSandboxId;
-    const worktree = workspace.worktreePath;
+    const reach = reachableWorktree(await getWorkspaceComputer(workspace), workspace.worktreePath);
+    if (!reach.ok) return NextResponse.json({ error: reach.error }, { status: 409 });
+    const { sandboxId, worktree } = reach;
     io = {
       listChanged: () => provider.listWorkspaceChangedFiles(sandboxId, worktree),
       commit: (message) =>

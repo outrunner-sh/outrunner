@@ -4,6 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { attachmentsUnavailable } from "@/lib/runtime/worktree-access";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -48,12 +49,15 @@ export async function POST(request: Request, context: RouteContext) {
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId, agent, identity } = reach.reached;
 
+  const noFiles = attachmentsUnavailable(attachmentIds.length, workspace.worktreePath);
+  if (noFiles) return NextResponse.json({ error: noFiles }, { status: 409 });
+
   let prompt = content;
   try {
     prompt = await materializeAttachments({
       provider,
       sandboxId,
-      worktreePath: workspace.worktreePath ?? "",
+      worktreePath: workspace.worktreePath,
       workspaceId: workspace.id,
       attachmentIds,
       prompt: content,
