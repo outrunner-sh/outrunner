@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { type PooledBox, refillPool, STALE_REFILL_MS, type WarmPoolDeps } from "@/lib/runtime/warm-pool";
+import {
+  type PooledBox,
+  REFILL_BACKOFF_MS,
+  refillPool,
+  STALE_REFILL_MS,
+  type WarmPoolDeps,
+} from "@/lib/runtime/warm-pool";
 
 const NOW = Date.parse("2026-10-25T12:00:00Z");
 
@@ -13,6 +19,7 @@ function pool(
     slotTaken?: boolean;
     makeFails?: "before-box" | "after-box";
     pauseFails?: boolean;
+    rowGone?: boolean;
   } = {},
 ) {
   const log: string[] = [];
@@ -36,7 +43,11 @@ function pool(
       log.push(`pause ${sandboxId}`);
       if (opts.pauseFails) throw new Error("pause failed");
     },
-    ready: async (computerId, sandboxId) => void log.push(`ready ${computerId} on ${sandboxId}`),
+    ready: async (computerId, sandboxId) => {
+      log.push(`ready ${computerId} on ${sandboxId}`);
+      return !opts.rowGone;
+    },
+    failed: async (computerId) => void log.push(`failed ${computerId}`),
     discard: async (sandboxId, provider) => void log.push(`discard ${sandboxId} on ${provider}`),
     forget: async (computerId) => void log.push(`forget ${computerId}`),
     newSecret: () => "s3cret",
@@ -96,10 +107,10 @@ test("a pooled box from the provider the user moved from is deleted there and re
   assert.deepEqual(log, ["discard sb-old on user-modal", "forget c-old", ...MADE]);
 });
 
-test("a box that couldn't be made leaves no row, and its box if it had one goes", async () => {
+test("a box that couldn't be made goes, and its row is kept failed for the back-off", async () => {
   const before = pool({ makeFails: "before-box" });
   await assert.rejects(refillPool(before.deps), /Daytona said no/);
-  assert.deepEqual(before.log, ["slot with s3cret", "make with s3cret", "forget c-1"]);
+  assert.deepEqual(before.log, ["slot with s3cret", "make with s3cret", "failed c-1"]);
 
   const after = pool({ makeFails: "after-box" });
   await assert.rejects(refillPool(after.deps), /clone failed/);
@@ -108,12 +119,29 @@ test("a box that couldn't be made leaves no row, and its box if it had one goes"
     "make with s3cret",
     "record sb-1 on c-1",
     "discard sb-1 on daytona",
-    "forget c-1",
+    "failed c-1",
   ]);
 });
 
 test("a box made but not stopped is deleted, not left running unrecorded", async () => {
   const { deps, log } = pool({ pauseFails: true });
   await assert.rejects(refillPool(deps), /pause failed/);
-  assert.deepEqual(log, [...MADE.slice(0, 4), "discard sb-1 on daytona", "forget c-1"]);
+  assert.deepEqual(log, [...MADE.slice(0, 4), "discard sb-1 on daytona", "failed c-1"]);
+});
+
+test("a refill whose row was swept while it ran deletes its box rather than leave it unrecorded", async () => {
+  const { deps, log } = pool({ rowGone: true });
+  await assert.rejects(refillPool(deps), /sweep/);
+  assert.deepEqual(log, [...MADE, "discard sb-1 on daytona", "failed c-1"]);
+});
+
+test("a project whose refill failed waits before the next try", async () => {
+  const recent = pool({ existing: box({ status: "error", daytonaSandboxId: null }) });
+  assert.equal(await refillPool(recent.deps), false);
+  assert.deepEqual(recent.log, []);
+
+  const old = new Date(NOW - REFILL_BACKOFF_MS - 1).toISOString();
+  const later = pool({ existing: box({ status: "error", daytonaSandboxId: null, updatedAt: old }) });
+  assert.equal(await refillPool(later.deps), true);
+  assert.deepEqual(later.log, ["forget c-old", ...MADE]);
 });

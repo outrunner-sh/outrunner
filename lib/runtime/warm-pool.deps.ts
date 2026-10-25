@@ -11,6 +11,8 @@ import {
   createPooledComputer,
   deletePooledComputer,
   getPooledComputer,
+  markPooledFailed,
+  markPooledReady,
   updateRuntimeComputer,
 } from "@/lib/db/repositories";
 import { ownSandboxKeys } from "@/lib/db/credentials";
@@ -65,8 +67,8 @@ export async function refillProjectPool(input: {
         }),
       recordBox: (computerId, sandboxId) => updateRuntimeComputer(computerId, { daytonaSandboxId: sandboxId }),
       pause: (sandboxId) => provider.pauseComputer(sandboxId),
-      ready: (computerId, sandboxId) =>
-        updateRuntimeComputer(computerId, { status: "stopped", daytonaSandboxId: sandboxId, errorMessage: null }),
+      ready: markPooledReady,
+      failed: markPooledFailed,
       discard: (sandboxId, madeBy) => discardBox(provider, madeBy, ownerId, sandboxId),
       forget: deletePooledComputer,
       newSecret: () => randomBytes(32).toString("hex"),
@@ -77,8 +79,10 @@ export async function refillProjectPool(input: {
   }
 }
 
-/** Delete a pooled box with the provider that made it: this one, or the one
- *  the user moved from. */
+/** Delete a pooled box with the provider that made it. Pooled boxes are only
+ *  ever the deployment's, so another maker means the deployment's provider
+ *  changed: that one can't be reached from here, and its row can't help
+ *  delete it, so the box is logged (to delete by hand) and let go. */
 async function discardBox(
   provider: ComputerRuntimeProvider,
   madeBy: ProviderName | null,
@@ -86,7 +90,10 @@ async function discardBox(
   sandboxId: string,
 ): Promise<void> {
   const maker = !madeBy || madeBy === provider.name ? provider : providerNamed(madeBy, ownSandboxKeys(ownerId));
-  if (!maker || !isComputerProvider(maker)) throw new Error(`${madeBy}'s box ${sandboxId} can't be reached to delete it`);
+  if (!maker || !isComputerProvider(maker)) {
+    console.warn(`Pooled box ${sandboxId} on ${madeBy} can't be reached to delete it: delete it there by hand`);
+    return;
+  }
   await maker.destroyComputerOrThrow(sandboxId);
 }
 
@@ -103,14 +110,17 @@ export async function sweepAbandonedPools(provider: ComputerRuntimeProvider): Pr
     .from("runtime_computers")
     .select("id, daytona_sandbox_id, provider")
     .eq("pooled", true)
-    .neq("status", "stopped")
+    .eq("status", "provisioning")
     .lt("updated_at", new Date(Date.now() - STALE_REFILL_MS).toISOString());
   if (error) throw error;
   let swept = 0;
   for (const row of data ?? []) {
     try {
-      // Pooled boxes are only ever Outrunner's, on this deployment's provider.
-      if (row.daytona_sandbox_id && (!row.provider || row.provider === provider.name)) {
+      // Pooled boxes are only ever this deployment's provider's: another's
+      // means the deployment moved, and its box can't be reached from here.
+      if (row.daytona_sandbox_id && row.provider && row.provider !== provider.name) {
+        console.warn(`Pooled box ${row.daytona_sandbox_id} on ${row.provider} can't be reached to delete it: delete it there by hand`);
+      } else if (row.daytona_sandbox_id) {
         await provider.destroyComputerOrThrow(row.daytona_sandbox_id);
       }
       const { error: deleteError } = await supabase.from("runtime_computers").delete().eq("id", row.id).eq("pooled", true);

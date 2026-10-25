@@ -21,6 +21,11 @@ import type { RuntimeComputer } from "@/lib/runtime/types";
  *  for dead (a deploy or crash cut it off): longer than any clone. */
 export const STALE_REFILL_MS = 30 * 60_000;
 
+/** How long a project whose refill failed waits before the next try: a
+ *  repository that can't be pooled (a clone that fails after minutes) isn't
+ *  tried again on every session. */
+export const REFILL_BACKOFF_MS = 60 * 60_000;
+
 /** The project's pooled box as the refill sees it. */
 export type PooledBox = Pick<RuntimeComputer, "id" | "status" | "provider" | "daytonaSandboxId" | "updatedAt">;
 
@@ -42,9 +47,14 @@ export type WarmPoolDeps = {
   recordBox(computerId: string, sandboxId: string): Promise<void>;
   /** Stop it, keeping its disk. */
   pause(sandboxId: string): Promise<void>;
-  /** Record it stopped and ready to take. */
-  ready(computerId: string, sandboxId: string): Promise<void>;
-  /** Delete a box, with the provider that made it. */
+  /** Record it stopped and ready to take; false when its row is gone (the
+   *  sweep took this refill for dead), which leaves the box the refill's to
+   *  delete. */
+  ready(computerId: string, sandboxId: string): Promise<boolean>;
+  /** Keep a failed refill's row, with no box, for the back-off. */
+  failed(computerId: string): Promise<void>;
+  /** Delete a box, with the provider that made it. One whose provider can't
+   *  be reached is logged, not thrown: its row can't help delete it. */
   discard(sandboxId: string, provider: PooledBox["provider"]): Promise<void>;
   /** Forget a pooled box's row. */
   forget(computerId: string): Promise<void>;
@@ -54,20 +64,21 @@ export type WarmPoolDeps = {
 
 /**
  * Make the project's pooled box when it has none to take. Whether one was
- * made. A pooled box another provider made (the user moved sandbox), or one
- * whose refill died mid-way, is deleted and replaced: left, it would block
- * the pool for good, and a box being made may be running. A failure leaves no
- * row and no box behind, and the next session makes its box as it would
- * without a pool.
+ * made. A pooled box another provider made, or one whose refill died
+ * mid-way, is deleted and replaced: left, it would block the pool for good,
+ * and a box being made may be running. A refill that fails leaves no box, and
+ * its row marked failed, so the project waits REFILL_BACKOFF_MS before the
+ * next try; its sessions make their boxes as they would without a pool.
  */
 export async function refillPool(deps: WarmPoolDeps): Promise<boolean> {
   if (!deps.pools) return false;
   const existing = await deps.pooled();
   if (existing) {
+    const age = deps.now() - new Date(existing.updatedAt).getTime();
     const foreign = existing.provider !== deps.provider;
-    const abandoned =
-      existing.status !== "stopped" && deps.now() - new Date(existing.updatedAt).getTime() > STALE_REFILL_MS;
-    if (!foreign && !abandoned) return false;
+    const abandoned = existing.status === "provisioning" && age > STALE_REFILL_MS;
+    const retry = existing.status === "error" && age > REFILL_BACKOFF_MS;
+    if (!foreign && !abandoned && !retry) return false;
     if (existing.daytonaSandboxId) await deps.discard(existing.daytonaSandboxId, existing.provider);
     await deps.forget(existing.id);
   }
@@ -84,11 +95,13 @@ export async function refillPool(deps: WarmPoolDeps): Promise<boolean> {
       })
     ).sandboxId;
     await deps.pause(sandboxId);
-    await deps.ready(slot.id, sandboxId);
+    if (!(await deps.ready(slot.id, sandboxId))) {
+      throw new Error("its row went while it was made (the sweep took it for dead)");
+    }
     return true;
   } catch (error) {
     if (sandboxId) await deps.discard(sandboxId, deps.provider).catch(() => {});
-    await deps.forget(slot.id).catch(() => {});
+    await deps.failed(slot.id).catch(() => deps.forget(slot.id).catch(() => {}));
     throw error;
   }
 }
