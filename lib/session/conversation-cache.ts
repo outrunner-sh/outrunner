@@ -60,10 +60,13 @@ export class ConversationCache {
   /** Take in one streamed event, as the session's own stream would. */
   append(id: string, event: AgentEvent, eventId: string): void {
     const entry = this.get(id) ?? { events: [], lastEventId: null, seenIds: new Set<string>() };
+    // A copy: the kept Set may be an open page's own, and an id marked seen
+    // here would make that page drop the event when its stream delivers it.
+    const seenIds = new Set(entry.seenIds);
     this.set(id, {
-      events: appendEvent(entry.events, event, eventId, entry.seenIds),
+      events: appendEvent(entry.events, event, eventId, seenIds),
       lastEventId: eventId && eventId !== "0" ? eventId : entry.lastEventId,
-      seenIds: entry.seenIds,
+      seenIds,
     });
   }
 
