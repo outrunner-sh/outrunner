@@ -99,11 +99,19 @@ test("sessions nest under their workspace, newest first, with links and times", 
   assert.equal(group.detail, "acme/outrunner");
   assert.deepEqual(group.start, { kind: "cloud", projectId: "p1" });
   assert.deepEqual(group.sessions, [
-    { id: "new", href: "/workspaces/new", title: "new", at: "2026-10-02T00:00:00Z", deletion: { kind: "cloud" } },
+    {
+      id: "new",
+      href: "/workspaces/new",
+      title: "new",
+      branch: "runtime/new",
+      at: "2026-10-02T00:00:00Z",
+      deletion: { kind: "cloud" },
+    },
     {
       id: "old",
       href: "/workspaces/old",
       title: "Pull latest code from main",
+      branch: "runtime/old",
       at: "2026-10-01T00:00:00Z",
       deletion: { kind: "cloud" },
     },
@@ -277,6 +285,23 @@ test("a workspace whose name matches keeps every session", () => {
   const result = filterSidebarGroups(sample(), "outrun");
   assert.equal(result.length, 1);
   assert.equal(result[0].sessions.length, 2);
+});
+
+test("search finds a session by its branch, but not by the runtime/ they all have", () => {
+  const groups = buildSidebarGroups(
+    [project("p1", "outrunner")],
+    [
+      { ...workspace("w1", "p1", "2026-10-02T00:00:00Z", "Fix login redirect"), branch: "feat/oauth-callback" },
+      workspace("w2", "p1", "2026-10-01T00:00:00Z", "Add billing page"),
+    ],
+    [{ ...local("l1", "/Users/ada/notes", "2026-10-03T00:00:00Z", "Tidy notes"), branch: "md/notes-cleanup" }],
+  );
+  const titles = (query: string) => filterSidebarGroups(groups, query).flatMap((g) => g.sessions.map((s) => s.title));
+  assert.deepEqual(titles("OAUTH"), ["Fix login redirect"]);
+  assert.deepEqual(titles("cleanup"), ["Tidy notes"]);
+  // A generated branch is found by its own part (runtime/w2).
+  assert.deepEqual(titles("w2"), ["Add billing page"]);
+  assert.deepEqual(titles("runtime"), []);
 });
 
 test("a blank search changes nothing; no match leaves nothing", () => {

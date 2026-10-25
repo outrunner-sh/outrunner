@@ -85,6 +85,8 @@ export type SidebarSession = {
   id: string;
   href: string;
   title: string;
+  /** Its git branch, for search. */
+  branch: string;
   /** When it was last active, for ordering and the time label. */
   at: string;
   /** What deleting it would do; null while it cannot be deleted (a cloud
@@ -148,6 +150,7 @@ export function buildSidebarGroups(
       id: w.id,
       href: `/workspaces/${w.id}`,
       title: workspaceLabel(w),
+      branch: w.branch,
       at: recency(w),
       // The server's own rule (the lifecycle route's destroy).
       deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
@@ -164,6 +167,7 @@ export function buildSidebarGroups(
         id: s.workspaceId,
         href: `/local/${s.workspaceId}`,
         title: localSessionLabel(s),
+        branch: s.branch,
         // Last use, not creation: comparable with a cloud session's activity.
         at: s.lastActiveAt || s.createdAt,
         deletion: s.inPlace ? { kind: "local-in-place" as const } : { kind: "local-worktree" as const },
@@ -191,9 +195,11 @@ export function buildSidebarGroups(
 }
 
 /**
- * The sidebar's search: case-insensitive, on session titles and workspace
- * names. A workspace whose name matches keeps all its sessions; otherwise only
- * the matching sessions stay, and a workspace left with none is dropped.
+ * The sidebar's search: case-insensitive, on session titles and branches and
+ * workspace names. A workspace whose name matches keeps all its sessions;
+ * otherwise only the matching sessions stay, and a workspace left with none is
+ * dropped. A branch is matched without the generated `runtime/` every
+ * Outrunner branch starts with, which "run" would otherwise find in them all.
  */
 export function filterSidebarGroups(groups: SidebarGroup[], query: string): SidebarGroup[] {
   const q = query.trim().toLowerCase();
@@ -202,7 +208,11 @@ export function filterSidebarGroups(groups: SidebarGroup[], query: string): Side
     if (group.label.toLowerCase().includes(q) || group.detail.toLowerCase().includes(q)) {
       return [group];
     }
-    const sessions = group.sessions.filter((s) => s.title.toLowerCase().includes(q));
+    const sessions = group.sessions.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.branch.replace(/^runtime\//, "").toLowerCase().includes(q),
+    );
     return sessions.length > 0 ? [{ ...group, sessions }] : [];
   });
 }
