@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
@@ -16,6 +16,9 @@ export type ConversationStreamState = {
   error: string | null;
   /** Force a full URL refresh + re-subscribe. Preserves the resume cursor. */
   refresh: () => void;
+  /** Give automatic reconnects their full budget again, e.g. when the user
+   *  asks to reconnect after they gave up. */
+  resetBackoff: () => void;
 };
 
 // Reconnect backoff lives in lib/runtime/reconnect (pure + unit-tested). Unlike
@@ -95,6 +98,11 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
   // reducer state, so the onClose closure reads the live count, not a stale one.
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resetBackoff = useCallback(() => {
+    reconnectAttemptsRef.current = 0;
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
+  }, []);
 
   useEffect(() => {
     const url = urls?.eventsUrl;
@@ -201,6 +209,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     status,
     error: ws.error ?? attachmentError,
     refresh,
+    resetBackoff,
   };
 }
 

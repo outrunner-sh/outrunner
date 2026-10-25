@@ -114,6 +114,8 @@ export function WorkspaceSession({
   const error = connectionError ?? sendError;
   const refresh = () => {
     setSendError(null);
+    // After the stream gave up, Reconnect gets a full set of retries, not one.
+    conversation.resetBackoff();
     attachment.refresh();
   };
   const attached = attachment.status === "attached";
