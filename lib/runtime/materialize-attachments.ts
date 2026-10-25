@@ -7,7 +7,7 @@
  */
 
 import { getAttachments, markMaterialized, readAttachmentBytes } from "@/lib/db/attachments";
-import { promptWithAttachments, uniqueFilenames } from "@/lib/runtime/attachments";
+import { attachmentFilenames, promptWithAttachments } from "@/lib/runtime/attachments";
 import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 
 /**
@@ -35,8 +35,9 @@ export async function materializeAttachments(input: {
   const attachments = await getAttachments(input.attachmentIds);
   if (attachments.length === 0) return input.prompt;
 
-  // Two files called screenshot.png must not overwrite each other on the box.
-  const names = uniqueFilenames(attachments.map((a) => a.filename));
+  // Two files called screenshot.png must not overwrite each other on the box,
+  // in one message or across messages.
+  const names = attachmentFilenames(attachments);
   const files = await Promise.all(
     attachments.map(async (attachment, index) => ({
       filename: names[index],

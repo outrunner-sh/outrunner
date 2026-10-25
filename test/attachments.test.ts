@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   ATTACHMENT_DIR,
+  attachmentFilenames,
   attachNotice,
   restoreDraft,
   MAX_ATTACHMENTS_PER_MESSAGE,
@@ -55,6 +56,30 @@ test("uniqueFilenames handles extensionless names", () => {
 test("uniqueFilenames collides only after sanitizing", () => {
   // Both sanitize to the same thing, so the second must still be renamed.
   assert.deepEqual(uniqueFilenames(["a b.png", "a/b.png"]), ["a-b.png", "b.png"]);
+});
+
+test("attachmentFilenames keeps a later paste from overwriting an earlier one", () => {
+  // Browsers name every pasted image image.png; each message is named alone.
+  const [first] = attachmentFilenames([{ id: "3f2a9c1b-0000-4000-8000-000000000001", filename: "image.png" }]);
+  const [later] = attachmentFilenames([{ id: "8d41e7a0-0000-4000-8000-000000000002", filename: "image.png" }]);
+  assert.equal(first, "3f2a9c1b-image.png");
+  assert.equal(later, "8d41e7a0-image.png");
+  assert.notEqual(first, later);
+});
+
+test("attachmentFilenames still sanitizes and keeps names unique within a message", () => {
+  assert.deepEqual(
+    attachmentFilenames([
+      { id: "aaaaaaaa-1", filename: "../my shot.png" },
+      { id: "aaaaaaaa-2", filename: "my shot.png" },
+      { id: "", filename: "notes.txt" },
+    ]),
+    ["aaaaaaaa-my-shot.png", "aaaaaaaa-my-shot-1.png", "notes.txt"],
+  );
+  // Still under the folder the prompt header names, so a failed send's draft
+  // comes back without it.
+  const prompt = promptWithAttachments("look", attachmentFilenames([{ id: "3f2a9c1b-x", filename: "image.png" }]));
+  assert.equal(promptWithoutAttachments(prompt), "look");
 });
 
 test("isImage recognizes what Claude can see, not every image type", () => {

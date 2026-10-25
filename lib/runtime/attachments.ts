@@ -71,6 +71,22 @@ export function uniqueFilenames(names: string[]): string[] {
 }
 
 /**
+ * The names attachments are written under on the box: each led by a short
+ * form of its id, so a file from a later message cannot overwrite one from an
+ * earlier (browsers name every pasted image `image.png`), then kept unique
+ * within the message too.
+ */
+export function attachmentFilenames(attachments: Array<{ id: string; filename: string }>): string[] {
+  return uniqueFilenames(
+    attachments.map((a) => {
+      const short = a.id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+      const name = safeFilename(a.filename);
+      return short ? `${short}-${name}` : name;
+    }),
+  );
+}
+
+/**
  * Prefix a prompt with the attachment paths so Claude knows what arrived and
  * where. Paths are relative to the worktree, which is Claude's working
  * directory, so they resolve with no further context.
