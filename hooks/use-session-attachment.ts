@@ -138,7 +138,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         setStatus("error");
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        inflight.current = null;
+        // An aborted attach may finish after a newer one started; that one's
+        // guard isn't ours to clear.
+        if (inflight.current === controller) inflight.current = null;
       }
     })();
   }, [workspaceId, local, agent]);
