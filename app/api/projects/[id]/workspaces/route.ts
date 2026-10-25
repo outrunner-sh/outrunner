@@ -70,10 +70,14 @@ import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
-// Lazy provisioning boots a Daytona box + agent (~15s) plus a repo mirror, in
-// after() once the response has gone. maxDuration caps the per-request
-// wall-clock, after() included, on serverless hosts (a no-op on a long-running
-// server like Railway); 60s covers provisioning with headroom.
+// Lazy provisioning boots a Daytona box + agent (~19s, about 4 from the warm
+// pool) plus a repo mirror, in after() once the response has gone, and then
+// refills the pool for the project's next session (as long again, longer for
+// a large repository). maxDuration caps the per-request wall-clock, after()
+// included, on serverless hosts: 60s does not cover both there. Outrunner runs
+// as a long-running server (server.ts on Cloudflare Containers), where it is a
+// no-op; a refill a restart cuts off is replaced by the next one
+// (lib/runtime/warm-pool.ts) and its box swept by the reconciler.
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -462,8 +466,9 @@ async function provisionWorkspace({
         );
         return;
       }
-      // Ready: the project's next session gets a box made ahead.
-      await refillProjectPool({ provider, ownerId: owner.id, project, githubToken, sessionEnv });
+      // Ready: the project's next session gets a box made ahead, after this
+      // session's setup rather than as part of it.
+      after(() => refillProjectPool({ provider, ownerId: owner.id, project, githubToken, sessionEnv }));
       return;
     }
 

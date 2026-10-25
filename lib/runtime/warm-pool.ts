@@ -17,47 +17,77 @@
 
 import type { RuntimeComputer } from "@/lib/runtime/types";
 
+/** How long a pooled box may stay "provisioning" before its refill is taken
+ *  for dead (a deploy or crash cut it off): longer than any clone. */
+export const STALE_REFILL_MS = 30 * 60_000;
+
+/** The project's pooled box as the refill sees it. */
+export type PooledBox = Pick<RuntimeComputer, "id" | "status" | "provider" | "daytonaSandboxId" | "updatedAt">;
+
 export type WarmPoolDeps = {
   /** Whether this provider's boxes can be pooled: it pauses and restores
    *  them, and they're Outrunner's. */
   pools: boolean;
+  /** The provider new sessions run on, which a pooled box must be made by. */
+  provider: NonNullable<RuntimeComputer["provider"]>;
   /** The project's pooled box, if it has one. */
-  pooled(): Promise<Pick<RuntimeComputer, "id"> | null>;
+  pooled(): Promise<PooledBox | null>;
   /** Start the pooled box's row with `secret`; null when another refill
    *  started one first. */
   claimSlot(secret: string): Promise<Pick<RuntimeComputer, "id"> | null>;
-  /** Make a box ready: tools, agent, the project's repository. */
-  make(secret: string): Promise<{ sandboxId: string }>;
+  /** Make a box ready: tools, agent, the project's repository. `onBox` is
+   *  told its id as soon as it exists. */
+  make(secret: string, onBox: (sandboxId: string) => Promise<void>): Promise<{ sandboxId: string }>;
+  /** Put a box's id on its row while it's still being made. */
+  recordBox(computerId: string, sandboxId: string): Promise<void>;
   /** Stop it, keeping its disk. */
   pause(sandboxId: string): Promise<void>;
   /** Record it stopped and ready to take. */
   ready(computerId: string, sandboxId: string): Promise<void>;
-  /** A box made but not recorded: delete it, so it isn't left running. */
-  discard(sandboxId: string): Promise<void>;
-  /** Forget the row of a box that couldn't be made. */
+  /** Delete a box, with the provider that made it. */
+  discard(sandboxId: string, provider: PooledBox["provider"]): Promise<void>;
+  /** Forget a pooled box's row. */
   forget(computerId: string): Promise<void>;
   newSecret(): string;
+  now(): number;
 };
 
 /**
- * Make the project's pooled box when it has none. Whether one was made.
- * Best effort: a failure leaves no row and no box behind, and the next
- * session makes its box as it would without a pool.
+ * Make the project's pooled box when it has none to take. Whether one was
+ * made. A pooled box another provider made (the user moved sandbox), or one
+ * whose refill died mid-way, is deleted and replaced: left, it would block
+ * the pool for good, and a box being made may be running. A failure leaves no
+ * row and no box behind, and the next session makes its box as it would
+ * without a pool.
  */
 export async function refillPool(deps: WarmPoolDeps): Promise<boolean> {
-  if (!deps.pools || (await deps.pooled())) return false;
+  if (!deps.pools) return false;
+  const existing = await deps.pooled();
+  if (existing) {
+    const foreign = existing.provider !== deps.provider;
+    const abandoned =
+      existing.status !== "stopped" && deps.now() - new Date(existing.updatedAt).getTime() > STALE_REFILL_MS;
+    if (!foreign && !abandoned) return false;
+    if (existing.daytonaSandboxId) await deps.discard(existing.daytonaSandboxId, existing.provider);
+    await deps.forget(existing.id);
+  }
   const secret = deps.newSecret();
   const slot = await deps.claimSlot(secret);
   if (!slot) return false;
 
   let sandboxId: string | null = null;
   try {
-    sandboxId = (await deps.make(secret)).sandboxId;
+    sandboxId = (
+      await deps.make(secret, async (id) => {
+        sandboxId = id;
+        await deps.recordBox(slot.id, id);
+      })
+    ).sandboxId;
     await deps.pause(sandboxId);
     await deps.ready(slot.id, sandboxId);
     return true;
   } catch (error) {
-    if (sandboxId) await deps.discard(sandboxId).catch(() => {});
+    if (sandboxId) await deps.discard(sandboxId, deps.provider).catch(() => {});
     await deps.forget(slot.id).catch(() => {});
     throw error;
   }
