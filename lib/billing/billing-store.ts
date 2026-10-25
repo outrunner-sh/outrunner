@@ -47,7 +47,12 @@ export async function userForCustomer(customerId: string): Promise<string | null
 }
 
 export async function subscriptionsFor(userId: string): Promise<SubscriptionRecord[]> {
-  const { data, error } = await createSupabaseAdminClient().from("subscriptions").select("*").eq("user_id", userId);
+  // Ordered, so whoever reads them sees the same order every time.
+  const { data, error } = await createSupabaseAdminClient()
+    .from("subscriptions")
+    .select("*")
+    .eq("user_id", userId)
+    .order("stripe_subscription_id");
   if (error) throw error;
   return data.map(fromRow);
 }

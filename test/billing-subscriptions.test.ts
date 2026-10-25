@@ -89,6 +89,18 @@ test("the user gets the best plan any subscription gives, and Free with none", (
   assert.equal(currentSubscription([], NOW), null);
 });
 
+test("of two subscriptions on the same plan, the same one is picked in any order", () => {
+  // Its period sets the allowance's: a pick that flipped after a webhook
+  // reordered the rows would grant the allowance again.
+  const early = record({ stripeSubscriptionId: "sub_A1", currentPeriodStart: new Date("2026-10-15T00:00:00Z") });
+  const late = record({ stripeSubscriptionId: "sub_B2", currentPeriodStart: new Date("2026-10-01T00:00:00Z") });
+  assert.equal(currentSubscription([early, late], NOW)?.stripeSubscriptionId, "sub_A1");
+  assert.equal(currentSubscription([late, early], NOW)?.stripeSubscriptionId, "sub_A1");
+  // One that no longer entitles is never the pick, whatever its id.
+  const lapsed = record({ stripeSubscriptionId: "sub_0", status: "canceled" });
+  assert.equal(currentSubscription([lapsed, late], NOW)?.stripeSubscriptionId, "sub_B2");
+});
+
 test("a Stripe subscription becomes a row: plan by lookup key, period from its item", () => {
   assert.deepEqual(recordFromStripe(stripeSubscription(), "u-1", null, NOW), {
     stripeSubscriptionId: "sub_1",

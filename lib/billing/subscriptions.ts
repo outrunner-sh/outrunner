@@ -64,13 +64,19 @@ export function planFromSubscriptions(subscriptions: readonly SubscriptionRecord
 }
 
 /** The subscription a user's plan comes from: the entitled one with the best
- *  plan; null on Free. */
+ *  plan; null on Free. Of two on that plan, the one with the lower Stripe id,
+ *  whatever order they were read in: its period sets the allowance's, so a
+ *  pick that flipped (a webhook can reorder the rows) would grant it again. */
 export function currentSubscription(
   subscriptions: readonly SubscriptionRecord[],
   now: Date,
 ): SubscriptionRecord | null {
   const plan = planFromSubscriptions(subscriptions, now);
-  return subscriptions.find((s) => entitles(s, now) && s.plan === plan.id) ?? null;
+  const candidates = subscriptions.filter((s) => entitles(s, now) && s.plan === plan.id);
+  return candidates.reduce<SubscriptionRecord | null>(
+    (first, s) => (first && first.stripeSubscriptionId <= s.stripeSubscriptionId ? first : s),
+    null,
+  );
 }
 
 /**
