@@ -93,6 +93,8 @@ export function RepositorySelect({
   extra,
   disabled,
   triggerClassName,
+  autoOpen = false,
+  onClosed,
 }: {
   /** Already-connected projects; used before the live list has loaded. */
   projects?: Project[];
@@ -110,8 +112,16 @@ export function RepositorySelect({
   disabled?: boolean;
   /** Replaces the trigger's default look, to sit in a row of other pickers. */
   triggerClassName?: string;
+  /** Open as it mounts, or as this turns true (the sidebar's add-project
+   *  button). */
+  autoOpen?: boolean;
+  /** The menu is shut. */
+  onClosed?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(autoOpen);
+  useEffect(() => {
+    if (!open) onClosed?.();
+  }, [open, onClosed]);
   useCloseWhenHidden(useCallback(() => setOpen(false), []));
   const repositories = useSharedResource(REPOSITORIES);
   const listing = repositories.value?.listing ?? null;
@@ -132,6 +142,15 @@ export function RepositorySelect({
   // field, and this one is announced as active).
   const [active, setActive] = useState(0);
   const listId = useId();
+  // Asked again while mounted: open now.
+  const [autoOpenSeen, setAutoOpenSeen] = useState(autoOpen);
+  if (autoOpen !== autoOpenSeen) {
+    setAutoOpenSeen(autoOpen);
+    if (autoOpen) {
+      setOpen(true);
+      setActive(0);
+    }
+  }
 
   const selected = projects.find((p) => p.id === selectedProjectId);
 

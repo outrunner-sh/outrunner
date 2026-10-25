@@ -176,10 +176,10 @@ export function AppSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-2">
           <h2 className="text-sm text-muted-foreground">Projects</h2>
-          {/* Opens the new-session screen, where any repository or folder can be
-              picked: the way to start in a project not listed yet. */}
+          {/* Opens the new-session screen with its repository picker open
+              (`?pick=repo`): the way to start in a project not listed yet. */}
           <Link
-            href="/new"
+            href="/new?pick=repo"
             onClick={startNewSession}
             aria-label="Start a session in another project"
             title="Start a session in another project"

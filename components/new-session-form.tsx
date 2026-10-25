@@ -2,7 +2,7 @@
 
 import { GitBranch, GitFork } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
@@ -45,12 +45,15 @@ export function NewSessionForm({
   projects: listed,
   projectsKnown = true,
   initialProjectId,
+  openPicker = false,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start): it is not yet "none". */
   projectsKnown?: boolean;
   /** Repo to preselect (the last-used project). Falls back to the first. */
   initialProjectId?: string;
+  /** Opens the repository picker: as the form mounts, or as it turns true. */
+  openPicker?: boolean;
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal } =
     useCreateSession(listed, initialProjectId);
@@ -65,6 +68,18 @@ export function NewSessionForm({
   // The effort picked in the composer; undefined until one is, when the
   // loadout's for the model it starts on shows, else DEFAULT_EFFORT.
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
+  // Asked to open the picker, until it has been shut once: the cloud picker
+  // can give way to the Mac's as this Mac's agent answers, and that one opens
+  // in its place.
+  const [pickAsked, setPickAsked] = useState(openPicker);
+  const pickerClosed = useCallback(() => setPickAsked(false), []);
+  // Asked again with the form already open (the URL catches up after a click
+  // that reset it).
+  const [openPickerSeen, setOpenPickerSeen] = useState(openPicker);
+  if (openPicker !== openPickerSeen) {
+    setOpenPickerSeen(openPicker);
+    if (openPicker) setPickAsked(true);
+  }
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
@@ -134,7 +149,13 @@ export function NewSessionForm({
           <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
             {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={busy} className={CHIP_BUTTON} />}
             {local ? (
-              <LocalRepositoryButton state={where} disabled={busy} className={CHIP_BUTTON} />
+              <LocalRepositoryButton
+                state={where}
+                disabled={busy}
+                className={CHIP_BUTTON}
+                autoOpen={pickAsked}
+                onClosed={pickerClosed}
+              />
             ) : (
               <RepositorySelect
                 projects={projects}
@@ -142,6 +163,8 @@ export function NewSessionForm({
                 onSelect={selectProject}
                 disabled={busy}
                 triggerClassName={CHIP_BUTTON}
+                autoOpen={pickAsked}
+                onClosed={pickerClosed}
               />
             )}
             {details.branch && (

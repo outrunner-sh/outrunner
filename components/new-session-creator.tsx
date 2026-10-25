@@ -11,12 +11,15 @@ export function NewSessionCreator({
   projects,
   projectsKnown = true,
   initialProjectId,
+  openPicker = false,
   showBack = false,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start). */
   projectsKnown?: boolean;
   initialProjectId?: string;
+  /** Opens the repository (or folder) picker as the form mounts. */
+  openPicker?: boolean;
   /** /new is reached from somewhere and needs a way back where the sidebar is
    *  hidden (narrow windows); home is home already. */
   showBack?: boolean;
@@ -28,7 +31,12 @@ export function NewSessionCreator({
           <BackButton />
         </div>
       )}
-      <NewSessionForm projects={projects} projectsKnown={projectsKnown} initialProjectId={initialProjectId} />
+      <NewSessionForm
+        projects={projects}
+        projectsKnown={projectsKnown}
+        initialProjectId={initialProjectId}
+        openPicker={openPicker}
+      />
     </div>
   );
 }
