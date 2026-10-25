@@ -24,6 +24,8 @@ import {
   recordWorkspaceModel,
   transitionWorkspace,
 } from "@/lib/db/repositories";
+import { GITHUB_RECONNECT_HREF } from "@/components/github-reconnect-link";
+import { getGitHubRepository, GitHubReconnectError } from "@/lib/github/client";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { NoProviderKeyError } from "@/lib/providers/errors";
@@ -159,6 +161,31 @@ export async function POST(request: Request, context: RouteContext) {
   const hasClaude = agentId === "claude" && auth.credential !== null;
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return NextResponse.json({ error: NO_OUTRUNNER_MODELS, settingsHref: PROVIDERS_SETTINGS_HREF }, { status: 409 });
+  }
+  // GitHub's word on the stored token before a box is started to clone with
+  // it: a token GitHub has since revoked or expired failed the setup minutes
+  // later, on the box, with git's own message. Only a refusal stops here; a
+  // rate limit or an outage is left to the clone.
+  if (githubToken) {
+    try {
+      const seen = await getGitHubRepository(githubToken, project.fullName);
+      if (!seen && project.private) {
+        return NextResponse.json(
+          {
+            error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or sign out and back in to reconnect.`,
+            reconnect: true,
+            settingsHref: GITHUB_RECONNECT_HREF,
+          },
+          { status: 409 },
+        );
+      }
+    } catch (error) {
+      // With the link the form shows: where signing in again happens.
+      if (error instanceof GitHubReconnectError) {
+        return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });
+      }
+      console.warn(`Could not check the GitHub connection before ${project.fullName}'s session`, error);
+    }
   }
   if (project.private && !githubToken) {
     return NextResponse.json(

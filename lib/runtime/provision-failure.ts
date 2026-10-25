@@ -34,6 +34,14 @@ const CREDENTIAL_SHAPES: readonly RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
 ];
 
+/** What GitHub says, through git, when it won't take the token: revoked,
+ *  expired, or never one it knew. */
+const GITHUB_REFUSED = /Invalid username or token|Authentication failed for 'https:\/\/github\.com|could not read Username for 'https:\/\/github\.com/i;
+
+/** A session's setup that GitHub refused: only signing in again fixes it. */
+export const GITHUB_RECONNECT_MESSAGE =
+  "GitHub didn't accept your connection, so the repository couldn't be cloned. Sign out and back in to reconnect GitHub, then start a new session.";
+
 export function provisionFailureMessage(
   error: unknown,
   phase: ProvisionPhase | null,
@@ -41,6 +49,7 @@ export function provisionFailureMessage(
 ): string {
   const step = phase ? ` while ${STEP[phase]}` : "";
   const detail = errorText(error);
+  if (GITHUB_REFUSED.test(detail)) return GITHUB_RECONNECT_MESSAGE;
   if (!detail) return `Setup failed${step}. Start a new session to try again.`;
   return `Setup failed${step}: ${truncate(redact(detail, secrets))}`;
 }
