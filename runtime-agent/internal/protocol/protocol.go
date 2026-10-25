@@ -263,6 +263,17 @@ const FeatureEnvironment = "session-environment"
 // bundle's branch under another name, and the conversation's folder moved.
 const FeatureImports = "restore-imports"
 
+// FeatureEditor is POST /workspaces/{id}/editor: VS Code in the browser.
+const FeatureEditor = "editor"
+
+// EditorResponse is where the session's editor is: the box port code-server
+// answers on, reached through the provider's preview URL, and the folder to
+// open it on.
+type EditorResponse struct {
+	Port   int    `json:"port"`
+	Folder string `json:"folder"`
+}
+
 // FeatureRestoreModel is a restore that puts the session back on its model
 // (RestoreWorkspaceRequest.Model). An older agent ignores the field, and
 // relaunches the session on Claude's own default.

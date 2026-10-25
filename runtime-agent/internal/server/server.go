@@ -25,6 +25,7 @@ import (
 	"runtime-agent/internal/auth"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
+	"runtime-agent/internal/editor"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
@@ -51,8 +52,10 @@ const (
 )
 
 type Server struct {
-	secret   string
-	ws       *workspace.Service
+	secret string
+	ws     *workspace.Service
+	// Editor runs VS Code in the browser on this box (package editor).
+	Editor   *editor.Editor
 	upgrader websocket.Upgrader
 	broker   *ptyx.Broker
 	// lastInput: when a user last did something here (Unix nanoseconds) — typed
@@ -67,6 +70,7 @@ func New(secret string, ws *workspace.Service) *Server {
 		secret: secret,
 		ws:     ws,
 		broker: ptyx.NewBroker(),
+		Editor: &editor.Editor{Home: ws.Root},
 		upgrader: websocket.Upgrader{
 			// The Daytona preview proxy already gates access; the Runtime token in
 			// the URL is the real authorization check.
@@ -93,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("POST /workspaces/{id}/interrupt", s.authed(s.interrupt))
+	mux.HandleFunc("POST /workspaces/{id}/editor", s.authed(s.openEditor))
 	mux.HandleFunc("POST /workspaces/{id}/answer", s.authed(s.answer))
 	// The session's own relay asks, with the session's ask token rather than
 	// a Runtime token (package ask).
@@ -124,7 +129,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor},
 	})
 }
 
@@ -440,6 +445,32 @@ func (s *Server) interrupt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, "interrupted", err)
+}
+
+// openEditor has the box's editor running and says where it is, and the
+// session's folder to open it on.
+func (s *Server) openEditor(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	folder, err := s.ws.Folder(id)
+	if err != nil {
+		respond(w, "", err)
+		return
+	}
+	port, err := s.Editor.Ensure(r.Context())
+	if errors.Is(err, editor.ErrStarting) {
+		// Being installed or started: the caller asks again.
+		writeJSON(w, http.StatusAccepted, map[string]string{"result": "starting"})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "EDITOR", err.Error())
+		return
+	}
+	s.touch()
+	writeJSON(w, http.StatusOK, protocol.EditorResponse{Port: port, Folder: folder})
 }
 
 // ask holds a question the session's agent asked (its ask_user relay's call)

@@ -560,6 +560,13 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     return upgrade;
   }
 
+  /** A URL the owner's browser opens the box's `port` at, for `ttlSeconds`;
+   *  null where the provider can't make one. */
+  async browserUrl(sandboxId: string, port: number, ttlSeconds: number): Promise<string | null> {
+    const box = await this.backend.get(sandboxId);
+    return box.browserUrl ? box.browserUrl(port, ttlSeconds) : null;
+  }
+
   /**
    * Build the {@link AgentTarget} an {@link AgentClient} needs for one box. Its
    * endpoint is kept a few minutes (lib/runtime/agent-endpoint-cache.ts);

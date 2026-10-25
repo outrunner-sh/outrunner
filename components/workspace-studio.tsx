@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
+import { OpenEditorButton } from "@/components/open-editor-button";
 import { SessionComposer } from "@/components/session-composer";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
@@ -71,6 +72,8 @@ export function WorkspaceStudio({
           {place && <span className="studio-title-place">{place}</span>}
         </div>
         <div className="studio-header-actions">
+          {/* VS Code on the session's own box: cloud sessions only. */}
+          {hasLiveSession && !isLocal && <OpenEditorButton workspaceId={workspace.id} />}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}
