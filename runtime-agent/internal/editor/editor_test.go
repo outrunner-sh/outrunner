@@ -306,4 +306,12 @@ func TestAWedgedEditorIsStoppedSoTheNextOpenStartsFresh(t *testing.T) {
 	if stops != 1 || starts != 0 {
 		t.Fatalf("stopped %d, started %d: a wedged editor is stopped, not started over", stops, starts)
 	}
+	// The next open finds it gone and starts it fresh.
+	binary := filepath.Join(e.Home, ".local", "bin", "code-server")
+	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
+	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
+	_, _ = e.Ensure(context.Background())
+	if starts != 1 {
+		t.Fatalf("started %d after the wedged editor was stopped, want 1", starts)
+	}
 }
