@@ -308,6 +308,11 @@ func (s *Service) worktreePath(id string) string {
 	return filepath.Join(s.Root, "workspaces", id)
 }
 
+// Worktree is where a workspace's Claude works, for the control plane: a
+// restore reports it, as create does, since a session imported from a Mac
+// was never created here and has none on record.
+func (s *Service) Worktree(id string) string { return s.worktreePath(id) }
+
 // requireWorktree refuses a workspace whose folder is gone: deleted, or never
 // created here. tmux given a missing start directory silently starts in $HOME,
 // so a page reopening a deleted session would otherwise get Claude running in

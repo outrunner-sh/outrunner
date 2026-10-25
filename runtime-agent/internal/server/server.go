@@ -292,8 +292,12 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, workspace.ErrModelUnsupported):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
-	default:
+	case err != nil:
 		respond(w, name, err)
+	default:
+		// The worktree too, as create answers it: the control plane has none
+		// on record for a session imported from a Mac.
+		writeJSON(w, http.StatusOK, map[string]string{"result": name, "worktree": s.ws.Worktree(r.PathValue("id"))})
 	}
 }
 
