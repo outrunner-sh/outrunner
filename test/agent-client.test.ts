@@ -286,3 +286,12 @@ test("openEditor says where the editor is, or null while it starts", async () =>
     "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/editor",
   ]);
 });
+
+test("listPorts reads the box's servers", async () => {
+  const fakeFetch = (async (url: string) => {
+    assert.equal(url, "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/ports");
+    return new Response(JSON.stringify({ ports: [{ port: 3000, process: "node" }, { port: 5173 }] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const ports = await new AgentClient(target, fakeFetch).listPorts(identity);
+  assert.deepEqual(ports, [{ port: 3000, process: "node" }, { port: 5173 }]);
+});

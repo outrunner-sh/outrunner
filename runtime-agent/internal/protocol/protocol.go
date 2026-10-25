@@ -274,6 +274,21 @@ type EditorResponse struct {
 	Folder string `json:"folder"`
 }
 
+// FeaturePorts is GET /workspaces/{id}/ports: the servers running on the box.
+const FeaturePorts = "ports"
+
+// PortsResponse is the servers listening on the session's box, for its owner
+// to open through the provider's preview URL.
+type PortsResponse struct {
+	Ports []ListeningPort `json:"ports"`
+}
+
+// ListeningPort is one of them, with its program where the agent can see it.
+type ListeningPort struct {
+	Port    int    `json:"port"`
+	Process string `json:"process,omitempty"`
+}
+
 // FeatureRestoreModel is a restore that puts the session back on its model
 // (RestoreWorkspaceRequest.Model). An older agent ignores the field, and
 // relaunches the session on Claude's own default.
