@@ -1,9 +1,9 @@
 import Link from "next/link";
 
+import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { cn } from "@/lib/utils";
 
-/** Where signing out (and so back in, minting a fresh GitHub token) lives. */
-export const GITHUB_RECONNECT_HREF = "/settings/account";
+export { GITHUB_RECONNECT_HREF };
 
 /**
  * Trails a GitHub error the API flagged `reconnect: true`: retrying cannot

@@ -63,6 +63,8 @@ import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-env
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
+import { getGitHubRepository, GitHubReconnectError } from "@/lib/github/client";
+import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { optionalGithubToken } from "@/lib/github/token";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
@@ -216,6 +218,10 @@ export async function POST(request: Request, context: RouteContext) {
       "Sessions on this sandbox run only on your Claude account. Connect Claude in Settings, or choose another sandbox under Settings → Sandbox.",
     );
   }
+
+  // Last of the checks, after the cheap local ones: it asks GitHub.
+  const github = await githubRefusal(githubToken, project);
+  if (github) return github;
 
   // A box is about to start, the new session's own: the plan's hours and box
   // count get their say before anything is created.
@@ -493,5 +499,40 @@ async function provisionWorkspace({
     await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );
+  }
+}
+
+/**
+ * GitHub's word on the stored token before a box is started to clone with
+ * it, or null to go on: a token GitHub has since revoked or expired failed
+ * the setup minutes later, on the box, with git's own message. Only a refusal
+ * stops here; a rate limit or an outage is left to the clone.
+ */
+async function githubRefusal(
+  githubToken: string | undefined,
+  project: { fullName: string; private: boolean },
+): Promise<NextResponse | null> {
+  if (!githubToken) return null;
+  try {
+    if (await getGitHubRepository(githubToken, project.fullName)) return null;
+    // Lost access, an organization's SSO, or the repository renamed or gone:
+    // GitHub says only that it can't be seen. Logged, to tell them apart.
+    console.warn(`GitHub can't see ${project.fullName} with its owner's token (private: ${project.private})`);
+    if (!project.private) return null;
+    return NextResponse.json(
+      {
+        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or sign out and back in to reconnect.`,
+        reconnect: true,
+        settingsHref: GITHUB_RECONNECT_HREF,
+      },
+      { status: 409 },
+    );
+  } catch (error) {
+    // With the link the form shows: where signing in again happens.
+    if (error instanceof GitHubReconnectError) {
+      return NextResponse.json({ error: error.message, reconnect: true, settingsHref: GITHUB_RECONNECT_HREF }, { status: 409 });
+    }
+    console.warn(`Could not check the GitHub connection before ${project.fullName}'s session`, error);
+    return null;
   }
 }
