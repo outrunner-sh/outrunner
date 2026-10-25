@@ -75,6 +75,10 @@ type Editor struct {
 	// Running is whether code-server's process is still there, answering or
 	// not; nil asks tmux whether its session is.
 	Running func(ctx context.Context) bool
+	// Stop ends a code-server that never answered; nil kills its tmux session.
+	Stop func(ctx context.Context)
+	// StartTimeout overrides startTimeout, for tests.
+	StartTimeout time.Duration
 	// Install puts code-server on the box; nil runs code-server's installer.
 	Install func(ctx context.Context) error
 	// Wait overrides waitTimeout, for tests.
@@ -157,7 +161,11 @@ func (e *Editor) start(ctx context.Context) error {
 			return fmt.Errorf("start code-server: %w", err)
 		}
 	}
-	deadline := time.Now().Add(startTimeout)
+	timeout := e.StartTimeout
+	if timeout == 0 {
+		timeout = startTimeout
+	}
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if e.up(ctx) {
 			return nil
@@ -166,6 +174,14 @@ func (e *Editor) start(ctx context.Context) error {
 			return fmt.Errorf("code-server stopped: %s", tail(e.readLog(), 400))
 		}
 		time.Sleep(300 * time.Millisecond)
+	}
+	// Alive but answering nothing for the whole wait: wedged, not slow. Its
+	// session goes, so the next open starts it fresh rather than waiting on
+	// the same process again.
+	if e.Stop != nil {
+		e.Stop(ctx)
+	} else {
+		_ = tmux.Command(ctx, "kill-session", "-t", session).Run()
 	}
 	return fmt.Errorf("code-server started but didn't answer: %s", tail(e.readLog(), 400))
 }

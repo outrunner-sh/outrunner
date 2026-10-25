@@ -23,7 +23,13 @@ export function openPendingTab(message: string): PendingTab {
   return {
     closed: () => tab !== null && tab.closed,
     go(url) {
-      if (!tab) return window.open(url, "_blank", "noopener") !== null;
+      if (!tab) {
+        // Not "noopener", which makes window.open answer null even when the
+        // tab opened: the handle's opener is cleared instead.
+        const opened = window.open(url, "_blank");
+        if (opened) opened.opener = null;
+        return opened !== null;
+      }
       // Another site: it gets no handle back on this page.
       tab.opener = null;
       tab.location.href = url;
