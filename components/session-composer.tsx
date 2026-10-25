@@ -25,7 +25,13 @@ import {
   type TypedModelProvider,
 } from "@/lib/runtime/custom-models";
 import { EffortMeter, effortName } from "@/components/effort-meter";
-import { effortOnPick, loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
+import {
+  connectOffers,
+  effortOnPick,
+  loadoutModels,
+  type ModelLoadout,
+  searchModels,
+} from "@/lib/runtime/model-loadout";
 import {
   costHint,
   DEFAULT_EFFORT,
@@ -390,6 +396,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
   // one, stands in for the groups.
   const flat = searching ? searchModels(groups.flatMap((g) => g.models), query) : loadout;
   const showGroups = !searching && loadout.length === 0;
+  const connect = connectOffers(choice.connect, query, flat.length);
   const isCurrent = (m: SessionModel) => m.id === current?.id && m.provider === current.provider;
   const item = (m: SessionModel) => (
     <DropdownMenuItem
@@ -493,10 +500,10 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                 ) : [],
               )
             : null}
-          {!searching && choice.connect.length > 0 ? (
+          {connect.length > 0 ? (
             <>
               <DropdownMenuSeparator />
-              {choice.connect.map((agent) => (
+              {connect.map((agent) => (
                 <DropdownMenuItem key={`connect:${agent}`} asChild>
                   <Link href={providerSettingsHref(agent)}>
                     <AgentIcon agent={agent} />
