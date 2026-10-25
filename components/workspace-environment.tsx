@@ -322,7 +322,13 @@ function PullRequestRow({
           setPhase("idle");
           router.refresh();
         }
-        if (result.status) setStatus(result.status);
+        if (result.status) {
+          setStatus(result.status);
+          // GitHub answered with the sign-in, so a Reconnect GitHub error is
+          // stale. Not on the pull request alone: one on record comes back
+          // without asking GitHub. Any other error (a failed merge) stays.
+          setError((e) => (e?.reconnect ? null : e));
+        }
       } else if (result.reconnect) {
         setError({ message: result.error ?? "Reconnect GitHub to see the pull request.", reconnect: true });
       }
