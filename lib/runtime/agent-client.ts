@@ -129,8 +129,6 @@ export class AgentClient {
     });
   }
 
-  /** Stop the turn the workspace's session is running, as Escape does in its
-   *  terminal; a session not running one is already stopped. */
   /**
    * Have the box's editor (code-server) running, and say where: its port and
    * the session's folder. Null while it is still being installed or started
@@ -142,6 +140,8 @@ export class AgentClient {
     return EditorResponse.parse(raw);
   }
 
+  /** Stop the turn the workspace's session is running, as Escape does in its
+   *  terminal; a session not running one is already stopped. */
   interrupt(identity: WorkspaceIdentity): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/interrupt`, identity);
   }

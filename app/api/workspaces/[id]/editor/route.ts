@@ -39,16 +39,23 @@ export async function POST(request: Request, context: RouteContext) {
   const { workspace, provider, sandboxId, secret, agent, identity } = reach.reached;
 
   try {
-    // A box's agent from before the editor is brought up to this one's.
-    await requireFeature(
-      {
-        features: async () => (await agent.health(identity)).features ?? [],
-        upgrade: boxUpgrade(provider, sandboxId, secret, owner.id),
-      },
-      AGENT_FEATURE_EDITOR,
-      "open the editor",
-    );
-    const editor = await agent.openEditor(identity);
+    let editor;
+    try {
+      editor = await agent.openEditor(identity);
+    } catch (error) {
+      // No such route: an agent from before the editor, brought up to this
+      // one's, then asked again. Asked only then, not on every poll.
+      if (!(error instanceof AgentRequestError && error.status === 404 && !error.error)) throw error;
+      await requireFeature(
+        {
+          features: async () => (await agent.health(identity)).features ?? [],
+          upgrade: boxUpgrade(provider, sandboxId, secret, owner.id),
+        },
+        AGENT_FEATURE_EDITOR,
+        "open the editor",
+      );
+      editor = await agent.openEditor(identity);
+    }
     // Still being installed or started: the button asks again.
     if (!editor) return NextResponse.json({ starting: true }, { status: 202 });
     const base = await provider.browserUrl(sandboxId, editor.port, EDITOR_LINK_TTL_SECONDS);

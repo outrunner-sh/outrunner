@@ -182,7 +182,7 @@ func TestASlowStartSaysItIsStartingThenOpens(t *testing.T) {
 	}
 }
 
-func TestAFailedStartIsSaidOnceThenTriedAgain(t *testing.T) {
+func TestAFailedStartIsToldThenTriedAgain(t *testing.T) {
 	noCodeServerOnPath(t)
 	installs := 0
 	e := &Editor{
@@ -195,5 +195,93 @@ func TestAFailedStartIsSaidOnceThenTriedAgain(t *testing.T) {
 	}
 	if _, err := e.Ensure(context.Background()); err == nil || installs != 2 {
 		t.Fatalf("tried again %d times, %v", installs, err)
+	}
+}
+
+// gone says no code-server process is there.
+func gone(context.Context) bool { return false }
+
+func TestEveryOpenWaitingOnAFailedStartIsTold(t *testing.T) {
+	noCodeServerOnPath(t)
+	release := make(chan struct{})
+	var installs atomic.Int32
+	e := &Editor{
+		Home:    t.TempDir(),
+		Health:  "http://127.0.0.1:1/healthz",
+		Running: gone,
+		Wait:    5 * time.Second,
+		Install: func(context.Context) error {
+			installs.Add(1)
+			<-release
+			return errors.New("no network")
+		},
+	}
+	errs := make(chan error, 3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			_, err := e.Ensure(context.Background())
+			errs <- err
+		}()
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	for i := 0; i < 3; i++ {
+		if err := <-errs; err == nil || !strings.Contains(err.Error(), "no network") {
+			t.Fatalf("an open waiting on the start got %v", err)
+		}
+	}
+	if installs.Load() != 1 {
+		t.Fatalf("installed %d times for one start", installs.Load())
+	}
+}
+
+func TestALiveButSlowEditorIsWaitedOnNotRestarted(t *testing.T) {
+	var up atomic.Bool
+	srv := health(&up)
+	defer srv.Close()
+	e := &Editor{
+		Home:    t.TempDir(),
+		Health:  srv.URL,
+		Running: func(context.Context) bool { return true },
+		Start: func(context.Context, string, int) error {
+			t.Error("restarted an editor whose process was there")
+			return nil
+		},
+		Install: func(context.Context) error {
+			t.Error("installed over a running editor")
+			return nil
+		},
+	}
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		up.Store(true)
+	}()
+	if port, err := e.Ensure(context.Background()); err != nil || port != Port {
+		t.Fatalf("got %d, %v", port, err)
+	}
+}
+
+func TestAnEditorThatDiesAtOnceIsSaidAtOnceWithItsLog(t *testing.T) {
+	noCodeServerOnPath(t)
+	home := t.TempDir()
+	binary := filepath.Join(home, ".local", "bin", "code-server")
+	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
+	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
+	e := &Editor{
+		Home:    home,
+		Health:  "http://127.0.0.1:1/healthz",
+		Running: gone,
+		Wait:    10 * time.Second,
+		Start: func(context.Context, string, int) error {
+			return os.WriteFile(filepath.Join(home, ".outrunner-editor.log"), []byte("error listen EADDRINUSE"), 0o600)
+		},
+	}
+	began := time.Now()
+	_, err := e.Ensure(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "EADDRINUSE") {
+		t.Fatalf("got %v", err)
+	}
+	if time.Since(began) > 5*time.Second {
+		t.Fatalf("took %s to say it died", time.Since(began))
 	}
 }

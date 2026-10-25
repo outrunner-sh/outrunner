@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,15 +32,23 @@ import (
 const Port = 8443
 
 // Version is the code-server a box installs, for its user, the first time its
-// editor is opened (about 8 seconds on Daytona). The box image doesn't carry
-// one yet: its check runs on every box as it comes up, and would refuse every
-// box made from the image before it.
+// editor is opened (about 9 seconds on Daytona): its release tarball, checked
+// against releaseSHA256. The box image doesn't carry one yet: its check runs
+// on every box as it comes up, and would refuse every box made from the image
+// before it.
 const Version = "4.143.1"
+
+// releaseSHA256 is each architecture's code-server-<Version>-linux-<arch>.tar.gz.
+var releaseSHA256 = map[string]string{
+	"amd64": "614877cf71005f14ea252bd2d9b1c12237cf7d73681ef150f0dff7f13849fdb5",
+	"arm64": "51481a891754dc2585b86d007aec24ac675453fc5ef6cfa346c4462449277384",
+}
 
 // session is the tmux session code-server runs in.
 const session = "outrunner-editor"
 
-// startTimeout bounds waiting for a started code-server to answer.
+// startTimeout bounds waiting for a started code-server to answer, while its
+// tmux session lives: one that dies is said at once.
 const startTimeout = 60 * time.Second
 
 // waitTimeout is how long one open waits for the editor before saying it's
@@ -63,14 +72,22 @@ type Editor struct {
 	Health string
 	// Start runs code-server, detached; nil runs it in tmux.
 	Start func(ctx context.Context, binary string, port int) error
+	// Running is whether code-server's process is still there, answering or
+	// not; nil asks tmux whether its session is.
+	Running func(ctx context.Context) bool
 	// Install puts code-server on the box; nil runs code-server's installer.
 	Install func(ctx context.Context) error
 	// Wait overrides waitTimeout, for tests.
 	Wait time.Duration
 
-	mu       sync.Mutex
-	starting chan struct{} // closed when the start under way ends
-	failed   error         // why the last start failed, told once
+	mu      sync.Mutex
+	attempt *attempt // the start under way, if any
+}
+
+// attempt is one start, and how it ended: every open waiting on it is told.
+type attempt struct {
+	done chan struct{}
+	err  error
 }
 
 func (e *Editor) port() int {
@@ -83,31 +100,26 @@ func (e *Editor) port() int {
 // Ensure has code-server running and answering, and returns its port. One
 // that isn't up is started (and, on a box without it, installed) in the
 // background, once however many ask: an open waits a while for it, then
-// returns ErrStarting for the caller to ask again. A start that failed is
-// said once, by the next call, and the one after tries again.
+// returns ErrStarting for the caller to ask again. A start that fails is told
+// to every open waiting on it; the next open tries again.
 func (e *Editor) Ensure(ctx context.Context) (int, error) {
 	if e.up(ctx) {
 		return e.port(), nil
 	}
 	e.mu.Lock()
-	if err := e.failed; err != nil {
-		e.failed = nil
-		e.mu.Unlock()
-		return 0, err
-	}
-	if e.starting == nil {
-		done := make(chan struct{})
-		e.starting = done
+	a := e.attempt
+	if a == nil {
+		a = &attempt{done: make(chan struct{})}
+		e.attempt = a
 		go func() {
 			err := e.start(context.Background())
 			e.mu.Lock()
-			e.failed = err
-			e.starting = nil
+			a.err = err
+			e.attempt = nil
 			e.mu.Unlock()
-			close(done)
+			close(a.done)
 		}()
 	}
-	done := e.starting
 	e.mu.Unlock()
 
 	wait := e.Wait
@@ -115,8 +127,11 @@ func (e *Editor) Ensure(ctx context.Context) (int, error) {
 		wait = waitTimeout
 	}
 	select {
-	case <-done:
-		return e.Ensure(ctx)
+	case <-a.done:
+		if a.err != nil {
+			return 0, a.err
+		}
+		return e.port(), nil
 	case <-time.After(wait):
 		return 0, ErrStarting
 	case <-ctx.Done():
@@ -124,28 +139,43 @@ func (e *Editor) Ensure(ctx context.Context) (int, error) {
 	}
 }
 
-// start installs code-server if the box has none, starts it, and waits for
-// it to answer.
+// start has code-server answering: waiting on one whose process is there but
+// slow to answer (a loaded box) rather than killing it with the user's tabs,
+// else installing it if the box has none and starting it. A process that
+// dies while it's waited on is said at once, with its log.
 func (e *Editor) start(ctx context.Context) error {
-	binary, err := e.binary(ctx)
-	if err != nil {
-		return err
-	}
-	start := e.Start
-	if start == nil {
-		start = e.startInTmux
-	}
-	if err := start(ctx, binary, e.port()); err != nil {
-		return fmt.Errorf("start code-server: %w", err)
+	if !e.running(ctx) {
+		binary, err := e.binary(ctx)
+		if err != nil {
+			return err
+		}
+		start := e.Start
+		if start == nil {
+			start = e.startInTmux
+		}
+		if err := start(ctx, binary, e.port()); err != nil {
+			return fmt.Errorf("start code-server: %w", err)
+		}
 	}
 	deadline := time.Now().Add(startTimeout)
 	for time.Now().Before(deadline) {
 		if e.up(ctx) {
 			return nil
 		}
+		if !e.running(ctx) {
+			return fmt.Errorf("code-server stopped: %s", tail(e.readLog(), 400))
+		}
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fmt.Errorf("code-server started but didn't answer: %s", tail(e.readLog(), 400))
+}
+
+// running is whether code-server's process is there.
+func (e *Editor) running(ctx context.Context) bool {
+	if e.Running != nil {
+		return e.Running(ctx)
+	}
+	return tmux.Command(ctx, "has-session", "-t", session).Run() == nil
 }
 
 // up is whether code-server answers on its port.
@@ -196,10 +226,29 @@ func (e *Editor) binary(ctx context.Context) (string, error) {
 	return "", errors.New("code-server was installed but isn't where it was put")
 }
 
-// installStandalone runs code-server's installer for the box user, at Version,
-// into ~/.local: no root, no package manager.
+// installStandalone puts code-server's release for Version in ~/.local, for
+// the box user: the tarball from GitHub, checked against its pinned digest,
+// unpacked to ~/.local/lib and linked into ~/.local/bin. No root, no installer
+// script run from the network.
 func (e *Editor) installStandalone(ctx context.Context) error {
-	script := "curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix=\"$HOME/.local\" --version " + Version
+	sum, ok := releaseSHA256[runtime.GOARCH]
+	if !ok {
+		return fmt.Errorf("no code-server release for %s", runtime.GOARCH)
+	}
+	name := "code-server-" + Version + "-linux-" + runtime.GOARCH
+	url := "https://github.com/coder/code-server/releases/download/v" + Version + "/" + name + ".tar.gz"
+	script := strings.Join([]string{
+		"set -eu",
+		"lib=\"$HOME/.local/lib\"; bin=\"$HOME/.local/bin\"",
+		"mkdir -p \"$lib\" \"$bin\"",
+		"tmp=$(mktemp)",
+		"trap 'rm -f \"$tmp\"' EXIT",
+		"curl -fsSL -o \"$tmp\" " + shellQuote(url),
+		"echo " + shellQuote(sum+"  ") + "\"$tmp\" | sha256sum -c - >/dev/null",
+		"rm -rf \"$lib/" + name + "\"",
+		"tar -xzf \"$tmp\" -C \"$lib\"",
+		"ln -sfn \"$lib/" + name + "/bin/code-server\" \"$bin/code-server\"",
+	}, "\n")
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
 	cmd.Env = append(os.Environ(), "HOME="+e.Home)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -216,8 +265,8 @@ func (e *Editor) readLog() string {
 	return strings.TrimSpace(string(data))
 }
 
-// startInTmux runs code-server in its own tmux session, replacing one whose
-// code-server died, its output kept in its log.
+// startInTmux runs code-server in its own tmux session (start only calls it
+// when that session is gone), its output kept in its log.
 func (e *Editor) startInTmux(ctx context.Context, binary string, port int) error {
 	_ = tmux.Command(ctx, "kill-session", "-t", session).Run()
 	_ = os.Remove(e.logPath())
@@ -233,9 +282,7 @@ func (e *Editor) startInTmux(ctx context.Context, binary string, port int) error
 		"--disable-workspace-trust",
 		">>" + shellQuote(e.logPath()), "2>&1",
 	}, " ")
-	// One shell command: tmux joins separate arguments with spaces, which
-	// would hand `sh -c` only the first word and start code-server with no
-	// flags, on its default port (8080, the agent's own on some boxes).
+	// One shell command, run by tmux's shell, for the PORT and the redirect.
 	cmd := tmux.Command(ctx, "new-session", "-d", "-s", session, "-c", e.Home, command)
 	cmd.Env = append(os.Environ(), "HOME="+e.Home)
 	if out, err := cmd.CombinedOutput(); err != nil {

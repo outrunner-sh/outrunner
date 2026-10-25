@@ -30,12 +30,19 @@ export function OpenEditorButton({ workspaceId }: { workspaceId: string }) {
       tab.document.body.textContent = "Starting VS Code for this session…";
     }
     try {
-      const url = await editorUrl(workspaceId);
+      // Closing the starting tab gives up on the editor.
+      const url = await editorUrl(workspaceId, () => tab !== null && tab.closed);
+      if (url === null) return;
       // The editor is another site: it gets no handle back on this page.
-      if (tab && !tab.closed) {
+      if (tab) {
         tab.opener = null;
         tab.location.href = url;
-      } else window.open(url, "_blank", "noopener");
+      } else {
+        // The tab was blocked on the click, and this one may be too: if so,
+        // say so where the button is.
+        const opened = window.open(url, "_blank", "noopener");
+        if (!opened) setError("Your browser blocked the editor's tab. Allow pop-ups for Outrunner and try again.");
+      }
     } catch (e) {
       tab?.close();
       setError(e instanceof Error ? e.message : "Couldn't open the editor. Please try again.");
@@ -64,10 +71,11 @@ export function OpenEditorButton({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-/** The editor's link, asking again while it starts. */
-async function editorUrl(workspaceId: string): Promise<string> {
+/** The editor's link, asking again while it starts; null once `cancelled`. */
+async function editorUrl(workspaceId: string, cancelled: () => boolean): Promise<string | null> {
   const deadline = Date.now() + GIVE_UP_MS;
   while (true) {
+    if (cancelled()) return null;
     const res = await fetch(`/api/workspaces/${workspaceId}/editor`, { method: "POST" });
     const body = (await res.json().catch(() => null)) as EditorAnswer | null;
     if (res.ok && body?.url) return body.url;
