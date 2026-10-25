@@ -175,11 +175,13 @@ export function RepositorySelect({
     if (open) requestAnimationFrame(() => searchRef.current?.focus());
   }, [open]);
 
-  // Close on outside click / Escape.
+  // Close on outside press / Escape. On pointerdown, not mousedown: a Radix
+  // menu's trigger (the model chip) cancels its pointerdown, so no mousedown
+  // follows, and both menus stayed open. Touch sends pointerdown too.
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    function onDown(event: MouseEvent) {
+    function onDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
@@ -188,10 +190,10 @@ export function RepositorySelect({
         triggerRef.current?.focus();
       }
     }
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
