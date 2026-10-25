@@ -160,6 +160,9 @@ export type RuntimeComputer = {
   /** The workspace whose own box it is; null for a project's box shared by
    *  its sessions, from before each session had its own. */
   workspaceId: string | null;
+  /** Made ready ahead of a session and stopped, for the next new session of
+   *  its project to take (lib/runtime/warm-pool.ts). */
+  pooled: boolean;
   status: RuntimeComputerStatus;
   /** Frozen image tag this box was built from, e.g. `v1`. */
   imageVersion: string;

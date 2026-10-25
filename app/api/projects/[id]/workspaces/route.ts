@@ -61,6 +61,7 @@ import {
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
+import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError } from "@/lib/github/client";
@@ -339,6 +340,10 @@ async function provisionWorkspace({
       // gone. Only transition the exact ready row we checked so parallel
       // requests retain the claim RPC's single-provisioner invariant.
       const scope = { workspaceId: workspace.id };
+      // The project's pooled box, made ready ahead (lib/runtime/warm-pool.ts),
+      // becomes this session's, stopped: it starts again below on its disk,
+      // as a box that ended does, in seconds.
+      await takePooledBox(provider, workspace.id);
       const currentComputer = await getRuntimeComputer(scope);
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
@@ -455,7 +460,10 @@ async function provisionWorkspace({
         await agent.destroyWorkspace(identity).catch((error: unknown) =>
           console.warn(`Workspace ${workspace.id} teardown after delete failed`, error),
         );
+        return;
       }
+      // Ready: the project's next session gets a box made ahead.
+      await refillProjectPool({ provider, ownerId: owner.id, project, githubToken, sessionEnv });
       return;
     }
 
