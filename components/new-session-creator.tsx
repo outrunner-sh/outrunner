@@ -12,6 +12,7 @@ export function NewSessionCreator({
   projectsKnown = true,
   initialProjectId,
   openPicker = false,
+  focusComposer = false,
   showBack = false,
 }: {
   projects: Project[];
@@ -20,6 +21,8 @@ export function NewSessionCreator({
   initialProjectId?: string;
   /** Opens the repository (or folder) picker as the form mounts. */
   openPicker?: boolean;
+  /** Focuses the composer as the form mounts. */
+  focusComposer?: boolean;
   /** /new is reached from somewhere and needs a way back where the sidebar is
    *  hidden (narrow windows); home is home already. */
   showBack?: boolean;
@@ -36,6 +39,7 @@ export function NewSessionCreator({
         projectsKnown={projectsKnown}
         initialProjectId={initialProjectId}
         openPicker={openPicker}
+        focusComposer={focusComposer}
       />
     </div>
   );

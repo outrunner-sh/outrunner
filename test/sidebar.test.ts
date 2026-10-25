@@ -141,7 +141,40 @@ test("a session whose repository is not listed still appears, under a placeholde
 });
 
 test("nothing to show is an empty list", () => {
-  assert.deepEqual(buildSidebarGroups([project("p1")], [], []), []);
+  assert.deepEqual(buildSidebarGroups([], [], []), []);
+});
+
+test("a project with no session yet is listed, empty, after the ones with sessions", () => {
+  const groups = buildSidebarGroups(
+    [project("p1", "fresh"), project("p2", "outrunner"), project("p3", "newer")],
+    [workspace("w1", "p2", "2026-10-01T00:00:00Z")],
+    [local("l1", "/Users/ada/notes", "2026-09-01T00:00:00Z")],
+  );
+  // Started ones by activity, then the rest in the list's order.
+  assert.deepEqual(
+    groups.map((g) => [g.label, g.sessions.length]),
+    [
+      ["outrunner", 1],
+      ["notes", 1],
+      ["fresh", 0],
+      ["newer", 0],
+    ],
+  );
+  // Each can start its first session.
+  assert.deepEqual(groups[2], {
+    key: "cloud:p1",
+    label: "fresh",
+    detail: "acme/fresh",
+    local: false,
+    start: { kind: "cloud", projectId: "p1" },
+    sessions: [],
+  });
+});
+
+test("search finds a project with no session by its name, and drops it otherwise", () => {
+  const groups = buildSidebarGroups([project("p1", "fresh")], [], []);
+  assert.deepEqual(filterSidebarGroups(groups, "FRE").map((g) => g.label), ["fresh"]);
+  assert.deepEqual(filterSidebarGroups(groups, "billing"), []);
 });
 
 test("group keys stay distinct between a repository and a folder of the same name", () => {

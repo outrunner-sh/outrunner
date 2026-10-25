@@ -46,6 +46,7 @@ export function NewSessionForm({
   projectsKnown = true,
   initialProjectId,
   openPicker = false,
+  focusComposer = false,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start): it is not yet "none". */
@@ -54,6 +55,8 @@ export function NewSessionForm({
   initialProjectId?: string;
   /** Opens the repository picker: as the form mounts, or as it turns true. */
   openPicker?: boolean;
+  /** Focuses the composer: as the form mounts, or as it turns true. */
+  focusComposer?: boolean;
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal } =
     useCreateSession(listed, initialProjectId);
@@ -79,6 +82,13 @@ export function NewSessionForm({
   if (openPicker !== openPickerSeen) {
     setOpenPickerSeen(openPicker);
     if (openPicker) setPickAsked(true);
+  }
+  // Each ask to focus the composer, the same way.
+  const [focusAsks, setFocusAsks] = useState(focusComposer ? 1 : 0);
+  const [focusComposerSeen, setFocusComposerSeen] = useState(focusComposer);
+  if (focusComposer !== focusComposerSeen) {
+    setFocusComposerSeen(focusComposer);
+    if (focusComposer) setFocusAsks(focusAsks + 1);
   }
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
@@ -255,6 +265,7 @@ export function NewSessionForm({
                 : "Pick a repository above to start…"
           }
           allowAttachments={!local}
+          focusSignal={focusAsks}
         />
       </div>
     </div>

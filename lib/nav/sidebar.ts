@@ -5,7 +5,8 @@
  *
  * Cloud groups come from buildNavGroups and local ones from groupLocalSessions,
  * so the sidebar sorts and names them exactly as those already do; this only
- * puts the two side by side, newest activity first.
+ * puts the two side by side, newest activity first, then the projects with no
+ * session yet.
  */
 
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -115,7 +116,7 @@ export type SidebarGroup = {
    *  could not be loaded, so there is nothing to start one in, or for a Mac
    *  folder while new local sessions are off. */
   start: { kind: "cloud"; projectId: string } | { kind: "local"; folder: string } | null;
-  /** Newest first. */
+  /** Newest first; none for a project not started in yet. */
   sessions: SidebarSession[];
 };
 
@@ -169,9 +170,24 @@ export function buildSidebarGroups(
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));
+  // A project with no session yet is listed too, empty, so one just added
+  // doesn't vanish until it's started in. (A hidden project is only in
+  // `projects` for a session of its own, so it never shows here.)
+  const started = new Set(workspaces.map((w) => w.projectId));
+  const unstarted: SidebarGroup[] = projects
+    .filter((p) => !started.has(p.id))
+    .map((p) => ({
+      key: `cloud:${p.id}`,
+      label: p.name,
+      detail: p.fullName,
+      local: false,
+      start: { kind: "cloud", projectId: p.id },
+      sessions: [],
+    }));
   // Both lists are newest-first inside; interleave the groups by their newest
-  // session. A stable sort keeps each kind's own order on a tie.
-  return [...cloud, ...local].sort((a, b) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at));
+  // session. A stable sort keeps each kind's own order on a tie, and the
+  // projects with none, which sort last, in the list's order.
+  return [...cloud, ...local, ...unstarted].sort((a, b) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at));
 }
 
 /**

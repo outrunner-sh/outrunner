@@ -85,6 +85,7 @@ export function SessionComposer({
   modelChoice,
   allowAttachments = true,
   stop,
+  focusSignal = 0,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -105,6 +106,9 @@ export function SessionComposer({
   /** Stopping the turn under way, shown beside send (and on Escape) while
    *  there is one to stop. */
   stop?: { onStop: () => void; stopping: boolean };
+  /** Changes each time the composer should take focus (Get started's "Start
+   *  your first session"); it does once it can be typed in. */
+  focusSignal?: number;
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -116,6 +120,13 @@ export function SessionComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachments = useAttachments();
+
+  const focusedFor = useRef(0);
+  useEffect(() => {
+    if (focusSignal === 0 || focusSignal === focusedFor.current || !canSend) return;
+    focusedFor.current = focusSignal;
+    textareaRef.current?.focus();
+  }, [focusSignal, canSend]);
 
   // A notice says something once, then gets out of the way.
   useEffect(() => {

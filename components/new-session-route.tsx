@@ -34,7 +34,8 @@ export function HomeSessionRoute() {
  * list hides is still a valid place to start: the sidebar has it when a
  * session is in it, and otherwise the server's answer (`server`, a Project)
  * adds it, rather than the form falling back to some other repository.
- * `?pick=repo` (the sidebar's add-project button) opens the repository picker.
+ * `?pick=repo` (the sidebar's add-project button) opens the repository picker;
+ * `?focus=composer` (Get started) focuses the composer.
  */
 export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const data = useAppData();
@@ -42,18 +43,20 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const project = search.get("project") ?? undefined;
   const folder = search.get("folder") ?? "";
   const pick = search.get("pick") === "repo";
+  const focus = search.get("focus") === "composer";
   const asked = useNewSessionCount();
   const [answered, slot] = useServerAnswer<Project>(server);
   const router = useRouter();
 
   // The form has taken the ask; drop it from the URL, so back or a reload
-  // doesn't open the picker again.
+  // doesn't ask again.
   useEffect(() => {
-    if (!pick) return;
+    if (!pick && !focus) return;
     const rest = new URLSearchParams(search);
     rest.delete("pick");
+    rest.delete("focus");
     router.replace(rest.size > 0 ? `/new?${rest}` : "/new", { scroll: false });
-  }, [pick, search, router]);
+  }, [pick, focus, search, router]);
 
   const listed = data?.projects ?? [];
   const requested = [...(data?.hiddenProjects ?? []), ...(answered ? [answered] : [])].find((p) => p.id === project);
@@ -72,6 +75,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         projectsKnown={data !== null}
         initialProjectId={project}
         openPicker={pick}
+        focusComposer={focus}
         showBack
       />
       {slot}
