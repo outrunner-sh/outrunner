@@ -216,18 +216,18 @@ export function useWorkspaceChanges({
   }, [active, poll]);
 
   const toggle = (path: string) => {
+    // Decided here, not in the updater: React may run an updater twice, and
+    // the fetch below must happen once.
+    const opening = !openPaths.has(path);
     setOpenPaths((s) => {
       const n = new Set(s);
-      if (n.has(path)) {
-        n.delete(path);
-      } else {
-        n.add(path);
-        // Fetch on first expand, and retry after an error (errors aren't cached
-        // as diffs, so `diffs.has` stays false until a load succeeds).
-        if (!diffs.has(path) && !loadingPaths.has(path)) void loadDiff(path);
-      }
+      if (opening) n.add(path);
+      else n.delete(path);
       return n;
     });
+    // Fetch on first expand, and retry after an error (errors aren't cached
+    // as diffs, so `diffs.has` stays false until a load succeeds).
+    if (opening && !diffs.has(path) && !loadingPaths.has(path)) void loadDiff(path);
   };
 
   return { files, message, diffs, diffErrors, loadingPaths, openPaths, toggle };
