@@ -122,8 +122,12 @@ export type SidebarGroup = {
   sessions: SidebarSession[];
 };
 
+/** How many projects with no session yet the sidebar lists, newest first. */
+export const UNSTARTED_SHOWN = 3;
+
 export function buildSidebarGroups(
-  projects: NavProject[],
+  /** `createdAt` orders the projects with no session yet. */
+  projects: Array<NavProject & { createdAt?: string }>,
   workspaces: Workspace[],
   localSessions: LocalSession[],
   /** Whether a Mac folder can start a new session (lib/session/local-sessions.ts);
@@ -175,11 +179,15 @@ export function buildSidebarGroups(
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));
   // A project with no session yet is listed too, empty, so one just added
-  // doesn't vanish until it's started in. (A hidden project is only in
-  // `projects` for a session of its own, so it never shows here.)
+  // doesn't vanish until it's started in. Only the few connected last: "Sync
+  // repositories" connects every repository at once, often dozens, and those
+  // would bury the sessions. (A hidden project is only in `projects` for a
+  // session of its own, so it never shows here.)
   const started = new Set(workspaces.map((w) => w.projectId));
   const unstarted: SidebarGroup[] = projects
     .filter((p) => !started.has(p.id))
+    .sort((a, b) => newestFirst(a.createdAt, b.createdAt))
+    .slice(0, UNSTARTED_SHOWN)
     .map((p) => ({
       key: `cloud:${p.id}`,
       label: p.name,
@@ -190,7 +198,7 @@ export function buildSidebarGroups(
     }));
   // Both lists are newest-first inside; interleave the groups by their newest
   // session. A stable sort keeps each kind's own order on a tie, and the
-  // projects with none, which sort last, in the list's order.
+  // projects with none, which sort last, newest connected first.
   return [...cloud, ...local, ...unstarted].sort((a, b) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at));
 }
 

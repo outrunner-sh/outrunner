@@ -14,6 +14,7 @@ import {
   readFoldedProjects,
   relativeTime,
   shownSessions,
+  UNSTARTED_SHOWN,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
@@ -177,6 +178,17 @@ test("a project with no session yet is listed, empty, after the ones with sessio
     start: { kind: "cloud", projectId: "p1" },
     sessions: [],
   });
+});
+
+test("only the few projects connected last are listed with no session, newest first", () => {
+  const made = (id: string, day: number) => ({ ...project(id), createdAt: `2026-10-0${day}T00:00:00Z` });
+  const groups = buildSidebarGroups(
+    [made("a", 1), made("b", 5), made("c", 3), made("d", 4), made("e", 2), made("busy", 1)],
+    [workspace("w1", "busy", "2026-10-06T00:00:00Z")],
+    [],
+  );
+  assert.equal(UNSTARTED_SHOWN, 3);
+  assert.deepEqual(groups.map((g) => g.label), ["busy", "b", "d", "c"]);
 });
 
 test("search finds a project with no session by its name, and drops it otherwise", () => {
