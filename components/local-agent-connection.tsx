@@ -63,7 +63,11 @@ export function LocalAgentConnection({
     setChecking(true);
     try {
       const status = await localStatus();
-      if (check.current === mine) setCli(status ? cliOf(status, agent) : null);
+      if (check.current === mine) {
+        setCli(status ? cliOf(status, agent) : null);
+        // The Mac answered: what it says now replaces an earlier error.
+        setError(null);
+      }
     } catch (e) {
       if (check.current === mine) setError(e instanceof Error ? e.message : `Couldn't check ${label} on this Mac.`);
     } finally {
