@@ -135,6 +135,13 @@ export function SessionComposer({
     return () => clearTimeout(t);
   }, [notice]);
 
+  // Named for the agent whose own model it is (Claude Code's, Codex's); one
+  // on a key, or not known, is just "Message".
+  const provider = modelChoice
+    ? matchModel(modelChoice.groups, model, modelChoice.preferredProvider)?.provider
+    : undefined;
+  const messageLabel = provider === "claude" || provider === "codex" ? `Message ${AGENTS[provider].label}` : "Message";
+
   // A prompt of only attachments is legitimate — "here's a screenshot".
   const hasSomethingToSend = value.trim() !== "" || attachments.readyIds.length > 0;
 
@@ -260,7 +267,7 @@ export function SessionComposer({
         value={value}
         rows={1}
         placeholder={canSend ? placeholder : disabledPlaceholder}
-        aria-label="Message Claude"
+        aria-label={messageLabel}
         spellCheck={false}
         disabled={!canSend}
         onChange={(event) => {
