@@ -285,3 +285,25 @@ func TestAnEditorThatDiesAtOnceIsSaidAtOnceWithItsLog(t *testing.T) {
 		t.Fatalf("took %s to say it died", time.Since(began))
 	}
 }
+
+func TestAWedgedEditorIsStoppedSoTheNextOpenStartsFresh(t *testing.T) {
+	running := true
+	stops := 0
+	starts := 0
+	e := &Editor{
+		Home:         t.TempDir(),
+		Health:       "http://127.0.0.1:1/healthz",
+		Running:      func(context.Context) bool { return running },
+		Stop:         func(context.Context) { stops++; running = false },
+		StartTimeout: 200 * time.Millisecond,
+		Wait:         5 * time.Second,
+		Install:      func(context.Context) error { return errors.New("no install expected") },
+		Start:        func(context.Context, string, int) error { starts++; return nil },
+	}
+	if _, err := e.Ensure(context.Background()); err == nil || !strings.Contains(err.Error(), "didn't answer") {
+		t.Fatalf("got %v", err)
+	}
+	if stops != 1 || starts != 0 {
+		t.Fatalf("stopped %d, started %d: a wedged editor is stopped, not started over", stops, starts)
+	}
+}

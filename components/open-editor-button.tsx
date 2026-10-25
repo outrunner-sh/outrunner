@@ -40,8 +40,11 @@ export function OpenEditorButton({ workspaceId }: { workspaceId: string }) {
       } else {
         // The tab was blocked on the click, and this one may be too: if so,
         // say so where the button is.
-        const opened = window.open(url, "_blank", "noopener");
-        if (!opened) setError("Your browser blocked the editor's tab. Allow pop-ups for Outrunner and try again.");
+        // Not "noopener", which makes window.open answer null even when the
+        // tab opened: the handle's opener is cleared instead.
+        const opened = window.open(url, "_blank");
+        if (opened) opened.opener = null;
+        else setError("Your browser blocked the editor's tab. Allow pop-ups for Outrunner and try again.");
       }
     } catch (e) {
       tab?.close();
