@@ -1,13 +1,14 @@
 "use client";
 
 import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
 import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden";
 import { useSharedResource } from "@/hooks/use-shared-resource";
+import { type Placement, placeMenu } from "@/lib/client/menu-placement";
 import { sharedResource } from "@/lib/client/shared-resource";
 import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
@@ -69,6 +70,28 @@ function refreshRepositories(): Promise<unknown> {
   askGitHubAgain = true;
   REPOSITORIES.invalidate();
   return REPOSITORIES.ensure();
+}
+
+const BELOW: Placement = { side: "below" };
+
+/** The menu's height with a full list: below has room enough, it opens there. */
+const MENU_HEIGHT = 420;
+
+/**
+ * Where the menu fits beside `trigger` (placeMenu). The room is what can be
+ * seen: inside the window and every ancestor that scrolls or clips (the
+ * new-session form's scroll area clips a menu that rises out of it).
+ */
+function placement(trigger: HTMLElement | null): Placement {
+  if (!trigger) return BELOW;
+  const room = { top: 0, bottom: window.innerHeight };
+  for (let el = trigger.parentElement; el; el = el.parentElement) {
+    if (getComputedStyle(el).overflowY === "visible") continue;
+    const box = el.getBoundingClientRect();
+    room.top = Math.max(room.top, box.top);
+    room.bottom = Math.min(room.bottom, box.bottom);
+  }
+  return placeMenu(trigger.getBoundingClientRect(), room, MENU_HEIGHT);
 }
 
 /**
@@ -173,6 +196,17 @@ export function RepositorySelect({
   // sets state during render and cascades.
   useEffect(() => {
     if (open) requestAnimationFrame(() => searchRef.current?.focus());
+  }, [open]);
+
+  // Which side of the trigger the menu opens on, and how tall it may be, so
+  // it always fits: measured before it paints, and again as the window resizes.
+  const [place, setPlace] = useState<Placement>(BELOW);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => setPlace(placement(triggerRef.current));
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, [open]);
 
   // Close on outside press / Escape. On pointerdown, not mousedown: a Radix
@@ -287,8 +321,54 @@ export function RepositorySelect({
       </button>
 
       {open && (
-        <div className="bg-popover border-border absolute bottom-full left-1/2 z-50 mb-2 w-80 -translate-x-1/2 overflow-hidden rounded-lg border shadow-xl">
-          <div id={listId} role="listbox" aria-label="Repositories" className="max-h-72 overflow-y-auto py-1">
+        <div
+          className={cn(
+            "bg-popover border-border absolute left-1/2 z-50 flex w-80 -translate-x-1/2 flex-col overflow-hidden rounded-lg border shadow-xl",
+            place.side === "below" ? "top-full mt-2" : "bottom-full mb-2",
+          )}
+          style={{ maxHeight: place.maxHeight }}
+        >
+          {/* Search first, focused as it opens. */}
+          <div className="border-border relative shrink-0 border-b">
+            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setActive(0);
+              }}
+              // ↑/↓ move through the list, Enter picks; typing filters it.
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  if (visible.length === 0) return;
+                  const step = event.key === "ArrowDown" ? 1 : -1;
+                  setActive((i) => (i + step + visible.length) % visible.length);
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  const repo = visible[active];
+                  if (repo && connectingId === null) void choose(repo);
+                }
+              }}
+              role="combobox"
+              aria-expanded={open}
+              aria-controls={listId}
+              aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
+              aria-autocomplete="list"
+              placeholder="Search repositories…"
+              aria-label="Search repositories"
+              className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-sm outline-none"
+            />
+          </div>
+
+          {/* The one part that gives way when the room is short. */}
+          <div
+            id={listId}
+            role="listbox"
+            aria-label="Repositories"
+            className="max-h-72 min-h-0 overflow-y-auto py-1"
+          >
             {repositories.status === "loading" && (
               /* Only before the first answer: the page looks once as the form mounts. */
               <p className="text-muted-foreground flex items-center gap-2 px-3 py-2 text-sm">
@@ -329,7 +409,7 @@ export function RepositorySelect({
           {/* The list may be short: say why rather than let a missing
               repository look like one that isn't there. */}
           {listing && (listing.ssoPartialOrgIds.length > 0 || !listing.complete) && (
-            <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
+            <p className="text-muted-foreground border-border shrink-0 border-t px-3 py-2 text-xs">
               {listing.ssoPartialOrgIds.length > 0
                 ? "Some organizations' repositories are hidden until you authorize Outrunner for their single sign-on on GitHub."
                 : "GitHub may have more repositories than this list shows."}
@@ -337,7 +417,7 @@ export function RepositorySelect({
           )}
 
           {extra && (
-            <div className="border-border border-t">
+            <div className="border-border shrink-0 border-t">
               <button
                 type="button"
                 onClick={() => {
@@ -351,7 +431,7 @@ export function RepositorySelect({
             </div>
           )}
 
-          <div className="border-border border-t">
+          <div className="border-border shrink-0 border-t">
             <button
               type="button"
               onClick={() => void load(true)}
@@ -363,44 +443,11 @@ export function RepositorySelect({
           </div>
 
           {error && (
-            <p className="text-destructive border-border border-t px-3 py-2 text-xs">
+            <p className="text-destructive border-border shrink-0 border-t px-3 py-2 text-xs">
               {error.message}
               {error.reconnect && <GitHubReconnectLink />}
             </p>
           )}
-
-          <div className="border-border relative border-t">
-            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActive(0);
-              }}
-              // ↑/↓ move through the list, Enter picks; typing filters it.
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                  event.preventDefault();
-                  if (visible.length === 0) return;
-                  const step = event.key === "ArrowDown" ? 1 : -1;
-                  setActive((i) => (i + step + visible.length) % visible.length);
-                } else if (event.key === "Enter") {
-                  event.preventDefault();
-                  const repo = visible[active];
-                  if (repo && connectingId === null) void choose(repo);
-                }
-              }}
-              role="combobox"
-              aria-expanded={open}
-              aria-controls={listId}
-              aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
-              aria-autocomplete="list"
-              placeholder="Search repositories…"
-              aria-label="Search repositories"
-              className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-sm outline-none"
-            />
-          </div>
         </div>
       )}
     </div>
