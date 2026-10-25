@@ -11,6 +11,7 @@ import {
   cloneLocalRepository,
   claudeSetupNeeded,
   claudeSetupText,
+  folderGone,
   needsClaudeLogin,
   pickLocalFolder,
   rememberedFolder,
@@ -124,9 +125,11 @@ export function useSessionLocation(agent: AgentId = "claude") {
         .then((folder) => {
           if (!cancelled) setFound({ path, picked: false, choice: { state: "ok", folder } });
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (cancelled) return;
-          rememberFolder(null); // gone: ask again
+          // Forget it only when it's gone; after a hiccup it is still the one
+          // to try next time.
+          if (folderGone(error)) rememberFolder(null);
           setFound({ path, picked: false, choice: { state: "none" } });
         });
     }

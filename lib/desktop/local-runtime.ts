@@ -146,12 +146,23 @@ function requireCore(): TauriCore {
   return core;
 }
 
+/** An error from the app, worded for the user. `code` is the app's own code
+ *  (e.g. "folder-missing"), so a caller can tell which error it was. */
+export class LocalError extends Error {
+  readonly code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.name = "LocalError";
+    this.code = code;
+  }
+}
+
 /** `agent` names the CLI a login error is about. */
 async function call<T>(cmd: string, args?: Record<string, unknown>, agent: AgentId = "claude"): Promise<T> {
   try {
     return (await requireCore().invoke(cmd, args)) as T;
   } catch (error) {
-    throw new Error(messageForLocalError(error, agent));
+    throw new LocalError(messageForLocalError(error, agent), localErrorCode(error));
   }
 }
 
@@ -439,6 +450,12 @@ export function checkLocalFolder(path: string): Promise<LocalFolder> {
   return call<LocalFolder>("local_check_folder", { path });
 }
 
+/** Whether a re-check failed because the folder is gone or no longer allowed,
+ *  rather than a passing hiccup such as the agent restarting. */
+export function folderGone(error: unknown): boolean {
+  return error instanceof LocalError && (error.code === "folder-missing" || error.code === "folder-not-chosen");
+}
+
 /**
  * Clone a repository picked from GitHub (`owner/name`) into ~/outrunner/repos,
  * or use the clone made before, as the folder a local session works in. The
@@ -512,6 +529,12 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   import_config: "This version of the Outrunner app can't import your agent setup. Update the app, then try again.",
 };
 
+/** The app's code for an error it returned, e.g. "folder-missing". */
+function localErrorCode(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  return raw.split(":")[0];
+}
+
 /** Human-readable message for an error the app returned; `agent` is the CLI a
  *  login error is about. */
 export function messageForLocalError(error: unknown, agent: AgentId = "claude"): string {
@@ -521,7 +544,7 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
   if (missing) {
     return NEEDS_NEWER_APP[missing[1]] ?? "This version of the Outrunner app can't do that yet. Update the app, then try again.";
   }
-  const code = raw.split(":")[0];
+  const code = localErrorCode(error);
   switch (code) {
     case "agent-missing":
       return "This build of the Outrunner app has no local agent. Update the app to run sessions locally.";
