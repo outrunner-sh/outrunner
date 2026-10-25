@@ -51,10 +51,15 @@ test("a long error is cut to what the page can show", () => {
 test("git refused by GitHub says to reconnect, not git's message", () => {
   for (const said of [
     "git -C failed (128): remote: Invalid username or token. Password authentication is not supported for Git operations. fatal: Authentication failed for 'https://github.com/acme/app.git/'",
-    "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+    "remote: Invalid username or token.",
   ]) {
     assert.equal(provisionFailureMessage(new Error(said), "allocate", []), GITHUB_RECONNECT_MESSAGE);
   }
+  // No token at all: git asking for one is not a connection refused.
+  assert.match(
+    provisionFailureMessage(new Error("fatal: could not read Username for 'https://github.com': terminal prompts disabled"), "clone", []),
+    /could not read Username/,
+  );
   // Any other clone failure still says what happened.
   assert.match(provisionFailureMessage(new Error("fatal: repository not found"), "clone", []), /repository not found/);
 });
