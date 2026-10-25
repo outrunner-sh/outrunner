@@ -551,6 +551,9 @@ export const PROTOCOL_SCHEMAS = {
   SetAgentConfigRequest,
   EditorResponse,
   PortsResponse,
+  /** The provider's own ports on every box (lib/runtime/box-ports.ts and the
+   *  agent's ports package each hold the list, checked against this). */
+  ProviderPorts: z.array(z.number().int()),
   /** The variables a session's environment may not set; lib/imports/
    *  environment.ts and the agent each hold the list, checked against this. */
   ReservedEnv: z.array(z.string()),

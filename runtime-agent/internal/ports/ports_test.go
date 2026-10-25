@@ -1,10 +1,12 @@
 package ports
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"testing"
 )
@@ -84,4 +86,32 @@ func TestARealListenerIsFound(t *testing.T) {
 		}
 	}
 	t.Fatalf("port %d not listed in %+v", port, got)
+}
+
+func TestProviderPortsMatchTheSharedList(t *testing.T) {
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "lib", "runtime", "agent-protocol.fixtures.json")); err == nil {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("agent-protocol.fixtures.json not found")
+		}
+		dir = parent
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "lib", "runtime", "agent-protocol.fixtures.json"))
+	var fixtures struct {
+		ProviderPorts [][]int `json:"ProviderPorts"`
+	}
+	if err != nil || json.Unmarshal(data, &fixtures) != nil || len(fixtures.ProviderPorts) != 1 {
+		t.Fatalf("read the shared list: %v", err)
+	}
+	got := append([]int{}, ProviderPorts...)
+	want := append([]int{}, fixtures.ProviderPorts[0]...)
+	sort.Ints(got)
+	sort.Ints(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ProviderPorts = %v, the shared list = %v", got, want)
+	}
 }

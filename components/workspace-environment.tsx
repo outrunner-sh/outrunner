@@ -196,6 +196,13 @@ function PortRows({ workspaceId, active }: { workspaceId: string; active: boolea
   const [ports, setPorts] = useState<ListedPort[]>([]);
   const [opening, setOpening] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A session that stops (its box paused) runs nothing: the list it had goes,
+  // so it doesn't come back with the session, stale, before the first look.
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) setPorts([]);
+  }
 
   useEffect(() => {
     if (!active) return;

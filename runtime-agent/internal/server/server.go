@@ -494,11 +494,9 @@ func (s *Server) listPorts(w http.ResponseWriter, r *http.Request) {
 	if root == "" {
 		root = "/proc"
 	}
-	agentPort := s.AgentPort
-	if agentPort == 0 {
-		agentPort = 8080
-	}
-	found, err := ports.Listening(root, agentPort, editor.Port)
+	// AgentPort is set by main from the port it bound; the control plane's
+	// AGENT_PORT is what boxes are deployed with.
+	found, err := ports.Listening(root, s.AgentPort, editor.Port)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", "can't read this box's servers: "+err.Error())
 		return

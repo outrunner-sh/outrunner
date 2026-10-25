@@ -21,9 +21,11 @@ type Port struct {
 	Process string `json:"process,omitempty"`
 }
 
-// providerPorts are Daytona's own daemon on every box: its toolbox, SSH and
-// terminal. Not the user's to open.
-var providerPorts = map[int]bool{2280: true, 22220: true, 22222: true, 33333: true}
+// ProviderPorts are Daytona's own daemon on every box: its toolbox, SSH and
+// terminal. Not the user's to open. lib/runtime/box-ports.ts holds the same
+// list, which the control plane refuses a preview link for; both match
+// ProviderPorts in agent-protocol.fixtures.json.
+var ProviderPorts = []int{2280, 22220, 22222, 33333}
 
 // tcpListen is the LISTEN state in /proc/net/tcp.
 const tcpListen = "0A"
@@ -53,16 +55,21 @@ func Listening(procRoot string, skip ...int) ([]Port, error) {
 		return nil, os.ErrNotExist
 	}
 	skipped := map[int]bool{}
-	for _, port := range skip {
+	for _, port := range append(append([]int{}, skip...), ProviderPorts...) {
 		skipped[port] = true
 	}
 	var listening []Port
-	owners := socketOwners(procRoot)
+	wanted := map[string]bool{}
 	for port, inode := range inodes {
-		if port < 1024 || skipped[port] || providerPorts[port] {
+		if port < 1024 || skipped[port] {
 			continue
 		}
-		listening = append(listening, Port{Port: port, Process: owners[inode]})
+		listening = append(listening, Port{Port: port})
+		wanted[inode] = true
+	}
+	owners := socketOwners(procRoot, wanted)
+	for i := range listening {
+		listening[i].Process = owners[inodes[listening[i].Port]]
 	}
 	sort.Slice(listening, func(i, j int) bool { return listening[i].Port < listening[j].Port })
 	return listening, nil
@@ -98,13 +105,21 @@ func readListeners(path string) (map[int]string, error) {
 	return listeners, scanner.Err()
 }
 
-// socketOwners maps each socket inode the agent can see to the program that
-// holds it, from /proc/<pid>/fd: the box user's own processes (others' fds
-// can't be read, and those ports are listed without a name).
-func socketOwners(procRoot string) map[string]string {
+// socketOwners maps each `wanted` socket inode to the program that holds it,
+// from /proc/<pid>/fd: the box user's own processes (others' fds can't be
+// read, and those ports are listed without a name). It stops once all are
+// found, and looks at nothing when none are wanted: a poll's cost follows the
+// listeners, not every fd on the box.
+func socketOwners(procRoot string, wanted map[string]bool) map[string]string {
 	owners := map[string]string{}
+	if len(wanted) == 0 {
+		return owners
+	}
 	pids, _ := os.ReadDir(procRoot)
 	for _, pid := range pids {
+		if len(owners) == len(wanted) {
+			break
+		}
 		if _, err := strconv.Atoi(pid.Name()); err != nil {
 			continue
 		}
@@ -118,11 +133,15 @@ func socketOwners(procRoot string) map[string]string {
 			if err != nil || !strings.HasPrefix(link, "socket:[") {
 				continue
 			}
+			inode := strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")
+			if !wanted[inode] {
+				continue
+			}
 			if name == "" {
 				comm, _ := os.ReadFile(filepath.Join(procRoot, pid.Name(), "comm"))
 				name = strings.TrimSpace(string(comm))
 			}
-			owners[strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")] = name
+			owners[inode] = name
 		}
 	}
 	return owners

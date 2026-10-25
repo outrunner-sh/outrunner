@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
-import { AGENT_PORT } from "@/lib/runtime/daytona/deploy";
+import { previewablePort } from "@/lib/runtime/box-ports";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 
 type RouteContext = { params: Promise<{ id: string; port: string }> };
@@ -13,8 +13,9 @@ const PREVIEW_LINK_TTL_SECONDS = 8 * 60 * 60;
 /**
  * A link to a server running on a cloud session's box, for its owner's
  * browser: the provider's signed preview URL, its credential in the host, so
- * the app's pages, assets and sockets all get through. Any port but the
- * agent's own, which isn't the user's to open.
+ * the app's pages, assets and sockets all get through. Not the agent's own
+ * port or the provider's daemon's (lib/runtime/box-ports.ts): a link to
+ * those would be a bearer key to the box's control, good for hours.
  */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
@@ -26,7 +27,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
   const { id, port: raw } = await context.params;
   const port = /^\d{1,5}$/.test(raw) ? Number(raw) : NaN;
-  if (!(port >= 1024 && port <= 65535) || port === AGENT_PORT) {
+  if (!previewablePort(port)) {
     return NextResponse.json({ error: "That isn't a port to open." }, { status: 400 });
   }
 
