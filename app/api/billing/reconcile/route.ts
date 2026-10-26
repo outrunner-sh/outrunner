@@ -12,8 +12,8 @@ import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 
 /**
  * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
- * renew for sessions already running, and the warm pool's abandoned boxes
- * (lib/runtime/warm-pool.deps.ts), for the Cloudflare cron
+ * renew for sessions already running, and the warm pool's boxes nothing else
+ * will delete (lib/runtime/warm-pool.deps.ts), for the Cloudflare cron
  * (cloudflare/worker.ts, every 2 minutes). Not a user's route: it takes only
  * BILLING_CRON_SECRET, as a bearer token. Answers what the run did.
  */
@@ -35,7 +35,8 @@ export async function POST(request: Request) {
             return null;
           })
         : 0;
-    // Its own step too: pooled boxes whose refill a restart cut off.
+    // Its own step too: pooled boxes nothing else will delete (a refill a
+    // restart cut off, a failed refill's leftover box).
     const provider = getRuntimeProvider();
     const poolsSwept = isComputerProvider(provider)
       ? await sweepAbandonedPools(provider).catch((error: unknown) => {
