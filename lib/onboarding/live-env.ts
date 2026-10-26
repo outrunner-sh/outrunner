@@ -1,6 +1,7 @@
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import type { AgentStatus, OnboardingEnv, OnboardingUser, RepositoryList } from "@/lib/onboarding/types";
+import type { AgentPick, AgentStatus, OnboardingEnv, OnboardingUser, RepositoryList } from "@/lib/onboarding/types";
+import { CLAUDE_DEFAULT_MODEL, CODEX_MODELS } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 
 /** A failure the page can show, with where to fix it when there's a place. */
@@ -24,6 +25,14 @@ async function call<T>(method: "GET" | "POST" | "PUT", url: string, body?: unkno
   const json = (await res.json().catch(() => null)) as (T & { error?: string; settingsHref?: string }) | null;
   if (!res.ok) throw new OnboardingError(json?.error ?? "Something went wrong. Please try again.", json?.settingsHref);
   return json as T;
+}
+
+/** The model a first session starts on, by the agent picked: the user's own
+ *  Claude or Codex, or none for the menu's default (Outrunner's models). */
+export function firstModel(runOn: AgentPick): { provider: string; model: string } | Record<string, never> {
+  if (runOn === "claude") return { provider: "claude", model: CLAUDE_DEFAULT_MODEL.id };
+  if (runOn === "codex") return { provider: "codex", model: CODEX_MODELS[0].id };
+  return {};
 }
 
 /** Mark onboarding done, so home stops sending the user here. A failure is
@@ -77,9 +86,10 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       return projects;
     },
 
-    async startSession(projectId) {
+    async startSession(projectId, runOn) {
       const { workspace } = await call<{ workspace?: { id: string } }>("POST", `/api/projects/${projectId}/workspaces`, {
         branch: "",
+        ...firstModel(runOn),
       });
       if (!workspace) throw new OnboardingError("The session didn't start. Please try again.");
       await markOnboarded();

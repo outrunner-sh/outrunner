@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
 import type { RepositoryListing } from "@/lib/github/listing";
-import { liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
-import { agentReady, filterRepositories, initialPick, sortRepositories } from "@/lib/onboarding/rules";
-import type { AgentStatus } from "@/lib/onboarding/types";
+import { firstModel, liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
+import { filterRepositories, freeModelsOffer, sortRepositories } from "@/lib/onboarding/rules";
 
 const user = { name: "Ada Lovelace", login: "ada", avatarUrl: null };
 const realFetch = globalThis.fetch;
@@ -73,7 +72,8 @@ test("starting the first session marks onboarding done and opens the session", a
     "POST /api/projects/p1/workspaces": () => [202, { workspace: { id: "w1" } }],
     "POST /api/onboarding/complete": () => [200, { ok: true }],
   });
-  assert.equal(await env().startSession("p1"), "/workspaces/w1");
+  assert.equal(await env().startSession("p1", "claude"), "/workspaces/w1");
+  assert.deepEqual(calls[0].body, { branch: "", provider: "claude", model: "opus" });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ["POST /api/projects/p1/workspaces", "POST /api/onboarding/complete"]);
 });
 
@@ -81,7 +81,7 @@ test("a session refused says why and where to fix it, and onboarding isn't marke
   const calls = stubFetch({
     "POST /api/projects/p1/workspaces": () => [403, { error: "Your plan's 2 sessions are running.", settingsHref: "/upgrade" }],
   });
-  await assert.rejects(env().startSession("p1"), (e: unknown) => e instanceof OnboardingError && e.href === "/upgrade");
+  await assert.rejects(env().startSession("p1", "outrunner"), (e: unknown) => e instanceof OnboardingError && e.href === "/upgrade");
   assert.equal(calls.some((c) => c.url === "/api/onboarding/complete"), false);
 });
 
@@ -90,25 +90,14 @@ test("skipping marks onboarding done and goes home", async () => {
   assert.equal(await env().skip(), "/");
 });
 
-const status = (over: Partial<AgentStatus["claude"]> = {}, codex = false): AgentStatus => ({
-  claude: { subscription: false, last4: null, apiKey: false, ...over },
-  codex: { apiKey: codex },
+test("the first session starts on the agent picked: the user's own, or the menu's default", () => {
+  assert.deepEqual(firstModel("claude"), { provider: "claude", model: "opus" });
+  assert.equal(firstModel("codex").provider, "codex");
+  assert.deepEqual(firstModel("outrunner"), {});
 });
 
-test("an agent is ready only on what it signs in with", () => {
-  assert.equal(agentReady("claude", "subscription", status({ subscription: true })), true);
-  assert.equal(agentReady("claude", "api-key", status({ subscription: true })), false);
-  assert.equal(agentReady("claude", "api-key", status({ apiKey: true })), true);
-  assert.equal(agentReady("codex", "subscription", status({}, true)), true);
-  assert.equal(agentReady("codex", "subscription", status()), false);
-  assert.equal(agentReady("outrunner", "subscription", null), true);
-});
-
-test("a returning user starts on what they've connected", () => {
-  assert.equal(initialPick(status({ subscription: true }), true), "claude");
-  assert.equal(initialPick(status({}, true), true), "codex");
-  assert.equal(initialPick(status(), true), "outrunner");
-  assert.equal(initialPick(status(), false), "claude");
+test("Outrunner's models are offered as the Free plan gives them", () => {
+  assert.equal(freeModelsOffer(), "$5 free to start");
 });
 
 test("repositories show most recently pushed first, and filter by name or description", () => {

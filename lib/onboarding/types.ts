@@ -60,9 +60,9 @@ export type OnboardingEnv = {
   /** Connect repositories as projects; every project the user has after. */
   connect(githubRepoIds: number[]): Promise<Project[]>;
 
-  /** Start a first session on the project, finishing onboarding; where it
-   *  opens. */
-  startSession(projectId: string): Promise<string>;
+  /** Start a first session on the project, on the agent picked, finishing
+   *  onboarding; where it opens. */
+  startSession(projectId: string, runOn: AgentPick): Promise<string>;
   /** Finish onboarding without a session; where home is. */
   skip(): Promise<string>;
 };

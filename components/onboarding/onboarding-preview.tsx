@@ -137,12 +137,12 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
       await wait(600);
       return REPOS.filter((r) => ids.includes(r.githubRepoId)).map(project);
     },
-    async startSession(projectId) {
+    async startSession(projectId, runOn) {
       await wait(800);
       if (scenario.start === "fails") {
         throw new OnboardingError("Your plan's 2 concurrent cloud sessions are already running.", "/upgrade");
       }
-      return `/workspaces/new-on-${projectId}`;
+      return `/workspaces/new-on-${projectId}-${runOn}`;
     },
     skip: async () => (await wait(300), "/"),
   };

@@ -4,7 +4,7 @@ import { Check } from "lucide-react";
 import { useState } from "react";
 
 import { LoadingButton } from "@/components/ui/loading-button";
-import type { OnboardingEnv } from "@/lib/onboarding/types";
+import type { AgentPick, OnboardingEnv } from "@/lib/onboarding/types";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
@@ -16,10 +16,12 @@ import { cn } from "@/lib/utils";
 export function StartStep({
   env,
   projects,
+  runOn,
   onLeave,
 }: {
   env: OnboardingEnv;
   projects: Project[];
+  runOn: AgentPick;
   onLeave: (href: string) => void;
 }) {
   const [projectId, setProjectId] = useState(projects[0]?.id ?? null);
@@ -31,7 +33,7 @@ export function StartStep({
     setLeaving(way);
     setError(null);
     try {
-      onLeave(way === "start" && projectId ? await env.startSession(projectId) : await env.skip());
+      onLeave(way === "start" && projectId ? await env.startSession(projectId, runOn) : await env.skip());
     } catch (e) {
       setError({
         message: e instanceof Error ? e.message : "The session didn't start. Please try again.",

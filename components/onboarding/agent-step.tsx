@@ -1,29 +1,49 @@
 "use client";
 
-import { Check, KeyRound, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowLeft, Check, ChevronRight, Copy, KeyRound, Sparkles, Terminal } from "lucide-react";
+import { type ComponentType, useEffect, useState } from "react";
 
 import { ClaudeIcon, OpenAIIcon } from "@/components/brand-icons";
 import { ClaudeConnection } from "@/components/claude-connection";
-import { CommandSnippet } from "@/components/onboarding/checklist-row";
-import { OptionCards } from "@/components/option-cards";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
-import { agentReady, initialPick } from "@/lib/onboarding/rules";
-import type { AgentMethod, AgentPick, AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
+import { freeModelsOffer } from "@/lib/onboarding/rules";
+import type { AgentPick, AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
+import { cn } from "@/lib/utils";
 
 /** How often the page looks for a subscription connected from the terminal. */
 const TERMINAL_POLL_MS = 3_000;
 
-/** The command that connects Claude from the user's terminal (the outrunner
- *  CLI: it signs the terminal in, then runs `claude setup-token`). */
-export const CONNECT_COMMAND = "npx outrunner@latest";
+type Agent = "claude" | "codex";
+type Method = "subscription" | "api-key" | "outrunner";
+
+/** Where in the step the user is: the agents, one agent's ways to connect,
+ *  or one way's page. */
+type Page = { at: "agents" } | { at: "methods"; agent: Agent } | { at: "connect"; agent: Agent; method: Method };
+
+const AGENT_NAMES: Record<Agent, string> = { claude: "Claude Code", codex: "OpenAI Codex" };
+const AGENT_ICONS: Record<Agent, ComponentType<{ className?: string }>> = { claude: ClaudeIcon, codex: OpenAIIcon };
+
+/** The CLI that connects Claude from the user's terminal, by package manager
+ *  (it signs the terminal in, then runs `claude setup-token`). */
+const CONNECT_COMMANDS = [
+  ["npm", "npx outrunner@latest"],
+  ["pnpm", "pnpm dlx outrunner@latest"],
+  ["yarn", "yarn dlx outrunner@latest"],
+  ["bun", "bunx outrunner@latest"],
+] as const;
+
+/** Whether `method` of `agent` is connected already. */
+function connected(agent: Agent, method: Method, status: AgentStatus): boolean {
+  if (method === "outrunner") return false;
+  if (agent === "codex") return status.codex.apiKey;
+  return method === "subscription" ? status.claude.subscription : status.claude.apiKey;
+}
 
 /**
- * Step 1: the coding agent, and how it signs in. Claude Code on the user's
- * subscription (connected from their terminal, or with a pasted token; in the
- * Mac app, one click) or an Anthropic API key; Codex on an OpenAI key; or
- * Outrunner's own models, where the server runs them.
+ * Step 1, as Replicas' is: choose a coding agent, then how it connects (its
+ * subscription, an API key, or Outrunner's models, free to start), then
+ * connect. Done once connected, with what sessions run on.
  */
 export function AgentStep({
   env,
@@ -32,43 +52,26 @@ export function AgentStep({
   onDone,
 }: {
   env: OnboardingEnv;
-  status: AgentStatus | null;
+  status: AgentStatus;
   onStatus: (status: AgentStatus) => void;
-  onDone: () => void;
+  /** Sessions run on this from now on. */
+  onDone: (runOn: AgentPick) => void;
 }) {
-  const [pick, setPick] = useState<AgentPick>(() => initialPick(status, env.outrunnerModels));
-  const [method, setMethod] = useState<AgentMethod>(
-    status && !status.claude.subscription && status.claude.apiKey ? "api-key" : "subscription",
-  );
+  const [page, setPage] = useState<Page>({ at: "agents" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ready = agentReady(pick, method, status);
 
-  // A subscription connected from the terminal lands on the server: look for
-  // it while it's what the page is waiting on, and the page is in view.
-  const waitingOnTerminal = pick === "claude" && method === "subscription" && !ready && !env.desktop;
-  useEffect(() => {
-    if (!waitingOnTerminal) return;
-    const timer = setInterval(() => {
-      if (document.hidden) return;
-      env.agentStatus().then(onStatus, () => {});
-    }, TERMINAL_POLL_MS);
-    return () => clearInterval(timer);
-  }, [waitingOnTerminal, env, onStatus]);
-
-  const options = [
-    { id: "claude" as const, label: "Claude Code", icon: ClaudeIcon, connected: Boolean(status?.claude.subscription || status?.claude.apiKey) },
-    { id: "codex" as const, label: "Codex", icon: OpenAIIcon, connected: Boolean(status?.codex.apiKey) },
-    ...(env.outrunnerModels ? [{ id: "outrunner" as const, label: "Outrunner's models", icon: Sparkles }] : []),
-  ];
-
-  async function next() {
+  async function finish(agent: Agent, method: Method) {
     setBusy(true);
     setError(null);
     try {
-      // Sessions run on what was connected here, from now on.
-      if (pick !== "outrunner") await env.chooseMethod(pick, pick === "codex" ? "api-key" : method);
-      onDone();
+      if (method === "outrunner") {
+        onDone("outrunner");
+        return;
+      }
+      // Sessions sign in this way from now on (Settings → Providers).
+      await env.chooseMethod(agent, agent === "codex" ? "api-key" : method);
+      onDone(agent);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that. Please try again.");
     } finally {
@@ -76,94 +79,153 @@ export function AgentStep({
     }
   }
 
-  return (
-    <section className="space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold">Choose a coding agent</h1>
-        <p className="text-muted-foreground text-sm">It runs in your sessions, on your own account or on Outrunner&apos;s models.</p>
-      </div>
-
-      <OptionCards options={options} chosen={ready ? pick : null} shown={pick} onSelect={setPick} label="Coding agent" chosenLabel="ready" />
-
-      <div className="border-border/60 bg-card/30 space-y-4 rounded-xl border p-4">
-        {pick === "claude" && (
-          <>
-            <MethodTabs method={method} onMethod={setMethod} />
-            {method === "subscription" ? (
-              status?.claude.subscription ? (
-                <Connected detail={status.claude.last4 ? `Subscription · …${status.claude.last4}` : "Subscription"} />
-              ) : env.desktop ? (
-                <ClaudeConnection
-                  meta={{ connected: false, last4: null }}
-                  onChange={() => void env.agentStatus().then(onStatus, () => {})}
-                />
-              ) : (
-                <SubscriptionFromTerminal env={env} onStatus={onStatus} />
-              )
-            ) : status?.claude.apiKey ? (
-              <Connected detail="Anthropic API key" />
-            ) : (
-              <ApiKeyForm placeholder="sk-ant-api…" onSave={(key) => env.saveApiKey("anthropic", key).then(onStatus)} />
-            )}
-          </>
-        )}
-        {pick === "codex" &&
-          (status?.codex.apiKey ? (
-            <Connected detail="OpenAI API key" />
-          ) : (
-            <div className="space-y-3">
-              <p className="text-muted-foreground text-sm">Codex runs in the cloud on an OpenAI API key.</p>
-              <ApiKeyForm placeholder="sk-…" onSave={(key) => env.saveApiKey("openai", key).then(onStatus)} />
-            </div>
+  if (page.at === "agents") {
+    return (
+      <Page title="Choose a coding agent">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {(["claude", "codex"] as const).map((agent) => (
+            <Row key={agent} icon={AGENT_ICONS[agent]} label={AGENT_NAMES[agent]} onClick={() => setPage({ at: "methods", agent })} />
           ))}
-        {pick === "outrunner" && (
-          <p className="text-muted-foreground text-sm">
-            Sessions run on Outrunner&apos;s models, nothing to connect. You can add your own Claude Code or Codex later in
-            Settings → Providers.
+        </div>
+      </Page>
+    );
+  }
+
+  const { agent } = page;
+  const Icon = AGENT_ICONS[agent];
+  const title = (
+    <>
+      Connect <Icon className="mx-1.5 inline size-5 align-[-3px]" /> <span className="font-normal">{AGENT_NAMES[agent]}</span>
+    </>
+  );
+
+  if (page.at === "methods") {
+    const methods: { id: Method; label: string; icon: ComponentType<{ className?: string }>; note?: string }[] = [
+      ...(agent === "claude" ? [{ id: "subscription" as const, label: "Use a subscription", icon: ClaudeIcon }] : []),
+      { id: "api-key", label: agent === "claude" ? "Anthropic API key" : "OpenAI API key", icon: KeyRound },
+      ...(env.outrunnerModels
+        ? [
+            {
+              id: "outrunner" as const,
+              label: "Outrunner's models",
+              icon: Sparkles,
+              note: agent === "codex" ? `${freeModelsOffer()} · runs in Claude Code` : freeModelsOffer(),
+            },
+          ]
+        : []),
+    ];
+    return (
+      <Page title={title} onBack={() => setPage({ at: "agents" })}>
+        <div className="space-y-2">
+          {methods.map((method) => (
+            <Row
+              key={method.id}
+              icon={method.icon}
+              label={method.label}
+              note={method.note}
+              done={connected(agent, method.id, status)}
+              onClick={() => setPage({ at: "connect", agent, method: method.id })}
+            />
+          ))}
+        </div>
+      </Page>
+    );
+  }
+
+  const { method } = page;
+  const isConnected = connected(agent, method, status);
+  return (
+    <Page title={title} onBack={() => setPage({ at: "methods", agent })}>
+      {method === "subscription" &&
+        (isConnected ? (
+          <Connected detail={status.claude.last4 ? `Subscription · …${status.claude.last4}` : "Subscription"} />
+        ) : env.desktop ? (
+          <ClaudeConnection meta={{ connected: false, last4: null }} onChange={() => void env.agentStatus().then(onStatus, () => {})} />
+        ) : (
+          <SubscriptionFromTerminal env={env} onStatus={onStatus} />
+        ))}
+      {method === "api-key" &&
+        (isConnected ? (
+          <Connected detail={agent === "claude" ? "Anthropic API key" : "OpenAI API key"} />
+        ) : (
+          <div className="space-y-3">
+            <p className="text-muted-foreground text-sm">
+              {agent === "claude" ? "Sessions run Claude Code on your Anthropic API key." : "Sessions run Codex on your OpenAI API key."}
+            </p>
+            <KeyForm
+              placeholder={agent === "claude" ? "sk-ant-api…" : "sk-…"}
+              onSave={(key) => env.saveApiKey(agent === "claude" ? "anthropic" : "openai", key).then(onStatus)}
+            />
+          </div>
+        ))}
+      {method === "outrunner" && (
+        <div className="border-border/60 space-y-1 rounded-xl border p-4">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <Sparkles className="size-4" /> {freeModelsOffer()}
           </p>
-        )}
-      </div>
+          <p className="text-muted-foreground text-sm">
+            Sessions run {agent === "codex" ? "in Claude Code " : ""}on Outrunner&apos;s models (GLM, Kimi, DeepSeek), nothing to
+            connect. Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
+          </p>
+        </div>
+      )}
 
       {error && <p role="alert" className="text-destructive text-sm">{error}</p>}
-
       <div className="flex justify-end">
         <LoadingButton
           size="default"
           status={busy ? "pending" : "idle"}
-          disabled={!ready}
-          onClick={() => void next()}
+          disabled={method !== "outrunner" && !isConnected}
+          onClick={() => void finish(agent, method)}
           labels={{ idle: "Continue", pending: "Saving" }}
         />
       </div>
+    </Page>
+  );
+}
+
+function Page({ title, onBack, children }: { title: React.ReactNode; onBack?: () => void; children: React.ReactNode }) {
+  return (
+    <section className="space-y-6">
+      <h1 className="text-xl font-semibold">{title}</h1>
+      {children}
+      {onBack && (
+        <button type="button" onClick={onBack} className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-sm">
+          <ArrowLeft className="size-4" /> Back
+        </button>
+      )}
     </section>
   );
 }
 
-function MethodTabs({ method, onMethod }: { method: AgentMethod; onMethod: (method: AgentMethod) => void }) {
+/** One choice, as a row that goes on to its page. */
+function Row({
+  icon: Icon,
+  label,
+  note,
+  done,
+  onClick,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  note?: string;
+  done?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <div role="tablist" aria-label="How Claude Code signs in" className="bg-muted/40 inline-flex rounded-lg p-0.5 text-xs">
-      {(
-        [
-          ["subscription", "Subscription"],
-          ["api-key", "API key"],
-        ] as const
-      ).map(([id, label]) => (
-        <button
-          key={id}
-          type="button"
-          role="tab"
-          aria-selected={method === id}
-          onClick={() => onMethod(id)}
-          className={
-            method === id
-              ? "bg-background text-foreground rounded-md px-3 py-1 shadow-sm"
-              : "text-muted-foreground hover:text-foreground rounded-md px-3 py-1"
-          }
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className="border-border/60 bg-card/30 hover:bg-accent/30 flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm"
+    >
+      <Icon className="size-4 shrink-0" />
+      <span className="flex-1">
+        {label}
+        {note && <span className="text-success ml-2 text-xs">{note}</span>}
+      </span>
+      {done && <span className="text-success text-xs">Connected</span>}
+      <ChevronRight className="text-muted-foreground size-4" />
+    </button>
   );
 }
 
@@ -178,23 +240,58 @@ function Connected({ detail }: { detail: string }) {
   );
 }
 
-/** Connect the subscription from the user's terminal (the page moves on when
- *  it lands), or paste a token from `claude setup-token`. */
+/** The CLI command to connect the subscription from the user's terminal, by
+ *  package manager, as Replicas shows it; the page moves on once it lands. A
+ *  token from `claude setup-token` can be pasted instead. */
 function SubscriptionFromTerminal({ env, onStatus }: { env: OnboardingEnv; onStatus: (status: AgentStatus) => void }) {
+  const [manager, setManager] = useState(0);
   const [pasting, setPasting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const command = CONNECT_COMMANDS[manager][1];
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!document.hidden) env.agentStatus().then(onStatus, () => {});
+    }, TERMINAL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [env, onStatus]);
+
   return (
     <div className="space-y-3">
-      <p className="text-sm">Run this in your terminal. It signs it in, then connects your Claude subscription:</p>
-      <CommandSnippet command={CONNECT_COMMAND} />
-      <p className="text-muted-foreground flex items-center gap-2 text-xs">
-        <span className="bg-muted-foreground/60 size-1.5 animate-pulse rounded-full" />
-        Waiting for it to connect. This page moves on by itself.
-      </p>
+      <p className="text-muted-foreground text-sm">Run the CLI and connect your Claude Code account</p>
+      <div role="tablist" aria-label="Package manager" className="flex gap-4 text-xs">
+        {CONNECT_COMMANDS.map(([name], index) => (
+          <button
+            key={name}
+            type="button"
+            role="tab"
+            aria-selected={index === manager}
+            onClick={() => setManager(index)}
+            className={cn("pb-1", index === manager ? "border-foreground text-foreground border-b" : "text-muted-foreground hover:text-foreground")}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+      <div className="bg-muted/40 border-border/60 flex items-center gap-2 rounded-md border px-3 py-2.5">
+        <Terminal className="text-success size-3.5 shrink-0" />
+        <code className="flex-1 font-mono text-xs">{command}</code>
+        <button
+          type="button"
+          aria-label="Copy"
+          onClick={() => {
+            void navigator.clipboard?.writeText(command);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+      </div>
+      <p className="text-muted-foreground text-xs">Claude will give you a code to paste into your terminal. This page moves on by itself.</p>
       {pasting ? (
-        <ApiKeyForm
-          placeholder="Paste the token from claude setup-token"
-          onSave={(token) => env.saveClaudeToken(token).then(onStatus)}
-        />
+        <KeyForm placeholder="Paste the token from claude setup-token" onSave={(token) => env.saveClaudeToken(token).then(onStatus)} />
       ) : (
         <button type="button" onClick={() => setPasting(true)} className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline">
           Or paste a token from <code className="font-mono">claude setup-token</code>
@@ -204,7 +301,7 @@ function SubscriptionFromTerminal({ env, onStatus }: { env: OnboardingEnv; onSta
   );
 }
 
-function ApiKeyForm({ placeholder, onSave }: { placeholder: string; onSave: (value: string) => Promise<unknown> }) {
+function KeyForm({ placeholder, onSave }: { placeholder: string; onSave: (value: string) => Promise<unknown> }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
