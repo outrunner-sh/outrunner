@@ -36,6 +36,9 @@ export class AgentEndpointCache {
     const kept = this.entries.get(key);
     if (kept && !options.fresh && this.now() - kept.at < this.ttlMs) return kept.endpoint;
 
+    // Each session has its own box, so most keys are never asked for again:
+    // drop the expired ones, or the map grows by one per session for good.
+    this.sweep();
     const entry: Entry = { endpoint: load(), at: this.now() };
     this.entries.set(key, entry);
     entry.endpoint.catch(() => {
@@ -48,5 +51,17 @@ export class AgentEndpointCache {
   /** Drop a box's endpoint: the box is gone. */
   forget(key: string): void {
     this.entries.delete(key);
+  }
+
+  /** How many endpoints are kept. */
+  get size(): number {
+    return this.entries.size;
+  }
+
+  private sweep(): void {
+    const now = this.now();
+    for (const [key, entry] of this.entries) {
+      if (now - entry.at >= this.ttlMs) this.entries.delete(key);
+    }
   }
 }

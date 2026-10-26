@@ -6,12 +6,12 @@ export default function GeneralSettings() {
 
       <div className="space-y-1">
         <span className="text-lg font-semibold text-foreground">Outrunner</span>
-        <p className="text-sm text-muted-foreground">Cloud sandboxes for Claude Code.</p>
+        <p className="text-sm text-muted-foreground">Cloud sessions for Claude Code, Codex and open models.</p>
       </div>
 
       <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
         Spin up an isolated cloud workspace per task — each on its own git branch —
-        running Claude Code, chat with it live, and review every change it makes.
+        running Claude Code or Codex, chat with it live, and review every change it makes.
       </p>
     </section>
   );

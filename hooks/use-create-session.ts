@@ -97,13 +97,15 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         response = await fetch(`/api/projects/${selected.id}/workspaces`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // The prompt and attachments are not sent here: the workspace has no
-          // box yet. They ride the redirect, and wait in this tab for the
-          // session to be ready (lib/session/first-prompt.ts).
+          // The prompt and attachments are not delivered from here: the
+          // workspace has no box yet. They ride the redirect, and wait in this
+          // tab for the session to be ready (lib/session/first-prompt.ts). The
+          // prompt goes along only to name the session at once.
           // The model picked on this screen, who serves it, and its effort;
           // none, the server starts it on the menu's default.
           body: JSON.stringify({
             branch: "",
+            prompt,
             ...(model && { provider: model.provider, model: model.id }),
             ...(effort && { effort }),
           }),

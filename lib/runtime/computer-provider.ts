@@ -450,9 +450,14 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     // mkdir -p first: an upload need not create intermediate directories, and
     // a fresh worktree has no .attachments/.
     await box.io.exec(`mkdir -p ${shellQuote(dir)}`);
-    await Promise.all(
-      files.map((file) => box.io.upload(file.bytes, `${dir}/${file.filename}`)),
-    );
+    // A .gitignore of "*" inside ignores the folder, itself included, so a
+    // pasted screenshot never lands in a commit or a PR (the agent does the
+    // same for .context). Every time: it costs one small upload, and a
+    // folder from before this has none. Names here are never dotfiles.
+    await Promise.all([
+      box.io.upload(Buffer.from("*\n"), `${dir}/.gitignore`),
+      ...files.map((file) => box.io.upload(file.bytes, `${dir}/${file.filename}`)),
+    ]);
   }
 
   /** Push an interactive worktree's persisted branch with a request-scoped token. */

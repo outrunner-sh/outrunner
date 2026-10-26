@@ -339,6 +339,13 @@ export const RestoreWorkspaceRequest = z
   });
 export type RestoreWorkspaceRequest = z.infer<typeof RestoreWorkspaceRequest>;
 
+/** What a restore answers: the session's worktree on the box, as create
+ *  answers. Absent from agents before it was reported. */
+export const RestoreWorkspaceResult = z.object({
+  worktree: z.string().startsWith("/").optional(),
+});
+export type RestoreWorkspaceResult = z.infer<typeof RestoreWorkspaceResult>;
+
 export const ErrorCode = z.enum([
   "WORKSPACE_NOT_FOUND",
   "UNAUTHORIZED",

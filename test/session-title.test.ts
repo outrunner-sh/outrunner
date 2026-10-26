@@ -51,6 +51,13 @@ test("a session with a title is never renamed", () => {
   assert.equal(titleToSet({ title: "Fix OAuth redirect" }, "something else entirely"), null);
 });
 
+test("a session named from its prompt as it's made keeps that name when the prompt is delivered", () => {
+  const prompt = "Fix the login redirect\nand add a test";
+  const made = { title: titleToSet({ title: null }, prompt) };
+  assert.equal(made.title, "Fix the login redirect");
+  assert.equal(titleToSet(made, prompt), null);
+});
+
 test("a prompt with no text gives no title", () => {
   assert.equal(titleToSet({ title: null }, "  \n  "), null);
 });

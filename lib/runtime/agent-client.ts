@@ -18,6 +18,7 @@ import {
   LISTING_WORKSPACE_ID,
   PortsResponse,
   RestoreWorkspaceRequest,
+  RestoreWorkspaceResult,
   type RuntimeTokenClaims,
   SetAgentConfigRequest,
   SetAuthRequest,
@@ -228,17 +229,22 @@ export class AgentClient {
    * relaunches Claude with `--continue`. Rejects (agent 500) if verification
    * fails — Claude is not booted into a broken restore.
    */
+  /** Restore an archived session. The worktree is undefined from an agent
+   *  that doesn't report it (or reports something unreadable): the restore
+   *  itself still succeeded. */
   async restoreWorkspace(
     identity: WorkspaceIdentity,
     req: RestoreWorkspaceRequest,
-  ): Promise<unknown> {
+  ): Promise<RestoreWorkspaceResult> {
     const body = RestoreWorkspaceRequest.parse(req);
-    return this.post(
+    const raw = await this.post(
       `/workspaces/${identity.workspaceId}/restore`,
       identity,
       body,
       AGENT_LIFECYCLE_TIMEOUT_MS,
     );
+    const parsed = RestoreWorkspaceResult.safeParse(raw);
+    return parsed.success ? parsed.data : {};
   }
 
   destroyWorkspace(identity: WorkspaceIdentity): Promise<unknown> {

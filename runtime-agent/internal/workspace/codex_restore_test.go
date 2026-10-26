@@ -128,6 +128,25 @@ func TestACodexSessionWithoutARolloutStartsAfresh(t *testing.T) {
 	}
 }
 
+// The control plane saves the worktree a restore reports: a session imported
+// from a Mac has none on record. It must be the folder the restore rebuilt.
+func TestTheWorktreeARestoreReportsIsTheOneItRebuilt(t *testing.T) {
+	s, _ := restoringService(t)
+	srv := snapshotServer(t, nil)
+	if _, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
+		Branch: "feature", Agent: AgentCodex, Downloads: downloads(srv, "bundle", "patch"),
+	}, nil); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	worktree := s.Worktree("ws-r")
+	if worktree != filepath.Join(s.Root, "workspaces", "ws-r") {
+		t.Errorf("worktree = %q, want it under the agent's root", worktree)
+	}
+	if branch := run(t, worktree, "symbolic-ref", "--short", "HEAD"); branch != "feature" {
+		t.Errorf("the reported worktree is on %q, want the restored branch", branch)
+	}
+}
+
 // A fresh box has no record of the session's model: the restore brings it,
 // and the session relaunches on it, through its gateway on its key.
 func TestAClaudeSessionIsRestoredOnItsModel(t *testing.T) {
