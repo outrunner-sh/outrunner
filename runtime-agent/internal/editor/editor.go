@@ -13,8 +13,10 @@ package editor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -66,6 +68,10 @@ const installTimeout = 3 * time.Minute
 type Editor struct {
 	// Home is the box user's home, where a code-server it installs goes.
 	Home string
+	// Env is what code-server, its terminals and (when it starts first) the
+	// tmux server run with: the session's environment, never the agent's,
+	// whose secret tmux would hand every later session.
+	Env []string
 	// Port overrides Port, for tests.
 	Port int
 	// Health is the URL to ask whether it's up; empty is its own /healthz.
@@ -86,6 +92,13 @@ type Editor struct {
 
 	mu      sync.Mutex
 	attempt *attempt // the start under way, if any
+}
+
+// Health is code-server's /healthz: alive while it runs, and when someone
+// last had a tab open on it.
+type Health struct {
+	Status        string `json:"status"`
+	LastHeartbeat int64  `json:"lastHeartbeat"` // Unix milliseconds
 }
 
 // attempt is one start, and how it ended: every open waiting on it is told.
@@ -196,10 +209,7 @@ func (e *Editor) running(ctx context.Context) bool {
 
 // up is whether code-server answers on its port.
 func (e *Editor) up(ctx context.Context) bool {
-	url := e.Health
-	if url == "" {
-		url = "http://127.0.0.1:" + strconv.Itoa(e.port()) + "/healthz"
-	}
+	url := e.healthURL()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -210,14 +220,49 @@ func (e *Editor) up(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	res.Body.Close()
-	return res.StatusCode == http.StatusOK
+	defer res.Body.Close()
+	// code-server's own answer, not any server's 200: the user's dev server
+	// on this port would otherwise pass for the editor.
+	var h Health
+	return res.StatusCode == http.StatusOK && json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&h) == nil &&
+		(h.Status == "alive" || h.Status == "expired")
+}
+
+// LastUsed is when someone last had the editor open, from its heartbeat;
+// zero when it isn't running or can't say. Activity counts it, so a box
+// isn't paused under someone working in it.
+func (e *Editor) LastUsed(ctx context.Context) time.Time {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.healthURL(), nil)
+	if err != nil {
+		return time.Time{}
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return time.Time{}
+	}
+	defer res.Body.Close()
+	var h Health
+	if res.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(res.Body, 4096)).Decode(&h) != nil || h.Status != "alive" {
+		return time.Time{}
+	}
+	return time.UnixMilli(h.LastHeartbeat)
+}
+
+func (e *Editor) healthURL() string {
+	if e.Health != "" {
+		return e.Health
+	}
+	return "http://127.0.0.1:" + strconv.Itoa(e.port()) + "/healthz"
 }
 
 // binary is the code-server to run: the image's, or one installed for the
 // box user, installing it if neither is there.
 func (e *Editor) binary(ctx context.Context) (string, error) {
-	installed := filepath.Join(e.Home, ".local", "bin", "code-server")
+	// This release's own binary: a box with an older one (Version bumped)
+	// installs this one beside it, and the link moves to it.
+	installed := e.releaseBinary()
 	if path, err := exec.LookPath("code-server"); err == nil {
 		return path, nil
 	}
@@ -233,13 +278,18 @@ func (e *Editor) binary(ctx context.Context) (string, error) {
 	if err := install(ctx); err != nil {
 		return "", fmt.Errorf("install code-server: %w", err)
 	}
-	if path, err := exec.LookPath("code-server"); err == nil {
-		return path, nil
-	}
 	if isExecutable(installed) {
 		return installed, nil
 	}
+	if path, err := exec.LookPath("code-server"); err == nil {
+		return path, nil
+	}
 	return "", errors.New("code-server was installed but isn't where it was put")
+}
+
+// releaseBinary is where Version's release puts code-server.
+func (e *Editor) releaseBinary() string {
+	return filepath.Join(e.Home, ".local", "lib", "code-server-"+Version+"-linux-"+runtime.GOARCH, "bin", "code-server")
 }
 
 // installStandalone puts code-server's release for Version in ~/.local, for
@@ -261,12 +311,13 @@ func (e *Editor) installStandalone(ctx context.Context) error {
 		"trap 'rm -f \"$tmp\"' EXIT",
 		"curl -fsSL -o \"$tmp\" " + shellQuote(url),
 		"echo " + shellQuote(sum+"  ") + "\"$tmp\" | sha256sum -c - >/dev/null",
-		"rm -rf \"$lib/" + name + "\"",
+		// Other releases go: a bumped Version doesn't leave the old behind.
+		"rm -rf \"$lib\"/code-server-*-linux-*",
 		"tar -xzf \"$tmp\" -C \"$lib\"",
 		"ln -sfn \"$lib/" + name + "/bin/code-server\" \"$bin/code-server\"",
 	}, "\n")
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
-	cmd.Env = append(os.Environ(), "HOME="+e.Home)
+	cmd.Env = append(append([]string{}, e.Env...), "HOME="+e.Home)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, tail(string(out), 400))
 	}
@@ -287,10 +338,9 @@ func (e *Editor) startInTmux(ctx context.Context, binary string, port int) error
 	_ = tmux.Command(ctx, "kill-session", "-t", session).Run()
 	_ = os.Remove(e.logPath())
 	command := strings.Join([]string{
-		// code-server takes $PORT over --bind-addr's port, and the agent's own
-		// is in the environment it inherits.
-		"PORT=" + strconv.Itoa(port),
-		"exec", shellQuote(binary),
+		// No PORT: code-server takes it over --bind-addr's port, and its
+		// terminals hand it on to the user's dev servers.
+		"exec", "env", "-u", "PORT", shellQuote(binary),
 		"--bind-addr", "0.0.0.0:" + strconv.Itoa(port),
 		"--auth", "none",
 		"--disable-telemetry",
@@ -300,7 +350,9 @@ func (e *Editor) startInTmux(ctx context.Context, binary string, port int) error
 	}, " ")
 	// One shell command, run by tmux's shell, for the PORT and the redirect.
 	cmd := tmux.Command(ctx, "new-session", "-d", "-s", session, "-c", e.Home, command)
-	cmd.Env = append(os.Environ(), "HOME="+e.Home)
+	// The session's environment, not the agent's: if this starts the tmux
+	// server, tmux keeps what it was started with for every later session.
+	cmd.Env = append(append([]string{}, e.Env...), "HOME="+e.Home)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, tail(string(out), 400))
 	}

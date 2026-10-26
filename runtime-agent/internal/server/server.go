@@ -75,7 +75,7 @@ func New(secret string, ws *workspace.Service) *Server {
 		secret: secret,
 		ws:     ws,
 		broker: ptyx.NewBroker(),
-		Editor: &editor.Editor{Home: ws.Root},
+		Editor: &editor.Editor{Home: ws.Root, Env: ws.SessionEnv()},
 		upgrader: websocket.Upgrader{
 			// The Daytona preview proxy already gates access; the Runtime token in
 			// the URL is the real authorization check.
@@ -347,6 +347,12 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 	last, turnInProgress := s.ws.Activity()
 	if input := time.Unix(0, s.lastInput.Load()); input.After(last) {
 		last = input
+	}
+	// Someone working in the editor is activity: its heartbeat beats while a
+	// tab is open on it, so an editor left open also keeps the box awake
+	// (the 8-hour link's day, as the terminal's open tab does).
+	if used := s.Editor.LastUsed(r.Context()); used.After(last) {
+		last = used
 	}
 	writeJSON(w, http.StatusOK, protocol.Activity{
 		LastActivity:   last.UTC().Format(time.RFC3339),

@@ -68,6 +68,10 @@ try {
   const other = await agent.openEditor({ ...identity, workspaceId: "someone-else" }).then(() => "allowed", (e: { status?: number }) => `refused ${e.status}`);
   console.log(at(), "another session's id:", other);
   const box = await new Daytona().get(sandboxId);
+  const sh = async (c: string) => ((await box.process.executeCommand(c)).result ?? "").trim();
+  // Neither the agent's secret nor its PORT reaches tmux, the editor or its terminals.
+  console.log(at(), "tmux global env has the agent secret:", await sh("tmux show-environment -g 2>/dev/null | grep -c '^RUNTIME_AGENT_SECRET=' || true"));
+  console.log(at(), "code-server env has PORT / secret:", await sh("p=$(pgrep -f 'code-server-.*--bind-addr' | head -1); tr '\\0' '\\n' < /proc/$p/environ | grep -cE '^(PORT|RUNTIME_AGENT_SECRET)=' || true"));
   console.log(at(), "editor log tail:", ((await box.process.executeCommand("tail -3 ~/.outrunner-editor.log 2>&1")).result ?? "").trim().slice(-400));
 } catch (error) {
   console.log(at(), "FAILED:", error);
