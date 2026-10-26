@@ -98,20 +98,23 @@ async function discardBox(
 }
 
 /**
- * Delete the pooled boxes whose refill died mid-way (a deploy or crash cut it
- * off): their row still "provisioning" past STALE_REFILL_MS, and their box,
- * if it was made, running where nothing meters or pauses it. For the
- * reconciler's cron, so such a box runs minutes, not until the project's next
- * session. How many went. Idempotent: a box already gone is gone.
+ * Delete the warm pool's boxes nothing else will: a refill that died mid-way
+ * (its row still "provisioning" past STALE_REFILL_MS, its box maybe running),
+ * and a failed refill's leftover box (an "error" row that kept the box its
+ * delete couldn't remove; maybe still running too). Pooled boxes are outside
+ * metering and the reconciler, so this is what stops them. For the
+ * reconciler's cron, so such a box lasts minutes, not until the project's
+ * next session. A dead refill's row goes; a failed one keeps its row, for its
+ * back-off, without the box. How many boxes went. A box already gone is gone.
  */
 export async function sweepAbandonedPools(provider: ComputerRuntimeProvider): Promise<number> {
   const supabase = createSupabaseAdminClient();
+  const stale = new Date(Date.now() - STALE_REFILL_MS).toISOString();
   const { data, error } = await supabase
     .from("runtime_computers")
-    .select("id, daytona_sandbox_id, provider")
+    .select("id, status, daytona_sandbox_id, provider")
     .eq("pooled", true)
-    .eq("status", "provisioning")
-    .lt("updated_at", new Date(Date.now() - STALE_REFILL_MS).toISOString());
+    .or(`and(status.eq.provisioning,updated_at.lt.${stale}),and(status.eq.error,daytona_sandbox_id.not.is.null)`);
   if (error) throw error;
   let swept = 0;
   for (const row of data ?? []) {
@@ -123,11 +126,14 @@ export async function sweepAbandonedPools(provider: ComputerRuntimeProvider): Pr
       } else if (row.daytona_sandbox_id) {
         await provider.destroyComputerOrThrow(row.daytona_sandbox_id);
       }
-      const { error: deleteError } = await supabase.from("runtime_computers").delete().eq("id", row.id).eq("pooled", true);
-      if (deleteError) throw deleteError;
+      const { error: writeError } =
+        row.status === "error"
+          ? await supabase.from("runtime_computers").update({ daytona_sandbox_id: null }).eq("id", row.id).eq("pooled", true)
+          : await supabase.from("runtime_computers").delete().eq("id", row.id).eq("pooled", true);
+      if (writeError) throw writeError;
       swept += 1;
     } catch (sweepError) {
-      console.error(`Could not sweep abandoned pooled box ${row.id}`, sweepError);
+      console.error(`Could not sweep pooled box ${row.id}`, sweepError);
     }
   }
   return swept;

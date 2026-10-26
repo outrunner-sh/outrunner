@@ -102,7 +102,10 @@ export async function refillPool(deps: WarmPoolDeps): Promise<boolean> {
     return true;
   } catch (error) {
     const deleted = sandboxId ? await deps.discard(sandboxId, deps.provider).then(() => true, () => false) : true;
-    await deps.failed(slot.id, deleted ? null : sandboxId).catch(() => deps.forget(slot.id).catch(() => {}));
+    await deps.failed(slot.id, deleted ? null : sandboxId).catch(() => {
+      if (!deleted) console.warn(`Pooled box ${sandboxId} couldn't be deleted or recorded: delete it by hand`);
+      return deps.forget(slot.id).catch(() => {});
+    });
     throw error;
   }
 }
