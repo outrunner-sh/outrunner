@@ -27,8 +27,9 @@ export type AgentStatus = {
 };
 
 /** The agent a user starts on: their own Claude Code or Codex, or Outrunner's
- *  models, where the server runs them (no account of the user's needed). */
-export type AgentPick = "claude" | "codex" | "outrunner";
+ *  models, where the server runs them (no account of the user's needed), in
+ *  Claude Code ("outrunner") or in Codex ("codex-outrunner"). */
+export type AgentPick = "claude" | "codex" | "outrunner" | "codex-outrunner";
 
 /** How a picked agent signs in, in the cloud. */
 export type AgentMethod = "subscription" | "api-key";

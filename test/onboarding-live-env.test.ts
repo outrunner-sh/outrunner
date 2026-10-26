@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 
 import type { RepositoryListing } from "@/lib/github/listing";
 import { firstModel, liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
+import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 import { filterRepositories, freeModelsOffer, sortRepositories } from "@/lib/onboarding/rules";
 
 const user = { name: "Ada Lovelace", login: "ada", avatarUrl: null };
@@ -94,6 +95,17 @@ test("the first session starts on the agent picked: the user's own, or the menu'
   assert.deepEqual(firstModel("claude"), { provider: "claude", model: "opus" });
   assert.equal(firstModel("codex").provider, "codex");
   assert.deepEqual(firstModel("outrunner"), {});
+});
+
+test("Codex on Outrunner's models starts Codex on Outrunner's first model, not Claude Code", async () => {
+  const first = firstModel("codex-outrunner");
+  assert.deepEqual(first, { provider: "outrunner", model: OUTRUNNER_MODELS[0].id, agent: "codex" });
+  const calls = stubFetch({
+    "POST /api/projects/p1/workspaces": () => [202, { workspace: { id: "w1" } }],
+    "POST /api/onboarding/complete": () => [200, { ok: true }],
+  });
+  await env().startSession("p1", "codex-outrunner");
+  assert.deepEqual(calls[0].body, { branch: "", provider: "outrunner", model: OUTRUNNER_MODELS[0].id, agent: "codex" });
 });
 
 test("Outrunner's models are offered as the Free plan gives them", () => {

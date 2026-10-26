@@ -66,7 +66,7 @@ export function AgentStep({
     setError(null);
     try {
       if (method === "outrunner") {
-        onDone("outrunner");
+        onDone(agent === "codex" ? "codex-outrunner" : "outrunner");
         return;
       }
       // Sessions sign in this way from now on (Settings → Providers).
@@ -109,7 +109,7 @@ export function AgentStep({
               id: "outrunner" as const,
               label: "Outrunner's models",
               icon: Sparkles,
-              note: agent === "codex" ? `${freeModelsOffer()} · runs in Claude Code` : freeModelsOffer(),
+              note: freeModelsOffer(),
             },
           ]
         : []),
@@ -170,8 +170,8 @@ export function AgentStep({
             <Sparkles className="size-4" /> {freeModelsOffer()}
           </p>
           <p className="text-muted-foreground text-sm">
-            Sessions run {agent === "codex" ? "in Claude Code " : ""}on Outrunner&apos;s models (GLM, Kimi, DeepSeek), nothing to
-            connect. Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
+            {`Sessions run ${AGENT_NAMES[agent]} on Outrunner's models (GLM, Kimi, DeepSeek), nothing to connect. `}
+            Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
           </p>
         </div>
       )}
