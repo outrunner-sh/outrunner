@@ -57,18 +57,18 @@ export function AgentAuthPanel({
 }) {
   const { label } = AGENTS[agent];
   // Only ways a session can use: with local sessions off, not the Mac's own
-  // CLI. A pick of one of those still shows as no card chosen, so the user
-  // can move to one that works.
+  // CLI. A pick of one of those reads as none, here and on the cards, so the
+  // panel asks for one that works.
   const methods = authMethodsFor(agent, LOCAL_SESSIONS);
   const listed = (method: AuthMethodId | null | undefined) =>
     method && methods.some((m) => m.id === method) ? method : undefined;
-  const chosen = choices[agent];
+  const chosen = listed(choices[agent]) ?? null;
   // Shows what a link asked for, else the pick, else the first way already
   // saved here, else the first card.
   const [shown, setShown] = useState<AuthMethodId>(
     () =>
       listed(initialMethod) ??
-      listed(chosen) ??
+      chosen ??
       methods.find((method) => savedCredential(method.credential, keys, claude))?.id ??
       methods[0].id,
   );
