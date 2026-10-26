@@ -127,6 +127,9 @@ export function WorkspaceSession({
   // An answer that didn't go: why, under the card that asked it. The next
   // answer retires it, and the card leaving takes it along.
   const [answerError, setAnswerError] = useState<string | null>(null);
+  // A question that was over before its answer got there: nothing failed to
+  // send, so it is said as news above the composer, not as a send failure.
+  const [questionGone, setQuestionGone] = useState<string | null>(null);
   // A model switch that didn't happen: which model, why, and where to fix it.
   const [switchError, setSwitchError] = useState<{ label: string; message: string; href?: string } | null>(null);
   // A failed send is shown by the composer, with a way to send it again: the box's own text comes back to it; a session's first prompt, which never was in the box, retries its original.
@@ -184,6 +187,7 @@ export function WorkspaceSession({
       });
     }
     setSendError(null);
+    setQuestionGone(null);
     // It didn't go: say why, and drop its bubble, which would otherwise stay on
     // screen for good once a resend of the same text lands in its place. The
     // composer gets the text back (it awaits the `false`).
@@ -304,6 +308,7 @@ export function WorkspaceSession({
     setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
     setSendError(null);
     setAnswerError(null);
+    setQuestionGone(null);
     const body = { questions: asked.raw, ...reply };
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/answer`, body)
@@ -312,8 +317,8 @@ export function WorkspaceSession({
       const raw = error instanceof Error ? error.message : String(error ?? "");
       if (isExpiredQuestionError(raw)) {
         // Over already (the session restarted, or it was answered elsewhere):
-        // it stays put away. The composer is back, so its line says it.
-        setSendError({ message: `${AGENTS[agent].label} isn't waiting on that question any more. Reply in the chat instead.` });
+        // it stays put away, and the composer that is back says so.
+        setQuestionGone(`${AGENTS[agent].label} isn't waiting on that question any more. Reply in the chat instead.`);
         return;
       }
       setAnsweredHere((prev) => {
@@ -569,6 +574,11 @@ export function WorkspaceSession({
         // An answer that didn't go is the card's failure to say, not the
         // composer's: the composer is away while the card is up.
         <InlineMessage>{answerError}</InlineMessage>
+      ) : null}
+      {!waitingOnUser && questionGone ? (
+        <InlineMessage tone="info" actions={[{ label: "Dismiss", onClick: () => setQuestionGone(null) }]}>
+          {questionGone}
+        </InlineMessage>
       ) : null}
       {!waitingOnUser && (
         <SessionComposer
