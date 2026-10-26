@@ -26,7 +26,13 @@ import {
   type TypedModelProvider,
 } from "@/lib/runtime/custom-models";
 import { EffortMeter, effortName } from "@/components/effort-meter";
-import { effortOnPick, loadoutModels, type ModelLoadout, searchModels } from "@/lib/runtime/model-loadout";
+import {
+  connectOffers,
+  effortOnPick,
+  loadoutModels,
+  type ModelLoadout,
+  searchModels,
+} from "@/lib/runtime/model-loadout";
 import {
   costHint,
   DEFAULT_EFFORT,
@@ -91,6 +97,7 @@ export function SessionComposer({
   onDismissSendError,
   onRetrySendError,
   stop,
+  focusSignal = 0,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -126,6 +133,9 @@ export function SessionComposer({
   /** Stopping the turn under way, shown beside send (and on Escape) while
    *  there is one to stop. */
   stop?: { onStop: () => void; stopping: boolean };
+  /** Changes each time the composer should take focus (Get started's "Start
+   *  your first session"); it does once it can be typed in. */
+  focusSignal?: number;
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -138,12 +148,26 @@ export function SessionComposer({
   const fileRef = useRef<HTMLInputElement>(null);
   const attachments = useAttachments();
 
+  const focusedFor = useRef(0);
+  useEffect(() => {
+    if (focusSignal === 0 || focusSignal === focusedFor.current || !canSend) return;
+    focusedFor.current = focusSignal;
+    textareaRef.current?.focus();
+  }, [focusSignal, canSend]);
+
   // A notice says something once, then gets out of the way.
   useEffect(() => {
     if (!notice) return;
     const t = setTimeout(() => setNotice(null), 5000);
     return () => clearTimeout(t);
   }, [notice]);
+
+  // Named for the agent whose own model it is (Claude Code's, Codex's); one
+  // on a key, or not known, is just "Message".
+  const provider = modelChoice
+    ? matchModel(modelChoice.groups, model, modelChoice.preferredProvider)?.provider
+    : undefined;
+  const messageLabel = provider === "claude" || provider === "codex" ? `Message ${AGENTS[provider].label}` : "Message";
 
   // A prompt of only attachments is legitimate — "here's a screenshot".
   const hasSomethingToSend = value.trim() !== "" || attachments.readyIds.length > 0;
@@ -311,7 +335,7 @@ export function SessionComposer({
         value={value}
         rows={1}
         placeholder={canSend ? placeholder : disabledPlaceholder}
-        aria-label="Message Claude"
+        aria-label={messageLabel}
         spellCheck={false}
         disabled={!canSend}
         onChange={(event) => {
@@ -434,6 +458,7 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
   // one, stands in for the groups.
   const flat = searching ? searchModels(groups.flatMap((g) => g.models), query) : loadout;
   const showGroups = !searching && loadout.length === 0;
+  const connect = connectOffers(choice.connect, query, flat.length);
   const isCurrent = (m: SessionModel) => m.id === current?.id && m.provider === current.provider;
   const item = (m: SessionModel) => (
     <DropdownMenuItem
@@ -537,10 +562,10 @@ function ModelPicker({ model, choice }: { model?: string; choice: ModelChoice })
                 ) : [],
               )
             : null}
-          {!searching && choice.connect.length > 0 ? (
+          {connect.length > 0 ? (
             <>
               <DropdownMenuSeparator />
-              {choice.connect.map((agent) => (
+              {connect.map((agent) => (
                 <DropdownMenuItem key={`connect:${agent}`} asChild>
                   <Link href={providerSettingsHref(agent)}>
                     <AgentIcon agent={agent} />

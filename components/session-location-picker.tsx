@@ -92,10 +92,14 @@ export function LocalRepositoryButton({
   state,
   disabled,
   className,
+  autoOpen,
+  onClosed,
 }: {
   state: SessionLocationState;
   disabled?: boolean;
   className?: string;
+  autoOpen?: boolean;
+  onClosed?: () => void;
 }) {
   const { folder, chooseFolder, chooseRepository } = state;
   const chosen = folder.state === "ok" ? folder.folder : null;
@@ -111,6 +115,8 @@ export function LocalRepositoryButton({
     <RepositorySelect
       disabled={disabled || cloning !== null}
       triggerClassName={className}
+      autoOpen={autoOpen}
+      onClosed={onClosed}
       onPick={(repo) => void chooseRepository(repo.fullName)}
       label={{
         text: cloning ? `Cloning ${cloning.split("/")[1] ?? cloning}…` : chosen ? chosen.name : "Choose repository…",

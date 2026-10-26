@@ -8,7 +8,10 @@
  * Imports only the menu, so the browser and the tests use it as is.
  */
 
+import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import {
+  CLAUDE_MODELS,
+  CODEX_MODELS,
   DEFAULT_EFFORT,
   type Effort,
   isEffort,
@@ -155,4 +158,21 @@ export function searchModels(models: SessionModel[], query: string): SessionMode
   const q = query.trim().toLowerCase();
   if (!q) return models;
   return models.filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+}
+
+/** Each agent's own models, offered once it's connected. */
+const AGENT_MODELS: Record<AgentId, SessionModel[]> = { claude: CLAUDE_MODELS, codex: CODEX_MODELS };
+
+/**
+ * The agents to connect (`connect`, not connected here) the picker offers
+ * while `query` is searched, `matched` being how many models it found: those
+ * whose name or own models the search is for, and every one when it found
+ * nothing, so a search never ends at "No model matches" alone.
+ */
+export function connectOffers(connect: AgentId[], query: string, matched: number): AgentId[] {
+  const q = query.trim().toLowerCase();
+  if (!q || matched === 0) return connect;
+  return connect.filter(
+    (agent) => AGENTS[agent].label.toLowerCase().includes(q) || searchModels(AGENT_MODELS[agent], q).length > 0,
+  );
 }

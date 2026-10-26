@@ -5,7 +5,8 @@
  *
  * Cloud groups come from buildNavGroups and local ones from groupLocalSessions,
  * so the sidebar sorts and names them exactly as those already do; this only
- * puts the two side by side, newest activity first.
+ * puts the two side by side, newest activity first, then the projects with no
+ * session yet.
  */
 
 import type { LocalSession } from "@/lib/desktop/local-runtime";
@@ -84,6 +85,8 @@ export type SidebarSession = {
   id: string;
   href: string;
   title: string;
+  /** Its git branch, for search. */
+  branch: string;
   /** When it was last active, for ordering and the time label. */
   at: string;
   /** What deleting it would do; null while it cannot be deleted (a cloud
@@ -115,12 +118,16 @@ export type SidebarGroup = {
    *  could not be loaded, so there is nothing to start one in, or for a Mac
    *  folder while new local sessions are off. */
   start: { kind: "cloud"; projectId: string } | { kind: "local"; folder: string } | null;
-  /** Newest first. */
+  /** Newest first; none for a project not started in yet. */
   sessions: SidebarSession[];
 };
 
+/** How many projects with no session yet the sidebar lists, newest first. */
+export const UNSTARTED_SHOWN = 3;
+
 export function buildSidebarGroups(
-  projects: NavProject[],
+  /** `createdAt` orders the projects with no session yet. */
+  projects: Array<NavProject & { createdAt?: string }>,
   workspaces: Workspace[],
   localSessions: LocalSession[],
   /** Whether a Mac folder can start a new session (lib/session/local-sessions.ts);
@@ -147,6 +154,7 @@ export function buildSidebarGroups(
       id: w.id,
       href: `/workspaces/${w.id}`,
       title: workspaceLabel(w),
+      branch: w.branch,
       at: recency(w),
       // The server's own rule (the lifecycle route's destroy).
       deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
@@ -163,21 +171,43 @@ export function buildSidebarGroups(
         id: s.workspaceId,
         href: `/local/${s.workspaceId}`,
         title: localSessionLabel(s),
+        branch: s.branch,
         // Last use, not creation: comparable with a cloud session's activity.
         at: s.lastActiveAt || s.createdAt,
         deletion: s.inPlace ? { kind: "local-in-place" as const } : { kind: "local-worktree" as const },
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));
+  // A project with no session yet is listed too, empty, so one just added
+  // doesn't vanish until it's started in. Only the few connected last: "Sync
+  // repositories" connects every repository at once, often dozens, and those
+  // would bury the sessions. (A hidden project is only in `projects` for a
+  // session of its own, so it never shows here.)
+  const started = new Set(workspaces.map((w) => w.projectId));
+  const unstarted: SidebarGroup[] = projects
+    .filter((p) => !started.has(p.id))
+    .sort((a, b) => newestFirst(a.createdAt, b.createdAt))
+    .slice(0, UNSTARTED_SHOWN)
+    .map((p) => ({
+      key: `cloud:${p.id}`,
+      label: p.name,
+      detail: p.fullName,
+      local: false,
+      start: { kind: "cloud", projectId: p.id },
+      sessions: [],
+    }));
   // Both lists are newest-first inside; interleave the groups by their newest
-  // session. A stable sort keeps each kind's own order on a tie.
-  return [...cloud, ...local].sort((a, b) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at));
+  // session. A stable sort keeps each kind's own order on a tie, and the
+  // projects with none, which sort last, newest connected first.
+  return [...cloud, ...local, ...unstarted].sort((a, b) => newestFirst(a.sessions[0]?.at, b.sessions[0]?.at));
 }
 
 /**
- * The sidebar's search: case-insensitive, on session titles and workspace
- * names. A workspace whose name matches keeps all its sessions; otherwise only
- * the matching sessions stay, and a workspace left with none is dropped.
+ * The sidebar's search: case-insensitive, on session titles and branches and
+ * workspace names. A workspace whose name matches keeps all its sessions;
+ * otherwise only the matching sessions stay, and a workspace left with none is
+ * dropped. A branch is matched without the generated `runtime/` every
+ * Outrunner branch starts with, which "run" would otherwise find in them all.
  */
 export function filterSidebarGroups(groups: SidebarGroup[], query: string): SidebarGroup[] {
   const q = query.trim().toLowerCase();
@@ -186,7 +216,11 @@ export function filterSidebarGroups(groups: SidebarGroup[], query: string): Side
     if (group.label.toLowerCase().includes(q) || group.detail.toLowerCase().includes(q)) {
       return [group];
     }
-    const sessions = group.sessions.filter((s) => s.title.toLowerCase().includes(q));
+    const sessions = group.sessions.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.branch.replace(/^runtime\//, "").toLowerCase().includes(q),
+    );
     return sessions.length > 0 ? [{ ...group, sessions }] : [];
   });
 }

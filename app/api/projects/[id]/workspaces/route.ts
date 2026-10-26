@@ -66,6 +66,7 @@ import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-env
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
+import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
@@ -117,7 +118,15 @@ export async function POST(request: Request, context: RouteContext) {
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
-  let body: { branch?: unknown; provider?: unknown; model?: unknown; key?: unknown; effort?: unknown };
+  let body: {
+    branch?: unknown;
+    provider?: unknown;
+    model?: unknown;
+    key?: unknown;
+    effort?: unknown;
+    /** The first prompt, only to name the session by. */
+    prompt?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -253,6 +262,10 @@ export async function POST(request: Request, context: RouteContext) {
     }
     return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
   }
+  // Named now, from its first prompt, as the message route would once that is
+  // delivered: until then the sidebar showed its branch. That later naming
+  // then leaves it be (a title is never replaced).
+  await nameSessionFromPrompt(workspace, typeof body.prompt === "string" ? body.prompt : "");
 
   // The session opens now, on its setup progress, and its box is set up after
   // this response. A request held open for the whole setup tied the session to
