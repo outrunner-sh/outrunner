@@ -311,7 +311,7 @@ export function ClaudeConnection({
             labels={{ idle: "Reconnect" }}
             onClick={() => (desktop ? void connect() : setReconnecting((n) => n + 1))}
           />
-          <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
+          <Button variant="ghost" size="sm" disabled={busy || saving} onClick={disconnect}>
             Disconnect
           </Button>
         </div>
