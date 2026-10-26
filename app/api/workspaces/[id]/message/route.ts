@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { attachmentsUnavailable } from "@/lib/runtime/worktree-access";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
+import { sendFailureMessage } from "@/lib/session/send-failure";
+import { BOX_GONE } from "@/lib/session/session-codes";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -48,12 +52,15 @@ export async function POST(request: Request, context: RouteContext) {
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId, agent, identity } = reach.reached;
 
+  const noFiles = attachmentsUnavailable(attachmentIds.length, workspace.worktreePath);
+  if (noFiles) return NextResponse.json({ error: noFiles }, { status: 409 });
+
   let prompt = content;
   try {
     prompt = await materializeAttachments({
       provider,
       sandboxId,
-      worktreePath: workspace.worktreePath ?? "",
+      worktreePath: workspace.worktreePath,
       workspaceId: workspace.id,
       attachmentIds,
       prompt: content,
@@ -70,8 +77,24 @@ export async function POST(request: Request, context: RouteContext) {
     await agent.sendMessage(identity, prompt);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
+    // The agent's own 404 (unknown workspace) means the session's box is gone,
+    // so retrying fails the same way every time. Tag it (BOX_GONE) so the
+    // composer drops Retry and points at a new session instead of offering one.
+    // A 404 without the agent's error body (a proxy in front of a box that is
+    // restarting, an agent without the route) may pass on retry, so keeps it.
+    if (error instanceof AgentRequestError && error.status === 404 && error.error?.message === "unknown workspace") {
+      return NextResponse.json(
+        { error: "This session isn't running on its computer any more.", code: BOX_GONE },
+        { status: 502 },
+      );
+    }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Send failed." },
+      {
+        error:
+          error instanceof AgentRequestError
+            ? sendFailureMessage(error.error?.message)
+            : "Couldn't reach the Runtime Computer. Try again.",
+      },
       { status: 502 },
     );
   }

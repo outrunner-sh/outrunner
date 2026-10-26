@@ -4,6 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { getWorkspaceComputer, getWorkspace } from "@/lib/db/repositories";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { reachableWorktree } from "@/lib/runtime/worktree-access";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -33,25 +34,20 @@ export async function GET(request: Request, context: RouteContext) {
 
   try {
     if (isComputerProvider(provider)) {
-      const computer = await getWorkspaceComputer(workspace);
-      if (!computer?.daytonaSandboxId || !workspace.worktreePath) {
-        return NextResponse.json(
-          { error: "The interactive worktree is not available yet." },
-          { status: 409 },
-        );
-      }
+      const reach = reachableWorktree(await getWorkspaceComputer(workspace), workspace.worktreePath);
+      if (!reach.ok) return NextResponse.json({ error: reach.error }, { status: 409 });
       if (path !== null) {
         const diff = await provider.readWorkspaceChangedFileDiff(
-          computer.daytonaSandboxId,
-          workspace.worktreePath,
+          reach.sandboxId,
+          reach.worktree,
           path,
           workspace.baseBranch,
         );
         return NextResponse.json({ diff });
       }
       const files = await provider.listWorkspaceChangedFiles(
-        computer.daytonaSandboxId,
-        workspace.worktreePath,
+        reach.sandboxId,
+        reach.worktree,
         workspace.baseBranch,
       );
       return NextResponse.json({ files });

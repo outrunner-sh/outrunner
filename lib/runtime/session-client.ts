@@ -16,7 +16,28 @@
  */
 
 import { openSocket } from "@/lib/desktop/local-runtime";
+import { CLIENT_FAULT_MESSAGES } from "@/lib/http/client-error-report";
 import { AgentEvent } from "@/lib/runtime/agent-protocol";
+
+/**
+ * A frame the browser couldn't read: a fault on Outrunner's side, not the
+ * network's. `ref` is logged with the frame's metadata, so the code a user
+ * reads out matches one console line.
+ */
+export class StreamProtocolError extends Error {
+  readonly ref: string;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "StreamProtocolError";
+    this.ref = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+}
+
+/** The two faults the events stream can hit, taken from the closed set its
+ *  reports are logged under: the reporting route accepts no other message, so
+ *  what the stream says and what the log takes cannot drift apart. */
+const [MALFORMED_FRAME, SCHEMA_MISMATCH] = CLIENT_FAULT_MESSAGES;
 
 // ---------------------------------------------------------------------------
 // Conversation event stream (SSE). The caller owns the URL freshness (via
@@ -34,6 +55,9 @@ export type EventSubscription = {
 export type EventSubscribeOptions = {
   /** Cursor to resume from; if set, appended as `?lastEventId=<id>`. */
   lastEventId?: string | null;
+  /** The session this stream belongs to, so a reported fault can be found in
+   *  the server's log. */
+  workspaceId?: string;
   /** Called on browser-detected connection loss (close OR transport error); the
    *  hook debounces these into one URL refresh + re-subscribe. */
   onClose?: () => void;
@@ -43,6 +67,30 @@ export type EventSubscribeOptions = {
    *  `onClose`), so an idle socket reap never surfaces here. */
   onError?: (error: Error) => void;
 };
+
+/** A fault's ref is what the user reads out; it goes to the server too, so the
+ * code matches a server log line and not only the browser console. Best
+ * effort: the browser's line still has it if this can't go out. */
+function reportFault(
+  workspaceId: string | undefined,
+  error: StreamProtocolError,
+  meta: { eventId?: string; eventType?: string; issues?: unknown[] },
+): void {
+  void fetch("/api/client-errors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    keepalive: true,
+    body: JSON.stringify({
+      where: "events-stream",
+      ref: error.ref,
+      message: error.message,
+      ...(workspaceId && { workspaceId }),
+      ...meta,
+    }),
+  }).catch(() => {
+    // The browser console still has the ref.
+  });
+}
 
 /**
  * Subscribe to the Workspace Session's AgentEvent stream over a WebSocket.
@@ -71,6 +119,19 @@ export function subscribeEventsWs(
   let disposed = false;
   let opened = false;
   let lastId: string | null = options.lastEventId ?? null;
+  // One report per fault kind per subscription: a stream that keeps sending
+  // frames it can't read is one problem, not a log line each, and the browser
+  // console keeps every ref anyway. A resubscribe starts the set over.
+  const reported = new Set<string>();
+  const reportOnce = (
+    kind: string,
+    error: StreamProtocolError,
+    meta: { eventId?: string; eventType?: string; issues?: unknown[] },
+  ): void => {
+    if (reported.has(kind)) return;
+    reported.add(kind);
+    reportFault(options.workspaceId, error, meta);
+  };
 
   ws.addEventListener("open", () => {
     opened = true;
@@ -81,7 +142,10 @@ export function subscribeEventsWs(
     try {
       frame = JSON.parse((raw as MessageEvent<string>).data);
     } catch {
-      options.onError?.(new Error("Malformed events frame payload"));
+      const error = new StreamProtocolError(MALFORMED_FRAME);
+      console.warn(error.message, { ref: error.ref });
+      reportOnce("malformed frame", error, {});
+      options.onError?.(error);
       return;
     }
     const parsed = AgentEvent.safeParse(frame?.data);
@@ -90,12 +154,18 @@ export function subscribeEventsWs(
       // unmodeled shape can be identified — never the raw payload, which can
       // carry user prompts or tool output.
       const data = frame?.data as { t?: unknown } | undefined;
-      console.warn("Events frame did not match AgentEvent schema", {
-        issues: parsed.error.issues,
-        eventId: typeof frame.id === "string" ? frame.id : undefined,
-        eventType: typeof data?.t === "string" ? data.t : undefined,
+      const eventId = typeof frame.id === "string" ? frame.id : undefined;
+      const eventType = typeof data?.t === "string" ? data.t : undefined;
+      const error = new StreamProtocolError(SCHEMA_MISMATCH);
+      console.warn(error.message, { ref: error.ref, issues: parsed.error.issues, eventId, eventType });
+      reportOnce(eventType || "no type", error, {
+        eventId,
+        eventType,
+        // The report carries only what identifies the shape — code, path,
+        // message — never a payload value, which can hold a prompt.
+        issues: parsed.error.issues.slice(0, 20).map(({ code, path, message }) => ({ code, path, message })),
       });
-      options.onError?.(new Error("Events frame did not match AgentEvent schema"));
+      options.onError?.(error);
       return;
     }
     const id = typeof frame.id === "string" ? frame.id : "";

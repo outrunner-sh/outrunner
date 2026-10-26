@@ -20,6 +20,12 @@ test("each step is ticked off by what the app knows", () => {
   assert.equal(getStartedSteps({ projects: 1, sessions: 1, claudeConnected: null, startsWithoutClaude: false })[2].done, null);
 });
 
+test("the project step opens the repository picker, the session step the composer", () => {
+  const [project, session] = getStartedSteps({ projects: 0, sessions: 0, claudeConnected: false, startsWithoutClaude: false });
+  assert.equal(project.href, "/new?pick=repo");
+  assert.equal(session.href, "/new?focus=composer");
+});
+
 test("Claude's step opens its subscription card in Settings → Providers", () => {
   const claude = getStartedSteps({ projects: 0, sessions: 0, claudeConnected: false, startsWithoutClaude: false })[2];
   assert.equal(claude.href, "/settings/providers?tab=claude&method=subscription");

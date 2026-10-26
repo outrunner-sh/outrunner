@@ -44,7 +44,7 @@ func TestTheNewestHealthFixtureNamesEveryFeature(t *testing.T) {
 		t.Fatal(err)
 	}
 	newest := groups.AgentHealth[len(groups.AgentHealth)-1].Features
-	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureCodexGateway} {
+	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway} {
 		if !slices.Contains(newest, feature) {
 			t.Errorf("the newest AgentHealth fixture lacks %s: %q", feature, newest)
 		}
@@ -95,6 +95,8 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &SetAgentConfigRequest{})
 	case "SetEnvironmentRequest":
 		return json.Unmarshal(raw, &SetEnvironmentRequest{})
+	case "ProviderPorts":
+		return json.Unmarshal(raw, &[]int{})
 	case "ReservedEnv":
 		return json.Unmarshal(raw, &[]string{})
 	case "ErrorResponse":
@@ -105,6 +107,10 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &WorkspaceSummary{})
 	case "Activity":
 		return json.Unmarshal(raw, &Activity{})
+	case "EditorResponse":
+		return json.Unmarshal(raw, &EditorResponse{})
+	case "PortsResponse":
+		return json.Unmarshal(raw, &PortsResponse{})
 	case "ConversationMessage":
 		return json.Unmarshal(raw, &ConversationMessage{})
 	case "TokenUsage":

@@ -11,6 +11,8 @@ export type WorkspaceAgent = {
   workspace: Workspace;
   provider: ComputerRuntimeProvider;
   sandboxId: string;
+  /** The box's agent secret, for a call that upgrades the agent in place. */
+  secret: string;
   agent: AgentClient;
   identity: WorkspaceIdentity;
 };
@@ -55,6 +57,7 @@ export async function reachWorkspaceAgent(
       workspace,
       provider,
       sandboxId: computer.daytonaSandboxId,
+      secret,
       agent: new AgentClient(target),
       identity: { workspaceId: workspace.id, projectId: workspace.projectId, computerId: computer.id, userId },
     },

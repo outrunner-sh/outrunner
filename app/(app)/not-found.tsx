@@ -1,11 +1,12 @@
 import { RouteMessage } from "@/components/route-states";
 
-/** A session (or page) that is not there: deleted, or a stale link. */
+/** A link to nothing: mistyped, out of date, or another account's. */
 export default function NotFound() {
   return (
     <RouteMessage
-      title="Nothing here"
-      detail="This session may have been deleted, or the link is out of date."
+      title="Nothing at this link"
+      detail="It may be out of date, or belong to another account."
+      actions={[{ label: "Back to sessions", href: "/", primary: true }]}
     />
   );
 }

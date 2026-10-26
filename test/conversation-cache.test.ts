@@ -54,6 +54,17 @@ test("an event already taken in isn't taken twice", () => {
   assert.equal(cache.get("w1")!.events.length, 1);
 });
 
+test("a warm-up leaves the seen ids of a page that kept its conversation alone", () => {
+  const cache = new ConversationCache();
+  // What an open page keeps: its live Set, which its own stream still checks.
+  const pageSeen = new Set<string>(["10"]);
+  cache.set("w1", { events: [], lastEventId: "10", seenIds: pageSeen });
+  const usage: AgentEvent = { t: "usage", inputTokens: 1, outputTokens: 2 } as unknown as AgentEvent;
+  cache.append("w1", usage, "30");
+  assert.deepEqual([...pageSeen], ["10"]);
+  assert.ok(cache.get("w1")!.seenIds.has("30"));
+});
+
 test("a deleted session's conversation is forgotten", () => {
   const cache = new ConversationCache();
   cache.set("w1", entry(1));

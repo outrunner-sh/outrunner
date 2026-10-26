@@ -66,6 +66,33 @@ test("the menu carries the user's loadout, made sound", async () => {
   });
 });
 
+test("a failed look isn't kept: the next ask goes out again", async () => {
+  let asks = 0;
+  globalThis.fetch = (async () => {
+    asks += 1;
+    return asks === 1
+      ? new Response("busy", { status: 503 })
+      : new Response(JSON.stringify({ outrunner: true, keys: [], available: true }));
+  }) as typeof fetch;
+  assert.equal((await outrunnerModels()).available, false);
+  assert.equal((await outrunnerModels()).available, true);
+  assert.equal(asks, 2);
+  // An answer is kept.
+  await outrunnerModels();
+  assert.equal(asks, 2);
+});
+
+test("an unreachable server isn't kept either", async () => {
+  let asks = 0;
+  globalThis.fetch = (async () => {
+    asks += 1;
+    if (asks === 1) throw new TypeError("Load failed");
+    return new Response(JSON.stringify({ outrunner: true, keys: [], available: true }));
+  }) as typeof fetch;
+  assert.equal((await outrunnerModels()).available, false);
+  assert.equal((await outrunnerModels()).available, true);
+});
+
 test("forgetting the menu looks again at once, so a menu shown next has the new answer", async () => {
   answer({ outrunner: true, keys: [], available: true, agents: { claude: { cloud: false, local: false } } });
   assert.equal((await outrunnerModels()).agents.claude.cloud, false);

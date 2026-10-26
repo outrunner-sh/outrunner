@@ -6,8 +6,10 @@ import { test } from "node:test";
 import {
   AGENT_FEATURE_AGENT_CONFIG,
   AGENT_FEATURE_CODEX_GATEWAY,
+  AGENT_FEATURE_EDITOR,
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_IMPORTS,
+  AGENT_FEATURE_PORTS,
   AGENT_FEATURE_RESTORE_MODEL,
   PROTOCOL_SCHEMAS,
   type ProtocolSchemaName,
@@ -137,6 +139,8 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_ENVIRONMENT,
     AGENT_FEATURE_AGENT_CONFIG,
     AGENT_FEATURE_RESTORE_MODEL,
+    AGENT_FEATURE_EDITOR,
+    AGENT_FEATURE_PORTS,
     AGENT_FEATURE_CODEX_GATEWAY,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);

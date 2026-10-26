@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  connectOffers,
   effortOnPick,
   LOADOUT_MAX,
   loadoutDefault,
@@ -71,6 +72,19 @@ test("search finds a model by its name or its id", () => {
   assert.deepEqual(searchModels(all, "luna").map((m) => m.id), ["gpt-6-luna"]);
   assert.deepEqual(searchModels(all, "OPUS").map((m) => m.id), ["opus"]);
   assert.equal(searchModels(all, "  ").length, all.length);
+});
+
+test("a search keeps offering to connect the agent whose models it is for", () => {
+  // Codex not connected: "gpt" is a search for its models, whatever else matches.
+  assert.deepEqual(connectOffers(["codex"], "gpt", 0), ["codex"]);
+  assert.deepEqual(connectOffers(["codex"], "GPT", 3), ["codex"]);
+  assert.deepEqual(connectOffers(["claude", "codex"], "codex", 1), ["codex"]);
+  assert.deepEqual(connectOffers(["claude", "codex"], "sonnet", 2), ["claude"]);
+  // A search that found other models, and none of theirs: not offered.
+  assert.deepEqual(connectOffers(["claude", "codex"], "glm", 1), []);
+  // One that found nothing offers every agent there is to connect.
+  assert.deepEqual(connectOffers(["claude", "codex"], "zzz", 0), ["claude", "codex"]);
+  assert.deepEqual(connectOffers(["claude"], "  ", 5), ["claude"], "no search: all of them");
 });
 
 test("a move passes over models the picker doesn't show now", () => {

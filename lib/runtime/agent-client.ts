@@ -13,9 +13,12 @@ import {
   AnswerRequest,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
+  EditorResponse,
   ErrorResponse,
   LISTING_WORKSPACE_ID,
+  PortsResponse,
   RestoreWorkspaceRequest,
+  RestoreWorkspaceResult,
   type RuntimeTokenClaims,
   SetAgentConfigRequest,
   SetAuthRequest,
@@ -47,6 +50,9 @@ type FetchFn = typeof fetch;
  * no error to surface. Fail fast instead so callers can degrade or retry.
  */
 const AGENT_REQUEST_TIMEOUT_MS = 12_000;
+/** Opening the editor: the agent waits up to 15 seconds for it to come up
+ *  before saying it's still starting. */
+const EDITOR_TIMEOUT_MS = 25_000;
 
 /**
  * Archive/restore do real snapshot I/O on the box — the agent uploads or
@@ -123,6 +129,22 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/message`, identity, {
       content,
     });
+  }
+
+  /**
+   * Have the box's editor (code-server) running, and say where: its port and
+   * the session's folder. Null while it is still being installed or started
+   * (the first open on a box installs it): ask again shortly.
+   */
+  async openEditor(identity: WorkspaceIdentity): Promise<EditorResponse | null> {
+    const raw = await this.post(`/workspaces/${identity.workspaceId}/editor`, identity, undefined, EDITOR_TIMEOUT_MS);
+    if ((raw as { result?: unknown } | null)?.result === "starting") return null;
+    return EditorResponse.parse(raw);
+  }
+
+  /** The servers running on the session's box, for its owner to open. */
+  async listPorts(identity: WorkspaceIdentity): Promise<PortsResponse["ports"]> {
+    return PortsResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/ports`, identity)).ports;
   }
 
   /** Stop the turn the workspace's session is running, as Escape does in its
@@ -207,17 +229,22 @@ export class AgentClient {
    * relaunches Claude with `--continue`. Rejects (agent 500) if verification
    * fails — Claude is not booted into a broken restore.
    */
+  /** Restore an archived session. The worktree is undefined from an agent
+   *  that doesn't report it (or reports something unreadable): the restore
+   *  itself still succeeded. */
   async restoreWorkspace(
     identity: WorkspaceIdentity,
     req: RestoreWorkspaceRequest,
-  ): Promise<unknown> {
+  ): Promise<RestoreWorkspaceResult> {
     const body = RestoreWorkspaceRequest.parse(req);
-    return this.post(
+    const raw = await this.post(
       `/workspaces/${identity.workspaceId}/restore`,
       identity,
       body,
       AGENT_LIFECYCLE_TIMEOUT_MS,
     );
+    const parsed = RestoreWorkspaceResult.safeParse(raw);
+    return parsed.success ? parsed.data : {};
   }
 
   destroyWorkspace(identity: WorkspaceIdentity): Promise<unknown> {

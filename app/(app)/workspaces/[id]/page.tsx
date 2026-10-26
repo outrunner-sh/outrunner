@@ -7,7 +7,7 @@ import { SessionRoute } from "@/components/session-route";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
 import { getProjectOnce } from "@/lib/db/request-cache";
-import type { SessionView } from "@/lib/session/session-view";
+import type { SessionAnswer } from "@/lib/session/session-view";
 
 /** A click on a session never waits on the server: the build checks it, on a
  *  sample session opened from the sidebar (no first prompt). */
@@ -55,13 +55,21 @@ async function ServerSession({ params }: { params: Params }) {
 
   const { id } = await params;
   const workspace = await getWorkspace(id);
-  // A deleted session keeps its row, marked destroyed: it is gone all the same.
-  if (!workspace || workspace.status === "destroyed") notFound();
+  if (!workspace) notFound();
+  // A deleted session keeps its row, marked destroyed: say so, rather than
+  // leaving the user to wonder whether the link was wrong.
+  if (workspace.status === "destroyed") {
+    return (
+      <ServerAnswer<SessionAnswer>
+        value={{ gone: { workspace, pullRequest: await getWorkspacePullRequest(workspace.id) } }}
+      />
+    );
+  }
   const [project, pullRequest] = await Promise.all([
     getProjectOnce(workspace.projectId),
     getWorkspacePullRequest(workspace.id),
   ]);
   if (!project) notFound();
 
-  return <ServerAnswer<SessionView> value={{ workspace, projectName: project.fullName, pullRequest }} />;
+  return <ServerAnswer<SessionAnswer> value={{ workspace, projectName: project.fullName, pullRequest }} />;
 }

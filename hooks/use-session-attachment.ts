@@ -8,6 +8,7 @@ import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
 import {
   localAgentRequest,
   localSocketUrl,
+  LocalRuntimeError,
   localTarget,
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
@@ -33,6 +34,12 @@ export type SessionAttachment = {
   urls: SessionUrls | null;
   status: SessionAttachmentStatus;
   error: string | null;
+  /** What the server said went wrong, when it names it: "box-restore-failed"
+   *  (the box didn't come back; its disk is kept) or "box-gone" (it can't). */
+  errorCode: string | null;
+  /** What followed the code, for a local session: the reason the Mac app gave
+   *  ("agent-did-not-start: <the runner's last log line>"). */
+  errorReason: string | null;
   /** Increments every time `urls` changes (new fetch succeeded). */
   attachId: number;
   /** Fetch fresh URLs, the box's endpoint looked up again too. Idempotent
@@ -77,7 +84,7 @@ async function localSessionUrls(target: LocalTarget, agent: AgentId): Promise<Se
 export function useSessionAttachment(workspaceId: string, local = false, agent: AgentId = "claude"): SessionAttachment {
   const [urls, setUrls] = useState<SessionUrls | null>(null);
   const [status, setStatus] = useState<SessionAttachmentStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; code: string | null; reason: string | null } | null>(null);
   const [attachId, setAttachId] = useState(0);
 
   const inflight = useRef<AbortController | null>(null);
@@ -94,7 +101,8 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     const controller = new AbortController();
     inflight.current = controller;
     setStatus("loading");
-    setError(null);
+    // The last failure stays until this attempt has its own answer, so its
+    // notice doesn't blink away and back on a retry that fails again.
 
     (async () => {
       try {
@@ -104,6 +112,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           setUrls(urls);
           setAttachId((n) => n + 1);
           setStatus("attached");
+          setError(null);
           return;
         }
         // The first attach takes the URLs a sidebar warm-up already has.
@@ -121,9 +130,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         });
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as
-            | { error?: string }
+            | { error?: string; code?: string }
             | null;
-          throw new Error(body?.error ?? `Session attach failed (${res.status})`);
+          throw new AttachError(body?.error ?? "Couldn't reach this session's box.", body?.code ?? null);
         }
         const raw = (await res.json()) as unknown;
         const parsed = SessionUrls.safeParse(raw);
@@ -133,12 +142,19 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         setUrls(parsed.data);
         setAttachId((n) => n + 1);
         setStatus("attached");
+        setError(null);
       } catch (err) {
         if (controller.signal.aborted) return;
         setStatus("error");
-        setError(err instanceof Error ? err.message : String(err));
+        setError({
+          message: err instanceof Error ? err.message : String(err),
+          code: err instanceof AttachError || err instanceof LocalRuntimeError ? err.code : null,
+          reason: err instanceof LocalRuntimeError ? err.reason : null,
+        });
       } finally {
-        inflight.current = null;
+        // An aborted attach may finish after a newer one started; that one's
+        // guard isn't ours to clear.
+        if (inflight.current === controller) inflight.current = null;
       }
     })();
   }, [workspaceId, local, agent]);
@@ -165,5 +181,23 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     };
   }, [attach]);
 
-  return { urls, status, error, attachId, refresh, reconnect };
+  return {
+    urls,
+    status,
+    error: error?.message ?? null,
+    errorCode: error?.code ?? null,
+    errorReason: error?.reason ?? null,
+    attachId,
+    refresh,
+    reconnect,
+  };
+}
+
+class AttachError extends Error {
+  readonly code: string | null;
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = "AttachError";
+    this.code = code;
+  }
 }

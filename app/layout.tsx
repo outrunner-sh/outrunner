@@ -25,7 +25,7 @@ const geistPixel = localFont({
 
 export const metadata: Metadata = {
   title: "Outrunner",
-  description: "Personal cloud environment for running Claude Code.",
+  description: "Cloud sessions for Claude Code, Codex and open models.",
 };
 
 export default function RootLayout({

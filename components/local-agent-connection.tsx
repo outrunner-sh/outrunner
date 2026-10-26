@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import {
   agentCli,
@@ -63,7 +64,11 @@ export function LocalAgentConnection({
     setChecking(true);
     try {
       const status = await localStatus();
-      if (check.current === mine) setCli(status ? cliOf(status, agent) : null);
+      if (check.current === mine) {
+        setCli(status ? cliOf(status, agent) : null);
+        // The Mac answered: what it says now replaces an earlier error.
+        setError(null);
+      }
     } catch (e) {
       if (check.current === mine) setError(e instanceof Error ? e.message : `Couldn't check ${label} on this Mac.`);
     } finally {
@@ -169,9 +174,7 @@ export function LocalAgentConnection({
       ) : null}
 
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+        <InlineMessage>{error}</InlineMessage>
       ) : null}
     </div>
   );

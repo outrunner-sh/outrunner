@@ -115,6 +115,30 @@ export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
  *  conversation moved to the worktree). */
 export const AGENT_FEATURE_IMPORTS = "restore-imports";
 
+/** The agent runs VS Code in the browser (POST /workspaces/{id}/editor). */
+export const AGENT_FEATURE_EDITOR = "editor";
+
+/** Where a session's editor is: the box port code-server answers on, reached
+ *  through the provider's preview URL, and the folder to open it on. */
+export const EditorResponse = z
+  .object({ port: z.number().int().min(1).max(65535), folder: z.string().startsWith("/") })
+  .strict();
+export type EditorResponse = z.infer<typeof EditorResponse>;
+
+/** The agent lists the servers running on its box (GET /workspaces/{id}/ports). */
+export const AGENT_FEATURE_PORTS = "ports";
+
+/** The servers listening on a session's box, lowest port first, each with its
+ *  program where the agent can see it. */
+export const PortsResponse = z
+  .object({
+    ports: z.array(
+      z.object({ port: z.number().int().min(1).max(65535), process: z.string().optional() }).strict(),
+    ),
+  })
+  .strict();
+export type PortsResponse = z.infer<typeof PortsResponse>;
+
 /** The agent restores a session onto its model (RestoreWorkspaceRequest's
  *  `model`); an older one ignores it, and relaunches on Claude's default. */
 export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";
@@ -318,6 +342,13 @@ export const RestoreWorkspaceRequest = z
     path: ["downloads"],
   });
 export type RestoreWorkspaceRequest = z.infer<typeof RestoreWorkspaceRequest>;
+
+/** What a restore answers: the session's worktree on the box, as create
+ *  answers. Absent from agents before it was reported. */
+export const RestoreWorkspaceResult = z.object({
+  worktree: z.string().startsWith("/").optional(),
+});
+export type RestoreWorkspaceResult = z.infer<typeof RestoreWorkspaceResult>;
 
 export const ErrorCode = z.enum([
   "WORKSPACE_NOT_FOUND",
@@ -529,6 +560,11 @@ export const PROTOCOL_SCHEMAS = {
   WorkspaceStateChanged,
   SetEnvironmentRequest,
   SetAgentConfigRequest,
+  EditorResponse,
+  PortsResponse,
+  /** The provider's own ports on every box (lib/runtime/box-ports.ts and the
+   *  agent's ports package each hold the list, checked against this). */
+  ProviderPorts: z.array(z.number().int()),
   /** The variables a session's environment may not set; lib/imports/
    *  environment.ts and the agent each hold the list, checked against this. */
   ReservedEnv: z.array(z.string()),

@@ -309,6 +309,11 @@ func (s *Service) worktreePath(id string) string {
 	return filepath.Join(s.Root, "workspaces", id)
 }
 
+// Worktree is where a workspace's Claude works, for the control plane: a
+// restore reports it, as create does, since a session imported from a Mac
+// was never created here and has none on record.
+func (s *Service) Worktree(id string) string { return s.worktreePath(id) }
+
 // requireWorktree refuses a workspace whose folder is gone: deleted, or never
 // created here. tmux given a missing start directory silently starts in $HOME,
 // so a page reopening a deleted session would otherwise get Claude running in
@@ -319,6 +324,20 @@ func (s *Service) requireWorktree(id string) error {
 	}
 	return nil
 }
+
+// Folder is the folder a workspace's session works in, for its editor to open
+// on; ErrUnknownWorkspace when it isn't on this box.
+func (s *Service) Folder(id string) (string, error) {
+	if err := s.requireWorktree(id); err != nil {
+		return "", err
+	}
+	return s.worktreePath(id), nil
+}
+
+// SessionEnv is the environment a session's processes get: the agent's own,
+// less its control secret and launch variables (sessionEnvironment). The
+// editor starts code-server, and so maybe the tmux server, on it.
+func (s *Service) SessionEnv() []string { return append([]string{}, s.env...) }
 
 // castDir holds a workspace's terminal cast, kept OUTSIDE the worktree so the
 // recording never pollutes the git tree (bundle/patch/changedFiles) it archives.

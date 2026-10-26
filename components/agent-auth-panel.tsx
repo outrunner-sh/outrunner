@@ -7,9 +7,12 @@ import { AuthMethodCards } from "@/components/auth-method-cards";
 import { ClaudeConnection } from "@/components/claude-connection";
 import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
+import { LoadingButton } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
 import { AGENT_AUTH_CHOICES } from "@/lib/client/agent-auth-choices";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
+import { requestJson } from "@/lib/http/request-json";
 import type { KeyProviderId } from "@/lib/providers/registry";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 
@@ -62,23 +65,26 @@ export function AgentAuthPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function choose(method: AuthMethodId) {
+  function show(method: AuthMethodId) {
     setShown(method);
+    // A save still under way keeps its error slot for its own reply.
+    if (!saving) setError(null);
+  }
+
+  async function choose(method: AuthMethodId) {
     if (method === chosen) return;
     setSaving(true);
-    setError(null);
     try {
-      const res = await fetch("/api/settings/agents", {
+      const data = await requestJson<{ choices: AgentAuthChoices }>("/api/settings/agents", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent, method }),
+        body: { agent, method },
+        has: (d) => d.choices !== undefined,
       });
-      const data = (await res.json().catch(() => null)) as { choices?: AgentAuthChoices; error?: string } | null;
-      if (!res.ok || !data?.choices) throw new Error(data?.error ?? "Couldn't save that. Try again.");
       AGENT_AUTH_CHOICES.invalidate();
       // This agent's only: another tab's reply, sent before a pick there
       // landed, mustn't undo it.
       onChoice(agent, data.choices[agent]);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that.");
     } finally {
@@ -97,16 +103,22 @@ export function AgentAuthPanel({
           chosen={chosen}
           shown={shown}
           busy={saving}
-          onChoose={(method) => void choose(method)}
+          onChoose={show}
           label={`How ${label} signs in`}
         />
         <p className="text-[13px] text-muted-foreground">
           {chosen ? way.description : `Choose how ${label} signs in for your sessions. ${way.description}`}
         </p>
+        {shown !== chosen ? (
+          <LoadingButton
+            variant="outline"
+            status={saving ? "pending" : "idle"}
+            labels={{ idle: `Use ${way.label}`, pending: "Saving" }}
+            onClick={() => void choose(shown)}
+          />
+        ) : null}
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+          <InlineMessage>{error}</InlineMessage>
         ) : null}
       </div>
 

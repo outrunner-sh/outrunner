@@ -144,6 +144,10 @@ export type ProvisionComputerInput = {
   previousSandboxId?: string;
   /** Optional live per-stage progress (the UI/verify script logs these). */
   onStage?: (stage: ProvisionStage, ms: number) => void;
+  /** Told the box's id as soon as there is one, before the agent and the
+   *  repository: so a caller cut off mid-provision (the warm pool) has it on
+   *  record, and can delete the box rather than leave it running unknown. */
+  onBox?: (sandboxId: string) => Promise<void>;
 };
 
 /**
@@ -244,6 +248,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       sandbox = await this.restoreBox(timer, labels, input);
       const restored = sandbox !== null;
       sandbox ??= await timer.stage("sandbox_create", () => this.backend.create(labels, input.size));
+      await input.onBox?.(sandbox.id);
       const box = sandbox;
       const home = await box.home();
 
@@ -445,9 +450,14 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     // mkdir -p first: an upload need not create intermediate directories, and
     // a fresh worktree has no .attachments/.
     await box.io.exec(`mkdir -p ${shellQuote(dir)}`);
-    await Promise.all(
-      files.map((file) => box.io.upload(file.bytes, `${dir}/${file.filename}`)),
-    );
+    // A .gitignore of "*" inside ignores the folder, itself included, so a
+    // pasted screenshot never lands in a commit or a PR (the agent does the
+    // same for .context). Every time: it costs one small upload, and a
+    // folder from before this has none. Names here are never dotfiles.
+    await Promise.all([
+      box.io.upload(Buffer.from("*\n"), `${dir}/.gitignore`),
+      ...files.map((file) => box.io.upload(file.bytes, `${dir}/${file.filename}`)),
+    ]);
   }
 
   /** Push an interactive worktree's persisted branch with a request-scoped token. */
@@ -558,6 +568,13 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     })().finally(() => UPGRADING.delete(key));
     UPGRADING.set(key, upgrade);
     return upgrade;
+  }
+
+  /** A URL the owner's browser opens the box's `port` at, for `ttlSeconds`;
+   *  null where the provider can't make one. */
+  async browserUrl(sandboxId: string, port: number, ttlSeconds: number): Promise<string | null> {
+    const box = await this.backend.get(sandboxId);
+    return box.browserUrl ? box.browserUrl(port, ttlSeconds) : null;
   }
 
   /**
