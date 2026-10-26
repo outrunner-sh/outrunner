@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  firstPromptFromUrl,
   firstPromptQuery,
   forgetFirstPrompt,
   handOverFirstPrompt,
@@ -84,6 +85,12 @@ test("start over hands the waiting prompt to the fresh session, and only to it",
   assert.deepEqual(handOverFirstPrompt(storage, "old", "new"), { prompt: "fix the build", attachmentIds: ["a"] });
   assert.equal(rememberedFirstPrompt(storage, "old"), null);
   assert.deepEqual(rememberedFirstPrompt(storage, "new"), { prompt: "fix the build", attachmentIds: ["a"] });
+});
+
+test("a prompt only in the URL is read back from it, for a tab without the kept copy", () => {
+  const url = new URL("https://outrunner.test/workspaces/ws-1?prompt=fix+it&attachment=a1&attachment=a2");
+  assert.deepEqual(firstPromptFromUrl(url), { prompt: "fix it", attachmentIds: ["a1", "a2"] });
+  assert.equal(firstPromptFromUrl(new URL("https://outrunner.test/workspaces/ws-1")), null);
 });
 
 test("start over with no prompt waiting hands over nothing", () => {

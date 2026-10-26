@@ -9,11 +9,20 @@ import { RouteMessage } from "@/components/route-states";
 import { InlineMessage } from "@/components/ui/notice";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import type { Workspace } from "@/lib/runtime/types";
-import { firstPromptQuery, handOverFirstPrompt, tabStorage, withoutFirstPrompt } from "@/lib/session/first-prompt";
+import { deleteSession } from "@/lib/session/delete-session";
+import {
+  firstPromptFromUrl,
+  firstPromptQuery,
+  handOverFirstPrompt,
+  tabStorage,
+  withoutFirstPrompt,
+} from "@/lib/session/first-prompt";
 
 /**
- * Start a fresh session on `workspace`'s repository in its place, carrying over
- * the first prompt still waiting in this tab, and go to it.
+ * Start a fresh session on `workspace`'s repository in its place, on the model
+ * and effort it was started on, carrying over the first prompt still waiting in
+ * this tab, and go to it. The one it replaces is deleted, so its box stops
+ * setting up and it leaves the sidebar.
  */
 export function useStartOver(workspace: Workspace) {
   const router = useRouter();
@@ -28,7 +37,15 @@ export function useStartOver(workspace: Workspace) {
       const res = await fetch(`/api/projects/${workspace.projectId}/workspaces`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ branch: "" }),
+        // Its branch isn't carried: the session it replaces still holds it.
+        body: JSON.stringify({
+          branch: "",
+          ...(workspace.model && {
+            provider: workspace.model.model.provider,
+            model: workspace.model.model.id,
+            effort: workspace.model.effort,
+          }),
+        }),
       });
       const body = (await res.json().catch(() => ({}))) as {
         workspace?: { id: string };
@@ -44,13 +61,21 @@ export function useStartOver(workspace: Workspace) {
       }
       setRetryError(null);
       // The waiting prompt moves to the fresh session: this one can never
-      // send it.
-      const first = handOverFirstPrompt(tabStorage(), workspace.id, body.workspace.id);
+      // send it. A tab without the kept copy (the link opened in another) has
+      // it only in the URL.
+      const first =
+        handOverFirstPrompt(tabStorage(), workspace.id, body.workspace.id) ??
+        firstPromptFromUrl(new URL(window.location.href));
       // Its URL too: Back to this session, once its setup finishes after all,
       // would otherwise send the prompt the fresh one already has.
       window.history.replaceState(window.history.state, "", withoutFirstPrompt(new URL(window.location.href)));
       router.push(`/workspaces/${body.workspace.id}${first ? firstPromptQuery(first) : ""}`);
       router.refresh();
+      // The replaced session goes: left alone, its box would keep setting up
+      // (and could come up, costing a computer) beside the fresh one.
+      void deleteSession(workspace.id, { kind: "cloud" }).catch((error) => {
+        console.error("Start over: couldn't delete the replaced session", error);
+      });
       // retrying stays true: this page is about to be the fresh session's,
       // and until it is, a second click must not start another one.
     } catch {

@@ -73,6 +73,15 @@ export function firstPromptQuery(first: FirstPrompt): string {
   return params.size > 0 ? `?${params}` : "";
 }
 
+/** The first prompt `url` carries, if any (the session page's ?prompt=, ?attachment=). */
+export function firstPromptFromUrl(url: URL): FirstPrompt | null {
+  const first: FirstPrompt = {
+    prompt: url.searchParams.get("prompt") ?? "",
+    attachmentIds: url.searchParams.getAll("attachment"),
+  };
+  return hasFirstPrompt(first) ? first : null;
+}
+
 /** `url` without the first prompt, once it has gone: a reload must not send it again. */
 export function withoutFirstPrompt(url: URL): string {
   const next = new URL(url);
