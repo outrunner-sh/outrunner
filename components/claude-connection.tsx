@@ -68,6 +68,9 @@ export function ClaudeConnection({
   // On the web, Reconnect shows the CLI again, connected meanwhile; bumped per
   // Reconnect, so each starts watching afresh from the token then in place.
   const [reconnecting, setReconnecting] = useState(0);
+  // A pasted token being saved: Disconnect and Cancel wait for it, or the
+  // save could land after them and quietly connect again.
+  const [saving, setSaving] = useState(false);
 
   /** Store a freshly minted token and clear the in-progress state. */
   const save = useCallback(async (token: string) => {
@@ -286,14 +289,15 @@ export function ClaudeConnection({
               onChange(next);
             }}
             active={active}
+            onSaving={setSaving}
             next={connected ? "Your current connection stays until the new one lands." : "This card updates once it's connected."}
           />
           {connected ? (
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setReconnecting(0)}>
+              <Button variant="ghost" size="sm" disabled={saving} onClick={() => setReconnecting(0)}>
                 Cancel
               </Button>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
+              <Button variant="ghost" size="sm" disabled={busy || saving} onClick={disconnect}>
                 Disconnect
               </Button>
             </div>

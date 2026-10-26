@@ -4,7 +4,7 @@ import { Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { SecretForm } from "@/components/ui/secret-form";
-import { claudeTokenLanded } from "@/lib/claude-connect";
+import { watchClaudeToken } from "@/lib/claude-connect";
 import { CLI_DEFAULT_URL, connectClaudeCommand } from "@/lib/onboarding/rules";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 import { cn } from "@/lib/utils";
@@ -34,11 +34,11 @@ function useOrigin(): string {
  * `claude setup-token` pasted instead. Onboarding and Settings → Providers
  * both show it.
  *
- * The CLI saves the token to the account itself, so this watches for it:
- * while `active`, every few seconds and at once when the user comes back to
- * the tab. A token saved since `before` (what was in place as this opened) is
- * the one; `onLanded` hears of it once, though the watch and a pasted token
- * can both see it.
+ * The CLI saves the token to the account itself, so this watches for it
+ * while `active` (watchClaudeToken). A token saved since `before` (what was in
+ * place as this opened) is the one; `onLanded` hears of it once, though the
+ * watch and a pasted token can both see it, and never after this is gone.
+ * `onSaving` says while a pasted token is being saved.
  */
 export function ClaudeFromTerminal({
   before,
@@ -47,6 +47,7 @@ export function ClaudeFromTerminal({
   onLanded,
   active = true,
   next,
+  onSaving,
 }: {
   before: ClaudeTokenMeta;
   /** The subscription as the server has it now. */
@@ -58,6 +59,7 @@ export function ClaudeFromTerminal({
   active?: boolean;
   /** What happens once it's connected, said under the command. */
   next: string;
+  onSaving?: (saving: boolean) => void;
 }) {
   const [manager, setManager] = useState(0);
   const [pasting, setPasting] = useState(false);
@@ -66,9 +68,12 @@ export function ClaudeFromTerminal({
 
   // What was in place as this opened, kept: the page's own copy moves on.
   const [baseline] = useState(before);
+  // Once, by the watch or a pasted token, and not after this is gone: a
+  // pasted token's save can answer after a Cancel or a Disconnect.
   const went = useRef(false);
+  const gone = useRef(false);
   const land = (meta: ClaudeTokenMeta) => {
-    if (went.current) return;
+    if (went.current || gone.current) return;
     went.current = true;
     onLanded(meta);
   };
@@ -77,26 +82,26 @@ export function ClaudeFromTerminal({
   useEffect(() => {
     latest.current = { check, land };
   });
+  useEffect(() => {
+    gone.current = false;
+    return () => {
+      gone.current = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!active) return;
-    const look = () => {
-      if (document.hidden || went.current) return;
-      latest.current.check().then(
-        (meta) => {
-          if (claudeTokenLanded(meta, baseline)) latest.current.land(meta);
-        },
-        // A failed look is the next one's to retry.
-        () => {},
-      );
-    };
-    look();
-    const timer = setInterval(look, POLL_MS);
-    document.addEventListener("visibilitychange", look);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", look);
-    };
+    return watchClaudeToken({
+      before: baseline,
+      check: () => latest.current.check(),
+      onLanded: (meta) => latest.current.land(meta),
+      everyMs: POLL_MS,
+      hidden: () => document.hidden,
+      onVisible: (look) => {
+        document.addEventListener("visibilitychange", look);
+        return () => document.removeEventListener("visibilitychange", look);
+      },
+    });
   }, [active, baseline]);
 
   return (
@@ -137,11 +142,14 @@ export function ClaudeFromTerminal({
         <SecretForm
           placeholder="Paste the token from claude setup-token"
           // Saved here, so it's the one: no need to tell it from the one before.
-          onSave={(token) =>
-            saveToken(token).then((meta) => {
-              if (meta.connected) land(meta);
-            })
-          }
+          onSave={(token) => {
+            onSaving?.(true);
+            return saveToken(token)
+              .then((meta) => {
+                if (meta.connected) land(meta);
+              })
+              .finally(() => onSaving?.(false));
+          }}
         />
       ) : (
         <button type="button" onClick={() => setPasting(true)} className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline">
