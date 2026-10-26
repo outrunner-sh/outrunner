@@ -3,8 +3,8 @@ import { afterEach, test } from "node:test";
 
 import type { RepositoryListing } from "@/lib/github/listing";
 import { firstModel, liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
-import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 import { filterRepositories, freeModelsOffer, sortRepositories } from "@/lib/onboarding/rules";
+import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 
 const user = { name: "Ada Lovelace", login: "ada", avatarUrl: null };
 const realFetch = globalThis.fetch;

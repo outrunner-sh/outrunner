@@ -26,7 +26,7 @@ export function Stepper<Id extends string>({
         return (
           <Fragment key={id}>
             {index > 0 && (
-              <li aria-hidden className={cn("h-px w-10 sm:w-16", done.has(steps[index - 1].id) ? "bg-success/70" : "bg-border")} />
+              <li aria-hidden className={cn("h-px w-10 sm:w-16", done.has(steps[index - 1].id) ? "bg-warning/70" : "bg-border")} />
             )}
             <li>
               <button
@@ -42,12 +42,12 @@ export function Stepper<Id extends string>({
                 <span
                   className={cn(
                     "flex size-5 items-center justify-center rounded-full border",
-                    isDone && "border-success bg-success text-background",
-                    isCurrent && "border-success",
+                    isDone && "border-warning bg-warning text-background",
+                    isCurrent && "border-warning",
                     !isDone && !isCurrent && "border-border",
                   )}
                 >
-                  {isDone ? <Check className="size-3" strokeWidth={3} /> : isCurrent && <span className="bg-success size-2 rounded-full" />}
+                  {isDone ? <Check className="size-3" strokeWidth={3} /> : isCurrent && <span className="bg-warning size-2 rounded-full" />}
                 </span>
                 {label}
               </button>

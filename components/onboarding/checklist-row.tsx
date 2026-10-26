@@ -51,7 +51,7 @@ function StateIcon({ state }: { state: RowState }) {
   switch (state) {
     case "done":
       return (
-        <span className={cn(box, "bg-success/15 text-success")} aria-label="Done">
+        <span className={cn(box, "bg-warning/15 text-warning")} aria-label="Done">
           <Check className="size-3.5" strokeWidth={3} />
         </span>
       );
