@@ -166,6 +166,11 @@ func TestAnOpenThatFoundItDownAsAStartFinishedDoesNotStartAnother(t *testing.T) 
 		_, _ = w.Write([]byte(`{"status":"alive","lastHeartbeat":1761400000000}`))
 	}))
 	defer srv.Close()
+	// Released on every way out, before the server closes: Close waits on
+	// the held probe, so a failure would otherwise hang rather than fail.
+	var once sync.Once
+	letGo := func() { once.Do(func() { close(release) }) }
+	defer letGo()
 	var starts atomic.Int32
 	e := &Editor{Home: home, Health: srv.URL, Start: func(context.Context, string, int) error {
 		starts.Add(1)
@@ -184,7 +189,7 @@ func TestAnOpenThatFoundItDownAsAStartFinishedDoesNotStartAnother(t *testing.T) 
 	if _, err := e.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	close(release)
+	letGo()
 	if err := <-late; err != nil {
 		t.Fatal(err)
 	}
