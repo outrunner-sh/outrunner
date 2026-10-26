@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 
+import { ClaudeFromTerminal } from "@/components/claude-from-terminal";
 import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
@@ -26,17 +27,23 @@ const LOGIN_WINDOW_MS = 5 * 60 * 1000;
  * Claude Code's Subscription card in Settings → Providers: connect the
  * user's Claude subscription. The card above says what it is.
  *
- * Desktop-only: one click runs `claude setup-token` natively (logging in via the
- * browser if needed), then stores the minted token server-side. Sandboxes the
- * user creates then run on their own subscription instead of the platform key.
- * The page reads `meta`; every change here goes back through `onChange`.
+ * In the Mac app, one click runs `claude setup-token` natively (logging in via
+ * the browser if needed), then stores the minted token server-side. On the
+ * web, the user runs the CLI (`outrunner claude`) in their own terminal, which
+ * saves the token itself, and the card watches for it (ClaudeFromTerminal).
+ * Sandboxes the user creates then run on their own subscription instead of
+ * the platform key. The page reads `meta`; every change here goes back
+ * through `onChange`.
  */
 export function ClaudeConnection({
   meta,
   onChange,
+  active = true,
 }: {
   meta: ClaudeTokenMeta;
   onChange: (meta: ClaudeTokenMeta) => void;
+  /** Whether the card is on screen: on the web, it watches for the CLI only then. */
+  active?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   // Watching for the CLI to finish after the browser opened. Kept apart from
@@ -58,17 +65,13 @@ export function ClaudeConnection({
   const [deadline, setDeadline] = useState<number | null>(null);
   const [pasting, setPasting] = useState(false);
   const [expired, setExpired] = useState(false);
+  // On the web, Reconnect shows the CLI again, connected meanwhile; bumped per
+  // Reconnect, so each starts watching afresh from the token then in place.
+  const [reconnecting, setReconnecting] = useState(0);
 
   /** Store a freshly minted token and clear the in-progress state. */
   const save = useCallback(async (token: string) => {
-    onChange(
-      await requestJson<ClaudeTokenMeta>("/api/settings/claude", {
-        method: "PUT",
-        body: { token },
-        has: (d) => typeof d.connected === "boolean",
-        fallback: "Could not save the token.",
-      }),
-    );
+    onChange(await saveSubscription(token));
     setPending(null);
     setCode("");
     // A save means the login finished, whatever the approval window was doing.
@@ -193,6 +196,7 @@ export function ClaudeConnection({
   const disconnect = useCallback(async () => {
     // A Reconnect still waiting must not save a token after this.
     stopLogin();
+    setReconnecting(0);
     // The window's line is this login's story, not whatever comes next: a
     // failed Disconnect has to be the one on screen, not talked over.
     setExpired(false);
@@ -269,21 +273,45 @@ export function ClaudeConnection({
             </div>
           ) : null}
         </div>
+      ) : !desktop && (!connected || reconnecting > 0) ? (
+        <div className="space-y-3">
+          <ClaudeFromTerminal
+            key={reconnecting}
+            before={meta}
+            check={readSubscription}
+            saveToken={saveSubscription}
+            onLanded={(next) => {
+              setReconnecting(0);
+              setError(null);
+              onChange(next);
+            }}
+            active={active}
+            next={connected ? "Your current connection stays until the new one lands." : "This card updates once it's connected."}
+          />
+          {connected ? (
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setReconnecting(0)}>
+                Cancel
+              </Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
+                Disconnect
+              </Button>
+            </div>
+          ) : null}
+        </div>
       ) : connected ? (
         <div className="flex gap-2">
-          {desktop ? (
-            <LoadingButton
-              variant="outline"
-              status={busy || waiting ? "pending" : "idle"}
-              labels={{ idle: "Reconnect" }}
-              onClick={() => void connect()}
-            />
-          ) : null}
+          <LoadingButton
+            variant="outline"
+            status={busy || waiting ? "pending" : "idle"}
+            labels={{ idle: "Reconnect" }}
+            onClick={() => (desktop ? void connect() : setReconnecting((n) => n + 1))}
+          />
           <Button variant="ghost" size="sm" disabled={busy} onClick={disconnect}>
             Disconnect
           </Button>
         </div>
-      ) : desktop ? (
+      ) : (
         <div className="space-y-2">
           <LoadingButton
             status={busy ? "pending" : "idle"}
@@ -295,10 +323,6 @@ export function ClaudeConnection({
             installed. Approve in the browser and it finishes by itself.
           </p>
         </div>
-      ) : (
-        <p className="text-[13px] text-muted-foreground">
-          Open Outrunner in the desktop app to connect your Claude subscription.
-        </p>
       )}
 
       {expired ? (
@@ -311,6 +335,24 @@ export function ClaudeConnection({
       ) : null}
     </div>
   );
+}
+
+/** The subscription as the server has it now. */
+function readSubscription(): Promise<ClaudeTokenMeta> {
+  return requestJson<ClaudeTokenMeta>("/api/settings/claude", {
+    has: (d) => typeof d.connected === "boolean",
+    fallback: "Couldn't check whether Claude is connected.",
+  });
+}
+
+/** Save a pasted `claude setup-token` token. */
+function saveSubscription(token: string): Promise<ClaudeTokenMeta> {
+  return requestJson<ClaudeTokenMeta>("/api/settings/claude", {
+    method: "PUT",
+    body: { token },
+    has: (d) => typeof d.connected === "boolean",
+    fallback: "Could not save the token.",
+  });
 }
 
 /** How long the CLI keeps waiting for the browser, counted down to the second. */
