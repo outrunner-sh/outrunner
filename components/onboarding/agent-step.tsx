@@ -264,18 +264,14 @@ function SubscriptionFromTerminal({
   const [copied, setCopied] = useState(false);
   const command = CONNECT_COMMANDS[manager][1];
 
-  // The latest callback, called once: the poll and a pasted token can both
-  // see the subscription land.
-  const connected = useRef(onConnected);
+  // Called once, though the poll and a pasted token can both see the
+  // subscription land; the poll reads the latest callback through `land`.
   const went = useRef(false);
-  useEffect(() => {
-    connected.current = onConnected;
-  });
   const landed = (status: AgentStatus) => {
     onStatus(status);
     if (status.claude.subscription && !went.current) {
       went.current = true;
-      connected.current();
+      onConnected();
     }
   };
   const land = useRef(landed);
@@ -325,8 +321,7 @@ function SubscriptionFromTerminal({
       </div>
       <p className="text-muted-foreground text-xs">Claude will give you a code to paste into your terminal. This page moves on once it&apos;s connected.</p>
       {pasting ? (
-        <KeyForm placeholder="Paste the token from claude setup-token" onSave={(token) => env.saveClaudeToken(token).then(landed)}
-        />
+        <KeyForm placeholder="Paste the token from claude setup-token" onSave={(token) => env.saveClaudeToken(token).then(landed)} />
       ) : (
         <button type="button" onClick={() => setPasting(true)} className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline">
           Or paste a token from <code className="font-mono">claude setup-token</code>
