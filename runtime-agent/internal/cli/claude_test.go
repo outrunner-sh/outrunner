@@ -83,10 +83,11 @@ func TestAFailureNeverShowsAToken(t *testing.T) {
 	}
 }
 
-func TestClaudeCommandSavesTheTokenToTheAccount(t *testing.T) {
-	app := newFakeApp(t)
-	app.tokens["or_cli_token"] = true // before any request: no race
-	var saved string
+// claudeApp is the fake app with the CLI's Claude slot; saved is what was
+// put in it.
+func claudeApp(t *testing.T) (app *fakeApp, saved *string) {
+	app = newFakeApp(t)
+	saved = new(string)
 	app.server.Config.Handler.(*http.ServeMux).HandleFunc("PUT /api/cli/claude", func(w http.ResponseWriter, r *http.Request) {
 		if !app.tokenWorks(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -94,9 +95,15 @@ func TestClaudeCommandSavesTheTokenToTheAccount(t *testing.T) {
 		}
 		var body struct{ Token string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		saved = body.Token
+		*saved = body.Token
 		_, _ = w.Write([]byte(`{"connected":true,"last4":"6789"}`))
 	})
+	return app, saved
+}
+
+func TestClaudeCommandSavesTheTokenToTheAccount(t *testing.T) {
+	app, saved := claudeApp(t)
+	app.tokens["or_cli_token"] = true // before any request: no race
 	fakeClaude(t, printLink+"\necho "+fakeToken)
 	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
 	path, _ := ConfigPath()
@@ -106,19 +113,38 @@ func TestClaudeCommandSavesTheTokenToTheAccount(t *testing.T) {
 	if code := Main(context.Background(), []string{"--url", app.server.URL, "claude"}, nil, &out, &errOut); code != 0 {
 		t.Fatalf("claude: %d %s", code, errOut.String())
 	}
-	if saved != fakeToken {
-		t.Fatalf("saved %q", saved)
+	if *saved != fakeToken {
+		t.Fatalf("saved %q", *saved)
 	}
 	if !strings.Contains(out.String(), "✓ Claude Code connected (token …6789)") {
 		t.Errorf("printed %q", out.String())
 	}
 }
 
-func TestClaudeCommandNeedsSigningInFirst(t *testing.T) {
+// Onboarding's subscription page shows `outrunner claude`: run signed out, it
+// signs in, connects, and opens no tab but the sign-in one, since the page
+// that gave the command is open and moves on by itself.
+func TestClaudeCommandSignsInFirstAndOpensNoOtherTab(t *testing.T) {
+	app, saved := claudeApp(t)
+	fakeClaude(t, printLink+"\necho "+fakeToken)
 	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	approve := app.approve(t, "")
+	var opened []string
+	openBrowser = func(u string) error {
+		opened = append(opened, u)
+		return approve(u)
+	}
+	t.Cleanup(func() { openBrowser = OpenBrowser })
+
 	var out, errOut bytes.Buffer
-	if code := Main(context.Background(), []string{"--url", "http://127.0.0.1:1", "claude"}, nil, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "outrunner login") {
-		t.Fatalf("got %d %q", code, errOut.String())
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "claude"}, nil, &out, &errOut); code != 0 {
+		t.Fatalf("claude: %d %s", code, errOut.String())
+	}
+	if *saved != fakeToken {
+		t.Fatalf("saved %q", *saved)
+	}
+	if len(opened) != 1 || !strings.HasPrefix(opened[0], app.server.URL+"/cli-login?") {
+		t.Errorf("opened %q, want only the sign-in page", opened)
 	}
 }
 

@@ -1,13 +1,13 @@
 "use client";
 
 import { ArrowLeft, Check, ChevronRight, Copy, KeyRound, Sparkles, Terminal } from "lucide-react";
-import { type ComponentType, useEffect, useRef, useState } from "react";
+import { type ComponentType, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { ClaudeIcon, OpenAIIcon } from "@/components/brand-icons";
 import { ClaudeConnection } from "@/components/claude-connection";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
-import { freeModelsOffer } from "@/lib/onboarding/rules";
+import { CLI_DEFAULT_URL, connectClaudeCommand, freeModelsOffer } from "@/lib/onboarding/rules";
 import type { AgentPick, AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
 import { cn } from "@/lib/utils";
 
@@ -24,14 +24,21 @@ type Page = { at: "agents" } | { at: "methods"; agent: Agent } | { at: "connect"
 const AGENT_NAMES: Record<Agent, string> = { claude: "Claude Code", codex: "OpenAI Codex" };
 const AGENT_ICONS: Record<Agent, ComponentType<{ className?: string }>> = { claude: ClaudeIcon, codex: OpenAIIcon };
 
-/** The CLI that connects Claude from the user's terminal, by package manager
- *  (it signs the terminal in, then runs `claude setup-token`). */
-const CONNECT_COMMANDS = [
-  ["npm", "npx outrunner@latest"],
-  ["pnpm", "pnpm dlx outrunner@latest"],
-  ["yarn", "yarn dlx outrunner@latest"],
-  ["bun", "bunx outrunner@latest"],
+/** How each package manager runs the CLI that connects Claude from the
+ *  user's terminal (it signs the terminal in, then runs `claude setup-token`). */
+const RUNNERS = [
+  ["npm", "npx"],
+  ["pnpm", "pnpm dlx"],
+  ["yarn", "yarn dlx"],
+  ["bun", "bunx"],
 ] as const;
+
+/** This app's origin, which never changes while the page is open; the
+ *  CLI's default on the server, which can't know it. */
+const noSubscription = () => () => {};
+function useOrigin(): string {
+  return useSyncExternalStore(noSubscription, () => window.location.origin, () => CLI_DEFAULT_URL);
+}
 
 /** Whether `method` of `agent` is connected already. */
 function connected(agent: Agent, method: Method, status: AgentStatus): boolean {
@@ -262,7 +269,7 @@ function SubscriptionFromTerminal({
   const [manager, setManager] = useState(0);
   const [pasting, setPasting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const command = CONNECT_COMMANDS[manager][1];
+  const command = connectClaudeCommand(RUNNERS[manager][1], useOrigin());
 
   // Called once, though the poll and a pasted token can both see the
   // subscription land; the poll reads the latest callback through `land`.
@@ -279,18 +286,25 @@ function SubscriptionFromTerminal({
     land.current = landed;
   });
 
+  // Polled while the page shows, and at once when the user comes back to it
+  // from the terminal or Claude's sign-in tab.
   useEffect(() => {
-    const timer = setInterval(() => {
+    const poll = () => {
       if (!document.hidden) env.agentStatus().then((status) => land.current(status), () => {});
-    }, TERMINAL_POLL_MS);
-    return () => clearInterval(timer);
+    };
+    const timer = setInterval(poll, TERMINAL_POLL_MS);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, [env]);
 
   return (
     <div className="space-y-3">
       <p className="text-muted-foreground text-sm">Run the CLI and connect your Claude Code account</p>
       <div role="tablist" aria-label="Package manager" className="flex gap-4 text-xs">
-        {CONNECT_COMMANDS.map(([name], index) => (
+        {RUNNERS.map(([name], index) => (
           <button
             key={name}
             type="button"

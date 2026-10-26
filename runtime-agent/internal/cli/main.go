@@ -21,7 +21,8 @@ const usage = `Usage: outrunner [--url <app>] [--version] [command]
 Commands:
   (none)   Sign in if needed, then continue setting up in your browser
   login    Sign this terminal in to Outrunner
-  claude   Connect your Claude subscription (runs claude setup-token)
+  claude   Connect your Claude subscription (runs claude setup-token),
+           signing in first if needed
   logout   Sign this terminal out
   whoami   Show who this terminal is signed in as
 `
@@ -74,11 +75,17 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	case "whoami":
 		return whoami(ctx, url, config, stdout, stderr)
 	case "claude":
-		if config.Token == "" {
-			fmt.Fprintln(stderr, "Not signed in. Run `outrunner login`.")
-			return 1
+		// The command onboarding's subscription page shows: that page is
+		// open already and moves on by itself, so no browser opens after.
+		config, code := ensureSignedIn(ctx, url, path, config, stdout, stderr)
+		if code != 0 {
+			return code
 		}
-		return connectClaude(ctx, url, config, in, stdout, stderr)
+		if code := connectClaude(ctx, url, config, in, stdout, stderr); code != 0 {
+			return code
+		}
+		fmt.Fprintln(stdout, "\nGo back to your browser to carry on.")
+		return 0
 	case "help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -92,28 +99,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 // when it's on this computer, then the web app takes over onboarding from
 // its first step the user hasn't done.
 func start(ctx context.Context, url, path string, config Config, in terminal, stdout, stderr io.Writer) int {
-	signedIn := false
-	if config.Token != "" {
-		user, err := WhoAmI(ctx, nil, url, config.Token)
-		switch {
-		case err == nil:
-			printSignedIn(stdout, user, url)
-			signedIn = true
-		case !errors.Is(err, ErrSignedOut):
-			fmt.Fprintln(stderr, "outrunner:", err)
-			return 1
-		}
-	}
-	if !signedIn {
-		token, code := signIn(ctx, url, path, "/cli-login/done", stdout, stderr)
-		if code != 0 {
-			return code
-		}
-		if saved, err := LoadConfig(path); err == nil && saved.Token == token {
-			config = saved
-		} else {
-			config = Config{URL: url, Token: token}
-		}
+	config, code := ensureSignedIn(ctx, url, path, config, stdout, stderr)
+	if code != 0 {
+		return code
 	}
 
 	if code := offerClaude(ctx, url, config, in, stdout, stderr); code != 0 {
@@ -122,8 +110,32 @@ func start(ctx context.Context, url, path string, config Config, in terminal, st
 
 	fmt.Fprintln(stdout, "\nContinue setting up in your browser:")
 	fmt.Fprintf(stdout, "%s/onboarding\n", url)
-	_ = OpenBrowser(url + "/onboarding")
+	_ = openBrowser(url + "/onboarding")
 	return 0
+}
+
+// ensureSignedIn returns config as is when its token still works, and signs
+// in through the browser when there's none or the app has dropped it.
+func ensureSignedIn(ctx context.Context, url, path string, config Config, stdout, stderr io.Writer) (Config, int) {
+	if config.Token != "" {
+		user, err := WhoAmI(ctx, nil, url, config.Token)
+		switch {
+		case err == nil:
+			printSignedIn(stdout, user, url)
+			return config, 0
+		case !errors.Is(err, ErrSignedOut):
+			fmt.Fprintln(stderr, "outrunner:", err)
+			return config, 1
+		}
+	}
+	token, code := signIn(ctx, url, path, "/cli-login/done", stdout, stderr)
+	if code != 0 {
+		return config, code
+	}
+	if saved, err := LoadConfig(path); err == nil && saved.Token == token {
+		return saved, 0
+	}
+	return Config{URL: url, Token: token}, 0
 }
 
 // offerClaude connects Claude when the user has it here, hasn't connected it
@@ -190,7 +202,7 @@ func signIn(ctx context.Context, url, path, after string, stdout, stderr io.Writ
 		BaseURL:     url,
 		DeviceName:  DeviceName(),
 		After:       after,
-		OpenBrowser: OpenBrowser,
+		OpenBrowser: openBrowser,
 		Out:         stdout,
 	})
 	if err != nil {
