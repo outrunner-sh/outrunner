@@ -6,10 +6,14 @@ import { billingMode } from "@/lib/billing/mode";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 
 /**
- * One reconciler run (lib/billing/reconcile.ts), and the model allowances
- * due to renew for sessions already running, for the Cloudflare cron
+ * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
+ * renew for sessions already running, and the warm pool's boxes nothing else
+ * will delete (lib/runtime/warm-pool.deps.ts), for the Cloudflare cron
  * (cloudflare/worker.ts, every 2 minutes). Not a user's route: it takes only
  * BILLING_CRON_SECRET, as a bearer token. Answers what the run did.
  */
@@ -31,7 +35,16 @@ export async function POST(request: Request) {
             return null;
           })
         : 0;
-    return NextResponse.json({ ...report, allowancesRenewed });
+    // Its own step too: pooled boxes nothing else will delete (a refill a
+    // restart cut off, a failed refill's leftover box).
+    const provider = getRuntimeProvider();
+    const poolsSwept = isComputerProvider(provider)
+      ? await sweepAbandonedPools(provider).catch((error: unknown) => {
+          console.error("Sweeping abandoned pooled boxes failed", error);
+          return null;
+        })
+      : 0;
+    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept });
   } catch (error) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });

@@ -144,6 +144,10 @@ export type ProvisionComputerInput = {
   previousSandboxId?: string;
   /** Optional live per-stage progress (the UI/verify script logs these). */
   onStage?: (stage: ProvisionStage, ms: number) => void;
+  /** Told the box's id as soon as there is one, before the agent and the
+   *  repository: so a caller cut off mid-provision (the warm pool) has it on
+   *  record, and can delete the box rather than leave it running unknown. */
+  onBox?: (sandboxId: string) => Promise<void>;
 };
 
 /**
@@ -244,6 +248,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       sandbox = await this.restoreBox(timer, labels, input);
       const restored = sandbox !== null;
       sandbox ??= await timer.stage("sandbox_create", () => this.backend.create(labels, input.size));
+      await input.onBox?.(sandbox.id);
       const box = sandbox;
       const home = await box.home();
 
