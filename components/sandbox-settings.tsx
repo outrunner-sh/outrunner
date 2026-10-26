@@ -96,6 +96,8 @@ export function SandboxSettingsForm({
           method,
           body: body?.(),
           has: (d) => d.sandbox !== undefined,
+          // The line already says "Couldn't <verb> <subject>".
+          fallback: "Outrunner didn't say why.",
         });
         inUseNow.current = data.sandbox;
         // What landed clears its own failure — the line names the change, and
