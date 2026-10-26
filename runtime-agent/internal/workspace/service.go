@@ -319,6 +319,20 @@ func (s *Service) requireWorktree(id string) error {
 	return nil
 }
 
+// Folder is the folder a workspace's session works in, for its editor to open
+// on; ErrUnknownWorkspace when it isn't on this box.
+func (s *Service) Folder(id string) (string, error) {
+	if err := s.requireWorktree(id); err != nil {
+		return "", err
+	}
+	return s.worktreePath(id), nil
+}
+
+// SessionEnv is the environment a session's processes get: the agent's own,
+// less its control secret and launch variables (sessionEnvironment). The
+// editor starts code-server, and so maybe the tmux server, on it.
+func (s *Service) SessionEnv() []string { return append([]string{}, s.env...) }
+
 // castDir holds a workspace's terminal cast, kept OUTSIDE the worktree so the
 // recording never pollutes the git tree (bundle/patch/changedFiles) it archives.
 func (s *Service) castDir(id string) string {
