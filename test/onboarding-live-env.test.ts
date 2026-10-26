@@ -97,7 +97,8 @@ test("the first session starts on the agent picked: the user's own, or the menu'
 });
 
 test("Outrunner's models are offered as the Free plan gives them", () => {
-  assert.equal(freeModelsOffer(), "$5 free to start");
+  // The Free plan's $5, at 5¢ a credit.
+  assert.equal(freeModelsOffer(), "100 free credits");
 });
 
 test("repositories show most recently pushed first, and filter by name or description", () => {

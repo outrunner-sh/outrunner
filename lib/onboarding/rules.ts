@@ -20,9 +20,14 @@ export function filterRepositories(repositories: RepositoryListing[], query: str
   );
 }
 
+/** What one credit is worth, in USD: the Free plan's allowance shown as
+ *  credits (1 credit = 5¢). */
+export const USD_PER_CREDIT = 0.05;
+
 /** What a new account gets of Outrunner's models, as the Free plan says
- *  (lib/billing/plans.ts): "$5 free to start". */
+ *  (lib/billing/plans.ts), in credits: "100 free credits". */
 export function freeModelsOffer(): string {
   const { usd, per } = PLANS.free.models;
-  return per === "once" ? `$${usd} free to start` : `$${usd} free each month`;
+  const credits = Math.round(usd / USD_PER_CREDIT);
+  return per === "once" ? `${credits} free credits` : `${credits} free credits a month`;
 }
