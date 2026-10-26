@@ -73,10 +73,12 @@ export async function POST(request: Request, context: RouteContext) {
     await agent.sendMessage(identity, prompt);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
-    // The agent's 404 (unknown workspace) means the session's box is gone, so
-    // retrying fails the same way every time. Tag it (BOX_GONE) so the composer
-    // drops Retry and points at a new session instead of offering one.
-    if (error instanceof AgentRequestError && error.status === 404) {
+    // The agent's own 404 (unknown workspace) means the session's box is gone,
+    // so retrying fails the same way every time. Tag it (BOX_GONE) so the
+    // composer drops Retry and points at a new session instead of offering one.
+    // A 404 without the agent's error body (a proxy in front of a box that is
+    // restarting, an agent without the route) may pass on retry, so keeps it.
+    if (error instanceof AgentRequestError && error.status === 404 && error.error?.message === "unknown workspace") {
       return NextResponse.json(
         { error: "This session isn't running on its computer any more.", code: BOX_GONE },
         { status: 502 },
