@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
+import { OpenEditorButton } from "@/components/open-editor-button";
 import { SessionComposer } from "@/components/session-composer";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
@@ -15,7 +16,7 @@ import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
-import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -71,6 +72,8 @@ export function WorkspaceStudio({
           {place && <span className="studio-title-place">{place}</span>}
         </div>
         <div className="studio-header-actions">
+          {/* VS Code on the session's own box: cloud sessions only. */}
+          {hasLiveSession && !isLocal && opensInBrowser(workspace.provider) && <OpenEditorButton workspaceId={workspace.id} />}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}

@@ -47,6 +47,8 @@ test("a live box: ready, or provisioning while fresh, and never the owner's own"
   const stale = new Date(now.getTime() - STALE_PROVISION_MS - 1).toISOString();
   assert.equal(isLiveMeteredComputer(box("provisioning", "daytona", stale), now), false);
   assert.equal(isLiveMeteredComputer(box("stopped", null, fresh.toISOString()), now), false);
+  // A pooled box, made ahead and stopped, runs no one's session.
+  assert.equal(isLiveMeteredComputer({ ...box("provisioning", "daytona", fresh.toISOString()), pooled: true }, now), false);
   // The owner's own Daytona or Modal is their bill, not the plan's.
   assert.equal(isLiveMeteredComputer(box("ready", "user-daytona", fresh.toISOString()), now), false);
   assert.equal(isLiveMeteredComputer(box("ready", "user-modal", fresh.toISOString()), now), false);
