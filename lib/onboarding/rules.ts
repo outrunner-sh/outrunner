@@ -31,3 +31,18 @@ export function freeModelsOffer(): string {
   const credits = Math.round(usd / USD_PER_CREDIT);
   return per === "once" ? `${credits} free credits` : `${credits} free credits a month`;
 }
+
+/** The app the CLI signs in to when it's given no --url: its DefaultURL
+ *  (runtime-agent/internal/cli/main.go). */
+export const CLI_DEFAULT_URL = "https://app.outrunner.sh";
+
+/** The command that connects a Claude subscription from the terminal, run
+ *  with `runner` (`npx`, `pnpm dlx`…), for the app at `origin`. It's
+ *  `outrunner claude`, not the bare command: the page showing it is open and
+ *  moves on by itself, so the CLI mustn't open onboarding in another tab. Any
+ *  app but the default is named with --url, or the token would be saved to
+ *  that one and this page would never see it. */
+export function connectClaudeCommand(runner: string, origin: string): string {
+  const url = origin === CLI_DEFAULT_URL ? "" : ` --url ${origin}`;
+  return `${runner} outrunner@latest${url} claude`;
+}

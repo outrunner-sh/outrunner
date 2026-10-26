@@ -3,7 +3,7 @@ import { afterEach, test } from "node:test";
 
 import type { RepositoryListing } from "@/lib/github/listing";
 import { firstModel, liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
-import { filterRepositories, freeModelsOffer, sortRepositories } from "@/lib/onboarding/rules";
+import { CLI_DEFAULT_URL, connectClaudeCommand, filterRepositories, freeModelsOffer, sortRepositories } from "@/lib/onboarding/rules";
 import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 
 const user = { name: "Ada Lovelace", login: "ada", avatarUrl: null };
@@ -111,6 +111,12 @@ test("Codex on Outrunner's models starts Codex on Outrunner's first model, not C
 test("Outrunner's models are offered as the Free plan gives them", () => {
   // The Free plan's $5, at 5¢ a credit.
   assert.equal(freeModelsOffer(), "100 free credits");
+});
+
+test("the terminal command connects Claude to this app, without opening onboarding again", () => {
+  assert.equal(connectClaudeCommand("npx", CLI_DEFAULT_URL), "npx outrunner@latest claude");
+  // Any other app is named, or the token lands on the default one and this page never moves on.
+  assert.equal(connectClaudeCommand("pnpm dlx", "http://localhost:3000"), "pnpm dlx outrunner@latest --url http://localhost:3000 claude");
 });
 
 test("repositories show most recently pushed first, and filter by name or description", () => {
