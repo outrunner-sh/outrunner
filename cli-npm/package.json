@@ -18,6 +18,6 @@
     "outrunner-darwin-x64": "0.0.0",
     "outrunner-linux-arm64": "0.0.0",
     "outrunner-linux-x64": "0.0.0",
-    "outrunner-win32-x64": "0.0.0"
+    "outrunner-windows-x64": "0.0.0"
   }
 }
