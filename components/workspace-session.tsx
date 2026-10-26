@@ -1,5 +1,6 @@
 "use client";
 
+import { RotateCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -7,13 +8,17 @@ import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { QuestionCard } from "@/components/question-card";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
-import { deliverLocalAgentAuth } from "@/lib/desktop/local-agent-auth";
+import { ErrorRef, InlineMessage, Notice, TickingFact } from "@/components/ui/notice";
+import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
 import {
+  LOCAL_RUNNER_LOG,
   accountsHere,
   localAgentRequest,
   localTarget,
+  localSendFailure,
   messageForLocalError,
   putOnModel,
+  runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
 import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import {
@@ -29,6 +34,7 @@ import {
   type PendingPrompt,
 } from "@/lib/session/optimistic-echo";
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { reachOutrunner } from "@/lib/http/request-json";
 import {
   forgetFirstPrompt,
   hasFirstPrompt,
@@ -52,10 +58,18 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import { sendIsDeadEnd } from "@/lib/session/send-failure";
+import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
+
+/** A send that didn't go: why, and how to try it again. `retry` is set only
+ * where its text never was in the composer's box (a session's first prompt),
+ * so the box's Retry sends the original rather than an empty box. `code` is
+ * the route's, when it gave one, so a dead end offers no retry. */
+type FailedSend = { message: string; retry?: () => void; code?: string };
 
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   outrunner: true,
@@ -74,6 +88,7 @@ export type SessionSender = {
 
 export function WorkspaceSession({
   workspaceId,
+  projectId,
   agent = "claude",
   local = false,
   untitled = false,
@@ -82,6 +97,8 @@ export function WorkspaceSession({
   onSender,
 }: {
   workspaceId: string;
+  /** Its repository, so a session whose box is gone can continue in a new one there. */
+  projectId?: string;
   /** The coding agent the session runs: its model menu offers only models
    *  that agent runs. */
   agent?: AgentId;
@@ -106,15 +123,29 @@ export function WorkspaceSession({
   // The jcode engine has no PTY: prompts go over the /message API and the reply
   // streams back on the Conversation SSE. So input readiness and errors come
   // from the session attachment + conversation stream.
-  const [sendError, setSendError] = useState<string | null>(null);
-  // A broken connection outranks a failed send: reconnecting is the way out of
-  // it. A failed send or model switch is only dismissed — the composer already
-  // has the prompt back to send again.
-  const connectionError = conversation.error ?? attachment.error;
-  const error = connectionError ?? sendError;
+  const [sendError, setSendError] = useState<FailedSend | null>(null);
+  // An answer that didn't go: why, under the card that asked it. The next
+  // answer retires it, and the card leaving takes it along.
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  // A question that was over before its answer got there: nothing failed to
+  // send, so it is said as news above the composer, not as a send failure.
+  const [questionGone, setQuestionGone] = useState<string | null>(null);
+  // A model switch that didn't happen: which model, why, and where to fix it.
+  const [switchError, setSwitchError] = useState<{ label: string; message: string; href?: string } | null>(null);
+  // A failed send is shown by the composer, with a way to send it again: the box's own text comes back to it; a session's first prompt, which never was in the box, retries its original.
+  // A dropped stream gets its own notice (retrying, then lost) instead of the
+  // strip, so a handshake failure mid-retry doesn't flash red.
+  const streamDropped = conversation.reconnecting !== null || conversation.lost;
+  // The box's own answer wins over the stream's: a box that is gone explains a
+  // socket that can't reconnect, so its notice — and its way out — is the one
+  // to show, whatever the stream said before it closed. (The stream reports
+  // the attachment's error as its own only until it has one of its own.)
+  const fromBox = attachment.error !== null;
+  const connectionError = streamDropped ? null : (fromBox ? attachment.error : conversation.error);
   const refresh = () => {
     setSendError(null);
-    attachment.refresh();
+    setAnswerError(null);
+    conversation.refresh();
   };
   const attached = attachment.status === "attached";
   // The composer takes a prompt while the session is still connecting: it goes
@@ -143,7 +174,7 @@ export function WorkspaceSession({
   const anchor = (pendingId: string, sentAt: number) =>
     setPending((prev) => settlePending(prev, pendingId, userPrompts(eventsRef.current), sentAt));
 
-  const send = (text: string, attachmentIds: string[] = []) => {
+  const send = (text: string, attachmentIds: string[] = [], retry?: () => void) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
     if (trimmed) {
@@ -156,12 +187,13 @@ export function WorkspaceSession({
       });
     }
     setSendError(null);
+    setQuestionGone(null);
     // It didn't go: say why, and drop its bubble, which would otherwise stay on
     // screen for good once a resend of the same text lands in its place. The
     // composer gets the text back (it awaits the `false`).
-    const failed = (message: string) => {
+    const failed = (message: string, code?: string) => {
       setPending((prev) => prev.filter((p) => p.id !== pendingId));
-      setSendError(message);
+      setSendError({ message, retry, code });
       return false;
     };
     return whenAttached().then(
@@ -176,7 +208,7 @@ export function WorkspaceSession({
     text: string,
     attachmentIds: string[],
     pendingId: string,
-    failed: (message: string) => boolean,
+    failed: (message: string, code?: string) => boolean,
   ) => {
     // The stream may record the prompt before the session answers.
     const sentAt = userPromptCount(eventsRef.current);
@@ -191,7 +223,7 @@ export function WorkspaceSession({
           anchor(pendingId, sentAt);
           return true;
         },
-        (error: unknown) => failed(error instanceof Error ? error.message : "Could not send that message."),
+        (error: unknown) => failed(localSendFailure(error)),
       );
     }
     return fetch(`/api/workspaces/${workspaceId}/message`, {
@@ -200,14 +232,14 @@ export function WorkspaceSession({
       body: JSON.stringify({ content: text, attachmentIds }),
     }).then(
       async (res) => {
-        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string };
-        if (!res.ok) return failed(body.error ?? "Could not send that message.");
+        const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
+        if (!res.ok) return failed(body.error ?? "Could not send that message.", body.code);
         anchor(pendingId, sentAt);
         // The first prompt just named this session: re-read the sidebar.
         if (body.titled) router.refresh();
         return true;
       },
-      () => failed("Could not reach Outrunner. Check your connection and send it again."),
+      () => failed("Couldn't reach Outrunner. Check your connection."),
     );
   };
 
@@ -259,6 +291,9 @@ export function WorkspaceSession({
   // Stopping the turn under way (the composer's stop button): the agent
   // presses Escape in the session and answers once the turn has stopped.
   const [stopping, setStopping] = useState(false);
+  // A stop that didn't happen: why, as its own notice. Not the composer's
+  // send line, which offers to send again — the turn, not a send, failed.
+  const [stopError, setStopError] = useState<string | null>(null);
   // The prompts recorded when a turn was last stopped: the turn is over until
   // the next, even where the agent records nothing of the stop (Codex).
   const [stoppedAt, setStoppedAt] = useState<number | null>(null);
@@ -272,6 +307,8 @@ export function WorkspaceSession({
   const answer = (asked: PendingQuestion, reply: { answers: AskAnswer[] } | { dismissed: true }) => {
     setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
     setSendError(null);
+    setAnswerError(null);
+    setQuestionGone(null);
     const body = { questions: asked.raw, ...reply };
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/answer`, body)
@@ -280,8 +317,8 @@ export function WorkspaceSession({
       const raw = error instanceof Error ? error.message : String(error ?? "");
       if (isExpiredQuestionError(raw)) {
         // Over already (the session restarted, or it was answered elsewhere):
-        // it stays put away.
-        setSendError(`${AGENTS[agent].label} isn't waiting on that question any more. Reply in the chat instead.`);
+        // it stays put away, and the composer that is back says so.
+        setQuestionGone(`${AGENTS[agent].label} isn't waiting on that question any more. Reply in the chat instead.`);
         return;
       }
       setAnsweredHere((prev) => {
@@ -289,7 +326,9 @@ export function WorkspaceSession({
         next.delete(asked.toolUseId);
         return next;
       });
-      setSendError(local ? messageForLocalError(error, agent) : raw || "Couldn't send your answer.");
+      // The card is up again, so the line sits under it — the composer's send
+      // line is hidden with the composer.
+      setAnswerError(local ? messageForLocalError(error, agent) : raw || "Couldn't send your answer.");
     });
   };
   // A prompt the stream hasn't recorded yet is a turn starting. The agent
@@ -303,13 +342,14 @@ export function WorkspaceSession({
   const stop = () => {
     setStopping(true);
     setSendError(null);
+    setStopError(null);
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
       : stopCloudTurn(workspaceId)
     )
       .then(() => setStoppedAt(userPromptCount(eventsRef.current)))
       .catch((error: unknown) =>
-        setSendError(
+        setStopError(
           local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
         ),
       )
@@ -338,6 +378,7 @@ export function WorkspaceSession({
       const next = takesEffort(model) ? pickedEffort : null;
       setSwitching(true);
       setSendError(null);
+      setSwitchError(null);
       // A local switch relaunches the session on this Mac: signed in as the
       // user picks now first, as the server does for a cloud one.
       (local
@@ -351,9 +392,12 @@ export function WorkspaceSession({
           rememberEffort(workspaceId, next);
         })
         .catch((error: unknown) =>
-          setSendError(
-            local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't switch models.",
-          ),
+          setSwitchError({
+            label: model.label,
+            message: local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't switch models.",
+            href:
+              error instanceof ModelSwitchError || error instanceof LocalAgentAuthError ? error.settingsHref : undefined,
+          }),
         )
         .finally(() => setSwitching(false));
     },
@@ -415,16 +459,28 @@ export function WorkspaceSession({
     // fire on ready, not a render cascade. Another mount of this session may be
     // sending it still: sendFirstPromptOnce waits on that one instead.
     const sessionPath = window.location.pathname;
-    void sendFirstPromptOnce(workspaceId, () => send(first.prompt, first.attachmentIds)).then((outcome) => {
-      // Forget it only once the POST is accepted, so a failed delivery leaves
-      // it in place for a reload to retry. Remove just the first prompt's
-      // params (preserving any history state), not the whole query string,
-      // and only while this session is still the page: a send that lands
-      // after the user moved on must not rewrite another page's URL.
-      if (outcome === "failed") return;
+    // The prompt went: forget the kept copy, and the URL's params (only while
+    // this session is still the page, preserving any history state), so a
+    // reload can't send it again. Nothing is forgotten until the POST is
+    // accepted, so a failed delivery leaves it in place for a retry or a reload.
+    const itWent = () => {
       if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
       const url = new URL(window.location.href);
       if (url.pathname === sessionPath) window.history.replaceState(window.history.state, "", withoutFirstPrompt(url));
+    };
+    // Send it, cleaning up only once it lands. A failed send keeps its Retry.
+    const attempt = (): Promise<boolean> =>
+      send(first.prompt, first.attachmentIds, retry).then((landed) => {
+        if (landed) itWent();
+        return landed;
+      });
+    // The composer's Retry re-enters through the same once-per-tab gate as
+    // the first try, so a retry racing a remounted page still sends it once.
+    const retry = (): void => void sendFirstPromptOnce(workspaceId, attempt);
+    void sendFirstPromptOnce(workspaceId, attempt).then((outcome) => {
+      // Another page of this tab sent it first: its send cleaned up after
+      // itself, but this URL may still be the one carrying the prompt.
+      if (outcome === "already") itWent();
     });
     // send is stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -432,15 +488,62 @@ export function WorkspaceSession({
 
   return (
     <div className="studio-live-session" data-testid="workspace-session">
-      {error && (
-        <div className="studio-session-error" role="alert">
-          <span>{error}</span>
-          {connectionError ? (
-            <button type="button" onClick={refresh}>Reconnect</button>
-          ) : (
-            <button type="button" onClick={() => setSendError(null)}>Dismiss</button>
-          )}
-        </div>
+      {conversation.lost ? (
+        <Notice
+          tone="warning"
+          title="Lost connection to this session"
+          detail="It's still running on its box, so nothing is lost."
+          actions={[
+            {
+              label: "Reconnect",
+              icon: <RotateCw className={conversation.retrying ? "is-working" : undefined} />,
+              primary: true,
+              disabled: conversation.retrying,
+              onClick: refresh,
+            },
+          ]}
+        />
+      ) : (
+        conversation.reconnecting && <ReconnectingNotice {...conversation.reconnecting} />
+      )}
+      {switchError && !connectionError && !streamDropped && (
+        <Notice
+          tone="error"
+          title={`Couldn't switch to ${switchError.label}`}
+          detail={`${switchError.message} The session stays on its current model.`}
+          actions={[
+            ...(switchError.href ? [{ label: "Open settings", href: switchError.href }] : []),
+            { label: "Dismiss", onClick: () => setSwitchError(null) },
+          ]}
+        />
+      )}
+      {stopError && !connectionError && !streamDropped && (
+        <Notice
+          tone="error"
+          title="Couldn't stop this turn"
+          detail={`${stopError} The turn keeps running.`}
+          actions={[{ label: "Dismiss", onClick: () => setStopError(null) }]}
+        />
+      )}
+      {conversation.protocolErrorRef && !connectionError && !streamDropped && (
+        <Notice
+          tone="warning"
+          title="Something went wrong in this session"
+          detail="Part of the conversation couldn't be shown. Reloading usually fixes it."
+          meta={<ErrorRef value={conversation.protocolErrorRef} />}
+          actions={[{ label: "Reload", icon: <RotateCw />, primary: true, onClick: () => window.location.reload() }]}
+        />
+      )}
+      {connectionError && (
+        <ConnectionNotice
+          // The server's sentence about the box; a stream error is internal.
+          message={fromBox ? attachment.error : null}
+          code={fromBox ? attachment.errorCode : null}
+          reason={fromBox ? attachment.errorReason : null}
+          retrying={attachment.status === "loading"}
+          projectId={projectId}
+          onRetry={refresh}
+        />
       )}
 
       <section className="studio-convo-panel" aria-label="Claude conversation">
@@ -457,7 +560,6 @@ export function WorkspaceSession({
         </div>
       </section>
 
-
       {question && (
         <QuestionCard
           key={question.toolUseId}
@@ -468,18 +570,135 @@ export function WorkspaceSession({
           onDismiss={() => answer(question, { dismissed: true })}
         />
       )}
+      {question && answerError ? (
+        // An answer that didn't go is the card's failure to say, not the
+        // composer's: the composer is away while the card is up.
+        <InlineMessage>{answerError}</InlineMessage>
+      ) : null}
+      {!waitingOnUser && questionGone ? (
+        <InlineMessage tone="info" actions={[{ label: "Dismiss", onClick: () => setQuestionGone(null) }]}>
+          {questionGone}
+        </InlineMessage>
+      ) : null}
       {!waitingOnUser && (
         <SessionComposer
           onSend={send}
           canSend={canSend}
-          disabledPlaceholder="Couldn't connect to the session: reconnect to send"
+          // Sending waits on the connection alone, so say that, not the
+          // composer's default (another viewer holding the keyboard).
+          disabledPlaceholder={
+            attachment.status === "error" ? "You can send once this session is back." : "Connecting to this session…"
+          }
           model={shownModel}
           modelChoice={modelChoice}
           allowAttachments={!local}
+          sendError={connectionError ? null : (sendError?.message ?? null)}
+          sendErrorNoRetry={sendIsDeadEnd(sendError?.code)}
+          newSessionHref={projectId ? `/new?project=${projectId}` : "/new"}
+          onDismissSendError={() => setSendError(null)}
+          onRetrySendError={sendError?.retry}
           stop={attached && working ? { onStop: stop, stopping } : undefined}
         />
       )}
     </div>
+  );
+}
+
+/** Why the live session can't be shown, by what the server said of its box. */
+function ConnectionNotice({
+  message,
+  code,
+  reason,
+  retrying,
+  projectId,
+  onRetry,
+}: {
+  message: string | null;
+  code: string | null;
+  reason: string | null;
+  /** A retry is under way: its button turns rather than the notice going. */
+  retrying: boolean;
+  projectId?: string;
+  onRetry: () => void;
+}) {
+  const retry = (label: string) => ({
+    label,
+    icon: <RotateCw className={retrying ? "is-working" : undefined} />,
+    primary: true,
+    disabled: retrying,
+    onClick: onRetry,
+  });
+  if (code === "agent-did-not-start" || code === "agent-spawn-failed") {
+    // Trying again starts the runner afresh: the app restarts one that died.
+    return (
+      <Notice
+        tone="error"
+        title="This Mac's session runner didn't start"
+        detail={runnerDidNotStartDetail(reason)}
+        meta={<ErrorRef label="log" value={LOCAL_RUNNER_LOG} />}
+        actions={[retry("Try again")]}
+      />
+    );
+  }
+  if (code === BOX_GONE) {
+    return (
+      <Notice
+        tone="warning"
+        title="This session's box ended"
+        detail="It couldn't be restored, so its uncommitted files are gone. Anything pushed to GitHub is kept."
+        actions={[
+          { label: "Continue in a new session", primary: true, href: projectId ? `/new?project=${projectId}` : "/new" },
+        ]}
+      />
+    );
+  }
+  if (code === BOX_RESTORE_FAILED) {
+    return (
+      <Notice
+        tone="warning"
+        title="Couldn't restart this session's box"
+        detail="Its files are kept on the box's disk. This is usually brief."
+        actions={[retry("Try again")]}
+      />
+    );
+  }
+  return (
+    <Notice
+      tone="warning"
+      title="Can't show this session live"
+      detail={message ? `It may still be running. ${message}` : "It may still be running on its box."}
+      actions={[retry("Retry")]}
+    />
+  );
+}
+
+function ReconnectingNotice({ attempt, max, since }: { attempt: number; max: number; since: number }) {
+  // Seeded from the clock, not `since`: the first second shows the run's real
+  // elapsed time rather than a 0:00 that jumps on the next tick.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.floor((now - since) / 1000));
+  const elapsed = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  return (
+    <Notice
+      tone="progress"
+      title="Reconnecting to this session…"
+      meta={
+        <>
+          {attempt > 0 && <span>attempt {Math.min(attempt, max)} of {max}</span>}
+          {/* The elapsed clock ticks every second, so it stays out of the
+              live region; the attempt line is announced only when it changes. */}
+          <TickingFact>
+            {attempt > 0 ? " · " : ""}
+            {elapsed}
+          </TickingFact>
+        </>
+      }
+    />
   );
 }
 
@@ -515,14 +734,24 @@ function useWhenAttached(
 /** Switch a cloud session's model. The server adds the key the model needs
  *  and calls the session's agent, so the key stays off the browser. */
 async function switchCloudModel(workspaceId: string, model: SessionModel, effort: Effort | null): Promise<void> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/model`, {
+  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/model`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ provider: model.provider, model: model.id, ...(effort && { effort }) }),
   });
   if (res.ok) return;
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
-  throw new Error(data.error ?? "Couldn't switch models. Please try again.");
+  const data = (await res.json().catch(() => ({}))) as { error?: string; settingsHref?: string };
+  throw new ModelSwitchError(data.error ?? "Couldn't switch models. Please try again.", data.settingsHref);
+}
+
+/** A refused switch, with the settings page that fixes it when one does. */
+class ModelSwitchError extends Error {
+  readonly settingsHref?: string;
+  constructor(message: string, settingsHref?: string) {
+    super(message);
+    this.name = "ModelSwitchError";
+    this.settingsHref = settingsHref;
+  }
 }
 
 /** Answer the questions a cloud session's agent is waiting on. The server
@@ -541,7 +770,7 @@ async function answerCloudQuestion(workspaceId: string, body: unknown): Promise<
 /** Stop a cloud session's turn. The server reaches the session's agent, as
  *  for a prompt. */
 async function stopCloudTurn(workspaceId: string): Promise<void> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
+  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/interrupt`, { method: "POST" });
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't stop the turn. Please try again.");

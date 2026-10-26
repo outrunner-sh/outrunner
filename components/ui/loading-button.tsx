@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleAlert, Check } from "lucide-react";
+import { Check, RotateCw } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loaders";
@@ -29,7 +29,11 @@ export function LoadingButton({
 }: {
   status: ActionStatus;
   /** `idle` is also the accessible name; the rest default to it, "Done" and
-   *  "Try again" (the next action, not the diagnosis). */
+   *  the idle label again. While it works a button keeps its idle label and
+   *  turns its icon: a `pending` label is for a wait that is a different step
+   *  than the click (Opening GitHub), not the same verb said again
+   *  (Publishing). A failed button keeps its label rather than turning
+   *  red: the caller shows the reason beside it (InlineMessage). */
   labels: { idle: string; pending?: string; success?: string; error?: string };
   /** Shown beside the idle label. */
   icon?: React.ReactNode;
@@ -46,10 +50,13 @@ export function LoadingButton({
     { key: "idle", text: labels.idle, icon },
     { key: "pending", text: labels.pending ?? labels.idle, icon: <Spinner /> },
     { key: "success", text: labels.success ?? "Done", icon: <Check /> },
-    { key: "error", text: labels.error ?? "Try again", icon: <CircleAlert /> },
+    { key: "error", text: labels.error ?? labels.idle, icon: icon ?? <RotateCw /> },
   ];
   const pending = status === "pending";
-  const current = faces.find((face) => face.key === status) ?? faces[0];
+  // A failure that reads exactly like idle shows the idle face itself: two
+  // identical faces crossfading would blur the label for nothing.
+  const face: ActionStatus = status === "error" && labels.error === undefined && icon !== undefined ? "idle" : status;
+  const current = faces.find((f) => f.key === face) ?? faces[0];
   return (
     <>
       <button
@@ -68,11 +75,11 @@ export function LoadingButton({
         className={cn(buttonVariants({ size, variant }), "loading-button", `is-${status}`, className)}
       >
         <span aria-hidden className="loading-button-faces">
-          {faces.map((face) => (
-            <span key={face.key} className={cn("loading-button-face", face.key === status && "is-current")}>
-              {face.icon}
-              {face.text}
-              {face.key === "idle" && trailingIcon}
+          {faces.map((f) => (
+            <span key={f.key} className={cn("loading-button-face", f.key === face && "is-current")}>
+              {f.icon}
+              {f.text}
+              {f.key === "idle" && trailingIcon}
             </span>
           ))}
         </span>

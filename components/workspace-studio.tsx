@@ -5,17 +5,21 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
+import { OpenEditorButton } from "@/components/open-editor-button";
 import { SessionComposer } from "@/components/session-composer";
+import { SessionDidntStart } from "@/components/session-didnt-start";
+import { SetupStalled } from "@/components/setup-stalled";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
+import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
-import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -47,12 +51,13 @@ export function WorkspaceStudio({
   // How the Environment panel's Create PR sends into the session, while it can.
   const [sender, setSender] = useState<SessionSender | null>(null);
   const isLocal = local !== undefined;
-  const setup = useWorkspaceSetup(workspace, !isLocal);
+  const { state: setup, phase, hasComputer, keepWaiting } = useWorkspaceSetup(workspace, !isLocal);
   // An archived session (one imported from a Mac) comes back as it opens.
   const restore = useRestoreOnOpen(workspace, !isLocal);
   const isReady = workspace.status === "ready" || workspace.status === "idle";
   const hasLiveSession = isReady && (onRuntimeComputer(workspace.provider) || isLocal);
-  const offline = offlineCopy({ workspace, isReady, stalled: setup.state === "stalled" });
+  const offline = offlineCopy({ workspace, isReady });
+  const queued = useQueuedFirstPrompt(workspace.id, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] });
   // Beside the title: the repository by its short name, or this Mac's folder.
   const place = local ? local.name : projectName?.split("/").pop();
 
@@ -71,6 +76,8 @@ export function WorkspaceStudio({
           {place && <span className="studio-title-place">{place}</span>}
         </div>
         <div className="studio-header-actions">
+          {/* VS Code on the session's own box: cloud sessions only. */}
+          {hasLiveSession && !isLocal && opensInBrowser(workspace.provider) && <OpenEditorButton workspaceId={workspace.id} />}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}
@@ -86,6 +93,7 @@ export function WorkspaceStudio({
         {hasLiveSession ? (
           <WorkspaceSession
             workspaceId={workspace.id}
+            projectId={isLocal ? undefined : workspace.projectId}
             agent={workspace.agent}
             local={isLocal}
             untitled={!isLocal && !workspace.title}
@@ -93,21 +101,29 @@ export function WorkspaceStudio({
             initialAttachmentIds={initialAttachmentIds}
             onSender={setSender}
           />
-        ) : setup.state === "running" ? (
+        ) : setup !== "ended" ? (
           <div className="studio-offline">
             <div className="min-h-0 flex-1 overflow-y-auto">
               <WorkspaceCreating
                 projectName={projectName ?? workspaceLabel(workspace)}
                 branch={workspace.baseBranch}
                 startedAt={workspace.createdAt}
-                phase={setup.phase}
-                hasExistingComputer={setup.hasComputer}
+                phase={phase}
+                hasExistingComputer={hasComputer}
+                stalled={setup === "stalled" && <SetupStalled workspace={workspace} onKeepWaiting={keepWaiting} />}
+                queued={queued}
               />
             </div>
             <SessionComposer
               onSend={() => {}}
               canSend={false}
-              disabledPlaceholder="Claude starts here, with your first message, once the session is ready"
+              disabledPlaceholder={
+                setup === "stalled"
+                  ? "Start over to try again"
+                  : queued
+                    ? "Your message sends as soon as the session is ready"
+                    : "Claude starts here, with your first message, once the session is ready"
+              }
             />
           </div>
         ) : restore.state === "restoring" ? (
@@ -147,6 +163,14 @@ export function WorkspaceStudio({
             </div>
             <SessionComposer onSend={() => {}} canSend={false} disabledPlaceholder="Restore the session to continue it" />
           </div>
+        ) : workspace.status === "failed" && !isLocal ? (
+          <div className="studio-offline">
+            <SessionDidntStart
+              workspace={workspace}
+              detail={workspace.errorMessage ?? "Its box couldn't be set up. Nothing was lost; try again to start a fresh one."}
+            />
+            <SessionComposer onSend={() => {}} canSend={false} disabledPlaceholder="Try again to start a fresh session" />
+          </div>
         ) : (
           <div className="studio-offline">
             <div className="studio-empty-chat">
@@ -180,24 +204,15 @@ export function WorkspaceStudio({
 function offlineCopy({
   workspace,
   isReady,
-  stalled,
 }: {
   workspace: Workspace;
   isReady: boolean;
-  /** Set up for so long it never will (lib/session/provisioning.ts). */
-  stalled: boolean;
 }): { title: string; detail: string; placeholder: string } {
-  if (stalled) {
-    return {
-      title: "This workspace didn't start",
-      detail: "Its setup stopped before it finished. Delete it and start a new session to try again.",
-      placeholder: "Start a new session to try again",
-    };
-  }
+  // A cloud one gets SessionDidntStart instead; this is a local one's.
   if (workspace.status === "failed") {
     return {
-      title: "This workspace didn't start",
-      detail: workspace.errorMessage ?? "Provisioning failed. Start a new session to try again.",
+      title: "This session didn't start",
+      detail: workspace.errorMessage ?? "Its setup stopped before it finished. Start a new session to try again.",
       placeholder: "Start a new session to try again",
     };
   }

@@ -14,6 +14,7 @@ import {
   readFoldedProjects,
   relativeTime,
   shownSessions,
+  UNSTARTED_SHOWN,
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
@@ -99,11 +100,19 @@ test("sessions nest under their workspace, newest first, with links and times", 
   assert.equal(group.detail, "acme/outrunner");
   assert.deepEqual(group.start, { kind: "cloud", projectId: "p1" });
   assert.deepEqual(group.sessions, [
-    { id: "new", href: "/workspaces/new", title: "new", at: "2026-10-02T00:00:00Z", deletion: { kind: "cloud" } },
+    {
+      id: "new",
+      href: "/workspaces/new",
+      title: "new",
+      branch: "runtime/new",
+      at: "2026-10-02T00:00:00Z",
+      deletion: { kind: "cloud" },
+    },
     {
       id: "old",
       href: "/workspaces/old",
       title: "Pull latest code from main",
+      branch: "runtime/old",
       at: "2026-10-01T00:00:00Z",
       deletion: { kind: "cloud" },
     },
@@ -141,7 +150,51 @@ test("a session whose repository is not listed still appears, under a placeholde
 });
 
 test("nothing to show is an empty list", () => {
-  assert.deepEqual(buildSidebarGroups([project("p1")], [], []), []);
+  assert.deepEqual(buildSidebarGroups([], [], []), []);
+});
+
+test("a project with no session yet is listed, empty, after the ones with sessions", () => {
+  const groups = buildSidebarGroups(
+    [project("p1", "fresh"), project("p2", "outrunner"), project("p3", "newer")],
+    [workspace("w1", "p2", "2026-10-01T00:00:00Z")],
+    [local("l1", "/Users/ada/notes", "2026-09-01T00:00:00Z")],
+  );
+  // Started ones by activity, then the rest in the list's order.
+  assert.deepEqual(
+    groups.map((g) => [g.label, g.sessions.length]),
+    [
+      ["outrunner", 1],
+      ["notes", 1],
+      ["fresh", 0],
+      ["newer", 0],
+    ],
+  );
+  // Each can start its first session.
+  assert.deepEqual(groups[2], {
+    key: "cloud:p1",
+    label: "fresh",
+    detail: "acme/fresh",
+    local: false,
+    start: { kind: "cloud", projectId: "p1" },
+    sessions: [],
+  });
+});
+
+test("only the few projects connected last are listed with no session, newest first", () => {
+  const made = (id: string, day: number) => ({ ...project(id), createdAt: `2026-10-0${day}T00:00:00Z` });
+  const groups = buildSidebarGroups(
+    [made("a", 1), made("b", 5), made("c", 3), made("d", 4), made("e", 2), made("busy", 1)],
+    [workspace("w1", "busy", "2026-10-06T00:00:00Z")],
+    [],
+  );
+  assert.equal(UNSTARTED_SHOWN, 3);
+  assert.deepEqual(groups.map((g) => g.label), ["busy", "b", "d", "c"]);
+});
+
+test("search finds a project with no session by its name, and drops it otherwise", () => {
+  const groups = buildSidebarGroups([project("p1", "fresh")], [], []);
+  assert.deepEqual(filterSidebarGroups(groups, "FRE").map((g) => g.label), ["fresh"]);
+  assert.deepEqual(filterSidebarGroups(groups, "billing"), []);
 });
 
 test("group keys stay distinct between a repository and a folder of the same name", () => {
@@ -244,6 +297,23 @@ test("a workspace whose name matches keeps every session", () => {
   const result = filterSidebarGroups(sample(), "outrun");
   assert.equal(result.length, 1);
   assert.equal(result[0].sessions.length, 2);
+});
+
+test("search finds a session by its branch, but not by the runtime/ they all have", () => {
+  const groups = buildSidebarGroups(
+    [project("p1", "outrunner")],
+    [
+      { ...workspace("w1", "p1", "2026-10-02T00:00:00Z", "Fix login redirect"), branch: "feat/oauth-callback" },
+      workspace("w2", "p1", "2026-10-01T00:00:00Z", "Add billing page"),
+    ],
+    [{ ...local("l1", "/Users/ada/notes", "2026-10-03T00:00:00Z", "Tidy notes"), branch: "md/notes-cleanup" }],
+  );
+  const titles = (query: string) => filterSidebarGroups(groups, query).flatMap((g) => g.sessions.map((s) => s.title));
+  assert.deepEqual(titles("OAUTH"), ["Fix login redirect"]);
+  assert.deepEqual(titles("cleanup"), ["Tidy notes"]);
+  // A generated branch is found by its own part (runtime/w2).
+  assert.deepEqual(titles("w2"), ["Add billing page"]);
+  assert.deepEqual(titles("runtime"), []);
 });
 
 test("a blank search changes nothing; no match leaves nothing", () => {

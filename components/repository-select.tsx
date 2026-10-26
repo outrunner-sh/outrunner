@@ -1,13 +1,15 @@
 "use client";
 
 import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
+import { InlineMessage } from "@/components/ui/notice";
 import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden";
 import { useSharedResource } from "@/hooks/use-shared-resource";
+import { type Placement, placeMenu } from "@/lib/client/menu-placement";
 import { sharedResource } from "@/lib/client/shared-resource";
 import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
@@ -22,13 +24,21 @@ type Listing = {
   ssoPartialOrgIds: number[];
 };
 
-/** A failed request's message, and whether only reconnecting GitHub fixes it. */
-type PickerError = { message: string; reconnect: boolean };
+/** What went wrong, and for a repository GitHub withheld, which one. */
+type PickerError = { message: string; reconnect: boolean; repo?: string; noAccess?: boolean };
 
-/** Read the API's error body (`reconnect` set when the token is the problem). */
+// Where a user reviews which organizations an OAuth app may see.
+const GITHUB_APP_ACCESS_URL = "https://github.com/settings/applications";
+
+/** Read the API's error body: `reconnect` set when the token is the problem,
+ *  `noAccess` when GitHub withheld a repository. */
 async function readError(res: Response, fallback: string): Promise<PickerError> {
-  const data = (await res.json().catch(() => ({}))) as { error?: string; reconnect?: boolean };
-  return { message: data.error ?? fallback, reconnect: data.reconnect === true };
+  const data = (await res.json().catch(() => ({}))) as { error?: string; reconnect?: boolean; code?: string };
+  return {
+    message: data.error ?? fallback,
+    reconnect: data.reconnect === true,
+    noAccess: data.code === "repo-no-access",
+  };
 }
 
 type ListingAnswer = { listing: Listing; error: null } | { listing: null; error: PickerError };
@@ -48,7 +58,7 @@ const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
     // Refresh asks GitHub again; otherwise a listing from the last few seconds
     // is fine (app/api/github/repositories).
     const res = await fetch(fresh ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
-    if (!res.ok) return { listing: null, error: await readError(res, "Could not load repositories.") };
+    if (!res.ok) return { listing: null, error: await readError(res, "Couldn't load your repositories from GitHub.") };
     const data = (await res.json()) as Partial<Listing>;
     return {
       listing: {
@@ -60,7 +70,10 @@ const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
       error: null,
     };
   } catch {
-    return { listing: null, error: { message: "Could not load repositories.", reconnect: false } };
+    return {
+      listing: null,
+      error: { message: "Couldn't load your repositories from GitHub.", reconnect: false },
+    };
   }
 }, null);
 
@@ -69,6 +82,28 @@ function refreshRepositories(): Promise<unknown> {
   askGitHubAgain = true;
   REPOSITORIES.invalidate();
   return REPOSITORIES.ensure();
+}
+
+const BELOW: Placement = { side: "below" };
+
+/** The menu's height with a full list: below has room enough, it opens there. */
+const MENU_HEIGHT = 420;
+
+/**
+ * Where the menu fits beside `trigger` (placeMenu). The room is what can be
+ * seen: inside the window and every ancestor that scrolls or clips (the
+ * new-session form's scroll area clips a menu that rises out of it).
+ */
+function placement(trigger: HTMLElement | null): Placement {
+  if (!trigger) return BELOW;
+  const room = { top: 0, bottom: window.innerHeight };
+  for (let el = trigger.parentElement; el; el = el.parentElement) {
+    if (getComputedStyle(el).overflowY === "visible") continue;
+    const box = el.getBoundingClientRect();
+    room.top = Math.max(room.top, box.top);
+    room.bottom = Math.min(room.bottom, box.bottom);
+  }
+  return placeMenu(trigger.getBoundingClientRect(), room, MENU_HEIGHT);
 }
 
 /**
@@ -93,6 +128,8 @@ export function RepositorySelect({
   extra,
   disabled,
   triggerClassName,
+  autoOpen = false,
+  onClosed,
 }: {
   /** Already-connected projects; used before the live list has loaded. */
   projects?: Project[];
@@ -110,8 +147,16 @@ export function RepositorySelect({
   disabled?: boolean;
   /** Replaces the trigger's default look, to sit in a row of other pickers. */
   triggerClassName?: string;
+  /** Open as it mounts, or as this turns true (the sidebar's add-project
+   *  button). */
+  autoOpen?: boolean;
+  /** The menu is shut. */
+  onClosed?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(autoOpen);
+  useEffect(() => {
+    if (!open) onClosed?.();
+  }, [open, onClosed]);
   useCloseWhenHidden(useCallback(() => setOpen(false), []));
   const repositories = useSharedResource(REPOSITORIES);
   const listing = repositories.value?.listing ?? null;
@@ -132,13 +177,21 @@ export function RepositorySelect({
   // field, and this one is announced as active).
   const [active, setActive] = useState(0);
   const listId = useId();
+  // Asked again while mounted: open now.
+  const [autoOpenSeen, setAutoOpenSeen] = useState(autoOpen);
+  if (autoOpen !== autoOpenSeen) {
+    setAutoOpenSeen(autoOpen);
+    if (autoOpen) {
+      setOpen(true);
+      setActive(0);
+    }
+  }
 
   const selected = projects.find((p) => p.id === selectedProjectId);
 
   /** On opening, look again in the background (the last listing shows
    *  meanwhile); Refresh list asks GitHub itself, and waits. */
   async function load(force = false) {
-    setError(null);
     if (!force) {
       void REPOSITORIES.refresh();
       return;
@@ -147,6 +200,9 @@ export function RepositorySelect({
     setRefreshing(true);
     await refreshRepositories();
     setRefreshing(false);
+    // Asked GitHub and answered: a reason left from connecting a repository
+    // gives way to this look's own answer.
+    setError(null);
   }
 
   // Focus search on open so typing filters immediately. The fetch is kicked off
@@ -156,11 +212,24 @@ export function RepositorySelect({
     if (open) requestAnimationFrame(() => searchRef.current?.focus());
   }, [open]);
 
-  // Close on outside click / Escape.
+  // Which side of the trigger the menu opens on, and how tall it may be, so
+  // it always fits: measured before it paints, and again as the window resizes.
+  const [place, setPlace] = useState<Placement>(BELOW);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const measure = () => setPlace(placement(triggerRef.current));
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [open]);
+
+  // Close on outside press / Escape. On pointerdown, not mousedown: a Radix
+  // menu's trigger (the model chip) cancels its pointerdown, so no mousedown
+  // follows, and both menus stayed open. Touch sends pointerdown too.
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
-    function onDown(event: MouseEvent) {
+    function onDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
@@ -169,10 +238,10 @@ export function RepositorySelect({
         triggerRef.current?.focus();
       }
     }
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -203,7 +272,6 @@ export function RepositorySelect({
     }
     // Not connected yet — connect just this one, then select it.
     setConnectingId(repo.githubRepoId);
-    setError(null);
     try {
       const res = await fetch("/api/projects/sync", {
         method: "POST",
@@ -211,20 +279,29 @@ export function RepositorySelect({
         body: JSON.stringify({ repoIds: [repo.githubRepoId] }),
       });
       if (!res.ok) {
-        setError(await readError(res, "Could not connect that repository."));
+        setError({ ...(await readError(res, "Couldn't connect this repository. Try again.")), repo: repo.fullName });
         return;
       }
       const data = (await res.json()) as { projects?: Project[] };
       const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
       if (!created) {
-        setError({ message: "Connected, but the project did not come back.", reconnect: false });
+        setError({
+          message: "Connected it, but Outrunner couldn't find it afterwards. Refresh the list.",
+          reconnect: false,
+          repo: repo.fullName,
+        });
         return;
       }
+      setError(null);
       onSelect?.(created);
       setOpen(false);
       triggerRef.current?.focus();
     } catch {
-      setError({ message: "Could not connect that repository.", reconnect: false });
+      setError({
+        message: "Couldn't connect this repository. Try again.",
+        reconnect: false,
+        repo: repo.fullName,
+      });
     } finally {
       setConnectingId(null);
     }
@@ -266,8 +343,54 @@ export function RepositorySelect({
       </button>
 
       {open && (
-        <div className="bg-popover border-border absolute bottom-full left-1/2 z-50 mb-2 w-80 -translate-x-1/2 overflow-hidden rounded-lg border shadow-xl">
-          <div id={listId} role="listbox" aria-label="Repositories" className="max-h-72 overflow-y-auto py-1">
+        <div
+          className={cn(
+            "bg-popover border-border absolute left-1/2 z-50 flex w-80 -translate-x-1/2 flex-col overflow-hidden rounded-lg border shadow-xl",
+            place.side === "below" ? "top-full mt-2" : "bottom-full mb-2",
+          )}
+          style={{ maxHeight: place.maxHeight }}
+        >
+          {/* Search first, focused as it opens. */}
+          <div className="border-border relative shrink-0 border-b">
+            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setActive(0);
+              }}
+              // ↑/↓ move through the list, Enter picks; typing filters it.
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  if (visible.length === 0) return;
+                  const step = event.key === "ArrowDown" ? 1 : -1;
+                  setActive((i) => (i + step + visible.length) % visible.length);
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  const repo = visible[active];
+                  if (repo && connectingId === null) void choose(repo);
+                }
+              }}
+              role="combobox"
+              aria-expanded={open}
+              aria-controls={listId}
+              aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
+              aria-autocomplete="list"
+              placeholder="Search repositories…"
+              aria-label="Search repositories"
+              className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-sm outline-none"
+            />
+          </div>
+
+          {/* The one part that gives way when the room is short. */}
+          <div
+            id={listId}
+            role="listbox"
+            aria-label="Repositories"
+            className="max-h-72 min-h-0 overflow-y-auto py-1"
+          >
             {repositories.status === "loading" && (
               /* Only before the first answer: the page looks once as the form mounts. */
               <p className="text-muted-foreground flex items-center gap-2 px-3 py-2 text-sm">
@@ -308,7 +431,7 @@ export function RepositorySelect({
           {/* The list may be short: say why rather than let a missing
               repository look like one that isn't there. */}
           {listing && (listing.ssoPartialOrgIds.length > 0 || !listing.complete) && (
-            <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
+            <p className="text-muted-foreground border-border shrink-0 border-t px-3 py-2 text-xs">
               {listing.ssoPartialOrgIds.length > 0
                 ? "Some organizations' repositories are hidden until you authorize Outrunner for their single sign-on on GitHub."
                 : "GitHub may have more repositories than this list shows."}
@@ -316,7 +439,7 @@ export function RepositorySelect({
           )}
 
           {extra && (
-            <div className="border-border border-t">
+            <div className="border-border shrink-0 border-t">
               <button
                 type="button"
                 onClick={() => {
@@ -330,7 +453,7 @@ export function RepositorySelect({
             </div>
           )}
 
-          <div className="border-border border-t">
+          <div className="border-border shrink-0 border-t">
             <button
               type="button"
               onClick={() => void load(true)}
@@ -342,44 +465,23 @@ export function RepositorySelect({
           </div>
 
           {error && (
-            <p className="text-destructive border-border border-t px-3 py-2 text-xs">
-              {error.message}
-              {error.reconnect && <GitHubReconnectLink />}
-            </p>
-          )}
-
-          <div className="border-border relative border-t">
-            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActive(0);
-              }}
-              // ↑/↓ move through the list, Enter picks; typing filters it.
-              onKeyDown={(event) => {
-                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                  event.preventDefault();
-                  if (visible.length === 0) return;
-                  const step = event.key === "ArrowDown" ? 1 : -1;
-                  setActive((i) => (i + step + visible.length) % visible.length);
-                } else if (event.key === "Enter") {
-                  event.preventDefault();
-                  const repo = visible[active];
-                  if (repo && connectingId === null) void choose(repo);
+            <div className="border-border shrink-0 border-t px-3 py-2">
+              {error.repo && <p className="mb-1 truncate font-mono text-xs">{error.repo}</p>}
+              <InlineMessage
+                tone={error.noAccess ? "warning" : "error"}
+                actions={
+                  error.noAccess
+                    ? [{ label: "Grant access on GitHub", href: GITHUB_APP_ACCESS_URL, external: true }]
+                    : undefined
                 }
-              }}
-              role="combobox"
-              aria-expanded={open}
-              aria-controls={listId}
-              aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
-              aria-autocomplete="list"
-              placeholder="Search repositories…"
-              aria-label="Search repositories"
-              className="placeholder:text-muted-foreground w-full bg-transparent py-2.5 pl-9 pr-3 text-sm outline-none"
-            />
-          </div>
+              >
+                {error.noAccess
+                  ? "GitHub isn't giving Outrunner access to it. If an organization owns it, an owner may need to approve Outrunner."
+                  : error.message}
+                {error.reconnect && <GitHubReconnectLink />}
+              </InlineMessage>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -122,6 +122,9 @@ type RuntimeComputerRow = {
   /** The workspace whose own box it is; null for a project's shared box from
    *  before (20261023130000_workspace_computers.sql). */
   workspace_id: string | null;
+  /** Made ready ahead of a session and stopped, for the next one to take
+   *  (20261025120000_warm_pool.sql). */
+  pooled: boolean;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -616,6 +619,10 @@ export type Database = {
       claim_billing_lease: {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;
+      };
+      claim_pooled_computer: {
+        Args: { requested_workspace_id: string; requested_provider: string };
+        Returns: string | null;
       };
       claim_workspace_computer: {
         Args: {

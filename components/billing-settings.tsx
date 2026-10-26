@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { BillingIntervalToggle, PlanIncludes, PlanPrice, planPrice } from "@/components/plan-parts";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { InlineMessage, Notice } from "@/components/ui/notice";
 import { stripePage } from "@/lib/billing/client";
 import { type BillingInterval, type Plan, PLANS } from "@/lib/billing/plans";
 import { isDesktopApp } from "@/lib/is-desktop";
@@ -77,16 +78,17 @@ export function BillingSettings({
    *  the Mac app opens it in the browser). */
   async function go(action: string, path: string, body?: object) {
     setPending(action);
-    setFailed(null);
-    setError(null);
     try {
-      window.location.assign(await stripePage(path, body));
+      const url = await stripePage(path, body);
+      setFailed(null);
+      setError(null);
+      window.location.assign(url);
       if (isDesktopApp()) {
         setInBrowser(true);
         setPending(null);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't reach Stripe. Try again.");
+      setError(e instanceof Error ? e.message : "Stripe's page didn't open.");
       setFailed(action);
       setPending(null);
     }
@@ -101,15 +103,27 @@ export function BillingSettings({
         <p className="text-sm text-muted-foreground">Your plan, and what it includes.</p>
       </div>
 
-      {checkout === "canceled" ? <Notice>Checkout canceled. Nothing was charged.</Notice> : null}
-      {checkout === "error" ? <Notice>Couldn&apos;t reach Stripe to start your checkout. Try again below.</Notice> : null}
-      {inBrowser ? (
-        <Notice>Stripe opened in your browser. Finish there; your plan shows here when you come back.</Notice>
+      {checkout === "canceled" ? <Notice tone="info" title="Checkout canceled" detail="Nothing was charged." /> : null}
+      {checkout === "error" ? (
+        <Notice tone="error" title="Stripe's checkout didn't open" detail="Nothing was charged. Try again below." />
       ) : null}
-      {checkout === "success" && plan.id !== "free" ? <Notice>You&apos;re on {plan.label}. Thanks!</Notice> : null}
-      {confirming ? <Notice>Confirming your payment with Stripe…</Notice> : null}
+      {inBrowser ? (
+        <Notice
+          tone="info"
+          title="Stripe opened in your browser"
+          detail="Finish there; your plan shows here when you come back."
+        />
+      ) : null}
+      {checkout === "success" && plan.id !== "free" ? (
+        <Notice tone="info" title={`You're on ${plan.label}`} detail="Thanks!" />
+      ) : null}
+      {confirming ? <Notice tone="progress" title="Confirming your payment with Stripe…" /> : null}
       {checkout === "success" && plan.id === "free" && gaveUp ? (
-        <Notice>Your payment is still being confirmed. Reload this page in a minute.</Notice>
+        <Notice
+          tone="warning"
+          title="Your payment is still being confirmed"
+          detail="Reload this page in a minute."
+        />
       ) : null}
 
       <div className="space-y-3 rounded-lg border border-border/60 p-4">
@@ -126,6 +140,7 @@ export function BillingSettings({
             onClick={() => void go("portal", "/api/billing/portal")}
           />
         ) : null}
+        {failed === "portal" && error ? <InlineMessage>{error}</InlineMessage> : null}
       </div>
 
       {prices ? (
@@ -152,6 +167,7 @@ export function BillingSettings({
                     }}
                     onClick={() => void go(id, "/api/billing/checkout", { plan: id, interval })}
                   />
+                  {failed === id && error ? <InlineMessage>{error} Nothing was charged.</InlineMessage> : null}
                 </div>
               );
             })}
@@ -161,11 +177,6 @@ export function BillingSettings({
         <p className="text-sm text-muted-foreground">Plans aren&apos;t for sale on this server.</p>
       )}
 
-      {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
     </section>
   );
 }
@@ -175,8 +186,4 @@ function subscriptionLine(subscription: ShownSubscription): string {
   if (subscription.status === "past_due") return "Payment failed: update your card in Manage billing";
   if (subscription.cancelAtPeriodEnd) return `Ends ${date}`;
   return `Renews ${date}${subscription.interval === "year" ? ", yearly" : ""}`;
-}
-
-function Notice({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-md border border-border/60 bg-accent/40 px-3 py-2 text-sm text-foreground">{children}</p>;
 }

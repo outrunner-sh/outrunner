@@ -1,10 +1,12 @@
 "use client";
 
-import { Check, GitBranch } from "lucide-react";
+import { Check, Clock, GitBranch } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { DotMatrix, Spinner } from "@/components/ui/loaders";
 import type { ProvisionPhase } from "@/lib/runtime/types";
+import type { FirstPrompt } from "@/lib/session/first-prompt";
+import { cn } from "@/lib/utils";
 
 /**
  * Provisioning progress, shown in a new session's chat while its box is set up.
@@ -45,6 +47,22 @@ const FALLBACK_STAGES = [
   { label: "Finalizing setup", at: 46 },
 ] as const;
 
+function QueuedPrompt({ first }: { first: FirstPrompt }) {
+  const files = first.attachmentIds.length;
+  const text = first.prompt.trim() || `${files} ${files === 1 ? "file" : "files"}`;
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div className="line-clamp-4 max-w-[90%] whitespace-pre-wrap break-words rounded-3xl bg-foreground/[0.07] px-4 py-2 text-[0.8125rem] leading-relaxed text-foreground">
+        {text}
+      </div>
+      <span className="text-muted-foreground flex items-center gap-1 px-2 text-[11px]">
+        <Clock className="size-3" aria-hidden />
+        Sends when ready{first.prompt.trim() && files > 0 ? ` · ${files} ${files === 1 ? "file" : "files"}` : ""}
+      </span>
+    </div>
+  );
+}
+
 function clock(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -55,14 +73,21 @@ export function WorkspaceCreating({
   projectName,
   branch,
   startedAt,
+  stalled,
+  queued,
   phase,
   hasExistingComputer,
 }: {
   projectName: string;
   branch: string;
+  /** Set up for so long it may never finish: shown under the steps, and the
+   *  current step stops turning. */
+  stalled?: React.ReactNode;
   /** When setup began (the session's creation), so a session opened midway
    *  shows the time it has really taken. */
   startedAt: string;
+  /** The first prompt waiting for the box, shown as the message it will be. */
+  queued?: FirstPrompt | null;
   /** Current provisioning phase from the backend. */
   phase: ProvisionPhase | null;
   /** Whether there's already a Runtime Computer for this project. */
@@ -105,6 +130,7 @@ export function WorkspaceCreating({
   return (
     <div className="flex h-full items-center justify-center px-6">
       <div className="w-full max-w-sm space-y-7">
+        {queued && <QueuedPrompt first={queued} />}
         <DotMatrix rows={6} cols={10} />
 
         <div className="space-y-1.5">
@@ -121,12 +147,12 @@ export function WorkspaceCreating({
           {stages.map((stage, i) => {
             const state = i < active ? "done" : i === active ? "current" : "pending";
             return (
-              <li key={stage.label} className={`task-step is-${state}`}>
+              <li key={stage.label} className={cn("task-step", `is-${state}`, stalled && state === "current" && "is-stalled")}>
                 <span className="task-step-mark" aria-hidden>
                   {state === "done" ? (
                     <Check strokeWidth={3} />
                   ) : state === "current" ? (
-                    <Spinner />
+                    stalled ? <Clock /> : <Spinner />
                   ) : (
                     <span className="task-step-dot" />
                   )}
@@ -145,6 +171,8 @@ export function WorkspaceCreating({
             {clock(elapsed)} <span className="text-muted-foreground/60">/ ~{estimateSeconds}s</span>
           </span>
         </div>
+
+        {stalled}
       </div>
     </div>
   );

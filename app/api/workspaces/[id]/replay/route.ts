@@ -6,6 +6,7 @@ import {
   getWorkspaceSnapshot,
   listWorkspaceSnapshots,
 } from "@/lib/db/repositories";
+import { isUuid } from "@/lib/ids";
 import { assembleReplay } from "@/lib/runtime/replay/load";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
@@ -62,11 +63,6 @@ export async function GET(request: Request, context: RouteContext) {
       { status: 502 },
     );
   }
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isUuid(value: string): boolean {
-  return UUID_RE.test(value);
 }
 
 async function fetchBytes(url: string): Promise<Uint8Array> {

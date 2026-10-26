@@ -9,8 +9,11 @@ import { ConnectionStatus, DetailRow, Details, SectionHeader } from "@/component
 import { KeyInput } from "@/components/stored-key";
 import { Button } from "@/components/ui/button";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { allowsBoxSize, boxSizeWithin, type Plan } from "@/lib/billing/plans";
+import { saveOutcome, type SaveFailure } from "@/lib/settings/save-error";
 import type { SandboxChoice, SandboxSettings, StoredKey } from "@/lib/db/credentials";
+import { requestJson } from "@/lib/http/request-json";
 import { BOX_SIZES, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { modalTokenInText, type ModalToken } from "@/lib/runtime/sandbox/modal-token";
 import { cn } from "@/lib/utils";
@@ -39,6 +42,11 @@ const SANDBOXES: Record<SandboxChoice, { label: string; icon: OptionCard<Sandbox
 
 const ORDER: SandboxChoice[] = ["outrunner", "daytona", "modal"];
 
+/** What a credential change is called when it fails, so the line says which. */
+function credentialSubject(sandbox: OwnSandbox): string {
+  return `the ${SANDBOXES[sandbox].label} ${sandbox === "modal" ? "token" : "API key"}`;
+}
+
 /** Outrunner's mark: its prompt. */
 function OutrunnerMark({ className }: { className?: string }) {
   return <SquareTerminal aria-hidden className={className} />;
@@ -66,7 +74,9 @@ export function SandboxSettingsForm({
   const [settings, setSettings] = useState(initial);
   const [shown, setShown] = useState<SandboxChoice>(initial.sandbox);
   const [status, setStatus] = useState<ActionStatus>("idle");
-  const [error, setError] = useState<string | null>(null);
+  // The change that didn't land, as its line names it. Cleared by that
+  // change's own success, replaced by a newer failure, dismissed by hand.
+  const [error, setError] = useState<SaveFailure | null>(null);
   // Changes go out one at a time, in the order made: a save that is still
   // checking a key mustn't land after, and undo, a switch made since. Each
   // names the sandbox in use as it is when it goes out, not when it was made.
@@ -75,27 +85,39 @@ export function SandboxSettingsForm({
   const busy = status === "pending";
 
   /** Send a change, after any before it; the answer is the settings as the
-   *  server has them. `body` is made as it goes out. */
-  function send(method: "PUT" | "DELETE", body?: () => object, query = ""): Promise<boolean> {
+   *  server has them. `body` is made as it goes out. A change that fails is
+   *  called what it was: a removal isn't a save. */
+  function send(subject: string, method: "PUT" | "DELETE", body?: () => object, query = ""): Promise<boolean> {
     setStatus("pending");
-    setError(null);
+    const verb = method === "DELETE" ? "remove" : "save";
     const run = queue.current.then(async () => {
       try {
-        const payload = body?.();
-        const res = await fetch(`/api/settings/sandbox${query}`, {
+        const data = await requestJson<SandboxSettings>(`/api/settings/sandbox${query}`, {
           method,
-          headers: payload ? { "Content-Type": "application/json" } : undefined,
-          body: payload ? JSON.stringify(payload) : undefined,
+          body: body?.(),
+          has: (d) => d.sandbox !== undefined,
+          // The line already says "Couldn't <verb> <subject>".
+          fallback: "Outrunner didn't say why.",
         });
-        // A reply that isn't JSON (a proxy's error page) says nothing worth showing.
-        const data = (await res.json().catch(() => null)) as (SandboxSettings & { error?: string }) | null;
-        if (!res.ok || !data?.sandbox) throw new Error(data?.error ?? "Couldn't save that. Try again.");
         inUseNow.current = data.sandbox;
+        // What landed clears its own failure — the line names the change, and
+        // only that change's success retires it. Anything else that failed is
+        // still unmade, whatever just landed.
+        setError((current) => saveOutcome(current, { verb, subject, ok: true }));
         setSettings(data);
         setStatus("success");
         return true;
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Couldn't save that.");
+        setError(
+          saveOutcome(null, {
+            verb,
+            subject,
+            ok: false,
+            // The line already says "Couldn't <verb> <subject>"; the why
+            // doesn't say it again.
+            message: e instanceof Error ? e.message : "Outrunner didn't say why.",
+          }),
+        );
         setStatus("error");
         return false;
       }
@@ -132,9 +154,9 @@ export function SandboxSettingsForm({
           shown={shown}
           onSelect={(id) => {
             setShown(id);
-            // A save still under way keeps saying so.
+            // A save still under way keeps saying so. Looking at another card
+            // saves nothing: a failure that is still true stays on screen.
             if (!busy) setStatus("idle");
-            setError(null);
           }}
           label="Sandbox"
           chosenLabel="in use"
@@ -151,8 +173,10 @@ export function SandboxSettingsForm({
           stored={settings[shown]}
           inUse={inUse === shown}
           busy={busy}
-          onSave={(credential) => send("PUT", () => ({ sandbox: inUseNow.current, ...credential }))}
-          onRemove={() => void send("DELETE", undefined, `?key=${shown}`)}
+          onSave={(credential) =>
+            send(credentialSubject(shown), "PUT", () => ({ sandbox: inUseNow.current, ...credential }))
+          }
+          onRemove={() => void send(credentialSubject(shown), "DELETE", undefined, `?key=${shown}`)}
         />
       ) : null}
 
@@ -160,7 +184,7 @@ export function SandboxSettingsForm({
         <BoxSizePicker
           value={size}
           onChange={(next) => {
-            if (!busy) void send("PUT", () => ({ sandbox: inUseNow.current, boxSize: next }));
+            if (!busy) void send("the new box size", "PUT", () => ({ sandbox: inUseNow.current, boxSize: next }));
           }}
           plan={shown === "outrunner" ? plan : undefined}
         />
@@ -176,11 +200,11 @@ export function SandboxSettingsForm({
           <LoadingButton
             variant="outline"
             status={busy ? "pending" : "idle"}
-            labels={{ idle: `Use ${SANDBOXES[shown].label} for new sessions`, pending: "Saving" }}
+            labels={{ idle: `Use ${SANDBOXES[shown].label} for new sessions` }}
             disabled={!ready(shown) || busy}
             onClick={() => {
               const next = shown;
-              void send("PUT", () => ({ sandbox: next }));
+              void send("the sandbox for new sessions", "PUT", () => ({ sandbox: next }));
             }}
           />
         </div>
@@ -191,9 +215,9 @@ export function SandboxSettingsForm({
       )}
 
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+        <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>
+          Couldn&apos;t {error.verb} {error.subject}: {error.message}
+        </InlineMessage>
       ) : null}
     </section>
   );

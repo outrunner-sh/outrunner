@@ -176,10 +176,10 @@ export function AppSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-2">
           <h2 className="text-sm text-muted-foreground">Projects</h2>
-          {/* Opens the new-session screen, where any repository or folder can be
-              picked: the way to start in a project not listed yet. */}
+          {/* Opens the new-session screen with its repository picker open
+              (`?pick=repo`): the way to start in a project not listed yet. */}
           <Link
-            href="/new"
+            href="/new?pick=repo"
             onClick={startNewSession}
             aria-label="Start a session in another project"
             title="Start a session in another project"
@@ -229,10 +229,11 @@ export function AppSidebar({
         onDeleted={onDeleted}
       />
 
-      {/* Counted once both lists are in, so no step reads undone as they land. */}
+      {/* Counted once both lists are in, so no step reads undone as they land;
+          a project is one the list above shows. */}
       {!loading && local.state !== "loading" && (
         <GetStarted
-          projects={projects.length}
+          projects={groups.length}
           sessions={workspaces.length + local.sessions.length}
           skipped={getStartedSkipped}
         />
@@ -258,7 +259,8 @@ export function AppSidebar({
 
 /** A workspace and its sessions. Its name folds them away and back (the
  *  chevron says which); the `+` starts a new session in it, where there is a
- *  repository (or folder) to start one in. */
+ *  repository (or folder) to start one in. One with no session yet has a
+ *  "New session" row in their place. */
 function WorkspaceGroup({
   group,
   active,
@@ -327,6 +329,16 @@ function WorkspaceGroup({
         )}
       </div>
       <div id={listId}>
+        {start && group.sessions.length === 0 && !folded && (
+          <button
+            type="button"
+            onClick={startHere}
+            className="flex w-full items-center gap-2 rounded-md py-1.5 pl-[34px] pr-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+          >
+            <Plus aria-hidden className="size-3.5 shrink-0" />
+            New session
+          </button>
+        )}
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
           const { deletion } = session;

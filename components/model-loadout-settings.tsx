@@ -1,11 +1,12 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { EffortPicker } from "@/components/effort-meter";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
+import { requestJson } from "@/lib/http/request-json";
 import {
   LOADOUT_MAX,
   type LoadoutEntry,
@@ -56,13 +57,12 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
     const mine = ++latest.current;
     queue.current = queue.current.then(async () => {
       try {
-        const res = await fetch("/api/settings/models", {
+        const data = await requestJson<ModelLoadout>("/api/settings/models", {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(next),
+          body: next,
+          has: (d) => d.models !== undefined,
+          fallback: "Couldn't save that. Try again.",
         });
-        const data = (await res.json().catch(() => null)) as (ModelLoadout & { error?: string }) | null;
-        if (!res.ok || !data?.models) throw new Error(data?.error ?? "Couldn't save that. Try again.");
         saved.current = { models: data.models, default: data.default };
         if (latest.current === mine) setLoadout(saved.current);
         // The picker's menu carries the loadout: let it ask again.
@@ -73,6 +73,15 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
         setError(e instanceof Error ? e.message : "Couldn't save that.");
       }
     });
+  }
+
+  // "Add model": to the list below, on its first model not added yet.
+  const modelList = useRef<HTMLDivElement>(null);
+  function showModels() {
+    const list = modelList.current;
+    if (!list) return;
+    list.scrollIntoView({ behavior: "smooth", block: "start" });
+    list.querySelector<HTMLButtonElement>('button[aria-checked="false"]:not(:disabled)')?.focus({ preventScroll: true });
   }
 
   const picked = loadoutModels(loadout, groups);
@@ -100,8 +109,8 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
         <div className="space-y-1">
           <h2 className="text-sm font-medium text-foreground">Loadout</h2>
           <p className="text-xs text-muted-foreground">
-            Click a model to make it the default, and its bars to set how hard it thinks. Up to {LOADOUT_MAX}; search
-            in the picker finds the rest.
+            Click a model below to add it. Click a card to make it the default, and its bars to set how hard it
+            thinks. Up to {LOADOUT_MAX}; search in the picker finds the rest.
           </p>
         </div>
         {picked.length === 0 && hidden.length === 0 ? (
@@ -109,11 +118,13 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
             None chosen: the picker lists every model. Pick some below.
           </p>
         ) : (
-          <ul className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-px overflow-hidden rounded-lg border border-border/60 bg-border/60">
+          // Each card draws its own right and bottom edge, so a row not filled
+          // ends in the page's background rather than a grey block.
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] overflow-hidden rounded-lg border-t border-l border-border/60">
             {picked.map((m, i) => {
               const isDefault = sameEntry(loadout.default, m);
               return (
-                <li key={`${m.provider}:${m.id}`} className="group relative bg-background">
+                <li key={`${m.provider}:${m.id}`} className="group relative border-r border-b border-border/60 bg-background">
                   <button
                     type="button"
                     onClick={() => change({ ...loadout, default: { provider: m.provider, id: m.id } })}
@@ -165,6 +176,18 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
             {hidden.map((entry) => (
               <HiddenEntry key={`${entry.provider}:${entry.id}`} entry={entry} onRemove={() => change(toggleEntry(loadout, entry))} />
             ))}
+            {!full ? (
+              <li className="border-r border-b border-border/60 bg-background p-1.5">
+                <button
+                  type="button"
+                  onClick={showModels}
+                  className="flex h-full min-h-[84px] w-full cursor-pointer items-center justify-center gap-1.5 rounded-md border border-dashed border-border text-[13px] text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+                >
+                  <Plus aria-hidden className="size-3.5" />
+                  Add model
+                </button>
+              </li>
+            ) : null}
           </ul>
         )}
         {error ? (
@@ -174,7 +197,10 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
         ) : null}
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] overflow-hidden rounded-lg border-t border-l border-border/60">
+      <div
+        ref={modelList}
+        className="grid scroll-mt-6 grid-cols-[repeat(auto-fill,minmax(170px,1fr))] overflow-hidden rounded-lg border-t border-l border-border/60"
+      >
         {columns.map((group) => (
           <div key={group.provider} className="border-r border-b border-border/60">
             <div className="flex items-center gap-2 bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
@@ -239,7 +265,7 @@ function IconButton({
 /** A loadout model the menu doesn't offer now: named, and removable. */
 function HiddenEntry({ entry, onRemove }: { entry: LoadoutEntry; onRemove: () => void }) {
   return (
-    <li className="relative flex h-24 flex-col justify-between bg-background p-3 opacity-60">
+    <li className="relative flex h-24 flex-col justify-between border-r border-b border-border/60 bg-background p-3 opacity-60">
       <ModelIcon provider={entry.provider} />
       <span className="space-y-0.5">
         <span className="block truncate font-mono text-[13px] text-foreground">{entry.id}</span>

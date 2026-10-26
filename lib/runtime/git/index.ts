@@ -13,6 +13,7 @@
  *   remote `sandbox.exec`.
  */
 
+import { makeRedactor } from "@/lib/runtime/redact";
 import type { ChangedFile } from "@/lib/runtime/types";
 
 export type GitExecResult = {
@@ -115,6 +116,27 @@ export function parseChangedFiles(output: ChangeSetOutput): ChangedFile[] {
   return files.slice(0, 500);
 }
 
+/** How much of git's own output a user is shown: enough for a rejection's
+ *  hint, not a whole hook's log. */
+const GIT_OUTPUT_MAX = 2_000;
+
+/**
+ * What git itself said, from an error {@link git} threw: to show the user
+ * (secrets redacted, length capped), or null when the error isn't a git
+ * failure or git said nothing.
+ */
+export function gitFailureOutput(
+  error: unknown,
+  secrets: Array<string | null | undefined> = [],
+): string | null {
+  if (!(error instanceof Error)) return null;
+  const match = /^git \S* failed \(\d+\): ([\s\S]*)$/.exec(error.message);
+  if (!match) return null;
+  const said = makeRedactor(secrets)(match[1]).trim();
+  if (!said || said === "no output") return null;
+  return said.length > GIT_OUTPUT_MAX ? `${said.slice(0, GIT_OUTPUT_MAX)}…` : said;
+}
+
 /** Line counts by path from `git diff --numstat -z`. A binary file counts "-",
  * read as 0; a rename leaves the path empty and puts its old and new names in
  * the next two fields. */
@@ -137,7 +159,6 @@ function parseNumstat(
   }
   return counts;
 }
-
 export function limitText(value: string, maxBytes: number): string {
   return Buffer.byteLength(value, "utf8") <= maxBytes
     ? value

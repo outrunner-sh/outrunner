@@ -29,6 +29,7 @@ export type GetStartedStep = {
 };
 
 export type GetStartedSignals = {
+  /** The projects the sidebar lists: repositories and this Mac's folders. */
   projects: number;
   /** Sessions in the cloud and on this Mac. */
   sessions: number;
@@ -46,9 +47,10 @@ export function getStartedSteps({
   startsWithoutClaude,
 }: GetStartedSignals): GetStartedStep[] {
   const steps: GetStartedStep[] = [
-    // The new-session screen is where a repository is picked and becomes a project.
-    { id: "project", label: "Create your first project", href: "/new", done: projects > 0 },
-    { id: "session", label: "Start your first session", href: "/new", done: sessions > 0 },
+    // The new-session screen is where a repository is picked and becomes a
+    // project: it opens with its picker open, or its composer focused.
+    { id: "project", label: "Create your first project", href: "/new?pick=repo", done: projects > 0 },
+    { id: "session", label: "Start your first session", href: "/new?focus=composer", done: sessions > 0 },
   ];
   // Claude is a step only where a session needs it: on Outrunner's models a
   // new user has nothing to connect, and a step they needn't take would hold

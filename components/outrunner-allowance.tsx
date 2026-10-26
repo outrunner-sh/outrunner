@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AllowanceBar } from "@/components/allowance-bar";
+import { NoticeActions } from "@/components/ui/notice";
 import type { AllowanceView } from "@/lib/openrouter/allowance";
 import { providerSettingsHref, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
 
@@ -47,13 +48,10 @@ export function OutrunnerAllowance() {
         <AllowanceBar view={view} />
       </Link>
       {view.state === "out" ? (
-        <p className="text-xs text-muted-foreground">
-          You&apos;ve used your included usage.{" "}
-          <Link href={providerSettingsHref("claude")} className="text-foreground underline underline-offset-4">
-            Connect Claude
-          </Link>{" "}
-          to keep going.
-        </p>
+        <>
+          <p className="text-xs text-muted-foreground">You&apos;ve used your included usage.</p>
+          <NoticeActions actions={[{ label: "Connect Claude", href: providerSettingsHref("claude"), primary: true }]} />
+        </>
       ) : null}
     </div>
   );
