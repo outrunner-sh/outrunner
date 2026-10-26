@@ -473,5 +473,29 @@
       "port": 8443,
       "folder": "/home/daytona/workspaces/0b9b6f0e-5a1f-4c39-9a51-2d4a5b6c7d8e"
     }
+  ],
+  "PortsResponse": [
+    {
+      "ports": [
+        {
+          "port": 3000,
+          "process": "node"
+        },
+        {
+          "port": 5173
+        }
+      ]
+    },
+    {
+      "ports": []
+    }
+  ],
+  "ProviderPorts": [
+    [
+      2280,
+      22220,
+      22222,
+      33333
+    ]
   ]
 }

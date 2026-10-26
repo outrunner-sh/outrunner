@@ -73,6 +73,8 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &SetAgentConfigRequest{})
 	case "SetEnvironmentRequest":
 		return json.Unmarshal(raw, &SetEnvironmentRequest{})
+	case "ProviderPorts":
+		return json.Unmarshal(raw, &[]int{})
 	case "ReservedEnv":
 		return json.Unmarshal(raw, &[]string{})
 	case "ErrorResponse":
@@ -85,6 +87,8 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &Activity{})
 	case "EditorResponse":
 		return json.Unmarshal(raw, &EditorResponse{})
+	case "PortsResponse":
+		return json.Unmarshal(raw, &PortsResponse{})
 	case "ConversationMessage":
 		return json.Unmarshal(raw, &ConversationMessage{})
 	case "TokenUsage":

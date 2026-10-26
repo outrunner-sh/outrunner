@@ -16,6 +16,7 @@ import {
   EditorResponse,
   ErrorResponse,
   LISTING_WORKSPACE_ID,
+  PortsResponse,
   RestoreWorkspaceRequest,
   type RuntimeTokenClaims,
   SetAgentConfigRequest,
@@ -138,6 +139,11 @@ export class AgentClient {
     const raw = await this.post(`/workspaces/${identity.workspaceId}/editor`, identity, undefined, EDITOR_TIMEOUT_MS);
     if ((raw as { result?: unknown } | null)?.result === "starting") return null;
     return EditorResponse.parse(raw);
+  }
+
+  /** The servers running on the session's box, for its owner to open. */
+  async listPorts(identity: WorkspaceIdentity): Promise<PortsResponse["ports"]> {
+    return PortsResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/ports`, identity)).ports;
   }
 
   /** Stop the turn the workspace's session is running, as Escape does in its

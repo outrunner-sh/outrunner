@@ -3,7 +3,8 @@
  * provision a box with this build's agent, make a session, open its editor
  * (the first open installs code-server, so it says "starting" until it's up),
  * open it again, then load the editor's signed link and one of its assets.
- * Another session's id is refused. The box is deleted at the end.
+ * Then start a dev server on loopback, see it in the box's servers, and load
+ * a page through its preview link. Another session's id is refused. The box is deleted at the end.
  *
  *   ./scripts/build-agent.sh
  *   RUNTIME_AGENT_BINARY_PATH=.context/build/runtime-agent-linux-amd64 \
@@ -54,6 +55,16 @@ try {
     const css = html.match(/href="([^"]+\.css)"/)?.[1];
     if (css) console.log(at(), "an asset:", (await fetch(new URL(css, page.url))).status);
   }
+  // A dev server the session started, on loopback as Vite's default is.
+  const devBox = await new Daytona().get(sandboxId);
+  await devBox.process.executeCommand(
+    `cd ${editor?.folder ?? "/tmp"} && echo dev-server-page > preview.html && (nohup python3 -m http.server 5173 --bind 127.0.0.1 >/dev/null 2>&1 &) && sleep 2`,
+  );
+  const listed = await agent.listPorts(identity);
+  console.log(at(), "servers on the box:", JSON.stringify(listed));
+  const preview = await provider.browserUrl(sandboxId, 5173, 8 * 3600);
+  const served = await fetch(`${preview}/preview.html`).then(async (r) => `${r.status} ${(await r.text()).trim()}`);
+  console.log(at(), "preview of 5173:", served);
   const other = await agent.openEditor({ ...identity, workspaceId: "someone-else" }).then(() => "allowed", (e: { status?: number }) => `refused ${e.status}`);
   console.log(at(), "another session's id:", other);
   const box = await new Daytona().get(sandboxId);

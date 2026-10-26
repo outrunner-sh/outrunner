@@ -8,6 +8,7 @@ import {
   GitBranch,
   GitMerge,
   GitPullRequest,
+  Globe,
   Monitor,
   PanelRightClose,
   Plus,
@@ -22,9 +23,10 @@ import { WorkspaceChanges } from "@/components/workspace-changes";
 import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
+import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
-import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import { opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
 import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
 import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";
@@ -169,7 +171,110 @@ export function WorkspaceEnvironment({
             />
           </>
         )}
+
+        {/* The servers running on a cloud session's box, each a click from
+            the user's browser. */}
+        {!local && opensInBrowser(workspace.provider) && <PortRows workspaceId={workspace.id} active={isReady} />}
       </div>
+    </>
+  );
+}
+
+/** How often the panel looks for servers started or stopped on the box. */
+const PORTS_POLL_MS = 10_000;
+
+type ListedPort = { port: number; process?: string };
+
+/**
+ * A row for each server running on the session's box (a dev server, an API),
+ * looked for while the session is up and its page is in view. A click opens
+ * it in a tab through the box's preview link. Nothing shows while there are
+ * none, or where they can't be read: the agent on an older box, or the box
+ * paused.
+ */
+function PortRows({ workspaceId, active }: { workspaceId: string; active: boolean }) {
+  const [ports, setPorts] = useState<ListedPort[]>([]);
+  const [opening, setOpening] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // A session that stops (its box paused) runs nothing: the list it had goes,
+  // and any error with it, so neither comes back with the session, stale.
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) {
+      setPorts([]);
+      setError(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!active) return;
+    let stopped = false;
+    const look = async () => {
+      if (document.hidden) return;
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/ports`, { cache: "no-store" });
+        const body = (await res.json().catch(() => null)) as { ports?: ListedPort[] } | null;
+        if (!stopped && res.ok && body?.ports) setPorts(body.ports);
+      } catch {
+        // Unreachable for now: the list stays as it was, and the next look tries again.
+      }
+    };
+    void look();
+    const timer = setInterval(() => void look(), PORTS_POLL_MS);
+    const onVisible = () => {
+      if (!document.hidden) void look();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [workspaceId, active]);
+
+  // A session that's no longer up runs nothing to open.
+  if (!active || ports.length === 0) return null;
+
+  async function open(port: number) {
+    setOpening(port);
+    setError(null);
+    const tab = openPendingTab(`Opening port ${port}…`);
+    try {
+      const res = await fetch(`/api/workspaces/${workspaceId}/ports/${port}`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
+      if (!res.ok || !body?.url) throw new Error(body?.error ?? "Couldn't open that preview. Please try again.");
+      if (tab.closed()) return;
+      if (!tab.go(body.url)) setError(TAB_BLOCKED);
+    } catch (e) {
+      tab.close();
+      setError(e instanceof Error ? e.message : "Couldn't open that preview. Please try again.");
+    } finally {
+      setOpening(null);
+    }
+  }
+
+  return (
+    <>
+      <div className="studio-env-label mt-3">Running</div>
+      {ports.map(({ port, process }) => (
+        <EnvRow
+          key={port}
+          onClick={() => void open(port)}
+          busy={opening === port}
+          icon={opening === port ? <Spinner /> : <Globe />}
+          right={<ArrowUpRight />}
+          title={`Open port ${port} in a new tab`}
+        >
+          <span className="font-mono text-xs tabular-nums">{port}</span>
+          {process && <span className="ml-2 truncate text-xs text-muted-foreground">{process}</span>}
+        </EnvRow>
+      ))}
+      {error && (
+        <p role="alert" className="px-2 text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </>
   );
 }

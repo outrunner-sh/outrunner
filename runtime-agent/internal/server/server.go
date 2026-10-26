@@ -26,6 +26,7 @@ import (
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/editor"
+	"runtime-agent/internal/ports"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
 	"runtime-agent/internal/redact"
@@ -55,9 +56,13 @@ type Server struct {
 	secret string
 	ws     *workspace.Service
 	// Editor runs VS Code in the browser on this box (package editor).
-	Editor   *editor.Editor
-	upgrader websocket.Upgrader
-	broker   *ptyx.Broker
+	Editor *editor.Editor
+	// AgentPort is the port this agent serves on, left out of the box's
+	// servers; ProcRoot is where they're read from ("/proc" but in tests).
+	AgentPort int
+	ProcRoot  string
+	upgrader  websocket.Upgrader
+	broker    *ptyx.Broker
 	// lastInput: when a user last did something here (Unix nanoseconds) — typed
 	// in a terminal or made a control call — from the agent's start.
 	lastInput atomic.Int64
@@ -98,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("POST /workspaces/{id}/interrupt", s.authed(s.interrupt))
 	mux.HandleFunc("POST /workspaces/{id}/editor", s.authed(s.openEditor))
+	mux.HandleFunc("GET /workspaces/{id}/ports", s.authed(s.listPorts))
 	mux.HandleFunc("POST /workspaces/{id}/answer", s.authed(s.answer))
 	// The session's own relay asks, with the session's ask token rather than
 	// a Runtime token (package ask).
@@ -129,7 +135,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts},
 	})
 }
 
@@ -477,6 +483,35 @@ func (s *Server) openEditor(w http.ResponseWriter, r *http.Request) {
 	}
 	s.touch()
 	writeJSON(w, http.StatusOK, protocol.EditorResponse{Port: port, Folder: folder})
+}
+
+// listPorts says which servers are running on the box: not the agent's own,
+// the editor's, or the provider's.
+func (s *Server) listPorts(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	if _, err := s.ws.Folder(id); err != nil {
+		respond(w, "", err)
+		return
+	}
+	root := s.ProcRoot
+	if root == "" {
+		root = "/proc"
+	}
+	// AgentPort is set by main from the port it bound; the control plane's
+	// AGENT_PORT is what boxes are deployed with.
+	found, err := ports.Listening(root, s.AgentPort, editor.Port)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "can't read this box's servers: "+err.Error())
+		return
+	}
+	out := protocol.PortsResponse{Ports: []protocol.ListeningPort{}}
+	for _, p := range found {
+		out.Ports = append(out.Ports, protocol.ListeningPort{Port: p.Port, Process: p.Process})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ask holds a question the session's agent asked (its ask_user relay's call)
