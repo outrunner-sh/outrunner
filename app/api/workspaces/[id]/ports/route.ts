@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
+import { opensInBrowser } from "@/lib/runtime/types";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -23,6 +24,8 @@ export async function GET(_request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, agent, identity } = reach.reached;
+  // Nothing to offer where a preview can't open.
+  if (!opensInBrowser(workspace.provider)) return NextResponse.json({ ports: [] });
 
   try {
     return NextResponse.json({ ports: await agent.listPorts(identity) });

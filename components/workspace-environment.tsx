@@ -26,7 +26,7 @@ import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-wor
 import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
-import type { Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import { opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
 import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
 import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";
@@ -174,7 +174,7 @@ export function WorkspaceEnvironment({
 
         {/* The servers running on a cloud session's box, each a click from
             the user's browser. */}
-        {!local && <PortRows workspaceId={workspace.id} active={isReady} />}
+        {!local && opensInBrowser(workspace.provider) && <PortRows workspaceId={workspace.id} active={isReady} />}
       </div>
     </>
   );

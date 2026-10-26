@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { previewablePort } from "@/lib/runtime/box-ports";
+import { opensInBrowser } from "@/lib/runtime/types";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 
 type RouteContext = { params: Promise<{ id: string; port: string }> };
@@ -37,6 +38,9 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId } = reach.reached;
+  if (!opensInBrowser(workspace.provider)) {
+    return NextResponse.json({ error: "Previews open on Outrunner's Daytona sandboxes only." }, { status: 409 });
+  }
 
   try {
     const url = await provider.browserUrl(sandboxId, port, PREVIEW_LINK_TTL_SECONDS);
