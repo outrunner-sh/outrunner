@@ -7,10 +7,13 @@ import type { Project } from "@/lib/runtime/types";
 /** A failure the page can show, with where to fix it when there's a place. */
 export class OnboardingError extends Error {
   readonly href?: string;
-  constructor(message: string, href?: string) {
+  /** GitHub refused the stored token: only signing in again fixes it. */
+  readonly reconnect: boolean;
+  constructor(message: string, href?: string, reconnect = false) {
     super(message);
     this.name = "OnboardingError";
     this.href = href;
+    this.reconnect = reconnect;
   }
 }
 
@@ -22,8 +25,12 @@ async function call<T>(method: "GET" | "POST" | "PUT", url: string, body?: unkno
     cache: "no-store",
     ...(body !== undefined && { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   });
-  const json = (await res.json().catch(() => null)) as (T & { error?: string; settingsHref?: string }) | null;
-  if (!res.ok) throw new OnboardingError(json?.error ?? "Something went wrong. Please try again.", json?.settingsHref);
+  const json = (await res.json().catch(() => null)) as
+    | (T & { error?: string; settingsHref?: string; reconnect?: boolean })
+    | null;
+  if (!res.ok) {
+    throw new OnboardingError(json?.error ?? "Something went wrong. Please try again.", json?.settingsHref, json?.reconnect === true);
+  }
   return json as T;
 }
 
@@ -38,9 +45,11 @@ export function firstModel(runOn: AgentPick): { provider: string; model: string 
 /** Mark onboarding done, so home stops sending the user here. A failure is
  *  logged only: onboarding just shows again. */
 async function markOnboarded(): Promise<void> {
-  await fetch("/api/onboarding/complete", { method: "POST" }).catch((error: unknown) =>
-    console.error("Could not mark onboarding done", error),
-  );
+  try {
+    await call("POST", "/api/onboarding/complete");
+  } catch (error) {
+    console.error("Could not mark onboarding done", error);
+  }
 }
 
 /**

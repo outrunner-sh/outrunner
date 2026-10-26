@@ -110,3 +110,20 @@ test("repositories show most recently pushed first, and filter by name or descri
   assert.deepEqual(filterRepositories(list, "MARKET").map((r) => r.fullName), ["acme/web"]);
   assert.equal(filterRepositories(list, "  ").length, 2);
 });
+
+test("GitHub's refusal is carried as reconnect, and other errors aren't", async () => {
+  stubFetch({ "GET /api/github/repositories": () => [409, { error: "Your GitHub connection has expired.", reconnect: true }] });
+  await assert.rejects(env().repositories(), (e: unknown) => e instanceof OnboardingError && e.reconnect);
+  stubFetch({ "GET /api/github/repositories": () => [502, { error: "GitHub could not list your repositories." }] });
+  await assert.rejects(env().repositories(), (e: unknown) => e instanceof OnboardingError && !e.reconnect);
+});
+
+test("a refused onboarding mark is logged, and the session still opens", async (t) => {
+  const logged = t.mock.method(console, "error", () => {});
+  stubFetch({
+    "POST /api/projects/p1/workspaces": () => [202, { workspace: { id: "w1" } }],
+    "POST /api/onboarding/complete": () => [500, { error: "db down" }],
+  });
+  assert.equal(await env().startSession("p1", "outrunner"), "/workspaces/w1");
+  assert.equal(logged.mock.callCount(), 1);
+});

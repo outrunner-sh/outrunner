@@ -45,7 +45,10 @@ export function ReposStep({
       .catch((e: unknown) => {
         if (stale) return;
         setList([]);
-        setError({ message: e instanceof Error ? e.message : "Couldn't read your repositories.", reconnect: true });
+        setError({
+          message: e instanceof Error ? e.message : "Couldn't read your repositories.",
+          reconnect: e instanceof OnboardingError && e.reconnect,
+        });
       });
     return () => {
       stale = true;
@@ -71,7 +74,7 @@ export function ReposStep({
     } catch (e) {
       setError({
         message: e instanceof Error ? e.message : "Couldn't connect those repositories.",
-        reconnect: e instanceof OnboardingError && /github/i.test(e.message),
+        reconnect: e instanceof OnboardingError && e.reconnect,
       });
     } finally {
       setBusy(false);

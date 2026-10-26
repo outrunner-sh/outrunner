@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { OnboardingLive } from "@/components/onboarding/onboarding-live";
 import { OnboardingPreview } from "@/components/onboarding/onboarding-preview";
 import { getOwner } from "@/lib/auth/owner";
-import { modelMenu, offersModels } from "@/lib/db/credentials";
+import { modelMenu } from "@/lib/db/credentials";
 import { getOnboardingUser } from "@/lib/onboarding/server";
 
 /**
@@ -24,9 +24,9 @@ export default async function OnboardingPage() {
   if (!user) redirect("/signin?next=/onboarding");
   if (user.onboardedAt) redirect("/");
   const owner = await getOwner();
-  // A cloud session starts without the user's own agent only on a model the
-  // menu offers: Outrunner's, where this server has them, or a key of theirs.
-  const outrunnerModels = owner ? await modelMenu(owner.id).then(offersModels) : false;
+  // Outrunner's own models, on this server: a key of the user's doesn't count,
+  // or "100 free credits" would start a session billed to that key.
+  const outrunnerModels = owner ? await modelMenu(owner.id).then((menu) => menu.outrunner) : false;
 
   return (
     <OnboardingLive

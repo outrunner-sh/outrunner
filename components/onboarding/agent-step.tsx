@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowLeft, Check, ChevronRight, Copy, KeyRound, Sparkles, Terminal } from "lucide-react";
-import { type ComponentType, useEffect, useState } from "react";
+import { type ComponentType, useEffect, useRef, useState } from "react";
 
 import { ClaudeIcon, OpenAIIcon } from "@/components/brand-icons";
 import { ClaudeConnection } from "@/components/claude-connection";
@@ -140,9 +140,15 @@ export function AgentStep({
         (isConnected ? (
           <Connected detail={status.claude.last4 ? `Subscription · …${status.claude.last4}` : "Subscription"} />
         ) : env.desktop ? (
-          <ClaudeConnection meta={{ connected: false, last4: null }} onChange={() => void env.agentStatus().then(onStatus, () => {})} />
+          <ClaudeConnection
+            meta={{ connected: false, last4: null }}
+            onChange={(meta) => {
+              void env.agentStatus().then(onStatus, () => {});
+              if (meta.connected) void finish("claude", "subscription");
+            }}
+          />
         ) : (
-          <SubscriptionFromTerminal env={env} onStatus={onStatus} />
+          <SubscriptionFromTerminal env={env} onStatus={onStatus} onConnected={() => void finish("claude", "subscription")} />
         ))}
       {method === "api-key" &&
         (isConnected ? (
@@ -243,18 +249,46 @@ function Connected({ detail }: { detail: string }) {
 /** The CLI command to connect the subscription from the user's terminal, by
  *  package manager, as Replicas shows it; the page moves on once it lands. A
  *  token from `claude setup-token` can be pasted instead. */
-function SubscriptionFromTerminal({ env, onStatus }: { env: OnboardingEnv; onStatus: (status: AgentStatus) => void }) {
+function SubscriptionFromTerminal({
+  env,
+  onStatus,
+  onConnected,
+}: {
+  env: OnboardingEnv;
+  onStatus: (status: AgentStatus) => void;
+  /** The subscription landed: the step goes on. */
+  onConnected: () => void;
+}) {
   const [manager, setManager] = useState(0);
   const [pasting, setPasting] = useState(false);
   const [copied, setCopied] = useState(false);
   const command = CONNECT_COMMANDS[manager][1];
 
+  // The latest callback, called once: the poll and a pasted token can both
+  // see the subscription land.
+  const connected = useRef(onConnected);
+  const went = useRef(false);
+  useEffect(() => {
+    connected.current = onConnected;
+  });
+  const landed = (status: AgentStatus) => {
+    onStatus(status);
+    if (status.claude.subscription && !went.current) {
+      went.current = true;
+      connected.current();
+    }
+  };
+  const land = useRef(landed);
+  useEffect(() => {
+    land.current = landed;
+  });
+
   useEffect(() => {
     const timer = setInterval(() => {
-      if (!document.hidden) env.agentStatus().then(onStatus, () => {});
+      if (!document.hidden) env.agentStatus().then((status) => land.current(status), () => {});
     }, TERMINAL_POLL_MS);
     return () => clearInterval(timer);
-  }, [env, onStatus]);
+  }, [env]);
 
   return (
     <div className="space-y-3">
@@ -289,9 +323,10 @@ function SubscriptionFromTerminal({ env, onStatus }: { env: OnboardingEnv; onSta
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>
       </div>
-      <p className="text-muted-foreground text-xs">Claude will give you a code to paste into your terminal. This page moves on by itself.</p>
+      <p className="text-muted-foreground text-xs">Claude will give you a code to paste into your terminal. This page moves on once it&apos;s connected.</p>
       {pasting ? (
-        <KeyForm placeholder="Paste the token from claude setup-token" onSave={(token) => env.saveClaudeToken(token).then(onStatus)} />
+        <KeyForm placeholder="Paste the token from claude setup-token" onSave={(token) => env.saveClaudeToken(token).then(landed)}
+        />
       ) : (
         <button type="button" onClick={() => setPasting(true)} className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline">
           Or paste a token from <code className="font-mono">claude setup-token</code>
