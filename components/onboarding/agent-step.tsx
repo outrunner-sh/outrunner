@@ -66,7 +66,7 @@ export function AgentStep({
     setError(null);
     try {
       if (method === "outrunner") {
-        onDone("outrunner");
+        onDone(agent === "codex" ? "codex-outrunner" : "outrunner");
         return;
       }
       // Sessions sign in this way from now on (Settings → Providers).
@@ -109,7 +109,7 @@ export function AgentStep({
               id: "outrunner" as const,
               label: "Outrunner's models",
               icon: Sparkles,
-              note: agent === "codex" ? `${freeModelsOffer()} · runs in Claude Code` : freeModelsOffer(),
+              note: freeModelsOffer(),
             },
           ]
         : []),
@@ -170,8 +170,8 @@ export function AgentStep({
             <Sparkles className="size-4" /> {freeModelsOffer()}
           </p>
           <p className="text-muted-foreground text-sm">
-            Sessions run {agent === "codex" ? "in Claude Code " : ""}on Outrunner&apos;s models (GLM, Kimi, DeepSeek), nothing to
-            connect. Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
+            {`Sessions run ${AGENT_NAMES[agent]} on Outrunner's models (GLM, Kimi, DeepSeek), nothing to connect. `}
+            Add your own {AGENT_NAMES[agent]} any time in Settings → Providers.
           </p>
         </div>
       )}
@@ -227,9 +227,9 @@ function Row({
       <Icon className="size-4 shrink-0" />
       <span className="flex-1">
         {label}
-        {note && <span className="text-success ml-2 text-xs">{note}</span>}
+        {note && <span className="text-amber-500 ml-2 text-xs">{note}</span>}
       </span>
-      {done && <span className="text-success text-xs">Connected</span>}
+      {done && <span className="text-amber-500 text-xs">Connected</span>}
       <ChevronRight className="text-muted-foreground size-4" />
     </button>
   );
@@ -238,7 +238,7 @@ function Row({
 function Connected({ detail }: { detail: string }) {
   return (
     <p className="flex items-center gap-2 text-sm">
-      <span className="bg-success/15 text-success flex size-5 items-center justify-center rounded-full">
+      <span className="bg-amber-500/15 text-amber-500 flex size-5 items-center justify-center rounded-full">
         <Check className="size-3" strokeWidth={3} />
       </span>
       Connected <span className="text-muted-foreground">· {detail}</span>
@@ -304,7 +304,7 @@ function SubscriptionFromTerminal({
         ))}
       </div>
       <div className="bg-muted/40 border-border/60 flex items-center gap-2 rounded-md border px-3 py-2.5">
-        <Terminal className="text-success size-3.5 shrink-0" />
+        <Terminal className="text-amber-500 size-3.5 shrink-0" />
         <code className="flex-1 font-mono text-xs">{command}</code>
         <button
           type="button"

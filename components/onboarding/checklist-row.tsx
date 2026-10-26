@@ -51,7 +51,7 @@ function StateIcon({ state }: { state: RowState }) {
   switch (state) {
     case "done":
       return (
-        <span className={cn(box, "bg-success/15 text-success")} aria-label="Done">
+        <span className={cn(box, "bg-amber-500/15 text-amber-500")} aria-label="Done">
           <Check className="size-3.5" strokeWidth={3} />
         </span>
       );
@@ -63,7 +63,7 @@ function StateIcon({ state }: { state: RowState }) {
       );
     case "problem":
       return (
-        <span className={cn(box, "text-warning")} aria-label="Needs attention">
+        <span className={cn(box, "text-destructive")} aria-label="Needs attention">
           <AlertCircle className="size-4" />
         </span>
       );
