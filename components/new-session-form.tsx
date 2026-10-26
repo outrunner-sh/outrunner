@@ -179,13 +179,13 @@ export function NewSessionForm({
             )}
             {details.branch && (
               <span className={CHIP} title="The branch the session starts from">
-                <GitBranch className="size-4 shrink-0" />
+                <GitBranch className="shrink-0" />
                 <span className="truncate font-mono text-[13px]">{details.branch}</span>
               </span>
             )}
             {details.worktree && (
               <span className={CHIP} title={details.worktree.title}>
-                <GitFork className="size-4 shrink-0" />
+                <GitFork className="shrink-0" />
                 {details.worktree.label}
               </span>
             )}

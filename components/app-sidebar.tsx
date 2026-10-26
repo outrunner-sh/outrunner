@@ -43,6 +43,7 @@ import {
 } from "@/lib/nav/sidebar";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
@@ -181,8 +182,8 @@ export function AppSidebar({
           <Link
             href="/new?pick=repo"
             onClick={startNewSession}
-            aria-label="Add a repository from GitHub"
-            title="Add a repository from GitHub"
+            aria-label={ADD_PROJECT_LABEL}
+            title={ADD_PROJECT_LABEL}
             className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <GitBranchPlus className="size-3.5" />
@@ -405,23 +406,26 @@ function RowTail({ at, now, hideOnHover }: { at: string; now: number; hideOnHove
   );
 }
 
-/** Two groups of placeholder rows, at the real rows' height (32px): a project
+/** Two groups of placeholder rows, at the real rows' height (28px): a project
  *  header, then its sessions indented to where their titles start. */
 function SidebarSkeleton() {
   return (
     <div className="space-y-3">
       {[3, 2].map((sessions, i) => (
         <div key={i}>
-          <SkeletonRows rows={1} rowHeight={32} indent={34} />
-          <SkeletonRows rows={sessions} rowHeight={32} indent={34} />
+          <SkeletonRows rows={1} rowHeight={28} indent={32} />
+          <SkeletonRows rows={sessions} rowHeight={28} indent={32} />
         </div>
       ))}
     </div>
   );
 }
 
-type DeletingSession = { id: string; title: string; deletion: SessionDeletion };
+/** The add-project button's name: a GitHub repository, unless local sessions
+ *  are on, where the picker it opens can be a folder on the Mac. */
+const ADD_PROJECT_LABEL = LOCAL_SESSIONS ? "Add a project" : "Add a repository from GitHub";
 
+type DeletingSession = { id: string; title: string; deletion: SessionDeletion };
 
 function NavLink({
   href,
