@@ -32,7 +32,8 @@ export function freeModelsOffer(): string {
   return per === "once" ? `${credits} free credits` : `${credits} free credits a month`;
 }
 
-/** The app the CLI signs in to when it's given no --url: its DefaultURL
+/** The origin the command shows before the browser's is known (the server
+ *  render of the onboarding page). Matches the CLI's DefaultURL
  *  (runtime-agent/internal/cli/main.go). */
 export const CLI_DEFAULT_URL = "https://app.outrunner.sh";
 
