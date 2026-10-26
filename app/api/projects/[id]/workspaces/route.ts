@@ -32,6 +32,8 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_CODEX_GATEWAY } from "@/lib/runtime/agent-protocol";
+import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
 import { isValidBranchName } from "@/lib/runtime/git";
@@ -40,9 +42,12 @@ import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { NO_OUTRUNNER_MODELS, NoStartingModelError, startingModel } from "@/lib/runtime/model-switch";
 import {
   agentOf,
+  agentsFor,
   defaultModel,
   type Effort,
   EffortUnsupportedError,
+  onCodexGateway,
+  requestedAgent,
   requestedEffort,
   requestedModel,
   runsOnOwnAccount,
@@ -124,6 +129,8 @@ export async function POST(request: Request, context: RouteContext) {
     model?: unknown;
     key?: unknown;
     effort?: unknown;
+    /** The agent the session is asked to run (requestedAgent). */
+    agent?: unknown;
     /** The first prompt, only to name the session by. */
     prompt?: unknown;
   };
@@ -142,8 +149,14 @@ export async function POST(request: Request, context: RouteContext) {
   if (chosenEffort === null) {
     return NextResponse.json({ error: "Choose one of the offered efforts." }, { status: 400 });
   }
-  // Codex for Codex's models, Claude Code for every other, and for none.
-  const agentId = agentOf(chosenModel?.provider ?? "claude");
+  // The agent asked for (onboarding's "Codex on Outrunner's models"), which
+  // must run the model chosen with it; none, the model's own: Codex for
+  // Codex's models, Claude Code for every other, and for none.
+  const askedAgent = requestedAgent(body);
+  if (askedAgent === null || (askedAgent && (!chosenModel || !agentsFor(chosenModel.provider).includes(askedAgent)))) {
+    return NextResponse.json({ error: "Choose a model the agent runs." }, { status: 400 });
+  }
+  const agentId = agentOf(chosenModel?.provider ?? "claude", askedAgent);
   const menu = await modelMenu(owner.id);
   // What it starts on: the model chosen, else the menu's default, else the
   // user's Claude (startingModel). On a model on a key, Claude Code needs no
@@ -432,6 +445,11 @@ async function provisionWorkspace({
       // Before the session is made: an agent too old for Codex would make a
       // Claude Code session of it. One that is, is upgraded in place.
       await readyBox(signIn, agentId, auth);
+      // And one too old to run Codex through a gateway would refuse its model.
+      if (chosenModel && onCodexGateway(agentId, chosenModel)) {
+        const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+        await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
+      }
       const created = await agent.createWorkspace(
         {
           workspaceId: workspace.id,

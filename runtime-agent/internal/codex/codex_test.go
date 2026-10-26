@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"runtime-agent/internal/claude"
@@ -65,5 +66,45 @@ func TestTOMLStringRoundTrips(t *testing.T) {
 	}
 	if back != orientation {
 		t.Errorf("round trip = %q, want %q", back, orientation)
+	}
+}
+
+func TestProviderConfigPutsCodexOnOpenRouterOnly(t *testing.T) {
+	got := ProviderConfig(claude.OpenRouter, "sk-or-v1-0123456789abcdef")
+	want := `model_provider = "openrouter"
+
+[model_providers."openrouter"]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+wire_api = "responses"
+experimental_bearer_token = "sk-or-v1-0123456789abcdef"
+`
+	if got != want {
+		t.Errorf("ProviderConfig =\n%s\nwant\n%s", got, want)
+	}
+	// The others serve Anthropic's API, which Codex doesn't speak.
+	for _, g := range []claude.Gateway{claude.NoGateway, claude.Anthropic, "zai", "moonshot", "deepseek"} {
+		if RunsThrough(g) || ProviderConfig(g, "sk-0123456789abcdef0123") != "" {
+			t.Errorf("Codex runs through %q", g)
+		}
+	}
+	if !RunsThrough(claude.OpenRouter) {
+		t.Error("Codex doesn't run through OpenRouter")
+	}
+}
+
+// It names no model: Codex never sends it again after a switch, so a name
+// would go stale.
+func TestIdentityOverridesCodexAndNamesNoModel(t *testing.T) {
+	got := Identity()
+	for _, want := range []string{"you are Outrunner", "calls you Codex or a GPT model", "says OpenAI made you", "model menu"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Identity missing %q:\n%s", want, got)
+		}
+	}
+	for _, slug := range []string{"Claude", "glm", "kimi", "deepseek"} {
+		if strings.Contains(got, slug) {
+			t.Errorf("Codex's identity names %s:\n%s", slug, got)
+		}
 	}
 }

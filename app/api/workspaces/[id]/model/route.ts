@@ -12,6 +12,8 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_CODEX_GATEWAY } from "@/lib/runtime/agent-protocol";
+import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
@@ -19,7 +21,9 @@ import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import {
   agentOf,
+  agentsFor,
   checkEffortApplied,
+  onCodexGateway,
   requestedEffort,
   requestedModel,
   runsOnOwnAccount,
@@ -62,7 +66,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
   // A session keeps its agent: its conversation is that agent's.
-  if (agentOf(model.provider) !== workspace.agent) {
+  if (!agentsFor(model.provider).includes(workspace.agent)) {
     return NextResponse.json(
       { error: `This session runs ${AGENTS[workspace.agent].label}. Start a new session to use ${AGENTS[agentOf(model.provider)].label}.` },
       { status: 409 },
@@ -118,6 +122,14 @@ export async function POST(request: Request, context: RouteContext) {
     // The switch relaunches the session: signed in as the user picks now, so
     // a key replaced since is the one it relaunches on.
     const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+    // An agent from before Codex ran through a gateway would refuse the model.
+    // Checked before signing in, which may take the session's own key away
+    // (a model on Outrunner's key needs none): a switch refused here must
+    // leave the session as it was.
+    if (onCodexGateway(workspace.agent, model)) {
+      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+      await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
+    }
     await signInSession(
       sessionAuthClient(agent, identity, upgrade),
       workspace.agent,

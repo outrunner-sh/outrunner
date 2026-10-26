@@ -203,14 +203,17 @@ func TestACodexThatExitsAtOnceSaysToRunCodex(t *testing.T) {
 	}
 }
 
-func TestACodexSessionSwitchesModelsButNeverToAGateway(t *testing.T) {
+func TestACodexSessionSwitchesModelsAndOnlyThroughOpenRouter(t *testing.T) {
 	t.Parallel()
 	s, fake, id := codexSession(t, CreateInput{WorkspaceID: "ws-cx", Branch: "b", BaseBranch: "main", Model: "gpt-6-luna"})
 	fake.running[sessionName(id)] = true
 	ctx := context.Background()
-	err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: "sk-or-v1-codex-0123456789abcdef"}, "")
-	if !errors.Is(err, ErrGatewayUnsupported) {
-		t.Fatalf("SetModel to a gateway = %v, want ErrGatewayUnsupported", err)
+	// Anthropic's API, and the others serving only it, mean nothing to Codex.
+	for _, g := range []claude.Gateway{claude.Anthropic, "zai", "moonshot", "deepseek"} {
+		err := s.SetModel(ctx, id, ModelChoice{Model: "glm-5.3", Gateway: g, Token: testGatewayKey2}, "")
+		if !errors.Is(err, ErrGatewayUnsupported) {
+			t.Fatalf("SetModel through %s = %v, want ErrGatewayUnsupported", g, err)
+		}
 	}
 	if _, statErr := os.Stat(s.gatewayEnvPath(id)); !os.IsNotExist(statErr) || len(fake.launches) != 0 {
 		t.Fatalf("a refused gateway left a key file (%v) or relaunched (%q)", statErr, fake.launches)
@@ -220,6 +223,174 @@ func TestACodexSessionSwitchesModelsButNeverToAGateway(t *testing.T) {
 	}
 	if got := fake.lastLaunch(); len(got) < 3 || got[0] != "codex" || got[2] != "gpt-5.5" {
 		t.Errorf("relaunch = %q, want codex -m gpt-5.5", got)
+	}
+}
+
+// Outrunner's models in Codex: through OpenRouter's Responses API, from a
+// Codex home of the session's own whose config holds the key, which is on no
+// command line and in no environment.
+func TestACodexSessionOnOpenRouterRunsInItsOwnHomeOnTheKey(t *testing.T) {
+	t.Parallel()
+	s, fake, id := codexSession(t, CreateInput{WorkspaceID: "ws-or", Branch: "b", BaseBranch: "main", Model: "gpt-5.5"})
+	login := &loginRecorder{}
+	s.runCommand = login.run
+	s.env = []string{"PATH=/usr/bin", "OPENAI_API_KEY=the-computers-key", "CODEX_HOME=/home/runtime/.codex"}
+	ctx := context.Background()
+	if _, err := s.Start(ctx, id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	fake.running[sessionName(id)] = true
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2}, ""); err != nil {
+		t.Fatalf("SetModel onto OpenRouter: %v", err)
+	}
+	home := s.codexHome(id)
+	argv := fake.lastLaunch()
+	want := []string{"env", "-u", "OPENAI_API_KEY", "CODEX_HOME=" + home, "codex", "-m", "z-ai/glm-5.3"}
+	if len(argv) < len(want) || !slices.Equal(argv[:len(want)], want) {
+		t.Fatalf("relaunch = %q, want codex on GLM in its own home", argv)
+	}
+	if strings.Contains(strings.Join(argv, " "), testGatewayKey2) ||
+		strings.Contains(strings.Join(s.agentFor(id).env(""), " "), testGatewayKey2) {
+		t.Errorf("the key is on the command line or in the environment: %q", argv)
+	}
+	if !strings.Contains(strings.Join(argv, " "), "you are Outrunner") || !strings.Contains(strings.Join(argv, " "), "calls you Codex") {
+		t.Errorf("launch = %q, want Outrunner's identity in Codex's terms", argv)
+	}
+	if info, err := os.Stat(home); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("Codex home = %v, %v; want it owner-only", info, err)
+	}
+	configPath := filepath.Join(home, "config.toml")
+	if info, err := os.Stat(configPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("config.toml = %v, %v; want it owner-only", info, err)
+	}
+	config := readFileString(t, configPath)
+	for _, line := range []string{`model_provider = "openrouter"`, `base_url = "https://openrouter.ai/api/v1"`,
+		`wire_api = "responses"`, `experimental_bearer_token = "` + testGatewayKey2 + `"`, `trust_level = "trusted"`} {
+		if !strings.Contains(config, line) {
+			t.Errorf("config.toml lacks %q:\n%s", line, config)
+		}
+	}
+	// TOML: the provider's top-level key must come before every table.
+	if strings.Index(config, "model_provider =") > strings.Index(config, "[") {
+		t.Errorf("model_provider follows a table, where Codex reads it as the table's:\n%s", config)
+	}
+	if len(login.calls) != 0 {
+		t.Errorf("logged in with no OpenAI key: %+v", login.calls)
+	}
+	if info, err := os.Stat(s.gatewayEnvPath(id)); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("key file = %v, %v; want it owner-only", info, err)
+	}
+	if !slices.Contains(s.RedactionSecrets(), testGatewayKey2) {
+		t.Error("the gateway key is not masked")
+	}
+
+	// A relaunch (a resume after an exit, a restarted agent) goes back on it.
+	s2 := NewService(s.Root)
+	s2.lookPath, s2.tmux, s2.runCommand, s2.env = s.lookPath, fake, login.run, s.env
+	if _, err := s2.Resume(ctx, id, ""); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if got := fake.lastLaunch(); !slices.Equal(got[:len(want)], want) {
+		t.Errorf("relaunch after a restart = %q, want codex on GLM in its own home", got)
+	}
+	if !strings.Contains(readFileString(t, configPath), testGatewayKey2) {
+		t.Error("the relaunch lost the provider")
+	}
+
+	// A replaced key is the one the next launch runs on; the old stays masked.
+	const replaced = "sk-or-v1-replaced-0123456789abcdef"
+	if err := s2.SetModel(ctx, id, ModelChoice{Model: "moonshotai/kimi-k3", Gateway: claude.OpenRouter, Token: replaced}, ""); err != nil {
+		t.Fatalf("SetModel onto Kimi: %v", err)
+	}
+	if config := readFileString(t, configPath); !strings.Contains(config, replaced) || strings.Contains(config, testGatewayKey2) {
+		t.Errorf("config.toml after the key changed:\n%s", config)
+	}
+	if secrets := s2.RedactionSecrets(); !slices.Contains(secrets, replaced) || !slices.Contains(secrets, testGatewayKey2) {
+		t.Error("the new key, or the one it replaced, is not masked")
+	}
+
+	// Back on OpenAI's models with no key of its own: the user's home, and the
+	// session's keeps no copy of the gateway's key.
+	if err := s2.SetModel(ctx, id, ModelChoice{Model: "gpt-5.5"}, ""); err != nil {
+		t.Fatalf("SetModel off the gateway: %v", err)
+	}
+	if got := fake.lastLaunch(); got[0] != "codex" {
+		t.Errorf("relaunch = %q, want codex in the user's own home", got)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Errorf("the session's Codex home kept the gateway's key: %v", err)
+	}
+}
+
+// A Codex session with its own OpenAI key and on a gateway: logged in, so a
+// switch back to OpenAI's models needs nothing more, and on the gateway.
+func TestACodexSessionWithAKeyAndAGatewayIsOnBoth(t *testing.T) {
+	t.Parallel()
+	s, fake, id := codexSession(t, CreateInput{WorkspaceID: "ws-both", Branch: "b", BaseBranch: "main"})
+	login := &loginRecorder{}
+	s.runCommand = login.run
+	ctx := context.Background()
+	if err := s.SetAuth(ctx, id, AuthOpenAIAPIKey, testOpenAIKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "deepseek/deepseek-v4.1-flash", Gateway: claude.OpenRouter, Token: testGatewayKey2}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Start(ctx, id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(login.calls) != 1 {
+		t.Errorf("codex login ran %d times, want once", len(login.calls))
+	}
+	config := readFileString(t, filepath.Join(s.codexHome(id), "config.toml"))
+	if !strings.Contains(config, `cli_auth_credentials_store = "file"`) || !strings.Contains(config, testGatewayKey2) {
+		t.Errorf("config.toml:\n%s", config)
+	}
+	if argv := strings.Join(fake.lastLaunch(), " "); strings.Contains(argv, testGatewayKey2) || strings.Contains(argv, testOpenAIKey) {
+		t.Errorf("a key is on the command line: %s", argv)
+	}
+}
+
+// A gateway-only session logs its home in with nothing, even if an OpenAI key
+// it no longer claims was left in its file: whether it logs in is the
+// session's facts' to say, not whatever file survived.
+func TestACodexSessionOnAGatewayAloneNeverLogsInWithAStaleKey(t *testing.T) {
+	t.Parallel()
+	s, _, id := codexSession(t, CreateInput{WorkspaceID: "ws-stale", Branch: "b", BaseBranch: "main"})
+	login := &loginRecorder{}
+	s.runCommand = login.run
+	ctx := context.Background()
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authFiles().put(id, authEnvFile(AuthOpenAIAPIKey, testOpenAIKey)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Start(ctx, id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(login.calls) != 0 {
+		t.Errorf("logged in with a key the session doesn't claim: %+v", login.calls)
+	}
+}
+
+// A session recorded on the gateway whose key file is gone doesn't launch on
+// whatever the computer has.
+func TestACodexSessionWithoutItsGatewayKeyDoesntLaunch(t *testing.T) {
+	t.Parallel()
+	s, fake, id := codexSession(t, CreateInput{WorkspaceID: "ws-gone", Branch: "b", BaseBranch: "main"})
+	ctx := context.Background()
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(s.gatewayEnvPath(id)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Start(ctx, id, ""); !errors.Is(err, ErrGatewayKeyMissing) {
+		t.Fatalf("Start = %v, want ErrGatewayKeyMissing", err)
+	}
+	if len(fake.launches) != 0 {
+		t.Errorf("launched without its key: %q", fake.launches)
 	}
 }
 

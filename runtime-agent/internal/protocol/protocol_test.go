@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -25,6 +26,27 @@ func TestGoldenFixtures(t *testing.T) {
 			if err := decodeInto(name, ex); err != nil {
 				t.Errorf("%s[%d]: %v", name, i, err)
 			}
+		}
+	}
+}
+
+// TestTheNewestHealthFixtureNamesEveryFeature ties the features this agent
+// advertises to the fixture the zod side checks its own names against
+// (test/agent-protocol.test.ts): a feature named differently on either side
+// would never be found, and the control plane would upgrade a box forever.
+func TestTheNewestHealthFixtureNamesEveryFeature(t *testing.T) {
+	raw, err := os.ReadFile(findFixtures(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var groups struct{ AgentHealth []Health }
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		t.Fatal(err)
+	}
+	newest := groups.AgentHealth[len(groups.AgentHealth)-1].Features
+	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway} {
+		if !slices.Contains(newest, feature) {
+			t.Errorf("the newest AgentHealth fixture lacks %s: %q", feature, newest)
 		}
 	}
 }

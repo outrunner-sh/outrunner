@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/claude"
+	"runtime-agent/internal/codex"
 )
 
 func TestOrientationUsesRecordedFacts(t *testing.T) {
@@ -54,6 +55,7 @@ func TestOrientationSaysOutrunnerOnlyOffClaude(t *testing.T) {
 		{workspaceFacts{Model: "glm-5.3", Gateway: "zai"}, true},
 		{workspaceFacts{Model: "claude-opus-5", Gateway: claude.Anthropic}, false},
 		{workspaceFacts{Model: "opus"}, false},
+		{workspaceFacts{Model: "gpt-5.5", Agent: AgentCodex}, false},
 	} {
 		s.setFacts("ws", tc.facts)
 		got := s.orientation("ws", "/work/ws")
@@ -63,6 +65,17 @@ func TestOrientationSaysOutrunnerOnlyOffClaude(t *testing.T) {
 		if !strings.Contains(got, "in the /work/ws directory") {
 			t.Errorf("%+v: orientation lost its workspace lines:\n%s", tc.facts, got)
 		}
+	}
+}
+
+// Codex on Outrunner's model is told it is Outrunner, in Codex's terms: its
+// own instructions call it Codex, not Claude.
+func TestACodexOrientationOnAGatewaySaysOutrunnerOverCodex(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.setFacts("ws", workspaceFacts{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Agent: AgentCodex})
+	got := s.orientation("ws", "/work/ws")
+	if !strings.Contains(got, codex.Identity()) || strings.Contains(got, claude.Identity("z-ai/glm-5.3")) {
+		t.Errorf("orientation = %s\nwant Codex's identity, not Claude's", got)
 	}
 }
 

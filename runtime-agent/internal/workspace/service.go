@@ -20,6 +20,7 @@ import (
 	"runtime-agent/internal/ask"
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
+	"runtime-agent/internal/codex"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/snapshot"
@@ -607,9 +608,10 @@ var (
 	ErrUnknownWorkspace = errors.New("unknown workspace")
 	// ErrModelUnsupported is a model switch on an engine that has none (jcode).
 	ErrModelUnsupported = errors.New("this engine cannot switch models")
-	// ErrGatewayUnsupported is a gateway asked of a Codex session: gateways
-	// serve Claude's API, and Codex speaks OpenAI's.
-	ErrGatewayUnsupported = errors.New("a Codex session runs on OpenAI's models directly and can't use a gateway")
+	// ErrGatewayUnsupported is a gateway asked of a Codex session that serves
+	// only Claude's API: Codex speaks OpenAI's, which of the gateways only
+	// OpenRouter serves (codex.RunsThrough).
+	ErrGatewayUnsupported = errors.New("a Codex session runs on OpenAI's models directly, or through OpenRouter, and can't use this gateway")
 	// ErrSessionBusy is a switch asked for while Claude is mid-turn: the
 	// relaunch would cut the turn off.
 	ErrSessionBusy = errors.New("Claude is mid-turn; switch models once it has finished")
@@ -654,11 +656,18 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	if !ok {
 		return ErrUnknownWorkspace // never write facts for a workspace never created
 	}
-	if f.Agent == AgentCodex && choice.Gateway != claude.NoGateway {
+	codexSession := f.Agent == AgentCodex
+	if codexSession && choice.Gateway != claude.NoGateway && !codex.RunsThrough(choice.Gateway) {
 		return ErrGatewayUnsupported
 	}
+	// The session's key file: Claude's sources it, Codex's home is given the
+	// key from it at each launch (prepareCodexHome).
 	env := ""
-	if choice.Gateway != claude.NoGateway {
+	switch {
+	case choice.Gateway == claude.NoGateway:
+	case codexSession:
+		env = codexGatewayEnvFile(choice.Token)
+	default:
 		env = gatewayEnvFile(choice.Gateway, choice.Token, choice.Model)
 	}
 	priorEnv := s.readGatewayEnv(workspaceID)
@@ -701,6 +710,13 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	}
 	if err := s.gatewayFiles().put(workspaceID, env); err != nil {
 		return err
+	}
+	if codexSession && choice.Gateway == claude.NoGateway {
+		// The session's Codex home must not keep a copy of a gateway key no
+		// longer the session's; a launch in that home writes it again.
+		if err := os.Remove(filepath.Join(s.codexHome(workspaceID), "config.toml")); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	// Only the model, gateway and effort change: a Codex session's tail may
 	// record its rollout meanwhile.
@@ -791,13 +807,20 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 // Create), getFacts returns the zero value and the base branch is empty, so
 // claude.Orientation omits the target-branch guidance — a degraded but still
 // useful prompt (see claude.Orientation). A session on another company's
-// model gets Outrunner's identity after it (claude.Identity); it is rebuilt
-// each launch, so a model switch brings the identity in or takes it away.
+// model gets Outrunner's identity after it (claude.Identity, or Codex's
+// codex.Identity); it is rebuilt each launch, so a model switch brings the
+// identity in or takes it away. Claude reads it every launch; Codex only when
+// its conversation starts (codex.Identity), so a Codex session keeps the
+// identity it started with.
 func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
 	// A session in the user's own folder has no branch of its own.
 	o := claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
-	if f.Gateway.SpeaksAsOutrunner() {
+	switch {
+	case !f.Gateway.SpeaksAsOutrunner():
+	case f.Agent == AgentCodex:
+		o += "\n\n" + codex.Identity()
+	default:
 		o += "\n\n" + claude.Identity(f.Model)
 	}
 	return o

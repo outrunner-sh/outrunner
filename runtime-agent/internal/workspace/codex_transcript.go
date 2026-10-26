@@ -50,7 +50,8 @@ func (s *Service) codexHomeFor(workspaceID string) string {
 }
 
 // launchCodexHome is the Codex home a session's next launch runs in: its own,
-// with an OpenAI key (codex_auth.go), else the user's: CODEX_HOME, or ~/.codex.
+// with an OpenAI key or on a gateway (codex_auth.go), else the user's:
+// CODEX_HOME, or ~/.codex.
 func (s *Service) launchCodexHome(workspaceID string) string {
 	if s.ownCodexHome(workspaceID) {
 		return s.codexHome(workspaceID)

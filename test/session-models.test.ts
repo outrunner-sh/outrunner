@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { AGENT_IDS, type AgentConnection, type AgentId } from "@/lib/agents/registry";
 import {
   agentOf,
+  agentsFor,
   checkEffortApplied,
   connectedAccounts,
   costHint,
@@ -13,10 +14,12 @@ import {
   modelChoice,
   modelGroups,
   modelLabel,
+  onCodexGateway,
   OUTRUNNER_MODELS,
   parseAgentConnections,
   predatesProvider,
   recordedModel,
+  requestedAgent,
   requestedEffort,
   requestedModel,
   runsOnOwnAccount,
@@ -164,6 +167,13 @@ test("a model offered by two is ticked on the provider it was picked on", () => 
 
 test("an agent older than a provider is told apart from other refusals", () => {
   assert.equal(predatesProvider('unknown gateway "zai"'), true);
+  // An agent from before Codex ran through a gateway, as it refused one.
+  assert.equal(predatesProvider("a Codex session runs on OpenAI's models directly and can't use a gateway"), true);
+  // This one's refusal of a gateway serving only Anthropic's API is no age.
+  assert.equal(
+    predatesProvider("a Codex session runs on OpenAI's models directly, or through OpenRouter, and can't use this gateway"),
+    false,
+  );
   assert.equal(predatesProvider("invalid model"), false);
   assert.equal(predatesProvider(undefined), false);
 });
@@ -187,14 +197,64 @@ test("a running session's menu offers only what its agent runs", () => {
     modelGroups(menu, AGENT_IDS, "claude").map((g) => g.provider),
     ["outrunner", "zai", "claude"],
   );
+  // Codex runs Outrunner's models too (through OpenRouter's OpenAI API),
+  // but no key's: those are reached through an Anthropic API.
   assert.deepEqual(
     modelGroups(menu, AGENT_IDS, "codex").map((g) => g.provider),
+    ["outrunner", "codex"],
+  );
+  assert.deepEqual(
+    modelGroups({ outrunner: false, allowance: false, keys: ["openrouter"] }, AGENT_IDS, "codex").map((g) => g.provider),
     ["codex"],
   );
   assert.equal(agentOf("codex"), "codex");
   for (const provider of ["outrunner", "claude", "openrouter", "anthropic"] as const) {
     assert.equal(agentOf(provider), "claude", provider);
   }
+});
+
+test("a session asked to run an agent runs it where that agent runs the model, and its model's own elsewhere", () => {
+  assert.deepEqual(agentsFor("outrunner"), ["claude", "codex"]);
+  assert.deepEqual(agentsFor("codex"), ["codex"]);
+  for (const provider of ["claude", "openrouter", "anthropic", "zai", "moonshot", "deepseek"] as const) {
+    assert.deepEqual(agentsFor(provider), ["claude"], provider);
+  }
+  // Outrunner's models in Codex (onboarding's "Codex → Outrunner's models").
+  assert.equal(agentOf("outrunner", "codex"), "codex");
+  assert.equal(agentOf("outrunner", "claude"), "claude");
+  // An agent that can't run the model is never what runs it.
+  assert.equal(agentOf("claude", "codex"), "claude");
+  assert.equal(agentOf("openrouter", "codex"), "claude");
+  assert.equal(agentOf("codex", "claude"), "codex");
+  // Every agent a provider names runs it as the session's.
+  for (const provider of ["outrunner", "claude", "codex", "openrouter"] as const) {
+    for (const agent of agentsFor(provider)) assert.equal(agentOf(provider, agent), agent, `${provider} in ${agent}`);
+  }
+});
+
+test("only Codex on a model it doesn't own needs an agent that runs Codex through a gateway", () => {
+  assert.equal(onCodexGateway("codex", { provider: "outrunner" }), true);
+  assert.equal(onCodexGateway("codex", { provider: "codex" }), false);
+  assert.equal(onCodexGateway("claude", { provider: "outrunner" }), false);
+  assert.equal(onCodexGateway("claude", { provider: "openrouter" }), false);
+});
+
+test("a request's agent is one there is, none, or refused", () => {
+  assert.equal(requestedAgent({ agent: "codex" }), "codex");
+  assert.equal(requestedAgent({ agent: "claude" }), "claude");
+  assert.equal(requestedAgent({}), undefined);
+  assert.equal(requestedAgent({ agent: null }), undefined);
+  assert.equal(requestedAgent(null), undefined);
+  for (const bad of ["Codex", "gemini", "", 1]) assert.equal(requestedAgent({ agent: bad }), null, String(bad));
+});
+
+test("a Codex session on Outrunner's model switches on Outrunner's key, as a Claude Code one does", async () => {
+  const keyFor = async (holder: string) => `key-of-${holder}-0123456789`;
+  assert.deepEqual(await setModelRequest(modelChoice("outrunner", "moonshotai/kimi-k3")!, keyFor, "high"), {
+    model: "moonshotai/kimi-k3",
+    gateway: "openrouter",
+    token: "key-of-outrunner-0123456789",
+  });
 });
 
 test("Codex takes its listed models and any id the agent takes, and switches with no key", async () => {
@@ -246,8 +306,11 @@ test("the user's own Claude and Codex are offered only where connected", () => {
   // Nothing connected: Outrunner's alone, and its first model is the default.
   assert.deepEqual(labels([]), ["Outrunner · included"]);
   assert.deepEqual(labels(["codex"]), ["Outrunner · included", "Codex"]);
-  // A running Codex session whose Codex was disconnected has nothing to switch to.
-  assert.deepEqual(labels([], "codex"), []);
+  // A running Codex session whose Codex was disconnected can still switch to
+  // Outrunner's models, which need no account of the user's.
+  assert.deepEqual(labels([], "codex"), ["Outrunner · included"]);
+  assert.deepEqual(labels(["codex"], "codex"), ["Outrunner · included", "Codex"]);
+  assert.deepEqual(modelGroups({ outrunner: false, allowance: false, keys: [] }, [], "codex"), []);
 });
 
 test("where an account is connected: everywhere on a saved credential, on the Mac by its own login", () => {
