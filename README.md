@@ -45,7 +45,7 @@ subscription when Claude Code is on the computer (it runs `claude setup-token`
 under a PTY and saves the token), then continues onboarding in the browser.
 `outrunner login | claude | whoami | logout` do one step each; `claude` signs
 in first if needed and opens no tab after, so it's what onboarding's
-subscription page shows (with `--url` when the page isn't on the default app).
+subscription page shows (always with `--url`, the page's own app).
 `--url` or `OUTRUNNER_URL` points it at another app.
 
 The CLI is Go (`runtime-agent/cmd/outrunner`), shipped through npm like

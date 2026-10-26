@@ -114,8 +114,8 @@ test("Outrunner's models are offered as the Free plan gives them", () => {
 });
 
 test("the terminal command connects Claude to this app, without opening onboarding again", () => {
-  assert.equal(connectClaudeCommand("npx", CLI_DEFAULT_URL), "npx outrunner@latest claude");
-  // Any other app is named, or the token lands on the default one and this page never moves on.
+  // The app is always named, even the default: OUTRUNNER_URL in the user's shell would win otherwise.
+  assert.equal(connectClaudeCommand("npx", CLI_DEFAULT_URL), "npx outrunner@latest --url https://app.outrunner.sh claude");
   assert.equal(connectClaudeCommand("pnpm dlx", "http://localhost:3000"), "pnpm dlx outrunner@latest --url http://localhost:3000 claude");
 });
 
