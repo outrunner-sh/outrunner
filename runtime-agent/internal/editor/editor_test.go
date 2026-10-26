@@ -142,6 +142,34 @@ func TestTwoOpensAtOnceStartOneEditor(t *testing.T) {
 	}
 }
 
+func TestAnEditorThatDiesAfterStartingIsStartedAgain(t *testing.T) {
+	noCodeServerOnPath(t)
+	home := t.TempDir()
+	binary := (&Editor{Home: home}).releaseBinary()
+	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
+	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
+	var up atomic.Bool
+	srv := health(&up)
+	defer srv.Close()
+	var starts atomic.Int32
+	e := &Editor{Home: home, Health: srv.URL, Start: func(context.Context, string, int) error {
+		starts.Add(1)
+		up.Store(true)
+		return nil
+	}}
+	if _, err := e.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The kept start ended before this open found it down: not taken for up.
+	up.Store(false)
+	if _, err := e.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if starts.Load() != 2 {
+		t.Fatalf("started %d editors, want 2", starts.Load())
+	}
+}
+
 func TestASlowStartSaysItIsStartingThenOpens(t *testing.T) {
 	noCodeServerOnPath(t)
 	home := t.TempDir()

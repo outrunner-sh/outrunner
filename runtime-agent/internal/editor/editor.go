@@ -102,9 +102,12 @@ type Health struct {
 }
 
 // attempt is one start, and how it ended: every open waiting on it is told.
+// It's kept once ended, so an open that found code-server down just before a
+// start finished can tell it's up now rather than start another.
 type attempt struct {
-	done chan struct{}
-	err  error
+	done  chan struct{}
+	err   error
+	ended time.Time // zero while it runs; set under Editor.mu
 }
 
 func (e *Editor) port() int {
@@ -120,19 +123,25 @@ func (e *Editor) port() int {
 // returns ErrStarting for the caller to ask again. A start that fails is told
 // to every open waiting on it; the next open tries again.
 func (e *Editor) Ensure(ctx context.Context) (int, error) {
+	asked := time.Now()
 	if e.up(ctx) {
 		return e.port(), nil
 	}
 	e.mu.Lock()
 	a := e.attempt
-	if a == nil {
+	if a != nil && !a.ended.IsZero() && a.err == nil && !a.ended.Before(asked) {
+		// Down when this asked, but a start ended well since: it's up.
+		e.mu.Unlock()
+		return e.port(), nil
+	}
+	if a == nil || !a.ended.IsZero() {
 		a = &attempt{done: make(chan struct{})}
 		e.attempt = a
 		go func() {
 			err := e.start(context.Background())
 			e.mu.Lock()
 			a.err = err
-			e.attempt = nil
+			a.ended = time.Now()
 			e.mu.Unlock()
 			close(a.done)
 		}()
