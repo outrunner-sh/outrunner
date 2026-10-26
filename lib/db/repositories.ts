@@ -495,12 +495,13 @@ export async function markPooledReady(id: string, sandboxId: string): Promise<bo
   return (data ?? []).length > 0;
 }
 
-/** Mark a pooled box's refill failed, with no box: the project's back-off. */
-export async function markPooledFailed(id: string): Promise<void> {
+/** Mark a pooled box's refill failed, for the project's back-off, keeping the
+ *  box its delete couldn't remove (`leftover`), so the next refill deletes it. */
+export async function markPooledFailed(id: string, leftover: string | null): Promise<void> {
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase
     .from("runtime_computers")
-    .update({ status: "error", daytona_sandbox_id: null, agent_base_url: null, error_message: "The warm pool's refill failed." })
+    .update({ status: "error", daytona_sandbox_id: leftover, agent_base_url: null, error_message: "The warm pool's refill failed." })
     .eq("id", id)
     .eq("pooled", true);
   if (error) throw error;

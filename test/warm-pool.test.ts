@@ -20,6 +20,7 @@ function pool(
     makeFails?: "before-box" | "after-box";
     pauseFails?: boolean;
     rowGone?: boolean;
+    discardFails?: boolean;
   } = {},
 ) {
   const log: string[] = [];
@@ -47,8 +48,11 @@ function pool(
       log.push(`ready ${computerId} on ${sandboxId}`);
       return !opts.rowGone;
     },
-    failed: async (computerId) => void log.push(`failed ${computerId}`),
-    discard: async (sandboxId, provider) => void log.push(`discard ${sandboxId} on ${provider}`),
+    failed: async (computerId, leftover) => void log.push(`failed ${computerId}${leftover ? ` keeping ${leftover}` : ""}`),
+    discard: async (sandboxId, provider) => {
+      log.push(`discard ${sandboxId} on ${provider}`);
+      if (opts.discardFails) throw new Error("Daytona timed out");
+    },
     forget: async (computerId) => void log.push(`forget ${computerId}`),
     newSecret: () => "s3cret",
     now: () => NOW,
@@ -144,4 +148,15 @@ test("a project whose refill failed waits before the next try", async () => {
   const later = pool({ existing: box({ status: "error", daytonaSandboxId: null, updatedAt: old }) });
   assert.equal(await refillPool(later.deps), true);
   assert.deepEqual(later.log, ["forget c-old", ...MADE]);
+});
+
+test("a box whose delete failed stays on the failed row, and the retry deletes it", async () => {
+  const { deps, log } = pool({ pauseFails: true, discardFails: true });
+  await assert.rejects(refillPool(deps), /pause failed/);
+  assert.equal(log.at(-1), "failed c-1 keeping sb-1");
+
+  const old = new Date(NOW - REFILL_BACKOFF_MS - 1).toISOString();
+  const retry = pool({ existing: box({ status: "error", daytonaSandboxId: "sb-1", updatedAt: old }) });
+  assert.equal(await refillPool(retry.deps), true);
+  assert.deepEqual(retry.log.slice(0, 2), ["discard sb-1 on daytona", "forget c-old"]);
 });

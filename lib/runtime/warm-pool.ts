@@ -51,8 +51,9 @@ export type WarmPoolDeps = {
    *  sweep took this refill for dead), which leaves the box the refill's to
    *  delete. */
   ready(computerId: string, sandboxId: string): Promise<boolean>;
-  /** Keep a failed refill's row, with no box, for the back-off. */
-  failed(computerId: string): Promise<void>;
+  /** Keep a failed refill's row for the back-off, with the box its delete
+   *  failed to remove (null when there is none): the retry deletes it. */
+  failed(computerId: string, leftover: string | null): Promise<void>;
   /** Delete a box, with the provider that made it. One whose provider can't
    *  be reached is logged, not thrown: its row can't help delete it. */
   discard(sandboxId: string, provider: PooledBox["provider"]): Promise<void>;
@@ -100,8 +101,8 @@ export async function refillPool(deps: WarmPoolDeps): Promise<boolean> {
     }
     return true;
   } catch (error) {
-    if (sandboxId) await deps.discard(sandboxId, deps.provider).catch(() => {});
-    await deps.failed(slot.id).catch(() => deps.forget(slot.id).catch(() => {}));
+    const deleted = sandboxId ? await deps.discard(sandboxId, deps.provider).then(() => true, () => false) : true;
+    await deps.failed(slot.id, deleted ? null : sandboxId).catch(() => deps.forget(slot.id).catch(() => {}));
     throw error;
   }
 }
