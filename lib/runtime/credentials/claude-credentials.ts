@@ -30,6 +30,9 @@ export type ClaudeTokenMeta = {
   connected: boolean;
   /** Last 4 characters, for the UI to confirm which token — never the token. */
   last4: string | null;
+  /** When the token was saved (ISO), null with none. A reconnect watches it
+   *  change: `connected` stays true throughout one (lib/claude-connect.ts). */
+  updatedAt: string | null;
 };
 
 /** Store (or replace) the owner's Claude token, encrypted at rest. */
@@ -57,6 +60,7 @@ export async function getClaudeTokenMeta(
   return {
     connected: status.anthropic.connected,
     last4: last4FromHint(status.anthropic.hint),
+    updatedAt: status.anthropic.updatedAt,
   };
 }
 
