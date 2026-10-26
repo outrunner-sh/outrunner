@@ -6,6 +6,7 @@ import {
   deleteClaudeToken,
   getClaudeTokenMeta,
   setClaudeToken,
+  type ClaudeTokenMeta,
 } from "@/lib/runtime/credentials/claude-credentials";
 import { checkClaudeToken } from "@/lib/runtime/credentials/claude-token";
 
@@ -28,8 +29,15 @@ export async function GET() {
   const owner = await getOwner();
   if (!owner) return unauthorized();
 
-  const meta = await getClaudeTokenMeta(owner.id);
-  return NextResponse.json(meta);
+  try {
+    return NextResponse.json(await getClaudeTokenMeta(owner.id));
+  } catch (error) {
+    console.error("Could not read the Claude token", error);
+    return NextResponse.json(
+      { error: "Couldn't check whether Claude is connected. Reload to try again." },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PUT(request: Request) {
@@ -49,8 +57,22 @@ export async function PUT(request: Request) {
   const checked = checkClaudeToken((body as { token?: unknown })?.token);
   if ("error" in checked) return NextResponse.json({ error: checked.error }, { status: 400 });
 
-  await setClaudeToken(owner.id, checked.token);
-  return NextResponse.json(await getClaudeTokenMeta(owner.id));
+  try {
+    await setClaudeToken(owner.id, checked.token);
+  } catch (error) {
+    console.error("Could not save the Claude token", error);
+    return NextResponse.json(
+      { error: "Couldn't save your Claude token. Try again in a moment." },
+      { status: 500 },
+    );
+  }
+  // Saved: a failed re-read must not say otherwise. What was just stored is
+  // its own answer.
+  const meta: ClaudeTokenMeta = await getClaudeTokenMeta(owner.id).catch((error: unknown) => {
+    console.error("Could not re-read the Claude token after saving it", error);
+    return { connected: true, last4: checked.token.slice(-4) };
+  });
+  return NextResponse.json(meta);
 }
 
 export async function DELETE(request: Request) {
@@ -60,6 +82,14 @@ export async function DELETE(request: Request) {
   const owner = await getOwner();
   if (!owner) return unauthorized();
 
-  await deleteClaudeToken(owner.id);
+  try {
+    await deleteClaudeToken(owner.id);
+  } catch (error) {
+    console.error("Could not delete the Claude token", error);
+    return NextResponse.json(
+      { error: "Couldn't disconnect Claude. It's still connected; try again in a moment." },
+      { status: 500 },
+    );
+  }
   return NextResponse.json({ connected: false, last4: null });
 }

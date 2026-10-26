@@ -273,7 +273,56 @@
 .studio-offline { display:flex; flex-direction:column; height:100%; min-height:0; }
 .studio-offline .studio-empty-chat { margin:auto; }
 
-.studio-session-error { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:10px auto 0; max-width:736px; width:calc(100% - 32px); padding:9px 12px; border:1px solid rgba(248,81,73,.32); border-radius:9px; color:#f5847e; background:rgba(248,81,73,.1); font-size:11px; }.studio-session-error button { border:0; color:#f5847e; background:transparent; font-size:11px; text-decoration:underline; cursor:pointer; }
+/* Notices and inline messages (components/ui/notice.tsx). Red is for what did
+   not happen; a retry is neutral and a recoverable stop amber. */
+.notice { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border:1px solid rgba(255,255,255,.1); border-radius:9px; color:var(--foreground); background:rgba(255,255,255,.03); font-size:12px; line-height:1.5; }
+.notice.is-warning { border-color:rgba(210,153,34,.32); background:rgba(210,153,34,.07); }
+.notice.is-error { border-color:rgba(248,81,73,.32); background:rgba(248,81,73,.08); }
+.notice-icon { display:inline-flex; flex-shrink:0; margin-top:2px; color:rgba(255,255,255,.55); }
+.notice-icon svg { width:14px; height:14px; }
+.is-warning > .notice-icon, .is-warning .inline-message-row > .notice-icon { color:#d29922; }
+.is-error > .notice-icon, .is-error .inline-message-row > .notice-icon { color:#f5847e; }
+.notice-text { display:flex; flex:1; min-width:0; flex-direction:column; gap:2px; }
+.notice-text strong { font-weight:500; }
+.notice-text span { color:rgba(255,255,255,.55); }
+.notice-text .notice-meta { font:11px var(--font-geist-mono); }
+.notice-actions { display:flex; flex-shrink:0; flex-wrap:wrap; align-items:center; gap:6px; }
+/* Actions on their own row, lined up with the text, for a notice with more
+   buttons than fit beside a sentence. */
+.notice.is-stacked { flex-wrap:wrap; row-gap:8px; }
+.notice.is-stacked > .notice-text { flex-basis:calc(100% - 24px); }
+.notice.is-stacked > .notice-actions { flex-basis:100%; padding-left:24px; }
+.notice-action { display:inline-flex; height:26px; align-items:center; gap:6px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:6px; color:var(--foreground); background:transparent; font-size:12px; font-weight:500; cursor:pointer; transition:background-color .15s; }
+.notice-action:hover { background:rgba(255,255,255,.06); }
+.notice-action.is-primary { border-color:transparent; color:#111; background:#f2f2f2; }
+.notice-action.is-primary:hover { background:#fff; }
+/* While an action runs, its button keeps its label and width and only its
+   icon turns, and its neighbours dim; both wait 150ms, so an answer that
+   comes back at once changes nothing on screen. Re-enabling is instant. */
+.notice-action:disabled { opacity:.5; cursor:default; transition:background-color .15s, opacity .12s .15s; }
+.notice-action .is-working { animation:spinner-turn .9s linear .15s infinite; }
+@media (prefers-reduced-motion: reduce) { .notice-action .is-working { animation:none; } }
+.notice-action svg { width:13px; height:13px; }
+.notice-actions.is-inline .notice-action { height:auto; padding:0; border:0; background:transparent; color:inherit; text-decoration:underline; text-underline-offset:2px; }
+.error-ref { display:inline-flex; align-items:center; gap:4px; font-family:var(--font-geist-mono); font-size:11px; }
+.error-ref button { display:inline-flex; padding:2px; border:0; border-radius:4px; background:transparent; color:inherit; opacity:.7; cursor:pointer; }
+.error-ref button:hover { opacity:1; background:rgba(255,255,255,.06); }
+.error-ref svg { width:12px; height:12px; }
+.inline-message { font-size:12px; line-height:1.5; color:rgba(255,255,255,.6); }
+.inline-message.is-error { color:#f5847e; }
+.inline-message.is-warning { color:#e3b341; }
+.inline-message-row { display:flex; align-items:flex-start; gap:6px; }
+.inline-message-row > .notice-icon { margin-top:2px; }
+/* Text and actions share a wrapping body: in a narrow menu the actions drop
+   under the text, aligned with it, rather than squeezing it to a column. */
+.inline-message-body { display:flex; flex:1; min-width:0; flex-wrap:wrap; align-items:flex-start; gap:2px 8px; }
+.inline-message-text { flex:1 1 160px; min-width:0; }
+.inline-message-details { margin:4px 0 0 20px; color:rgba(255,255,255,.5); }
+.inline-message-details summary { cursor:pointer; font-size:11px; }
+.inline-message-details pre { margin:4px 0 0; padding:8px 10px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:6px; background:#111; font:11px/1.5 var(--font-geist-mono); white-space:pre-wrap; }
+.studio-composer-message { padding:10px 16px 0; }
+/* In the session column, a notice sits where the error strip does. */
+.studio-live-session > .notice { margin:10px auto 0; max-width:736px; width:calc(100% - 32px); }
 
 .studio-convo-panel { display:flex; flex:1; min-height:0; flex-direction:column; }
 .studio-convo-body { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
@@ -355,6 +404,8 @@
 .task-step-mark { display: grid; flex-shrink: 0; width: 18px; height: 18px; place-items: center; border-radius: 5px; font-size: 15px; }
 .task-step.is-done .task-step-mark { color: var(--color-positive); background: color-mix(in oklab, var(--color-positive) 18%, transparent); animation: task-step-done .35s cubic-bezier(.23, 1, .32, 1) both; }
 .task-step.is-done .task-step-mark svg { width: 12px; height: 12px; }
+.task-step.is-stalled .task-step-mark { color: #d29922; }
+.task-step.is-stalled .task-step-mark svg { width: 14px; height: 14px; }
 .task-step-dot { width: 5px; height: 5px; border-radius: 1.5px; background: currentColor; opacity: .6; }
 @keyframes task-step-done { from { transform: scale(.6); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .task-step.is-done .task-step-mark { animation: none; } }
@@ -388,9 +439,11 @@
 .loading-button-faces { display: grid; place-items: center; }
 .loading-button-face { grid-area: 1 / 1; display: inline-flex; align-items: center; gap: 6px; opacity: 0; transform: translateY(3px); filter: blur(3px); transition: opacity .3s cubic-bezier(.23, 1, .32, 1), transform .3s cubic-bezier(.23, 1, .32, 1), filter .3s cubic-bezier(.23, 1, .32, 1); }
 .loading-button-face.is-current { opacity: 1; transform: none; filter: none; }
-.loading-button.is-pending { cursor: progress; opacity: .85; }
+.loading-button.is-pending { cursor: progress; opacity: .85; transition-delay: .15s; }
+/* Pending shows only once an action has taken 150ms: an instant answer goes
+   straight from idle to its result without flashing the busy face. */
+.loading-button.is-pending .loading-button-face { transition-delay: .15s; }
 .loading-button.is-success .loading-button-face.is-current { color: var(--color-positive); }
-.loading-button.is-error .loading-button-face.is-current { color: var(--destructive); }
 .loading-button:active:not(.is-pending):not(:disabled) { transform: translateY(1px); }
 @media (prefers-reduced-motion: reduce) {
   .loading-button-face { transition: none; transform: none; filter: none; }
@@ -404,6 +457,12 @@
 .route-state-button:hover { background: rgba(255,255,255,.05); }
 .route-state-button.is-primary { border-color: transparent; color: var(--background); background: var(--foreground); }
 .route-state-button.is-primary:hover { background: color-mix(in oklab, var(--foreground) 88%, transparent); }
+.route-state-action-row { position:relative; display:flex; flex-direction:column; align-items:center; }
+.route-state-message { position:absolute; top:100%; margin-top:12px; width:max-content; max-width:min(384px, 90vw); }
+/* A reason that arrives after a click eases in rather than popping. */
+.route-state-message, .is-arriving { animation:skeleton-in .15s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .route-state-message, .is-arriving { animation:none; } }
+.route-state-actions .notice-action { height:32px; padding:0 12px; border-radius:8px; font-size:13px; }
 .dot-matrix.is-still .dot-matrix-cell { animation: none; }
 @media (prefers-reduced-motion: reduce) { .route-state { animation: none; } }
 /* Hold to Confirm (interior.dev): a fill crosses the button while it is held;

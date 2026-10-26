@@ -6,6 +6,9 @@ import {
   claudeSetupNeeded,
   claudeSetupText,
   CODEX_INSTALL_COMMAND,
+  LOCAL_RUNNER_LOG,
+  localAgentRequest,
+  LocalRuntimeError,
   type LocalStatus,
   LocalSocket,
   localAgentState,
@@ -15,6 +18,7 @@ import {
   missingTools,
   needsClaudeLogin,
   needsCodexLogin,
+  runnerDidNotStartDetail,
   runsOnOutrunnerModel,
   toolsToInstall,
   openSocket,
@@ -165,6 +169,47 @@ test("Codex's login errors name Codex, and a missing one says how to install it"
   assert.deepEqual(sent, ["local_codex_login"]);
 });
 
+test("a runner that didn't start says why, what still works, and where its log is", async () => {
+  assert.equal(
+    messageForLocalError("agent-did-not-start: listen tcp: address already in use"),
+    "This Mac's session runner didn't start. It stopped with: listen tcp: address already in use. Cloud sessions still work. Its log is ~/.outrunner/agent.log.",
+  );
+  // One that never answered has no reason to give.
+  assert.equal(
+    messageForLocalError("agent-did-not-start"),
+    "This Mac's session runner didn't start. Cloud sessions still work. Its log is ~/.outrunner/agent.log.",
+  );
+  assert.match(messageForLocalError("agent-spawn-failed: Permission denied (os error 13)"), /It stopped with: Permission denied \(os error 13\)\. Cloud/);
+  assert.equal(runnerDidNotStartDetail("it exited with code 7"), "It stopped with: it exited with code 7. Cloud sessions still work.");
+  assert.equal(runnerDidNotStartDetail("panic: boom!"), "It stopped with: panic: boom! Cloud sessions still work.");
+  assert.equal(runnerDidNotStartDetail(null), "Cloud sessions still work.");
+
+  // Through the app, the code and reason stay with the sentence, so the page
+  // can show the reason and the log apart.
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: {
+      core: { invoke: () => Promise.reject("agent-did-not-start: it exited with code 7"), Channel: class {} },
+    },
+  };
+  const error = await localAgentRequest(target, "GET", "/workspaces").catch((e: unknown) => e);
+  assert.ok(error instanceof LocalRuntimeError);
+  assert.equal(error.code, "agent-did-not-start");
+  assert.equal(error.reason, "it exited with code 7");
+  assert.equal(LOCAL_RUNNER_LOG, "~/.outrunner/agent.log");
+  assert.match(error.message, /^This Mac's session runner didn't start\./);
+
+  // An agent's own message carries no reason to split out.
+  (globalThis as Record<string, unknown>).window = {
+    __RUNTIME_DESKTOP__: true,
+    __TAURI__: { core: { invoke: () => Promise.reject("folder-missing"), Channel: class {} } },
+  };
+  const missing = await localAgentRequest(target, "GET", "/workspaces").catch((e: unknown) => e);
+  assert.ok(missing instanceof LocalRuntimeError);
+  assert.equal(missing.code, "folder-missing");
+  assert.equal(missing.reason, null);
+});
+
 test("a session the agent has no folder for reads as deleted, not 'unknown workspace'", () => {
   assert.match(messageForLocalError("agent: unknown workspace"), /isn't on this Mac any more/);
 });
@@ -183,6 +228,11 @@ test("an app too old for the page says to update it, not Tauri's refusal", () =>
   assert.match(messageForLocalError("local_something_new not allowed. Command not found"), /Update the app/);
   // A refusal for another reason stays as it was.
   assert.match(messageForLocalError("local_status not allowed on origin [https://x]"), /not allowed on origin/);
+  // An app whose list of agent routes predates the page's call.
+  assert.equal(
+    messageForLocalError(new Error("route-not-allowed: POST /workspaces/6f1c/auth")),
+    "This version of the Outrunner app can't do that yet. Update the app, then try again.",
+  );
 });
 
 // ---------------------------------------------------------------------------

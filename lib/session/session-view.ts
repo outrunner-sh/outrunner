@@ -19,6 +19,10 @@ export type SessionView = {
   pullRequest: WorkspacePullRequest | null;
 };
 
+/** The server's read of a cloud session's page: the session, or that it was
+ *  deleted (its row stays, marked destroyed) and what of it is left. */
+export type SessionAnswer = SessionView | { gone: Pick<SessionView, "workspace" | "pullRequest"> };
+
 /**
  * A cloud session's page from what the sidebar already holds, so it shows the
  * moment it is clicked; null when the sidebar doesn't have it (made since it

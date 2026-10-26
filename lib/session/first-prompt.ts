@@ -73,6 +73,15 @@ export function firstPromptQuery(first: FirstPrompt): string {
   return params.size > 0 ? `?${params}` : "";
 }
 
+/** The first prompt `url` carries, if any (the session page's ?prompt=, ?attachment=). */
+export function firstPromptFromUrl(url: URL): FirstPrompt | null {
+  const first: FirstPrompt = {
+    prompt: url.searchParams.get("prompt") ?? "",
+    attachmentIds: url.searchParams.getAll("attachment"),
+  };
+  return hasFirstPrompt(first) ? first : null;
+}
+
 /** `url` without the first prompt, once it has gone: a reload must not send it again. */
 export function withoutFirstPrompt(url: URL): string {
   const next = new URL(url);
@@ -114,6 +123,16 @@ export function rememberedFirstPrompt(storage: PromptStorage | null, workspaceId
   } catch {
     return null;
   }
+}
+
+/** Hand the waiting prompt from one session to another, as Start over does:
+ * the copy moves, so only the fresh session can send it. */
+export function handOverFirstPrompt(storage: PromptStorage | null, from: string, to: string): FirstPrompt | null {
+  const first = rememberedFirstPrompt(storage, from);
+  if (!first) return null;
+  rememberFirstPrompt(storage, to, first);
+  forgetFirstPrompt(storage, from);
+  return first;
 }
 
 /** The session's first prompt has gone (or never will): drop the kept copy. */

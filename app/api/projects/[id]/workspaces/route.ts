@@ -20,12 +20,15 @@ import {
   createWorkspaceRow,
   getProject,
   getRuntimeComputer,
+  liveWorkspaceOnBranch,
   markRuntimeComputerStoppedIfReady,
   recordWorkspaceModel,
   transitionWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
+import { branchTakenResponse, isUniqueViolation, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
+import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
@@ -93,13 +96,6 @@ function needsClaude(error: string) {
 
 function needsSandbox(error: string) {
   return NextResponse.json({ error, settingsHref: "/settings/sandbox" }, { status: 409 });
-}
-
-function safeErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "code" in error && error.code === "23505") {
-    return "A live workspace already uses that branch for this project.";
-  }
-  return "Could not create the workspace. Check Outrunner's setup and try again.";
 }
 
 /** Create one local worktree from a Runtime project. */
@@ -179,7 +175,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   // Said before a box is set up for it, not after.
   if (chosenModel?.provider === "claude" && !hasClaude) {
-    return needsClaude("Connect Claude in Settings to start a session on your Claude account.");
+    return needsClaude("Connect Claude to start a session on your Claude account.");
   }
   if (chosenModel && isProviderId(chosenModel.provider) && !menu.keys.includes(chosenModel.provider)) {
     return modelKeyErrorResponse(new NoProviderKeyError(chosenModel.provider), "");
@@ -244,11 +240,18 @@ export async function POST(request: Request, context: RouteContext) {
       agent: agentId,
     });
   } catch (error) {
-    const message = safeErrorMessage(error);
-    return NextResponse.json(
-      { error: message },
-      { status: message.startsWith("A live") ? 409 : 500 },
-    );
+    // A requested branch can be one a live session already works on: name that
+    // session and offer its page, rather than only saying one is there.
+    // (Generated branches can't collide.) If that lookup itself fails, the
+    // row's own failure is still the answer to give, not a thrown one.
+    if (requestedBranch && isUniqueViolation(error)) {
+      const holder = await liveWorkspaceOnBranch(owner.id, project.id, requestedBranch).catch((lookupError) => {
+        console.error("Couldn't look up the session on that branch", lookupError);
+        return null;
+      });
+      if (holder) return branchTakenResponse({ id: holder.id, label: workspaceLabel(holder) });
+    }
+    return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
   }
 
   // The session opens now, on its setup progress, and its box is set up after

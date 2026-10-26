@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 
 type SyncResponse = {
@@ -16,7 +17,7 @@ type SyncResponse = {
   reconnect?: boolean;
 };
 
-/** How long "Synced" / "Try again" stays on the button before it settles. */
+/** How long "Synced" stays on the button before it settles. */
 const SETTLE_MS = 1400;
 
 /**
@@ -31,7 +32,7 @@ export function ProjectsSyncButton({
 }) {
   const router = useRouter();
   const [status, setStatus] = useState<ActionStatus>("idle");
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; failed: boolean } | null>(null);
   const [reconnect, setReconnect] = useState(false);
 
   useEffect(() => {
@@ -42,20 +43,20 @@ export function ProjectsSyncButton({
 
   async function sync() {
     setStatus("pending");
-    setMessage(null);
-    setReconnect(false);
+    // The last reason stays while this runs; its own answer replaces it.
     let response: Response;
     try {
       response = await fetch("/api/projects/sync", { method: "POST" });
     } catch {
       setStatus("error");
-      setMessage("Could not reach Outrunner. Please try again.");
+      setMessage({ text: "Couldn't reach Outrunner. Check your connection.", failed: true });
+      setReconnect(false);
       return;
     }
     const result = (await response.json().catch(() => ({}))) as SyncResponse;
     if (!response.ok) {
       setStatus("error");
-      setMessage(result.error ?? "Repository sync failed. Please try again.");
+      setMessage({ text: result.error ?? "Couldn't sync repositories.", failed: true });
       setReconnect(result.reconnect === true);
       return;
     }
@@ -64,7 +65,11 @@ export function ProjectsSyncButton({
     const synced = discovered === 1 ? "1 repository synchronized." : `${discovered} repositories synchronized.`;
     // GitHub had more than Outrunner reads in one go, or sent a record it
     // couldn't read: say so rather than imply this is everything.
-    setMessage(result.complete === false ? `${synced} GitHub may have more.` : synced);
+    setMessage({
+      text: result.complete === false ? `${synced} GitHub may have more.` : synced,
+      failed: false,
+    });
+    setReconnect(false);
     router.refresh();
   }
 
@@ -79,14 +84,20 @@ export function ProjectsSyncButton({
     <div className={cn("flex flex-col gap-1.5", alignment)}>
       <LoadingButton
         status={status}
-        labels={{ idle: "Sync repositories", pending: "Syncing", success: "Synced", error: "Try again" }}
+        labels={{ idle: "Sync repositories", success: "Synced" }}
         icon={<RefreshCw />}
         onClick={() => void sync()}
       />
-      <p aria-live="polite" className="text-muted-foreground min-h-4 max-w-64 text-xs">
-        {message}
-        {reconnect && <GitHubReconnectLink />}
-      </p>
+      {message?.failed ? (
+        <InlineMessage className="min-h-4 max-w-64">
+          {message.text}
+          {reconnect && <GitHubReconnectLink />}
+        </InlineMessage>
+      ) : (
+        <p aria-live="polite" className="text-muted-foreground min-h-4 max-w-64 text-xs">
+          {message?.text}
+        </p>
+      )}
     </div>
   );
 }

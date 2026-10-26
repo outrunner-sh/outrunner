@@ -10,6 +10,7 @@ import {
   cloneMirror,
   commitAll,
   fetchMirror,
+  gitFailureOutput,
   listChangedFiles,
   pushBranch,
   readFileDiff,
@@ -127,6 +128,28 @@ test("readFileDiff rejects a path outside the change set", async () => {
     readFileDiff(exec, { worktree: "/r/ws/x", path: "b.txt" }),
     /not part of this workspace change set/,
   );
+});
+
+test("gitFailureOutput returns git's own message with the token redacted", () => {
+  const error = new Error(
+    "git -C failed (1): To https://github.com/acme/app.git\n ! [rejected] runtime/x -> runtime/x (fetch first)\nghp_secret",
+  );
+  assert.equal(
+    gitFailureOutput(error, ["ghp_secret"]),
+    "To https://github.com/acme/app.git\n ! [rejected] runtime/x -> runtime/x (fetch first)\n***",
+  );
+});
+
+test("gitFailureOutput ignores errors that aren't git's and git's silence", () => {
+  assert.equal(gitFailureOutput(new Error("Box unreachable")), null);
+  assert.equal(gitFailureOutput(new Error("git push failed (128): no output")), null);
+  assert.equal(gitFailureOutput("git push failed (1): x"), null);
+});
+
+test("gitFailureOutput caps a long message", () => {
+  const said = gitFailureOutput(new Error(`git push failed (1): ${"x".repeat(5_000)}`));
+  assert.equal(said?.length, 2_001);
+  assert.ok(said?.endsWith("…"));
 });
 
 /** A GitExec running real git with no user or system config. */

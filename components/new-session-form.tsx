@@ -1,13 +1,13 @@
 "use client";
 
 import { GitBranch, GitFork } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
 import { ProjectsSyncButton } from "@/components/projects-sync-button";
 import { RepositorySelect } from "@/components/repository-select";
 import { SessionComposer } from "@/components/session-composer";
+import { Notice } from "@/components/ui/notice";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { useCreateSession } from "@/hooks/use-create-session";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
@@ -52,7 +52,7 @@ export function NewSessionForm({
   /** Repo to preselect (the last-used project). Falls back to the first. */
   initialProjectId?: string;
 }) {
-  const { projects, projectId, selectProject, selected, isCreating, message, messageHref, create, createLocal } =
+  const { projects, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal } =
     useCreateSession(listed, initialProjectId);
   // The model the session starts on, picked in the composer as in a session;
   // none picked, what it starts on anyway: the menu's default on the cloud,
@@ -165,20 +165,17 @@ export function NewSessionForm({
 
       <div className="shrink-0">
         {message && (
-          <div
-            aria-live="polite"
-            className="border-destructive/30 bg-destructive/10 mx-auto w-[calc(100%-32px)] max-w-[720px] rounded-lg border px-4 py-3 text-center"
-          >
-            <p className="text-destructive text-sm">{message}</p>
-            {messageHref && (
-              <Link
-                href={messageHref}
-                className="mt-2 inline-block text-sm font-medium underline underline-offset-4"
-              >
-                Open settings
-              </Link>
-            )}
-          </div>
+          // A failure with a fix to make first is a step, not an error. One
+          // that points at what is in the way (a taken branch) still didn't start.
+          <Notice
+            className="mx-auto w-[calc(100%-32px)] max-w-[720px]"
+            tone={messageAction?.kind === "step" ? "info" : "error"}
+            title={messageAction?.kind === "step" ? "One step before this session starts" : "Couldn't start the session"}
+            detail={message}
+            actions={
+              messageAction ? [{ label: messageAction.label, href: messageAction.href, primary: true }] : undefined
+            }
+          />
         )}
         <SessionComposer
           onSend={(text, attachmentIds) =>

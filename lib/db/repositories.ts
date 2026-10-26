@@ -1,4 +1,5 @@
 import type { AgentId } from "@/lib/agents/registry";
+import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -51,6 +52,7 @@ export async function listProjects(): Promise<Project[]> {
 }
 
 export async function getProject(id: string): Promise<Project | null> {
+  if (!isUuid(id)) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("projects")
@@ -134,6 +136,7 @@ export async function listWorkspaces(
 }
 
 export async function getWorkspace(id: string): Promise<Workspace | null> {
+  if (!isUuid(id)) return null;
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("workspaces")
@@ -175,6 +178,31 @@ export async function createWorkspaceRow(input: {
   return toWorkspace(data);
 }
 
+/**
+ * The live session already on `branch`, when one is: the one a new session on
+ * the same branch is refused for, named in the refusal. The index allows one
+ * session per branch while it isn't destroyed.
+ */
+export async function liveWorkspaceOnBranch(
+  ownerId: string,
+  projectId: string,
+  branch: string,
+): Promise<Workspace | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .select("*")
+    .eq("owner_id", ownerId)
+    .eq("project_id", projectId)
+    .eq("branch", branch)
+    .neq("status", "destroyed")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? toWorkspace(data) : null;
+}
 /**
  * Give a workspace its title, unless it already has one: the first prompt
  * names the session for good. Conditional in the database (`title is null`),

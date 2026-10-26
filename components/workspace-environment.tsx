@@ -366,7 +366,7 @@ function ReviewRow({
         }
         right={busy ? <Spinner label="Asking for a review" /> : undefined}
       >
-        {busy ? "Asking for a review…" : "Review"}
+        Review
       </EnvRow>
       {error && (
         <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
@@ -496,7 +496,7 @@ function PullRequestRow({
         }
         right={busy ? <Spinner label="Creating pull request" /> : undefined}
       >
-        {busy ? "Creating PR…" : "Create PR"}
+        Create PR
       </EnvRow>
       {errorLine}
     </>
@@ -583,7 +583,8 @@ function OpenedPullRequestRow({
             title={`Merge #${pullRequest.number} into ${pullRequest.baseBranch} on GitHub`}
           >
             {merging ? <Spinner label="Merging" /> : <GitMerge />}
-            {merging ? "Merging" : confirming ? "Confirm merge" : "Merge"}
+            {/* The confirm step keeps its words while the merge runs. */}
+            {merging || confirming ? "Confirm merge" : "Merge"}
           </button>
         )
       }

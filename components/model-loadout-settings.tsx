@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { EffortPicker } from "@/components/effort-meter";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
+import { requestJson } from "@/lib/http/request-json";
 import {
   LOADOUT_MAX,
   type LoadoutEntry,
@@ -56,13 +57,12 @@ export function ModelLoadoutSettings({ groups, initial }: { groups: ModelGroup[]
     const mine = ++latest.current;
     queue.current = queue.current.then(async () => {
       try {
-        const res = await fetch("/api/settings/models", {
+        const data = await requestJson<ModelLoadout>("/api/settings/models", {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(next),
+          body: next,
+          has: (d) => d.models !== undefined,
+          fallback: "Couldn't save that. Try again.",
         });
-        const data = (await res.json().catch(() => null)) as (ModelLoadout & { error?: string }) | null;
-        if (!res.ok || !data?.models) throw new Error(data?.error ?? "Couldn't save that. Try again.");
         saved.current = { models: data.models, default: data.default };
         if (latest.current === mine) setLoadout(saved.current);
         // The picker's menu carries the loadout: let it ask again.
