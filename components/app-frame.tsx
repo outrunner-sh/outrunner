@@ -107,7 +107,7 @@ export function AppFrame({
         router.push("/new");
       } else if (key === "k") {
         event.preventDefault();
-        setCollapsed(false);
+        setAndRemember(false);
         setSearchSignal((n) => n + 1);
       }
     };

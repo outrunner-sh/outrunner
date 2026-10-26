@@ -478,6 +478,12 @@ export function checkLocalFolder(path: string): Promise<LocalFolder> {
   return call<LocalFolder>("local_check_folder", { path });
 }
 
+/** Whether a re-check failed because the folder is gone or no longer allowed,
+ *  rather than a passing hiccup such as the agent restarting. */
+export function folderGone(error: unknown): boolean {
+  return error instanceof LocalRuntimeError && (error.code === "folder-missing" || error.code === "folder-not-chosen");
+}
+
 /**
  * Clone a repository picked from GitHub (`owner/name`) into ~/outrunner/repos,
  * or use the clone made before, as the folder a local session works in. The

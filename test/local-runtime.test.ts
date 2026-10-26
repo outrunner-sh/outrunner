@@ -3,9 +3,11 @@ import { test } from "node:test";
 
 import {
   agentCli,
+  checkLocalFolder,
   claudeSetupNeeded,
   claudeSetupText,
   CODEX_INSTALL_COMMAND,
+  folderGone,
   LOCAL_RUNNER_LOG,
   localAgentRequest,
   LocalRuntimeError,
@@ -167,6 +169,27 @@ test("Codex's login errors name Codex, and a missing one says how to install it"
   };
   await assert.rejects(logInToCodex(), { message: "Codex couldn't log in. It said: Error: access denied" });
   assert.deepEqual(sent, ["local_codex_login"]);
+});
+
+test("a folder re-check that fails is gone only when the app says so, not on a hiccup", async () => {
+  const checkFailing = (reason: string) => {
+    (globalThis as Record<string, unknown>).window = {
+      __RUNTIME_DESKTOP__: true,
+      __TAURI__: { core: { invoke: () => Promise.reject(reason), Channel: class {} } },
+    };
+    return checkLocalFolder("/Users/ada/app").then(
+      () => assert.fail("expected the check to fail"),
+      (error: unknown) => error,
+    );
+  };
+  const missing = await checkFailing("folder-missing");
+  // The message the user sees is unchanged.
+  assert.equal((missing as Error).message, "That folder isn't there any more. Choose another.");
+  assert.equal(folderGone(missing), true);
+  assert.equal(folderGone(await checkFailing("folder-not-chosen")), true);
+  assert.equal(folderGone(await checkFailing("agent-unreachable: connection refused")), false);
+  assert.equal(folderGone(await checkFailing("agent-did-not-start")), false);
+  assert.equal(folderGone(new Error("folder-missing")), false);
 });
 
 test("a runner that didn't start says why, what still works, and where its log is", async () => {

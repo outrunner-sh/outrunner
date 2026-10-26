@@ -152,7 +152,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           reason: err instanceof LocalRuntimeError ? err.reason : null,
         });
       } finally {
-        inflight.current = null;
+        // An aborted attach may finish after a newer one started; that one's
+        // guard isn't ours to clear.
+        if (inflight.current === controller) inflight.current = null;
       }
     })();
   }, [workspaceId, local, agent]);
