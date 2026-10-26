@@ -33,7 +33,7 @@ export function HomeUserMenu({
     <DropdownMenu>
       <DropdownMenuTrigger className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left outline-none transition-colors hover:bg-accent">
         <Avatar url={ownerAvatarUrl} />
-        <span className="truncate text-sm text-foreground">{label}</span>
+        <span className="truncate text-[13px] text-foreground">{label}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
         <DropdownMenuLabel className="flex items-center gap-2 font-normal">

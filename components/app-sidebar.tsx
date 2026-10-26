@@ -4,11 +4,10 @@ import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronRight,
-  CloudUpload,
   Ellipsis,
   Flag,
+  GitBranchPlus,
   Folder,
-  FolderPlus,
   Laptop,
   PanelLeft,
   Plus,
@@ -26,6 +25,7 @@ import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
 import { Spinner } from "@/components/ui/loaders";
+import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
@@ -163,7 +163,7 @@ export function AppSidebar({
           hint="⌘N"
           active={pathname === "/" || pathname === "/new"}
         />
-        <NavLink href="/import" icon={<CloudUpload />} label="Import" active={pathname === "/import"} />
+        {/* Import (/import) is hidden from the nav for now; the page still works. */}
         <NavSoon icon={<Flag />} label="Runner" />
         <NavSoon icon={<Sparkles />} label="Automations" />
         {searching ? (
@@ -175,17 +175,17 @@ export function AppSidebar({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-2">
-          <h2 className="text-sm text-muted-foreground">Projects</h2>
-          {/* Opens the new-session screen with its repository picker open
-              (`?pick=repo`): the way to start in a project not listed yet. */}
+          <h2 className="text-[13px] text-muted-foreground">Projects</h2>
+          {/* Opens the new-session screen with its GitHub repository picker
+              open (`?pick=repo`): the way to add a repository not listed yet. */}
           <Link
             href="/new?pick=repo"
             onClick={startNewSession}
-            aria-label="Start a session in another project"
-            title="Start a session in another project"
+            aria-label="Add a repository from GitHub"
+            title="Add a repository from GitHub"
             className="-mr-1 rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            <FolderPlus className="size-4" />
+            <GitBranchPlus className="size-3.5" />
           </Link>
         </div>
         {/* What it lists streams in on a cold start, and this Mac's sessions are
@@ -199,7 +199,7 @@ export function AppSidebar({
         >
           <div className="space-y-3">
             {shown.length === 0 ? (
-              <p className="px-2 py-1 text-sm text-muted-foreground">
+              <p className="px-2 py-1 text-[13px] text-muted-foreground">
                 {query ? "No matching sessions" : "No sessions yet"}
               </p>
             ) : (
@@ -294,7 +294,7 @@ function WorkspaceGroup({
   const Icon = group.local ? Laptop : Folder;
   return (
     <div>
-      <div className="group/ws flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-foreground">
+      <div className="group/ws flex items-center gap-2.5 rounded-md px-2 py-1 text-[13px] text-foreground">
         <button
           type="button"
           onClick={onToggle}
@@ -302,7 +302,7 @@ function WorkspaceGroup({
           aria-controls={listId}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
         >
-          <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 truncate" title={group.local ? `${group.detail} · this Mac` : group.detail}>
             {group.label}
           </span>
@@ -333,7 +333,7 @@ function WorkspaceGroup({
           <button
             type="button"
             onClick={startHere}
-            className="flex w-full items-center gap-2 rounded-md py-1.5 pl-[34px] pr-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            className="flex w-full items-center gap-2 rounded-md py-1 pl-[32px] pr-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
           >
             <Plus aria-hidden className="size-3.5 shrink-0" />
             New session
@@ -356,7 +356,7 @@ function WorkspaceGroup({
                 title={session.title}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "flex items-center gap-2 rounded-md py-1.5 pl-[34px] pr-2 text-sm transition-colors",
+                  "flex items-center gap-2 rounded-md py-1 pl-[32px] pr-2 text-[13px] transition-colors",
                   isActive
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -422,8 +422,6 @@ function SidebarSkeleton() {
 
 type DeletingSession = { id: string; title: string; deletion: SessionDeletion };
 
-const rowClass =
-  "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors [&_svg]:size-4 [&_svg]:shrink-0";
 
 function NavLink({
   href,
@@ -448,7 +446,7 @@ function NavLink({
       aria-current={active ? "page" : undefined}
       aria-keyshortcuts={hint ? keyShortcut(hint) : undefined}
       className={cn(
-        rowClass,
+        SIDEBAR_ROW,
         "group/nav",
         active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
@@ -476,7 +474,7 @@ function NavButton({
       type="button"
       onClick={onClick}
       aria-keyshortcuts={hint ? keyShortcut(hint) : undefined}
-      className={cn(rowClass, "group/nav text-muted-foreground hover:bg-accent hover:text-foreground")}
+      className={cn(SIDEBAR_ROW, "group/nav text-muted-foreground hover:bg-accent hover:text-foreground")}
     >
       {icon}
       <span className="flex-1">{label}</span>
@@ -506,7 +504,7 @@ function NavSoon({ icon, label }: { icon: React.ReactNode; label: string }) {
     <div
       aria-disabled="true"
       title={`${label} is coming soon`}
-      className={cn(rowClass, "cursor-default text-muted-foreground/60")}
+      className={cn(SIDEBAR_ROW, "cursor-default text-muted-foreground/60")}
     >
       {icon}
       {label}
@@ -528,7 +526,7 @@ function SearchField({
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => input.current?.focus(), []);
   return (
-    <div className={cn(rowClass, "bg-accent/60 text-foreground")}>
+    <div className={cn(SIDEBAR_ROW, "bg-accent/60 text-foreground")}>
       <Search className="text-muted-foreground" />
       <input
         ref={input}
