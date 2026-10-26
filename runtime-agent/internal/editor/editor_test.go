@@ -21,7 +21,7 @@ func health(up *atomic.Bool) *httptest.Server {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"alive","lastHeartbeat":1761400000000}`))
 	}))
 }
 
@@ -47,7 +47,7 @@ func TestARunningEditorIsLeftAsItIs(t *testing.T) {
 func TestAStoppedEditorIsStartedOnItsPort(t *testing.T) {
 	noCodeServerOnPath(t)
 	home := t.TempDir()
-	binary := filepath.Join(home, ".local", "bin", "code-server")
+	binary := (&Editor{Home: home}).releaseBinary()
 	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestABoxWithoutCodeServerInstallsItFirst(t *testing.T) {
 		Health: srv.URL,
 		Install: func(context.Context) error {
 			installs++
-			binary := filepath.Join(home, ".local", "bin", "code-server")
+			binary := (&Editor{Home: home}).releaseBinary()
 			_ = os.MkdirAll(filepath.Dir(binary), 0o755)
 			return os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
 		},
@@ -114,7 +114,7 @@ func TestAFailedInstallSaysSo(t *testing.T) {
 func TestTwoOpensAtOnceStartOneEditor(t *testing.T) {
 	noCodeServerOnPath(t)
 	home := t.TempDir()
-	binary := filepath.Join(home, ".local", "bin", "code-server")
+	binary := (&Editor{Home: home}).releaseBinary()
 	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
 	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
 	var up atomic.Bool
@@ -145,7 +145,7 @@ func TestTwoOpensAtOnceStartOneEditor(t *testing.T) {
 func TestASlowStartSaysItIsStartingThenOpens(t *testing.T) {
 	noCodeServerOnPath(t)
 	home := t.TempDir()
-	binary := filepath.Join(home, ".local", "bin", "code-server")
+	binary := (&Editor{Home: home}).releaseBinary()
 	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
 	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
 	var up atomic.Bool
@@ -264,7 +264,7 @@ func TestALiveButSlowEditorIsWaitedOnNotRestarted(t *testing.T) {
 func TestAnEditorThatDiesAtOnceIsSaidAtOnceWithItsLog(t *testing.T) {
 	noCodeServerOnPath(t)
 	home := t.TempDir()
-	binary := filepath.Join(home, ".local", "bin", "code-server")
+	binary := (&Editor{Home: home}).releaseBinary()
 	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
 	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
 	e := &Editor{
@@ -307,11 +307,61 @@ func TestAWedgedEditorIsStoppedSoTheNextOpenStartsFresh(t *testing.T) {
 		t.Fatalf("stopped %d, started %d: a wedged editor is stopped, not started over", stops, starts)
 	}
 	// The next open finds it gone and starts it fresh.
-	binary := filepath.Join(e.Home, ".local", "bin", "code-server")
+	binary := e.releaseBinary()
 	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
 	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
 	_, _ = e.Ensure(context.Background())
 	if starts != 1 {
 		t.Fatalf("started %d after the wedged editor was stopped, want 1", starts)
+	}
+}
+
+func TestAnotherServerOnThePortIsNotTheEditor(t *testing.T) {
+	spa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<!doctype html><title>my app</title>"))
+	}))
+	defer spa.Close()
+	e := &Editor{Health: spa.URL}
+	if e.up(context.Background()) {
+		t.Fatal("a dev server's 200 passed for the editor")
+	}
+	if !e.LastUsed(context.Background()).IsZero() {
+		t.Fatal("a dev server reported editor activity")
+	}
+}
+
+func TestTheEditorsHeartbeatIsWhenItWasLastUsed(t *testing.T) {
+	var up atomic.Bool
+	up.Store(true)
+	srv := health(&up)
+	defer srv.Close()
+	e := &Editor{Health: srv.URL}
+	if got := e.LastUsed(context.Background()); !got.Equal(time.UnixMilli(1761400000000)) {
+		t.Fatalf("got %v", got)
+	}
+	up.Store(false)
+	if !e.LastUsed(context.Background()).IsZero() {
+		t.Fatal("a stopped editor reported activity")
+	}
+}
+
+func TestAnInstallOfAnotherVersionIsReplacedByThisOne(t *testing.T) {
+	noCodeServerOnPath(t)
+	home := t.TempDir()
+	old := filepath.Join(home, ".local", "lib", "code-server-0.0.1-linux-amd64", "bin", "code-server")
+	_ = os.MkdirAll(filepath.Dir(old), 0o755)
+	_ = os.WriteFile(old, []byte("#!/bin/sh\n"), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, ".local", "bin"), 0o755)
+	_ = os.Symlink(old, filepath.Join(home, ".local", "bin", "code-server"))
+	installs := 0
+	e := &Editor{Home: home, Install: func(context.Context) error {
+		installs++
+		path := (&Editor{Home: home}).releaseBinary()
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		return os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755)
+	}}
+	got, err := e.binary(context.Background())
+	if err != nil || installs != 1 || got != e.releaseBinary() {
+		t.Fatalf("got %q, %d installs, %v", got, installs, err)
 	}
 }

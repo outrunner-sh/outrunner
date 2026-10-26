@@ -19,7 +19,9 @@ func TestTheEditorOpensOnlyForItsSessionsOwnFolder(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	svc := workspace.NewService(root)
 	srv := New("s", svc)
-	healthz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	healthz := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"alive","lastHeartbeat":0}`))
+	}))
 	defer healthz.Close()
 	srv.Editor = &editor.Editor{Home: root, Health: healthz.URL, Start: func(context.Context, string, int) error { return nil }}
 	ts := httptest.NewServer(srv.Handler())

@@ -16,7 +16,7 @@ import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
-import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -73,7 +73,7 @@ export function WorkspaceStudio({
         </div>
         <div className="studio-header-actions">
           {/* VS Code on the session's own box: cloud sessions only. */}
-          {hasLiveSession && !isLocal && <OpenEditorButton workspaceId={workspace.id} />}
+          {hasLiveSession && !isLocal && opensInBrowser(workspace.provider) && <OpenEditorButton workspaceId={workspace.id} />}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}

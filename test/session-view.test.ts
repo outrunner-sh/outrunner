@@ -125,3 +125,10 @@ test("the server's read of the session open before doesn't stand in for this one
   const sidebar = view("2026-10-01T00:00:00Z", "w2");
   assert.equal(newerSessionView("w2", sidebar, view("2026-10-09T00:00:00Z", "w1")), sidebar);
 });
+
+test("the editor is offered only where a box's port opens in the browser", async () => {
+  const { opensInBrowser } = await import("@/lib/runtime/types");
+  assert.equal(opensInBrowser("daytona"), true);
+  assert.equal(opensInBrowser("user-daytona"), true);
+  for (const provider of ["neev", "modal", "user-modal", "local"] as const) assert.equal(opensInBrowser(provider), false, provider);
+});

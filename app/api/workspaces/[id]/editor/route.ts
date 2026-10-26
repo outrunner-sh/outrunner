@@ -7,6 +7,7 @@ import { AGENT_FEATURE_EDITOR } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
+import { opensInBrowser } from "@/lib/runtime/types";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -37,6 +38,12 @@ export async function POST(request: Request, context: RouteContext) {
   });
   if (!reach.ok) return reach.response;
   const { workspace, provider, sandboxId, secret, agent, identity } = reach.reached;
+
+  // Before the agent is asked: where no browser link can be made, nothing is
+  // installed or started for it.
+  if (!opensInBrowser(workspace.provider)) {
+    return NextResponse.json({ error: "The editor opens on Outrunner's Daytona sandboxes only." }, { status: 409 });
+  }
 
   try {
     let editor;
