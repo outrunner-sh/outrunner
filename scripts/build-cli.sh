@@ -6,7 +6,7 @@
 # first, then the launcher:
 #
 #   scripts/build-cli.sh 0.1.0
-#   for dir in .context/cli-npm/outrunner-*/; do npm publish "$dir"; done
+#   for dir in .context/cli-npm/outrunner-*/; do npm publish "$dir" --access public; done
 #   npm publish .context/cli-npm/outrunner
 set -euo pipefail
 
@@ -23,6 +23,9 @@ cd "$repo_root/runtime-agent"
 for target in $targets; do
   IFS=: read -r os cpu goos goarch <<<"$target"
   pkg="outrunner-$os-$cpu"
+  # npm's spam check refused outrunner-win32-x64: Windows's is outrunner-windows-x64. Keep
+  # in step with PACKAGES in cli-npm/bin/outrunner.mjs.
+  [ "$os" = win32 ] && pkg="outrunner-windows-x64"
   exe="outrunner"; [ "$os" = win32 ] && exe="outrunner.exe"
   mkdir -p "$out/$pkg/bin"
   GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath \

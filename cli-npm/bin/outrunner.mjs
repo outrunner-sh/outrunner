@@ -9,7 +9,16 @@ import path from "node:path";
 
 const require = createRequire(import.meta.url);
 
-const pkg = `outrunner-${process.platform}-${process.arch}`;
+// Each platform's package. Windows's is named for the OS: npm's spam check refused
+// the name outrunner-win32-x64. Keep in step with scripts/build-cli.sh.
+const PACKAGES = {
+  "darwin-arm64": "outrunner-darwin-arm64",
+  "darwin-x64": "outrunner-darwin-x64",
+  "linux-arm64": "outrunner-linux-arm64",
+  "linux-x64": "outrunner-linux-x64",
+  "win32-x64": "outrunner-windows-x64",
+};
+const pkg = PACKAGES[`${process.platform}-${process.arch}`] ?? `outrunner-${process.platform}-${process.arch}`;
 const exe = process.platform === "win32" ? "outrunner.exe" : "outrunner";
 
 let binary;
