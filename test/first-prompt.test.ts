@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  firstPromptFromUrl,
   firstPromptQuery,
   forgetFirstPrompt,
+  handOverFirstPrompt,
   rememberedFirstPrompt,
   rememberFirstPrompt,
   sendFirstPromptOnce,
@@ -74,6 +76,32 @@ test("storage refusing, or missing outright, never breaks creating or opening a 
     assert.doesNotThrow(() => rememberFirstPrompt(storage, "w1", { prompt: "hi", attachmentIds: [] }));
     assert.equal(rememberedFirstPrompt(storage, "w1"), null);
     assert.doesNotThrow(() => forgetFirstPrompt(storage, "w1"));
+  }
+});
+
+test("start over hands the waiting prompt to the fresh session, and only to it", () => {
+  const storage = memoryStorage();
+  rememberFirstPrompt(storage, "old", { prompt: "fix the build", attachmentIds: ["a"] });
+  assert.deepEqual(handOverFirstPrompt(storage, "old", "new"), { prompt: "fix the build", attachmentIds: ["a"] });
+  assert.equal(rememberedFirstPrompt(storage, "old"), null);
+  assert.deepEqual(rememberedFirstPrompt(storage, "new"), { prompt: "fix the build", attachmentIds: ["a"] });
+});
+
+test("a prompt only in the URL is read back from it, for a tab without the kept copy", () => {
+  const url = new URL("https://outrunner.test/workspaces/ws-1?prompt=fix+it&attachment=a1&attachment=a2");
+  assert.deepEqual(firstPromptFromUrl(url), { prompt: "fix it", attachmentIds: ["a1", "a2"] });
+  assert.equal(firstPromptFromUrl(new URL("https://outrunner.test/workspaces/ws-1")), null);
+});
+
+test("start over with no prompt waiting hands over nothing", () => {
+  const storage = memoryStorage();
+  assert.equal(handOverFirstPrompt(storage, "old", "new"), null);
+  assert.equal(rememberedFirstPrompt(storage, "new"), null);
+});
+
+test("storage refusing, or missing outright, still starts over without a prompt", () => {
+  for (const storage of [refusing, null]) {
+    assert.equal(handOverFirstPrompt(storage, "old", "new"), null);
   }
 });
 

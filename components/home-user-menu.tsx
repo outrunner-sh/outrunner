@@ -49,7 +49,7 @@ export function HomeUserMenu({
   );
 }
 
-/** Log out, staying open with "Signing out" until the redirect lands (the
+/** Log out, staying open with its icon turning until the redirect lands (the
  *  menu would otherwise close at once, with nothing to say it worked). The
  *  conversations this browser kept go with the user. */
 function SignOutItem() {
@@ -64,7 +64,7 @@ function SignOutItem() {
         onClick={() => CONVERSATIONS.clear()}
       >
         {pending ? <Spinner /> : <LogOut />}
-        {pending ? "Signing out" : "Log out"}
+        Log out
       </button>
     </DropdownMenuItem>
   );

@@ -13,9 +13,9 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -203,11 +203,13 @@ fn spawn_agent() -> Result<Agent, String> {
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     // Sessions run the `claude` linked here; make sure it is the one that works.
     let _ = find_claude();
+    let log_path = root.join("agent.log");
     let log = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(root.join("agent.log"))
+        .open(&log_path)
         .map_err(|error| error.to_string())?;
+    let log_start = log.metadata().map(|meta| meta.len()).unwrap_or(0);
     let secret = random_hex(32);
 
     // The agent passes its environment on to every Claude session.
@@ -246,11 +248,32 @@ fn spawn_agent() -> Result<Agent, String> {
     match address.recv_timeout(Duration::from_secs(10)) {
         Ok(addr) if addr.starts_with("127.0.0.1:") => Ok(Agent { child, addr, secret }),
         _ => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err("agent-did-not-start".into())
+            // An agent that exited closed stdout, so the wait ended early; one
+            // that hung is killed here. Either way what it wrote to the log
+            // says the most — a port-bind retry, say — so the log line is the
+            // reason and how it ended is only the fallback.
+            let exited = exit_within(&mut child, Duration::from_millis(500));
+            let status = if exited { child.wait().ok() } else { None };
+            let reason = start_failure_reason(last_line_since(&log_path, log_start), status);
+            Err(match reason {
+                Some(reason) => format!("agent-did-not-start: {reason}"),
+                None => "agent-did-not-start".into(),
+            })
         }
     }
+}
+
+/// The last non-empty line written to `path` after byte `from`, cut to a
+/// sentence's length: what a failed start said, not an older run's output.
+/// The log is only ever appended to, across every start the app has made, so
+/// this reads only from `from`: everything before it is an older run's.
+fn last_line_since(path: &Path, from: u64) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let line = String::from_utf8_lossy(&bytes).lines().map(str::trim).filter(|line| !line.is_empty()).next_back()?.to_string();
+    Some(if line.chars().count() > 200 { format!("{}…", line.chars().take(200).collect::<String>()) } else { line })
 }
 
 /// A command with only what a terminal session would have: the user's identity
@@ -290,6 +313,21 @@ fn exit_within(child: &mut Child, limit: Duration) -> bool {
                 return false;
             }
         }
+    }
+}
+
+/// What a failed start says: what it wrote to the log, else how it ended. A
+/// runner that hung wrote something useful before it stalled, so the log line
+/// is the reason even when there is no exit status to report.
+fn start_failure_reason(log: Option<String>, status: Option<ExitStatus>) -> Option<String> {
+    log.or_else(|| status.map(describe_exit))
+}
+
+/// How a stopped agent ended, for when it wrote nothing to the log.
+fn describe_exit(status: ExitStatus) -> String {
+    match status.code() {
+        Some(code) => format!("it exited with code {code}"),
+        None => format!("it was stopped ({status})"),
     }
 }
 
@@ -1566,6 +1604,50 @@ mod tests {
         git(&dir, &["init", "-q", "-b", "main"]);
         git(&dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
         dir
+    }
+
+    #[test]
+    fn a_failed_start_reports_its_own_last_log_line_not_an_older_runs() {
+        let dir = scratch("agent-log");
+        let log = dir.join("agent.log");
+        std::fs::write(&log, "older run: listening\n").unwrap();
+        let from = std::fs::metadata(&log).unwrap().len();
+        assert_eq!(last_line_since(&log, from), None);
+
+        let mut file = OpenOptions::new().append(true).open(&log).unwrap();
+        std::io::Write::write_all(&mut file, b"starting\n  listen tcp: address already in use  \n\n").unwrap();
+        assert_eq!(last_line_since(&log, from).as_deref(), Some("listen tcp: address already in use"));
+
+        std::io::Write::write_all(&mut file, "x".repeat(300).as_bytes()).unwrap();
+        let long = last_line_since(&log, from).unwrap();
+        assert_eq!(long.chars().count(), 201);
+        assert!(long.ends_with('…'));
+
+        // A from past the end (the log was cleared between runs) reads nothing.
+        let past = std::fs::metadata(&log).unwrap().len() + 10;
+        assert_eq!(last_line_since(&log, past), None);
+        assert_eq!(last_line_since(&dir.join("missing.log"), 0), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_start_says_what_it_wrote_else_how_it_ended() {
+        use std::os::unix::process::ExitStatusExt;
+        let exited = ExitStatus::from_raw(7 << 8); // exit code 7
+        let killed = ExitStatus::from_raw(9); // signal 9, so no exit code
+
+        // What it wrote wins: a runner that hung past the timeout wrote a
+        // port-bind retry or the like before it stalled, and that is the
+        // reason even though there is no exit status to report.
+        assert_eq!(
+            start_failure_reason(Some("listen tcp: address already in use".into()), Some(exited)).as_deref(),
+            Some("listen tcp: address already in use"),
+        );
+        // Nothing written: how it ended.
+        assert_eq!(start_failure_reason(None, Some(exited)).as_deref(), Some("it exited with code 7"));
+        assert_eq!(describe_exit(killed), format!("it was stopped ({killed})"));
+        // Neither: still no reason, as before.
+        assert_eq!(start_failure_reason(None, None), None);
     }
 
     #[test]

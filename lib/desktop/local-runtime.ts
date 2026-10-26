@@ -25,6 +25,7 @@ import {
   setModelRequest,
   type SessionModel,
 } from "@/lib/runtime/session-models";
+import { SEND_FAILED, sendFailureMessage } from "@/lib/session/send-failure";
 
 /**
  * Desktop-only bridge for local sessions: Claude Code running on this Mac.
@@ -146,15 +147,30 @@ function requireCore(): TauriCore {
   return core;
 }
 
-/** An error from the app, worded for the user. `code` is the app's own code
- *  (e.g. "folder-missing"), so a caller can tell which error it was. */
-export class LocalError extends Error {
-  readonly code: string;
-  constructor(message: string, code: string) {
+/** Where the Mac app's session runner (the local agent) writes its log. */
+export const LOCAL_RUNNER_LOG = "~/.outrunner/agent.log";
+
+/** An error the Mac app returned, as a sentence; `code` is the app's own code
+ *  ("agent-did-not-start"), when it gave one, and `reason` what followed it. */
+export class LocalRuntimeError extends Error {
+  readonly code: string | null;
+  readonly reason: string | null;
+  constructor(message: string, code: string | null, reason: string | null) {
     super(message);
-    this.name = "LocalError";
+    this.name = "LocalRuntimeError";
     this.code = code;
+    this.reason = reason;
   }
+}
+
+/** What the composer says for a local send that didn't reach the agent: this
+ *  module's own errors are already sentences (messageForLocalError); what the
+ *  agent itself said goes through the same filter as a hosted send's. */
+export function localSendFailure(error: unknown): string {
+  console.error("Send failed", error);
+  if (!(error instanceof LocalRuntimeError)) return SEND_FAILED;
+  if (error.code === "agent" && error.reason !== "unknown workspace") return sendFailureMessage(error.reason);
+  return error.message;
 }
 
 /** `agent` names the CLI a login error is about. */
@@ -162,8 +178,17 @@ async function call<T>(cmd: string, args?: Record<string, unknown>, agent: Agent
   try {
     return (await requireCore().invoke(cmd, args)) as T;
   } catch (error) {
-    throw new LocalError(messageForLocalError(error, agent), localErrorCode(error));
+    const raw = error instanceof Error ? error.message : String(error ?? "");
+    const code = /^[a-z][a-z-]*(?=:|$)/.exec(raw)?.[0] ?? null;
+    const reason = code ? raw.slice(code.length).replace(/^:\s*/, "").trim() || null : null;
+    throw new LocalRuntimeError(messageForLocalError(error, agent), code, reason);
   }
+}
+
+/** What the runner said as it stopped, as a sentence, then what still works. */
+export function runnerDidNotStartDetail(reason: string | null): string {
+  const said = reason ? `It stopped with: ${/[.!?…]$/.test(reason) ? reason : `${reason}.`} ` : "";
+  return `${said}Cloud sessions still work.`;
 }
 
 /** Every session on this Mac that could move to the cloud, and why any can't;
@@ -370,12 +395,15 @@ const NO_MODELS: OutrunnerModels = {
 /** What the user's model menu offers (GET /api/outrunner-models), and whether
  *  a session can start without their Claude; asked once per page load, or
  *  again after Settings → Providers changes a key. One answer for the page:
- *  read it with useSharedResource to show the last one at once. A failed look
- *  is asked again next time. */
+ *  read it with useSharedResource to show the last one at once. Only an
+ *  answer is kept: a failed look, refused or unreachable, is asked again. */
 export const OUTRUNNER_MODELS = sharedResource<OutrunnerModels>(
   () =>
     fetch("/api/outrunner-models")
-      .then((res): Promise<Record<string, unknown>> | Record<string, unknown> => (res.ok ? res.json() : {}))
+      .then((res): Promise<Record<string, unknown>> => {
+        if (!res.ok) throw new Error(`outrunner-models answered ${res.status}`);
+        return res.json();
+      })
       .then(parseOutrunnerModels),
   NO_MODELS,
 );
@@ -453,7 +481,7 @@ export function checkLocalFolder(path: string): Promise<LocalFolder> {
 /** Whether a re-check failed because the folder is gone or no longer allowed,
  *  rather than a passing hiccup such as the agent restarting. */
 export function folderGone(error: unknown): boolean {
-  return error instanceof LocalError && (error.code === "folder-missing" || error.code === "folder-not-chosen");
+  return error instanceof LocalRuntimeError && (error.code === "folder-missing" || error.code === "folder-not-chosen");
 }
 
 /**
@@ -529,11 +557,7 @@ const NEEDS_NEWER_APP: Record<string, string> = {
   import_config: "This version of the Outrunner app can't import your agent setup. Update the app, then try again.",
 };
 
-/** The app's code for an error it returned, e.g. "folder-missing". */
-function localErrorCode(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error ?? "");
-  return raw.split(":")[0];
-}
+const OLDER_APP = "This version of the Outrunner app can't do that yet. Update the app, then try again.";
 
 /** Human-readable message for an error the app returned; `agent` is the CLI a
  *  login error is about. */
@@ -541,16 +565,19 @@ export function messageForLocalError(error: unknown, agent: AgentId = "claude"):
   const raw = error instanceof Error ? error.message : String(error ?? "");
   // Tauri's refusal of a command the app doesn't have.
   const missing = /^(\w+) not allowed\. Command not found$/.exec(raw);
-  if (missing) {
-    return NEEDS_NEWER_APP[missing[1]] ?? "This version of the Outrunner app can't do that yet. Update the app, then try again.";
-  }
-  const code = localErrorCode(error);
+  if (missing) return NEEDS_NEWER_APP[missing[1]] ?? OLDER_APP;
+  const code = raw.split(":")[0];
   switch (code) {
+    case "route-not-allowed":
+      // The app's own allowlist of agent routes, from before this one.
+      return OLDER_APP;
     case "agent-missing":
       return "This build of the Outrunner app has no local agent. Update the app to run sessions locally.";
     case "agent-did-not-start":
-    case "agent-spawn-failed":
-      return "The local agent didn't start. Its log is ~/.outrunner/agent.log.";
+    case "agent-spawn-failed": {
+      const reason = raw.slice(code.length).replace(/^:\s*/, "").trim() || null;
+      return `This Mac's session runner didn't start. ${runnerDidNotStartDetail(reason)} Its log is ${LOCAL_RUNNER_LOG}.`;
+    }
     case "agent-unreachable":
       return "Lost contact with the local agent. Try again.";
     case "folder-missing":

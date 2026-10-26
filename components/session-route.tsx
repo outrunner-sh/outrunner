@@ -6,9 +6,10 @@ import { useMemo } from "react";
 import { useAppData } from "@/components/app-data";
 import { RouteLoading, RouteMessage } from "@/components/route-states";
 import { useServerAnswer } from "@/components/server-answer";
+import { SessionDeleted } from "@/components/session-deleted";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useDeletedSession } from "@/lib/session/delete-session";
-import { newerSessionView, resolveSessionView, type SessionView } from "@/lib/session/session-view";
+import { newerSessionView, resolveSessionView, type SessionAnswer } from "@/lib/session/session-view";
 
 /**
  * A cloud session's page. It shows at once from what the sidebar holds
@@ -24,8 +25,9 @@ import { newerSessionView, resolveSessionView, type SessionView } from "@/lib/se
 export function SessionRoute({ server }: { server: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
   const fromSidebar = resolveSessionView(id, useAppData());
-  const [fromServer, slot] = useServerAnswer<SessionView>(server);
-  const view = newerSessionView(id, fromSidebar, fromServer);
+  const [answer, slot] = useServerAnswer<SessionAnswer>(server);
+  const gone = answer && "gone" in answer ? answer.gone : null;
+  const view = newerSessionView(id, fromSidebar, answer && !("gone" in answer) ? answer : null);
   // Deleted from the sidebar while this page was kept for going back to.
   const deleted = useDeletedSession(id);
 
@@ -40,6 +42,9 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
     <>
       {deleted ? (
         <RouteMessage title="Session deleted" detail="This session and its worktree are gone." />
+      ) : gone ? (
+        // Ahead of a sidebar list from before the delete.
+        <SessionDeleted workspace={gone.workspace} pullRequest={gone.pullRequest} />
       ) : view ? (
         <WorkspaceStudio
           workspace={view.workspace}

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { ProjectAvatar } from "@/components/project-avatar";
 import { Spinner } from "@/components/ui/loaders";
+import { InlineMessage } from "@/components/ui/notice";
 import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden";
 import { useSharedResource } from "@/hooks/use-shared-resource";
 import { sharedResource } from "@/lib/client/shared-resource";
@@ -22,13 +23,21 @@ type Listing = {
   ssoPartialOrgIds: number[];
 };
 
-/** A failed request's message, and whether only reconnecting GitHub fixes it. */
-type PickerError = { message: string; reconnect: boolean };
+/** What went wrong, and for a repository GitHub withheld, which one. */
+type PickerError = { message: string; reconnect: boolean; repo?: string; noAccess?: boolean };
 
-/** Read the API's error body (`reconnect` set when the token is the problem). */
+// Where a user reviews which organizations an OAuth app may see.
+const GITHUB_APP_ACCESS_URL = "https://github.com/settings/applications";
+
+/** Read the API's error body: `reconnect` set when the token is the problem,
+ *  `noAccess` when GitHub withheld a repository. */
 async function readError(res: Response, fallback: string): Promise<PickerError> {
-  const data = (await res.json().catch(() => ({}))) as { error?: string; reconnect?: boolean };
-  return { message: data.error ?? fallback, reconnect: data.reconnect === true };
+  const data = (await res.json().catch(() => ({}))) as { error?: string; reconnect?: boolean; code?: string };
+  return {
+    message: data.error ?? fallback,
+    reconnect: data.reconnect === true,
+    noAccess: data.code === "repo-no-access",
+  };
 }
 
 type ListingAnswer = { listing: Listing; error: null } | { listing: null; error: PickerError };
@@ -48,7 +57,7 @@ const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
     // Refresh asks GitHub again; otherwise a listing from the last few seconds
     // is fine (app/api/github/repositories).
     const res = await fetch(fresh ? "/api/github/repositories?fresh=1" : "/api/github/repositories");
-    if (!res.ok) return { listing: null, error: await readError(res, "Could not load repositories.") };
+    if (!res.ok) return { listing: null, error: await readError(res, "Couldn't load your repositories from GitHub.") };
     const data = (await res.json()) as Partial<Listing>;
     return {
       listing: {
@@ -60,7 +69,10 @@ const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
       error: null,
     };
   } catch {
-    return { listing: null, error: { message: "Could not load repositories.", reconnect: false } };
+    return {
+      listing: null,
+      error: { message: "Couldn't load your repositories from GitHub.", reconnect: false },
+    };
   }
 }, null);
 
@@ -138,7 +150,6 @@ export function RepositorySelect({
   /** On opening, look again in the background (the last listing shows
    *  meanwhile); Refresh list asks GitHub itself, and waits. */
   async function load(force = false) {
-    setError(null);
     if (!force) {
       void REPOSITORIES.refresh();
       return;
@@ -147,6 +158,9 @@ export function RepositorySelect({
     setRefreshing(true);
     await refreshRepositories();
     setRefreshing(false);
+    // Asked GitHub and answered: a reason left from connecting a repository
+    // gives way to this look's own answer.
+    setError(null);
   }
 
   // Focus search on open so typing filters immediately. The fetch is kicked off
@@ -203,7 +217,6 @@ export function RepositorySelect({
     }
     // Not connected yet — connect just this one, then select it.
     setConnectingId(repo.githubRepoId);
-    setError(null);
     try {
       const res = await fetch("/api/projects/sync", {
         method: "POST",
@@ -211,20 +224,29 @@ export function RepositorySelect({
         body: JSON.stringify({ repoIds: [repo.githubRepoId] }),
       });
       if (!res.ok) {
-        setError(await readError(res, "Could not connect that repository."));
+        setError({ ...(await readError(res, "Couldn't connect this repository. Try again.")), repo: repo.fullName });
         return;
       }
       const data = (await res.json()) as { projects?: Project[] };
       const created = data.projects?.find((p) => p.githubRepoId === repo.githubRepoId);
       if (!created) {
-        setError({ message: "Connected, but the project did not come back.", reconnect: false });
+        setError({
+          message: "Connected it, but Outrunner couldn't find it afterwards. Refresh the list.",
+          reconnect: false,
+          repo: repo.fullName,
+        });
         return;
       }
+      setError(null);
       onSelect?.(created);
       setOpen(false);
       triggerRef.current?.focus();
     } catch {
-      setError({ message: "Could not connect that repository.", reconnect: false });
+      setError({
+        message: "Couldn't connect this repository. Try again.",
+        reconnect: false,
+        repo: repo.fullName,
+      });
     } finally {
       setConnectingId(null);
     }
@@ -342,10 +364,22 @@ export function RepositorySelect({
           </div>
 
           {error && (
-            <p className="text-destructive border-border border-t px-3 py-2 text-xs">
-              {error.message}
-              {error.reconnect && <GitHubReconnectLink />}
-            </p>
+            <div className="border-border border-t px-3 py-2">
+              {error.repo && <p className="mb-1 truncate font-mono text-xs">{error.repo}</p>}
+              <InlineMessage
+                tone={error.noAccess ? "warning" : "error"}
+                actions={
+                  error.noAccess
+                    ? [{ label: "Grant access on GitHub", href: GITHUB_APP_ACCESS_URL, external: true }]
+                    : undefined
+                }
+              >
+                {error.noAccess
+                  ? "GitHub isn't giving Outrunner access to it. If an organization owns it, an owner may need to approve Outrunner."
+                  : error.message}
+                {error.reconnect && <GitHubReconnectLink />}
+              </InlineMessage>
+            </div>
           )}
 
           <div className="border-border relative border-t">

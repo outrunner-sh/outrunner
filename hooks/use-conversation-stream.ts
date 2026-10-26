@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { reconnectPlan } from "@/lib/runtime/reconnect";
-import { subscribeEventsWs } from "@/lib/runtime/session-client";
+import { dropNarration, rearmedSince, reconnectPlan } from "@/lib/runtime/reconnect";
+import { StreamProtocolError, subscribeEventsWs } from "@/lib/runtime/session-client";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 
 import type { SessionAttachment } from "./use-session-attachment";
@@ -14,11 +14,20 @@ export type ConversationStreamState = {
   events: AgentEvent[];
   status: "loading" | "connecting" | "connected" | "disconnected" | "error";
   error: string | null;
+  /** Set while the automatic reconnect loop is running after a drop. `attempt`
+   *  is 0 for a retry re-armed by focus/visibility/online, before it is counted. */
+  reconnecting: { attempt: number; max: number; since: number } | null;
+  /** Automatic retry gave up; the session itself is untouched on its box. */
+  lost: boolean;
+  /** A reconnect the user asked for is under way: the "lost connection" notice
+   *  stays (its button spinning) rather than blinking "Reconnecting…". */
+  retrying: boolean;
+  /** A frame the browser couldn't read, by the reference it was logged under.
+   *  Stays set until the page reloads: the frame's event is missing from the
+   *  timeline, and resuming from the cursor would not bring it back. */
+  protocolErrorRef: string | null;
   /** Force a full URL refresh + re-subscribe. Preserves the resume cursor. */
   refresh: () => void;
-  /** Give automatic reconnects their full budget again, e.g. when the user
-   *  asks to reconnect after they gave up. */
-  resetBackoff: () => void;
 };
 
 // Reconnect backoff lives in lib/runtime/reconnect (pure + unit-tested). Unlike
@@ -30,12 +39,27 @@ export type ConversationStreamState = {
 // A single {error, closed, live} slice: reducer keeps effect body free of
 // setState, and the signals update from the same subscribe callbacks. `live`:
 // a frame has arrived on this connection.
-type WsStatus = { error: string | null; closed: boolean; live: boolean };
+type WsStatus = {
+  error: string | null;
+  closed: boolean;
+  live: boolean;
+  /** Consecutive failed reconnects, mirrored from the ref for rendering. */
+  attempt: number;
+  /** When the current run of drops began (ms), for the elapsed time shown. */
+  since: number | null;
+  gaveUp: boolean;
+  protocolErrorRef: string | null;
+};
 type WsAction =
   | { kind: "opening" }
   | { kind: "frame-received" }
-  | { kind: "closed" }
-  | { kind: "error"; message: string };
+  | { kind: "closed"; attempt: number; at: number }
+  | { kind: "gave-up" }
+  | { kind: "rearm"; at: number }
+  | { kind: "error"; message: string }
+  | { kind: "protocol-error"; ref: string };
+
+const OPEN: WsStatus = { error: null, closed: false, live: false, attempt: 0, since: null, gaveUp: false, protocolErrorRef: null };
 
 function wsReducer(state: WsStatus, action: WsAction): WsStatus {
   switch (action.kind) {
@@ -45,11 +69,22 @@ function wsReducer(state: WsStatus, action: WsAction): WsStatus {
       return state.live ? { ...state, live: false } : state;
     case "frame-received":
       // First frame after connect implicitly means we're open again.
-      return state.live && !state.closed && state.error === null ? state : { error: null, closed: false, live: true };
+      return state.live && !state.closed && state.error === null
+        ? state
+        : { ...OPEN, live: true, protocolErrorRef: state.protocolErrorRef };
     case "closed":
-      return { ...state, closed: true, live: false };
+      return { ...state, closed: true, live: false, attempt: action.attempt, since: state.since ?? action.at };
+    case "gave-up":
+      return { ...state, gaveUp: true };
+    case "rearm":
+      // A fresh retry budget; the clock restarts only if the run had given up
+      // (rearmedSince). A re-arm mid-outage keeps it, so the elapsed time
+      // still shows how long the outage has lasted.
+      return { ...state, attempt: 0, gaveUp: false, since: rearmedSince(state, action.at) };
     case "error":
       return { ...state, error: action.message };
+    case "protocol-error":
+      return { ...state, protocolErrorRef: state.protocolErrorRef ?? action.ref };
   }
 }
 
@@ -97,12 +132,13 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
   // Consecutive failed reconnects (reset by any received frame). A ref, not
   // reducer state, so the onClose closure reads the live count, not a stale one.
   const reconnectAttemptsRef = useRef(0);
+  // A reconnect this user asked for. It keeps the "lost connection" notice on
+  // screen — its button spinning — until it lands; the automatic retry stays
+  // quiet rather than blinking "Reconnecting…" over the button just pressed.
+  // A fresh close (its socket dying too) hands the story back to the automatic
+  // narration, and so does the first frame of a retry that lands.
+  const [manualRetry, setManualRetry] = useState(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resetBackoff = useCallback(() => {
-    reconnectAttemptsRef.current = 0;
-    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-    reconnectTimerRef.current = null;
-  }, []);
 
   useEffect(() => {
     const url = urls?.eventsUrl;
@@ -121,23 +157,24 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
         if (id && id !== "0") lastEventIdRef.current = id;
         // A live frame means this connection is healthy: clear the backoff.
         reconnectAttemptsRef.current = 0;
+        setManualRetry(false);
         dispatch({ kind: "frame-received" });
       },
       {
         lastEventId: lastEventIdRef.current,
+        workspaceId,
         onClose: () => {
           if (!active) return;
-          dispatch({ kind: "closed" });
+          setManualRetry(false);
           const attempt = (reconnectAttemptsRef.current += 1);
+          dispatch({ kind: "closed", attempt, at: Date.now() });
           const plan = reconnectPlan(attempt);
           if (!plan.retry) {
             // Automatic retry is exhausted (e.g. endpoint permanently down). Not
             // a dead end: the visibility/focus/online effect re-arms this when
             // the app becomes active again, and the user can refresh to retry.
-            dispatch({
-              kind: "error",
-              message: "Lost the conversation stream. Refresh to reconnect.",
-            });
+            dispatch({ kind: "gave-up" });
+            dispatch({ kind: "error", message: "Lost connection to this session." });
             return;
           }
           // Back off, then let the shared attachment refetch URLs (coalescing
@@ -146,7 +183,12 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
             if (active) reconnect();
           }, plan.delayMs);
         },
-        onError: (err) => dispatch({ kind: "error", message: err.message }),
+        onError: (err) =>
+          dispatch(
+            err instanceof StreamProtocolError
+              ? { kind: "protocol-error", ref: err.ref }
+              : { kind: "error", message: err.message },
+          ),
       },
     );
 
@@ -155,7 +197,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       sub.dispose();
     };
-  }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl]);
+  }, [attachId, attachmentStatus, dispatch, reconnect, urls?.eventsUrl, workspaceId]);
 
   // Idle recovery. A backgrounded/hidden webview (the desktop app hides to the
   // tray) can have its socket suspended, so every backoff retry fails and we
@@ -180,6 +222,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       reconnectAttemptsRef.current = 0;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      dispatch({ kind: "rearm", at: Date.now() });
       reconnect();
     };
     document.addEventListener("visibilitychange", rearm);
@@ -190,7 +233,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
       window.removeEventListener("focus", rearm);
       window.removeEventListener("online", rearm);
     };
-  }, [attachmentStatus, transportLost, reconnect]);
+  }, [attachmentStatus, transportLost, reconnect, dispatch]);
 
   const status = useMemo<ConversationStreamState["status"]>(() => {
     if (attachmentStatus === "loading") return "loading";
@@ -204,22 +247,41 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     return ws.live ? "connected" : "connecting";
   }, [attachmentStatus, ws.error, ws.closed, ws.live]);
 
+  // A failed /session refetch is its own error with its own message, so the
+  // reconnect notices give way to it. What the drop says on screen — the
+  // automatic retry's narration, or lost — is reconnect.ts' to decide.
+  const { reconnecting, lost } = dropNarration({
+    dropped: ws.closed && attachmentStatus !== "error",
+    gaveUp: ws.gaveUp,
+    manual: manualRetry,
+    attempt: ws.attempt,
+    since: ws.since,
+  });
+  // A manual reconnect starts a fresh retry budget, as the idle re-arm does;
+  // otherwise the next drop after giving up would give up at once.
+  const refreshStream = useCallback(() => {
+    setManualRetry(true);
+    reconnectAttemptsRef.current = 0;
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    dispatch({ kind: "rearm", at: Date.now() });
+    refresh();
+  }, [dispatch, refresh]);
+
   return {
     events,
     status,
     error: ws.error ?? attachmentError,
-    refresh,
-    resetBackoff,
+    reconnecting,
+    lost,
+    retrying: manualRetry,
+    protocolErrorRef: ws.protocolErrorRef,
+    refresh: refreshStream,
   };
 }
 
 // Small helper to hide useReducer typing; keeps the hook readable.
 function useReducerState() {
-  const [state, setState] = useState<WsStatus>({
-    error: null,
-    closed: false,
-    live: false,
-  });
+  const [state, setState] = useState<WsStatus>(OPEN);
   const dispatch = useMemo(
     () => (action: WsAction) => setState((s) => wsReducer(s, action)),
     [],

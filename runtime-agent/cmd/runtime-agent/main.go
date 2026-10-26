@@ -86,6 +86,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Its own port is never one of the box's servers to open.
+	srv.AgentPort = listener.Addr().(*net.TCPAddr).Port
 	if err := svc.Announce(listener.Addr()); err != nil {
 		log.Printf("runtime-agent: sessions' questions can't reach this agent: %v", err)
 	}
