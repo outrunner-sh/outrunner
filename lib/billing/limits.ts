@@ -81,7 +81,10 @@ export function boxesDenial(plan: Plan, live: number): CloudLimitDenial | null {
   };
 }
 
-export type MeteredComputerRow = Pick<RuntimeComputer, "projectId" | "workspaceId" | "status" | "provider" | "updatedAt">;
+export type MeteredComputerRow = Pick<
+  RuntimeComputer,
+  "projectId" | "workspaceId" | "status" | "provider" | "updatedAt"
+> & { pooled?: boolean };
 
 /** Whether one of the owner's computers is a box the plan limits: running
  *  (ready, or provisioning while still fresh — a claim whose provision died
@@ -91,6 +94,8 @@ export type MeteredComputerRow = Pick<RuntimeComputer, "projectId" | "workspaceI
  *  together. */
 export function isLiveMeteredComputer(computer: MeteredComputerRow, now: Date): boolean {
   if (computer.provider === "user-daytona" || computer.provider === "user-modal") return false;
+  // Made ahead and stopped: running no one's session (lib/runtime/warm-pool.ts).
+  if (computer.pooled) return false;
   if (computer.status === "ready") return true;
   return (
     computer.status === "provisioning" &&

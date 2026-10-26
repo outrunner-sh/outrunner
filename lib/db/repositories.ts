@@ -315,11 +315,15 @@ export async function transitionWorkspace(input: {
  *  project's shared one from before (lib/runtime/computer-scope.ts). */
 export async function getRuntimeComputer(scope: ComputerScope): Promise<RuntimeComputer | null> {
   const supabase = await createSupabaseServerClient();
-  const query = supabase.from("runtime_computers").select("*");
-  const { data, error } = await ("workspaceId" in scope
-    ? query.eq("workspace_id", scope.workspaceId)
-    : query.eq("project_id", scope.projectId).is("workspace_id", null)
-  ).maybeSingle();
+  const read = (pooledColumn: boolean) => {
+    const query = supabase.from("runtime_computers").select("*");
+    if ("workspaceId" in scope) return query.eq("workspace_id", scope.workspaceId).maybeSingle();
+    const shared = query.eq("project_id", scope.projectId).is("workspace_id", null);
+    return (pooledColumn ? shared.eq("pooled", false) : shared).maybeSingle();
+  };
+  let { data, error } = await read(true);
+  // Before the warm pool's migration there is no `pooled`, and no pooled box.
+  if (error && probeStatus(error) === "outdated" && !("workspaceId" in scope)) ({ data, error } = await read(false));
 
   if (error) throw error;
   return data ? toRuntimeComputer(data) : null;
@@ -442,6 +446,100 @@ export async function claimRuntimeComputer(input: {
     throw new Error("Runtime Computer claim was not persisted.");
   }
   return { computer, shouldProvision: claim.should_provision };
+}
+
+/**
+ * Hand the project's pooled box (lib/runtime/warm-pool.ts), made by
+ * `provider`, to a session with no box yet: it becomes the session's own,
+ * still stopped, for its setup to start again. The box's id, or null when
+ * there's none to take, or before the warm pool's migration.
+ */
+export async function claimPooledComputer(workspaceId: string, provider: ProviderName): Promise<string | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("claim_pooled_computer", {
+    requested_workspace_id: workspaceId,
+    requested_provider: provider,
+  });
+  // Before the migration: no function to call, or no column. No pool, then.
+  if (error && (error.code === "PGRST202" || error.code === "42883" || probeStatus(error) === "outdated")) {
+    console.warn("No warm pool yet: run the migrations", error.message);
+    return null;
+  }
+  if (error) throw error;
+  return typeof data === "string" ? data : null;
+}
+
+/** The project's pooled box, if it has one, in whatever state. */
+export async function getPooledComputer(projectId: string): Promise<RuntimeComputer | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .select("*")
+    .eq("project_id", projectId)
+    .eq("pooled", true)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toRuntimeComputer(data) : null;
+}
+
+/** Start the project's pooled box's row: null when it has one already (the
+ *  unique index says so), so two refills make one box. */
+export async function createPooledComputer(input: {
+  ownerId: string;
+  projectId: string;
+  provider: ProviderName;
+  agentSecret: string;
+}): Promise<RuntimeComputer | null> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .insert({
+      owner_id: input.ownerId,
+      project_id: input.projectId,
+      provider: input.provider,
+      agent_secret: input.agentSecret,
+      status: "provisioning",
+      pooled: true,
+    })
+    .select("*")
+    .single();
+  // One there already, or no pool before the migration.
+  if (error?.code === "23505" || (error && probeStatus(error) === "outdated")) return null;
+  if (error) throw error;
+  return toRuntimeComputer(data);
+}
+
+/** Record the pooled box stopped and ready to take; false when its row is
+ *  gone (swept as abandoned), so the box is its refill's to delete. */
+export async function markPooledReady(id: string, sandboxId: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("runtime_computers")
+    .update({ status: "stopped", daytona_sandbox_id: sandboxId, error_message: null })
+    .eq("id", id)
+    .eq("pooled", true)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** Mark a pooled box's refill failed, for the project's back-off, keeping the
+ *  box its delete couldn't remove (`leftover`), so the next refill deletes it. */
+export async function markPooledFailed(id: string, leftover: string | null): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("runtime_computers")
+    .update({ status: "error", daytona_sandbox_id: leftover, agent_base_url: null, error_message: "The warm pool's refill failed." })
+    .eq("id", id)
+    .eq("pooled", true);
+  if (error) throw error;
+}
+
+/** Forget a pooled box's row whose box couldn't be made. */
+export async function deletePooledComputer(id: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("pooled", true);
+  if (error) throw error;
 }
 
 export async function updateRuntimeComputer(

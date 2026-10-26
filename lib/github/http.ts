@@ -1,5 +1,8 @@
 import { GitHubReconnectError, GitHubSyncError, MissingGithubTokenError } from "@/lib/github/client";
 
+/** Where signing out (and so back in, minting a fresh GitHub token) lives. */
+export const GITHUB_RECONNECT_HREF = "/settings/account";
+
 /**
  * The response for an error from a route's GitHub work: no usable token is
  * 409, GitHub refusing or failing is 502 with its already-safe message, and

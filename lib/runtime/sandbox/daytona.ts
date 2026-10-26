@@ -169,6 +169,9 @@ function box(sandbox: Sandbox): SandboxBox {
         wsBaseUrl: signed.url,
       };
     },
+    // The token is in the host, so every page, asset and socket under it is
+    // let through: what the editor needs.
+    browserUrl: async (port, ttlSeconds) => (await sandbox.getSignedPreviewUrl(port, ttlSeconds)).url,
   };
 }
 

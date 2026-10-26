@@ -672,6 +672,78 @@ begin
   raise notice 'ok: one box per session, and only signed-in callers may claim one';
 end $$;
 
+-- 23. The warm pool (20261025120000): a project's pooled box is handed to one
+-- new session, of its owner, made by the provider asked for; one pooled box
+-- per project; and it never counts toward the plan's cap.
+insert into workspaces (id, owner_id, project_id, branch)
+select '44444444-4444-4444-4444-444444444441'::uuid, owner_id, id, 'pool-1'
+from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 144;
+insert into workspaces (id, owner_id, project_id, branch)
+select '44444444-4444-4444-4444-444444444442'::uuid, owner_id, id, 'pool-2'
+from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 144;
+insert into runtime_computers (owner_id, project_id, status, daytona_sandbox_id, provider, pooled)
+select owner_id, id, 'stopped', 'box-pooled', 'daytona', true
+from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 144;
+
+do $$
+begin
+  begin
+    insert into runtime_computers (owner_id, project_id, status, pooled)
+    select owner_id, id, 'provisioning', true
+    from projects where owner_id = '11111111-1111-1111-1111-111111111111' and github_repo_id = 144;
+    raise exception 'FAIL: a project got two pooled boxes';
+  exception when unique_violation then
+    null;
+  end;
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+declare
+  before_count bigint;
+  taken text;
+begin
+  -- Pooled and stopped: not live, so the plan's count is as it was.
+  update runtime_computers set status = 'provisioning' where daytona_sandbox_id = 'box-pooled';
+  before_count := live_metered_computers('11111111-1111-1111-1111-111111111111');
+  update runtime_computers set status = 'stopped' where daytona_sandbox_id = 'box-pooled';
+  if before_count <> live_metered_computers('11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: a pooled box counted toward the plan''s cap';
+  end if;
+
+  if claim_pooled_computer('44444444-4444-4444-4444-444444444441', 'modal') is not null then
+    raise exception 'FAIL: a pooled box went to a session on another provider';
+  end if;
+  taken := claim_pooled_computer('44444444-4444-4444-4444-444444444441', 'daytona');
+  if taken is distinct from 'box-pooled' then
+    raise exception 'FAIL: the pooled box was not handed over (got %)', taken;
+  end if;
+  if not exists (
+    select 1 from runtime_computers
+    where daytona_sandbox_id = 'box-pooled' and not pooled
+      and workspace_id = '44444444-4444-4444-4444-444444444441' and status = 'stopped'
+  ) then
+    raise exception 'FAIL: the taken box is not the session''s own, stopped';
+  end if;
+  -- Taken: the next session finds none, and a session with a box keeps it.
+  if claim_pooled_computer('44444444-4444-4444-4444-444444444442', 'daytona') is not null then
+    raise exception 'FAIL: one pooled box went to two sessions';
+  end if;
+  begin
+    perform claim_pooled_computer('33333333-3333-3333-3333-333333333333', 'daytona');
+    raise exception 'FAIL: a pooled box was claimed for another owner''s session';
+  exception when others then
+    if SQLERRM <> 'workspace not found' then
+      raise;
+    end if;
+  end;
+  raise notice 'ok: a pooled box goes to one session of its owner, on its provider, and counts toward no cap';
+end $$;
+
+reset role;
+
 -- 22. The CLI's sign-in: no user reaches its codes or tokens, even their own
 -- (no grant, and RLS with no policy behind it), and only hashes fit.
 do $$
