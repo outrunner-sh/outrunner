@@ -80,6 +80,13 @@ export function onRuntimeComputer(provider: ProviderName): boolean {
   return provider === "daytona" || provider === "neev" || provider === "user-daytona" || provider === "user-modal";
 }
 
+/** Whether a session on `provider` can open a box's port in the browser (the
+ *  editor, previews): Daytona's signed preview links. Modal and Neev have
+ *  none, so the editor isn't offered there, nor started. */
+export function opensInBrowser(provider: ProviderName): boolean {
+  return provider === "daytona" || provider === "user-daytona";
+}
+
 export type Workspace = {
   id: string;
   projectId: string;
@@ -160,6 +167,9 @@ export type RuntimeComputer = {
   /** The workspace whose own box it is; null for a project's box shared by
    *  its sessions, from before each session had its own. */
   workspaceId: string | null;
+  /** Made ready ahead of a session and stopped, for the next new session of
+   *  its project to take (lib/runtime/warm-pool.ts). */
+  pooled: boolean;
   status: RuntimeComputerStatus;
   /** Frozen image tag this box was built from, e.g. `v1`. */
   imageVersion: string;

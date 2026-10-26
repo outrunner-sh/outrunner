@@ -73,7 +73,7 @@ export function useAttachments() {
       for (const { file, key } of accepted) {
         if (file.size > MAX_ATTACHMENT_BYTES) {
           const mb = Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024));
-          setItem(key, { status: "error", error: `Larger than ${mb} MB` });
+          setItem(key, { status: "error", error: `It's over ${mb} MB, the most one file can be.` });
           continue;
         }
         void uploadAttachment(file).then(
@@ -88,7 +88,7 @@ export function useAttachments() {
             setItem(key, { id: attachment.id, filename: attachment.filename, status: "ready" });
           },
           (err: unknown) =>
-            setItem(key, { status: "error", error: err instanceof Error ? err.message : "Upload failed" }),
+            setItem(key, { status: "error", error: err instanceof Error ? err.message : "Couldn't upload it. Remove it and attach it again." }),
         );
       }
       return files.length - accepted.length;
@@ -141,5 +141,7 @@ export async function uploadAttachment(file: File): Promise<{ id: string; filena
     error?: string;
   };
   if (res.ok && data.attachment) return data.attachment;
-  throw new Error(data.error ?? (res.status === 413 ? "Too large to upload" : "Upload failed"));
+  throw new Error(
+    data.error ?? (res.status === 413 ? "It's too large to upload." : "Couldn't upload it. Remove it and attach it again."),
+  );
 }

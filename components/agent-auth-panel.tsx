@@ -8,9 +8,11 @@ import { ClaudeConnection } from "@/components/claude-connection";
 import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
 import { LoadingButton } from "@/components/ui/loading-button";
+import { InlineMessage } from "@/components/ui/notice";
 import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
 import { AGENT_AUTH_CHOICES } from "@/lib/client/agent-auth-choices";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
+import { requestJson } from "@/lib/http/request-json";
 import type { KeyProviderId } from "@/lib/providers/registry";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 
@@ -72,19 +74,17 @@ export function AgentAuthPanel({
   async function choose(method: AuthMethodId) {
     if (method === chosen) return;
     setSaving(true);
-    setError(null);
     try {
-      const res = await fetch("/api/settings/agents", {
+      const data = await requestJson<{ choices: AgentAuthChoices }>("/api/settings/agents", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent, method }),
+        body: { agent, method },
+        has: (d) => d.choices !== undefined,
       });
-      const data = (await res.json().catch(() => null)) as { choices?: AgentAuthChoices; error?: string } | null;
-      if (!res.ok || !data?.choices) throw new Error(data?.error ?? "Couldn't save that. Try again.");
       AGENT_AUTH_CHOICES.invalidate();
       // This agent's only: another tab's reply, sent before a pick there
       // landed, mustn't undo it.
       onChoice(agent, data.choices[agent]);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't save that.");
     } finally {
@@ -118,9 +118,7 @@ export function AgentAuthPanel({
           />
         ) : null}
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+          <InlineMessage>{error}</InlineMessage>
         ) : null}
       </div>
 

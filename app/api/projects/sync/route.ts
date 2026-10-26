@@ -66,10 +66,16 @@ export async function POST(request: Request) {
         lookup: getGitHubRepository,
         upsert: upsertProjects,
       }));
+      // Asked for specific repositories and the token can see none of them: an
+      // organization that hasn't approved Outrunner, or access since removed.
+      // The picker names the repository and says where to grant access.
       if (repositories.length === 0) {
         return NextResponse.json(
-          { error: "Your GitHub account can't see that repository any more. Refresh the list and try again." },
-          { status: 404 },
+          {
+            error: "GitHub isn't giving Outrunner access to this repository.",
+            code: "repo-no-access",
+          },
+          { status: 403 },
         );
       }
     } else {
@@ -92,7 +98,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return githubErrorResponse(
       error,
-      "Could not save repositories. Check Outrunner's setup and try again.",
+      "GitHub listed the repositories, but Outrunner couldn't save them. Try again.",
     );
   }
 }

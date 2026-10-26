@@ -29,6 +29,10 @@ export interface SandboxBox {
   /** The box user's home, where the agent and the mirror live. */
   home(): Promise<string>;
   agentEndpoint(port: number): Promise<AgentEndpoint>;
+  /** A URL a browser can open the box's `port` at for `ttlSeconds`, its
+   *  credential in it: for the session's editor. Absent where the provider
+   *  can't make one. */
+  browserUrl?(port: number, ttlSeconds: number): Promise<string>;
   /** The vCPUs it runs with, where the provider says: a resumed box keeps
    *  the size it was made at, whatever the user's setting is now. */
   readonly cpu?: number;

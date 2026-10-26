@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, FileText, Plus, Search, Settings2, Square, X } from "lucide-react";
+import { ArrowUp, Check, CircleAlert, FileText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
+import { InlineMessage } from "@/components/ui/notice";
 import { useAttachments } from "@/hooks/use-attachments";
 import { attachNotice, restoreDraft } from "@/lib/runtime/attachments";
 import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
@@ -90,6 +91,11 @@ export function SessionComposer({
   model,
   modelChoice,
   allowAttachments = true,
+  sendError = null,
+  sendErrorNoRetry = false,
+  newSessionHref,
+  onDismissSendError,
+  onRetrySendError,
   stop,
   focusSignal = 0,
 }: {
@@ -109,6 +115,21 @@ export function SessionComposer({
   /** False hides attaching. Attachments are delivered by the server, which
    *  cannot reach a local session's worktree on the user's Mac. */
   allowAttachments?: boolean;
+  /** Why the last send didn't go. A send from the box has its text back
+   *  there, so the line offers to send it again or edit it first; one that
+   *  didn't come from the box (onRetrySendError) offers Retry alone. */
+  sendError?: string | null;
+  /** The failure can't be fixed by trying again (the session's box is gone):
+   *  the line offers no Retry, only the way forward. */
+  sendErrorNoRetry?: boolean;
+  /** Where "Continue in a new session" goes, for a send with no retry. */
+  newSessionHref?: string;
+  onDismissSendError?: () => void;
+  /** Retry a send that didn't come from the box: a session's first prompt
+   *  fails while the box is still empty, so its Retry sends the original
+   *  again through here. Without this, Retry sends the box, which a failed
+   *  send has put its text back into. */
+  onRetrySendError?: () => void;
   /** Stopping the turn under way, shown beside send (and on Escape) while
    *  there is one to stop. */
   stop?: { onStop: () => void; stopping: boolean };
@@ -229,15 +250,49 @@ export function SessionComposer({
           {notice}
         </p>
       )}
+      {sendError && !sending && (
+        <InlineMessage
+          className="studio-composer-message"
+          actions={
+            sendErrorNoRetry
+              ? // Retrying fails the same way every time: offer the way on
+                // instead of a Retry that can't work.
+                [{ label: "Continue in a new session", primary: true, href: newSessionHref ?? "/new" }]
+              : [
+                  { label: "Retry", onClick: onRetrySendError ?? submit, disabled: !canSend },
+                  // Edit is for text the failure put back in the box. A send that
+                  // never came from it (a first prompt) has nothing there to edit.
+                  ...(onRetrySendError
+                    ? []
+                    : [
+                        {
+                          label: "Edit",
+                          onClick: () => {
+                            onDismissSendError?.();
+                            textareaRef.current?.focus();
+                          },
+                        },
+                      ]),
+                ]
+          }
+        >
+          Not sent · {sendError}
+        </InlineMessage>
+      )}
       {attachments.items.length > 0 && (
         <ul className="flex flex-wrap gap-2 px-1 pb-2">
           {attachments.items.map((item) => (
             <li
               key={item.key}
-              className="border-border bg-background/60 flex max-w-52 items-center gap-2 rounded-md border px-2 py-1.5 text-xs"
+              className={cn(
+                "bg-background/60 flex max-w-52 items-center gap-2 rounded-md border px-2 py-1.5 text-xs",
+                item.status === "error" ? "border-destructive/50" : "border-border",
+              )}
               title={item.error ?? item.filename}
             >
-              {item.previewUrl ? (
+              {item.status === "error" ? (
+                <CircleAlert className="text-destructive size-4 shrink-0" />
+              ) : item.previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={item.previewUrl}
@@ -247,11 +302,7 @@ export function SessionComposer({
               ) : (
                 <FileText className="text-muted-foreground size-4 shrink-0" />
               )}
-              <span
-                className={`truncate ${item.status === "error" ? "text-destructive" : ""}`}
-              >
-                {item.status === "error" ? (item.error ?? "Failed") : item.filename}
-              </span>
+              <span className="truncate">{item.filename}</span>
               {item.status === "uploading" && (
                 <Spinner className="size-3 shrink-0" />
               )}
@@ -267,6 +318,17 @@ export function SessionComposer({
           ))}
         </ul>
       )}
+      {attachments.items
+        .filter((item) => item.status === "error")
+        .map((item) => (
+          <InlineMessage
+            key={item.key}
+            className="studio-composer-message"
+            actions={[{ label: "Remove", onClick: () => attachments.remove(item.key) }]}
+          >
+            {item.filename}: {item.error ?? "Couldn't attach this file."}
+          </InlineMessage>
+        ))}
 
       <textarea
         ref={textareaRef}

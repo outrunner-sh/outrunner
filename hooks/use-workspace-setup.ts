@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { useNow } from "@/hooks/use-now";
 import type { ProvisionPhase, Workspace } from "@/lib/runtime/types";
-import { isSettingUp, setupState } from "@/lib/session/provisioning";
+import { isSettingUp, SETUP_STALLS_AFTER_MS, setupState } from "@/lib/session/provisioning";
 
 const POLL_MS = 2000;
 
@@ -15,13 +15,17 @@ export type WorkspaceSetupResult = {
   phase: ProvisionPhase | null;
   /** Whether the workspace has a Runtime Computer (faster provisioning). */
   hasComputer: boolean;
+  /** Grants a stalled setup another stall period of polling before it is
+   *  called stalled again. */
+  keepWaiting: () => void;
 };
 
 /**
  * Where a new cloud session's setup stands, for its page: it opens before the
  * box is ready. While setup runs, the session's status is polled, and the page
- * re-read once it ends — ready or failed — so the session attaches, or says
- * why it didn't, without a reload.
+ * re-read once it ends — ready or failed, and even after it is called stalled — so the session attaches, or says
+ * why it didn't, without a reload. `keepWaiting` gives a stalled setup another
+ * stall period of polling before it is called stalled again.
  */
 export function useWorkspaceSetup(
   workspace: Pick<Workspace, "id" | "status" | "createdAt">,
@@ -31,15 +35,19 @@ export function useWorkspaceSetup(
   const router = useRouter();
   // Ticks only matter while setting up: they move a long setup to "stalled".
   const now = useNow(isSettingUp(workspace.status) ? POLL_MS : 60_000);
-  const state = cloud ? setupState(workspace, now) : "ended";
-  const running = state === "running";
+  const [graceUntil, setGraceUntil] = useState(0);
+  const judged = cloud ? setupState(workspace, now) : "ended";
+  const state = judged === "stalled" && now < graceUntil ? "running" : judged;
+  // A stalled setup is still watched: one that finishes late after all must
+  // still attach, not leave "it may have stopped" on screen.
+  const watching = state !== "ended";
 
   const [phase, setPhase] = useState<ProvisionPhase | null>(null);
   // Track whether we've seen the "allocate" phase - if not, computer already existed
   const [sawAllocate, setSawAllocate] = useState(false);
 
   useEffect(() => {
-    if (!running) return;
+    if (!watching) return;
     let live = true;
     let inFlight = false;
     const poll = async () => {
@@ -72,10 +80,11 @@ export function useWorkspaceSetup(
       live = false;
       window.clearInterval(id);
     };
-  }, [running, workspace.id, router]);
+  }, [watching, workspace.id, router]);
 
   // Computer already existed if we have a phase but never saw allocate
   const hasComputer = phase !== null && !sawAllocate;
 
-  return { state, phase, hasComputer };
+  const keepWaiting = () => setGraceUntil(Date.now() + SETUP_STALLS_AFTER_MS);
+  return { state, phase, hasComputer, keepWaiting };
 }

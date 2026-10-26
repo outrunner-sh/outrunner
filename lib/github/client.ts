@@ -93,6 +93,8 @@ function isTokenRejected(status: number): boolean {
   return status === 401;
 }
 
+/** A reply from GitHub that Outrunner couldn't read. */
+const GITHUB_UNREADABLE = "GitHub sent back a reply Outrunner couldn't read. Try again.";
 const GITHUB_API_URL = "https://api.github.com";
 const PER_PAGE = 100;
 const MAX_PAGES = 100;
@@ -493,7 +495,7 @@ async function readJson(response: Response): Promise<unknown> {
     return await response.json();
   } catch (error) {
     console.error("GitHub returned an unreadable response", error);
-    throw new GitHubSyncError("GitHub returned an invalid response.");
+    throw new GitHubSyncError(GITHUB_UNREADABLE);
   }
 }
 

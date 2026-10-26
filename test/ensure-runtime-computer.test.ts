@@ -13,6 +13,7 @@ function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
     id: "computer-1",
     projectId: "project-1",
     workspaceId: "workspace-1",
+    pooled: false,
     status: "provisioning",
     imageVersion: "v1",
     daytonaSandboxId: null,
