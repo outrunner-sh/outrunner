@@ -3,12 +3,12 @@
  * on Outrunner's key and the user's allowance), the user's own Claude, a
  * provider on a key of the user's own (Settings → Providers), or Codex. A
  * choice is always both, a provider and a model, from the menu to the agent,
- * and the provider says which agent runs it: Codex runs Codex's models, and
- * Claude Code every other. Imports only the registries, so it unit-tests
- * without React or a session.
+ * and the provider says which agents can run it: Codex runs Codex's models,
+ * Claude Code every other, and either runs Outrunner's. Imports only the
+ * registries, so it unit-tests without React or a session.
  */
 
-import { type AgentConnection, type AgentId, AGENT_IDS, type RunTarget } from "@/lib/agents/registry";
+import { type AgentConnection, type AgentId, AGENT_IDS, isAgentId, type RunTarget } from "@/lib/agents/registry";
 import { isProviderId, PROVIDER_IDS, PROVIDERS, type ProviderId } from "@/lib/providers/registry";
 
 /** Who serves a model. */
@@ -64,10 +64,36 @@ export const CLAUDE_MODELS: SessionModel[] = [
  *  Codex): OpenAI's names, as on its API. */
 export const CODEX_MODELS: SessionModel[] = PROVIDERS.openai.models.map((m) => ({ ...m, provider: "codex" }));
 
-/** The agent that runs a provider's models. A session keeps its agent: its
- *  model can change only to another the same agent runs. */
-export function agentOf(provider: ModelProvider): AgentId {
-  return provider === "codex" ? "codex" : "claude";
+/** The agents that can run a provider's models, the one a session runs when
+ *  it names none first: Codex alone runs Codex's models, both run
+ *  Outrunner's (Codex through OpenRouter's OpenAI API, Claude Code through
+ *  its Anthropic one), and Claude Code alone the rest, which are reached
+ *  through an Anthropic API only. A session keeps its agent: its model can
+ *  change only to another its agent runs. */
+export function agentsFor(provider: ModelProvider): readonly AgentId[] {
+  if (provider === "codex") return ["codex"];
+  if (provider === "outrunner") return ["claude", "codex"];
+  return ["claude"];
+}
+
+/** The agent a new session on a provider's models runs: `preferred` (one the
+ *  session was asked to run) where it runs them, else the provider's first. */
+export function agentOf(provider: ModelProvider, preferred?: AgentId): AgentId {
+  const agents = agentsFor(provider);
+  return preferred && agents.includes(preferred) ? preferred : agents[0];
+}
+
+/** Whether a session runs Codex through a gateway (Outrunner's models), which
+ *  only an agent with the `codex-gateway` feature does. */
+export function onCodexGateway(agent: AgentId, model: { provider: ModelProvider }): boolean {
+  return agent === "codex" && model.provider !== "codex";
+}
+
+/** A request body's agent: undefined when it names none, null when it names
+ *  one that isn't an agent. */
+export function requestedAgent(body: { agent?: unknown } | null): AgentId | null | undefined {
+  if (body?.agent === undefined || body.agent === null) return undefined;
+  return isAgentId(body.agent) ? body.agent : null;
 }
 
 /** Whether `model` runs on the user's own account of its agent (their
@@ -121,7 +147,8 @@ export type ModelMenu = { outrunner: boolean; allowance: boolean; keys: Provider
 /** The menu: Outrunner's models first, where the server has them; then each
  *  provider the user has a key for; the user's Claude, and Codex last, each
  *  only where `accounts` (connectedAccounts) has it. With `agent` (a running
- *  session's), only what that agent runs. */
+ *  session's), only what that agent runs: in Codex, Outrunner's models and
+ *  Codex's own. */
 export function modelGroups(menu: ModelMenu, accounts: readonly AgentId[], agent?: AgentId): ModelGroup[] {
   const groups: ModelGroup[] = [];
   if (menu.outrunner) {
@@ -147,7 +174,7 @@ export function modelGroups(menu: ModelMenu, accounts: readonly AgentId[], agent
   if (accounts.includes("codex")) {
     groups.push({ label: "Codex", provider: "codex", models: CODEX_MODELS, custom: true });
   }
-  return agent ? groups.filter((group) => agentOf(group.provider) === agent) : groups;
+  return agent ? groups.filter((group) => agentsFor(group.provider).includes(agent)) : groups;
 }
 
 /**
@@ -325,9 +352,10 @@ export function checkEffortApplied(req: SetModelRequest, answer: unknown): void 
   if (applied !== req.effort) throw new EffortUnsupportedError();
 }
 
-/** An agent's refusal of a provider it doesn't know: one released before it. */
+/** An agent's refusal of a provider it doesn't know: one released before it,
+ *  or, for a Codex session, one from before Codex ran through a gateway. */
 export function predatesProvider(message: string | undefined): boolean {
-  return /unknown gateway/.test(message ?? "");
+  return /unknown gateway|runs on OpenAI's models directly and can't use a gateway/.test(message ?? "");
 }
 
 /** What to tell the user when the agent predates a provider. */

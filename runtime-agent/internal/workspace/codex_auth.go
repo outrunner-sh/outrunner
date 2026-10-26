@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"runtime-agent/internal/claude"
 	"runtime-agent/internal/codex"
 )
 
@@ -17,7 +18,10 @@ import (
 // $ROOT/codex/<id>, logged in with that key: Codex reads its login from its
 // home (CODEX_HOME), not from the environment, and the user's own home on a
 // Mac holds their ChatGPT login, which the session must neither use nor
-// replace. A Codex session without a key runs in the user's own home.
+// replace. So does one on a gateway (Outrunner's models through OpenRouter):
+// its home's config puts Codex on the gateway, with the key, and the user's
+// own config must not. A Codex session with neither runs in the user's own
+// home.
 
 // codexLoginTimeout bounds `codex login`, which only writes the home's
 // auth.json: a hung one must not hold the session's lifecycle lock.
@@ -30,18 +34,32 @@ func (s *Service) codexHome(workspaceID string) string {
 // ownCodexHome reports whether a session runs in a Codex home of its own.
 func (s *Service) ownCodexHome(workspaceID string) bool {
 	f, _ := s.getFacts(workspaceID)
-	return f.Auth == AuthOpenAIAPIKey
+	return f.Auth == AuthOpenAIAPIKey || f.Gateway != claude.NoGateway
 }
 
 // prepareCodexHome readies a session's own Codex home for a launch: owner-
 // only, its config keeping the login in the home's auth.json (not the
-// system keychain, shared by every home) and trusting the session's folder
-// (so no trust question waits for an answer), then logged in with the
-// session's key, given on stdin, never on a command line.
+// system keychain, shared by every home), trusting the session's folder (so
+// no trust question waits for an answer) and, on a gateway, putting Codex on
+// it with the session's gateway key (codex.ProviderConfig). With an OpenAI
+// key, it is then logged in with it, given on stdin, never on a command line.
+// Rewritten each launch from the session's facts, so a model switched to or
+// from a gateway, or a key replaced, is what the next launch runs on.
 func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) error {
+	f, _ := s.getFacts(workspaceID)
 	key := s.authFiles().value(workspaceID, "OPENAI_API_KEY")
-	if key == "" {
+	if f.Auth == AuthOpenAIAPIKey && key == "" {
 		return ErrAuthMissing
+	}
+	provider := ""
+	if f.Gateway != claude.NoGateway {
+		token := s.gatewayFiles().value(workspaceID, codexGatewayKeyEnv)
+		if token == "" {
+			return ErrGatewayKeyMissing
+		}
+		if provider = codex.ProviderConfig(f.Gateway, token); provider == "" {
+			return ErrGatewayUnsupported
+		}
 	}
 	home := s.codexHome(workspaceID)
 	if err := os.MkdirAll(home, 0o700); err != nil {
@@ -55,13 +73,17 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 	if real, err := filepath.EvalSymlinks(folder); err == nil {
 		folder = real
 	}
-	config := "cli_auth_credentials_store = \"file\"\n\n" +
+	// The provider's top-level key goes before the tables.
+	config := "cli_auth_credentials_store = \"file\"\n" + provider + "\n" +
 		"[projects." + codex.TOMLString(folder) + "]\ntrust_level = \"trusted\"\n"
 	// writeKeysFile: owner-only and atomic, so Codex never reads half of it.
 	if err := writeKeysFile(filepath.Join(home, "config.toml"), config); err != nil {
 		return err
 	}
 	copyAgentsMD(home) // the user's instructions, as the computer's own home has them
+	if key == "" {
+		return nil // on a gateway alone: nothing to log in with, nor needed
+	}
 	ctx, cancel := context.WithTimeout(ctx, codexLoginTimeout)
 	defer cancel()
 	env := append(withoutEnv(s.env, "CODEX_HOME", "OPENAI_API_KEY"), "CODEX_HOME="+home)
@@ -76,7 +98,7 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 // home. It rides the command line, not tmux's environment, which a running
 // tmux server doesn't take from a new session's client. The home's path is no
 // secret; an OPENAI_API_KEY in the agent's environment is dropped, so the
-// session runs on its own key rather than the computer's.
+// session runs on its own key, or its gateway's, rather than the computer's.
 func (s *Service) codexLaunchEnv(workspaceID string) []string {
 	if !s.ownCodexHome(workspaceID) {
 		return nil

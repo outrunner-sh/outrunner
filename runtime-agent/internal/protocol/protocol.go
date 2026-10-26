@@ -268,6 +268,11 @@ const FeatureImports = "restore-imports"
 // relaunches the session on Claude's own default.
 const FeatureRestoreModel = "restore-model"
 
+// FeatureCodexGateway is a Codex session on a gateway (SetModelRequest's
+// gateway, for OpenRouter): Outrunner's models in Codex. An older agent
+// refuses the gateway.
+const FeatureCodexGateway = "codex-gateway"
+
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
 	Error struct {

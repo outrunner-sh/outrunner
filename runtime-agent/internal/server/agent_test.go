@@ -77,11 +77,12 @@ func TestASessionsAgentIsChosenAtCreateAndItsCredentialMustFitIt(t *testing.T) {
 		t.Errorf("auth on an unknown session = %v, want the NOT_FOUND envelope", out)
 	}
 
-	// Gateways serve Claude's API: a Codex session can't switch to one.
+	// Of the gateways, only OpenRouter serves OpenAI's API, as Codex needs:
+	// a Codex session can't switch to the others.
 	if code, out := call("ws-a", "POST", "/workspaces/ws-a/model", map[string]string{
-		"model": "z-ai/glm-5.3", "gateway": "openrouter", "token": testGatewayKey,
+		"model": "glm-5.3", "gateway": "zai", "token": testGatewayKey,
 	}); code != http.StatusBadRequest {
-		t.Errorf("a Codex session onto a gateway = %d %v, want 400", code, out)
+		t.Errorf("a Codex session onto Z.ai's Anthropic API = %d %v, want 400", code, out)
 	}
 }
 
@@ -96,6 +97,9 @@ func TestHealthSaysWhichAgentsTheComputerRuns(t *testing.T) {
 	var body protocol.Health
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Status != "ok" || len(body.Agents) == 0 || body.Agents[0] != "claude" {
 		t.Errorf("health = %+v, %v; want ok and Claude first among the agents", body, err)
+	}
+	if !slices.Contains(body.Features, protocol.FeatureCodexGateway) {
+		t.Errorf("health features = %q, want %s: Outrunner's models in Codex", body.Features, protocol.FeatureCodexGateway)
 	}
 	_, err = exec.LookPath("codex")
 	if hasCodex := slices.Contains(body.Agents, "codex"); hasCodex != (err == nil) {

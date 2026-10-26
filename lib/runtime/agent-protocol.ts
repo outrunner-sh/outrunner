@@ -119,6 +119,10 @@ export const AGENT_FEATURE_IMPORTS = "restore-imports";
  *  `model`); an older one ignores it, and relaunches on Claude's default. */
 export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";
 
+/** The agent runs a Codex session through a gateway (OpenRouter): Outrunner's
+ *  models in Codex. An older one refuses the gateway. */
+export const AGENT_FEATURE_CODEX_GATEWAY = "codex-gateway";
+
 /** GET /health (unauthenticated): the agent is up, and what it can run a
  *  session on. `gateways`, `agents` and `features` are absent from agents
  *  older than each: those run OpenRouter alone, and Claude alone. */

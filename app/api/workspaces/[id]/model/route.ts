@@ -12,6 +12,8 @@ import {
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_CODEX_GATEWAY } from "@/lib/runtime/agent-protocol";
+import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { switchFailure } from "@/lib/runtime/model-switch";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
@@ -19,7 +21,9 @@ import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { sessionAuthClient, signInFailure, signInSession } from "@/lib/runtime/session-auth";
 import {
   agentOf,
+  agentsFor,
   checkEffortApplied,
+  onCodexGateway,
   requestedEffort,
   requestedModel,
   runsOnOwnAccount,
@@ -62,7 +66,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
   // A session keeps its agent: its conversation is that agent's.
-  if (agentOf(model.provider) !== workspace.agent) {
+  if (!agentsFor(model.provider).includes(workspace.agent)) {
     return NextResponse.json(
       { error: `This session runs ${AGENTS[workspace.agent].label}. Start a new session to use ${AGENTS[agentOf(model.provider)].label}.` },
       { status: 409 },
@@ -124,6 +128,11 @@ export async function POST(request: Request, context: RouteContext) {
       agentAuthStore(owner.id),
       runsOnOwnAccount(model),
     );
+    // An agent from before Codex ran through a gateway would refuse the model.
+    if (onCodexGateway(workspace.agent, model)) {
+      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+      await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
+    }
   } catch (error) {
     const failure = signInFailure(error);
     if (failure) return NextResponse.json(failure, { status: 409 });

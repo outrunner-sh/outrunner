@@ -4,6 +4,11 @@ import path from "node:path";
 import { test } from "node:test";
 
 import {
+  AGENT_FEATURE_AGENT_CONFIG,
+  AGENT_FEATURE_CODEX_GATEWAY,
+  AGENT_FEATURE_ENVIRONMENT,
+  AGENT_FEATURE_IMPORTS,
+  AGENT_FEATURE_RESTORE_MODEL,
   PROTOCOL_SCHEMAS,
   type ProtocolSchemaName,
 } from "@/lib/runtime/agent-protocol";
@@ -122,4 +127,18 @@ test("a restore may bring the session's model: through a gateway on its key, or 
   assert.equal(restore({ model: "z-ai/glm-5.3", gateway: "openrouter" }), false, "a gateway needs its key");
   assert.equal(restore({ model: "opus", token: key }), false, "only a gateway takes one");
   assert.equal(restore({ model: "z-ai/glm-5.3", gateway: "openrouter", token: "it's" + "x".repeat(20) }), false, "a key a shell file can hold");
+});
+
+test("the newest health fixture names every feature the agent and the control plane share", () => {
+  const health = fixtures.AgentHealth as { features?: string[] }[];
+  const newest = health[health.length - 1].features ?? [];
+  for (const feature of [
+    AGENT_FEATURE_IMPORTS,
+    AGENT_FEATURE_ENVIRONMENT,
+    AGENT_FEATURE_AGENT_CONFIG,
+    AGENT_FEATURE_RESTORE_MODEL,
+    AGENT_FEATURE_CODEX_GATEWAY,
+  ]) {
+    assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
+  }
 });

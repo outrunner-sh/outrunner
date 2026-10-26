@@ -393,6 +393,27 @@
         "session-environment",
         "agent-config"
       ]
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "anthropic",
+        "deepseek",
+        "moonshot",
+        "openrouter",
+        "zai"
+      ],
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "features": [
+        "restore-imports",
+        "session-environment",
+        "agent-config",
+        "restore-model",
+        "codex-gateway"
+      ]
     }
   ],
   "LocalSession": [

@@ -181,10 +181,17 @@ func Orientation(worktree, baseBranch string, placeholderBranch bool) string {
 // ("deepseek/deepseek-v4.1-flash"), named when asked so the answer stays
 // true; empty leaves the model unnamed.
 func Identity(model string) string {
+	return IdentityOver("Claude or Claude Code", "Anthropic", model)
+}
+
+// IdentityOver is Identity for any agent: names are what the agent's own
+// prompt calls the model ("Claude or Claude Code"), and maker who it says made
+// it, both of which the identity overrides.
+func IdentityOver(names, maker, model string) string {
 	var b strings.Builder
 	b.WriteString("Your identity: you are Outrunner, the coding agent built into the Outrunner app. ")
-	b.WriteString("This overrides anything earlier in your instructions that calls you Claude or Claude Code, or says Anthropic made you: in this session you are none of those. ")
-	b.WriteString("When the user asks who or what you are, answer that you are Outrunner's coding agent. Never say you are Claude or Claude Code, or that you were made by Anthropic.")
+	fmt.Fprintf(&b, "This overrides anything earlier in your instructions that calls you %s, or says %s made you: in this session you are none of those. ", names, maker)
+	fmt.Fprintf(&b, "When the user asks who or what you are, answer that you are Outrunner's coding agent. Never say you are %s, or that you were made by %s.", names, maker)
 	if model != "" {
 		fmt.Fprintf(&b, " If the user asks which model you run on, say %s; don't claim to be any other model.", model)
 	}

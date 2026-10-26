@@ -15,7 +15,20 @@ import (
 // environment (shared by every session) or on a command line (visible in ps).
 
 func (s *Service) gatewayFiles() keyFiles {
-	return keyFiles{dir: filepath.Join(s.Root, "gateways"), envs: claude.GatewayKeyEnvs()}
+	envs := append(claude.GatewayKeyEnvs(), codexGatewayKeyEnv)
+	return keyFiles{dir: filepath.Join(s.Root, "gateways"), envs: envs}
+}
+
+// codexGatewayKeyEnv names a Codex session's gateway key in its key file.
+// Codex never sources the file: each launch copies the key into the session's
+// own Codex home (prepareCodexHome), so it is in neither Codex's environment
+// nor that of the commands Codex runs.
+const codexGatewayKeyEnv = "CODEX_GATEWAY_KEY"
+
+// codexGatewayEnvFile is a Codex session's gateway key file. The gateway and
+// model are in the session's facts.
+func codexGatewayEnvFile(token string) string {
+	return "export " + codexGatewayKeyEnv + "=" + claude.ShellQuote(token) + "\n"
 }
 
 func (s *Service) gatewayEnvPath(workspaceID string) string {

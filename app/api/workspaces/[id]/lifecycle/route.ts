@@ -21,7 +21,7 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_IMPORTS, AGENT_FEATURE_RESTORE_MODEL } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_IMPORTS, AGENT_FEATURE_RESTORE_MODEL } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
@@ -29,7 +29,7 @@ import { scopeOf } from "@/lib/runtime/computer-scope";
 import { recordedModelRequest } from "@/lib/runtime/model-switch";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import { relaunchNeedsAccount, restoreSignedIn, sessionAuthClient, signInFailure } from "@/lib/runtime/session-auth";
-import { defaultModel, type RecordedModel } from "@/lib/runtime/session-models";
+import { defaultModel, onCodexGateway, type RecordedModel } from "@/lib/runtime/session-models";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
@@ -368,6 +368,10 @@ async function restoreDaytonaWorkspace(
     }
     // An older agent would ignore the model, and relaunch on Claude's own.
     if (model) await requireFeature(features, AGENT_FEATURE_RESTORE_MODEL, "restore a session on its model");
+    // Nor would one from before Codex ran through a gateway take its model.
+    if (restoreOn && onCodexGateway(workspace.agent, restoreOn.model)) {
+      await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
+    }
     // Before the restore, which launches the session at once.
     await setUpSession(agent, identity, upgrade, owner.id, project.id);
     const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;

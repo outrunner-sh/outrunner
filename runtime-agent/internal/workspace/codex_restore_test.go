@@ -114,6 +114,36 @@ func TestACodexSessionIsRestoredWithItsRolloutAndCredential(t *testing.T) {
 	}
 }
 
+// One on Outrunner's model comes back on it on a fresh box: its rollout in a
+// Codex home of its own, whose config puts it on OpenRouter on its key.
+func TestACodexSessionOnAGatewayIsRestoredOnIt(t *testing.T) {
+	s, fake := restoringService(t)
+	s.runCommand = (&loginRecorder{}).run
+	srv := snapshotServer(t, map[string][]byte{"/conversation": []byte("{}\n"), "/rollout": fixtureRollout(t, "/work/repo")})
+	id := fixtureSessionID
+	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{
+		Branch: "feature", BaseBranch: "main", SessionID: &id, Agent: AgentCodex,
+		Downloads: downloads(srv, "bundle", "patch", "conversation", "rollout"),
+	}, &ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	home := s.codexHome("ws-r")
+	if f, _ := s.getFacts("ws-r"); f.Gateway != claude.OpenRouter || !strings.HasPrefix(f.CodexRollout, filepath.Join(home, "sessions")) {
+		t.Fatalf("facts = %+v, want the session on OpenRouter, its rollout in its own home", f)
+	}
+	argv := fake.lastLaunch()
+	if !slices.Contains(argv, "CODEX_HOME="+home) || !slices.Contains(argv, "resume") || !slices.Contains(argv, "z-ai/glm-5.3") {
+		t.Errorf("launch = %q, want codex resume on GLM in its own home", argv)
+	}
+	if strings.Contains(strings.Join(argv, " "), testGatewayKey2) {
+		t.Errorf("the key is on the command line: %q", argv)
+	}
+	if config := readFileString(t, filepath.Join(home, "config.toml")); !strings.Contains(config, `model_provider = "openrouter"`) || !strings.Contains(config, testGatewayKey2) {
+		t.Errorf("config.toml:\n%s", config)
+	}
+}
+
 func TestACodexSessionWithoutARolloutStartsAfresh(t *testing.T) {
 	s, fake := restoringService(t)
 	srv := snapshotServer(t, nil)
@@ -175,11 +205,11 @@ func TestRestoreRefusesWhatItCantResume(t *testing.T) {
 			t.Errorf("%s: Restore = %v, want %q", c.name, err, c.want)
 		}
 	}
-	// A Codex session never runs through a gateway.
+	// A Codex session runs through no gateway serving only Claude's API.
 	_, err := s.Restore(context.Background(), "ws-r", protocol.RestoreWorkspaceRequest{Branch: "feature", Agent: AgentCodex,
-		Downloads: downloads(srv, "bundle", "patch")}, &ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2})
+		Downloads: downloads(srv, "bundle", "patch")}, &ModelChoice{Model: "claude-opus-5", Gateway: claude.Anthropic, Token: testAnthropic})
 	if !errors.Is(err, ErrGatewayUnsupported) {
-		t.Errorf("Restore of Codex through a gateway = %v, want ErrGatewayUnsupported", err)
+		t.Errorf("Restore of Codex through Anthropic's API = %v, want ErrGatewayUnsupported", err)
 	}
 	// A rollout that isn't the session's is not resumed.
 	other := "02b2"
