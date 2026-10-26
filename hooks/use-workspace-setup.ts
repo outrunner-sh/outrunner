@@ -23,7 +23,7 @@ export type WorkspaceSetupResult = {
 /**
  * Where a new cloud session's setup stands, for its page: it opens before the
  * box is ready. While setup runs, the session's status is polled, and the page
- * re-read once it ends — ready or failed — so the session attaches, or says
+ * re-read once it ends — ready or failed, and even after it is called stalled — so the session attaches, or says
  * why it didn't, without a reload. `keepWaiting` gives a stalled setup another
  * stall period of polling before it is called stalled again.
  */
@@ -38,14 +38,16 @@ export function useWorkspaceSetup(
   const [graceUntil, setGraceUntil] = useState(0);
   const judged = cloud ? setupState(workspace, now) : "ended";
   const state = judged === "stalled" && now < graceUntil ? "running" : judged;
-  const running = state === "running";
+  // A stalled setup is still watched: one that finishes late after all must
+  // still attach, not leave "it may have stopped" on screen.
+  const watching = state !== "ended";
 
   const [phase, setPhase] = useState<ProvisionPhase | null>(null);
   // Track whether we've seen the "allocate" phase - if not, computer already existed
   const [sawAllocate, setSawAllocate] = useState(false);
 
   useEffect(() => {
-    if (!running) return;
+    if (!watching) return;
     let live = true;
     let inFlight = false;
     const poll = async () => {
@@ -78,7 +80,7 @@ export function useWorkspaceSetup(
       live = false;
       window.clearInterval(id);
     };
-  }, [running, workspace.id, router]);
+  }, [watching, workspace.id, router]);
 
   // Computer already existed if we have a phase but never saw allocate
   const hasComputer = phase !== null && !sawAllocate;
