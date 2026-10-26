@@ -21,7 +21,8 @@ type codexAgent struct{ s *Service }
 var ErrCodexMissing = fmt.Errorf("Codex isn't installed on this computer. Install it with `%s`, then start the session again", codex.InstallHint)
 
 // prepare finds Codex, then readies the session's own Codex home when it has
-// an OpenAI key (prepareCodexHome); without one, Codex runs in the user's.
+// an OpenAI key or is on a gateway (prepareCodexHome); with neither, Codex
+// runs in the user's.
 func (a codexAgent) prepare(ctx context.Context, workspaceID string) error {
 	if _, err := a.s.lookPath("codex"); err != nil {
 		return ErrCodexMissing

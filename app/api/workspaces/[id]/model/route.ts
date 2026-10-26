@@ -122,17 +122,20 @@ export async function POST(request: Request, context: RouteContext) {
     // The switch relaunches the session: signed in as the user picks now, so
     // a key replaced since is the one it relaunches on.
     const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+    // An agent from before Codex ran through a gateway would refuse the model.
+    // Checked before signing in, which may take the session's own key away
+    // (a model on Outrunner's key needs none): a switch refused here must
+    // leave the session as it was.
+    if (onCodexGateway(workspace.agent, model)) {
+      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+      await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
+    }
     await signInSession(
       sessionAuthClient(agent, identity, upgrade),
       workspace.agent,
       agentAuthStore(owner.id),
       runsOnOwnAccount(model),
     );
-    // An agent from before Codex ran through a gateway would refuse the model.
-    if (onCodexGateway(workspace.agent, model)) {
-      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
-      await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
-    }
   } catch (error) {
     const failure = signInFailure(error);
     if (failure) return NextResponse.json(failure, { status: 409 });

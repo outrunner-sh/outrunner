@@ -81,7 +81,7 @@ func (s *Service) prepareCodexHome(ctx context.Context, workspaceID string) erro
 		return err
 	}
 	copyAgentsMD(home) // the user's instructions, as the computer's own home has them
-	if key == "" {
+	if f.Auth != AuthOpenAIAPIKey {
 		return nil // on a gateway alone: nothing to log in with, nor needed
 	}
 	ctx, cancel := context.WithTimeout(ctx, codexLoginTimeout)

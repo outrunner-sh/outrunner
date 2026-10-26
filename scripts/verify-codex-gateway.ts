@@ -150,8 +150,16 @@ try {
     `for p in $(pgrep -f 'codex' | grep -v $$); do grep -qF -f /tmp/verify.key /proc/$p/environ 2>/dev/null && echo $p; done; true`,
   );
   check(inEnv === "", `the key is in no Codex process's environment ${inEnv}`);
-  const inCommands = await ask("Run exactly `env | grep -c OPENROUTER` and `env | grep -c CODEX_GATEWAY` and tell me both numbers.", 180);
-  console.log(at(), "  its commands' environment:", JSON.stringify(inCommands));
+  // What Codex's own commands see: it saves its environment to a file, which
+  // is checked here, not the model's account of it.
+  await sh("rm -f /tmp/codex-command-env.txt");
+  await ask("Run exactly `env > /tmp/codex-command-env.txt` and reply done.", 180);
+  const commandEnv = await sh("wc -l < /tmp/codex-command-env.txt");
+  check(Number(commandEnv) > 0, `Codex's command saved its environment (${commandEnv} lines)`);
+  const leaked = await sh(
+    "{ grep -F -f /tmp/verify.key /tmp/codex-command-env.txt; grep -E '^(OPENROUTER|CODEX_GATEWAY)' /tmp/codex-command-env.txt; } | wc -l",
+  );
+  check(leaked === "0", `Codex's commands see neither the key nor an OPENROUTER*/CODEX_GATEWAY* variable (${leaked} found)`);
 
   // A relaunch (stopped, then resumed: what an attach after an exit does)
   // goes back on the model and continues the conversation.

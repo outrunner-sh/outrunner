@@ -351,6 +351,29 @@ func TestACodexSessionWithAKeyAndAGatewayIsOnBoth(t *testing.T) {
 	}
 }
 
+// A gateway-only session logs its home in with nothing, even if an OpenAI key
+// it no longer claims was left in its file: whether it logs in is the
+// session's facts' to say, not whatever file survived.
+func TestACodexSessionOnAGatewayAloneNeverLogsInWithAStaleKey(t *testing.T) {
+	t.Parallel()
+	s, _, id := codexSession(t, CreateInput{WorkspaceID: "ws-stale", Branch: "b", BaseBranch: "main"})
+	login := &loginRecorder{}
+	s.runCommand = login.run
+	ctx := context.Background()
+	if err := s.SetModel(ctx, id, ModelChoice{Model: "z-ai/glm-5.3", Gateway: claude.OpenRouter, Token: testGatewayKey2}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.authFiles().put(id, authEnvFile(AuthOpenAIAPIKey, testOpenAIKey)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Start(ctx, id, ""); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(login.calls) != 0 {
+		t.Errorf("logged in with a key the session doesn't claim: %+v", login.calls)
+	}
+}
+
 // A session recorded on the gateway whose key file is gone doesn't launch on
 // whatever the computer has.
 func TestACodexSessionWithoutItsGatewayKeyDoesntLaunch(t *testing.T) {
