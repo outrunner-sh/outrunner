@@ -80,6 +80,13 @@ export function onRuntimeComputer(provider: ProviderName): boolean {
   return provider === "daytona" || provider === "neev" || provider === "user-daytona" || provider === "user-modal";
 }
 
+/** Whether a session on `provider` can open a box's port in the browser (the
+ *  editor, previews): Daytona's signed preview links. Modal and Neev have
+ *  none, so the editor isn't offered there, nor started. */
+export function opensInBrowser(provider: ProviderName): boolean {
+  return provider === "daytona" || provider === "user-daytona";
+}
+
 export type Workspace = {
   id: string;
   projectId: string;

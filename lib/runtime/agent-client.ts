@@ -13,6 +13,7 @@ import {
   AnswerRequest,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
+  EditorResponse,
   ErrorResponse,
   LISTING_WORKSPACE_ID,
   RestoreWorkspaceRequest,
@@ -47,6 +48,9 @@ type FetchFn = typeof fetch;
  * no error to surface. Fail fast instead so callers can degrade or retry.
  */
 const AGENT_REQUEST_TIMEOUT_MS = 12_000;
+/** Opening the editor: the agent waits up to 15 seconds for it to come up
+ *  before saying it's still starting. */
+const EDITOR_TIMEOUT_MS = 25_000;
 
 /**
  * Archive/restore do real snapshot I/O on the box — the agent uploads or
@@ -123,6 +127,17 @@ export class AgentClient {
     return this.post(`/workspaces/${identity.workspaceId}/message`, identity, {
       content,
     });
+  }
+
+  /**
+   * Have the box's editor (code-server) running, and say where: its port and
+   * the session's folder. Null while it is still being installed or started
+   * (the first open on a box installs it): ask again shortly.
+   */
+  async openEditor(identity: WorkspaceIdentity): Promise<EditorResponse | null> {
+    const raw = await this.post(`/workspaces/${identity.workspaceId}/editor`, identity, undefined, EDITOR_TIMEOUT_MS);
+    if ((raw as { result?: unknown } | null)?.result === "starting") return null;
+    return EditorResponse.parse(raw);
   }
 
   /** Stop the turn the workspace's session is running, as Escape does in its

@@ -266,3 +266,23 @@ test("an agent from before /activity answers 404, as an AgentRequestError", asyn
     return true;
   });
 });
+
+test("openEditor says where the editor is, or null while it starts", async () => {
+  const answers = [
+    new Response(JSON.stringify({ result: "starting" }), { status: 202 }),
+    new Response(JSON.stringify({ port: 8443, folder: "/home/daytona/workspaces/ws-1" }), { status: 200 }),
+  ];
+  const urls: string[] = [];
+  const fakeFetch = (async (url: string) => {
+    urls.push(url);
+    return answers.shift()!;
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+
+  assert.equal(await client.openEditor(identity), null);
+  assert.deepEqual(await client.openEditor(identity), { port: 8443, folder: "/home/daytona/workspaces/ws-1" });
+  assert.deepEqual(urls, [
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/editor",
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/editor",
+  ]);
+});

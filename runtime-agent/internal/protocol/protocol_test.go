@@ -83,6 +83,8 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &WorkspaceSummary{})
 	case "Activity":
 		return json.Unmarshal(raw, &Activity{})
+	case "EditorResponse":
+		return json.Unmarshal(raw, &EditorResponse{})
 	case "ConversationMessage":
 		return json.Unmarshal(raw, &ConversationMessage{})
 	case "TokenUsage":
