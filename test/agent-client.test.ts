@@ -169,6 +169,31 @@ test("restoreWorkspace posts branch, sessionId, and download URLs", async () => 
   });
 });
 
+test("restoreWorkspace reports the worktree the agent rebuilt, and none from an older agent", async () => {
+  const restoreWith = async (answer: unknown) => {
+    const fakeFetch = (async () =>
+      new Response(JSON.stringify(answer), { status: 200 })) as unknown as typeof fetch;
+    return new AgentClient(target, fakeFetch).restoreWorkspace(identity, {
+      branch: "feat/x",
+      sessionId: "sess-1",
+      downloads: [
+        { artifact: "bundle", url: "https://storage.example/b" },
+        { artifact: "patch", url: "https://storage.example/p" },
+        { artifact: "conversation", url: "https://storage.example/c" },
+      ],
+    });
+  };
+  assert.deepEqual(
+    await restoreWith({ result: "ws-1", worktree: "/home/runtime/workspaces/ws-1" }),
+    { worktree: "/home/runtime/workspaces/ws-1" },
+  );
+  // An agent from before restores reported it.
+  assert.equal((await restoreWith({ result: "ws-1" })).worktree, undefined);
+  // Nothing the box says is saved as a folder unless it is one.
+  assert.equal((await restoreWith({ result: "ws-1", worktree: "" })).worktree, undefined);
+  assert.equal((await restoreWith({ result: "ws-1", worktree: 7 })).worktree, undefined);
+});
+
 test("restoreWorkspace rejects an invalid request body before calling the agent", async () => {
   let called = false;
   const fakeFetch = (async () => {

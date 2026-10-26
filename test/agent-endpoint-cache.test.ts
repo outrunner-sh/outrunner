@@ -103,3 +103,19 @@ test("forget drops a box's endpoint", async () => {
   await cache.get("daytona:a", load);
   assert.equal(calls(), 2);
 });
+
+test("endpoints of boxes no longer asked for are dropped once their lifetime is up", async () => {
+  // One box per session: most keys are never looked up again.
+  const { cache, load, advance } = setup();
+  for (let i = 0; i < 50; i++) await cache.get(`daytona:s${i}`, load);
+  assert.equal(cache.size, 50);
+  advance(500);
+  await cache.get("daytona:recent", load);
+  // None expired yet: all are kept.
+  assert.equal(cache.size, 51);
+  advance(500);
+  await cache.get("daytona:new", load);
+  // The fifty are past their lifetime; the recent one and the new one stay.
+  assert.equal(cache.size, 2);
+  assert.deepEqual(await cache.get("daytona:recent", load), endpoint(51));
+});

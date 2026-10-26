@@ -371,8 +371,9 @@ async function restoreDaytonaWorkspace(
     // Before the restore, which launches the session at once.
     await setUpSession(agent, identity, upgrade, owner.id, project.id);
     const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
-    await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, (credential) =>
-      agent.restoreWorkspace(identity, {
+    let restoredWorktree: string | undefined;
+    await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, async (credential) => {
+      const restored = await agent.restoreWorkspace(identity, {
         branch: workspace.branch,
         baseBranch: project.defaultBranch,
         sessionId: manifest.sessionId,
@@ -382,15 +383,19 @@ async function restoreDaytonaWorkspace(
         ...(model && { model }),
         ...(bundleRef && { bundleRef }),
         ...(manifest.origin && { originWorktree: manifest.origin.worktree }),
-      }),
-    );
+      });
+      restoredWorktree = restored.worktree;
+    });
 
     // Persist the (possibly new) box + session linkage now that the agent has
-    // rebuilt and verified the worktree.
+    // rebuilt and verified the worktree. Its path too, which a session
+    // imported from a Mac has none of; an older agent doesn't report it, and
+    // the one on record (if any) is kept.
     await updateWorkspace(workspace.id, {
       computerId: computer.id,
       tmuxSession: `ws-${workspace.id}`,
       agentWorkspaceId: workspace.id,
+      ...(restoredWorktree && { worktreePath: restoredWorktree }),
     });
     // One from before models were recorded now has one.
     if (restoreOn && !workspace.model) await recordWorkspaceModel(workspace.id, restoreOn);
