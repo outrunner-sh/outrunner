@@ -43,8 +43,10 @@ terminal. It signs the terminal in through the browser (`/cli-login`, PKCE, a
 token kept in `~/.outrunner/cli.json`), offers to connect their Claude
 subscription when Claude Code is on the computer (it runs `claude setup-token`
 under a PTY and saves the token), then continues onboarding in the browser.
-`outrunner login | claude | whoami | logout` do one step each; `--url` or
-`OUTRUNNER_URL` points it at another app.
+`outrunner login | claude | whoami | logout` do one step each; `claude` signs
+in first if needed and opens no tab after, so it's what onboarding's
+subscription page shows (with `--url` when the page isn't on the default app).
+`--url` or `OUTRUNNER_URL` points it at another app.
 
 The CLI is Go (`runtime-agent/cmd/outrunner`), shipped through npm like
 esbuild: the `outrunner` launcher (`cli-npm/`) and one `outrunner-<os>-<cpu>`

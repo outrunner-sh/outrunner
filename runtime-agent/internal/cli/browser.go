@@ -6,6 +6,10 @@ import (
 	"runtime"
 )
 
+// openBrowser is what the commands open URLs with: OpenBrowser, swapped for
+// a fake browser in tests.
+var openBrowser = OpenBrowser
+
 // OpenBrowser opens a URL in the user's browser. OUTRUNNER_NO_BROWSER=1
 // skips it (a remote shell, a test): the URL is printed either way.
 func OpenBrowser(url string) error {
