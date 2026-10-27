@@ -11,6 +11,10 @@ import (
 )
 
 func triageApp(t *testing.T, got *map[string]any) *httptest.Server {
+	return triageAppOrg(t, got, new(string))
+}
+
+func triageAppOrg(t *testing.T, got *map[string]any, org *string) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/triage/items" || r.Method != http.MethodPost {
@@ -21,6 +25,7 @@ func triageApp(t *testing.T, got *map[string]any) *httptest.Server {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		*org = r.URL.Query().Get("org")
 		_ = json.NewDecoder(r.Body).Decode(got)
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"key":"OR-7","url":"https://app/triage?item=x","created":true,"item":{"title":"Fix the flaky test"}}`))
@@ -81,5 +86,17 @@ func TestTriageNeedsTextAndASignIn(t *testing.T) {
 	}
 	if !strings.Contains(errs.String(), "outrunner login") {
 		t.Fatalf("said %q", errs.String())
+	}
+}
+
+func TestTriageNamesTheOrg(t *testing.T) {
+	var got map[string]any
+	var org string
+	server := triageAppOrg(t, &got, &org)
+	var out, errs bytes.Buffer
+	code := triage(context.Background(), server.URL, Config{Token: "good"},
+		[]string{"--org", "Acme Inc", "Fix it"}, terminal{interactive: true}, &out, &errs)
+	if code != 0 || org != "Acme Inc" {
+		t.Fatalf("exit %d, org %q: %s", code, org, errs.String())
 	}
 }

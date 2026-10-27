@@ -13,7 +13,8 @@ import { Spinner } from "@/components/ui/loaders";
 import { useNow } from "@/hooks/use-now";
 import { relativeTime } from "@/lib/nav/sidebar";
 import { groupWorkItems, tabCounts, tabOf, TRIAGE_TABS, type TriageTab } from "@/lib/triage/groups";
-import { itemKey, SOURCE_LABELS, STATUS_LABELS, type WorkItem } from "@/lib/triage/work-items";
+import type { AccessLevel } from "@/lib/orgs/access";
+import { itemKey, SOURCE_LABELS, STATUS_LABELS, type TriageItem } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,7 +29,11 @@ export function TriageView() {
   const capturing = search.get("new") === "1";
   const data = useAppData();
   const projects = data?.projects ?? [];
-  const [items, setItems] = useState<WorkItem[] | null>(null);
+  const [items, setItems] = useState<TriageItem[] | null>(null);
+  // The caller's level on each project, and on all of them: where they may
+  // move an item to.
+  const [levels, setLevels] = useState<Record<string, AccessLevel>>({});
+  const [orgLevel, setOrgLevel] = useState<AccessLevel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tabChoice, setTab] = useState<TriageTab | null>(null);
   const now = useNow(60_000);
@@ -36,9 +41,16 @@ export function TriageView() {
   const load = useCallback(async () => {
     try {
       const response = await fetch("/api/triage/items", { cache: "no-store" });
-      const body = (await response.json().catch(() => ({}))) as { items?: WorkItem[]; error?: string };
+      const body = (await response.json().catch(() => ({}))) as {
+        items?: TriageItem[];
+        projects?: Record<string, AccessLevel>;
+        orgLevel?: AccessLevel | null;
+        error?: string;
+      };
       if (!response.ok || !body.items) throw new Error(body.error ?? "Couldn't load triage.");
       setItems(body.items);
+      setLevels(body.projects ?? {});
+      setOrgLevel(body.orgLevel ?? null);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Couldn't load triage.");
@@ -175,6 +187,8 @@ export function TriageView() {
               key={selectedId}
               id={selectedId}
               projects={projects}
+              moveTargets={projects.filter((p) => levels[p.id] === "write")}
+              canUnsort={orgLevel === "write"}
               items={items ?? []}
               onChanged={changed}
             />

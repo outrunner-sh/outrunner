@@ -1,8 +1,8 @@
 import { after, NextResponse } from "next/server";
 
 import { isOwner } from "@/lib/auth/allowlist";
-import { slackLinkOwner } from "@/lib/db/slack-links";
-import { captureWorkItem, resolveProject } from "@/lib/db/work-items";
+import { slackLinkTarget } from "@/lib/db/slack-links";
+import { captureWorkItem, resolveProject, triageActor, WorkItemChangeError } from "@/lib/db/work-items";
 import { optionalEnv } from "@/lib/env";
 import {
   captureFromCommand,
@@ -16,6 +16,7 @@ import {
   verifySlackSignature,
 } from "@/lib/slack/slack";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import type { TriageActor } from "@/lib/triage/access";
 import { itemUrl } from "@/lib/triage/urls";
 import { itemKey } from "@/lib/triage/work-items";
 
@@ -135,28 +136,27 @@ async function captureReply(
   commandText?: string,
 ): Promise<Reply> {
   try {
-    const ownerId = await linkedOwner(identity);
-    if (!ownerId) {
+    const actor = await linkedActor(identity);
+    if (!actor) {
       const base = optionalEnv("RUNTIME_BASE_URL");
       if (!base) return ephemeral("Outrunner's address isn't configured, so your account can't be connected yet.");
       const link = new URL(`/slack/link?t=${signLinkToken(identity, secret)}`, base).toString();
       return ephemeral(
-        `Connect Slack to your Outrunner account first: <${link}|Connect Slack to Outrunner> (link valid for 10 minutes). Then try again.`,
+        `Connect Slack to your Outrunner account first: <${link}|Connect Slack to Outrunner> (link valid for 10 minutes; you'll sign in with Slack). Then try again.`,
       );
     }
-    const db = createSupabaseAdminClient();
     let projectId: string | null = null;
     let { title, body } = capture;
     if (capture.project) {
-      projectId = await resolveProject(db, ownerId, capture.project);
-      // Not a workspace of theirs: it was part of what they wrote.
+      projectId = await resolveProject(actor, capture.project);
+      // Not a workspace of the org they can see: it was part of what they wrote.
       if (!projectId && commandText !== undefined) {
         const whole = captureFromCommand(`${capture.project} ${commandText}`, { channelName: null, userName: null });
         title = whole.title;
         body = whole.body;
       }
     }
-    const result = await captureWorkItem(db, ownerId, {
+    const result = await captureWorkItem(actor, {
       title,
       body,
       projectId,
@@ -174,18 +174,20 @@ async function captureReply(
           : `Added a note to ${link} (same thread).`,
     );
   } catch (error) {
+    if (error instanceof WorkItemChangeError) return ephemeral(error.message);
     console.error("Slack: couldn't capture to triage", error);
     return ephemeral("Couldn't add that to Outrunner triage. Please try again.");
   }
 }
 
-/** The Outrunner owner a Slack user is linked to, while they may still sign in. */
-async function linkedOwner(identity: SlackIdentity): Promise<string | null> {
-  const ownerId = await slackLinkOwner(identity.teamId, identity.userId);
-  if (!ownerId) return null;
-  const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(ownerId);
+/** The Slack user's linked account as a triager in the org their captures
+ *  go to, while they may still sign in and are still in that org. */
+async function linkedActor(identity: SlackIdentity): Promise<TriageActor | null> {
+  const target = await slackLinkTarget(identity.teamId, identity.userId);
+  if (!target) return null;
+  const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(target.ownerId);
   if (error || !data.user || !isOwner(data.user)) return null;
-  return ownerId;
+  return triageActor(target.ownerId, target.orgId);
 }
 
 /** What Slack would read as markup in a link's label. */

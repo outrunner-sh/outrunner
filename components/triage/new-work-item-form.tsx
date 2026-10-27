@@ -6,7 +6,7 @@ import { WorkspaceSelect } from "@/components/triage/workspace-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { WorkItem } from "@/lib/triage/work-items";
+import type { TriageItem } from "@/lib/triage/work-items";
 
 /**
  * Capture a work item (⌘I): a title, which workspace if known, and Markdown.
@@ -18,7 +18,7 @@ export function NewWorkItemForm({
   onCancel,
 }: {
   projects: { id: string; fullName: string }[];
-  onCreated: (item: WorkItem) => void;
+  onCreated: (item: TriageItem) => void;
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState("");
@@ -38,7 +38,7 @@ export function NewWorkItemForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, body, project: projectId }),
       });
-      const result = (await response.json().catch(() => ({}))) as { item?: WorkItem; error?: string };
+      const result = (await response.json().catch(() => ({}))) as { item?: TriageItem; error?: string };
       if (!response.ok || !result.item) throw new Error(result.error ?? "Couldn't add the item.");
       onCreated(result.item);
     } catch (saveError) {

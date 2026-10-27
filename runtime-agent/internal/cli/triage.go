@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -31,10 +32,15 @@ type NewTriageItem struct {
 	Source  string `json:"source"`
 }
 
-// CaptureTriage adds a work item to the signed-in user's triage.
-func CaptureTriage(ctx context.Context, client *http.Client, base, token string, item NewTriageItem) (TriageItem, error) {
+// CaptureTriage adds a work item to an org's triage: the one org names (its
+// name or id), else the signed-in user's personal org.
+func CaptureTriage(ctx context.Context, client *http.Client, base, token, org string, item NewTriageItem) (TriageItem, error) {
 	body, _ := json.Marshal(item)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, appURL(base, "/api/triage/items"), bytes.NewReader(body))
+	path := "/api/triage/items"
+	if org != "" {
+		path += "?org=" + url.QueryEscape(org)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, appURL(base, path), bytes.NewReader(body))
 	if err != nil {
 		return TriageItem{}, err
 	}
@@ -44,20 +50,22 @@ func CaptureTriage(ctx context.Context, client *http.Client, base, token string,
 	return answer, do(httpClient(client), req, &answer)
 }
 
-const triageUsage = `Usage: outrunner triage [--repo owner/name] [--title <title>] <text…>
+const triageUsage = `Usage: outrunner triage [--org <name>] [--repo owner/name] [--title <title>] <text…>
 
-Adds a work item to your Outrunner triage. The text is its Markdown; with no
---title, its first line is the title. With no text, it's read from stdin:
+Adds a work item to an org's Outrunner triage: your personal org's, or the
+one --org names. The text is its Markdown; with no --title, its first line
+is the title. With no text, it's read from stdin:
 
   git log -1 --format=%B | outrunner triage --repo acme/web
 `
 
 // triage is `outrunner triage`: the args after the command name.
 // Piped text comes from in: the run's one reader of stdin.
-func triage(ctx context.Context, url string, config Config, args []string, in terminal, stdout, stderr io.Writer) int {
+func triage(ctx context.Context, base string, config Config, args []string, in terminal, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("outrunner triage", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() { fmt.Fprint(stderr, triageUsage) }
+	org := flags.String("org", "", "the org (its name) whose triage it goes to; none is your personal org")
 	repo := flags.String("repo", "", "the workspace (owner/name) it belongs to; none is Unsorted")
 	title := flags.String("title", "", "its title; none is the text's first line")
 	if err := flags.Parse(args); err != nil {
@@ -83,7 +91,7 @@ func triage(ctx context.Context, url string, config Config, args []string, in te
 		return 1
 	}
 
-	item, err := CaptureTriage(ctx, nil, url, config.Token, NewTriageItem{
+	item, err := CaptureTriage(ctx, nil, base, config.Token, strings.TrimSpace(*org), NewTriageItem{
 		Title:   strings.TrimSpace(*title),
 		Body:    text,
 		Project: strings.TrimSpace(*repo),

@@ -59,11 +59,13 @@ cd runtime-agent && go run ./cmd/outrunner --url http://localhost:3000
 
 ## Triage
 
-Work items live in Outrunner (`/triage`, ⌘I), not in another tracker. Each
-item has a Markdown body, a feed of notes, and a workspace (a repository), or
-none yet: Unsorted. Items come from the app, from Slack (a message shortcut
+Work items live in Outrunner (`/triage`, ⌘I), not in another tracker. They
+are the org's, numbered per org, and follow its Roles & access: read on a
+repository sees its items and starts sessions from them; write triages them.
+Each item has a Markdown body, a feed of notes, and a workspace (a
+repository), or none yet: Unsorted. Items come from the app, from Slack (a message shortcut
 and `/triage`, see [`docs/slack-app.md`](docs/slack-app.md)), and from the CLI
-or a script (`POST /api/triage/items` with a CLI token). An item is accepted,
+or a script (`POST /api/triage/items?org=<name>` with a CLI token). An item is accepted,
 declined or marked a duplicate. **Start session** opens a session on the
 item's workspace with the item as its first prompt, and marks the item in
 progress.

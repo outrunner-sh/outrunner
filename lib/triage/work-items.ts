@@ -54,6 +54,13 @@ export type WorkItem = {
   updatedAt: string;
 };
 
+/** An item as the triage routes answer with it: what the asker may do with
+ *  it (lib/triage/access.ts), and whether its session is theirs to open. */
+export type TriageItem = WorkItem & {
+  can: { triage: boolean; contribute: boolean };
+  ownSession?: boolean;
+};
+
 export type WorkItemNote = {
   id: string;
   itemId: string;

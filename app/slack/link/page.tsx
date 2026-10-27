@@ -1,14 +1,16 @@
-import { confirmSlackLink } from "@/app/slack/link/actions";
-import { ConfirmButton } from "@/app/slack/link/confirm-button";
+import { startSlackLink } from "@/app/slack/link/actions";
+import { ContinueButton } from "@/app/slack/link/continue-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { optionalEnv } from "@/lib/env";
+import { getOrgContext } from "@/lib/orgs/server";
 import { verifyLinkToken } from "@/lib/slack/slack";
+import { slackSignInConfig } from "@/lib/slack/sign-in";
 
 /**
  * Where the Slack app's "Connect Slack to Outrunner" reply sends a user who
  * isn't linked yet. The proxy has already sent a signed-out visitor through
- * sign-in and back here, so this only asks the signed-in user to confirm the
- * Slack user the link names is them.
+ * sign-in and back here. The user picks the org their captures go to, then
+ * signs in with Slack as the Slack user the link names, which finishes it.
  */
 export default async function SlackLinkPage({
   searchParams,
@@ -19,6 +21,8 @@ export default async function SlackLinkPage({
   const token = typeof t === "string" ? t : "";
   const identity = verifyLinkToken(token, optionalEnv("SLACK_SIGNING_SECRET") ?? "");
   const owner = await getOwnerSafe();
+  const orgs = owner ? await getOrgContext().catch(() => null) : null;
+  const ready = slackSignInConfig() !== null;
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6">
@@ -38,10 +42,23 @@ export default async function SlackLinkPage({
             <h1 className="text-sm">Sign in to Outrunner first.</h1>
             <p className="text-xs text-muted-foreground">Then open the link from Slack again.</p>
           </div>
+        ) : !ready ? (
+          <div className="space-y-2">
+            <h1 className="text-sm">Sign in with Slack isn&apos;t set up on this deployment.</h1>
+            <p className="text-xs text-muted-foreground">
+              Its admin sets <code className="font-mono">SLACK_CLIENT_ID</code> and{" "}
+              <code className="font-mono">SLACK_CLIENT_SECRET</code>: see{" "}
+              <code className="font-mono">docs/slack-app.md</code>.
+            </p>
+          </div>
+        ) : !orgs ? (
+          <div className="space-y-2">
+            <h1 className="text-sm">You aren&apos;t in an org yet.</h1>
+          </div>
         ) : (
-          <form action={confirmSlackLink} className="space-y-6">
-            <div className="space-y-2">
-              <h1 className="text-sm">Connect Slack to Outrunner?</h1>
+          <form action={startSlackLink} className="space-y-6">
+            <div className="space-y-3">
+              <h1 className="text-sm">Connect Slack to Outrunner</h1>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
                 <dt className="text-muted-foreground">Slack user</dt>
                 <dd className="font-mono">{identity.userName ? `@${identity.userName}` : identity.userId}</dd>
@@ -50,13 +67,29 @@ export default async function SlackLinkPage({
                 <dt className="text-muted-foreground">Outrunner</dt>
                 <dd className="font-mono">{owner.githubLogin}</dd>
               </dl>
+              <label className="block space-y-1 text-xs">
+                <span className="text-muted-foreground">Send captures to</span>
+                <select
+                  name="org"
+                  defaultValue={orgs.active.id}
+                  className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30"
+                >
+                  {orgs.orgs.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                      {org.personal ? " (personal)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <p className="text-xs text-muted-foreground">
-                What this Slack user sends to triage will land in your triage. Only confirm if you just asked for
-                this link in Slack yourself.
+                Next, sign in with Slack as{" "}
+                {identity.userName ? <span className="font-mono">@{identity.userName}</span> : "that Slack user"}.
+                It finishes only if it&apos;s you.
               </p>
             </div>
             <input type="hidden" name="t" value={token} />
-            <ConfirmButton />
+            <ContinueButton />
           </form>
         )}
       </div>

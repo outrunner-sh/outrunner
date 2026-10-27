@@ -16,12 +16,13 @@ import {
   itemKey,
   SOURCE_LABELS,
   STATUS_LABELS,
+  type TriageItem,
   type WorkItem,
   type WorkItemNote,
   type WorkItemPatch,
 } from "@/lib/triage/work-items";
 
-type Loaded = { item: WorkItem; notes: WorkItemNote[] };
+type Loaded = { item: TriageItem; notes: WorkItemNote[] };
 
 /**
  * One work item: its title and Markdown body (both editable), the workspace
@@ -31,11 +32,17 @@ type Loaded = { item: WorkItem; notes: WorkItemNote[] };
 export function WorkItemDetail({
   id,
   projects,
+  moveTargets,
+  canUnsort,
   items,
   onChanged,
 }: {
   id: string;
   projects: { id: string; fullName: string }[];
+  /** The workspaces the user may move items to (write on them). */
+  moveTargets: { id: string; fullName: string }[];
+  /** Whether they may move items to Unsorted (write on all projects). */
+  canUnsort: boolean;
   /** The list, to pick what this one duplicates from. */
   items: WorkItem[];
   onChanged: () => void;
@@ -75,10 +82,12 @@ export function WorkItemDetail({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
-      const body = (await response.json().catch(() => ({}))) as { item?: WorkItem; error?: string };
+      const body = (await response.json().catch(() => ({}))) as { item?: TriageItem; error?: string };
       if (!response.ok || !body.item) throw new Error(body.error ?? "Couldn't change the item.");
       const item = body.item;
-      setLoaded((current) => (current ? { ...current, item } : current));
+      setLoaded((current) =>
+        current ? { ...current, item: { ...item, ownSession: current.item.ownSession } } : current,
+      );
       onChanged();
       return true;
     } catch (updateError) {
@@ -126,13 +135,20 @@ export function WorkItemDetail({
         </span>
       </div>
 
-      <TitleField key={item.title} title={item.title} disabled={busy} onSave={(title) => update({ title })} />
+      <TitleField
+        key={item.title}
+        title={item.title}
+        disabled={busy || !item.can.triage}
+        onSave={(title) => update({ title })}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <WorkspaceSelect
-          projects={projects}
+          // Its own workspace is named even where the user can't move items to it.
+          projects={item.can.triage ? withCurrent(moveTargets, projects, item.projectId) : projects}
           value={item.projectId}
-          disabled={busy}
+          disabled={busy || !item.can.triage}
+          allowUnsorted={canUnsort}
           onChange={(projectId) => void update({ projectId })}
         />
         <Actions item={item} items={items} busy={busy} update={update} />
@@ -148,7 +164,20 @@ export function WorkItemDetail({
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      <BodyField key={item.body} body={item.body} disabled={busy} onSave={(body) => update({ body })} />
+      {!item.can.triage && (
+        <p className="text-xs text-muted-foreground">
+          You can see this item, add notes and start a session from it. Triaging it needs write on{" "}
+          {item.projectId ? "its workspace" : "all of the org's workspaces"} (Settings → Roles &amp; access).
+        </p>
+      )}
+
+      <BodyField
+        key={item.body}
+        body={item.body}
+        disabled={busy}
+        editable={item.can.triage}
+        onSave={(body) => update({ body })}
+      />
 
       <Notes
         itemId={item.id}
@@ -163,6 +192,16 @@ export function WorkItemDetail({
   );
 }
 
+/** `targets`, with the workspace the item is in added when it isn't one. */
+function withCurrent(
+  targets: { id: string; fullName: string }[],
+  all: { id: string; fullName: string }[],
+  current: string | null,
+): { id: string; fullName: string }[] {
+  if (!current || targets.some((t) => t.id === current)) return targets;
+  return [...all.filter((p) => p.id === current), ...targets];
+}
+
 /** What can be done with the item from where it stands. */
 function Actions({
   item,
@@ -170,7 +209,7 @@ function Actions({
   busy,
   update,
 }: {
-  item: WorkItem;
+  item: TriageItem;
   items: WorkItem[];
   busy: boolean;
   update: (patch: WorkItemPatch) => Promise<boolean>;
@@ -191,6 +230,21 @@ function Actions({
       Start session
     </Button>
   );
+
+  // A session's page is its starter's alone: others start their own.
+  const openOwn =
+    item.workspaceId && item.ownSession ? (
+      <Button asChild size="sm" variant="outline">
+        <Link href={`/workspaces/${item.workspaceId}`}>
+          <ArrowUpRight />
+          Open session
+        </Link>
+      </Button>
+    ) : null;
+
+  // Seen but not triaged by this user: they may still start a session on an
+  // accepted one.
+  if (!item.can.triage) return isOpen(item.status) && item.status !== "triage" ? (openOwn ?? start) : null;
 
   if (pickingDuplicate) {
     const candidates = items.filter((other) => other.id !== item.id && isOpen(other.status));
@@ -255,16 +309,7 @@ function Actions({
     case "in_progress":
       return (
         <>
-          {item.workspaceId ? (
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/workspaces/${item.workspaceId}`}>
-                <ArrowUpRight />
-                Open session
-              </Link>
-            </Button>
-          ) : (
-            start
-          )}
+          {openOwn ?? start}
           <Button size="sm" disabled={busy} onClick={() => void update({ status: "done" })}>
             <Check />
             Done
@@ -321,10 +366,13 @@ function TitleField({
 function BodyField({
   body,
   disabled,
+  editable,
   onSave,
 }: {
   body: string;
   disabled: boolean;
+  /** False shows it only: editing needs triage rights. */
+  editable: boolean;
   onSave: (body: string) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -382,16 +430,18 @@ function BodyField({
       ) : (
         <p className="text-sm text-muted-foreground">No description.</p>
       )}
-      <Button
-        size="xs"
-        variant="ghost"
-        onClick={() => setEditing(true)}
-        className="mt-2 text-muted-foreground"
-        aria-label="Edit description"
-      >
-        <Pencil />
-        Edit
-      </Button>
+      {editable && (
+        <Button
+          size="xs"
+          variant="ghost"
+          onClick={() => setEditing(true)}
+          className="mt-2 text-muted-foreground"
+          aria-label="Edit description"
+        >
+          <Pencil />
+          Edit
+        </Button>
+      )}
     </div>
   );
 }

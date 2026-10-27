@@ -9,6 +9,10 @@ import {
   type MessageAction,
   parseTriageCommand,
   signLinkToken,
+  signSignInState,
+  slackAuthorizeUrl,
+  slackSignInMatches,
+  verifySignInState,
   slackPermalink,
   slackToMarkdown,
   verifyLinkToken,
@@ -98,4 +102,50 @@ test("replies go only to Slack's own hosts", () => {
   assert.equal(isSlackResponseUrl("https://evil.com/hooks.slack.com"), false);
   assert.equal(isSlackResponseUrl("http://hooks.slack.com/x"), false);
   assert.equal(isSlackResponseUrl(null), false);
+});
+
+test("the sign-in's state carries the link, org, user and nonce, signed apart from link tokens", () => {
+  const state = { link: "l.x", orgId: "o", ownerId: "w", nonce: "n" };
+  const signed = signSignInState(state, secret, 1000);
+  assert.deepEqual(verifySignInState(signed, secret, 2000), state);
+  assert.equal(verifySignInState(signed, secret, 1000 + 10 * 60 * 1000 + 1), null);
+  assert.equal(verifySignInState(signed, "other", 2000), null);
+  // A link token is no state, and a state no link token.
+  const link = signLinkToken({ teamId: "T1", teamName: null, userId: "U1", userName: null }, secret, 1000);
+  assert.equal(verifySignInState(link, secret, 2000), null);
+  assert.equal(verifyLinkToken(signed, secret, 2000), null);
+});
+
+test("Slack's sign-in page is asked for openid, in the link's workspace", () => {
+  const url = new URL(
+    slackAuthorizeUrl({ clientId: "c", redirectUri: "https://app/cb", state: "s", nonce: "n", teamId: "T1" }),
+  );
+  assert.equal(url.origin + url.pathname, "https://slack.com/openid/connect/authorize");
+  assert.deepEqual(
+    ["response_type", "scope", "client_id", "redirect_uri", "state", "nonce", "team"].map((k) => url.searchParams.get(k)),
+    ["code", "openid", "c", "https://app/cb", "s", "n", "T1"],
+  );
+});
+
+test("the sign-in links only the Slack user the link names, for this app and this sign-in", () => {
+  const identity = { teamId: "T1", teamName: null, userId: "U1", userName: null };
+  const token = (claims: Record<string, unknown>) =>
+    `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
+  const good = {
+    iss: "https://slack.com",
+    aud: "c",
+    nonce: "n",
+    exp: 2000,
+    "https://slack.com/user_id": "U1",
+    "https://slack.com/team_id": "T1",
+  };
+  const expected = { clientId: "c", nonce: "n", identity };
+  assert.equal(slackSignInMatches(token(good), expected, 1000), true);
+  assert.equal(slackSignInMatches(token({ ...good, "https://slack.com/user_id": "U2" }), expected, 1000), false);
+  assert.equal(slackSignInMatches(token({ ...good, "https://slack.com/team_id": "T2" }), expected, 1000), false);
+  assert.equal(slackSignInMatches(token({ ...good, aud: "other" }), expected, 1000), false);
+  assert.equal(slackSignInMatches(token({ ...good, nonce: "x" }), expected, 1000), false);
+  assert.equal(slackSignInMatches(token({ ...good, iss: "https://evil.com" }), expected, 1000), false);
+  assert.equal(slackSignInMatches(token(good), expected, 3000), false);
+  assert.equal(slackSignInMatches("garbage", expected, 1000), false);
 });

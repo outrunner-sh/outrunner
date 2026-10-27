@@ -6,12 +6,11 @@ import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
-import { countTriage } from "@/lib/db/work-items";
+import { countTriage, triageActor } from "@/lib/db/work-items";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import { getOrgContext } from "@/lib/orgs/server";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 /**
  * Every app page (home, new session, a cloud or local session) under one
@@ -93,7 +92,8 @@ async function SidebarData() {
       console.error("Sidebar: could not load pull requests", error);
       return [];
     }),
-    countTriage(await createSupabaseServerClient(), owner.id).catch((error: unknown): number => {
+    // What waits in the active org's triage that the user may see.
+    (orgId ? triageActor(owner.id, orgId).then((actor) => (actor ? countTriage(actor) : 0)) : Promise.resolve(0)).catch((error: unknown): number => {
       console.error("Sidebar: could not count triage", error);
       return 0;
     }),

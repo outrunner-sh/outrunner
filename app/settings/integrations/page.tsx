@@ -8,6 +8,16 @@ import { getOwnerSafe } from "@/lib/auth/owner";
 import { listSlackLinks, type SlackLink } from "@/lib/db/slack-links";
 import { optionalEnv } from "@/lib/env";
 
+/** How the last Sign in with Slack ended (app/api/integrations/slack/oauth). */
+const SLACK_RESULTS: Record<string, string> = {
+  linked: "Slack connected. Try the shortcut again.",
+  mismatch: "You signed in to Slack as someone other than the Slack user the link was for. Nothing was connected.",
+  expired: "That link expired or was opened elsewhere. Run /triage in Slack for a new one.",
+  cancelled: "Slack sign-in was cancelled.",
+  failed: "Slack didn't finish the sign-in. Please try again.",
+  unavailable: "Sign in with Slack isn't set up on this deployment.",
+};
+
 /** Integrations: where triage captures come from — Slack, and the CLI. */
 export default function IntegrationsSettings({
   searchParams,
@@ -49,7 +59,7 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
         ) : links.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             Not connected. Use the shortcut or <code className="font-mono">/triage</code> once in Slack: the reply has
-            a link that connects your Slack user here.
+            a link where you pick the org and sign in with Slack to connect.
           </p>
         ) : (
           <ul className="divide-y divide-border/60 rounded-md border border-border/60">
@@ -57,7 +67,10 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
               <li key={`${link.teamId}/${link.userId}`} className="flex items-center justify-between gap-3 px-3 py-2">
                 <div className="text-sm">
                   <span className="font-mono">{link.userName ? `@${link.userName}` : link.userId}</span>
-                  <span className="text-muted-foreground"> in {link.teamName ?? link.teamId}</span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    in {link.teamName ?? link.teamId} → {link.orgName ?? "an org"}&apos;s triage
+                  </span>
                 </div>
                 <form action={unlinkSlack}>
                   <input type="hidden" name="team" value={link.teamId} />
@@ -70,15 +83,20 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
             ))}
           </ul>
         )}
-        {slack === "linked" && <p className="text-xs text-foreground">Slack connected. Try the shortcut again.</p>}
+        {slack && SLACK_RESULTS[slack] && (
+          <p className={slack === "linked" ? "text-xs text-foreground" : "text-xs text-destructive"}>
+            {SLACK_RESULTS[slack]}
+          </p>
+        )}
       </div>
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-foreground">Terminal</h2>
         <p className="text-sm text-muted-foreground">
           After <code className="font-mono">outrunner login</code>, capture from the terminal with{" "}
-          <code className="font-mono">outrunner triage &quot;fix the flaky login test&quot;</code>. Scripts can post
-          to <code className="font-mono">/api/triage/items</code> with the same token.
+          <code className="font-mono">outrunner triage &quot;fix the flaky login test&quot;</code>. It goes to your
+          personal org&apos;s triage unless you pass <code className="font-mono">--org &lt;name&gt;</code>. Scripts can
+          post to <code className="font-mono">/api/triage/items?org=&lt;name&gt;</code> with the same token.
         </p>
       </div>
     </section>

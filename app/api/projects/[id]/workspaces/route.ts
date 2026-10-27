@@ -26,8 +26,7 @@ import {
   transitionWorkspace,
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
-import { linkWorkItemToSession } from "@/lib/db/work-items";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
@@ -333,10 +332,14 @@ export async function POST(request: Request, context: RouteContext) {
   // Started from a triage item: the item is in progress, on this session. The
   // session starts either way; the item is only bookkeeping.
   if (typeof body.workItemId === "string" && body.workItemId) {
-    await linkWorkItemToSession(await createSupabaseServerClient(), owner.id, body.workItemId, {
-      workspaceId: workspace.id,
-      projectId: project.id,
-    }).catch((error: unknown) => console.error("Couldn't link the triage item to its session", error));
+    const workItemId = body.workItemId;
+    // As a triager in the project's org: an item of another org is no item.
+    await projectOrgId(project.id)
+      .then((orgId) => (orgId ? triageActor(owner.id, orgId) : null))
+      .then((actor) =>
+        actor ? linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id }) : undefined,
+      )
+      .catch((error: unknown) => console.error("Couldn't link the triage item to its session", error));
   }
 
   // The session opens now, on its setup progress, and its box is set up after

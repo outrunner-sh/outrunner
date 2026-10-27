@@ -6,7 +6,8 @@ import { parseNoteBody, type WorkItemSource } from "@/lib/triage/work-items";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** Add a note (Markdown) to an item: from the app, or with a CLI token. */
+/** Add a note (Markdown) to an item the caller may see: from the app, or
+ *  with a CLI token. */
 export async function POST(request: Request, context: RouteContext) {
   const caller = await triageCaller(request, { allowToken: true });
   if (caller instanceof NextResponse) return caller;
@@ -20,8 +21,8 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const item = await getWorkItem(caller.db, caller.owner.id, id);
+  const item = await getWorkItem(caller.actor, id);
   if (!item) return NextResponse.json({ error: "Item not found." }, { status: 404 });
-  const note = await addNote(caller.db, caller.owner.id, item.id, { body, source: source as WorkItemSource });
+  const note = await addNote(caller.actor, item, { body, source: source as WorkItemSource });
   return NextResponse.json({ note }, { status: 201 });
 }

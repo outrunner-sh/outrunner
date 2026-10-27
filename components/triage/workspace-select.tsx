@@ -9,12 +9,16 @@ export function WorkspaceSelect({
   value,
   onChange,
   disabled = false,
+  allowUnsorted = true,
   className,
 }: {
   projects: { id: string; fullName: string }[];
   value: string | null;
   onChange: (projectId: string | null) => void;
   disabled?: boolean;
+  /** Whether Unsorted may be picked (moving an item there needs write on
+   *  all projects). */
+  allowUnsorted?: boolean;
   className?: string;
 }) {
   // One the list no longer has still shows as chosen rather than as Unsorted.
@@ -30,7 +34,9 @@ export function WorkspaceSelect({
         className,
       )}
     >
-      <option value="">Unsorted</option>
+      <option value="" disabled={!allowUnsorted && value !== null}>
+        Unsorted
+      </option>
       {!known && value && <option value={value}>Workspace</option>}
       {projects.map((project) => (
         <option key={project.id} value={project.id}>

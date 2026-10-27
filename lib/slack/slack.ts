@@ -48,53 +48,146 @@ export const LINK_TTL_MS = 10 * 60 * 1000;
 
 const ID_PATTERN = /^[A-Z0-9]{2,32}$/;
 
-function linkSignature(payload: string, secret: string): string {
-  return createHmac("sha256", secret).update(`slack-link:${payload}`).digest("base64url");
+/** A signed, expiring payload: `<base64url json>.<hmac>`, the HMAC keyed by
+ *  the app's signing secret and the payload's kind, so one kind can't pass
+ *  for another. */
+function signPayload(kind: string, data: Record<string, unknown>, secret: string): string {
+  const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
+  return `${payload}.${createHmac("sha256", secret).update(`${kind}:${payload}`).digest("base64url")}`;
+}
+
+/** The payload {@link signPayload} signed, or null for a forged, broken or
+ *  expired one (`exp`, in ms). */
+function verifyPayload(kind: string, token: unknown, secret: string, now: number): Record<string, unknown> | null {
+  if (!secret || typeof token !== "string" || token.length > 4000) return null;
+  const [payload, signature, extra] = token.split(".");
+  if (!payload || !signature || extra !== undefined) return null;
+  const given = Buffer.from(signature);
+  const wanted = Buffer.from(createHmac("sha256", secret).update(`${kind}:${payload}`).digest("base64url"));
+  if (given.length !== wanted.length || !timingSafeEqual(given, wanted)) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  return typeof record.exp === "number" && record.exp >= now ? record : null;
 }
 
 /**
- * The token in the link that connects a Slack user to whoever opens it signed
- * in. Signed with the app's signing secret, so only a reply from this endpoint
- * (shown to that Slack user alone) can have made one, and it expires.
+ * The token in the link Slack hands a user who isn't linked yet. Signed with
+ * the app's signing secret, so only a reply from this endpoint can have made
+ * one, and it expires. It only starts linking: the user then signs in with
+ * Slack as the Slack user it names ({@link slackSignInMatches}), so a link
+ * forwarded to someone else links no one.
  */
 export function signLinkToken(identity: SlackIdentity, secret: string, now = Date.now()): string {
-  const payload = Buffer.from(
-    JSON.stringify({
-      t: identity.teamId,
-      tn: identity.teamName,
-      u: identity.userId,
-      un: identity.userName,
-      exp: now + LINK_TTL_MS,
-    }),
-  ).toString("base64url");
-  return `${payload}.${linkSignature(payload, secret)}`;
+  return signPayload(
+    "slack-link",
+    { t: identity.teamId, tn: identity.teamName, u: identity.userId, un: identity.userName, exp: now + LINK_TTL_MS },
+    secret,
+  );
 }
 
 /** The identity a link's token names, or null for a forged, broken or
  *  expired one. */
 export function verifyLinkToken(token: string, secret: string, now = Date.now()): SlackIdentity | null {
-  if (!secret || typeof token !== "string" || token.length > 2000) return null;
-  const [payload, signature, extra] = token.split(".");
-  if (!payload || !signature || extra !== undefined) return null;
-  const given = Buffer.from(signature);
-  const wanted = Buffer.from(linkSignature(payload, secret));
-  if (given.length !== wanted.length || !timingSafeEqual(given, wanted)) return null;
-  let raw: unknown;
-  try {
-    raw = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
-  const data = raw as { t?: unknown; tn?: unknown; u?: unknown; un?: unknown; exp?: unknown };
+  const data = verifyPayload("slack-link", token, secret, now);
+  if (!data) return null;
   if (typeof data.t !== "string" || !ID_PATTERN.test(data.t)) return null;
   if (typeof data.u !== "string" || !ID_PATTERN.test(data.u)) return null;
-  if (typeof data.exp !== "number" || data.exp < now) return null;
   return {
     teamId: data.t,
     teamName: typeof data.tn === "string" ? data.tn.slice(0, 200) : null,
     userId: data.u,
     userName: typeof data.un === "string" ? data.un.slice(0, 200) : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Sign in with Slack (OpenID Connect), which proves the person linking is the
+// Slack user the link names.
+// ---------------------------------------------------------------------------
+
+/** What the sign-in carries through Slack and back (its `state`): the link,
+ *  the org picked, who started it, and a nonce the browser holds too. */
+export type SlackSignInState = {
+  link: string;
+  orgId: string;
+  ownerId: string;
+  nonce: string;
+};
+
+export function signSignInState(state: SlackSignInState, secret: string, now = Date.now()): string {
+  return signPayload(
+    "slack-signin",
+    { l: state.link, o: state.orgId, w: state.ownerId, n: state.nonce, exp: now + LINK_TTL_MS },
+    secret,
+  );
+}
+
+export function verifySignInState(token: unknown, secret: string, now = Date.now()): SlackSignInState | null {
+  const data = verifyPayload("slack-signin", token, secret, now);
+  if (!data) return null;
+  const { l, o, w, n } = data;
+  if (typeof l !== "string" || typeof o !== "string" || typeof w !== "string" || typeof n !== "string") return null;
+  return { link: l, orgId: o, ownerId: w, nonce: n };
+}
+
+/** Slack's sign-in page, for the workspace the link is from. */
+export function slackAuthorizeUrl(input: {
+  clientId: string;
+  redirectUri: string;
+  state: string;
+  nonce: string;
+  teamId: string;
+}): string {
+  const query = new URLSearchParams({
+    response_type: "code",
+    scope: "openid",
+    client_id: input.clientId,
+    redirect_uri: input.redirectUri,
+    state: input.state,
+    nonce: input.nonce,
+    team: input.teamId,
+  });
+  return `https://slack.com/openid/connect/authorize?${query}`;
+}
+
+/**
+ * Whether the ID token Slack's token endpoint returned says the person who
+ * signed in is the Slack user the link names: issued by Slack, for this app,
+ * for this sign-in (the nonce), as that user in that workspace. Read without
+ * checking its signature: it came straight from Slack over TLS, in exchange
+ * for the app's secret (OpenID Connect Core 3.1.3.7).
+ */
+export function slackSignInMatches(
+  idToken: unknown,
+  expected: { clientId: string; nonce: string; identity: SlackIdentity },
+  nowSeconds = Math.floor(Date.now() / 1000),
+): boolean {
+  if (typeof idToken !== "string") return false;
+  const [, payload] = idToken.split(".");
+  if (!payload) return false;
+  let claims: Record<string, unknown>;
+  try {
+    claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  const audience = claims.aud;
+  const forApp = Array.isArray(audience) ? audience.includes(expected.clientId) : audience === expected.clientId;
+  return (
+    claims.iss === "https://slack.com" &&
+    forApp &&
+    claims.nonce === expected.nonce &&
+    typeof claims.exp === "number" &&
+    claims.exp >= nowSeconds &&
+    claims["https://slack.com/user_id"] === expected.identity.userId &&
+    claims["https://slack.com/team_id"] === expected.identity.teamId
+  );
 }
 
 /**

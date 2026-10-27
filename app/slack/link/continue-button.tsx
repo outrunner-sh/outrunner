@@ -4,14 +4,14 @@ import { useFormStatus } from "react-dom";
 
 import { LoadingButton } from "@/components/ui/loading-button";
 
-/** Submits the confirmation form it sits in. */
-export function ConfirmButton() {
+/** Submits the form it sits in, until the browser goes to Slack. */
+export function ContinueButton() {
   const { pending } = useFormStatus();
   return (
     <LoadingButton
       type="submit"
       status={pending ? "pending" : "idle"}
-      labels={{ idle: "Connect Slack", pending: "Connecting" }}
+      labels={{ idle: "Continue with Slack", pending: "Opening Slack" }}
     />
   );
 }

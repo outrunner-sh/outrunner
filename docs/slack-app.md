@@ -37,9 +37,13 @@ are built from the payload.
          usage_hint: "[owner/repo] what needs doing"
          should_escape: false
    oauth_config:
+     redirect_urls:
+       - https://outrunner.example.com/api/integrations/slack/oauth
      scopes:
        bot:
          - commands
+       user:
+         - openid
    settings:
      interactivity:
        is_enabled: true
@@ -50,22 +54,33 @@ are built from the payload.
    ```
 
 2. **Install to Workspace**.
-3. Copy **Basic Information → App Credentials → Signing Secret** into the deployment's environment as
-   `SLACK_SIGNING_SECRET`, then redeploy. While it is unset, the endpoint answers 404.
-4. Apply `supabase/migrations/20261027120000_work_items.sql` (`pnpm db:migrate`).
+3. Copy these from **Basic Information → App Credentials** into the deployment's environment, then redeploy:
+   - `SLACK_SIGNING_SECRET`: the **Signing Secret**. While it is unset, the endpoint answers 404.
+   - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account
+     signs in with Slack, and while these are unset nobody can connect.
+4. Apply `supabase/migrations/20261029120000_work_items.sql` (`pnpm db:migrate`).
 
 ## Connecting a Slack user to an Outrunner account (each person, once)
 
 The first time someone uses the shortcut or `/triage`, the reply (shown only to them) has a **Connect Slack
-to Outrunner** link. It is valid for 10 minutes. Opening it while signed in to Outrunner and confirming links
-that Slack user to the account. From then on, their captures land in that account's triage.
-**Settings → Integrations** lists the links and can unlink them.
+to Outrunner** link, valid for 10 minutes. Signed in to Outrunner, they:
 
-Linking always goes through that confirmation. There is no "paste your member ID" step, so nobody can
-direct someone else's Slack captures to their own account.
+1. Pick the **org** whose triage their captures go to (any org they're a member of).
+2. **Sign in with Slack.** Linking finishes only if Slack says the person who signed in is the Slack user the
+   link was made for, in that Slack workspace. It also has to be the same browser and the same Outrunner user
+   that started it.
 
-**Known limit (v0):** the link proves that someone signed in to Outrunner confirmed it. It doesn't prove
-they are the Slack user it names. A person could forward the link from their own reply and talk an Outrunner
-user into confirming it. After that, their Slack captures land in that user's triage. That's why the confirm
-screen says to confirm only a link you just asked for yourself. Binding the link to Slack's own sign-in
-(OAuth `users.identity`) would close this, and it should happen before triage is shared between people.
+A forwarded link therefore connects nobody. **Settings → Integrations** lists the links and can unlink them.
+Leaving an org removes the links into it.
+
+## Who sees what
+
+Captures are filed as the linked Outrunner user, in their org. They follow the org's **Roles & access**:
+
+- **read** on a workspace: see its items, add notes, start a session from one.
+- **write** on a workspace (and admins): also edit and triage its items: accept, decline, mark a duplicate,
+  or move them.
+- **Unsorted** items (no workspace yet): every member sees them. Triaging them needs write on all workspaces.
+
+`/triage owner/repo …` files the item in that workspace only if the user can see it. Otherwise the whole text is
+the item, and it goes to Unsorted.
