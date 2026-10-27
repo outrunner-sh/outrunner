@@ -7,14 +7,17 @@ import { useState } from "react";
 
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
+import type { OrgRoleInfo } from "@/lib/db/org-access";
 import type { JoinRequest, Member, OpenInvite, Person } from "@/lib/db/org-members";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org, OrgRole } from "@/lib/orgs/active";
@@ -30,6 +33,7 @@ export function OrgMembersSettings({
   members,
   invites,
   requests,
+  roles = [],
   emails,
 }: {
   org: Org;
@@ -37,6 +41,8 @@ export function OrgMembersSettings({
   members: Member[];
   invites: OpenInvite[];
   requests: JoinRequest[];
+  /** The org's roles, for an admin to give members (Roles & access). */
+  roles?: OrgRoleInfo[];
   /** Whether the deployment emails invites; else their links are shared. */
   emails: boolean;
 }) {
@@ -76,7 +82,7 @@ export function OrgMembersSettings({
       <div className="space-y-1">
         <h1 className="text-lg font-semibold text-foreground">Members</h1>
         <p className="text-sm text-muted-foreground">
-          {`Everyone in ${org.name} sees its projects. Each person's sessions stay their own, admins included.`}
+          {`Who's in ${org.name}. What each may do with its projects is set on Roles & access; each person's sessions stay their own, admins included.`}
         </p>
       </div>
 
@@ -126,6 +132,16 @@ export function OrgMembersSettings({
           {members.map((m) => (
             <li key={m.userId} className="flex items-center gap-3 px-3 py-2">
               <PersonCell person={m} detail={m.login ? `@${m.login}` : m.email} you={m.userId === me} />
+              {admin && m.role === "member" && roles.length > 0 ? (
+                <RolesMenu
+                  roles={roles}
+                  held={roles.filter((r) => r.memberIds.includes(m.userId)).map((r) => r.id)}
+                  busy={busy !== null}
+                  onChange={(roleIds) =>
+                    void change(`roles:${m.userId}`, `/api/orgs/${org.id}/members/${m.userId}/roles`, "PUT", { roleIds })
+                  }
+                />
+              ) : null}
               <MemberActions
                 member={m}
                 isMe={m.userId === me}
@@ -169,6 +185,44 @@ function PersonCell({ person, detail, you = false }: { person: Person; detail: s
         {detail ? <p className="truncate text-xs text-muted-foreground">{detail}</p> : null}
       </div>
     </div>
+  );
+}
+
+/** A member's roles, for an admin to give or take: what each may do is set on
+ *  Roles & access. */
+function RolesMenu({
+  roles,
+  held,
+  busy,
+  onChange,
+}: {
+  roles: OrgRoleInfo[];
+  held: string[];
+  busy: boolean;
+  onChange: (roleIds: string[]) => void;
+}) {
+  const names = roles.filter((r) => held.includes(r.id)).map((r) => r.name);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="route-state-button max-w-48 truncate text-muted-foreground" disabled={busy}>
+        {names.length === 0 ? "No roles" : names.join(", ")}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Roles</DropdownMenuLabel>
+        {roles.map((r) => (
+          <DropdownMenuCheckboxItem
+            key={r.id}
+            checked={held.includes(r.id)}
+            onSelect={(event) => event.preventDefault()}
+            onCheckedChange={(checked) =>
+              onChange(checked ? [...held, r.id] : held.filter((id) => id !== r.id))
+            }
+          >
+            {r.name}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

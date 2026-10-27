@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { OrgMembersSettings } from "@/components/org-members";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { listRoles } from "@/lib/db/org-access";
 import { listJoinRequests, listMembers, listOpenInvites } from "@/lib/db/org-members";
 import { canSendEmail } from "@/lib/email/send";
 import { getOrgContext } from "@/lib/orgs/server";
@@ -35,10 +36,11 @@ async function MembersSection() {
   }
   const { active } = context;
   const admin = active.role === "admin" && !active.personal;
-  const [listed, invites, requests] = await Promise.all([
+  const [listed, invites, requests, roles] = await Promise.all([
     listMembers(active.id),
     admin ? listOpenInvites(active.id) : Promise.resolve([]),
     admin ? listJoinRequests(active.id) : Promise.resolve([]),
+    admin ? listRoles(active.id) : Promise.resolve([]),
   ]);
   // Members see one another by GitHub login; only admins, who invite and
   // answer requests, see emails.
@@ -50,6 +52,7 @@ async function MembersSection() {
       members={members}
       invites={invites}
       requests={requests}
+      roles={roles}
       emails={canSendEmail()}
     />
   );
