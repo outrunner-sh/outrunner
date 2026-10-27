@@ -8,6 +8,7 @@ import { githubErrorResponse } from "@/lib/github/http";
 import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { connectRefusal } from "@/lib/orgs/connect-access";
 import { activeOrgId } from "@/lib/orgs/server";
 
 /** Repositories one request may connect by id; the picker sends one. */
@@ -59,6 +60,8 @@ export async function POST(request: Request) {
 
   try {
     const orgId = await activeOrgId();
+    const refused = await connectRefusal(owner.id, orgId);
+    if (refused) return refused;
     const upsert = (ownerId: string, repos: GitHubRepository[]) => upsertProjects(ownerId, repos, orgId);
     const token = await requireGithubToken(owner.id);
     let repositories: GitHubRepository[];

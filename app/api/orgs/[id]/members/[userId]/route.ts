@@ -22,6 +22,8 @@ export async function PATCH(request: Request, { params }: Params) {
   if (!role) return NextResponse.json({ error: "Choose admin or member." }, { status: 400 });
 
   return changingMembers("a member's role", async () => {
+    // Made an admin, they hold no roles any more: set_org_member_role takes
+    // them away in the same step.
     await setMemberRole(id, userId, role);
     return NextResponse.json({ member: { userId, role } });
   });

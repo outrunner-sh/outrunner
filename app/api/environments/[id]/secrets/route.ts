@@ -2,7 +2,12 @@ import { after, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
-import { EnvironmentConflictError, editEnvironmentSecrets, getEnvironment } from "@/lib/db/environments";
+import {
+  EnvironmentAccessError,
+  EnvironmentConflictError,
+  editEnvironmentSecrets,
+  getEnvironment,
+} from "@/lib/db/environments";
 import { EnvironmentRuleError } from "@/lib/environments/rules";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
@@ -50,6 +55,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
       if (error instanceof EnvironmentConflictError) return NextResponse.json({ error: error.message }, { status: 409 });
+      if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
       throw error;
     }
   });

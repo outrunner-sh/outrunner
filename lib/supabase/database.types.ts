@@ -138,7 +138,7 @@ type RuntimeComputerRow = {
   /** Made ready ahead of a session and stopped, for the next one to take
    *  (20261025120000_warm_pool.sql). */
   pooled: boolean;
-  /** Which of the project's two ready boxes it is (20261028150000). */
+  /** Which of the project's two ready boxes it is (20261028150000_warm_hooks.sql). */
   pool_slot: number;
   /** The project's setup_generation it was made from. */
   generation: number | null;
@@ -295,7 +295,7 @@ type EnvironmentRow = {
   warm_hook: string | null;
   start_hook: string | null;
   setup_generation: number;
-  /** Each member's last warm run, by user id (20261028150000). */
+  /** Each member's last warm run, by user id (20261028150000_warm_hooks.sql). */
   warm_runs: Json;
   created_at: string;
   updated_at: string;
@@ -497,6 +497,33 @@ type OrganizationRemovalRow = {
   removed_at: string;
 };
 
+type OrganizationRoleRow = {
+  id: string;
+  org_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type MemberRoleRow = {
+  org_id: string;
+  user_id: string;
+  role_id: string;
+};
+
+export type AccessLevelDb = "read" | "write";
+
+type AccessGrantRow = {
+  id: string;
+  org_id: string;
+  /** Null: Everyone in the org. */
+  role_id: string | null;
+  /** Null: all the org's projects. */
+  project_id: string | null;
+  level: AccessLevelDb;
+  created_at: string;
+};
+
 type CliTokenRow = {
   id: string;
   user_id: string;
@@ -541,6 +568,24 @@ export type Database = {
         Row: OrganizationRemovalRow;
         Insert: Insert<OrganizationRemovalRow, "org_id" | "user_id">;
         Update: Partial<OrganizationRemovalRow>;
+        Relationships: [];
+      };
+      organization_roles: {
+        Row: OrganizationRoleRow;
+        Insert: Insert<OrganizationRoleRow, "org_id" | "name">;
+        Update: Partial<OrganizationRoleRow>;
+        Relationships: [];
+      };
+      member_roles: {
+        Row: MemberRoleRow;
+        Insert: MemberRoleRow;
+        Update: Partial<MemberRoleRow>;
+        Relationships: [];
+      };
+      access_grants: {
+        Row: AccessGrantRow;
+        Insert: Insert<AccessGrantRow, "org_id" | "level">;
+        Update: Partial<AccessGrantRow>;
         Relationships: [];
       };
       organization_members: {
@@ -788,6 +833,32 @@ export type Database = {
       };
       create_team_org: {
         Args: { org_name: string; creator: string; claimed_domain: string | null };
+        Returns: string;
+      };
+      // supabase/migrations/20261028145000_org_access.sql
+      project_level: {
+        Args: { member: string; target_project: string };
+        Returns: AccessLevelDb | null;
+      };
+      org_projects_level: {
+        Args: { member: string; target_org: string };
+        Returns: AccessLevelDb | null;
+      };
+      environment_level: {
+        Args: { member: string; target_environment: string };
+        Returns: AccessLevelDb | null;
+      };
+      // supabase/migrations/20261028155000_org_access_atomic.sql
+      set_grant: {
+        Args: { target_org: string; target_role: string | null; target_project: string | null; new_level: AccessLevelDb | null };
+        Returns: undefined;
+      };
+      set_member_roles: {
+        Args: { target_org: string; member: string; role_ids: string[] };
+        Returns: undefined;
+      };
+      make_default_environment: {
+        Args: { target_project: string; maker: string; checkout: string };
         Returns: string;
       };
       // supabase/migrations/20261028130000_org_members.sql

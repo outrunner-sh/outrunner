@@ -14,13 +14,16 @@
  * policy.
  *
  * A project is its org's (20261028140000_org_environments.sql), as its
- * repositories are, so every member of the org reads and changes it and
- * starts sessions from it. Each function here takes the user asking, and
- * reaches only projects of the orgs they're a member of.
+ * repositories are. Each function here takes the user asking, and does only
+ * what their access lets them (20261028145000_org_access.sql): reading needs
+ * read on every one of the project's repositories, and changing it, write
+ * (environment_level). Refused, a read finds nothing and a change throws
+ * EnvironmentAccessError.
  */
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import type { ProjectEnvironment, ProjectScripts } from "@/lib/db/project-environment";
+import { environmentLevel, projectLevel } from "@/lib/db/org-access";
 import {
   applySecretsEdit,
   checkoutNameFor,
@@ -29,19 +32,21 @@ import {
   MAX_REPOS,
   type SecretsEdit,
 } from "@/lib/environments/rules";
+import { type AccessLevel, allows } from "@/lib/orgs/access";
 import type { SessionCheckout } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-/** The orgs `userId` is a member of: the projects they may reach are theirs.
- *  Every function here asks once, and takes it given (`orgs`) when its caller
- *  asked already, as an import's steps do. Needs 20261028140000. */
-async function memberOrgIds(userId: string): Promise<string[]> {
-  const { data, error } = await createSupabaseAdminClient()
-    .from("organization_members")
-    .select("org_id")
-    .eq("user_id", userId);
-  if (error) throw error;
-  return (data ?? []).map((m) => m.org_id);
+/** The user may read the project but not change it. */
+export class EnvironmentAccessError extends Error {
+  constructor() {
+    super("You can see this project but not change it. Ask an admin of its org for write access.");
+    this.name = "EnvironmentAccessError";
+  }
+}
+
+/** Throw unless `userId` may change the project. */
+async function requireWrite(userId: string, id: string): Promise<void> {
+  if (!allows(await environmentLevel(userId, id), "write")) throw new EnvironmentAccessError();
 }
 
 export type EnvironmentRepo = {
@@ -81,6 +86,8 @@ export type Environment = {
    *  their own pool), or null for none yet. */
   warm: WarmRun | null;
   updatedAt: string;
+  /** What the user asking may do with it: write, or only read. */
+  access: AccessLevel;
 };
 
 /** The warm hook, run ahead on a ready box, and the start hook, run at each
@@ -116,15 +123,16 @@ export type EnvironmentPatch = {
   hooks?: Partial<ProjectHooks>;
 };
 
-/** The project, or null when none by that id is in the user's orgs. */
+/** The project, or null when there's none by that id the user may read. */
 export async function getEnvironment(userId: string, id: string): Promise<Environment | null> {
+  const access = await environmentLevel(userId, id);
+  if (!access) return null;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("environments")
     .select(
       "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, warm_hook, start_hook, setup_generation, warm_runs",
     )
-    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .is("archived_at", null)
     .maybeSingle();
@@ -145,6 +153,7 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
     setupGeneration: data.setup_generation,
     warm: warmRunOf(data.warm_runs, userId),
     updatedAt: data.updated_at,
+    access,
   };
 }
 
@@ -187,12 +196,12 @@ async function environmentRepos(orgId: string, environmentId: string): Promise<E
 }
 
 /** The id of the repository's default project, or null when it has none
- *  yet. Makes nothing. */
+ *  yet, or the user can't read the repository. Makes nothing. */
 export async function findDefaultEnvironmentId(userId: string, projectId: string): Promise<string | null> {
+  if (!(await projectLevel(userId, projectId))) return null;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("id")
-    .in("org_id", await memberOrgIds(userId))
     .eq("default_for_project_id", projectId)
     .maybeSingle();
   if (error) throw error;
@@ -201,73 +210,37 @@ export async function findDefaultEnvironmentId(userId: string, projectId: string
 
 /**
  * The id of the repository's default project, made now if it has none: one
- * per repository, in its org, whichever member's session needs it first.
- * Null when the repository isn't in one of the user's orgs.
+ * per repository, in its org, whichever member's session needs it first,
+ * made with its repository at once (make_default_environment). Null when the
+ * user can't read the repository.
  */
-export async function defaultEnvironmentId(
-  userId: string,
-  projectId: string,
-  orgs?: string[],
-): Promise<string | null> {
+export async function defaultEnvironmentId(userId: string, projectId: string): Promise<string | null> {
+  if (!(await projectLevel(userId, projectId))) return null;
   const supabase = createSupabaseAdminClient();
-  orgs ??= await memberOrgIds(userId);
   const { data: project, error: projectError } = await supabase
     .from("projects")
-    .select("id, name, org_id")
-    .in("org_id", orgs)
+    .select("name")
     .eq("id", projectId)
     .maybeSingle();
   if (projectError) throw projectError;
   if (!project) return null;
-
-  const found = await supabase
-    .from("environments")
-    .select("id")
-    .eq("org_id", project.org_id)
-    .eq("default_for_project_id", projectId)
-    .maybeSingle();
-  if (found.error) throw found.error;
-  if (found.data) return found.data.id;
-
-  const made = await supabase
-    .from("environments")
-    .insert({
-      org_id: project.org_id,
-      owner_id: userId,
-      name: project.name.slice(0, 80),
-      default_for_project_id: projectId,
-    })
-    .select("id")
-    .single();
-  if (made.error) {
-    // Made at the same moment by another request (two sessions started at
-    // once, maybe two members'): theirs is the one.
-    if (made.error.code === "23505") return defaultEnvironmentId(userId, projectId, orgs);
-    throw made.error;
-  }
-  const { error: repoError } = await supabase.from("environment_repos").insert({
-    owner_id: userId,
-    environment_id: made.data.id,
-    project_id: projectId,
-    checkout_name: checkoutNameFor(project.name),
+  const { data, error } = await supabase.rpc("make_default_environment", {
+    target_project: projectId,
+    maker: userId,
+    checkout: checkoutNameFor(project.name),
   });
-  if (repoError) {
-    // A project with no repository is no default project: take it back, so
-    // the next call makes it again.
-    await supabase.from("environments").delete().eq("id", made.data.id);
-    throw repoError;
-  }
-  return made.data.id;
+  if (error) throw error;
+  return (data as string | null) ?? null;
 }
 
 /** What a session started from the project gets; null when there is no such
  *  project. A sealed value that no longer opens reads as no variables rather
  *  than failing the session. */
 export async function environmentSetup(userId: string, id: string): Promise<EnvironmentSetup | null> {
+  if (!(await environmentLevel(userId, id))) return null;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("secrets_ciphertext, setup_script, run_script, archive_script, instructions, warm_hook, start_hook, setup_generation")
-    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
@@ -297,10 +270,10 @@ function openSecrets(id: string, ciphertext: string | null): EnvironmentSecrets 
 /** Whether the project keeps anything a session starts with: variables,
  *  files or a script. Reads no secrets. */
 export async function environmentHasSetup(userId: string, id: string): Promise<boolean> {
+  if (!(await environmentLevel(userId, id))) return false;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("env_names, file_paths, setup_script, run_script, archive_script, warm_hook, start_hook")
-    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
@@ -313,13 +286,10 @@ export async function environmentHasSetup(userId: string, id: string): Promise<b
 
 /** Change the project's name, description, instructions, scripts or hooks.
  *  A field left out is left as it is. A new warm hook moves the project's
- *  setup on a generation, so its ready boxes are made again. */
-export async function updateEnvironment(
-  userId: string,
-  id: string,
-  patch: EnvironmentPatch,
-  orgs?: string[],
-): Promise<void> {
+ *  setup on a generation, so its ready boxes are made again. Needs write
+ *  (else EnvironmentAccessError). */
+export async function updateEnvironment(userId: string, id: string, patch: EnvironmentPatch): Promise<void> {
+  await requireWrite(userId, id);
   const { error } = await createSupabaseAdminClient()
     .from("environments")
     .update({
@@ -332,25 +302,20 @@ export async function updateEnvironment(
       ...(patch.hooks?.warm !== undefined && { warm_hook: patch.hooks.warm }),
       ...(patch.hooks?.start !== undefined && { start_hook: patch.hooks.start }),
     })
-    .in("org_id", orgs ?? (await memberOrgIds(userId)))
     .eq("id", id);
   if (error) throw error;
-  if (patch.hooks?.warm !== undefined) await bumpGeneration(userId, id, orgs);
+  if (patch.hooks?.warm !== undefined) await bumpGeneration(userId, id);
 }
 
 /** Move the project's setup on a generation: its ready boxes are made again
- *  (a change they're made from, or "Try again"). The new one. */
-export async function bumpGeneration(userId: string, id: string, orgs?: string[]): Promise<number | null> {
+ *  (a change they're made from, or "Try again"). The new one; null when the
+ *  user can't see the project. Needs write, as a change to the project does
+ *  (else EnvironmentAccessError): checked first, as the function takes any id. */
+export async function bumpGeneration(userId: string, id: string): Promise<number | null> {
+  const level = await environmentLevel(userId, id);
+  if (!level) return null;
+  if (!allows(level, "write")) throw new EnvironmentAccessError();
   const supabase = createSupabaseAdminClient();
-  // In one of the user's orgs, checked first: the function takes any id.
-  const { data: own, error: ownError } = await supabase
-    .from("environments")
-    .select("id")
-    .in("org_id", orgs ?? (await memberOrgIds(userId)))
-    .eq("id", id)
-    .maybeSingle();
-  if (ownError) throw ownError;
-  if (!own) return null;
   const { data, error } = await supabase.rpc("bump_environment_generation", { target: id });
   // Before the migration that adds it: nothing to make again.
   if (error && (error.code === "PGRST202" || error.code === "42883")) return null;
@@ -401,21 +366,19 @@ const EDIT_TRIES = 3;
  *  edits at once (two tabs, the Mac import beside the settings page) would
  *  each write what they read and the later one drop the earlier's. The write
  *  only lands if the row is as it was read (its updated_at, which every
- *  write moves); otherwise the edit is made again on what is there now. */
+ *  write moves); otherwise the edit is made again on what is there now.
+ *  Needs write (else EnvironmentAccessError), asked once for every try. */
 export async function editEnvironmentSecrets(
   userId: string,
   id: string,
   edit: SecretsEdit,
-  orgs?: string[],
 ): Promise<{ envNames: string[]; filePaths: string[] }> {
+  await requireWrite(userId, id);
   const supabase = createSupabaseAdminClient();
-  // Once, for every try: the read and its write reach the same orgs.
-  const reach = orgs ?? (await memberOrgIds(userId));
   for (let attempt = 0; attempt < EDIT_TRIES; attempt++) {
     const { data, error } = await supabase
       .from("environments")
       .select("secrets_ciphertext, updated_at")
-      .in("org_id", reach)
       .eq("id", id)
       .single();
     if (error) throw error;
@@ -429,14 +392,13 @@ export async function editEnvironmentSecrets(
         env_names: envNames,
         file_paths: filePaths,
       })
-      .in("org_id", reach)
       .eq("id", id)
       .eq("updated_at", data.updated_at)
       .select("id");
     if (updateError) throw updateError;
     if (written.length > 0) {
       // Ready boxes carry the variables and files they were warmed with.
-      await bumpGeneration(userId, id, reach);
+      await bumpGeneration(userId, id);
       return { envNames, filePaths };
     }
   }
@@ -446,28 +408,27 @@ export async function editEnvironmentSecrets(
 /** Keep what the user picked of a repository's environment on their Mac in
  *  the repository's default project: a variable of the same name, a file at
  *  the same path, or a script given, replaces the one there. False, keeping
- *  nothing, for a repository that isn't in one of the user's orgs. */
+ *  nothing, for a repository the user can't read; EnvironmentAccessError for
+ *  one they can read but not change. */
 export async function mergeIntoDefaultEnvironment(
-  ownerId: string,
+  userId: string,
   projectId: string,
   add: { env: Record<string, string>; files: Record<string, string>; scripts: Partial<ProjectScripts> },
 ): Promise<boolean> {
-  const orgs = await memberOrgIds(ownerId);
-  const id = await defaultEnvironmentId(ownerId, projectId, orgs);
+  const id = await defaultEnvironmentId(userId, projectId);
   if (!id) return false;
-  await editEnvironmentSecrets(ownerId, id, { setEnv: add.env, setFiles: add.files }, orgs);
-  if (Object.keys(add.scripts).length > 0) await updateEnvironment(ownerId, id, { scripts: add.scripts }, orgs);
+  await editEnvironmentSecrets(userId, id, { setEnv: add.env, setFiles: add.files });
+  if (Object.keys(add.scripts).length > 0) await updateEnvironment(userId, id, { scripts: add.scripts });
   return true;
 }
 
 /** The generation of the project's setup a ready box must be made from to be
  *  taken; null for no project (any box, then). */
 export async function setupGeneration(userId: string, id: string | null): Promise<number | null> {
-  if (!id) return null;
+  if (!id || !(await environmentLevel(userId, id))) return null;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("setup_generation")
-    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
@@ -491,10 +452,18 @@ export async function sessionCheckouts(userId: string, id: string): Promise<Sess
 
 /** Add a repository of the project's org to it, in a folder named after it
  *  (made unique), last. Refused past MAX_REPOS, or for a repository of
- *  another org. */
+ *  another org. Needs write on the project (else EnvironmentAccessError),
+ *  and on the repository: a project's level is its repositories' lowest, so
+ *  adding one the user only reads would leave them unable to change it. */
 export async function addEnvironmentRepo(userId: string, id: string, projectId: string): Promise<void> {
   const environment = await getEnvironment(userId, id);
   if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
+  const repoLevel = await projectLevel(userId, projectId);
+  if (!repoLevel) throw new EnvironmentRuleError("That repository isn't connected to this project's organization.");
+  if (!allows(repoLevel, "write")) {
+    throw new EnvironmentRuleError("You can only add a repository you can change. Ask an admin for write access on it.");
+  }
   if (environment.repos.some((r) => r.projectId === projectId)) return;
   if (environment.repos.length >= MAX_REPOS) {
     throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
@@ -531,10 +500,12 @@ export async function addEnvironmentRepo(userId: string, id: string, projectId: 
 }
 
 /** Remove a repository from the project; never its last, nor the one a
- *  repository's default project is for (it would no longer be that one's). */
+ *  repository's default project is for (it would no longer be that one's).
+ *  Needs write on the project (else EnvironmentAccessError). */
 export async function removeEnvironmentRepo(userId: string, id: string, projectId: string): Promise<void> {
   const environment = await getEnvironment(userId, id);
   if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
   if (environment.repos.length <= 1) throw new EnvironmentRuleError("A project keeps at least one repository.");
   if (environment.defaultForProjectId === projectId) {
     throw new EnvironmentRuleError("This project is that repository's own: remove the others instead.");

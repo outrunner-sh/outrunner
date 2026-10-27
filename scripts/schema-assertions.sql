@@ -910,11 +910,12 @@ begin
   if not exists (select 1 from workspaces where branch = 'member-session') then
     raise exception 'FAIL: a member can''t see their own session in the org';
   end if;
-  -- The project is its owner's to change.
+  -- The org gives Everyone write (as every org starts, 20261028145000), so
+  -- a member may change a project they didn't connect.
   update projects set description = 'changed' where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
   get diagnostics n = row_count;
-  if n <> 0 then
-    raise exception 'FAIL: a member changed a project they don''t own';
+  if n <> 1 then
+    raise exception 'FAIL: a member with write couldn''t change the org''s project';
   end if;
   -- And they can't add themselves anywhere.
   begin
@@ -1297,4 +1298,198 @@ begin
     null;
   end;
   raise notice 'ok: a project is its org''s, one default per repository, shared by its members';
+end $$;
+
+-- 33. Access: every org starts with Everyone write; an admin can narrow it to
+-- read, or to nothing, and give a role write on one project; a member gets
+-- the highest any grant gives them; admins have write always. What a member
+-- can't read, they can't see or start a session on.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  app uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  builders uuid;
+begin
+  if not exists (select 1 from access_grants where org_id = team and role_id is null and project_id is null and level = 'write') then
+    raise exception 'FAIL: a new org didn''t start with Everyone: write';
+  end if;
+  if has_table_privilege('authenticated', 'access_grants', 'select')
+     or has_table_privilege('authenticated', 'member_roles', 'select')
+     or has_table_privilege('authenticated', 'organization_roles', 'select')
+     or has_function_privilege('authenticated', 'project_level(uuid, uuid)', 'execute')
+     or has_function_privilege('authenticated', 'environment_level(uuid, uuid)', 'execute') then
+    raise exception 'FAIL: a user may read grants or roles, or ask about someone else''s access';
+  end if;
+
+  update access_grants set level = 'read' where org_id = team and role_id is null and project_id is null;
+  if project_level('22222222-2222-2222-2222-222222222222', app) <> 'read' then
+    raise exception 'FAIL: Everyone: read didn''t give a member read';
+  end if;
+  if project_level('11111111-1111-1111-1111-111111111111', app) <> 'write' then
+    raise exception 'FAIL: an admin lost write';
+  end if;
+  if project_level('33333333-3333-3333-3333-333333333333', app) <> 'write'
+     and not exists (select 1 from organization_members where org_id = team and user_id = '33333333-3333-3333-3333-333333333333' and role = 'admin') then
+    raise exception 'FAIL: unexpected level for the third user';
+  end if;
+
+  insert into organization_roles (org_id, name) values (team, 'Builders') returning id into builders;
+  insert into access_grants (org_id, role_id, project_id, level) values (team, builders, app, 'write');
+  insert into member_roles (org_id, user_id, role_id) values (team, '22222222-2222-2222-2222-222222222222', builders);
+  if project_level('22222222-2222-2222-2222-222222222222', app) <> 'write' then
+    raise exception 'FAIL: a role''s write on one project didn''t reach its member';
+  end if;
+  if environment_level('22222222-2222-2222-2222-222222222222',
+       (select id from environments where default_for_project_id = app)) <> 'write' then
+    raise exception 'FAIL: a project''s settings didn''t follow its repository''s level';
+  end if;
+  begin
+    insert into access_grants (org_id, role_id, project_id, level) values (team, builders, app, 'read');
+    raise exception 'FAIL: two grants to one role on one project';
+  exception when unique_violation then
+    null;
+  end;
+  raise notice 'ok: grants to Everyone and to roles, on all projects and on one, give the highest; admins write';
+end $$;
+
+-- As the member: read on everything, write on the app project through the
+-- role, so they change it, but can't connect a new project.
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+declare n integer;
+begin
+  update projects set description = 'builders' where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  get diagnostics n = row_count;
+  if n <> 1 then
+    raise exception 'FAIL: a role''s write didn''t let its member change the project';
+  end if;
+  update projects set description = 'not mine' where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and id <> 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  get diagnostics n = row_count;
+  if n <> 0 then
+    raise exception 'FAIL: read let a member change % projects', n;
+  end if;
+  begin
+    insert into projects (org_id, owner_id, github_repo_id, full_name, owner, name)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 777, 'team/new', 'team', 'new');
+    raise exception 'FAIL: a member without write on all projects connected one';
+  exception when insufficient_privilege then
+    null;
+  end;
+  if my_project_level('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb') <> 'write' then
+    raise exception 'FAIL: my_project_level didn''t answer for the signed-in user';
+  end if;
+  raise notice 'ok: a member changes what they may write, and only that';
+end $$;
+
+reset role;
+
+-- Nothing for Everyone, and the role gone: the member sees none of the org's
+-- projects and can't start a session on one; their own sessions stay theirs.
+delete from access_grants where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and role_id is null and project_id is null;
+delete from member_roles where user_id = '22222222-2222-2222-2222-222222222222';
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+begin
+  if exists (select 1 from projects where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') then
+    raise exception 'FAIL: a member with no grant sees the org''s projects';
+  end if;
+  begin
+    insert into workspaces (owner_id, project_id, branch)
+    values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'no-access');
+    raise exception 'FAIL: a member started a session on a project they can''t read';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if not exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: losing read took a member''s own session away';
+  end if;
+  raise notice 'ok: no grant, no project, and no new session on it; their sessions stay theirs';
+end $$;
+
+reset role;
+
+-- 34. A repository's default project and its repository are made together,
+-- and asking again finds the one there.
+do $$
+declare first uuid; again uuid; app2 uuid;
+begin
+  select id into app2 from projects
+  where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and github_repo_id = 42;
+  first := make_default_environment(app2, '11111111-1111-1111-1111-111111111111', 'runtime');
+  again := make_default_environment(app2, '22222222-2222-2222-2222-222222222222', 'runtime');
+  if first is distinct from again
+     or (select count(*) from environment_repos where environment_id = first) <> 1 then
+    raise exception 'FAIL: a default project was made twice, or without its repository';
+  end if;
+  if has_function_privilege('authenticated', 'make_default_environment(uuid, uuid, text)', 'execute') then
+    raise exception 'FAIL: a user may make default projects directly';
+  end if;
+  raise notice 'ok: a default project and its repository are made together, once';
+end $$;
+
+-- 35. Changing access is one step: a grant set or taken in place, a failed
+-- one leaving what was there; a member's roles all or none; never an admin's;
+-- an admin made holds none.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  builders uuid := (select id from organization_roles where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and name = 'Builders');
+  other_role uuid;
+begin
+  perform set_grant(team, null, null, 'write');
+  perform set_grant(team, null, null, 'read');
+  if (select count(*) from access_grants where org_id = team and role_id is null and project_id is null) <> 1
+     or (select level from access_grants where org_id = team and role_id is null and project_id is null) <> 'read' then
+    raise exception 'FAIL: set_grant didn''t change Everyone''s grant in place';
+  end if;
+  -- A project of another org: refused, and Everyone keeps read.
+  begin
+    perform set_grant(team, null, (select id from projects where org_id <> team limit 1), 'write');
+    raise exception 'FAIL: a grant on another org''s project';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if (select level from access_grants where org_id = team and role_id is null and project_id is null) <> 'read' then
+    raise exception 'FAIL: a refused grant changed Everyone''s';
+  end if;
+  perform set_grant(team, null, null, null);
+  if exists (select 1 from access_grants where org_id = team and role_id is null and project_id is null) then
+    raise exception 'FAIL: set_grant(null) left the grant';
+  end if;
+  perform set_grant(team, null, null, 'write');
+
+  perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[builders]);
+  insert into organization_roles (org_id, name)
+  values ((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), 'Elsewhere')
+  returning id into other_role;
+  begin
+    perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[other_role]);
+    raise exception 'FAIL: a member got another org''s role';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if not exists (select 1 from member_roles where org_id = team and user_id = '22222222-2222-2222-2222-222222222222' and role_id = builders) then
+    raise exception 'FAIL: a refused change took a member''s roles away';
+  end if;
+  begin
+    perform set_member_roles(team, '11111111-1111-1111-1111-111111111111', array[builders]);
+    raise exception 'FAIL: an admin was given a role';
+  exception when raise_exception then
+    if sqlerrm <> 'admin_roles' then raise; end if;
+  end;
+  perform set_org_member_role(team, '22222222-2222-2222-2222-222222222222', 'admin');
+  if exists (select 1 from member_roles where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a member made admin kept their roles';
+  end if;
+  perform set_org_member_role(team, '22222222-2222-2222-2222-222222222222', 'member');
+  if has_function_privilege('authenticated', 'set_grant(uuid, uuid, uuid, text)', 'execute')
+     or has_function_privilege('authenticated', 'set_member_roles(uuid, uuid, uuid[])', 'execute') then
+    raise exception 'FAIL: a user may change grants or roles directly';
+  end if;
+  raise notice 'ok: grants and roles change in one step, and a refused change keeps what was there';
 end $$;
