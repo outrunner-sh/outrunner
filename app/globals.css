@@ -161,6 +161,19 @@
    above and its controls below. */
 .studio-composer { position: relative; margin: 12px auto 18px; max-width: 736px; width: calc(100% - 32px); border: 1px solid var(--studio-border); border-radius: 4px; background: var(--studio-bg); }
 .studio-composer:focus-within { border-color: #3a3a3a; }
+/* Prompts queued behind the agent's turn, just above the composer, its width. */
+.studio-queue { margin: 12px auto -4px; max-width: 736px; width: calc(100% - 32px); }
+.studio-queue-label { margin: 0 0 6px; color: #8a8a8a; font-size: 12px; }
+.studio-queue ol { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.studio-queue-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 6px 6px 12px; border: 1px dashed var(--studio-border); border-radius: 4px; color: var(--studio-text); font-size: 13px; }
+.studio-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-queue-files { display: inline-flex; flex-shrink: 0; align-items: center; gap: 3px; color: #8a8a8a; font-size: 12px; }
+.studio-queue-files svg { width: 12px; height: 12px; }
+.studio-queue-item button { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 12px var(--font-geist-sans); cursor: pointer; transition: background-color .15s; }
+.studio-queue-item button:hover:not(:disabled) { background: rgba(255,255,255,.06); }
+.studio-queue-item button:disabled { cursor: not-allowed; opacity: .5; }
+.studio-queue-item button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+.studio-queue-item button svg { width: 13px; height: 13px; }
 .studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }

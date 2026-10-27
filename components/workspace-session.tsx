@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
+import { QueuedPrompts } from "@/components/queued-prompts";
 import { QuestionCard } from "@/components/question-card";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { ErrorRef, InlineMessage, Notice, TickingFact } from "@/components/ui/notice";
@@ -59,6 +60,7 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import { type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
 import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
@@ -350,6 +352,60 @@ export function WorkspaceSession({
     !waitingOnUser &&
     (pending.some((p) => pendingShows(p, delivered)) ||
       (claudeIsWorking(conversation.events) && stoppedAt !== delivered));
+  // Prompts sent while the agent is at work wait here (lib/session/prompt-queue.ts)
+  // and go one at a time as each turn ends. One whose send failed holds the
+  // queue (`queueHeld`) until the user retries it or sends it now, so a box
+  // that's down doesn't fail the whole queue in a row.
+  const [queue, setQueue] = useState<QueuedPrompt[]>(() => readQueue(tabStorage(), workspaceId));
+  useEffect(() => writeQueue(tabStorage(), workspaceId, queue), [workspaceId, queue]);
+  const [queueHeld, setQueueHeld] = useState(false);
+  const sendingQueued = useRef(false);
+  // Bumped as each queued send settles, so the queue looks again: the turn it
+  // started may have ended while the send was still being answered.
+  const [queueSettled, setQueueSettled] = useState(0);
+  const enqueue = (text: string, attachmentIds: string[]): Promise<boolean> => {
+    setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds }]);
+    setSendError(null);
+    return Promise.resolve(true);
+  };
+  /** Send a queued prompt now: out of the queue, and back at its head, the
+   *  queue held, if it doesn't go (its Retry sends it again). */
+  const sendQueued = (prompt: QueuedPrompt): Promise<boolean> => {
+    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    setQueueHeld(false);
+    return send(prompt.text, prompt.attachmentIds, () => void sendQueued(prompt)).then((landed) => {
+      if (!landed) {
+        setQueue((q) => [prompt, ...q.filter((p) => p.id !== prompt.id)]);
+        setQueueHeld(true);
+      }
+      return landed;
+    });
+  };
+  const removeQueued = (prompt: QueuedPrompt) => {
+    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    // Its files were uploaded for it alone.
+    for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
+  };
+  const drains = queueDrains({ queued: queue.length, attached, working, waitingOnUser, held: queueHeld });
+  useEffect(() => {
+    if (!drains || sendingQueued.current) return;
+    sendingQueued.current = true;
+    // After this commit, not inside it: the send sets state of its own.
+    const next = queue[0];
+    void Promise.resolve()
+      .then(() => sendQueued(next))
+      .finally(() => {
+        sendingQueued.current = false;
+        setQueueSettled((n) => n + 1);
+      });
+    // sendQueued is this render's; the queue's head and whether it drains are
+    // what decide a send.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drains, queue, queueSettled]);
+  // While the agent works, or others wait ahead, a prompt joins the queue.
+  const sendOrQueue = (text: string, attachmentIds: string[]) =>
+    working || queue.length > 0 ? enqueue(text, attachmentIds) : send(text, attachmentIds);
+
   const stop = () => {
     setStopping(true);
     setSendError(null);
@@ -592,8 +648,17 @@ export function WorkspaceSession({
         </InlineMessage>
       ) : null}
       {!waitingOnUser && (
+        <QueuedPrompts
+          queue={queue}
+          canSendNow={attached}
+          onSendNow={(prompt) => void sendQueued(prompt)}
+          onRemove={removeQueued}
+        />
+      )}
+      {!waitingOnUser && (
         <SessionComposer
-          onSend={send}
+          onSend={sendOrQueue}
+          placeholder={working ? "Queue a message for when this turn ends…" : undefined}
           canSend={canSend}
           // Sending waits on the connection alone, so say that, not the
           // composer's default (another viewer holding the keyboard).
