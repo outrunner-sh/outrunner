@@ -180,7 +180,13 @@ export function AppSidebar({
         />
         {/* Import (/import) is hidden from the nav for now; the page still works. */}
         <NavSoon icon={<Flag />} label="Runner" />
-        <NavSoon icon={<Sparkles />} label="Automations" />
+        {/* The org's automations, and the GitHub App code review posts as. */}
+        <NavLink
+          href="/automations"
+          icon={<Sparkles />}
+          label="Automations"
+          active={pathname === "/automations" || pathname.startsWith("/automations/")}
+        />
         {searching ? (
           <SearchField value={query} onChange={setQuery} onClose={closeSearch} />
         ) : (

@@ -1,7 +1,7 @@
 /**
  * A GitHub App installation as Outrunner keeps and shows it. Kept apart from
- * lib/github/app.ts, which signs with the app's private key, so Settings →
- * Code review's client component can import it.
+ * lib/github/app.ts, which signs with the app's private key, so the
+ * Automations page's client component can import it.
  */
 
 export type InstallationAccountType = "User" | "Organization";

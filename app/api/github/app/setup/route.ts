@@ -6,13 +6,13 @@ import { linkInstallation } from "@/lib/db/github-installations";
 import { memberRole } from "@/lib/db/orgs";
 import { requireEnv } from "@/lib/env";
 import { getInstallation, githubAppConfig } from "@/lib/github/app";
-import { CODE_REVIEW_PATH, completeSetup, INSTALL_COOKIE, INSTALL_COOKIE_PATH } from "@/lib/github/app-setup";
+import { AUTOMATIONS_PATH, completeSetup, INSTALL_COOKIE, INSTALL_COOKIE_PATH } from "@/lib/github/app-setup";
 
 /**
  * The GitHub App's setup URL: GitHub sends the admin here after they install
  * the app or change its repositories. Links the installation to the org the
  * install started from, when `state` matches the install cookie
- * (lib/github/app-setup.ts), then lands on Settings → Code review.
+ * (lib/github/app-setup.ts), then lands on the Automations page.
  */
 export async function GET(request: Request) {
   await connection();
@@ -20,9 +20,9 @@ export async function GET(request: Request) {
   const to = (path: string) => NextResponse.redirect(new URL(path, base), 303);
 
   const owner = await getOwner();
-  if (!owner) return to(`/signin?next=${encodeURIComponent(CODE_REVIEW_PATH)}`);
+  if (!owner) return to(`/signin?next=${encodeURIComponent(AUTOMATIONS_PATH)}`);
   const config = githubAppConfig();
-  if (!config) return to(`${CODE_REVIEW_PATH}?problem=not_configured`);
+  if (!config) return to(`${AUTOMATIONS_PATH}?problem=not_configured`);
 
   const jar = await cookies();
   const path = await completeSetup(

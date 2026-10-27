@@ -182,7 +182,7 @@ test("setup links the installation to the org the install started from", async (
     },
     deps,
   );
-  assert.equal(path, "/settings/code-review?linked=neevai-labs");
+  assert.equal(path, "/automations?linked=neevai-labs");
   assert.deepEqual(linked, [{ orgId: ORG, installation, linkedBy: USER }]);
 });
 
@@ -221,7 +221,7 @@ test("setup links nothing without the matching cookie, for a member, or for an u
     const originalError = console.error;
     console.error = () => {};
     try {
-      assert.equal(await completeSetup(input, deps), `/settings/code-review?problem=${problem}`);
+      assert.equal(await completeSetup(input, deps), `/automations?problem=${problem}`);
     } finally {
       console.error = originalError;
     }
@@ -235,7 +235,7 @@ test("coming back from changing repositories on GitHub is no problem", async () 
     { userId: USER, params: params({ installation_id: "77", setup_action: "update" }), cookie: undefined },
     deps,
   );
-  assert.equal(path, "/settings/code-review");
+  assert.equal(path, "/automations");
   assert.deepEqual(linked, []);
 });
 

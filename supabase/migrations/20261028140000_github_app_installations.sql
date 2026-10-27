@@ -1,5 +1,5 @@
 -- Code review, step two: the Outrunner GitHub App's installations, each linked
--- to the Outrunner org whose admin installed it from Settings → Code review.
+-- to the Outrunner org whose admin installed it from the Automations page.
 -- Code review posts as the app, on the repositories an installation covers.
 --
 -- One GitHub account's installation may serve more than one Outrunner org

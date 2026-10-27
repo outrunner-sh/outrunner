@@ -9,7 +9,7 @@ webhook URL and one setup URL:
 | Production | `outrunner` | `https://app.outrunner.sh` |
 | Staging | `outrunner-staging` | the staging domain |
 
-Without the four `GITHUB_APP_*` variables, Settings → Code review says the app
+Without the four `GITHUB_APP_*` variables, the Automations page says the app
 isn't set up, and the webhook answers 503.
 
 ## Register it
@@ -52,7 +52,7 @@ in `.env.local`.
 
 ## How it's used
 
-1. In Outrunner, an org admin opens **Settings → Code review** and chooses
+1. In Outrunner, an org admin opens **Automations** in the sidebar and chooses
    **Install on GitHub**. Outrunner keeps the org in a short-lived cookie and
    sends the admin to the app's install page.
 2. The admin picks the account and repositories on GitHub. GitHub sends them

@@ -1,5 +1,5 @@
 /**
- * Installing the Outrunner GitHub App from Settings → Code review, and linking
+ * Installing the Outrunner GitHub App from the Automations page, and linking
  * the installation to the org the admin started from.
  *
  * The round trip: `/api/github/app/install?org=<id>` (an admin of that org)
@@ -18,7 +18,7 @@ import type { OrgRole } from "@/lib/orgs/active";
 import { installationId, type Installation } from "@/lib/github/installation";
 import { isUuid } from "@/lib/ids";
 
-export const CODE_REVIEW_PATH = "/settings/code-review";
+export const AUTOMATIONS_PATH = "/automations";
 
 export const INSTALL_COOKIE = "outrunner_github_install";
 export const INSTALL_COOKIE_PATH = "/api/github/app";
@@ -38,7 +38,7 @@ export function readInstallCookie(value: string | undefined): { orgId: string; n
   return dot > 0 && isUuid(orgId) && /^[A-Za-z0-9_-]{16,}$/.test(nonce) ? { orgId, nonce } : null;
 }
 
-/** Why Settings → Code review was sent back without a link; the page says. */
+/** Why the Automations page was sent back to without a link; the page says. */
 export type SetupProblem =
   | "not_configured"
   | "requested"
@@ -67,13 +67,13 @@ export type SetupDeps = {
   linkInstallation(input: { orgId: string; installation: Installation; linkedBy: string }): Promise<void>;
 };
 
-/** Where the setup URL sends the admin: Settings → Code review, saying what
+/** Where the setup URL sends the admin: the Automations page, saying what
  *  was linked or what went wrong. */
 export async function completeSetup(
   input: { userId: string; params: URLSearchParams; cookie: string | undefined },
   deps: SetupDeps,
 ): Promise<string> {
-  const back = (query: Record<string, string>) => `${CODE_REVIEW_PATH}?${new URLSearchParams(query)}`;
+  const back = (query: Record<string, string>) => `${AUTOMATIONS_PATH}?${new URLSearchParams(query)}`;
   const { params } = input;
   // An account member without rights to install asked its owners instead:
   // there's nothing to link until one of them approves.
@@ -84,7 +84,7 @@ export async function completeSetup(
   if (id === null || !started || params.get("state") !== started.nonce) {
     // Repositories changed on GitHub ("Redirect on update"): the webhook keeps
     // that, so there's nothing to link and nothing went wrong.
-    if (params.get("setup_action") === "update") return CODE_REVIEW_PATH;
+    if (params.get("setup_action") === "update") return AUTOMATIONS_PATH;
     return back({ problem: "start_here" });
   }
 

@@ -26,7 +26,7 @@ export type GitHubAppConfig = {
 
 /** The app's configuration, or null when this deployment hasn't registered
  *  one (any of the four is missing, or the key isn't a private key): then
- *  Settings → Code review says so, and the webhook answers 503. */
+ *  the Automations page says so, and the webhook answers 503. */
 export function githubAppConfig(): GitHubAppConfig | null {
   const appId = optionalEnv("GITHUB_APP_ID");
   const slug = optionalEnv("GITHUB_APP_SLUG");
