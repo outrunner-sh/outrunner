@@ -26,9 +26,9 @@ func askAsync(t *testing.T, ctx context.Context, b *Broker, requestID string, qs
 		done <- err
 	}()
 	waitFor(t, func() bool {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		w := b.waiting["ws"]
+		b.held.mu.Lock()
+		defer b.held.mu.Unlock()
+		w := b.held.waiting["ws"]
 		return w != nil && w.requestID == requestID
 	})
 	return done
@@ -55,7 +55,7 @@ func TestBrokerDeliversTheAnswerToTheWaitingCall(t *testing.T) {
 		}
 		got <- reply
 	}()
-	waitFor(t, func() bool { b.mu.Lock(); defer b.mu.Unlock(); return b.waiting["ws"] != nil })
+	waitFor(t, func() bool { return b.held.has("ws") })
 
 	reply := Reply{Answers: []Answer{{Selected: []string{"DB columns"}}, {Selected: []string{"Mac", "Cloud"}, Other: "Windows"}}}
 	if err := b.Answer("ws", questions(), reply); err != nil {

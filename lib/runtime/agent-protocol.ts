@@ -194,6 +194,25 @@ export const AnswerRequest = z.object({
 });
 export type AnswerRequest = z.infer<typeof AnswerRequest>;
 
+/** The agent serves request_secrets and takes its answer
+ *  (POST /workspaces/{id}/secrets). */
+export const AGENT_FEATURE_REQUEST_SECRETS = "request-secrets";
+
+/**
+ * POST /workspaces/{id}/secrets: the user's answer to the request for
+ * secrets the session is waiting on (runtime-agent/internal/ask/secrets.go).
+ * `keys` are the request's variables as the form showed them; the agent
+ * matches them to the call. Values for some of them, or skipped.
+ */
+export const ProvideSecretsRequest = z
+  .object({
+    keys: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)).min(1).max(10),
+    values: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string().min(1).max(64 * 1024)).optional(),
+    skipped: z.boolean().optional(),
+  })
+  .strict();
+export type ProvideSecretsRequest = z.infer<typeof ProvideSecretsRequest>;
+
 export const SetAuthRequest = z
   .object({
     kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key"]),
@@ -565,6 +584,7 @@ export const PROTOCOL_SCHEMAS = {
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  ProvideSecretsRequest,
   SetEnvironmentRequest,
   SetAgentConfigRequest,
   EditorResponse,

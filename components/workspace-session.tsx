@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
 import { QuestionCard } from "@/components/question-card";
+import { pendingSecretRequest, type PendingSecretRequest } from "@/lib/runtime/pending-secrets";
+import { SecretsCard } from "@/components/secrets-card";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
 import { ErrorRef, InlineMessage, Notice, TickingFact } from "@/components/ui/notice";
 import { deliverLocalAgentAuth, LocalAgentAuthError } from "@/lib/desktop/local-agent-auth";
@@ -303,7 +305,12 @@ export function WorkspaceSession({
   // that fails), until its result reaches the stream.
   const question = useMemo(() => pendingQuestion(conversation.events), [conversation.events]);
   const [answeredHere, setAnsweredHere] = useState<ReadonlySet<string>>(() => new Set());
-  const waitingOnUser = question !== null && !answeredHere.has(question.toolUseId);
+  // The secrets the agent asked for (request_secrets), the same way: a form
+  // in place of the composer, put away while its answer is on the way.
+  const secretRequest = useMemo(() => pendingSecretRequest(conversation.events), [conversation.events]);
+  const waitingOnSecrets = secretRequest !== null && !answeredHere.has(secretRequest.toolUseId);
+  const [secretsSaveError, setSecretsSaveError] = useState<string | null>(null);
+  const waitingOnUser = (question !== null && !answeredHere.has(question.toolUseId)) || waitingOnSecrets;
   const answer = (asked: PendingQuestion, reply: { answers: AskAnswer[] } | { dismissed: true }) => {
     setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
     setSendError(null);
@@ -330,6 +337,33 @@ export function WorkspaceSession({
       // line is hidden with the composer.
       setAnswerError(local ? messageForLocalError(error, agent) : raw || "Couldn't send your answer.");
     });
+  };
+  const provideSecrets = (asked: PendingSecretRequest, reply: { values: Record<string, string>; save: boolean } | null) => {
+    setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
+    setSendError(null);
+    setAnswerError(null);
+    setQuestionGone(null);
+    setSecretsSaveError(null);
+    const keys = asked.keys.map((k) => k.name);
+    const body = reply ? { keys, values: reply.values } : { keys, skipped: true };
+    (local
+      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/secrets`, body).then(() => null)
+      : provideCloudSecrets(workspaceId, { ...body, save: reply?.save ?? false })
+    )
+      .then((saveError) => setSecretsSaveError(saveError))
+      .catch((error: unknown) => {
+        const raw = error instanceof Error ? error.message : String(error ?? "");
+        if (isExpiredQuestionError(raw)) {
+          setQuestionGone(`${AGENTS[agent].label} isn't waiting for those any more. Reply in the chat instead.`);
+          return;
+        }
+        setAnsweredHere((prev) => {
+          const next = new Set(prev);
+          next.delete(asked.toolUseId);
+          return next;
+        });
+        setAnswerError(local ? messageForLocalError(error, agent) : raw || "Couldn't send them.");
+      });
   };
   // A prompt the stream hasn't recorded yet is a turn starting. The agent
   // refuses a switch mid-turn too, since a turn's end can't be read for sure here.
@@ -369,7 +403,9 @@ export function WorkspaceSession({
     disabledReason: !attached
       ? "Waiting for the session to connect"
       : waitingOnUser
-        ? `Answer ${AGENTS[agent].label}'s question first`
+        ? waitingOnSecrets
+          ? `Answer ${AGENTS[agent].label}'s request first`
+          : `Answer ${AGENTS[agent].label}'s question first`
         : working
           ? `Switch models once ${AGENTS[agent].label} has finished this turn`
           : null,
@@ -570,7 +606,23 @@ export function WorkspaceSession({
           onDismiss={() => answer(question, { dismissed: true })}
         />
       )}
-      {question && answerError ? (
+      {secretRequest && (
+        <SecretsCard
+          key={secretRequest.toolUseId}
+          request={secretRequest}
+          agentLabel={AGENTS[agent].label}
+          canSave={!local}
+          hidden={!waitingOnSecrets}
+          onProvide={(values, save) => provideSecrets(secretRequest, { values, save })}
+          onSkip={() => provideSecrets(secretRequest, null)}
+        />
+      )}
+      {secretsSaveError ? (
+        <InlineMessage tone="warning" actions={[{ label: "Dismiss", onClick: () => setSecretsSaveError(null) }]}>
+          {secretsSaveError}
+        </InlineMessage>
+      ) : null}
+      {(question || secretRequest) && answerError ? (
         // An answer that didn't go is the card's failure to say, not the
         // composer's: the composer is away while the card is up.
         <InlineMessage>{answerError}</InlineMessage>
@@ -765,6 +817,20 @@ async function answerCloudQuestion(workspaceId: string, body: unknown): Promise<
   if (res.ok) return;
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   throw new Error(data.error ?? "Couldn't send your answer. Please try again.");
+}
+
+/** Send the secrets a cloud session's agent asked for. The server reaches
+ *  the session's agent, as for an answer. Resolves with why they weren't
+ *  saved to the project, when they were meant to be and weren't. */
+async function provideCloudSecrets(workspaceId: string, body: unknown): Promise<string | null> {
+  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/secrets`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; saveError?: string };
+  if (!res.ok) throw new Error(data.error ?? "Couldn't send them. Please try again.");
+  return data.saveError ?? null;
 }
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as

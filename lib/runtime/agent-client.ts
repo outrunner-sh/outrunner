@@ -11,6 +11,7 @@ import {
   Activity,
   AgentHealth,
   AnswerRequest,
+  ProvideSecretsRequest,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   EditorResponse,
@@ -158,6 +159,14 @@ export class AgentClient {
    *  the agent refuses an answer to any it isn't waiting on (409 CONFLICT). */
   answer(identity: WorkspaceIdentity, req: AnswerRequest): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/answer`, identity, AnswerRequest.parse(req));
+  }
+
+  /** Answer the request for secrets the workspace's session is waiting on
+   *  (its agent's request_secrets call): the values go into its session,
+   *  never into a log. An answer to a request it isn't waiting on is 409
+   *  CONFLICT. */
+  provideSecrets(identity: WorkspaceIdentity, req: ProvideSecretsRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/secrets`, identity, ProvideSecretsRequest.parse(req));
   }
 
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {

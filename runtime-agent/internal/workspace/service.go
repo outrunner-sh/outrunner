@@ -113,6 +113,9 @@ type Service struct {
 	// asks holds the questions sessions are waiting on the user to answer
 	// (ask.go).
 	asks *ask.Broker
+	// secretAsks holds the requests for secrets sessions are waiting on
+	// (secrets.go).
+	secretAsks *ask.SecretsBroker
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
@@ -227,6 +230,7 @@ func NewService(root string) *Service {
 		runCommand: runCommand,
 		codexTails: map[string]*codexTail{},
 		asks:       ask.NewBroker(),
+		secretAsks: ask.NewSecretsBroker(),
 	}
 }
 
@@ -278,6 +282,7 @@ var githubCredentialEnv = []string{
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
 	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
+	secrets = append(secrets, s.providedTokens()...)
 	return append(secrets, agentConfigTokens()...)
 }
 
@@ -1475,6 +1480,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	s.removeEnvironment(workspaceID)
+	s.removeProvided(workspaceID)
 	s.forgetAsk(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))

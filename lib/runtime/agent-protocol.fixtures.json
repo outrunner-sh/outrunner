@@ -415,7 +415,8 @@
         "editor",
         "ports",
         "codex-gateway",
-        "project-instructions"
+        "project-instructions",
+        "request-secrets"
       ]
     }
   ],
@@ -472,6 +473,23 @@
     },
     {
       "env": {}
+    }
+  ],
+  "ProvideSecretsRequest": [
+    {
+      "keys": [
+        "VERCEL_TOKEN",
+        "VERCEL_ORG"
+      ],
+      "values": {
+        "VERCEL_TOKEN": "tok"
+      }
+    },
+    {
+      "keys": [
+        "VERCEL_TOKEN"
+      ],
+      "skipped": true
     }
   ],
   "SetAgentConfigRequest": [

@@ -108,6 +108,8 @@ func (s *Server) Handler() http.Handler {
 	// The session's own relay asks, with the session's ask token rather than
 	// a Runtime token (package ask).
 	mux.HandleFunc("POST /workspaces/{id}/ask", s.ask)
+	mux.HandleFunc("POST /workspaces/{id}/ask-secrets", s.askSecrets)
+	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
@@ -135,7 +137,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets},
 	})
 }
 
@@ -576,6 +578,65 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	default:
 		respond(w, "answered", err)
+	}
+}
+
+// askSecrets holds a request for secrets the session's agent made (its
+// request_secrets call) until the user answers it in the browser, or the
+// relay gives the call up. The request names variables; no value comes this
+// way.
+func (s *Server) askSecrets(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "this session can't ask for secrets here")
+		return
+	}
+	var req struct {
+		RequestID string `json:"requestId"`
+		ask.SecretRequest
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed request: "+err.Error())
+		return
+	}
+	if req.RequestID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a request needs a requestId")
+		return
+	}
+	_, _ = io.Copy(io.Discard, r.Body) // as ask: the server then watches the connection
+	text, err := s.ws.RequestSecrets(r.Context(), id, req.RequestID, req.SecretRequest)
+	switch {
+	case r.Context().Err() != nil:
+		return
+	case errors.Is(err, ask.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, ask.ErrBusy), errors.Is(err, ask.ErrReplaced):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"text": text})
+	}
+}
+
+// provideSecrets gives the user's answer to the request for secrets the
+// session is waiting on. Its values are never logged or echoed back.
+func (s *Server) provideSecrets(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.ProvideSecretsRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.ProvideSecrets(r.PathValue("id"), req.Keys, req.Values, req.Skipped)
+	switch {
+	case errors.Is(err, ask.ErrNotWaiting):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrInvalidEnvironment):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	default:
+		respond(w, "provided", err)
 	}
 }
 
