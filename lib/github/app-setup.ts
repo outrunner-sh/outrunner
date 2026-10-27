@@ -61,7 +61,7 @@ export const SETUP_MESSAGES: Record<SetupProblem, string> = {
   not_yours:
     "You can link the app only where you installed it: your own GitHub account, an organization you own, or repositories you're an admin of.",
   approve_members:
-    "Outrunner can't check you own that organization yet. Click Install on GitHub, approve the app's new permission to read the organization's members, and you'll be sent back here to link it.",
+    "Outrunner can't check you own that organization yet. Click Install on GitHub, approve the app's new permission to read the organization's members, then click Install on GitHub again to link it.",
   github: "Couldn't reach GitHub to check the installation. Try again.",
   failed: "Couldn't link the installation. Try again.",
 };

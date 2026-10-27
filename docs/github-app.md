@@ -71,6 +71,23 @@ in `.env.local`.
 Choosing which repositories get reviewed, and the review sessions
 themselves, come next.
 
+## Checking it on staging
+
+After registering the staging app, try each of these from the Automations page:
+
+1. Install on a personal account: it's linked, and listed with "Personal account".
+2. Install on an organization you own, on all repositories: it's linked.
+3. As a member who isn't an owner, install on an organization's selected
+   repositories, each of which you're an admin of: it's linked. Add one
+   repository you aren't an admin of: it's refused ("not yours").
+4. Edit `installation_id` in the setup URL GitHub sends you back to: it's
+   refused.
+5. Uninstall the app on GitHub: it's gone from the page (the webhook).
+6. For an install made before Organization members: read was added: the
+   page asks to approve it. Approve it on GitHub, then note whether GitHub
+   sends you back to Outrunner (`setup_action=update`, and with or without
+   `state`), so the message's steps match what happens.
+
 ## Local development
 
 GitHub can't reach `localhost`, so forward the webhook with a public relay:
