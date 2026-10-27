@@ -135,7 +135,7 @@ type RuntimeComputerRow = {
   /** Made ready ahead of a session and stopped, for the next one to take
    *  (20261025120000_warm_pool.sql). */
   pooled: boolean;
-  /** Which of the project's two ready boxes it is (20261028145000). */
+  /** Which of the project's two ready boxes it is (20261028150000_warm_hooks.sql). */
   pool_slot: number;
   /** The project's setup_generation it was made from. */
   generation: number | null;
@@ -292,7 +292,7 @@ type EnvironmentRow = {
   warm_hook: string | null;
   start_hook: string | null;
   setup_generation: number;
-  /** Each member's last warm run, by user id (20261028145000). */
+  /** Each member's last warm run, by user id (20261028150000_warm_hooks.sql). */
   warm_runs: Json;
   created_at: string;
   updated_at: string;
