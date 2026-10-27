@@ -206,10 +206,11 @@ function githubGet(url: string, token: string): Promise<Response> {
 export async function listInstallationRepositories(
   config: GitHubAppConfig,
   id: number,
+  pages = INSTALLATION_REPOS_PAGES,
 ): Promise<{ names: Set<string>; complete: boolean }> {
   const { token } = await createInstallationToken(config, id, { permissions: { metadata: "read" } });
   const names = new Set<string>();
-  for (let page = 1; page <= INSTALLATION_REPOS_PAGES; page++) {
+  for (let page = 1; page <= pages; page++) {
     const response = await githubGet(`https://api.github.com/installation/repositories?per_page=100&page=${page}`, token);
     if (!response.ok) {
       console.error("GitHub App repository listing was rejected", { status: response.status });
@@ -225,16 +226,25 @@ export async function listInstallationRepositories(
   return { names, complete: false };
 }
 
-/** Repositories checked for an admin's rights before giving up. */
-const OWNERSHIP_CHECKS = 10;
+/** A selected-repositories install on more than this many is linked only
+ *  by an owner of the organization. */
+const SELECTED_REPOS_MAX = 30;
 
 /**
- * Whether a signed-in user may link an installation: it's on their own
- * account, or, on an organization, they're an admin of one of the
- * repositories it covers (`userToken` is their GitHub token, which sees
- * their permission on each). Installing an app on an organization takes an
- * owner, or an admin of the repositories picked, so either holds for whoever
- * installed it; a stranger who edited the id in the setup URL has neither.
+ * Whether a signed-in user may link an installation:
+ *
+ * - On a user account: it's theirs.
+ * - On an organization: they're one of its owners (GitHub's membership,
+ *   read as the app with Organization members: read), the bar for
+ *   installing an app on it at all. Or, for an install on selected
+ *   repositories only (at most SELECTED_REPOS_MAX), they're an admin of
+ *   every one of them, which an organization may let repository admins
+ *   install on (`user.token` is their GitHub token, which sees their
+ *   permission on each).
+ *
+ * Being admin of a repository they made themselves (any member may, by
+ * default) is no claim on an organization's install. A stranger who edited
+ * the id in the setup URL has none of these.
  */
 export async function userControlsInstallation(
   config: GitHubAppConfig,
@@ -244,13 +254,39 @@ export async function userControlsInstallation(
   if (installation.accountType === "User") {
     return installation.accountLogin.toLowerCase() === user.login.toLowerCase();
   }
-  if (!user.token) return false;
-  const { names } = await listInstallationRepositories(config, installation.installationId);
-  for (const fullName of [...names].slice(0, OWNERSHIP_CHECKS)) {
-    const response = await githubGet(`https://api.github.com/repos/${fullName}`, user.token);
-    if (!response.ok) continue;
-    const repo = (await response.json().catch(() => null)) as { permissions?: { admin?: unknown } } | null;
-    if (repo?.permissions?.admin === true) return true;
+  if (await isOrganizationOwner(config, installation, user.login)) return true;
+  if (installation.repositorySelection !== "selected" || !user.token) return false;
+
+  const { names, complete } = await listInstallationRepositories(config, installation.installationId, 1);
+  if (!complete || names.size === 0 || names.size > SELECTED_REPOS_MAX) return false;
+  const token = user.token;
+  const admin = await Promise.all(
+    [...names].map(async (fullName) => {
+      const response = await githubGet(`https://api.github.com/repos/${fullName}`, token);
+      if (!response.ok) return false;
+      const repo = (await response.json().catch(() => null)) as { permissions?: { admin?: unknown } } | null;
+      return repo?.permissions?.admin === true;
+    }),
+  );
+  return admin.every(Boolean);
+}
+
+/** Whether `login` is an active owner (admin) of the installation's
+ *  organization, read as the app. False, said in the log, when the app
+ *  can't read members: its registration lacks Organization members: read. */
+async function isOrganizationOwner(config: GitHubAppConfig, installation: Installation, login: string): Promise<boolean> {
+  const { token } = await createInstallationToken(config, installation.installationId, {
+    permissions: { members: "read" },
+  });
+  const org = encodeURIComponent(installation.accountLogin);
+  const response = await githubGet(`https://api.github.com/orgs/${org}/memberships/${encodeURIComponent(login)}`, token);
+  if (response.status === 404) return false;
+  if (!response.ok) {
+    console.warn("GitHub App couldn't read an organization membership: does it have Organization members: read?", {
+      status: response.status,
+    });
+    return false;
   }
-  return false;
+  const membership = (await response.json().catch(() => null)) as { state?: unknown; role?: unknown } | null;
+  return membership?.state === "active" && membership.role === "admin";
 }

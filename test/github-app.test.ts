@@ -303,25 +303,40 @@ test("an installation on a user account is theirs only", async () => {
   assert.equal(await userControlsInstallation(config, mine, { login: "someone-else", token: "t" }), false);
 });
 
-test("an installation on an organization takes an admin of one of its repositories", async () => {
-  const stub = (admin: Record<string, boolean>) => {
+test("an installation on an organization takes one of its owners", async () => {
+  const stub = (role: string | null, admin: Record<string, boolean> = {}, repos = ["neevai-labs/a", "neevai-labs/b"]) => {
     globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
       if (url.endsWith("/access_tokens")) {
         return Promise.resolve(Response.json({ token: "ghs_x", expires_at: "2026-10-28T12:00:00Z" }, { status: 201 }));
       }
+      if (url.includes("/orgs/neevai-labs/memberships/")) {
+        return Promise.resolve(role ? Response.json({ state: "active", role }) : new Response("{}", { status: 404 }));
+      }
       if (url.includes("/installation/repositories")) {
-        return Promise.resolve(Response.json({ repositories: [{ full_name: "neevai-labs/a" }, { full_name: "neevai-labs/b" }] }));
+        return Promise.resolve(Response.json({ repositories: repos.map((full_name) => ({ full_name })) }));
       }
       const name = url.split("/repos/")[1];
       if (!(name in admin)) return Promise.resolve(new Response("{}", { status: 404 }));
       return Promise.resolve(Response.json({ permissions: { admin: admin[name] } }));
     }) as typeof fetch;
   };
-  stub({ "neevai-labs/a": false, "neevai-labs/b": true });
-  assert.equal(await userControlsInstallation(config, installation, { login: "x", token: "t" }), true);
-  stub({ "neevai-labs/a": false });
-  assert.equal(await userControlsInstallation(config, installation, { login: "x", token: "t" }), false);
+  const all = { ...installation, repositorySelection: "all" as const };
+  const user = { login: "x", token: "t" };
+
+  stub("admin");
+  assert.equal(await userControlsInstallation(config, all, user), true);
+  // A member who is admin of a repository (one they made, say) has no claim on an install on all of them.
+  stub("member", { "neevai-labs/a": true, "neevai-labs/b": true });
+  assert.equal(await userControlsInstallation(config, all, user), false);
+  // On selected repositories: admin of every one of them.
+  stub("member", { "neevai-labs/a": true, "neevai-labs/b": true });
+  assert.equal(await userControlsInstallation(config, installation, user), true);
+  stub(null, { "neevai-labs/a": true, "neevai-labs/b": false });
+  assert.equal(await userControlsInstallation(config, installation, user), false);
+  stub(null, {}, Array.from({ length: 31 }, (_, i) => `neevai-labs/r${i}`));
+  assert.equal(await userControlsInstallation(config, installation, user), false);
+  stub(null, { "neevai-labs/a": true, "neevai-labs/b": true });
   assert.equal(await userControlsInstallation(config, installation, { login: "x", token: null }), false);
 });
 

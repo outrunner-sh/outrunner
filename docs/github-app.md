@@ -34,6 +34,9 @@ App**. Create it under the organization that should own it (for example
   - Pull requests: **Read and write**, to comment on them.
   - Contents: **Read-only**, to read the code under review.
   - Metadata: **Read-only**. GitHub requires it.
+- **Organization permissions**:
+  - Members: **Read-only**, to check that whoever links an organization's
+    install is one of its owners.
 - **Subscribe to events**: **Pull request**. GitHub sends `installation` and
   `installation_repositories` events to every app without a subscription.
 - **Where can this GitHub App be installed?**: **Any account**, so users can
@@ -58,8 +61,9 @@ in `.env.local`.
 2. The admin picks the account and repositories on GitHub. GitHub sends them
    back to the setup URL, and Outrunner links the installation to that org
    (`lib/github/app-setup.ts`). It links only an installation the admin
-   controls: one on their own GitHub account, or on an organization where
-   they're an admin of one of the repositories it covers.
+   controls: one on their own GitHub account; one on an organization they
+   own; or one on up to 30 selected repositories of an organization, every
+   one of which they're an admin of.
 3. Uninstalling or suspending the app on GitHub, or changing its
    repositories, reaches the webhook, which updates the link
    (`lib/github/app-events.ts`).

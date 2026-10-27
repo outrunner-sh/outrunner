@@ -57,7 +57,7 @@ export const SETUP_MESSAGES: Record<SetupProblem, string> = {
   not_admin: "Only the org's admins can link the GitHub App.",
   not_found: "GitHub has no such installation of the Outrunner app. Install it again.",
   not_yours:
-    "That installation isn't on your GitHub account, or on an organization where you're an admin of one of its repositories.",
+    "You can link the app only where you installed it: your own GitHub account, an organization you own, or repositories you're an admin of.",
   github: "Couldn't reach GitHub to check the installation. Try again.",
   failed: "Couldn't link the installation. Try again.",
 };
