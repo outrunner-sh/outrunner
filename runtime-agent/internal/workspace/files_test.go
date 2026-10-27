@@ -87,6 +87,46 @@ func TestFilesAndReadFileOfALocalWorktree(t *testing.T) {
 	}
 }
 
+func TestFilesOfInPlaceFolders(t *testing.T) {
+	isolateGit(t)
+	write := func(dir string, names ...string) {
+		t.Helper()
+		for _, name := range names {
+			path := filepath.Join(dir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("x\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	s := NewService(t.TempDir())
+
+	// A repository with no commit yet is worked on in place, but git still
+	// lists it: what it ignores stays out of the tree.
+	fresh := t.TempDir()
+	run(t, fresh, "init", "--quiet", "-b", "main")
+	write(fresh, "main.go", "build/out.bin")
+	if err := os.WriteFile(filepath.Join(fresh, ".gitignore"), []byte("build/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.setFacts("ws-fresh", workspaceFacts{Branch: "b", RepoPath: fresh, InPlace: true})
+	files, _, err := s.Files(context.Background(), "ws-fresh")
+	if want := []string{".gitignore", "main.go"}; err != nil || !reflect.DeepEqual(files, want) {
+		t.Errorf("Files(no-commit repo) = %v, %v; want %v", files, err, want)
+	}
+
+	// A folder git can't list is walked.
+	plain := t.TempDir()
+	write(plain, "a.txt", "node_modules/x.js")
+	s.setFacts("ws-plain", workspaceFacts{Branch: "b", RepoPath: plain, InPlace: true})
+	files, _, err = s.Files(context.Background(), "ws-plain")
+	if want := []string{"a.txt"}; err != nil || !reflect.DeepEqual(files, want) {
+		t.Errorf("Files(plain folder) = %v, %v; want %v", files, err, want)
+	}
+}
+
 func TestFilesOfAFolderThatIsNotARepository(t *testing.T) {
 	folder := t.TempDir()
 	for _, name := range []string{"b.txt", "a/c.txt", ".git/HEAD", "node_modules/x/index.js"} {

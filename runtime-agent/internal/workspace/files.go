@@ -34,26 +34,36 @@ var ErrNoFile = errors.New("file not found in this workspace")
 // ones, sorted; truncated says the list was cut at maxListedFiles.
 func (s *Service) Files(ctx context.Context, workspaceID string) ([]string, bool, error) {
 	worktree := s.worktreePath(workspaceID)
-	var files []string
-	if f, ok := s.getFacts(workspaceID); ok && f.InPlace {
+	files, err := s.gitFiles(ctx, worktree)
+	if err != nil {
+		f, ok := s.getFacts(workspaceID)
+		if !ok || !f.InPlace {
+			return nil, false, err
+		}
+		// An in-place folder git can't list is no repository: every file in it.
+		// One that is a repository with no commit yet lists through git above,
+		// so its ignored files stay out.
 		files = walkFiles(worktree)
-	} else {
-		listed, err := s.gitRaw(ctx, worktree, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
-		if err != nil {
-			return nil, false, err
-		}
-		// Deleted but still in the index: nothing to open.
-		deleted, err := s.gitRaw(ctx, worktree, "ls-files", "--deleted", "-z")
-		if err != nil {
-			return nil, false, err
-		}
-		files = worktreeFiles(listed, deleted)
 	}
 	truncated := len(files) > maxListedFiles
 	if truncated {
 		files = files[:maxListedFiles]
 	}
 	return files, truncated, nil
+}
+
+// gitFiles is git's own listing of a worktree, ignored files left out.
+func (s *Service) gitFiles(ctx context.Context, worktree string) ([]string, error) {
+	listed, err := s.gitRaw(ctx, worktree, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, err
+	}
+	// Deleted but still in the index: nothing to open.
+	deleted, err := s.gitRaw(ctx, worktree, "ls-files", "--deleted", "-z")
+	if err != nil {
+		return nil, err
+	}
+	return worktreeFiles(listed, deleted), nil
 }
 
 // worktreeFiles is `git ls-files -z` less the deleted ones, sorted, each once.

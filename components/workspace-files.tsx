@@ -27,6 +27,8 @@ const MAX_MATCHES = 200;
 /** Past this many characters, a file is shown plain: highlighting it would
  *  stall the page. */
 const MAX_HIGHLIGHT_CHARS = 150_000;
+/** How often an open file the session is changing is read again. */
+const FILE_POLL_MS = 4_000;
 
 /**
  * The session's files, browsed in the Environment panel rather than in an
@@ -89,6 +91,7 @@ export function WorkspaceFiles({
         local={local}
         path={openPath}
         version={changed.get(openPath) ?? ""}
+        live={changed.has(openPath)}
         onBack={() => {
           closed.current = openPath;
           setOpenPath(null);
@@ -313,25 +316,30 @@ function FileIcon({ name }: { name: string }) {
 /**
  * One file's code, read from the session's box (or, local, the Mac), with a
  * line-number gutter and highlighting by its extension. It reads again when
- * `version` moves: the agent changed it.
+ * `version` moves (the agent changed it), and every few seconds while it is
+ * `live`: an edit can leave its line counts, and so `version`, as they were.
  */
 function FileView({
   workspaceId,
   local,
   path,
   version,
+  live,
   onBack,
 }: {
   workspaceId: string;
   local: boolean;
   path: string;
   version: string;
+  /** In the session's change set: the agent may be at work on it. */
+  live: boolean;
   onBack: () => void;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0);
+  const [polls, setPolls] = useState(0);
   const backRef = useRef<HTMLButtonElement>(null);
   useEffect(() => backRef.current?.focus(), []);
 
@@ -341,7 +349,12 @@ function FileView({
       try {
         const read = await readWorkspaceFile(workspaceId, local, path);
         if (cancelled) return;
-        setFile(read);
+        // The same text keeps its object, so it isn't highlighted again.
+        setFile((shown) =>
+          shown && shown.content === read.content && shown.binary === read.binary && shown.size === read.size
+            ? shown
+            : read,
+        );
         setError(null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't open this file.");
@@ -350,7 +363,15 @@ function FileView({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, local, path, version, reloads]);
+  }, [workspaceId, local, path, version, reloads, polls]);
+
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => {
+      if (!document.hidden) setPolls((n) => n + 1);
+    }, FILE_POLL_MS);
+    return () => clearInterval(id);
+  }, [live]);
 
   // Highlighting loads on first use, so the panel doesn't carry it until then.
   const language = codeLanguage(path);
