@@ -120,6 +120,8 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         }
         // The first attach takes the URLs a sidebar warm-up already has.
         const fetchedAt = Date.now();
+        // A fresh attach is one because the last URLs failed: they're not kept.
+        if (fresh) attachedWith.current = null;
         const warm = fresh ? null : await takeWarmUrls(workspaceId);
         if (controller.signal.aborted) return;
         if (warm) {
@@ -183,6 +185,8 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     attach(false);
     return () => {
       if (attachedWith.current) keepSessionUrls(workspaceId, attachedWith.current.urls, attachedWith.current.at);
+      // Handed off: the next attach starts with none of its own.
+      attachedWith.current = null;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
       inflight.current?.abort();
