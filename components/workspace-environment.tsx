@@ -417,7 +417,15 @@ function PullRequestRow({
   // Looked for every PR_POLL_MS while the agent is at it, re-read every
   // PR_STATUS_POLL_MS while open, and left alone once merged or closed.
   const settled = status !== null && status.state !== "open";
-  const pollMs = hasPullRequest ? (settled ? null : PR_STATUS_POLL_MS) : phase === "waiting" ? PR_POLL_MS : null;
+  // A first look that didn't get an answer is tried again, so Create PR
+  // isn't offered blind.
+  const pollMs = hasPullRequest
+    ? settled
+      ? null
+      : PR_STATUS_POLL_MS
+    : phase === "waiting" || !looked
+      ? PR_POLL_MS
+      : null;
 
   // Also looks once on opening: the agent may have opened one since the page
   // loaded, or without being asked. Only a sign-in GitHub refused is worth
@@ -428,7 +436,7 @@ function PullRequestRow({
     const look = async () => {
       const result = await lookUpPullRequest(workspaceId, repo?.projectId);
       if (!live) return;
-      setLooked(true);
+      if (result.answered) setLooked(true);
       if (result.pullRequest) {
         if (!hasPullRequest) {
           setFound(result.pullRequest);
@@ -634,6 +642,8 @@ function OpenedPullRequestRow({
 /** The session's pull request and its status as the server finds them, or
  *  why it couldn't. */
 async function lookUpPullRequest(workspaceId: string, projectId?: string): Promise<{
+  /** Outrunner said whether there is one (a 2xx); not a failed request. */
+  answered?: boolean;
   pullRequest?: WorkspacePullRequest | null;
   status?: PullRequestStatus | null;
   error?: string;
@@ -642,7 +652,8 @@ async function lookUpPullRequest(workspaceId: string, projectId?: string): Promi
   try {
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
     const response = await fetch(`/api/workspaces/${workspaceId}/pull-request${query}`, { cache: "no-store" });
-    return (await response.json().catch(() => ({}))) as Awaited<ReturnType<typeof lookUpPullRequest>>;
+    const body = (await response.json().catch(() => ({}))) as Awaited<ReturnType<typeof lookUpPullRequest>>;
+    return { ...body, answered: response.ok };
   } catch {
     return {};
   }

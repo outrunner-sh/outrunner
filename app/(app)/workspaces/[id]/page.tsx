@@ -59,14 +59,15 @@ async function ServerSession({ params }: { params: Params }) {
   // A deleted session keeps its row, marked destroyed: say so, rather than
   // leaving the user to wonder whether the link was wrong.
   if (workspace.status === "destroyed") {
+    // One read: its own repository's, and for a session of several, each's.
+    const pullRequests = await listWorkspacePullRequests([workspace.id]);
     return (
       <ServerAnswer<SessionAnswer>
         value={{
           gone: {
             workspace,
-            pullRequest: await getWorkspacePullRequest(workspace.id, workspace.projectId),
-            // A session of several repositories: each one's.
-            ...(workspace.checkouts && { pullRequests: await listWorkspacePullRequests([workspace.id]) }),
+            pullRequest: pullRequests.find((pr) => pr.projectId === workspace.projectId) ?? null,
+            ...(workspace.checkouts && { pullRequests }),
           },
         }}
       />
