@@ -152,6 +152,17 @@ these events: `checkout.session.completed`, `customer.subscription.created`,
 `invoice.payment_failed`, and `charge.dispute.created`. Prices are found by
 lookup key (`pro_monthly`, `pro_yearly`, `max_monthly`, `max_yearly`).
 
+**Code review**: the deployment's own GitHub App (one for prod, one for
+staging), registered as [github-app.md](github-app.md) describes. Unset, code
+review is off.
+
+```bash
+pnpm dlx wrangler secret put GITHUB_APP_ID
+pnpm dlx wrangler secret put GITHUB_APP_SLUG             # outrunner, or outrunner-staging
+pnpm dlx wrangler secret put GITHUB_APP_PRIVATE_KEY < outrunner.private-key.pem
+pnpm dlx wrangler secret put GITHUB_APP_WEBHOOK_SECRET
+```
+
 ## Domain: `app.outrunner.sh`
 
 1. **DNS/route** — the `routes` in `wrangler.jsonc` (`custom_domain: true`)

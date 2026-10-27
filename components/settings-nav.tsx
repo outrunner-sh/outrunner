@@ -2,7 +2,20 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Info, KeyRound, Layers, Terminal, User, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  BarChart3,
+  Box,
+  Building2,
+  CreditCard,
+  GitPullRequest,
+  Info,
+  KeyRound,
+  Layers,
+  Terminal,
+  User,
+  Users,
+} from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -28,6 +41,8 @@ const groups = [
       { href: "/settings/org", label: "General", icon: Building2 },
       // Who's in it; its admins invite, answer requests and remove.
       { href: "/settings/org/members", label: "Members", icon: Users },
+      // The Outrunner GitHub App, which reviews the org's pull requests.
+      { href: "/settings/code-review", label: "Code review", icon: GitPullRequest },
     ],
   },
   {

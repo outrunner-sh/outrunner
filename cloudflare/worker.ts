@@ -48,6 +48,12 @@ interface Env {
   RUNTIME_BILLING?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  /** The Outrunner GitHub App code review posts as (docs/github-app.md):
+   *  all four, or code review is off. */
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_SLUG?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_APP_WEBHOOK_SECRET?: string;
   OPENROUTER_API_KEY?: string;
   /**
    * Where cloud sessions run: "daytona" (the default) or "neev". "neev" needs
@@ -112,6 +118,10 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.BILLING_CRON_SECRET ? { BILLING_CRON_SECRET: env.BILLING_CRON_SECRET } : {}),
       ...(env.STRIPE_SECRET_KEY ? { STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY } : {}),
       ...(env.STRIPE_WEBHOOK_SECRET ? { STRIPE_WEBHOOK_SECRET: env.STRIPE_WEBHOOK_SECRET } : {}),
+      ...(env.GITHUB_APP_ID ? { GITHUB_APP_ID: env.GITHUB_APP_ID } : {}),
+      ...(env.GITHUB_APP_SLUG ? { GITHUB_APP_SLUG: env.GITHUB_APP_SLUG } : {}),
+      ...(env.GITHUB_APP_PRIVATE_KEY ? { GITHUB_APP_PRIVATE_KEY: env.GITHUB_APP_PRIVATE_KEY } : {}),
+      ...(env.GITHUB_APP_WEBHOOK_SECRET ? { GITHUB_APP_WEBHOOK_SECRET: env.GITHUB_APP_WEBHOOK_SECRET } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own

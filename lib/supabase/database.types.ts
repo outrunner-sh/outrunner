@@ -456,6 +456,17 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
+type GithubAppInstallationRow = {
+  org_id: string;
+  installation_id: number;
+  account_login: string;
+  account_type: "User" | "Organization";
+  repository_selection: "all" | "selected";
+  suspended_at: string | null;
+  linked_by: string | null;
+  created_at: string;
+};
+
 type OrganizationDomainRow = {
   domain: string;
   org_id: string;
@@ -523,6 +534,15 @@ export type Database = {
         Row: OrganizationDomainRow;
         Insert: Insert<OrganizationDomainRow, "domain" | "org_id">;
         Update: Partial<OrganizationDomainRow>;
+        Relationships: [];
+      };
+      github_app_installations: {
+        Row: GithubAppInstallationRow;
+        Insert: Insert<
+          GithubAppInstallationRow,
+          "org_id" | "installation_id" | "account_login" | "account_type" | "repository_selection"
+        >;
+        Update: Partial<GithubAppInstallationRow>;
         Relationships: [];
       };
       organization_invites: {

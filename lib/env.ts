@@ -55,6 +55,12 @@ type EnvKey =
   // webhook endpoint's signing secret.
   | "STRIPE_SECRET_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  // The Outrunner GitHub App (lib/github/app.ts, docs/github-app.md), which
+  // code review posts as. One per deployment; unset, code review is off.
+  | "GITHUB_APP_ID"
+  | "GITHUB_APP_SLUG"
+  | "GITHUB_APP_PRIVATE_KEY"
+  | "GITHUB_APP_WEBHOOK_SECRET"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).
