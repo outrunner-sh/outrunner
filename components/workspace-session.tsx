@@ -53,6 +53,7 @@ import {
   modelGroups,
   type ModelProvider,
   parseAgentConnections,
+  type RecordedModel,
   runsOnOwnAccount,
   type SessionModel,
   takesEffort,
@@ -90,6 +91,7 @@ export function WorkspaceSession({
   workspaceId,
   projectId,
   agent = "claude",
+  recorded = null,
   local = false,
   untitled = false,
   initialPrompt,
@@ -102,6 +104,9 @@ export function WorkspaceSession({
   /** The coding agent the session runs: its model menu offers only models
    *  that agent runs. */
   agent?: AgentId;
+  /** The model and effort its row records it was last put on (a cloud
+   *  session's), shown until a reply or a pick here says otherwise. */
+  recorded?: RecordedModel | null;
   /** A local session: everything then goes through the Outrunner app to the
    *  agent on this Mac, instead of through the server. */
   local?: boolean;
@@ -280,14 +285,20 @@ export function WorkspaceSession({
   // picked here, else the one a new session starts on.
   const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
-  // The effort it runs at, as last put on from here (lib/session/picked-effort.ts).
-  const [effort, setEffort] = useState<Effort | null>(() => rememberedEffort(workspaceId));
+  // The effort it runs at, as last put on from here (lib/session/picked-effort.ts);
+  // none put on from here (a session started from onboarding, or another
+  // browser), as its row records. Undefined until either says.
+  const [effortHere, setEffortHere] = useState<Effort | null | undefined>(
+    () => rememberedEffort(workspaceId) ?? undefined,
+  );
+  const effort = effortHere !== undefined ? effortHere : (recorded?.effort ?? null);
   const repliedSincePick =
     picked !== null &&
     conversation.events
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
-  const shownModel = picked && !repliedSincePick ? picked.model : activeModel;
+  // Before its first reply, the model its row records it starts on.
+  const shownModel = picked && !repliedSincePick ? picked.model : (activeModel ?? recorded?.model.id);
   // Stopping the turn under way (the composer's stop button): the agent
   // presses Escape in the session and answers once the turn has stopped.
   const [stopping, setStopping] = useState(false);
@@ -364,7 +375,7 @@ export function WorkspaceSession({
     connect: accounts.includes(agent) ? [] : [agent],
     effort,
     loadout: menu.loadout,
-    preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
+    preferredProvider: providerPicked ?? recorded?.model.provider ?? defaultModel(menu)?.provider,
     switching,
     disabledReason: !attached
       ? "Waiting for the session to connect"
@@ -388,7 +399,7 @@ export function WorkspaceSession({
           setPicked({ model: model.id, events: conversation.events.length });
           setProviderPicked(model.provider);
           rememberPickedProvider(workspaceId, model.provider);
-          setEffort(next);
+          setEffortHere(next);
           rememberEffort(workspaceId, next);
         })
         .catch((error: unknown) =>

@@ -2,7 +2,13 @@ import type { AgentId } from "@/lib/agents/registry";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
 import type { AgentPick, AgentStatus, OnboardingEnv, OnboardingUser, RepositoryList } from "@/lib/onboarding/types";
-import { CLAUDE_DEFAULT_MODEL, CODEX_MODELS, OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
+import {
+  CLAUDE_DEFAULT_MODEL,
+  CODEX_MODELS,
+  DEFAULT_EFFORT,
+  type Effort,
+  OUTRUNNER_MODELS,
+} from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
 
 /** A failure the page can show, with where to fix it when there's a place. */
@@ -36,16 +42,15 @@ async function call<T>(method: "GET" | "POST" | "PUT", url: string, body?: unkno
 }
 
 /** The model a first session starts on, by the agent picked: the user's own
- *  Claude or Codex; Outrunner's first model in Codex, which the session is
- *  asked to run (Claude Code would be its default); or none for the menu's
- *  default (Outrunner's models, in Claude Code). */
-export function firstModel(
-  runOn: AgentPick,
-): { provider: string; model: string; agent?: AgentId } | Record<string, never> {
-  if (runOn === "claude") return { provider: "claude", model: CLAUDE_DEFAULT_MODEL.id };
-  if (runOn === "codex") return { provider: "codex", model: CODEX_MODELS[0].id };
-  if (runOn === "codex-outrunner") return { provider: "outrunner", model: OUTRUNNER_MODELS[0].id, agent: "codex" };
-  return {};
+ *  Claude or Codex, at DEFAULT_EFFORT, as the new-session screen starts them;
+ *  or Outrunner's first model, in Codex where that is the pick (Claude Code
+ *  would be its default). Always named: with no model, a user whose Claude is
+ *  connected would start on it, not on the Outrunner's models they picked. */
+export function firstModel(runOn: AgentPick): { provider: string; model: string; effort?: Effort; agent?: AgentId } {
+  if (runOn === "claude") return { provider: "claude", model: CLAUDE_DEFAULT_MODEL.id, effort: DEFAULT_EFFORT };
+  if (runOn === "codex") return { provider: "codex", model: CODEX_MODELS[0].id, effort: DEFAULT_EFFORT };
+  const outrunner = { provider: "outrunner", model: OUTRUNNER_MODELS[0].id };
+  return runOn === "codex-outrunner" ? { ...outrunner, agent: "codex" } : outrunner;
 }
 
 /** Mark onboarding done, so home stops sending the user here. A failure is
