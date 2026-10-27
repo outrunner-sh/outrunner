@@ -243,6 +243,25 @@ export type ChangedFile = {
   deletions: number;
 };
 
+/** Every file in a worktree, tracked and untracked, without the ignored ones:
+ *  what the Files panel's tree is built from. */
+export type WorktreeFiles = {
+  files: string[];
+  /** The list was cut short: a very large repository. */
+  truncated: boolean;
+};
+
+/** One worktree file as the Files panel shows it: its text, or for a binary
+ *  file only that it is one. */
+export type FileContent = {
+  content: string;
+  binary: boolean;
+  /** Only the first part of a large file came back. */
+  truncated: boolean;
+  /** The file's size in bytes. */
+  size: number;
+};
+
 // ---------------------------------------------------------------------------
 // Provider contract
 // ---------------------------------------------------------------------------

@@ -117,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
 	mux.HandleFunc("GET /workspaces/{id}/summary", s.authed(s.workspaceSummary))
 	mux.HandleFunc("GET /workspaces/{id}/changes", s.authed(s.workspaceChanges))
+	mux.HandleFunc("GET /workspaces/{id}/files", s.authed(s.workspaceFiles))
 	mux.HandleFunc("GET /activity", s.authed(s.activity))
 	return mux
 }
@@ -401,6 +402,36 @@ func (s *Server) workspaceChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// workspaceFiles serves the Files panel for a local session, as
+// workspaceChanges does the Changes one: every file in the worktree, or with
+// ?path= one file's text — the shapes /api/workspaces/[id]/files uses.
+func (s *Server) workspaceFiles(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !s.requireWorkspace(w, r, id) {
+		return
+	}
+	if path := r.URL.Query().Get("path"); path != "" {
+		file, err := s.ws.ReadFile(r.Context(), id, path)
+		switch {
+		case errors.Is(err, workspace.ErrInvalidPath):
+			writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		case errors.Is(err, workspace.ErrNoFile):
+			writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		default:
+			writeJSON(w, http.StatusOK, file)
+		}
+		return
+	}
+	files, truncated, err := s.ws.Files(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files, "truncated": truncated})
 }
 
 // requireWorkspace binds a verified Runtime token to the exact workspace a

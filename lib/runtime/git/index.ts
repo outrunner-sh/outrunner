@@ -14,7 +14,7 @@
  */
 
 import { makeRedactor } from "@/lib/runtime/redact";
-import type { ChangedFile } from "@/lib/runtime/types";
+import type { ChangedFile, FileContent, WorktreeFiles } from "@/lib/runtime/types";
 
 export type GitExecResult = {
   stdout: string;
@@ -453,6 +453,64 @@ export async function readFileDiff(
     input.path,
   ]);
   return limitText(diff, input.maxBytes ?? 200_000);
+}
+
+const MAX_LISTED_FILES = 25_000;
+const MAX_FILE_BYTES = 512_000;
+
+/** Every file in a worktree for the Files panel: tracked and untracked, not
+ * the ignored ones nor those deleted from disk, sorted. Kept in step with the
+ * agent's Files (runtime-agent/internal/workspace/files.go), which serves a
+ * local session. */
+export async function listWorktreeFiles(
+  exec: GitExec,
+  input: { worktree: string },
+): Promise<WorktreeFiles> {
+  const [listed, deleted] = await Promise.all([
+    git(exec, ["-C", input.worktree, "ls-files", "--cached", "--others", "--exclude-standard", "-z"]),
+    git(exec, ["-C", input.worktree, "ls-files", "--deleted", "-z"]),
+  ]);
+  const gone = new Set(deleted.split("\0"));
+  const files = [...new Set(listed.split("\0"))].filter((path) => path && !gone.has(path)).sort();
+  return { files: files.slice(0, MAX_LISTED_FILES), truncated: files.length > MAX_LISTED_FILES };
+}
+
+/** Reads one file of a worktree, its size first: a link is followed only
+ * while it stays inside the worktree, and only a regular file is read. */
+const READ_FILE_SCRIPT = [
+  'root=$(realpath -- "$1") || exit 4',
+  'file=$(realpath -- "$1/$2" 2>/dev/null) || exit 4',
+  'case "$file" in "$root"/*) ;; *) exit 4 ;; esac',
+  '[ -f "$file" ] || exit 4',
+  'wc -c < "$file" && head -c "$3" -- "$file"',
+].join("\n");
+
+/** One worktree file's text for the Files panel, up to 512 KB; a binary one
+ * comes back marked as such, without its bytes. Ignored files are not listed
+ * but may still be opened. */
+export async function readWorktreeFile(
+  exec: GitExec,
+  input: { worktree: string; path: string; maxBytes?: number },
+): Promise<FileContent> {
+  if (!isSafeRelativePath(input.path)) throw new Error("Invalid file path");
+  const maxBytes = input.maxBytes ?? MAX_FILE_BYTES;
+  const result = await exec(["sh", "-c", READ_FILE_SCRIPT, "sh", input.worktree, input.path, String(maxBytes + 1)]);
+  if (result.exitCode === 4) throw new Error("File not found in this workspace");
+  if (result.exitCode !== 0) throw new Error(`Could not read ${input.path}: ${result.stderr || "no output"}`);
+  const newline = result.stdout.indexOf("\n");
+  const size = Number(result.stdout.slice(0, newline).trim()) || 0;
+  return fileContent(result.stdout.slice(newline + 1), size, maxBytes);
+}
+
+/** A file's first bytes as text, or binary when they hold a NUL or bytes that
+ * aren't UTF-8 (decoded as U+FFFD), cut at `maxBytes` on a character. */
+export function fileContent(text: string, size: number, maxBytes = MAX_FILE_BYTES): FileContent {
+  const bytes = Buffer.from(text, "utf8");
+  const truncated = bytes.length > maxBytes;
+  // A character the cut splits decodes as U+FFFD; drop it.
+  const content = truncated ? bytes.subarray(0, maxBytes).toString("utf8").replace(/\uFFFD+$/, "") : text;
+  if (/[\0\uFFFD]/.test(content.slice(0, 8000))) return { content: "", binary: true, truncated: false, size };
+  return { content, binary: false, truncated, size };
 }
 
 /** `git add -A && git commit` as the given author; returns the new SHA. */

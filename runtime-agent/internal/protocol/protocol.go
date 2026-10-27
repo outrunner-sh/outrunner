@@ -400,3 +400,13 @@ type ChangedFile struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 }
+
+// FileContent is one worktree file as the Files panel shows it, mirroring
+// FileContent in lib/runtime/types.ts (the shape /api/workspaces/[id]/files
+// returns with ?path=): its text, or for a binary file only that it is one.
+type FileContent struct {
+	Content   string `json:"content"`
+	Binary    bool   `json:"binary"`
+	Truncated bool   `json:"truncated"`
+	Size      int64  `json:"size"`
+}

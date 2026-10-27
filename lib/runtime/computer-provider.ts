@@ -19,8 +19,10 @@ import {
   commitAll,
   fetchMirror,
   listChangedFiles,
+  listWorktreeFiles,
   pushBranch,
   readFileDiff,
+  readWorktreeFile,
 } from "@/lib/runtime/git";
 import type { BoxResources, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
@@ -28,10 +30,12 @@ import type {
   CommitWorkspaceResult,
   CreatePullRequestResult,
   CreateWorkspaceResult,
+  FileContent,
   ProviderName,
   ProvisionStage,
   ProvisionTimings,
   RuntimeProvider,
+  WorktreeFiles,
 } from "@/lib/runtime/types";
 
 /**
@@ -419,6 +423,18 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       path: filePath,
       baseBranch,
     });
+  }
+
+  /** Every file in an interactive worktree, for the Files panel. */
+  async listWorkspaceFiles(sandboxId: string, worktreePath: string): Promise<WorktreeFiles> {
+    const box = await this.backend.get(sandboxId);
+    return listWorktreeFiles(box.gitExec, { worktree: worktreePath });
+  }
+
+  /** One file of an interactive worktree, bounded, for the Files panel. */
+  async readWorkspaceFile(sandboxId: string, worktreePath: string, filePath: string): Promise<FileContent> {
+    const box = await this.backend.get(sandboxId);
+    return readWorktreeFile(box.gitExec, { worktree: worktreePath, path: filePath });
   }
 
   /** Commit all current changes in a Runtime worktree. */

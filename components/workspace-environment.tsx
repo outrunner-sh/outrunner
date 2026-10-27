@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Cloud,
+  FolderTree,
   GitBranch,
   GitMerge,
   GitPullRequest,
@@ -15,14 +16,16 @@ import {
   ScanSearch,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceChanges } from "@/components/workspace-changes";
+import { WorkspaceFiles } from "@/components/workspace-files";
 import type { SessionSender } from "@/components/workspace-session";
 import { uploadAttachment } from "@/hooks/use-attachments";
 import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-workspace-changes";
+import { useWorkspaceFiles } from "@/hooks/use-workspace-files";
 import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
@@ -40,7 +43,7 @@ import { cn } from "@/lib/utils";
 /**
  * The session's Environment: where it runs, its changes, its branch, its pull
  * request and a review, one quiet row each. Changes opens the file list in
- * place; the branch row unfolds its details beneath it, the pull request row
+ * place, and Files the worktree's files to read; the branch row unfolds its details beneath it, the pull request row
  * asks the agent for one and then links to the pull request it opens, and
  * Review asks the agent to review the change. The terminal docks below, in the
  * studio's slot, not here.
@@ -51,6 +54,8 @@ export function WorkspaceEnvironment({
   pullRequest,
   isReady,
   sender,
+  view,
+  onView,
   onClose,
 }: {
   workspace: Workspace;
@@ -59,30 +64,48 @@ export function WorkspaceEnvironment({
   isReady: boolean;
   /** Sends into the session while it can (the Create PR and Review prompts). */
   sender: SessionSender | null;
+  /** Which of the panel's views shows: its rows, or one opened from them.
+   *  The studio's, so its header can open Files. */
+  view: EnvironmentView;
+  onView: (view: EnvironmentView) => void;
   /** Closes the panel; shown where the panel covers the chat (narrow windows). */
   onClose: () => void;
 }) {
-  const [view, setView] = useState<"overview" | "changes">("overview");
   // Focus follows the view: into the list's back arrow on the way in, back to
-  // the Changes row on the way out, so the keyboard is never left on nothing.
+  // the row it was opened from on the way out, so the keyboard is never left
+  // on nothing.
   const changesRow = useRef<HTMLButtonElement>(null);
+  const filesRow = useRef<HTMLButtonElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
-  const returning = useRef(false);
+  const returning = useRef<EnvironmentView | null>(null);
   useEffect(() => {
-    if (view === "changes") backButton.current?.focus();
-    else if (returning.current) changesRow.current?.focus();
-    returning.current = false;
+    if (view !== "overview") backButton.current?.focus();
+    else if (returning.current === "changes") changesRow.current?.focus();
+    else if (returning.current === "files") filesRow.current?.focus();
+    returning.current = null;
   }, [view]);
   const backToOverview = () => {
-    returning.current = true;
-    setView("overview");
+    returning.current = view;
+    onView("overview");
   };
   const [branchOpen, setBranchOpen] = useState(false);
   const changes = useWorkspaceChanges({ workspaceId: workspace.id, local: local !== undefined, active: isReady });
+  // Each changed path with what it changed by: the tree marks them, an open
+  // file reads again when its own moves, and a new path reloads the list.
+  const changed = useMemo(
+    () => new Map((changes.files ?? []).map((f) => [f.path, `${f.status}:${f.additions}:${f.deletions}`])),
+    [changes.files],
+  );
+  const files = useWorkspaceFiles({
+    workspaceId: workspace.id,
+    local: local !== undefined,
+    active: isReady && view === "files",
+    version: [...changed.keys()].join("\0"),
+  });
   const summary = environmentSummary(workspace, local);
 
-  // Both views stay mounted, the one not in use hidden: leaving the overview
-  // for Changes must not stop the watch for a pull request being opened.
+  // The overview stays mounted, hidden while another view shows: leaving it
+  // for Changes or Files must not stop the watch for a pull request being opened.
   return (
     <>
       {view === "changes" && (
@@ -96,7 +119,20 @@ export function WorkspaceEnvironment({
           />
         </div>
       )}
-      <div hidden={view === "changes"} className="studio-env-body">
+      {view === "files" && (
+        <div className="studio-env-body">
+          <WorkspaceFiles
+            state={files}
+            workspaceId={workspace.id}
+            local={local !== undefined}
+            active={isReady}
+            changed={changed}
+            onBack={backToOverview}
+            backRef={backButton}
+          />
+        </div>
+      )}
+      <div hidden={view !== "overview"} className="studio-env-body">
         <div className="studio-env-label">
           Environment
           <button type="button" onClick={onClose} className="studio-env-close" title="Hide environment" aria-label="Hide environment">
@@ -113,7 +149,7 @@ export function WorkspaceEnvironment({
 
         <EnvRow
           ref={changesRow}
-          onClick={() => setView("changes")}
+          onClick={() => onView("changes")}
           icon={<Plus />}
           right={
             <>
@@ -123,6 +159,10 @@ export function WorkspaceEnvironment({
           }
         >
           Changes
+        </EnvRow>
+
+        <EnvRow ref={filesRow} onClick={() => onView("files")} icon={<FolderTree />} right={<ChevronRight />}>
+          Files
         </EnvRow>
 
         <EnvRow
@@ -179,6 +219,9 @@ export function WorkspaceEnvironment({
     </>
   );
 }
+
+/** The Environment panel's views: its rows, the change list, the files. */
+export type EnvironmentView = "overview" | "changes" | "files";
 
 /** How often the panel looks for servers started or stopped on the box. */
 const PORTS_POLL_MS = 10_000;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -10,10 +10,13 @@ import {
   cloneMirror,
   commitAll,
   fetchMirror,
+  fileContent,
   gitFailureOutput,
   listChangedFiles,
+  listWorktreeFiles,
   pushBranch,
   readFileDiff,
+  readWorktreeFile,
   type GitExec,
   type GitExecOptions,
 } from "@/lib/runtime/git";
@@ -232,4 +235,61 @@ test("the change set spans the branch's commits and its working tree", async (t)
     readFileDiff(realGit, { worktree, path: "committed.ts", baseBranch: "no-such-branch" }),
     /not part of this workspace change set/,
   );
+});
+
+test("the Files panel lists a worktree's files and reads only those inside it", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "outrunner-files-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const worktree = join(root, "repo");
+  await mkdir(join(worktree, "src"), { recursive: true });
+  await sh(worktree, "init", "--quiet", "-b", "main");
+  await writeFile(join(worktree, "README.md"), "hello\n");
+  await writeFile(join(worktree, "gone.md"), "bye\n");
+  await writeFile(join(worktree, ".gitignore"), "secret.env\n");
+  await sh(worktree, "add", ".");
+  await sh(worktree, "commit", "--quiet", "-m", "first");
+  await unlink(join(worktree, "gone.md"));
+  await writeFile(join(worktree, "src", "app.ts"), "export const a = 1;\n");
+  await writeFile(join(worktree, "secret.env"), "KEY=1\n");
+  await writeFile(join(worktree, "logo.png"), Buffer.from([0x89, 0x50, 0, 0]));
+  await writeFile(join(root, "outside.txt"), "not yours\n");
+  await symlink(join(root, "outside.txt"), join(worktree, "escape.txt"));
+  await symlink("src/app.ts", join(worktree, "inside.ts"));
+
+  // Tracked and untracked; not ignored, not deleted; sorted.
+  assert.deepEqual(await listWorktreeFiles(realGit, { worktree }), {
+    files: [".gitignore", "README.md", "escape.txt", "inside.ts", "logo.png", "src/app.ts"],
+    truncated: false,
+  });
+
+  assert.deepEqual(await readWorktreeFile(realGit, { worktree, path: "src/app.ts" }), {
+    content: "export const a = 1;\n",
+    binary: false,
+    truncated: false,
+    size: 20,
+  });
+  assert.equal((await readWorktreeFile(realGit, { worktree, path: "inside.ts" })).content, "export const a = 1;\n");
+  assert.equal((await readWorktreeFile(realGit, { worktree, path: "secret.env" })).content, "KEY=1\n");
+  assert.deepEqual(await readWorktreeFile(realGit, { worktree, path: "logo.png" }), {
+    content: "",
+    binary: true,
+    truncated: false,
+    size: 4,
+  });
+  for (const path of ["escape.txt", "src", "gone.md", "nope.ts"]) {
+    await assert.rejects(readWorktreeFile(realGit, { worktree, path }), /not found in this workspace/, path);
+  }
+  for (const path of ["../outside.txt", "/etc/passwd", ":(glob)*"]) {
+    await assert.rejects(readWorktreeFile(realGit, { worktree, path }), /Invalid file path/, path);
+  }
+
+  // A long file comes back cut, on a character.
+  await writeFile(join(worktree, "long.txt"), "✓".repeat(10));
+  const long = await readWorktreeFile(realGit, { worktree, path: "long.txt", maxBytes: 7 });
+  assert.deepEqual(long, { content: "✓✓", binary: false, truncated: true, size: 30 });
+});
+
+test("fileContent reads bytes that aren't UTF-8 as binary", () => {
+  assert.equal(fileContent(Buffer.from([0xff, 0xfe, 0x61]).toString("utf8"), 3).binary, true);
+  assert.equal(fileContent("plain\n", 6).binary, false);
 });

@@ -1,17 +1,16 @@
 "use client";
 
-import { MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
+import { Code, MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
-import { OpenEditorButton } from "@/components/open-editor-button";
 import { SessionComposer } from "@/components/session-composer";
 import { SessionDidntStart } from "@/components/session-didnt-start";
 import { SetupStalled } from "@/components/setup-stalled";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
-import { WorkspaceEnvironment } from "@/components/workspace-environment";
+import { type EnvironmentView, WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
 import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
@@ -19,7 +18,7 @@ import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
-import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -48,6 +47,8 @@ export function WorkspaceStudio({
   initialAttachmentIds?: string[];
 }) {
   const [rightOpen, setRightOpen] = useState(true);
+  const [envView, setEnvView] = useState<EnvironmentView>("overview");
+  const filesOpen = rightOpen && envView === "files";
   // How the Environment panel's Create PR sends into the session, while it can.
   const [sender, setSender] = useState<SessionSender | null>(null);
   const isLocal = local !== undefined;
@@ -76,11 +77,27 @@ export function WorkspaceStudio({
           {place && <span className="studio-title-place">{place}</span>}
         </div>
         <div className="studio-header-actions">
-          {/* VS Code on the session's own box: cloud sessions only. */}
-          {hasLiveSession && !isLocal && opensInBrowser(workspace.provider) && <OpenEditorButton workspaceId={workspace.id} />}
+          {/* The session's files, read in the Environment panel. */}
+          {hasLiveSession && (
+            <button
+              className={cn("studio-icon-button", filesOpen && "is-active")}
+              onClick={() => {
+                setEnvView(filesOpen ? "overview" : "files");
+                setRightOpen(true);
+              }}
+              title={filesOpen ? "Hide files" : "Browse files"}
+              aria-pressed={filesOpen}
+            >
+              <Code />
+            </button>
+          )}
           <button
             className="studio-icon-button"
-            onClick={() => setRightOpen((open) => !open)}
+            onClick={() => {
+              // A panel opens on its rows, whatever it last showed.
+              if (rightOpen) setEnvView("overview");
+              setRightOpen(!rightOpen);
+            }}
             title={rightOpen ? "Hide environment" : "Show environment"}
             aria-pressed={rightOpen}
           >
@@ -192,7 +209,12 @@ export function WorkspaceStudio({
             pullRequest={pullRequest}
             isReady={isReady}
             sender={sender}
-            onClose={() => setRightOpen(false)}
+            view={envView}
+            onView={setEnvView}
+            onClose={() => {
+              setEnvView("overview");
+              setRightOpen(false);
+            }}
           />
         )}
       </aside>
