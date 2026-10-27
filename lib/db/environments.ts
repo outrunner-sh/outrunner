@@ -1,6 +1,6 @@
 /**
  * Projects, as the app calls them: an `environments` row
- * (20261027120000_environments.sql) and its repositories. Not the `projects`
+ * (20261027121000_environments.sql) and its repositories. Not the `projects`
  * table, which holds one connected GitHub repository a row and is where an
  * environment's repositories come from.
  *
@@ -11,14 +11,30 @@
  * The variables and files are sealed together, {env, files}
  * (lib/crypto/secret-box.ts), their names and paths kept beside them for
  * showing without opening them. Service role only — the tables have no
- * policy — and always scoped to the owner here.
+ * policy.
+ *
+ * A project is its org's (20261028140000_org_environments.sql), as its
+ * repositories are, so every member of the org reads and changes it and
+ * starts sessions from it. Each function here takes the user asking, and
+ * reaches only projects of the orgs they're a member of.
  */
 
 import { open, seal } from "@/lib/crypto/secret-box";
-import { mergeProjectEnvironment, type ProjectEnvironment, type ProjectScripts } from "@/lib/db/project-environment";
+import type { ProjectEnvironment, ProjectScripts } from "@/lib/db/project-environment";
 import { applySecretsEdit, checkoutNameFor, type EnvironmentSecrets, type SecretsEdit } from "@/lib/environments/rules";
-import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+
+/** The orgs `userId` is a member of: the projects they may reach are theirs.
+ *  Every function here asks once, and takes it given (`orgs`) when its caller
+ *  asked already, as an import's steps do. Needs 20261028140000. */
+async function memberOrgIds(userId: string): Promise<string[]> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_members")
+    .select("org_id")
+    .eq("user_id", userId);
+  if (error) throw error;
+  return (data ?? []).map((m) => m.org_id);
+}
 
 export type EnvironmentRepo = {
   projectId: string;
@@ -86,20 +102,18 @@ export type EnvironmentPatch = {
   hooks?: Partial<ProjectHooks>;
 };
 
-/** The project, or null when the owner has none by that id (or before the
- *  migration that adds them). */
-export async function getEnvironment(ownerId: string, id: string): Promise<Environment | null> {
+/** The project, or null when none by that id is in the user's orgs. */
+export async function getEnvironment(userId: string, id: string): Promise<Environment | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("environments")
     .select(
-      "id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, warm_hook, start_hook, setup_generation, warm_status, warm_log, warm_started_at, warm_finished_at, warm_generation",
+      "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, warm_hook, start_hook, setup_generation, warm_status, warm_log, warm_started_at, warm_finished_at, warm_generation",
     )
-    .eq("owner_id", ownerId)
+    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .is("archived_at", null)
     .maybeSingle();
-  if (error && probeStatus(error) === "missing") return null;
   if (error) throw error;
   if (!data) return null;
   return {
@@ -107,7 +121,7 @@ export async function getEnvironment(ownerId: string, id: string): Promise<Envir
     name: data.name,
     description: data.description,
     instructions: data.instructions,
-    repos: await environmentRepos(ownerId, id),
+    repos: await environmentRepos(data.org_id, id),
     envNames: data.env_names,
     filePaths: data.file_paths,
     scripts: { setup: data.setup_script, run: data.run_script, archive: data.archive_script },
@@ -127,12 +141,12 @@ export async function getEnvironment(ownerId: string, id: string): Promise<Envir
   };
 }
 
-async function environmentRepos(ownerId: string, environmentId: string): Promise<EnvironmentRepo[]> {
+async function environmentRepos(orgId: string, environmentId: string): Promise<EnvironmentRepo[]> {
   const supabase = createSupabaseAdminClient();
   const { data: rows, error } = await supabase
     .from("environment_repos")
     .select("project_id, checkout_name, branch, position")
-    .eq("owner_id", ownerId)
+    .eq("org_id", orgId)
     .eq("environment_id", environmentId)
     .order("position", { ascending: true });
   if (error) throw error;
@@ -140,7 +154,7 @@ async function environmentRepos(ownerId: string, environmentId: string): Promise
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
     .select("id, full_name, default_branch")
-    .eq("owner_id", ownerId)
+    .eq("org_id", orgId)
     .in(
       "id",
       rows.map((r) => r.project_id),
@@ -163,58 +177,66 @@ async function environmentRepos(ownerId: string, environmentId: string): Promise
 }
 
 /** The id of the repository's default project, or null when it has none
- *  yet (or before the migration that adds projects). Makes nothing. */
-export async function findDefaultEnvironmentId(ownerId: string, projectId: string): Promise<string | null> {
+ *  yet. Makes nothing. */
+export async function findDefaultEnvironmentId(userId: string, projectId: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("id")
-    .eq("owner_id", ownerId)
+    .in("org_id", await memberOrgIds(userId))
     .eq("default_for_project_id", projectId)
     .maybeSingle();
-  if (error && probeStatus(error) === "missing") return null;
   if (error) throw error;
   return data?.id ?? null;
 }
 
 /**
- * The id of the repository's default project, made now if it has none; null
- * when the owner has no such repository, or before the migration that adds
- * projects (a session then starts from project_environment, as before).
+ * The id of the repository's default project, made now if it has none: one
+ * per repository, in its org, whichever member's session needs it first.
+ * Null when the repository isn't in one of the user's orgs.
  */
-export async function defaultEnvironmentId(ownerId: string, projectId: string): Promise<string | null> {
+export async function defaultEnvironmentId(
+  userId: string,
+  projectId: string,
+  orgs?: string[],
+): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
-  const found = await supabase
-    .from("environments")
-    .select("id")
-    .eq("owner_id", ownerId)
-    .eq("default_for_project_id", projectId)
-    .maybeSingle();
-  if (found.error && probeStatus(found.error) === "missing") return null;
-  if (found.error) throw found.error;
-  if (found.data) return found.data.id;
-
+  orgs ??= await memberOrgIds(userId);
   const { data: project, error: projectError } = await supabase
     .from("projects")
-    .select("id, name")
-    .eq("owner_id", ownerId)
+    .select("id, name, org_id")
+    .in("org_id", orgs)
     .eq("id", projectId)
     .maybeSingle();
   if (projectError) throw projectError;
   if (!project) return null;
 
+  const found = await supabase
+    .from("environments")
+    .select("id")
+    .eq("org_id", project.org_id)
+    .eq("default_for_project_id", projectId)
+    .maybeSingle();
+  if (found.error) throw found.error;
+  if (found.data) return found.data.id;
+
   const made = await supabase
     .from("environments")
-    .insert({ owner_id: ownerId, name: project.name.slice(0, 80), default_for_project_id: projectId })
+    .insert({
+      org_id: project.org_id,
+      owner_id: userId,
+      name: project.name.slice(0, 80),
+      default_for_project_id: projectId,
+    })
     .select("id")
     .single();
   if (made.error) {
     // Made at the same moment by another request (two sessions started at
-    // once): theirs is the one.
-    if (made.error.code === "23505") return defaultEnvironmentId(ownerId, projectId);
+    // once, maybe two members'): theirs is the one.
+    if (made.error.code === "23505") return defaultEnvironmentId(userId, projectId, orgs);
     throw made.error;
   }
   const { error: repoError } = await supabase.from("environment_repos").insert({
-    owner_id: ownerId,
+    owner_id: userId,
     environment_id: made.data.id,
     project_id: projectId,
     checkout_name: checkoutNameFor(project.name),
@@ -222,7 +244,7 @@ export async function defaultEnvironmentId(ownerId: string, projectId: string): 
   if (repoError) {
     // A project with no repository is no default project: take it back, so
     // the next call makes it again.
-    await supabase.from("environments").delete().eq("owner_id", ownerId).eq("id", made.data.id);
+    await supabase.from("environments").delete().eq("id", made.data.id);
     throw repoError;
   }
   return made.data.id;
@@ -231,14 +253,13 @@ export async function defaultEnvironmentId(ownerId: string, projectId: string): 
 /** What a session started from the project gets; null when there is no such
  *  project. A sealed value that no longer opens reads as no variables rather
  *  than failing the session. */
-export async function environmentSetup(ownerId: string, id: string): Promise<EnvironmentSetup | null> {
+export async function environmentSetup(userId: string, id: string): Promise<EnvironmentSetup | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("secrets_ciphertext, setup_script, run_script, archive_script, instructions, warm_hook, start_hook, setup_generation")
-    .eq("owner_id", ownerId)
+    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .maybeSingle();
-  if (error && probeStatus(error) === "missing") return null;
   if (error) throw error;
   if (!data) return null;
   return {
@@ -265,11 +286,11 @@ function openSecrets(id: string, ciphertext: string | null): EnvironmentSecrets 
 
 /** Whether the project keeps anything a session starts with: variables,
  *  files or a script. Reads no secrets. */
-export async function environmentHasSetup(ownerId: string, id: string): Promise<boolean> {
+export async function environmentHasSetup(userId: string, id: string): Promise<boolean> {
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("env_names, file_paths, setup_script, run_script, archive_script, warm_hook, start_hook")
-    .eq("owner_id", ownerId)
+    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
@@ -283,7 +304,12 @@ export async function environmentHasSetup(ownerId: string, id: string): Promise<
 /** Change the project's name, description, instructions, scripts or hooks.
  *  A field left out is left as it is. A new warm hook moves the project's
  *  setup on a generation, so its ready boxes are made again. */
-export async function updateEnvironment(ownerId: string, id: string, patch: EnvironmentPatch): Promise<void> {
+export async function updateEnvironment(
+  userId: string,
+  id: string,
+  patch: EnvironmentPatch,
+  orgs?: string[],
+): Promise<void> {
   const { error } = await createSupabaseAdminClient()
     .from("environments")
     .update({
@@ -296,21 +322,21 @@ export async function updateEnvironment(ownerId: string, id: string, patch: Envi
       ...(patch.hooks?.warm !== undefined && { warm_hook: patch.hooks.warm }),
       ...(patch.hooks?.start !== undefined && { start_hook: patch.hooks.start }),
     })
-    .eq("owner_id", ownerId)
+    .in("org_id", orgs ?? (await memberOrgIds(userId)))
     .eq("id", id);
   if (error) throw error;
-  if (patch.hooks?.warm !== undefined) await bumpGeneration(ownerId, id);
+  if (patch.hooks?.warm !== undefined) await bumpGeneration(userId, id, orgs);
 }
 
 /** Move the project's setup on a generation: its ready boxes are made again
  *  (a change they're made from, or "Try again"). The new one. */
-export async function bumpGeneration(ownerId: string, id: string): Promise<number | null> {
+export async function bumpGeneration(userId: string, id: string, orgs?: string[]): Promise<number | null> {
   const supabase = createSupabaseAdminClient();
-  // The owner's, checked first: the function takes any id.
+  // In one of the user's orgs, checked first: the function takes any id.
   const { data: own, error: ownError } = await supabase
     .from("environments")
     .select("id")
-    .eq("owner_id", ownerId)
+    .in("org_id", orgs ?? (await memberOrgIds(userId)))
     .eq("id", id)
     .maybeSingle();
   if (ownError) throw ownError;
@@ -365,16 +391,19 @@ const EDIT_TRIES = 3;
  *  only lands if the row is as it was read (its updated_at, which every
  *  write moves); otherwise the edit is made again on what is there now. */
 export async function editEnvironmentSecrets(
-  ownerId: string,
+  userId: string,
   id: string,
   edit: SecretsEdit,
+  orgs?: string[],
 ): Promise<{ envNames: string[]; filePaths: string[] }> {
   const supabase = createSupabaseAdminClient();
+  // Once, for every try: the read and its write reach the same orgs.
+  const reach = orgs ?? (await memberOrgIds(userId));
   for (let attempt = 0; attempt < EDIT_TRIES; attempt++) {
     const { data, error } = await supabase
       .from("environments")
       .select("secrets_ciphertext, updated_at")
-      .eq("owner_id", ownerId)
+      .in("org_id", reach)
       .eq("id", id)
       .single();
     if (error) throw error;
@@ -388,14 +417,14 @@ export async function editEnvironmentSecrets(
         env_names: envNames,
         file_paths: filePaths,
       })
-      .eq("owner_id", ownerId)
+      .in("org_id", reach)
       .eq("id", id)
       .eq("updated_at", data.updated_at)
       .select("id");
     if (updateError) throw updateError;
     if (written.length > 0) {
       // Ready boxes carry the variables and files they were warmed with.
-      await bumpGeneration(ownerId, id);
+      await bumpGeneration(userId, id, reach);
       return { envNames, filePaths };
     }
   }
@@ -404,31 +433,31 @@ export async function editEnvironmentSecrets(
 
 /** Keep what the user picked of a repository's environment on their Mac in
  *  the repository's default project: a variable of the same name, a file at
- *  the same path, or a script given, replaces the one there. Before the
- *  migration that adds projects, in project_environment as before. */
+ *  the same path, or a script given, replaces the one there. False, keeping
+ *  nothing, for a repository that isn't in one of the user's orgs. */
 export async function mergeIntoDefaultEnvironment(
   ownerId: string,
   projectId: string,
   add: { env: Record<string, string>; files: Record<string, string>; scripts: Partial<ProjectScripts> },
-): Promise<void> {
-  const id = await defaultEnvironmentId(ownerId, projectId);
-  if (!id) return mergeProjectEnvironment(ownerId, projectId, add);
-  await editEnvironmentSecrets(ownerId, id, { setEnv: add.env, setFiles: add.files });
-  if (Object.keys(add.scripts).length > 0) await updateEnvironment(ownerId, id, { scripts: add.scripts });
+): Promise<boolean> {
+  const orgs = await memberOrgIds(ownerId);
+  const id = await defaultEnvironmentId(ownerId, projectId, orgs);
+  if (!id) return false;
+  await editEnvironmentSecrets(ownerId, id, { setEnv: add.env, setFiles: add.files }, orgs);
+  if (Object.keys(add.scripts).length > 0) await updateEnvironment(ownerId, id, { scripts: add.scripts }, orgs);
+  return true;
 }
 
 /** The generation of the project's setup a ready box must be made from to be
- *  taken; null for no project, or before the migration that adds it (any
- *  box, then). */
-export async function setupGeneration(ownerId: string, id: string | null): Promise<number | null> {
+ *  taken; null for no project (any box, then). */
+export async function setupGeneration(userId: string, id: string | null): Promise<number | null> {
   if (!id) return null;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("setup_generation")
-    .eq("owner_id", ownerId)
+    .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .maybeSingle();
-  if (error && (probeStatus(error) === "missing" || probeStatus(error) === "outdated")) return null;
   if (error) throw error;
   return data?.setup_generation ?? null;
 }

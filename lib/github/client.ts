@@ -1,5 +1,6 @@
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { isGitHubFullName, type RepositoryListing } from "@/lib/github/listing";
+import type { VerifiedEmail } from "@/lib/orgs/domains";
 
 /**
  * A GitHub repository normalized to the fields Runtime persists, plus the
@@ -330,6 +331,31 @@ export async function getGitHubRepository(
   const repo = normalizeRepository(await readJson(response));
   if (!repo) throw new GitHubSyncError("GitHub returned an invalid repository record.");
   return repo;
+}
+
+// ---------------------------------------------------------------------------
+// The user's verified emails: the domain a team org claims comes from one.
+// ---------------------------------------------------------------------------
+
+/**
+ * The emails GitHub has verified for the token's user (the `user:email`
+ * scope), primary first. An unverified email proves nothing about who the
+ * user is, so it's left out.
+ */
+export async function listVerifiedEmails(token: string): Promise<VerifiedEmail[]> {
+  const response = await fetchGitHub(new URL("/user/emails", GITHUB_API_URL), token);
+  if (!response.ok) {
+    throw rejected(response, "email listing", "GitHub could not list your emails. Please try again.");
+  }
+  const records = await readJson(response);
+  if (!Array.isArray(records)) throw new GitHubSyncError(GITHUB_UNREADABLE);
+  return records
+    .filter(
+      (r): r is { email: string; verified: true; primary?: boolean } =>
+        typeof r?.email === "string" && r.verified === true,
+    )
+    .map((r) => ({ email: r.email, primary: r.primary === true }))
+    .sort((a, b) => Number(b.primary) - Number(a.primary));
 }
 
 // ---------------------------------------------------------------------------

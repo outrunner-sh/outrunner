@@ -10,6 +10,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { useServerAnswer } from "@/components/server-answer";
 import { isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import { startNewSession } from "@/lib/session/new-session-reset";
+import type { Org } from "@/lib/orgs/active";
 import type { AppData } from "@/lib/session/session-view";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,10 @@ export type FrameData = {
   appData: AppData;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
+  /** The user's orgs, personal first, for the switcher; empty before orgs. */
+  orgs: Org[];
+  /** The org the sidebar lists (lib/orgs/active.ts). */
+  activeOrgId: string | null;
 };
 
 /**
@@ -153,6 +158,8 @@ export function AppFrame({
                 workspaces={appData?.workspaces ?? NO_WORKSPACES}
                 ownerLogin={frame?.ownerLogin ?? ""}
                 ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
+                orgs={frame?.orgs ?? NO_ORGS}
+                activeOrgId={frame?.activeOrgId ?? null}
                 onCollapse={() => setAndRemember(true)}
                 searchSignal={searchSignal}
                 initialFolded={look?.folded ?? NO_FOLDED}
@@ -228,4 +235,5 @@ function SidebarButtons({ className, expand }: { className?: string; expand: () 
 }
 
 const NO_WORKSPACES: AppData["workspaces"] = [];
+const NO_ORGS: Org[] = [];
 const NO_FOLDED: string[] = [];

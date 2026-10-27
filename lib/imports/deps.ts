@@ -52,15 +52,16 @@ export async function importProvider(ownerId: string): Promise<string> {
   return provider.name;
 }
 
-export function planDeps(ownerId: string, githubToken: string): PlanDeps {
+/** `orgId`: the org the user is looking at, where its projects go. */
+export function planDeps(ownerId: string, githubToken: string, orgId?: string): PlanDeps {
   const bucket = createSupabaseAdminClient().storage.from(SNAPSHOT_BUCKET);
   return {
     async connect(fullNames) {
       const { repositories } = await connectRepositories(ownerId, githubToken, fullNames, {
         lookup: getGitHubRepository,
-        upsert: upsertProjects,
+        upsert: (owner, repos) => upsertProjects(owner, repos, orgId),
       });
-      const byRepoId = new Map((await listProjects()).map((p) => [p.githubRepoId, p.id]));
+      const byRepoId = new Map((await listProjects(orgId)).map((p) => [p.githubRepoId, p.id]));
       return repositories.flatMap((repository) => {
         const projectId = byRepoId.get(repository.githubRepoId);
         return projectId ? [{ repository, projectId }] : [];

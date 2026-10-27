@@ -10,6 +10,27 @@ import type { ChangedFile } from "@/lib/runtime/types";
  *  them at once when the session opens again, and reads them fresh behind. */
 const KEPT_CHANGES = new Lru<{ files: ChangedFile[]; message: string | null }>(20);
 
+/** How often the change set is read again while the panel is mounted. */
+const POLL_MS = 3500;
+/** How long one read may take: one that hangs would hold every poll after it
+ *  (they don't overlap), so the panel would stop following the session. */
+const READ_TIMEOUT_MS = 15_000;
+
+/** `signal`, also aborted after `ms`. */
+function withTimeout(signal: AbortSignal | undefined, ms: number): { signal: AbortSignal; done: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort);
+  return {
+    signal: controller.signal,
+    done: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    },
+  };
+}
+
 /**
  * A session's changed files, kept live: the last read shown at once, loaded
  * fresh on mount, then polled while the caller stays mounted, with each file's
@@ -86,13 +107,18 @@ export function useWorkspaceChanges({
         if (!ok || !files) return { error: (result.error as string) ?? "Could not load changes." };
         return { files };
       }
-      const response = await fetch(`/api/workspaces/${workspaceId}/changes`, { signal });
-      const result = (await response.json().catch(() => ({}))) as {
-        files?: ChangedFile[];
-        error?: string;
-      };
-      if (!response.ok || !result.files) return { error: result.error ?? "Could not load changes." };
-      return { files: result.files };
+      const read = withTimeout(signal, READ_TIMEOUT_MS);
+      try {
+        const response = await fetch(`/api/workspaces/${workspaceId}/changes`, { signal: read.signal });
+        const result = (await response.json().catch(() => ({}))) as {
+          files?: ChangedFile[];
+          error?: string;
+        };
+        if (!response.ok || !result.files) return { error: result.error ?? "Could not load changes." };
+        return { files: result.files };
+      } finally {
+        read.done();
+      }
     },
     [workspaceId, local, readLocal],
   );
@@ -211,7 +237,7 @@ export function useWorkspaceChanges({
 
   useEffect(() => {
     if (!active) return;
-    const id = setInterval(() => void poll(), 3500);
+    const id = setInterval(() => void poll(), POLL_MS);
     return () => clearInterval(id);
   }, [active, poll]);
 

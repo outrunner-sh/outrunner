@@ -84,7 +84,7 @@ export async function refillProjectPool(input: {
       provider: provider.name,
       size: POOL_SIZE,
       generation,
-      pooled: () => getPooledComputers(project.id),
+      pooled: () => getPooledComputers(project.id, ownerId),
       claimSlot: (slot, secret) =>
         createPooledComputer({ ownerId, projectId: project.id, provider: provider.name, agentSecret: secret, slot, generation }),
       make: (secret, onBox) =>
@@ -282,7 +282,7 @@ export async function refillAfterChange(ownerId: string, environmentId: string):
   try {
     const environment = await getEnvironment(ownerId, environmentId);
     const repo = environment?.repos[0];
-    if (!repo || (await getPooledComputers(repo.projectId)).length === 0) return;
+    if (!repo || (await getPooledComputers(repo.projectId, ownerId)).length === 0) return;
     const provider = providerForNewSessions(await getSandboxSettings(ownerId), ownSandboxKeys(ownerId));
     if (!isComputerProvider(provider)) return;
     await refillProjectPool({

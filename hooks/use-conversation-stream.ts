@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
-import { dropNarration, rearmedSince, reconnectPlan } from "@/lib/runtime/reconnect";
+import { dropNarration, reconnectPlan, WS_OPEN, type WsAction, wsReducer, type WsStatus } from "@/lib/runtime/reconnect";
 import { StreamProtocolError, subscribeEventsWs } from "@/lib/runtime/session-client";
 import { CONVERSATIONS } from "@/lib/session/conversation-cache";
 
@@ -35,58 +35,6 @@ export type ConversationStreamState = {
 // a full reconnect — refetch URLs + a fresh token + a new socket — so the policy
 // backs off exponentially and gives up after a bounded number of consecutive
 // failures rather than hammering /session against a genuinely-down endpoint.
-
-// A single {error, closed, live} slice: reducer keeps effect body free of
-// setState, and the signals update from the same subscribe callbacks. `live`:
-// a frame has arrived on this connection.
-type WsStatus = {
-  error: string | null;
-  closed: boolean;
-  live: boolean;
-  /** Consecutive failed reconnects, mirrored from the ref for rendering. */
-  attempt: number;
-  /** When the current run of drops began (ms), for the elapsed time shown. */
-  since: number | null;
-  gaveUp: boolean;
-  protocolErrorRef: string | null;
-};
-type WsAction =
-  | { kind: "opening" }
-  | { kind: "frame-received" }
-  | { kind: "closed"; attempt: number; at: number }
-  | { kind: "gave-up" }
-  | { kind: "rearm"; at: number }
-  | { kind: "error"; message: string }
-  | { kind: "protocol-error"; ref: string };
-
-const OPEN: WsStatus = { error: null, closed: false, live: false, attempt: 0, since: null, gaveUp: false, protocolErrorRef: null };
-
-function wsReducer(state: WsStatus, action: WsAction): WsStatus {
-  switch (action.kind) {
-    case "opening":
-      // A new connection (a reconnect, or the page shown again): not live
-      // until its first frame.
-      return state.live ? { ...state, live: false } : state;
-    case "frame-received":
-      // First frame after connect implicitly means we're open again.
-      return state.live && !state.closed && state.error === null
-        ? state
-        : { ...OPEN, live: true, protocolErrorRef: state.protocolErrorRef };
-    case "closed":
-      return { ...state, closed: true, live: false, attempt: action.attempt, since: state.since ?? action.at };
-    case "gave-up":
-      return { ...state, gaveUp: true };
-    case "rearm":
-      // A fresh retry budget; the clock restarts only if the run had given up
-      // (rearmedSince). A re-arm mid-outage keeps it, so the elapsed time
-      // still shows how long the outage has lasted.
-      return { ...state, attempt: 0, gaveUp: false, since: rearmedSince(state, action.at) };
-    case "error":
-      return { ...state, error: action.message };
-    case "protocol-error":
-      return { ...state, protocolErrorRef: state.protocolErrorRef ?? action.ref };
-  }
-}
 
 /**
  * Subscribe to the Workspace Session's AgentEvent stream. State events (which
@@ -163,6 +111,15 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
       {
         lastEventId: lastEventIdRef.current,
         workspaceId,
+        // Back on: a resumed stream says nothing until Claude next writes,
+        // which during a long tool call can be minutes, so the open socket is
+        // what ends the drop, not its first frame. The backoff count waits for
+        // a frame: a socket that opens and closes again keeps backing off.
+        onOpen: () => {
+          if (!active) return;
+          setManualRetry(false);
+          dispatch({ kind: "opened" });
+        },
         onClose: () => {
           if (!active) return;
           setManualRetry(false);
@@ -240,10 +197,9 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
     if (attachmentStatus === "error") return "error";
     if (ws.error && ws.closed) return "error";
     if (ws.closed) return "disconnected";
-    // We consider ourselves "connected" once at least one frame arrived on
-    // this connection (the agent emits an initial state event on every fresh
-    // connect, so this resolves within one round trip). Before that, we're
-    // still connecting, whatever was kept from before.
+    // "Connected" once this connection is open (or a frame arrived on it):
+    // a resumed one may stay quiet for minutes while Claude runs a tool.
+    // Before that, we're still connecting, whatever was kept from before.
     return ws.live ? "connected" : "connecting";
   }, [attachmentStatus, ws.error, ws.closed, ws.live]);
 
@@ -281,7 +237,7 @@ export function useConversationStream(attachment: SessionAttachment, workspaceId
 
 // Small helper to hide useReducer typing; keeps the hook readable.
 function useReducerState() {
-  const [state, setState] = useState<WsStatus>(OPEN);
+  const [state, setState] = useState<WsStatus>(WS_OPEN);
   const dispatch = useMemo(
     () => (action: WsAction) => setState((s) => wsReducer(s, action)),
     [],

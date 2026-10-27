@@ -320,3 +320,22 @@ test("listPorts reads the box's servers", async () => {
   const ports = await new AgentClient(target, fakeFetch).listPorts(identity);
   assert.deepEqual(ports, [{ port: 3000, process: "node" }, { port: 5173 }]);
 });
+
+test("the change set and a file's diff are read from the box's agent", async () => {
+  const asked: string[] = [];
+  const fakeFetch = (async (url: string) => {
+    asked.push(url);
+    const body = url.includes("?path=")
+      ? { diff: "@@ -1 +1 @@" }
+      : { files: [{ path: "a b.ts", status: "modified", additions: 2, deletions: 1 }] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  assert.deepEqual(await client.listChanges(identity), [{ path: "a b.ts", status: "modified", additions: 2, deletions: 1 }]);
+  assert.equal(await client.changedFileDiff(identity, "a b.ts"), "@@ -1 +1 @@");
+  assert.deepEqual(asked, [
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/changes",
+    // The path is one query value, whatever it holds.
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/changes?path=a%20b.ts",
+  ]);
+});

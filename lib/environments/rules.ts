@@ -1,5 +1,5 @@
 /**
- * The rules a Project (an `environments` row, 20261027120000_environments.sql)
+ * The rules a Project (an `environments` row, 20261027121000_environments.sql)
  * is kept to: its name and instructions, its variables and files, its
  * scripts, and how many repositories it holds. The bounds are the ones the
  * runtime-agent holds a session's environment to
