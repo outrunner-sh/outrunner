@@ -235,15 +235,16 @@ test("the change set spans the branch's commits and its working tree", async (t)
   );
 });
 
-test("syncMirrors fetches the mirrors a box has and clones the rest", async () => {
+test("syncMirrors fetches the mirrors a box has and clones the rest, or another repository's", async () => {
   const calls: Call[] = [];
   const exec: GitExec = async (argv, options) => {
     calls.push({ argv, options });
-    // web's mirror is there; api's isn't.
-    if (argv.includes("--is-bare-repository")) {
-      return argv.includes("/r/repos/web.git")
-        ? { stdout: "true\n", stderr: "", exitCode: 0 }
-        : { stdout: "", stderr: "not a git repository", exitCode: 128 };
+    // web's mirror is acme/web's; api's folder holds another repository's;
+    // docs has none.
+    if (argv.includes("get-url")) {
+      if (argv.includes("/r/repos/web.git")) return { stdout: "https://github.com/acme/web.git\n", stderr: "", exitCode: 0 };
+      if (argv.includes("/r/repos/api.git")) return { stdout: "https://github.com/old-org/api.git\n", stderr: "", exitCode: 0 };
+      return { stdout: "", stderr: "not a git repository", exitCode: 128 };
     }
     return { stdout: "", stderr: "", exitCode: 0 };
   };
@@ -252,12 +253,15 @@ test("syncMirrors fetches the mirrors a box has and clones the rest", async () =
     repos: [
       { fullName: "acme/web", checkout: "web" },
       { fullName: "acme/api", checkout: "api" },
+      { fullName: "acme/docs", checkout: "docs" },
     ],
     token: "t",
   });
-  const shown = calls.map((c) => c.argv.filter((a) => !a.startsWith("-c") && !a.startsWith("credential")).join(" "));
+  const shown = calls.map((c) => c.argv.join(" "));
   assert.ok(shown.some((c) => c.includes("/r/repos/web.git") && c.includes("fetch --prune origin")), shown.join("\n"));
-  assert.ok(!shown.some((c) => c.includes("init --bare /r/repos/web.git")));
-  assert.ok(shown.includes("rm -rf /r/repos/api.git"));
-  assert.ok(shown.includes("git init --bare /r/repos/api.git"));
+  assert.ok(!shown.includes("git init --bare /r/repos/web.git"));
+  for (const name of ["api", "docs"]) {
+    assert.ok(shown.includes(`rm -rf /r/repos/${name}.git`), name);
+    assert.ok(shown.includes(`git init --bare /r/repos/${name}.git`), name);
+  }
 });

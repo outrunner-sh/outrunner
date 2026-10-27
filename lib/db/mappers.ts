@@ -190,9 +190,9 @@ function toCheckouts(value: unknown): SessionCheckout[] | null {
   if (!Array.isArray(value) || value.length < 2) return null;
   const checkouts = value.flatMap((c) => {
     if (!c || typeof c !== "object") return [];
-    const { projectId, fullName, checkout, baseBranch } = c as Record<string, unknown>;
+    const { projectId, fullName, checkout, baseBranch, private: isPrivate } = c as Record<string, unknown>;
     return typeof projectId === "string" && typeof fullName === "string" && typeof checkout === "string" && typeof baseBranch === "string"
-      ? [{ projectId, fullName, checkout, baseBranch }]
+      ? [{ projectId, fullName, checkout, baseBranch, ...(typeof isPrivate === "boolean" && { private: isPrivate }) }]
       : [];
   });
   return checkouts.length === value.length ? checkouts : null;

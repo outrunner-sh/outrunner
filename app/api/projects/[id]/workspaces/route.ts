@@ -270,7 +270,9 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
     for (const other of checkouts.filter((c) => c.projectId !== project.id)) {
-      const refused = await githubRefusal(githubToken, { fullName: other.fullName, private: true });
+      // As for the session's own repository: a public one GitHub doesn't show
+      // this token still clones, so only a private one is refused.
+      const refused = await githubRefusal(githubToken, { fullName: other.fullName, private: other.private ?? true });
       if (refused) return refused;
     }
   }

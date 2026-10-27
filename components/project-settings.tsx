@@ -155,7 +155,8 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
     );
     if (!saved) return;
     onSaved(saved);
-    setAddable((list) => list?.filter((r) => r.projectId !== projectId) ?? null);
+    // Removed, it can be added again: the list is fetched anew when opened.
+    setAddable((list) => (method === "DELETE" ? null : (list?.filter((r) => r.projectId !== projectId) ?? null)));
     setPicked("");
     if (method === "POST") setAdding(false);
   };

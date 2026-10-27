@@ -265,8 +265,11 @@ export async function syncMirrors(
 ): Promise<void> {
   for (const repo of input.repos) {
     const dir = `${input.root}/${repo.checkout}.git`;
-    const there = await exec(["git", "-C", dir, "rev-parse", "--is-bare-repository"]);
-    if (there.exitCode === 0 && there.stdout.trim() === "true") {
+    // A mirror of another repository in the same folder (one removed from
+    // the project, another of the same name added; or renamed on GitHub)
+    // is cloned again, never branched from.
+    const origin = await exec(["git", "-C", dir, "remote", "get-url", "origin"]);
+    if (origin.exitCode === 0 && origin.stdout.trim() === remoteUrl(repo.fullName)) {
       await fetchMirror(exec, { repoDir: dir, token: input.token });
     } else {
       await exec(["rm", "-rf", dir]); // a clone cut off half way

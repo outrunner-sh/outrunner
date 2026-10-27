@@ -94,6 +94,8 @@ export type SessionCheckout = {
   /** Its folder in the session's. */
   checkout: string;
   baseBranch: string;
+  /** Whether GitHub keeps it private; absent on a session recorded before. */
+  private?: boolean;
 };
 
 export type Workspace = {

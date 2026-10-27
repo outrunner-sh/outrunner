@@ -37,6 +37,9 @@ export type EnvironmentRepo = {
   /** The branch sessions start from; null is the repository's default. */
   branch: string | null;
   defaultBranch: string;
+  /** Its place in the project's list (and in a session's folder). */
+  position: number;
+  private: boolean;
 };
 
 /** A project as its settings page shows it: everything but the secrets'
@@ -139,15 +142,16 @@ async function environmentRepos(ownerId: string, environmentId: string): Promise
   const supabase = createSupabaseAdminClient();
   const { data: rows, error } = await supabase
     .from("environment_repos")
-    .select("project_id, checkout_name, branch, position")
+    .select("project_id, checkout_name, branch, position, created_at")
     .eq("owner_id", ownerId)
     .eq("environment_id", environmentId)
-    .order("position", { ascending: true });
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true });
   if (error) throw error;
   if (rows.length === 0) return [];
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
-    .select("id, full_name, default_branch")
+    .select("id, full_name, default_branch, is_private")
     .eq("owner_id", ownerId)
     .in(
       "id",
@@ -165,6 +169,8 @@ async function environmentRepos(ownerId: string, environmentId: string): Promise
         checkoutName: r.checkout_name,
         branch: r.branch,
         defaultBranch: project.default_branch,
+        position: r.position,
+        private: project.is_private,
       },
     ];
   });
@@ -452,6 +458,7 @@ export async function sessionCheckouts(ownerId: string, id: string): Promise<Ses
     fullName: r.fullName,
     checkout: r.checkoutName,
     baseBranch: r.branch ?? r.defaultBranch,
+    private: r.private,
   }));
 }
 
@@ -483,10 +490,15 @@ export async function addEnvironmentRepo(ownerId: string, id: string, projectId:
     environment_id: id,
     project_id: projectId,
     checkout_name: name,
-    position: environment.repos.length,
+    // After the last, whatever was removed between: no two share a place.
+    position: Math.max(-1, ...environment.repos.map((r) => r.position)) + 1,
   });
   if (insertError?.message.includes("at most 5")) {
     throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+  }
+  // Another add at the same moment took the folder name, or the repository.
+  if (insertError?.code === "23505") {
+    throw new EnvironmentRuleError("The project changed while adding that repository. Try again.");
   }
   if (insertError) throw insertError;
 }
