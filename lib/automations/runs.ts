@@ -69,7 +69,7 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
   if (!candidate.runsAs) {
     await settle({
       status: "refused",
-      reason: "Whoever last changed this automation is no longer in the org. Save it to run it as you.",
+      reason: "Whoever last changed this automation is no longer in the org. It runs again once an admin saves it.",
     });
     return;
   }
