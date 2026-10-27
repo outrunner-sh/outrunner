@@ -176,6 +176,14 @@ export async function createCloudSession(
   }
   const agentId = agentOf(chosenModel?.provider ?? "claude", askedAgent);
   const menu = await modelMenu(owner.id);
+  // First: it turns on the server's setup alone, and no credential of the
+  // user's would change it.
+  if (options.meteredOnly && !menu.allowance) {
+    return NextResponse.json(
+      { error: "Outrunner's models aren't metered per user on this server, so it can't start sessions on its own." },
+      { status: 409 },
+    );
+  }
   // What it needs to start: the model chosen, else the menu's default. On a
   // model on a key, Claude Code needs no account of the user's: one they
   // haven't connected doesn't stop it, and one they have is still resolved,
@@ -218,12 +226,6 @@ export async function createCloudSession(
   // Said before a box is set up for it, not after.
   if (chosenModel?.provider === "outrunner" && !menu.outrunner) {
     return NextResponse.json({ error: "Outrunner's models aren't available on this server." }, { status: 409 });
-  }
-  if (options.meteredOnly && !menu.allowance) {
-    return NextResponse.json(
-      { error: "Outrunner's models aren't metered per user on this server, so automations don't run here." },
-      { status: 409 },
-    );
   }
   if (chosenModel?.provider === "claude" && !hasClaude) {
     return needsClaude("Connect Claude to start a session on your Claude account.");
