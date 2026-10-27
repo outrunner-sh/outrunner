@@ -292,11 +292,8 @@ type EnvironmentRow = {
   warm_hook: string | null;
   start_hook: string | null;
   setup_generation: number;
-  warm_status: "running" | "succeeded" | "failed" | null;
-  warm_log: string | null;
-  warm_started_at: string | null;
-  warm_finished_at: string | null;
-  warm_generation: number | null;
+  /** Each member's last warm run, by user id (20261028150000). */
+  warm_runs: Json;
   created_at: string;
   updated_at: string;
 };
@@ -815,6 +812,10 @@ export type Database = {
       claim_billing_lease: {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;
+      };
+      record_warm_run: {
+        Args: { target: string; member: string; run: Json };
+        Returns: undefined;
       };
       bump_environment_generation: {
         Args: { target: string };

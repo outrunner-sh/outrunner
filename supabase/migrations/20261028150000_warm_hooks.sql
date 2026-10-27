@@ -8,8 +8,10 @@
 --
 -- setup_generation counts the changes a ready box is made from (the warm
 -- hook, the variables, the files): a box made from an older one is not taken
--- (claim_pooled_computer) and is replaced at the next refill. warm_* record
--- the last warm hook's run on a ready box, for the settings page.
+-- (claim_pooled_computer) and is replaced at the next refill. warm_runs
+-- record each member's last warm hook run on their ready boxes (each member
+-- has their own pool, 20261028120000), for the settings page:
+-- {"<user id>": {status, log, startedAt, finishedAt, generation}}.
 --
 -- The pool holds two boxes per project and member rather than one
 -- (20261028120000 made it one per member): pool_slot 0 or 1, each unique
@@ -20,11 +22,7 @@ alter table environments
   add column if not exists warm_hook text,
   add column if not exists start_hook text,
   add column if not exists setup_generation integer not null default 1,
-  add column if not exists warm_status text check (warm_status in ('running', 'succeeded', 'failed')),
-  add column if not exists warm_log text,
-  add column if not exists warm_started_at timestamptz,
-  add column if not exists warm_finished_at timestamptz,
-  add column if not exists warm_generation integer;
+  add column if not exists warm_runs jsonb not null default '{}'::jsonb;
 
 alter table runtime_computers
   add column if not exists pool_slot smallint not null default 0 check (pool_slot between 0 and 1),
@@ -117,3 +115,26 @@ as $$
 $$;
 
 revoke all on function bump_environment_generation(uuid) from public, anon, authenticated;
+
+-- Record a member's warm run on the project. Their two boxes warm at once:
+-- a failure of a generation stays until a new generation, whatever the
+-- other box's run of it says after. Service role only, as the table is.
+create or replace function record_warm_run(target uuid, member uuid, run jsonb)
+returns void
+language sql
+security invoker
+set search_path = public, pg_temp
+as $$
+  update environments
+  set warm_runs = jsonb_set(warm_runs, array[member::text], run)
+  where id = target
+    -- (coalesce: a member with no run yet has nothing to keep)
+    and not coalesce(
+      run->>'status' <> 'failed'
+      and warm_runs->member::text->>'status' = 'failed'
+      and warm_runs->member::text->'generation' = run->'generation',
+      false
+    );
+$$;
+
+revoke all on function record_warm_run(uuid, uuid, jsonb) from public, anon, authenticated;

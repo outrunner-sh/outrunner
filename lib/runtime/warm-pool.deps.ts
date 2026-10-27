@@ -160,7 +160,7 @@ async function warmBox(
     // so the settings page says so rather than "Applying" until it's updated.
     console.warn(`Box ${box.computerId}'s agent can't run a warm hook: pooled unwarmed`, healthError ?? "");
     const at = new Date().toISOString();
-    await recordWarmRun(environmentId, {
+    await recordWarmRun(environmentId, box.userId, {
       status: "failed",
       log: healthError
         ? "The ready box didn't answer before its warm hook could start. Sessions run the warm hook themselves as they start."
@@ -173,8 +173,8 @@ async function warmBox(
   }
   const startedAt = new Date().toISOString();
   const failed = (log: string) =>
-    recordWarmRun(environmentId, { status: "failed", log, startedAt, finishedAt: new Date().toISOString(), generation: req.generation });
-  await recordWarmRun(environmentId, { status: "running", log: null, startedAt, finishedAt: null, generation: req.generation });
+    recordWarmRun(environmentId, box.userId, { status: "failed", log, startedAt, finishedAt: new Date().toISOString(), generation: req.generation });
+  await recordWarmRun(environmentId, box.userId, { status: "running", log: null, startedAt, finishedAt: null, generation: req.generation });
   try {
     await agent.startWarm(box, { baseBranch: req.baseBranch, env: req.env, files: req.files, hook: req.hook });
   } catch (error) {
@@ -197,7 +197,7 @@ async function warmBox(
     }
     if (status.state === "running" && Date.now() < deadline) continue;
     const ok = status.state === "succeeded";
-    await recordWarmRun(environmentId, {
+    await recordWarmRun(environmentId, box.userId, {
       status: ok ? "succeeded" : "failed",
       log: (status.log ?? "").slice(-WARM_LOG_KEPT) || null,
       startedAt,
@@ -272,11 +272,15 @@ export async function sweepAbandonedPools(provider: ComputerRuntimeProvider): Pr
 }
 
 /**
- * Make a project's ready boxes again after a change they're made from (its
- * warm hook, variables or files; "Try again"): those of the old setup are
- * replaced. Only for a repository whose sessions are pooled already: an edit
- * to a project nobody has started a session in makes no boxes. Best effort,
- * after the change is saved: it never throws.
+ * Make the ready boxes of the member who changed the project again after a
+ * change they're made from (its warm hook, variables or files; "Try again"):
+ * those of the old setup are replaced. Only theirs: each member has their
+ * own pool (20261028120000), made with their GitHub token and written only
+ * by them (runtime_computers' policy). Another member's boxes of the old
+ * setup are never taken (claim_pooled_computer asks for the current
+ * generation), so their next session starts cold, and its setup refills
+ * their pool. Only for a repository whose sessions are pooled already. Best
+ * effort, after the change is saved: it never throws.
  */
 export async function refillAfterChange(ownerId: string, environmentId: string): Promise<void> {
   try {

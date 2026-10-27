@@ -64,7 +64,8 @@ export type Environment = {
   defaultForProjectId: string | null;
   /** Counts the changes ready boxes are made from (warm-pool.ts). */
   setupGeneration: number;
-  /** The warm hook's last run on a ready box, or null for none yet. */
+  /** The warm hook's last run on the asker's ready boxes (each member has
+   *  their own pool), or null for none yet. */
   warm: WarmRun | null;
   updatedAt: string;
 };
@@ -108,7 +109,7 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
   const { data, error } = await supabase
     .from("environments")
     .select(
-      "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, warm_hook, start_hook, setup_generation, warm_status, warm_log, warm_started_at, warm_finished_at, warm_generation",
+      "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, warm_hook, start_hook, setup_generation, warm_runs",
     )
     .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
@@ -128,15 +129,7 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
     hooks: { warm: data.warm_hook, start: data.start_hook },
     defaultForProjectId: data.default_for_project_id,
     setupGeneration: data.setup_generation,
-    warm: data.warm_status
-      ? {
-          status: data.warm_status,
-          log: data.warm_log,
-          startedAt: data.warm_started_at,
-          finishedAt: data.warm_finished_at,
-          generation: data.warm_generation,
-        }
-      : null,
+    warm: warmRunOf(data.warm_runs, userId),
     updatedAt: data.updated_at,
   };
 }
@@ -348,26 +341,28 @@ export async function bumpGeneration(userId: string, id: string, orgs?: string[]
   return typeof data === "number" ? data : null;
 }
 
-/** Record the warm hook's run on a ready box, for the settings page. A
- *  project's two boxes warm at once: a failure of a generation stays shown
- *  until a new generation (an edit, "Try again"), whatever the other box's
- *  run says after. */
-export async function recordWarmRun(id: string, run: WarmRun): Promise<void> {
-  let query = createSupabaseAdminClient()
-    .from("environments")
-    .update({
-      warm_status: run.status,
-      warm_log: run.log,
-      warm_started_at: run.startedAt,
-      warm_finished_at: run.finishedAt,
-      warm_generation: run.generation,
-    })
-    .eq("id", id);
-  if (run.status !== "failed" && run.generation !== null) {
-    query = query.or(`warm_status.is.null,warm_status.neq.failed,warm_generation.is.null,warm_generation.neq.${run.generation}`);
-  }
-  const { error } = await query;
+/** Record a member's warm hook run on their ready boxes, for the settings
+ *  page (record_warm_run: a failure of a generation isn't hidden by their
+ *  other box's success). */
+export async function recordWarmRun(id: string, memberId: string, run: WarmRun): Promise<void> {
+  const { error } = await createSupabaseAdminClient().rpc("record_warm_run", { target: id, member: memberId, run });
   if (error) throw error;
+}
+
+/** A member's warm run, read defensively from the project's map. */
+function warmRunOf(runs: unknown, memberId: string): WarmRun | null {
+  const run = runs && typeof runs === "object" ? (runs as Record<string, unknown>)[memberId] : null;
+  if (!run || typeof run !== "object") return null;
+  const r = run as Record<string, unknown>;
+  if (r.status !== "running" && r.status !== "succeeded" && r.status !== "failed") return null;
+  const text = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    status: r.status,
+    log: text(r.log),
+    startedAt: text(r.startedAt),
+    finishedAt: text(r.finishedAt),
+    generation: typeof r.generation === "number" ? r.generation : null,
+  };
 }
 
 /** Another save kept changing the project's secrets while this one tried
