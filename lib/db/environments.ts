@@ -25,7 +25,9 @@ import { applySecretsEdit, checkoutNameFor, type EnvironmentSecrets, type Secret
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-/** The orgs `userId` is a member of: the projects they may reach are theirs. */
+/** The orgs `userId` is a member of: the projects they may reach are theirs.
+ *  Every function here asks once, and takes it given (`orgs`) when its caller
+ *  asked already, as an import's steps do. Needs 20261028140000. */
 async function memberOrgIds(userId: string): Promise<string[]> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organization_members")
@@ -74,8 +76,7 @@ export type EnvironmentPatch = {
   scripts?: Partial<ProjectScripts>;
 };
 
-/** The project, or null when none by that id is in the user's orgs (or before
- *  the migration that adds them). */
+/** The project, or null when none by that id is in the user's orgs. */
 export async function getEnvironment(userId: string, id: string): Promise<Environment | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
@@ -140,17 +141,12 @@ async function environmentRepos(orgId: string, environmentId: string): Promise<E
 }
 
 /** The id of the repository's default project, or null when it has none
- *  yet (or before the migration that adds projects). Makes nothing. */
+ *  yet. Makes nothing. */
 export async function findDefaultEnvironmentId(userId: string, projectId: string): Promise<string | null> {
-  const orgs = await memberOrgIds(userId).catch((error: unknown) => {
-    if (probeStatus(error as { code?: string }) === "missing") return null;
-    throw error;
-  });
-  if (!orgs) return null;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
     .select("id")
-    .in("org_id", orgs)
+    .in("org_id", await memberOrgIds(userId))
     .eq("default_for_project_id", projectId)
     .maybeSingle();
   if (error && probeStatus(error) === "missing") return null;
@@ -161,13 +157,15 @@ export async function findDefaultEnvironmentId(userId: string, projectId: string
 /**
  * The id of the repository's default project, made now if it has none: one
  * per repository, in its org, whichever member's session needs it first.
- * Null when the repository isn't in one of the user's orgs, or before the
- * migration that adds projects (a session then starts from
- * project_environment, as before).
+ * Null when the repository isn't in one of the user's orgs.
  */
-export async function defaultEnvironmentId(userId: string, projectId: string): Promise<string | null> {
+export async function defaultEnvironmentId(
+  userId: string,
+  projectId: string,
+  orgs?: string[],
+): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
-  const orgs = await memberOrgIds(userId);
+  orgs ??= await memberOrgIds(userId);
   const { data: project, error: projectError } = await supabase
     .from("projects")
     .select("id, name, org_id")
@@ -200,7 +198,7 @@ export async function defaultEnvironmentId(userId: string, projectId: string): P
   if (made.error) {
     // Made at the same moment by another request (two sessions started at
     // once, maybe two members'): theirs is the one.
-    if (made.error.code === "23505") return defaultEnvironmentId(userId, projectId);
+    if (made.error.code === "23505") return defaultEnvironmentId(userId, projectId, orgs);
     throw made.error;
   }
   const { error: repoError } = await supabase.from("environment_repos").insert({
@@ -270,7 +268,12 @@ export async function environmentHasSetup(userId: string, id: string): Promise<b
 
 /** Change the project's name, description, instructions or scripts. A field
  *  left out is left as it is. */
-export async function updateEnvironment(userId: string, id: string, patch: EnvironmentPatch): Promise<void> {
+export async function updateEnvironment(
+  userId: string,
+  id: string,
+  patch: EnvironmentPatch,
+  orgs?: string[],
+): Promise<void> {
   const { error } = await createSupabaseAdminClient()
     .from("environments")
     .update({
@@ -281,7 +284,7 @@ export async function updateEnvironment(userId: string, id: string, patch: Envir
       ...(patch.scripts?.run !== undefined && { run_script: patch.scripts.run }),
       ...(patch.scripts?.archive !== undefined && { archive_script: patch.scripts.archive }),
     })
-    .in("org_id", await memberOrgIds(userId))
+    .in("org_id", orgs ?? (await memberOrgIds(userId)))
     .eq("id", id);
   if (error) throw error;
 }
@@ -310,13 +313,16 @@ export async function editEnvironmentSecrets(
   userId: string,
   id: string,
   edit: SecretsEdit,
+  orgs?: string[],
 ): Promise<{ envNames: string[]; filePaths: string[] }> {
   const supabase = createSupabaseAdminClient();
+  // Once, for every try: the read and its write reach the same orgs.
+  const reach = orgs ?? (await memberOrgIds(userId));
   for (let attempt = 0; attempt < EDIT_TRIES; attempt++) {
     const { data, error } = await supabase
       .from("environments")
       .select("secrets_ciphertext, updated_at")
-      .in("org_id", await memberOrgIds(userId))
+      .in("org_id", reach)
       .eq("id", id)
       .single();
     if (error) throw error;
@@ -330,7 +336,7 @@ export async function editEnvironmentSecrets(
         env_names: envNames,
         file_paths: filePaths,
       })
-      .in("org_id", await memberOrgIds(userId))
+      .in("org_id", reach)
       .eq("id", id)
       .eq("updated_at", data.updated_at)
       .select("id");
@@ -349,8 +355,9 @@ export async function mergeIntoDefaultEnvironment(
   projectId: string,
   add: { env: Record<string, string>; files: Record<string, string>; scripts: Partial<ProjectScripts> },
 ): Promise<void> {
-  const id = await defaultEnvironmentId(ownerId, projectId);
+  const orgs = await memberOrgIds(ownerId);
+  const id = await defaultEnvironmentId(ownerId, projectId, orgs);
   if (!id) return mergeProjectEnvironment(ownerId, projectId, add);
-  await editEnvironmentSecrets(ownerId, id, { setEnv: add.env, setFiles: add.files });
-  if (Object.keys(add.scripts).length > 0) await updateEnvironment(ownerId, id, { scripts: add.scripts });
+  await editEnvironmentSecrets(ownerId, id, { setEnv: add.env, setFiles: add.files }, orgs);
+  if (Object.keys(add.scripts).length > 0) await updateEnvironment(ownerId, id, { scripts: add.scripts }, orgs);
 }
