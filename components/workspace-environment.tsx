@@ -145,7 +145,7 @@ export function WorkspaceEnvironment({
         {/* Cloud sessions only: Create PR and Review hand the agent their
             instructions as an attachment, which a session on this Mac can't
             take. Review shows under the pull request once there is one. */}
-        {!local && summary.branch && (
+        {!local && summary.branch && !workspace.checkouts && (
           <PullRequestRow
             workspaceId={workspace.id}
             branch={summary.branch}
@@ -155,6 +155,22 @@ export function WorkspaceEnvironment({
             sender={isReady ? sender : null}
           />
         )}
+        {/* A session of several repositories: a pull request in each, a row
+            a repository, each counting its own folder's changes. */}
+        {!local &&
+          summary.branch &&
+          workspace.checkouts?.map((c) => (
+            <PullRequestRow
+              key={c.projectId}
+              workspaceId={workspace.id}
+              branch={summary.branch!}
+              baseBranch={c.baseBranch}
+              uncommitted={isReady && changes.files ? changes.files.filter((f) => f.path.startsWith(`${c.checkout}/`)).length : null}
+              pullRequest={pullRequest?.projectId === c.projectId ? pullRequest : null}
+              sender={isReady ? sender : null}
+              repo={{ projectId: c.projectId, checkout: c.checkout, fullName: c.fullName }}
+            />
+          ))}
 
         {/* The servers running on a cloud session's box, each a click from
             the user's browser. */}
@@ -312,11 +328,14 @@ function ReviewRow({
   baseBranch,
   pullRequestNumber,
   sender,
+  repo,
 }: {
   baseBranch: string;
   /** The open pull request under review. */
   pullRequestNumber: number;
   sender: SessionSender | null;
+  /** One repository of a session of several: its pull request's review. */
+  repo?: { checkout: string; fullName: string };
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -329,7 +348,7 @@ function ReviewRow({
       sender,
       REVIEW_PROMPT,
       REVIEW_INSTRUCTIONS_FILENAME,
-      reviewInstructions({ baseBranch, pullRequestNumber }),
+      reviewInstructions({ baseBranch, pullRequestNumber, ...(repo && { repo }) }),
     );
     setError(result.error ?? null);
     setBusy(false);
@@ -372,6 +391,7 @@ function PullRequestRow({
   uncommitted,
   pullRequest,
   sender,
+  repo,
 }: {
   workspaceId: string;
   branch: string;
@@ -380,6 +400,8 @@ function PullRequestRow({
   uncommitted: number | null;
   pullRequest: WorkspacePullRequest | null;
   sender: SessionSender | null;
+  /** One repository of a session of several: the row is its pull request's. */
+  repo?: { projectId: string; checkout: string; fullName: string };
 }) {
   const router = useRouter();
   const [found, setFound] = useState<WorkspacePullRequest | null>(null);
@@ -400,7 +422,7 @@ function PullRequestRow({
   useEffect(() => {
     let live = true;
     const look = async () => {
-      const result = await lookUpPullRequest(workspaceId);
+      const result = await lookUpPullRequest(workspaceId, repo?.projectId);
       if (!live) return;
       if (result.pullRequest) {
         if (!hasPullRequest) {
@@ -428,7 +450,7 @@ function PullRequestRow({
       clearInterval(poll);
       clearTimeout(giveUp);
     };
-  }, [hasPullRequest, pollMs, workspaceId, router]);
+  }, [hasPullRequest, pollMs, workspaceId, router, repo?.projectId]);
 
   const errorLine = error && (
     <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">
@@ -443,13 +465,14 @@ function PullRequestRow({
         <OpenedPullRequestRow
           workspaceId={workspaceId}
           pullRequest={opened}
+          repo={repo}
           status={status}
           onStatus={setStatus}
           onError={setError}
         />
         {errorLine}
         {/* While it's open: a merged or closed one has nothing left to review. */}
-        {!settled && <ReviewRow baseBranch={baseBranch} pullRequestNumber={opened.number} sender={sender} />}
+        {!settled && <ReviewRow baseBranch={baseBranch} pullRequestNumber={opened.number} sender={sender} repo={repo} />}
       </>
     );
   }
@@ -462,7 +485,7 @@ function PullRequestRow({
       sender,
       PR_PROMPT,
       PR_INSTRUCTIONS_FILENAME,
-      prInstructions({ branch, baseBranch, uncommitted }),
+      prInstructions({ branch, baseBranch, uncommitted, ...(repo && { repo }) }),
     );
     if (result.error) setError({ message: result.error, reconnect: false });
     setPhase(result.sent ? "waiting" : "idle");
@@ -481,11 +504,12 @@ function PullRequestRow({
             ? "Available once the session is connected"
             : phase === "waiting"
               ? "The agent is creating the pull request; it shows here once it's open"
-              : `Ask the agent to commit, push ${branch} and open a pull request into ${baseBranch}`
+              : `Ask the agent to commit, push ${branch} and open a pull request into ${baseBranch}${repo ? ` on ${repo.fullName}` : ""}`
         }
         right={busy ? <Spinner label="Creating pull request" /> : undefined}
       >
         Create PR
+        {repo && <span className="ml-2 truncate font-mono text-xs text-white/45">{repo.checkout}/</span>}
       </EnvRow>
       {errorLine}
     </>
@@ -507,12 +531,14 @@ const VERDICT_TONE: Record<PullRequestVerdict["tone"], string> = {
 function OpenedPullRequestRow({
   workspaceId,
   pullRequest,
+  repo,
   status,
   onStatus,
   onError,
 }: {
   workspaceId: string;
   pullRequest: WorkspacePullRequest;
+  repo?: { projectId: string; checkout: string; fullName: string };
   status: PullRequestStatus | null;
   onStatus: (status: PullRequestStatus) => void;
   onError: (error: RowError | null) => void;
@@ -540,7 +566,7 @@ function OpenedPullRequestRow({
       const response = await fetch(`/api/workspaces/${workspaceId}/pull-request/merge`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ headSha: status.headSha }),
+        body: JSON.stringify({ headSha: status.headSha, ...(repo && { projectId: repo.projectId }) }),
       });
       const result = (await response.json().catch(() => ({}))) as {
         status?: PullRequestStatus | null;
@@ -585,6 +611,7 @@ function OpenedPullRequestRow({
         title={`Open pull request #${pullRequest.number} on GitHub`}
         className="studio-env-pr-link"
       >
+        {repo && <span className="mr-1.5 font-mono text-xs text-white/45">{repo.checkout}/</span>}
         #{pullRequest.number}
         <ArrowUpRight />
       </a>
@@ -599,14 +626,15 @@ function OpenedPullRequestRow({
 
 /** The session's pull request and its status as the server finds them, or
  *  why it couldn't. */
-async function lookUpPullRequest(workspaceId: string): Promise<{
+async function lookUpPullRequest(workspaceId: string, projectId?: string): Promise<{
   pullRequest?: WorkspacePullRequest | null;
   status?: PullRequestStatus | null;
   error?: string;
   reconnect?: boolean;
 }> {
   try {
-    const response = await fetch(`/api/workspaces/${workspaceId}/pull-request`, { cache: "no-store" });
+    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const response = await fetch(`/api/workspaces/${workspaceId}/pull-request${query}`, { cache: "no-store" });
     return (await response.json().catch(() => ({}))) as Awaited<ReturnType<typeof lookUpPullRequest>>;
   } catch {
     return {};

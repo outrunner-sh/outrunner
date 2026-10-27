@@ -61,13 +61,13 @@ async function ServerSession({ params }: { params: Params }) {
   if (workspace.status === "destroyed") {
     return (
       <ServerAnswer<SessionAnswer>
-        value={{ gone: { workspace, pullRequest: await getWorkspacePullRequest(workspace.id) } }}
+        value={{ gone: { workspace, pullRequest: await getWorkspacePullRequest(workspace.id, workspace.projectId) } }}
       />
     );
   }
   const [project, pullRequest] = await Promise.all([
     getProjectOnce(workspace.projectId),
-    getWorkspacePullRequest(workspace.id),
+    getWorkspacePullRequest(workspace.id, workspace.projectId),
   ]);
   if (!project) notFound();
 

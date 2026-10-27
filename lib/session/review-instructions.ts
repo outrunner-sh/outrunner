@@ -22,19 +22,22 @@ export const REVIEW_INSTRUCTIONS_FILENAME = "Review request.md";
 export function reviewInstructions(input: {
   baseBranch: string;
   pullRequestNumber: number | null;
+  /** One repository of a session of several: the review is its alone. */
+  repo?: { checkout: string; fullName: string };
 }): string {
-  const { baseBranch, pullRequestNumber } = input;
+  const { baseBranch, pullRequestNumber, repo } = input;
+  const where = repo ? `the \`${repo.checkout}/\` folder (${repo.fullName})` : "this workspace";
   const subject =
     pullRequestNumber === null
-      ? "The change under review is everything in this workspace that differs from the target branch."
-      : `The change under review is pull request #${pullRequestNumber}: everything in this workspace that differs from the target branch.`;
+      ? `The change under review is everything in ${where} that differs from the target branch.`
+      : `The change under review is pull request #${pullRequestNumber}${repo ? ` on ${repo.fullName}` : ""}: everything in ${where} that differs from the target branch.`;
 
   return `# Review guidelines:
 
 You are acting as a reviewer for a proposed code change made by another engineer.
 
 ${subject}
-The target branch is origin/${baseBranch}.
+The target branch is origin/${baseBranch}.${repo ? `\nRun git in that folder (\`git -C ${repo.checkout} diff origin/${baseBranch}...\`); review only that repository.` : ""}
 
 Below are some default guidelines for determining whether the original author would appreciate the issue being flagged.
 

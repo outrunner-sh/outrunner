@@ -227,6 +227,8 @@ type PullRequestRow = {
   id: string;
   owner_id: string;
   workspace_id: string;
+  /** The repository it's in (20261028170000). */
+  project_id: string;
   github_number: number;
   url: string;
   title: string;

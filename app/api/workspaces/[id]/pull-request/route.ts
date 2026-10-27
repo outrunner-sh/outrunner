@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/repositories";
 import { findPullRequest, getPullRequestStatus, MissingGithubTokenError } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
+import { sessionRepo } from "@/lib/session/session-repos";
 import { optionalGithubToken } from "@/lib/github/token";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
 
@@ -19,9 +20,10 @@ type RouteContext = { params: Promise<{ id: string }> };
  * one its agent opened for the branch on GitHub (Create PR asks it to),
  * recorded once found; `{ pullRequest: null }` while there is none yet. The
  * status (state, mergeability, checks) is read fresh each time, and is null
- * when GitHub couldn't be asked.
+ * when GitHub couldn't be asked. `?projectId=` names one of a multi-repository
+ * session's repositories; none is the session's own.
  */
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const owner = await getOwner();
   if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
@@ -33,14 +35,19 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Workspace not found." }, { status: 404 });
   }
 
-  const recorded = await getWorkspacePullRequest(workspace.id);
+  const repo = sessionRepo(workspace, new URL(request.url).searchParams.get("projectId"));
+  if (!repo) {
+    return NextResponse.json({ error: "That repository isn't one of this session's." }, { status: 404 });
+  }
+
+  const recorded = await getWorkspacePullRequest(workspace.id, repo.projectId);
   const token = await optionalGithubToken(owner.id);
   if (!token) {
     if (recorded) return NextResponse.json({ pullRequest: recorded, status: null });
     return githubErrorResponse(new MissingGithubTokenError(), "Connect your GitHub account.");
   }
-  const project = await getProject(workspace.projectId);
-  if (!project) {
+  const repoFullName = repo.fullName ?? (await getProject(workspace.projectId))?.fullName;
+  if (!repoFullName) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
 
@@ -48,7 +55,7 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!pullRequest) {
     let found;
     try {
-      found = await findPullRequest({ token, repoFullName: project.fullName, headBranch: workspace.branch });
+      found = await findPullRequest({ token, repoFullName, headBranch: workspace.branch });
     } catch (error) {
       console.error(`Workspace ${id} pull request lookup failed`, error);
       return githubErrorResponse(error, "Could not look up the pull request. Please try again.");
@@ -59,6 +66,7 @@ export async function GET(_request: Request, context: RouteContext) {
       pullRequest = await createWorkspacePullRequest({
         ownerId: owner.id,
         workspaceId: workspace.id,
+        projectId: repo.projectId,
         number: found.number,
         url: found.url,
         title: found.title,
@@ -67,7 +75,7 @@ export async function GET(_request: Request, context: RouteContext) {
       });
     } catch (error) {
       // Two lookups at once: the other recorded it first.
-      pullRequest = await getWorkspacePullRequest(workspace.id).catch(() => null);
+      pullRequest = await getWorkspacePullRequest(workspace.id, repo.projectId).catch(() => null);
       if (!pullRequest) {
         console.error(`Workspace ${id} pull request could not be recorded`, error);
         return NextResponse.json({ error: "Could not save the pull request. Please try again." }, { status: 500 });
@@ -77,7 +85,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const status = await getPullRequestStatus({
     token,
-    repoFullName: project.fullName,
+    repoFullName,
     number: pullRequest.number,
   }).catch((error: unknown) => {
     console.error(`Workspace ${id} pull request status failed`, error);

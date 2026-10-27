@@ -100,7 +100,13 @@ async function SidebarData() {
           projects: listed,
           hiddenProjects: hidden,
           workspaces,
-          pullRequests: Object.fromEntries(pullRequests.map((pr) => [pr.workspaceId, pr])),
+          // Each session's own repository's: a session of several has one in
+          // each, and the session page reads the rest itself.
+          pullRequests: Object.fromEntries(
+            pullRequests
+              .filter((pr) => workspaces.some((w) => w.id === pr.workspaceId && w.projectId === pr.projectId))
+              .map((pr) => [pr.workspaceId, pr]),
+          ),
         },
         ownerLogin: owner.githubLogin,
         ownerAvatarUrl: owner.avatarUrl,
