@@ -51,6 +51,13 @@ type EnvKey =
   // requests to join. Without them, an invite's link is shown to share.
   | "RESEND_API_KEY"
   | "EMAIL_FROM"
+  // The Outrunner GitHub App (lib/github/app.ts), all four or none: its
+  // Client ID (the JWT's issuer), slug (its install link), private key (the
+  // .pem) and webhook secret.
+  | "GITHUB_APP_CLIENT_ID"
+  | "GITHUB_APP_SLUG"
+  | "GITHUB_APP_PRIVATE_KEY"
+  | "GITHUB_APP_WEBHOOK_SECRET"
   // Stripe (RUNTIME_BILLING=stripe): a restricted or secret key, and the
   // webhook endpoint's signing secret.
   | "STRIPE_SECRET_KEY"

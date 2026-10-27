@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Info, KeyRound, Layers, ShieldCheck, Terminal, User, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Github, Info, KeyRound, Layers, ShieldCheck, Terminal, User, Users } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -30,6 +30,8 @@ const groups = [
       { href: "/settings/org/members", label: "Members", icon: Users },
       // What Everyone and each role may do with its projects; admins'.
       { href: "/settings/org/access", label: "Roles & access", icon: ShieldCheck },
+      // The Outrunner GitHub App's installations; admins install it.
+      { href: "/settings/org/github", label: "GitHub", icon: Github },
     ],
   },
   {

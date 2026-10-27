@@ -526,6 +526,18 @@ type AccessGrantRow = {
   created_at: string;
 };
 
+type GithubInstallationRow = {
+  installation_id: number;
+  org_id: string;
+  account_login: string;
+  account_type: "User" | "Organization";
+  repository_selection: "all" | "selected";
+  installed_by: string | null;
+  suspended_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type CliTokenRow = {
   id: string;
   user_id: string;
@@ -588,6 +600,12 @@ export type Database = {
         Row: AccessGrantRow;
         Insert: Insert<AccessGrantRow, "org_id" | "level">;
         Update: Partial<AccessGrantRow>;
+        Relationships: [];
+      };
+      github_installations: {
+        Row: GithubInstallationRow;
+        Insert: Insert<GithubInstallationRow, "installation_id" | "org_id" | "account_login" | "account_type" | "repository_selection">;
+        Update: Partial<GithubInstallationRow>;
         Relationships: [];
       };
       organization_members: {

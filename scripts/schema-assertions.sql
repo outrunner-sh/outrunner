@@ -1493,3 +1493,31 @@ begin
   end if;
   raise notice 'ok: grants and roles change in one step, and a refused change keeps what was there';
 end $$;
+
+-- 36. The GitHub App's installations: one org each, the server's alone, and
+-- gone with their org.
+do $$
+declare personal uuid := (select id from organizations where personal_owner_id = '33333333-3333-3333-3333-333333333333');
+begin
+  if has_table_privilege('authenticated', 'github_installations', 'select')
+     or has_table_privilege('anon', 'github_installations', 'select') then
+    raise exception 'FAIL: users may read the App''s installations';
+  end if;
+  insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+  values (12345, personal, 'third', 'User', 'all');
+  begin
+    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+    values (12345, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'third', 'User', 'all');
+    raise exception 'FAIL: one installation kept by two orgs';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+    values (999, personal, 'x', 'Enterprise', 'all');
+    raise exception 'FAIL: an installation on an account GitHub has no such type of';
+  exception when check_violation then
+    null;
+  end;
+  raise notice 'ok: an installation is one org''s, and only the server reaches it';
+end $$;
