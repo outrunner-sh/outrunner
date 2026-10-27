@@ -294,9 +294,16 @@ func sessionEnvironment(base []string) ([]string, []string) {
 // to the box's .gitconfig, and no other host ever handed the token.
 var githubCredentialEnv = []string{
 	"GIT_CONFIG_COUNT=1",
-	"GIT_CONFIG_KEY_0=credential.https://github.com.helper",
-	`GIT_CONFIG_VALUE_0=!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f`,
+	"GIT_CONFIG_KEY_0=" + githubHelperName,
+	"GIT_CONFIG_VALUE_0=" + githubHelperScript,
 }
+
+// githubHelperName is git's credential helper setting for github.com, and
+// githubHelperScript the helper that answers with $GH_TOKEN.
+const (
+	githubHelperName   = "credential.https://github.com.helper"
+	githubHelperScript = `!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f`
+)
 
 // RedactionSecrets returns a defensive copy of values that must not be sent to
 // a browser in terminal output.

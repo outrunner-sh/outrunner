@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"runtime-agent/internal/claude"
@@ -33,38 +34,50 @@ func (s *Service) githubFiles() keyFiles {
 // githubEnvFile is a session's own token, and git pointed at it alone for
 // github.com, as the shell file its launch sources (on a box with no GH_TOKEN
 // of its own, git has no helper to use it otherwise). `gh` is kept off any
-// other credential (noLogin), and git too: its helpers add up, so one in the
-// user's ~/.gitconfig (`store`, a keychain) would be asked first and answer
-// as the user. An empty helper ahead of ours resets the list.
+// other credential (noLogin), and git too (sessionGitConfig).
 func githubEnvFile(token, noLoginDir string) string {
 	var b strings.Builder
 	b.WriteString("export " + githubTokenEnv + "=" + claude.ShellQuote(token) + "\n")
 	b.WriteString("unset GITHUB_TOKEN\n")
 	b.WriteString("export GH_CONFIG_DIR=" + claude.ShellQuote(noLoginDir) + "\n")
-	_, helper, _ := strings.Cut(githubCredentialEnv[2], "=") // GIT_CONFIG_VALUE_0
-	for _, entry := range []string{
-		"GIT_CONFIG_COUNT=2",
-		githubHelperKey + "0=" + githubHelperName, "GIT_CONFIG_VALUE_0=",
-		githubHelperKey + "1=" + githubHelperName, "GIT_CONFIG_VALUE_1=" + helper,
-	} {
+	for _, entry := range sessionGitConfig(true) {
 		name, value, _ := strings.Cut(entry, "=")
 		b.WriteString("export " + name + "=" + claude.ShellQuote(value) + "\n")
 	}
 	return b.String()
 }
 
-const (
-	githubHelperKey  = "GIT_CONFIG_KEY_"
-	githubHelperName = "credential.https://github.com.helper"
-)
+// sessionGitConfig is the git config (GIT_CONFIG_*) of a session on a GitHub
+// token of its own, its helper among it with `helper`; without, none:
+//
+//   - an empty github.com helper first: git's helpers add up, so one in the
+//     user's ~/.gitconfig (`store`, a keychain) would be asked before ours
+//     and answer as the user. The empty one resets the list.
+//   - no SSH, for any host: an `insteadOf` in the user's gitconfig, or an SSH
+//     remote, would push with the box's SSH key, as the user, past every
+//     helper. Such a session talks to its repository over https.
+//
+// It replaces any GIT_CONFIG_* the project's environment or provided secrets
+// set: in this session, git's own config is what keeps it off the user's.
+func sessionGitConfig(helper bool) []string {
+	entries := [][2]string{{githubHelperName, ""}}
+	if helper {
+		entries = append(entries, [2]string{githubHelperName, githubHelperScript})
+	}
+	entries = append(entries, [2]string{"protocol.ssh.allow", "never"})
+	env := []string{"GIT_CONFIG_COUNT=" + strconv.Itoa(len(entries))}
+	for i, e := range entries {
+		n := strconv.Itoa(i)
+		env = append(env, "GIT_CONFIG_KEY_"+n+"="+e[0], "GIT_CONFIG_VALUE_"+n+"="+e[1])
+	}
+	return env
+}
 
 // noGitHubCredentials is a session with no GitHub token of its own left:
 // none of the box's or its user's, for gh or for git.
 func (s *Service) noGitHubCredentials() []string {
-	return []string{
-		"env", "-u", githubTokenEnv, "-u", "GITHUB_TOKEN", "GH_CONFIG_DIR=" + s.noGitHubLoginDir(),
-		"GIT_CONFIG_COUNT=1", githubHelperKey + "0=" + githubHelperName, "GIT_CONFIG_VALUE_0=",
-	}
+	env := []string{"env", "-u", githubTokenEnv, "-u", "GITHUB_TOKEN", "GH_CONFIG_DIR=" + s.noGitHubLoginDir()}
+	return append(env, sessionGitConfig(false)...)
 }
 
 // setSessionGitHubToken keeps the session's own token; a new one replaces it
