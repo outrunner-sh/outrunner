@@ -163,7 +163,8 @@ export type Installation = {
   accountLogin: string;
   accountType: "User" | "Organization";
   repositorySelection: "all" | "selected";
-  suspended: boolean;
+  /** When GitHub suspended it, if it's suspended. */
+  suspendedAt: string | null;
 };
 
 type ApiInstallation = {
@@ -173,18 +174,21 @@ type ApiInstallation = {
   suspended_at: string | null;
 };
 
-function toInstallation(i: ApiInstallation): Installation {
+/** An installation as GitHub sends it (the API, or a webhook), or null for
+ *  one with no account: there's nothing to keep it under. */
+export function toInstallation(i: Partial<ApiInstallation> & { id?: number }): Installation | null {
+  if (typeof i.id !== "number" || !i.account?.login) return null;
   return {
     id: i.id,
-    accountLogin: i.account?.login ?? "",
-    accountType: i.account?.type === "Organization" ? "Organization" : "User",
+    accountLogin: i.account.login,
+    accountType: i.account.type === "Organization" ? "Organization" : "User",
     repositorySelection: i.repository_selection === "selected" ? "selected" : "all",
-    suspended: Boolean(i.suspended_at),
+    suspendedAt: i.suspended_at ?? null,
   };
 }
 
 /** An installation of the App, asked as the App; null when GitHub has none by
- *  that id (uninstalled, or another App's). */
+ *  that id (uninstalled, or another App's), or it has no account. */
 export async function getInstallation(
   config: GitHubAppConfig,
   installationId: number,
@@ -200,30 +204,33 @@ export async function getInstallation(
   }
 }
 
-/** Whether the GitHub user behind `userToken` can reach an installation of
- *  the App: they installed it, or administer its account. What the setup
- *  route asks before an org keeps an installation, so nobody attaches one
- *  that isn't theirs by its id. */
-export async function userCanReachInstallation(
-  userToken: string,
-  installationId: number,
-  doFetch: Fetch = fetch,
-): Promise<boolean> {
-  for (let page = 1; page <= 10; page++) {
-    const { installations } = await call<{ installations: ApiInstallation[] }>(
-      doFetch,
-      `${API}/user/installations?per_page=100&page=${page}`,
-      userToken,
-    );
-    if (installations.some((i) => i.id === installationId)) return true;
-    if (installations.length < 100) return false;
-  }
-  return false;
-}
-
 /** A token an installation's repositories are reached with: an hour long,
  *  and only for `repositories` (names, not owner/name) when given. */
 export type InstallationToken = { token: string; expiresAt: Date };
+
+/** Installation tokens, kept until 5 minutes before they expire: GitHub
+ *  limits how often they're made. Per installation, for all its repositories. */
+const tokens = new Map<number, InstallationToken>();
+const TOKEN_MARGIN_MS = 5 * 60 * 1000;
+
+/** A token for all an installation's repositories, made once and kept. */
+export async function installationToken(
+  config: GitHubAppConfig,
+  installationId: number,
+  doFetch: Fetch = fetch,
+  now = Date.now(),
+): Promise<string> {
+  const kept = tokens.get(installationId);
+  if (kept && kept.expiresAt.getTime() - TOKEN_MARGIN_MS > now) return kept.token;
+  const minted = await mintInstallationToken(config, installationId, undefined, doFetch);
+  tokens.set(installationId, minted);
+  return minted.token;
+}
+
+/** Forget an installation's kept token (it was uninstalled or suspended). */
+export function dropInstallationToken(installationId: number): void {
+  tokens.delete(installationId);
+}
 
 export async function mintInstallationToken(
   config: GitHubAppConfig,
@@ -247,21 +254,25 @@ export type InstallationRepository = {
   private: boolean;
 };
 
-/** The repositories an installation reaches, up to 1,000 (10 pages). */
+/** The repositories an installation reaches, up to `limit` (1,000 at most,
+ *  10 pages), and how many it reaches in all: a `limit` of 100 or fewer is
+ *  one request. */
 export async function listInstallationRepositories(
   token: string,
+  { limit = 1000 }: { limit?: number } = {},
   doFetch: Fetch = fetch,
 ): Promise<{ repositories: InstallationRepository[]; total: number }> {
+  const perPage = Math.min(100, Math.max(1, limit));
   const repositories: InstallationRepository[] = [];
   let total = 0;
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= 10 && repositories.length < limit; page++) {
     const data = await call<{
       total_count: number;
       repositories: Array<{ id: number; full_name: string; private: boolean }>;
-    }>(doFetch, `${API}/installation/repositories?per_page=100&page=${page}`, token);
+    }>(doFetch, `${API}/installation/repositories?per_page=${perPage}&page=${page}`, token);
     total = data.total_count;
     repositories.push(...data.repositories.map((r) => ({ githubRepoId: r.id, fullName: r.full_name, private: r.private })));
-    if (data.repositories.length < 100) break;
+    if (data.repositories.length < perPage) break;
   }
-  return { repositories, total };
+  return { repositories: repositories.slice(0, limit), total };
 }

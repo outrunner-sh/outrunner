@@ -4,8 +4,8 @@ import { Suspense } from "react";
 import { OrgGitHubSettings, type InstallationView } from "@/components/org-github";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { listOrgInstallations } from "@/lib/db/github-installations";
-import { githubAppConfig, listInstallationRepositories, mintInstallationToken } from "@/lib/github/app";
+import { listOrgInstallations, listUnclaimedFor } from "@/lib/db/github-installations";
+import { githubAppConfig, installationToken, listInstallationRepositories } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
@@ -19,7 +19,9 @@ const SHOWN = 12;
  * keeps, and the repositories each reaches. Its admins install it, and let
  * an installation go.
  */
-export default function OrgGitHub({ searchParams }: { searchParams: Promise<{ installed?: string; error?: string }> }) {
+type Query = { installed?: string; error?: string; pending?: string };
+
+export default function OrgGitHub({ searchParams }: { searchParams: Promise<Query> }) {
   return (
     <Suspense fallback={<SettingsLoading title="GitHub" />}>
       <GitHubSection searchParams={searchParams} />
@@ -27,10 +29,10 @@ export default function OrgGitHub({ searchParams }: { searchParams: Promise<{ in
   );
 }
 
-async function GitHubSection({ searchParams }: { searchParams: Promise<{ installed?: string; error?: string }> }) {
+async function GitHubSection({ searchParams }: { searchParams: Promise<Query> }) {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/org/github");
-  const { installed, error } = await searchParams;
+  const { installed, error, pending } = await searchParams;
   const context = await getOrgContext().catch(() => undefined);
   const org = context?.active;
   const config = githubAppConfig();
@@ -42,14 +44,22 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<{ install
       </section>
     );
   }
-  const kept = config ? await listOrgInstallations(org.id).catch(() => []) : [];
+  const [kept, unclaimed] = config
+    ? await Promise.all([
+        listOrgInstallations(org.id).catch(() => []),
+        // Installed by them on GitHub, before GitHub's word reached the
+        // setup route: theirs to add here.
+        org.role === "admin" ? listUnclaimedFor(owner.githubLogin).catch(() => []) : Promise.resolve([]),
+      ])
+    : [[], []];
   const installations: InstallationView[] = await Promise.all(
     kept.map(async (installation) => {
       if (installation.suspended || !config) return { ...installation, repositories: [], total: 0, reachable: false };
       try {
-        const { token } = await mintInstallationToken(config, installation.id);
-        const { repositories, total } = await listInstallationRepositories(token);
-        return { ...installation, repositories: repositories.slice(0, SHOWN).map((r) => r.fullName), total, reachable: true };
+        // A kept token, and one request for the few names shown.
+        const token = await installationToken(config, installation.id);
+        const { repositories, total } = await listInstallationRepositories(token, { limit: SHOWN });
+        return { ...installation, repositories: repositories.map((r) => r.fullName), total, reachable: true };
       } catch (cause) {
         console.error(`Settings → GitHub: couldn't read installation ${installation.id}`, cause);
         return { ...installation, repositories: [], total: 0, reachable: false };
@@ -61,6 +71,8 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<{ install
       org={org}
       configured={config !== null}
       installations={installations}
+      unclaimed={unclaimed}
+      pending={pending === "1"}
       installed={installed ?? null}
       error={error ?? null}
     />

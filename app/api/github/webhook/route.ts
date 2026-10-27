@@ -2,21 +2,36 @@ import { NextResponse } from "next/server";
 
 import {
   forgetInstallation,
-  installationOrg,
+  installationHolder,
+  recordInstalled,
   setInstallationSuspended,
   updateInstallation,
 } from "@/lib/db/github-installations";
-import { githubAppConfig, webhookSignatureMatches } from "@/lib/github/app";
+import { dropInstallationToken, githubAppConfig, toInstallation, webhookSignatureMatches } from "@/lib/github/app";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
+type Payload = {
+  action?: string;
+  installation?: {
+    id?: number;
+    account?: { login: string; type: string } | null;
+    repository_selection?: string;
+    suspended_at?: string | null;
+  };
+  account?: { login?: string };
+  repository_selection?: string;
+  sender?: { login?: string };
+};
+
 /**
  * The Outrunner GitHub App's webhook. Only what GitHub signed with the App's
- * webhook secret is read. It keeps the org's installations true to GitHub:
- * one uninstalled is forgotten, a suspended one is marked, a renamed account
- * is renamed, and a changed repository choice is recorded. An installation no
- * org keeps is GitHub's news to no one: answered, and left.
+ * webhook secret is read. A new installation is recorded unclaimed, with who
+ * installed it (the sender), for them to claim for an org
+ * (app/api/github/app/setup). After that it keeps the installations true to
+ * GitHub: an uninstalled one is forgotten, a suspension is marked, and a
+ * renamed account and a changed repository choice are recorded.
  */
 export async function POST(request: Request) {
   const config = githubAppConfig();
@@ -25,19 +40,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Too large." }, { status: 413 });
   }
   const raw = await request.text();
+  // A body with no Content-Length (chunked) is measured once read.
+  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return NextResponse.json({ error: "Too large." }, { status: 413 });
   if (!webhookSignatureMatches(config.webhookSecret, raw, request.headers.get("x-hub-signature-256"))) {
     return NextResponse.json({ error: "Bad signature." }, { status: 401 });
   }
 
   const event = request.headers.get("x-github-event");
-  let payload: {
-    action?: string;
-    installation?: { id?: number; account?: { login?: string }; repository_selection?: string };
-    account?: { login?: string };
-    repository_selection?: string;
-  };
+  let payload: Payload;
   try {
-    payload = JSON.parse(raw) as typeof payload;
+    payload = JSON.parse(raw) as Payload;
   } catch {
     return NextResponse.json({ error: "Not JSON." }, { status: 400 });
   }
@@ -45,11 +57,23 @@ export async function POST(request: Request) {
   if (event === "ping" || typeof installationId !== "number") return new NextResponse(null, { status: 204 });
 
   try {
-    if (!(await installationOrg(installationId))) return new NextResponse(null, { status: 204 });
+    if (event === "installation" && payload.action === "created") {
+      const installation = toInstallation(payload.installation ?? {});
+      const installer = payload.sender?.login;
+      if (installation && installer) await recordInstalled(installation, installer);
+      return new NextResponse(null, { status: 204 });
+    }
+    if (!(await installationHolder(installationId))) return new NextResponse(null, { status: 204 });
     if (event === "installation") {
-      if (payload.action === "deleted") await forgetInstallation(installationId);
-      else if (payload.action === "suspend") await setInstallationSuspended(installationId, true);
-      else if (payload.action === "unsuspend") await setInstallationSuspended(installationId, false);
+      if (payload.action === "deleted") {
+        dropInstallationToken(installationId);
+        await forgetInstallation(installationId);
+      } else if (payload.action === "suspend") {
+        dropInstallationToken(installationId);
+        await setInstallationSuspended(installationId, payload.installation?.suspended_at ?? new Date().toISOString());
+      } else if (payload.action === "unsuspend") {
+        await setInstallationSuspended(installationId, null);
+      }
     } else if (event === "installation_repositories") {
       const selection = payload.repository_selection ?? payload.installation?.repository_selection;
       if (selection === "all" || selection === "selected") {

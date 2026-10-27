@@ -528,11 +528,14 @@ type AccessGrantRow = {
 
 type GithubInstallationRow = {
   installation_id: number;
-  org_id: string;
+  /** Null until its installer claims it for an org (20261029110000). */
+  org_id: string | null;
   account_login: string;
   account_type: "User" | "Organization";
   repository_selection: "all" | "selected";
   installed_by: string | null;
+  /** The GitHub user who installed it (the webhook's sender). */
+  installer_login: string | null;
   suspended_at: string | null;
   created_at: string;
   updated_at: string;
@@ -604,7 +607,7 @@ export type Database = {
       };
       github_installations: {
         Row: GithubInstallationRow;
-        Insert: Insert<GithubInstallationRow, "installation_id" | "org_id" | "account_login" | "account_type" | "repository_selection">;
+        Insert: Insert<GithubInstallationRow, "installation_id" | "account_login" | "account_type" | "repository_selection">;
         Update: Partial<GithubInstallationRow>;
         Relationships: [];
       };

@@ -4,11 +4,14 @@ import { test } from "node:test";
 
 import {
   appJwt,
+  dropInstallationToken,
+  installationToken,
   installUrl,
+  listInstallationRepositories,
   pemFrom,
   readInstallState,
   signInstallState,
-  userCanReachInstallation,
+  toInstallation,
   webhookSignatureMatches,
 } from "@/lib/github/app";
 
@@ -67,16 +70,54 @@ test("the install link is the App's new-installation page with the state", () =>
   );
 });
 
-test("a user reaches an installation when GitHub lists it among theirs, across pages", async () => {
-  const pages: Record<number, Array<{ id: number }>> = {
-    1: Array.from({ length: 100 }, (_, i) => ({ id: i + 1 })),
-    2: [{ id: 555 }],
-  };
-  const fake = (async (url: string | URL) => {
-    const page = Number(new URL(String(url)).searchParams.get("page"));
-    const installations = (pages[page] ?? []).map((i) => ({ ...i, account: null, repository_selection: "all", suspended_at: null }));
-    return new Response(JSON.stringify({ installations }), { status: 200 });
+test("an installation as GitHub sends it, or none without an account", () => {
+  assert.deepEqual(
+    toInstallation({
+      id: 7,
+      account: { login: "zerotrail", type: "Organization" },
+      repository_selection: "selected",
+      suspended_at: "2026-10-27T12:00:00Z",
+    }),
+    { id: 7, accountLogin: "zerotrail", accountType: "Organization", repositorySelection: "selected", suspendedAt: "2026-10-27T12:00:00Z" },
+  );
+  assert.equal(toInstallation({ id: 7, account: null, repository_selection: "all", suspended_at: null }), null);
+  assert.equal(toInstallation({ account: { login: "x", type: "User" } }), null);
+});
+
+test("an installation token is made once and kept until 5 minutes before it expires", async () => {
+  let made = 0;
+  const fake = (async () => {
+    made += 1;
+    return new Response(JSON.stringify({ token: `t${made}`, expires_at: "2026-10-27T13:00:00Z" }), { status: 201 });
   }) as typeof fetch;
-  assert.equal(await userCanReachInstallation("t", 555, fake), true);
-  assert.equal(await userCanReachInstallation("t", 777, fake), false);
+  const config = { clientId: "Iv23test", slug: "s", privateKey: pem, webhookSecret: "w" };
+  const at = (iso: string) => new Date(iso).getTime();
+  assert.equal(await installationToken(config, 42, fake, at("2026-10-27T12:00:00Z")), "t1");
+  assert.equal(await installationToken(config, 42, fake, at("2026-10-27T12:54:00Z")), "t1");
+  assert.equal(await installationToken(config, 42, fake, at("2026-10-27T12:56:00Z")), "t2");
+  dropInstallationToken(42);
+  assert.equal(await installationToken(config, 42, fake, at("2026-10-27T12:56:00Z")), "t3");
+});
+
+test("a few of an installation's repositories are one request; all of them, as many pages as there are", async () => {
+  const asked: string[] = [];
+  const fake = (async (url: string | URL) => {
+    const u = new URL(String(url));
+    asked.push(`${u.searchParams.get("per_page")}/${u.searchParams.get("page")}`);
+    const perPage = Number(u.searchParams.get("per_page"));
+    const page = Number(u.searchParams.get("page"));
+    const all = Array.from({ length: 150 }, (_, i) => ({ id: i + 1, full_name: `o/r${i + 1}`, private: false }));
+    return new Response(
+      JSON.stringify({ total_count: 150, repositories: all.slice((page - 1) * perPage, page * perPage) }),
+      { status: 200 },
+    );
+  }) as typeof fetch;
+  const few = await listInstallationRepositories("t", { limit: 12 }, fake);
+  assert.equal(few.repositories.length, 12);
+  assert.equal(few.total, 150);
+  assert.deepEqual(asked, ["12/1"]);
+  asked.length = 0;
+  const all = await listInstallationRepositories("t", {}, fake);
+  assert.equal(all.repositories.length, 150);
+  assert.deepEqual(asked, ["100/1", "100/2"]);
 });

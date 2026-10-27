@@ -24,7 +24,7 @@ const ERRORS: Record<string, string> = {
   not_configured: "The GitHub App isn't set up on this Outrunner yet.",
   not_admin: "Only the org's admins can install the GitHub App.",
   link_expired: "That install link has expired, or was someone else's. Start again from here.",
-  not_yours: "GitHub says your account can't reach that installation. Sign in as the one who installed it.",
+  not_installer: "Only whoever installed the App on GitHub can add it to an org. Ask them to add it here.",
   no_installation: "GitHub has no such installation of the App. It may have been uninstalled.",
   taken: "Another Outrunner org has that GitHub account's installation. Uninstall it there first, or ask its admins.",
   failed: "Couldn't keep the installation. Try again.",
@@ -46,12 +46,18 @@ export function OrgGitHubSettings({
   org,
   configured,
   installations,
+  unclaimed,
+  pending,
   installed,
   error,
 }: {
   org: Org;
   configured: boolean;
   installations: InstallationView[];
+  /** Installed on GitHub by the signed-in admin, not in an org yet. */
+  unclaimed: OrgInstallation[];
+  /** Back from GitHub before its word of the install: say to wait. */
+  pending: boolean;
   installed: string | null;
   error: string | null;
 }) {
@@ -59,6 +65,23 @@ export function OrgGitHubSettings({
   const [failure, setFailure] = useState<string | null>(error ? (ERRORS[error] ?? ERRORS.failed) : null);
   const [busy, setBusy] = useState<number | null>(null);
   const admin = org.role === "admin";
+
+  const claim = async (id: number) => {
+    setBusy(id);
+    setFailure(null);
+    try {
+      await requestJson(`/api/orgs/${org.id}/github/installations`, {
+        method: "POST",
+        body: { installationId: id },
+        fallback: "Couldn't add it. Try again.",
+      });
+      router.refresh();
+    } catch (cause) {
+      setFailure(cause instanceof Error ? cause.message : "Couldn't add it. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const letGo = async (id: number) => {
     setBusy(id);
@@ -87,6 +110,32 @@ export function OrgGitHubSettings({
 
       {installed ? (
         <InlineMessage tone="info">{`Installed on ${installed}.`}</InlineMessage>
+      ) : null}
+      {pending && unclaimed.length === 0 ? (
+        <InlineMessage tone="info" actions={[{ label: "Reload", onClick: () => router.refresh() }]}>
+          GitHub hasn&apos;t confirmed the installation yet. It shows here in a moment, for you to add.
+        </InlineMessage>
+      ) : null}
+      {admin && unclaimed.length > 0 ? (
+        <div className="max-w-2xl space-y-2">
+          <h2 className="text-[13px] font-medium text-foreground">Installed by you, not added to an org yet</h2>
+          <ul className="divide-y divide-border/60 overflow-hidden rounded-lg border border-border/60">
+            {unclaimed.map((i) => (
+              <li key={i.id} className="flex items-center gap-3 px-3 py-2">
+                <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">{i.accountLogin}</span>
+                <button
+                  type="button"
+                  className="route-state-button"
+                  disabled={busy !== null}
+                  onClick={() => void claim(i.id)}
+                >
+                  {`Add to ${org.name}`}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
       {failure ? (
         <InlineMessage actions={[{ label: "Dismiss", onClick: () => setFailure(null) }]}>{failure}</InlineMessage>
