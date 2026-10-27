@@ -994,7 +994,7 @@ begin
   end;
   begin
     update runtime_computers set owner_id = '33333333-3333-3333-3333-333333333333'
-    where id = (select id from runtime_computers limit 1);
+    where daytona_sandbox_id = 'box-cap-a';
     raise exception 'FAIL: a box was handed to a non-member of its org';
   exception when foreign_key_violation then
     null;
