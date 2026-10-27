@@ -23,6 +23,7 @@ import (
 	"runtime-agent/internal/codex"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/redact"
 	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/tmux"
 	"runtime-agent/internal/transcript"
@@ -113,6 +114,12 @@ type Service struct {
 	// asks holds the questions sessions are waiting on the user to answer
 	// (ask.go).
 	asks *ask.Broker
+	// secretAsks holds the requests for secrets sessions are waiting on
+	// (secrets.go).
+	secretAsks *ask.SecretsBroker
+	// liveSecrets are values provided while sessions run: terminals and
+	// recordings already open mask them from then on (LiveSecrets).
+	liveSecrets *redact.Tokens
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
@@ -214,19 +221,21 @@ type CreateInput struct {
 func NewService(root string) *Service {
 	env, secrets := sessionEnvironment(os.Environ())
 	return &Service{
-		Root:       root,
-		tmux:       tmux.New(),
-		env:        env,
-		secrets:    secrets,
-		facts:      map[string]workspaceFacts{},
-		sendLocks:  map[string]*sendState{},
-		lifeLocks:  map[string]*sync.Mutex{},
-		summaries:  map[string]*Summary{},
-		recorders:  map[string]*cast.Recorder{},
-		lookPath:   exec.LookPath,
-		runCommand: runCommand,
-		codexTails: map[string]*codexTail{},
-		asks:       ask.NewBroker(),
+		Root:        root,
+		tmux:        tmux.New(),
+		env:         env,
+		secrets:     secrets,
+		facts:       map[string]workspaceFacts{},
+		sendLocks:   map[string]*sendState{},
+		lifeLocks:   map[string]*sync.Mutex{},
+		summaries:   map[string]*Summary{},
+		recorders:   map[string]*cast.Recorder{},
+		lookPath:    exec.LookPath,
+		runCommand:  runCommand,
+		codexTails:  map[string]*codexTail{},
+		asks:        ask.NewBroker(),
+		secretAsks:  ask.NewSecretsBroker(),
+		liveSecrets: &redact.Tokens{},
 	}
 }
 
@@ -278,8 +287,13 @@ var githubCredentialEnv = []string{
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
 	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
+	secrets = append(secrets, s.providedTokens()...)
 	return append(secrets, agentConfigTokens()...)
 }
+
+// LiveSecrets are secrets that arrive after a redactor is made: an open
+// terminal follows them (redact.Redactor.Follow).
+func (s *Service) LiveSecrets() *redact.Tokens { return s.liveSecrets }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
 
@@ -822,6 +836,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 		o += "\n\n" + codex.Identity()
 	default:
 		o += "\n\n" + claude.Identity(f.Model)
+	}
+	if instructions := s.instructions(workspaceID); instructions != "" {
+		o += "\n\n# Project instructions\n\nThe user gave these for every session in this project:\n\n" + instructions
 	}
 	return o
 }
@@ -1370,7 +1387,7 @@ func (s *Service) sessionID(workspaceID string) *string {
 func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.stopRecorder(ctx, workspaceID)
 	// Masked like the browser's terminal: a cast is archived and uploaded.
-	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{Secrets: s.RedactionSecrets()})
+	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{Secrets: s.RedactionSecrets(), Live: s.liveSecrets})
 	s.recordersMu.Lock()
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()
@@ -1472,6 +1489,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	s.removeEnvironment(workspaceID)
+	s.removeProvided(workspaceID)
 	s.forgetAsk(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))

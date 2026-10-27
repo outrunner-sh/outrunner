@@ -1,6 +1,8 @@
 package cast
 
 import (
+	"runtime-agent/internal/redact"
+
 	"bufio"
 	"encoding/json"
 	"io"
@@ -30,6 +32,9 @@ type Options struct {
 	// Secrets are masked before anything is recorded: a cast is archived and
 	// uploaded, so a key printed in the terminal must not land in it.
 	Secrets []string
+	// Live are secrets that may arrive while it records (provided
+	// mid-session); masked from then on.
+	Live *redact.Tokens
 }
 
 // Writer frames terminal output as an asciinema v2 stream (a header object line

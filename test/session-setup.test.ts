@@ -22,6 +22,7 @@ const environment = {
   setup: "pnpm install",
   run: null,
   archive: null,
+  instructions: null,
 };
 const sha = `sha256:${"5".repeat(64)}`;
 const agentConfig: AgentConfig = {
@@ -54,7 +55,7 @@ test("the user's setup and the project's environment reach a box that takes them
 test("nothing is sent for none, and what an old box can't take is skipped", async () => {
   const empty = box(all);
   await deliverSessionSetup(empty.client, {
-    environment: { env: {}, files: {}, setup: null, run: null, archive: null },
+    environment: { env: {}, files: {}, setup: null, run: null, archive: null, instructions: null },
     agentConfig: { archive: null, items: [], mcpServers: {}, settings: {} },
     downloadUrl,
   });
@@ -63,4 +64,28 @@ test("nothing is sent for none, and what an old box can't take is skipped", asyn
   const old = box(["session-environment"]);
   await deliverSessionSetup(old.client, { environment, agentConfig, downloadUrl });
   assert.deepEqual(old.sent.map(([kind]) => kind), ["environment"]);
+});
+
+test("a project's instructions go only to a box that reads them", async () => {
+  const withInstructions = { ...environment, instructions: "Use pnpm." };
+  const current = box([...all, "project-instructions"]);
+  await deliverSessionSetup(current.client, { environment: withInstructions, agentConfig: null, downloadUrl });
+  assert.deepEqual(current.sent, [
+    [
+      "environment",
+      { env: { API_TOKEN: "tok" }, files: { "api/.env": "DATABASE_URL=x\n" }, setup: "pnpm install", instructions: "Use pnpm." },
+    ],
+  ]);
+
+  // An older one still gets the rest; instructions alone send nothing to it.
+  const old = box(all);
+  await deliverSessionSetup(old.client, { environment: withInstructions, agentConfig: null, downloadUrl });
+  assert.equal((old.sent[0][1] as { instructions?: string }).instructions, undefined);
+  const onlyInstructions = box(all);
+  await deliverSessionSetup(onlyInstructions.client, {
+    environment: { env: {}, files: {}, setup: null, run: null, archive: null, instructions: "Use pnpm." },
+    agentConfig: null,
+    downloadUrl,
+  });
+  assert.deepEqual(onlyInstructions.sent, []);
 });

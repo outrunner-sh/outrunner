@@ -186,6 +186,8 @@ export async function createWorkspaceRow(input: {
   provider: ProviderName;
   /** Claude Code when not named. */
   agent?: AgentId;
+  /** The project it starts from; null before the migration that adds them. */
+  environmentId?: string | null;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -199,6 +201,8 @@ export async function createWorkspaceRow(input: {
       // Named only for Codex, so a database before 20261020130000 still
       // makes Claude Code sessions (its default) and refuses only Codex's.
       ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
+      // Named only when there is one, for the same reason.
+      ...(input.environmentId && { environment_id: input.environmentId }),
       status: "creating",
     })
     .select("*")

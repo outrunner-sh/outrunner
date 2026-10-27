@@ -159,7 +159,16 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	// Claude's own flags first: the env files below wrap the command.
 	argv = claude.WithEffort(argv, s.claudeEffort(workspaceID, f.Effort))
 	argv = withAgentConfig(argv)
-	argv = append(argv, s.claudeAskArgs(workspaceID)...)
+	if askArgs := s.claudeAskArgs(workspaceID); len(askArgs) > 0 {
+		argv = append(argv, askArgs...)
+		// With the tools, secrets the user provides reach the running Claude
+		// (secrets.go): its settings, the user's own and the hooks, replace
+		// the user's alone.
+		if env, settings := s.claudeSecretsLaunch(workspaceID); settings != "" {
+			argv = append(withoutFlag(argv, "--settings"), "--settings", settings)
+			argv = append(append([]string{"env"}, env...), argv...)
+		}
+	}
 	if f.Gateway != claude.NoGateway {
 		// The model rides in the gateway file: --model refuses a gateway's names.
 		argv = claude.WithEnvFile(argv, s.gatewayEnvPath(workspaceID))
@@ -279,4 +288,17 @@ func (a claudeAgent) sessionLog(workspaceID string) string {
 		}
 	}
 	return newest
+}
+
+// withoutFlag is argv less a flag and the value after it.
+func withoutFlag(argv []string, flag string) []string {
+	out := make([]string, 0, len(argv))
+	for i := 0; i < len(argv); i++ {
+		if argv[i] == flag && i+1 < len(argv) {
+			i++
+			continue
+		}
+		out = append(out, argv[i])
+	}
+	return out
 }

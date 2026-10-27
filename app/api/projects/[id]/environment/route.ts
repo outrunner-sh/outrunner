@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
+import { environmentHasSetup, findDefaultEnvironmentId } from "@/lib/db/environments";
 import { hasProjectEnvironment } from "@/lib/db/project-environment";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
- * Whether the user has kept an environment for the project's cloud sessions.
- * Until they have, the new-session form offers the one on their Mac.
+ * Whether the user has kept an environment for the repository's cloud
+ * sessions (its default project's variables, files and scripts), and which
+ * project that is. Until they have, the new-session form offers the one on
+ * their Mac.
  */
 export async function GET(_request: Request, context: RouteContext) {
   const owner = await getOwner();
@@ -20,7 +23,14 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
   try {
-    return NextResponse.json({ kept: await hasProjectEnvironment(owner.id, id) });
+    // The repository's project, if it has one yet (a GET makes none: its
+    // first session does); otherwise what was kept for the repository
+    // itself, before the migration that adds projects.
+    const environmentId = await findDefaultEnvironmentId(owner.id, id);
+    const kept = environmentId
+      ? await environmentHasSetup(owner.id, environmentId)
+      : await hasProjectEnvironment(owner.id, id);
+    return NextResponse.json({ kept, environmentId });
   } catch (error) {
     console.error(`Could not read project ${id}'s environment`, error);
     return NextResponse.json({ error: "Could not read this project's environment." }, { status: 502 });

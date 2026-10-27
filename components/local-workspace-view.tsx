@@ -121,6 +121,7 @@ function asWorkspace(session: LocalSession): Workspace {
     computerId: null,
     tmuxSession: `ws-${session.workspaceId}`,
     agentWorkspaceId: session.workspaceId,
+    environmentId: null,
     lastActiveAt: null,
     errorMessage: null,
     createdAt: session.createdAt,

@@ -1,16 +1,17 @@
 /**
  * Setting a cloud session up before it launches: the user's own agent setup
  * on its computer (lib/db/agent-config.ts) and its project's environment
- * (lib/db/project-environment.ts). A box whose agent is too old for either is
+ * (lib/db/environments.ts): variables, files, setup script, instructions. A box whose agent is too old for either is
  * upgraded in place first; one that can't be launches the session without
  * it, rather than not at all.
  */
 
 import type { AgentConfig } from "@/lib/db/agent-config";
-import type { ProjectEnvironment } from "@/lib/db/project-environment";
+import type { EnvironmentSetup } from "@/lib/db/environments";
 import {
   AGENT_FEATURE_AGENT_CONFIG,
   AGENT_FEATURE_ENVIRONMENT,
+  AGENT_FEATURE_INSTRUCTIONS,
   type SetAgentConfigRequest,
   type SetEnvironmentRequest,
 } from "@/lib/runtime/agent-protocol";
@@ -23,7 +24,7 @@ export type SetupClient = FeatureClient & {
 };
 
 export type SessionSetup = {
-  environment: ProjectEnvironment | null;
+  environment: EnvironmentSetup | null;
   agentConfig: AgentConfig | null;
   /** A signed download URL for the setup's archive. */
   downloadUrl(path: string): Promise<string>;
@@ -53,7 +54,12 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
     ...(Object.keys(environment.files).length > 0 && { files: environment.files }),
     ...(environment.setup && { setup: environment.setup }),
   };
-  if (Object.keys(req.env).length === 0 && !req.files && !req.setup) return;
+  // Only to an agent that reads them: an older one would take the rest and
+  // drop them without a word.
+  if (environment.instructions && (await supports(client, AGENT_FEATURE_INSTRUCTIONS, "take a project's instructions"))) {
+    req.instructions = environment.instructions;
+  }
+  if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions) return;
   if (await supports(client, AGENT_FEATURE_ENVIRONMENT, "take a project's environment")) {
     await client.setEnvironment(req);
   }

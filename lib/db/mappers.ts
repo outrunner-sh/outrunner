@@ -62,6 +62,8 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     computerId: row.computer_id,
     tmuxSession: row.tmux_session,
     agentWorkspaceId: row.agent_workspace_id,
+    // Absent before the migration that adds it.
+    environmentId: row.environment_id ?? null,
     // Claude Code: every session from before the column, and a value a later
     // release added.
     agent: isAgentId(row.agent) ? row.agent : "claude",

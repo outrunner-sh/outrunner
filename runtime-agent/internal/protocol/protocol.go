@@ -239,6 +239,10 @@ type SetEnvironmentRequest struct {
 	// session with no setup script gets them in its worktree.
 	Files map[string]string `json:"files,omitempty"`
 	Setup string            `json:"setup,omitempty"`
+	// Instructions are the project's for its agent, given after Outrunner's
+	// own orientation at every launch (FeatureInstructions). Empty removes
+	// them.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // SetAgentConfigRequest is the user's own agent setup for this computer
@@ -258,6 +262,24 @@ const FeatureAgentConfig = "agent-config"
 
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
+
+// FeatureInstructions is SetEnvironmentRequest's Instructions: an older
+// agent ignores them.
+const FeatureInstructions = "project-instructions"
+
+// FeatureRequestSecrets is a Claude session's request_secrets tool and
+// POST /workspaces/{id}/secrets, the user's answer to it.
+const FeatureRequestSecrets = "request-secrets"
+
+// ProvideSecretsRequest is the user's answer to the request for secrets a
+// session is waiting on (POST /workspaces/{id}/secrets): the request's
+// variables, as the form showed them, and the values given for some of
+// them; or that the user skipped it.
+type ProvideSecretsRequest struct {
+	Keys    []string          `json:"keys"`
+	Values  map[string]string `json:"values,omitempty"`
+	Skipped bool              `json:"skipped,omitempty"`
+}
 
 // FeatureImports is restoring an imported session: compressed downloads, a
 // bundle's branch under another name, and the conversation's folder moved.

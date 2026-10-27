@@ -25,6 +25,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     computerId: null,
     tmuxSession: null,
     agentWorkspaceId: null,
+    environmentId: null,
     agent: "claude",
     model: null,
     lastActiveAt: null,

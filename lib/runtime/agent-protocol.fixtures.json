@@ -414,7 +414,9 @@
         "restore-model",
         "editor",
         "ports",
-        "codex-gateway"
+        "codex-gateway",
+        "project-instructions",
+        "request-secrets"
       ]
     }
   ],
@@ -466,10 +468,28 @@
       "files": {
         "apps/backend/.env": "JWT_SECRET=x\n"
       },
-      "setup": "bun install"
+      "setup": "bun install",
+      "instructions": "Use pnpm. Run pnpm test before opening a PR."
     },
     {
       "env": {}
+    }
+  ],
+  "ProvideSecretsRequest": [
+    {
+      "keys": [
+        "VERCEL_TOKEN",
+        "VERCEL_ORG"
+      ],
+      "values": {
+        "VERCEL_TOKEN": "tok"
+      }
+    },
+    {
+      "keys": [
+        "VERCEL_TOKEN"
+      ],
+      "skipped": true
     }
   ],
   "SetAgentConfigRequest": [

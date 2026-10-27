@@ -64,3 +64,27 @@ func TestRedactorMasksOverlappingSecretsSplitAcrossReads(t *testing.T) {
 		t.Fatalf("redacted output = %q, want %q", got.String(), want)
 	}
 }
+
+// A token added while a stream is redacted is masked from the next read on,
+// in a redactor made before it existed.
+func TestFollowedTokensAddedLaterAreMasked(t *testing.T) {
+	live := &Tokens{}
+	r := New([]string{"static-secret"}).Follow(live)
+	if got := r.Redact([]byte("a static-secret b ")) + r.Flush(); got != "a *** b " {
+		t.Fatalf("before = %q", got)
+	}
+	live.Add("provided-later")
+	if got := r.Redact([]byte("x provided-later y static-secret")) + r.Flush(); got != "x *** y ***" {
+		t.Fatalf("after = %q", got)
+	}
+}
+
+func TestSetTokensTakesOneAway(t *testing.T) {
+	live := &Tokens{}
+	live.Add("first-secret", "second-secret")
+	r := New(nil).Follow(live)
+	live.Set([]string{"second-secret"})
+	if got := r.Redact([]byte("first-secret second-secret")) + r.Flush(); got != "first-secret ***" {
+		t.Fatalf("got %q", got)
+	}
+}

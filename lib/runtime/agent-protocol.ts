@@ -84,6 +84,9 @@ export const SetEnvironmentRequest = z
       )
       .optional(),
     setup: z.string().max(64 * 1024).optional(),
+    /** The project's instructions for its agent, after Outrunner's own at
+     *  every launch (AGENT_FEATURE_INSTRUCTIONS). */
+    instructions: z.string().max(16 * 1024).optional(),
   })
   .strict();
 export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
@@ -109,6 +112,10 @@ export const AGENT_FEATURE_AGENT_CONFIG = "agent-config";
 
 /** The agent takes a session's environment (POST /workspaces/{id}/environment). */
 export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
+
+/** The agent gives a session its project's instructions
+ *  (SetEnvironmentRequest's `instructions`); an older one ignores them. */
+export const AGENT_FEATURE_INSTRUCTIONS = "project-instructions";
 
 /** What an agent can do that an older one can't: `restore-imports` restores
  *  an imported session (compressed downloads, its branch renamed, its
@@ -186,6 +193,25 @@ export const AnswerRequest = z.object({
   dismissed: z.boolean().optional(),
 });
 export type AnswerRequest = z.infer<typeof AnswerRequest>;
+
+/** The agent serves request_secrets and takes its answer
+ *  (POST /workspaces/{id}/secrets). */
+export const AGENT_FEATURE_REQUEST_SECRETS = "request-secrets";
+
+/**
+ * POST /workspaces/{id}/secrets: the user's answer to the request for
+ * secrets the session is waiting on (runtime-agent/internal/ask/secrets.go).
+ * `keys` are the request's variables as the form showed them; the agent
+ * matches them to the call. Values for some of them, or skipped.
+ */
+export const ProvideSecretsRequest = z
+  .object({
+    keys: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)).min(1).max(10),
+    values: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string().min(1).max(64 * 1024)).optional(),
+    skipped: z.boolean().optional(),
+  })
+  .strict();
+export type ProvideSecretsRequest = z.infer<typeof ProvideSecretsRequest>;
 
 export const SetAuthRequest = z
   .object({
@@ -558,6 +584,7 @@ export const PROTOCOL_SCHEMAS = {
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  ProvideSecretsRequest,
   SetEnvironmentRequest,
   SetAgentConfigRequest,
   EditorResponse,

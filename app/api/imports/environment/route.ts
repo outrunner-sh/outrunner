@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { mergeProjectEnvironment } from "@/lib/db/project-environment";
+import { EnvironmentConflictError, mergeIntoDefaultEnvironment } from "@/lib/db/environments";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { getGitHubRepository } from "@/lib/github/client";
 import { connectRepositories } from "@/lib/github/connect";
@@ -9,6 +9,7 @@ import { githubErrorResponse } from "@/lib/github/http";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { databaseNotUpdated } from "@/lib/http/database-not-updated";
+import { EnvironmentRuleError } from "@/lib/environments/rules";
 import { ImportError } from "@/lib/imports/commit";
 import { importEnvironment } from "@/lib/imports/environment";
 import { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
@@ -46,12 +47,18 @@ export async function POST(request: Request) {
         if (!repository) return null;
         return (await listProjects(orgId)).find((p) => p.githubRepoId === repository.githubRepoId)?.id ?? null;
       },
-      merge: (projectId, add) => mergeProjectEnvironment(owner.id, projectId, add),
+      merge: (projectId, add) => mergeIntoDefaultEnvironment(owner.id, projectId, add),
     });
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof ImportError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof EnvironmentRuleError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof EnvironmentConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     return (
       databaseNotUpdated(error, `${parsed.data.repo}'s environment`) ??
