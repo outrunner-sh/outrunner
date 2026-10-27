@@ -246,6 +246,8 @@ export type Job = {
 export type WorkspacePullRequest = {
   id: string;
   workspaceId: string;
+  /** The repository it's in: a session of several has one in each. */
+  projectId: string;
   number: number;
   url: string;
   title: string;
