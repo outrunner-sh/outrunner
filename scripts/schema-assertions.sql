@@ -1547,3 +1547,17 @@ begin
   end if;
   raise notice 'ok: an installation remembers the org that removed it';
 end $$;
+
+-- 39. Deleting the org that removed an installation deletes it with the org,
+-- rather than clearing the mark that keeps it from other orgs.
+do $$
+declare doomed uuid;
+begin
+  insert into organizations (name, created_by) values ('Doomed', null) returning id into doomed;
+  update github_installations set removed_from = doomed where installation_id = 777;
+  delete from organizations where id = doomed;
+  if exists (select 1 from github_installations where installation_id = 777) then
+    raise exception 'FAIL: an installation outlived the org that removed it, claimable by any org';
+  end if;
+  raise notice 'ok: an installation goes with the org that removed it';
+end $$;

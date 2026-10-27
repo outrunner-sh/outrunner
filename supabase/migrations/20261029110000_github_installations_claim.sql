@@ -17,7 +17,9 @@
 alter table github_installations alter column org_id drop not null;
 alter table github_installations add column if not exists installer_id bigint;
 alter table github_installations add column if not exists installer_login text;
-alter table github_installations add column if not exists removed_from uuid references organizations (id) on delete set null;
+-- Gone with that org, as with org_id: cleared, it would let the installer
+-- take it to any org again.
+alter table github_installations add column if not exists removed_from uuid references organizations (id) on delete cascade;
 
 -- An unclaimed installation has its installer to claim it.
 alter table github_installations drop constraint if exists github_installations_claimable;

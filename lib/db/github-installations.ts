@@ -5,11 +5,14 @@
  * the event's sender, by GitHub's numeric user id, as a login can be renamed
  * and taken by someone else. That GitHub user claims it for an org they
  * administer, and from then it's that org's (one org each). An admin's
- * Remove unclaims it, for its installer to add back to that org alone. The server's alone; the routes have
- * checked the caller is the org's admin, or that GitHub sent the webhook.
+ * Remove unclaims it, for its installer to add back to that org alone.
+ *
+ * The server's alone: the routes have checked the caller is the org's
+ * admin, or that GitHub sent the webhook.
  */
 
 import type { Installation } from "@/lib/github/app";
+import { isUuid } from "@/lib/ids";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 export type OrgInstallation = Installation & { suspended: boolean; installedBy: string | null; createdAt: string };
@@ -58,7 +61,8 @@ export async function listOrgInstallations(orgId: string): Promise<OrgInstallati
 /** Installations no org has claimed that the GitHub user `githubId`
  *  installed, and may add to `orgId`: new ones, or ones that org removed. */
 export async function listUnclaimedFor(githubId: number | null, orgId: string): Promise<OrgInstallation[]> {
-  if (!githubId) return [];
+  // The org id goes into a filter string: a uuid, or nothing.
+  if (!githubId || !isUuid(orgId)) return [];
   const { data, error } = await createSupabaseAdminClient()
     .from("github_installations")
     .select(COLUMNS)
@@ -132,6 +136,8 @@ export async function claimInstallation(input: {
   userId: string;
 }): Promise<void> {
   if (!input.githubId) throw new ClaimError("not_installer");
+  // The org id goes into a filter string: a uuid, or nothing.
+  if (!isUuid(input.orgId)) throw new ClaimError("unknown");
   const { data, error } = await createSupabaseAdminClient()
     .from("github_installations")
     .update({
