@@ -76,7 +76,7 @@ export function AppSidebar({
   workspaces: Workspace[];
   ownerLogin: string;
   ownerAvatarUrl: string | null;
-  /** The user's orgs, for the switcher above the nav; none before they load. */
+  /** The user's orgs, for the switcher in the header; none before they load. */
   orgs?: Org[];
   /** The org the sidebar lists. */
   activeOrgId?: string | null;
@@ -147,11 +147,16 @@ export function AppSidebar({
 
   return (
     <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 bg-sidebar px-3 pb-3 pt-5">
-      <div className="flex items-center justify-between px-2">
-        <Link href="/" className="flex items-center gap-2 font-mono text-sm font-semibold text-foreground">
-          <Terminal className="size-4" />
-          outrunner
-        </Link>
+      <div className="flex items-center justify-between gap-2 px-2">
+        {/* The org being shown, which switches orgs; before they've loaded
+            (or with none, before orgs), the app's mark, home. */}
+        {orgs.length > 0 ? (
+          <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} avatarUrl={ownerAvatarUrl} />
+        ) : (
+          <Link href="/" aria-label="Home" className="flex items-center text-foreground">
+            <Terminal className="size-4" />
+          </Link>
+        )}
         <button
           type="button"
           onClick={onCollapse}
@@ -162,8 +167,6 @@ export function AppSidebar({
           <PanelLeft className="size-4" />
         </button>
       </div>
-
-      {orgs.length > 0 && <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} />}
 
       <nav className="space-y-0.5" aria-label="Main">
         {/* Home is the new-session screen too. */}
