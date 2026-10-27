@@ -14,6 +14,7 @@ export function NewSessionCreator({
   openPicker = false,
   focusComposer = false,
   showBack = false,
+  workItemId,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start). */
@@ -26,6 +27,8 @@ export function NewSessionCreator({
   /** /new is reached from somewhere and needs a way back where the sidebar is
    *  hidden (narrow windows); home is home already. */
   showBack?: boolean;
+  /** The triage item to start from (`?triage=`). */
+  workItemId?: string;
 }) {
   return (
     <div className="relative h-full">
@@ -40,6 +43,7 @@ export function NewSessionCreator({
         initialProjectId={initialProjectId}
         openPicker={openPicker}
         focusComposer={focusComposer}
+        workItemId={workItemId}
       />
     </div>
   );

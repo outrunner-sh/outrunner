@@ -13,6 +13,10 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
+// supabase/migrations/20261027120000_work_items.sql
+export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
+export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
+
 export type WorkspaceStatusDb =
   | "creating"
   | "provisioning"
@@ -558,6 +562,44 @@ type CliTokenRow = {
   created_at: string;
 };
 
+type WorkItemRow = {
+  id: string;
+  owner_id: string;
+  project_id: string | null;
+  number: number;
+  title: string;
+  body: string;
+  status: WorkItemStatusDb;
+  source: WorkItemSourceDb;
+  source_url: string | null;
+  source_ref: string | null;
+  duplicate_of: string | null;
+  workspace_id: string | null;
+  triaged_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type WorkItemNoteRow = {
+  id: string;
+  owner_id: string;
+  item_id: string;
+  body: string;
+  source: WorkItemSourceDb;
+  source_url: string | null;
+  author: string | null;
+  created_at: string;
+};
+
+type SlackLinkRow = {
+  team_id: string;
+  slack_user_id: string;
+  owner_id: string;
+  team_name: string | null;
+  slack_user_name: string | null;
+  created_at: string;
+};
+
 type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
   Partial<Omit<Row, Required | "created_at" | "updated_at">>;
 
@@ -778,6 +820,24 @@ export type Database = {
         Update: Partial<CliLoginCodeRow>;
         Relationships: [];
       };
+      work_items: {
+        Row: WorkItemRow;
+        Insert: Insert<WorkItemRow, "owner_id" | "title">;
+        Update: Partial<WorkItemRow>;
+        Relationships: [];
+      };
+      work_item_notes: {
+        Row: WorkItemNoteRow;
+        Insert: Insert<WorkItemNoteRow, "owner_id" | "item_id" | "body">;
+        Update: Partial<WorkItemNoteRow>;
+        Relationships: [];
+      };
+      slack_links: {
+        Row: SlackLinkRow;
+        Insert: Insert<SlackLinkRow, "team_id" | "slack_user_id" | "owner_id">;
+        Update: Partial<SlackLinkRow>;
+        Relationships: [];
+      };
       cli_tokens: {
         Row: CliTokenRow;
         Insert: Insert<CliTokenRow, "user_id" | "token_hash" | "device_name">;
@@ -962,6 +1022,8 @@ export type Database = {
       job_status: JobStatusDb;
       runtime_computer_status: RuntimeComputerStatusDb;
       archive_policy: ArchivePolicyDb;
+      work_item_status: WorkItemStatusDb;
+      work_item_source: WorkItemSourceDb;
     };
     CompositeTypes: Record<never, never>;
   };
