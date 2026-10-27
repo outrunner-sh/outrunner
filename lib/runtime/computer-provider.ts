@@ -7,6 +7,7 @@ import { optionalEnv } from "@/lib/env";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
 import { AgentEndpointCache } from "@/lib/runtime/agent-endpoint-cache";
 import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
+import { IMAGE_MISSING, IMAGE_TOO_LARGE, imageReadCommand } from "@/lib/runtime/chat-image";
 import {
   AGENT_PORT,
   deployClaude,
@@ -458,6 +459,17 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       box.io.upload(Buffer.from("*\n"), `${dir}/.gitignore`),
       ...files.map((file) => box.io.upload(file.bytes, `${dir}/${file.filename}`)),
     ]);
+  }
+
+  /** The file at `path` on the box (absolute), for the chat to show as an
+   *  image: its bytes, or why not. Its type is the caller's to check. */
+  async readBoxImage(sandboxId: string, path: string): Promise<Buffer | "missing" | "too-large"> {
+    const box = await this.backend.get(sandboxId);
+    const { stdout, exitCode } = await box.io.exec(imageReadCommand(path));
+    if (exitCode === IMAGE_MISSING) return "missing";
+    if (exitCode === IMAGE_TOO_LARGE) return "too-large";
+    if (exitCode !== 0) throw new Error(`Reading ${path} off the box exited ${exitCode}`);
+    return Buffer.from(stdout.trim(), "base64");
   }
 
   /** Push an interactive worktree's persisted branch with a request-scoped token. */

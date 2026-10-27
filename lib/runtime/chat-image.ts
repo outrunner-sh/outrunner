@@ -1,0 +1,86 @@
+/**
+ * Images Claude points at in its replies (`![File tree](.context/tree.png)`),
+ * which live on the session's box, where the browser can't reach them: the
+ * chat loads them through /api/workspaces/[id]/image, which reads them off the
+ * box. (Not the box's Docker image: that's lib/runtime/box-image.ts.) Imports
+ * nothing, so the browser, the route and the tests use it as is.
+ */
+
+/** The largest image read off a box: it crosses the provider's exec as text. */
+export const BOX_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+
+/**
+ * The path on the box a markdown image's `src` names, or null for one the
+ * browser loads by itself (http:, https:, data:, blob: and any other scheme).
+ * `file://` paths count as paths; a percent-encoded one is decoded.
+ */
+export function localImagePath(src: string | undefined): string | null {
+  const raw = src?.trim();
+  if (!raw) return null;
+  const path = raw.startsWith("file://") ? raw.slice("file://".length) : raw;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("//")) return null;
+  try {
+    return decodeURI(path) || null;
+  } catch {
+    return path;
+  }
+}
+
+/** Where `path` is on the box: as is when absolute, else in the worktree. Null
+ *  for one no file can have (a NUL in it). */
+export function boxImagePath(path: string, worktree: string): string | null {
+  if (path.includes("\0")) return null;
+  const parts: string[] = [];
+  for (const part of (path.startsWith("/") ? path : `${worktree}/${path}`).split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") parts.pop();
+    else parts.push(part);
+  }
+  return `/${parts.join("/")}`;
+}
+
+export type ImageType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+
+/** The image type `bytes` are, by their signature; null for anything else.
+ *  SVG never counts: it can carry script. */
+export function sniffImage(bytes: Uint8Array): ImageType | null {
+  const starts = (...sig: number[]) => sig.every((b, i) => bytes[i] === b);
+  if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "image/png";
+  if (starts(0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (starts(0x47, 0x49, 0x46, 0x38)) return "image/gif";
+  // RIFF....WEBP
+  if (starts(0x52, 0x49, 0x46, 0x46) && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return "image/webp";
+  }
+  return null;
+}
+
+/** Exit codes of {@link imageReadCommand}, past the shell's own. */
+export const IMAGE_MISSING = 3;
+export const IMAGE_TOO_LARGE = 4;
+
+/**
+ * The command that prints the file at `path` on the box as base64, or exits
+ * IMAGE_MISSING (no such regular file) or IMAGE_TOO_LARGE (past
+ * BOX_IMAGE_MAX_BYTES). Its own shell, as the box's exec isn't one, and quiet
+ * on stderr, which the providers fold into the output it's decoded from.
+ */
+export function imageReadCommand(path: string): string {
+  const script = [
+    `f=${quote(path)}`,
+    `[ -f "$f" ] || exit ${IMAGE_MISSING}`,
+    `[ "$(wc -c < "$f" 2>/dev/null)" -le ${BOX_IMAGE_MAX_BYTES} ] || exit ${IMAGE_TOO_LARGE}`,
+    `base64 < "$f" 2>/dev/null | tr -d '\\n'`,
+  ].join("; ");
+  return `bash -c ${quote(script)}`;
+}
+
+/** Single-quoted for the shell. */
+function quote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The URL the chat loads a box image of `workspaceId` at. */
+export function boxImageUrl(workspaceId: string, path: string): string {
+  return `/api/workspaces/${workspaceId}/image?path=${encodeURIComponent(path)}`;
+}
