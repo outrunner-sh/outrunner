@@ -112,15 +112,18 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
       </DropdownMenu>
       {/* Under the header, not in its row: the row stays as it is. */}
       {error ? (
-        <button
-          type="button"
-          role="alert"
-          onClick={() => setError(null)}
-          title="Dismiss"
-          className="absolute left-0 top-full z-10 mt-1 w-56 rounded-md border border-border bg-popover px-2 py-1.5 text-left text-xs text-destructive shadow-md"
-        >
-          {error}
-        </button>
+        // The live region on its own, so the button is still read as one.
+        <div role="alert" className="absolute left-0 top-full z-10 mt-1 w-56">
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label={`${error} (dismiss)`}
+            title="Dismiss"
+            className="w-full rounded-md border border-border bg-popover px-2 py-1.5 text-left text-xs text-destructive shadow-md"
+          >
+            {error}
+          </button>
+        </div>
       ) : null}
       <CreateOrgDialog open={creating} onOpenChange={setCreating} />
     </div>
