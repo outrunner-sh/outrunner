@@ -836,6 +836,15 @@ export type Database = {
         Args: { member: string; target_environment: string };
         Returns: AccessLevelDb | null;
       };
+      // supabase/migrations/20261028160000_org_access_atomic.sql
+      set_grant: {
+        Args: { target_org: string; target_role: string | null; target_project: string | null; new_level: AccessLevelDb | null };
+        Returns: undefined;
+      };
+      set_member_roles: {
+        Args: { target_org: string; member: string; role_ids: string[] };
+        Returns: undefined;
+      };
       make_default_environment: {
         Args: { target_project: string; maker: string; checkout: string };
         Returns: string;

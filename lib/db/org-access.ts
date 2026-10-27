@@ -106,30 +106,21 @@ export async function deleteRole(orgId: string, roleId: string): Promise<boolean
 }
 
 /**
- * Give a member exactly these roles. An admin holds none: they have write on
- * everything already, so a role would only mislead when they're made a member
- * again.
+ * Give a member exactly these roles, all or none (set_member_roles): a role
+ * of another org, or one deleted meanwhile, changes nothing. An admin holds
+ * none: they have write on everything already, so a role would only mislead
+ * when they're made a member again.
  */
 export async function setMemberRoles(orgId: string, userId: string, roleIds: readonly string[]): Promise<void> {
-  const supabase = createSupabaseAdminClient();
-  const { data: member, error: memberError } = await supabase
-    .from("organization_members")
-    .select("role")
-    .eq("org_id", orgId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (memberError) throw memberError;
-  if (!member) throw new AccessChangeError("They aren't a member of this org.");
-  if (member.role === "admin" && roleIds.length > 0) {
+  const { error } = await createSupabaseAdminClient().rpc("set_member_roles", {
+    target_org: orgId,
+    member: userId,
+    role_ids: [...roleIds],
+  });
+  if (error?.message === "not_a_member") throw new AccessChangeError("They aren't a member of this org.");
+  if (error?.message === "admin_roles") {
     throw new AccessChangeError("Admins can do everything already: roles are for members.");
   }
-  const { error: deleteError } = await supabase.from("member_roles").delete().eq("org_id", orgId).eq("user_id", userId);
-  if (deleteError) throw deleteError;
-  if (roleIds.length === 0) return;
-  const { error } = await supabase
-    .from("member_roles")
-    .insert([...new Set(roleIds)].map((roleId) => ({ org_id: orgId, user_id: userId, role_id: roleId })));
-  // A role id from another org, or one deleted meanwhile.
   if (error?.code === "23503") throw new AccessChangeError("One of those roles isn't this org's.");
   if (error) throw error;
 }
@@ -146,26 +137,21 @@ export async function listGrants(orgId: string): Promise<Grant[]> {
 
 /**
  * Set what Everyone (roleId null) or a role gets on all projects (projectId
- * null) or one: `level`, or nothing (null).
+ * null) or one: `level`, or nothing (null). One step (set_grant): a change
+ * that fails leaves the grant there was.
  */
 export async function setGrant(
   orgId: string,
   grant: { roleId: string | null; projectId: string | null; level: AccessLevel | null },
 ): Promise<void> {
-  const supabase = createSupabaseAdminClient();
-  let remove = supabase.from("access_grants").delete().eq("org_id", orgId);
-  remove = grant.roleId ? remove.eq("role_id", grant.roleId) : remove.is("role_id", null);
-  remove = grant.projectId ? remove.eq("project_id", grant.projectId) : remove.is("project_id", null);
-  const { error: removeError } = await remove;
-  if (removeError) throw removeError;
-  if (!grant.level) return;
-  const { error } = await supabase
-    .from("access_grants")
-    .insert({ org_id: orgId, role_id: grant.roleId, project_id: grant.projectId, level: grant.level });
+  const { error } = await createSupabaseAdminClient().rpc("set_grant", {
+    target_org: orgId,
+    target_role: grant.roleId,
+    target_project: grant.projectId,
+    new_level: grant.level,
+  });
   // A role or project of another org, or one deleted meanwhile.
   if (error?.code === "23503") throw new AccessChangeError("That role or project isn't this org's.");
-  // Set by another admin at the same moment: theirs stands.
-  if (error?.code === "23505") throw new AccessChangeError("Someone changed that at the same moment. Reload to see it.");
   if (error) throw error;
 }
 

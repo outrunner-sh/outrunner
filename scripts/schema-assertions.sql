@@ -1431,3 +1431,65 @@ begin
   end if;
   raise notice 'ok: a default project and its repository are made together, once';
 end $$;
+
+-- 35. Changing access is one step: a grant set or taken in place, a failed
+-- one leaving what was there; a member's roles all or none; never an admin's;
+-- an admin made holds none.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  builders uuid := (select id from organization_roles where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and name = 'Builders');
+  other_role uuid;
+begin
+  perform set_grant(team, null, null, 'write');
+  perform set_grant(team, null, null, 'read');
+  if (select count(*) from access_grants where org_id = team and role_id is null and project_id is null) <> 1
+     or (select level from access_grants where org_id = team and role_id is null and project_id is null) <> 'read' then
+    raise exception 'FAIL: set_grant didn''t change Everyone''s grant in place';
+  end if;
+  -- A project of another org: refused, and Everyone keeps read.
+  begin
+    perform set_grant(team, null, (select id from projects where org_id <> team limit 1), 'write');
+    raise exception 'FAIL: a grant on another org''s project';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if (select level from access_grants where org_id = team and role_id is null and project_id is null) <> 'read' then
+    raise exception 'FAIL: a refused grant changed Everyone''s';
+  end if;
+  perform set_grant(team, null, null, null);
+  if exists (select 1 from access_grants where org_id = team and role_id is null and project_id is null) then
+    raise exception 'FAIL: set_grant(null) left the grant';
+  end if;
+  perform set_grant(team, null, null, 'write');
+
+  perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[builders]);
+  insert into organization_roles (org_id, name)
+  values ((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), 'Elsewhere')
+  returning id into other_role;
+  begin
+    perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[other_role]);
+    raise exception 'FAIL: a member got another org''s role';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if not exists (select 1 from member_roles where org_id = team and user_id = '22222222-2222-2222-2222-222222222222' and role_id = builders) then
+    raise exception 'FAIL: a refused change took a member''s roles away';
+  end if;
+  begin
+    perform set_member_roles(team, '11111111-1111-1111-1111-111111111111', array[builders]);
+    raise exception 'FAIL: an admin was given a role';
+  exception when raise_exception then
+    if sqlerrm <> 'admin_roles' then raise; end if;
+  end;
+  perform set_org_member_role(team, '22222222-2222-2222-2222-222222222222', 'admin');
+  if exists (select 1 from member_roles where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a member made admin kept their roles';
+  end if;
+  perform set_org_member_role(team, '22222222-2222-2222-2222-222222222222', 'member');
+  if has_function_privilege('authenticated', 'set_grant(uuid, uuid, uuid, text)', 'execute')
+     or has_function_privilege('authenticated', 'set_member_roles(uuid, uuid, uuid[])', 'execute') then
+    raise exception 'FAIL: a user may change grants or roles directly';
+  end if;
+  raise notice 'ok: grants and roles change in one step, and a refused change keeps what was there';
+end $$;

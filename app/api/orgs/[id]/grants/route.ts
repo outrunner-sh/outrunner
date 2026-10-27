@@ -9,6 +9,7 @@ import { orgCaller } from "@/lib/orgs/routes";
 /**
  * Set what Everyone (`roleId` null) or a role gets on all the org's projects
  * (`projectId` null) or one: `level` "read" or "write", or null for nothing.
+ * All three must be given; null is said, never assumed.
  * The org's admins may; admins themselves always have write.
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -32,9 +33,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   });
 }
 
-/** An id as posted, null for none (Everyone, all projects); undefined for
- *  anything else. */
+/** An id as posted, or an explicit null for none (Everyone, all projects);
+ *  undefined for anything else, a missing one included: a body that drops a
+ *  field mustn't land on Everyone's grant on all projects, the org's base. */
 function idOrNull(value: unknown): string | null | undefined {
-  if (value === null || value === undefined) return null;
+  if (value === null) return null;
   return typeof value === "string" && isUuid(value) ? value : undefined;
 }
