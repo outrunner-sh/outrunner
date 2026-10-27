@@ -979,3 +979,42 @@ begin
 end $$;
 
 reset role;
+
+-- 26. Guards around orgs: a session or box can't be handed to someone outside
+-- its org, a project can't move to another org, and a session on a project
+-- that isn't there says so.
+do $$
+begin
+  begin
+    update workspaces set owner_id = '33333333-3333-3333-3333-333333333333'
+    where branch = 'admin-session';
+    raise exception 'FAIL: a session was handed to a non-member';
+  exception when foreign_key_violation then
+    null;
+  end;
+  begin
+    update runtime_computers set owner_id = '33333333-3333-3333-3333-333333333333'
+    where id = (select id from runtime_computers limit 1);
+    raise exception 'FAIL: a box was handed to a non-member of its org';
+  exception when foreign_key_violation then
+    null;
+  end;
+  begin
+    update projects set org_id = (
+      select id from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111'
+    ) where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+    raise exception 'FAIL: a project moved to another org';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    insert into workspaces (owner_id, project_id, branch)
+    values ('11111111-1111-1111-1111-111111111111', gen_random_uuid(), 'no-project');
+    raise exception 'FAIL: a session started on a project that isn''t there';
+  exception when foreign_key_violation then
+    if sqlerrm not like 'project % not found' then
+      raise exception 'FAIL: a missing project reads as "%"', sqlerrm;
+    end if;
+  end;
+  raise notice 'ok: sessions and boxes stay with org members, and projects stay in their org';
+end $$;
