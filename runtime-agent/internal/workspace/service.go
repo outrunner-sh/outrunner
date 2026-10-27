@@ -509,10 +509,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	return worktree, nil
 }
 
-// ErrArchiveCheckouts refuses archiving a session of several repositories,
-// which a snapshot can't hold yet: it keeps running instead.
-var ErrArchiveCheckouts = errors.New("a session of several repositories can't be archived yet")
-
 // ErrBypassInFolder refuses bypassPermissions for a session in a folder on the
 // user's own machine, whoever asks for it: there Claude would run every command
 // against their real files, keys and credentials without a prompt.
@@ -1272,10 +1268,6 @@ func (s *Service) SessionName(workspaceID string) string { return sessionName(wo
 // revive it. Archive is idempotent — re-archiving a stopped session simply
 // re-captures and re-uploads.
 func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.ArchiveWorkspaceRequest) (*snapshot.Manifest, error) {
-	// A snapshot holds one repository's tree; one of several comes later.
-	if f, _ := s.getFacts(workspaceID); len(f.Checkouts) > 0 {
-		return nil, ErrArchiveCheckouts
-	}
 	if err := s.Stop(ctx, workspaceID); err != nil {
 		return nil, err
 	}
@@ -1287,6 +1279,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	return snapshot.Produce(ctx, snapshot.Input{
 		WorkspaceID:      workspaceID,
 		Worktree:         s.worktreePath(workspaceID),
+		Checkouts:        s.snapshotCheckouts(f.Checkouts),
 		CastPath:         s.castPath(workspaceID),
 		ConversationPath: s.SessionLog(workspaceID),
 		SessionID:        s.sessionID(workspaceID),
@@ -1326,7 +1319,16 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	if sessionID != "" && !validSessionID(sessionID) {
 		return "", fmt.Errorf("cannot restore: invalid session id %q", sessionID)
 	}
-	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent})
+	var checkouts []Checkout
+	for _, r := range req.Repos {
+		checkouts = append(checkouts, Checkout{Name: r.Checkout, FullName: r.FullName, BaseBranch: r.BaseBranch})
+	}
+	if len(checkouts) > 0 {
+		if err := ValidCheckouts(checkouts); err != nil {
+			return "", err
+		}
+	}
+	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent, Checkouts: checkouts})
 	if req.Auth != nil && req.Auth.Kind != AuthNone {
 		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
 			return "", err
@@ -1346,6 +1348,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 		BundleRef:      req.BundleRef,
 		OriginWorktree: req.OriginWorktree,
 		Downloads:      req.Downloads,
+		Checkouts:      s.snapshotCheckouts(checkouts),
 	}
 	switch {
 	case codexSession:
@@ -1636,4 +1639,14 @@ func (s *Service) SummaryOf(ctx context.Context, workspaceID string) protocol.Wo
 		return startingSummary(s.worktreePath(workspaceID))
 	}
 	return sum.Snapshot(ctx)
+}
+
+// snapshotCheckouts are a session's checkouts as a Snapshot captures or
+// restores them, each with its mirror.
+func (s *Service) snapshotCheckouts(checkouts []Checkout) []snapshot.Checkout {
+	var out []snapshot.Checkout
+	for _, c := range checkouts {
+		out = append(out, snapshot.Checkout{Name: c.Name, FullName: c.FullName, BaseBranch: c.BaseBranch, MirrorPath: RepoMirrorPath(s.Root, c.Name)})
+	}
+	return out
 }

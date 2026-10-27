@@ -256,6 +256,19 @@
   ],
   "RestoreWorkspaceRequest": [
     {
+      "branch": "feat/z",
+      "sessionId": "sess-3",
+      "downloads": [
+        { "artifact": "bundle", "url": "https://storage.example/download/bundle?token=t" },
+        { "artifact": "patch", "url": "https://storage.example/download/patch?token=t" },
+        { "artifact": "conversation", "url": "https://storage.example/download/conversation?token=t" }
+      ],
+      "repos": [
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+      ]
+    },
+    {
       "branch": "feat/x",
       "baseBranch": "main",
       "sessionId": "sess-1",
@@ -428,7 +441,8 @@
         "project-instructions",
         "request-secrets",
         "warm-hooks",
-        "multi-repo"
+        "multi-repo",
+        "multi-repo-snapshots"
       ]
     }
   ],

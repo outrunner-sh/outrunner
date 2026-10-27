@@ -76,6 +76,8 @@ type Tree struct {
 	Kind   string `json:"kind"`
 	Bundle string `json:"bundle"`
 	Patch  string `json:"patch"`
+	// Checkouts are a session of several repositories' (TreeKindCheckouts).
+	Checkouts []TreeCheckout `json:"checkouts,omitempty"`
 }
 
 // Manifest is the Go MIRROR of the zod SnapshotManifest
@@ -111,8 +113,12 @@ type Manifest struct {
 // Input is everything Produce needs to capture and upload one Snapshot.
 type Input struct {
 	WorkspaceID string
-	// Worktree is the workspace's git worktree (source of the tree + last commit).
+	// Worktree is the workspace's git worktree (source of the tree + last commit),
+	// or the folder of a session of several repositories' checkouts.
 	Worktree string
+	// Checkouts, when set, are the repositories in Worktree's folders: each
+	// captured (checkouts.go).
+	Checkouts []Checkout
 	// CastPath is the finalized session.cast on disk (may not exist if the session
 	// never recorded — Produce then stages an empty cast so the artifact is present).
 	CastPath string
@@ -157,13 +163,25 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	paths["bundle"], err = buildBundle(ctx, in.Worktree, filepath.Join(staging, BundleName))
-	if err != nil {
-		return nil, err
-	}
-	paths["patch"], err = buildPatch(ctx, in.Worktree, filepath.Join(staging, PatchName))
-	if err != nil {
-		return nil, err
+	tree := Tree{Kind: TreeKindGitBundlePatch, Bundle: BundleName, Patch: PatchName}
+	var last *string
+	if len(in.Checkouts) > 0 {
+		paths["bundle"], paths["patch"], tree.Checkouts, err = buildCheckoutTrees(ctx, in.Worktree, in.Checkouts, staging)
+		if err != nil {
+			return nil, err
+		}
+		tree.Kind = TreeKindCheckouts
+		last = tree.Checkouts[0].LastCommit
+	} else {
+		paths["bundle"], err = buildBundle(ctx, in.Worktree, filepath.Join(staging, BundleName))
+		if err != nil {
+			return nil, err
+		}
+		paths["patch"], err = buildPatch(ctx, in.Worktree, filepath.Join(staging, PatchName))
+		if err != nil {
+			return nil, err
+		}
+		last = lastCommit(ctx, in.Worktree)
 	}
 	paths["summary"], err = stageSummary(staging, in.Summary)
 	if err != nil {
@@ -201,13 +219,13 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 		SessionID:      in.SessionID,
 		Conversation:   ConversationName,
 		Cast:           CastName,
-		Tree:           Tree{Kind: TreeKindGitBundlePatch, Bundle: BundleName, Patch: PatchName},
+		Tree:           tree,
 		Summary:        SummaryName,
 		Checksums:      checksums,
 		Sizes:          sizes,
 		StartedAt:      in.Summary.StartedAt,
 		ArchivedAt:     in.ArchivedAt,
-		LastCommit:     lastCommit(ctx, in.Worktree),
+		LastCommit:     last,
 		LastMessage:    in.Summary.LastAssistantMessage,
 		TokenUsage:     tokenUsageMap(in.Summary.TokenUsage),
 		ChangedFiles:   in.Summary.ChangedFiles,

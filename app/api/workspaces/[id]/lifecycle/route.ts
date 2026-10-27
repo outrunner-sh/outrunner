@@ -21,14 +21,25 @@ import {
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_IMPORTS, AGENT_FEATURE_RESTORE_MODEL } from "@/lib/runtime/agent-protocol";
+import {
+  AGENT_FEATURE_CODEX_GATEWAY,
+  AGENT_FEATURE_IMPORTS,
+  AGENT_FEATURE_MULTI_REPO_SNAPSHOTS,
+  AGENT_FEATURE_RESTORE_MODEL,
+} from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { scopeOf } from "@/lib/runtime/computer-scope";
 import { recordedModelRequest } from "@/lib/runtime/model-switch";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
-import { relaunchNeedsAccount, restoreSignedIn, sessionAuthClient, signInFailure } from "@/lib/runtime/session-auth";
+import {
+  OutdatedComputerError,
+  relaunchNeedsAccount,
+  restoreSignedIn,
+  sessionAuthClient,
+  signInFailure,
+} from "@/lib/runtime/session-auth";
 import { defaultModel, onCodexGateway, type RecordedModel } from "@/lib/runtime/session-models";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
@@ -193,13 +204,19 @@ async function archiveDaytonaWorkspace(
       { status: 409 },
     );
   }
-  // A snapshot holds one repository: one of several keeps running until
-  // snapshots hold more (the agent refuses it too).
+  // A session of several repositories is archived by an agent that can
+  // (its box upgraded in place first where it can be); one that can't keeps
+  // the session running, said, rather than archive it half.
   if (workspace.checkouts) {
-    return NextResponse.json(
-      { error: "A session of several repositories can't be archived yet. Delete it when you're done instead." },
-      { status: 409 },
-    );
+    try {
+      const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, owner);
+      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+      await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "archive a session of several repositories");
+    } catch (error) {
+      if (error instanceof OutdatedComputerError) return NextResponse.json({ error: error.message }, { status: 409 });
+      console.error(`Workspace ${workspace.id} couldn't be checked for archiving`, error);
+      return NextResponse.json({ error: lifecycleError("archive") }, { status: 502 });
+    }
   }
   const transitioned = await startTransition(workspace, ["ready", "idle"], "archiving");
   if (!transitioned) return lifecycleConflict();
@@ -354,6 +371,15 @@ async function restoreDaytonaWorkspace(
     if (!ensured.provisioned) {
       await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
     }
+    // A session of several repositories: a mirror of each, its bundle's
+    // commits imported into it by the restore.
+    if (workspace.checkouts) {
+      await provider.syncRepoMirrors(
+        computer.daytonaSandboxId,
+        workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
+        githubToken,
+      );
+    }
 
     const target = await provider.agentTarget(
       computer.daytonaSandboxId,
@@ -374,6 +400,9 @@ async function restoreDaytonaWorkspace(
     if (manifest.origin) {
       await requireFeature(features, AGENT_FEATURE_IMPORTS, "restore a session imported from a Mac");
     }
+    if (workspace.checkouts) {
+      await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "restore a session of several repositories");
+    }
     // An older agent would ignore the model, and relaunch on Claude's own.
     if (model) await requireFeature(features, AGENT_FEATURE_RESTORE_MODEL, "restore a session on its model");
     // Nor would one from before Codex ran through a gateway take its model.
@@ -382,7 +411,8 @@ async function restoreDaytonaWorkspace(
     }
     // Before the restore, which launches the session at once.
     await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
-    const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
+    const tree = manifest.tree;
+    const bundleRef = tree.kind === "git-bundle+patch" && tree.ref && tree.ref !== workspace.branch ? tree.ref : undefined;
     let restoredWorktree: string | undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, async (credential) => {
       const restored = await agent.restoreWorkspace(identity, {
@@ -395,6 +425,9 @@ async function restoreDaytonaWorkspace(
         ...(model && { model }),
         ...(bundleRef && { bundleRef }),
         ...(manifest.origin && { originWorktree: manifest.origin.worktree }),
+        ...(workspace.checkouts && {
+          repos: workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch })),
+        }),
       });
       restoredWorktree = restored.worktree;
     });

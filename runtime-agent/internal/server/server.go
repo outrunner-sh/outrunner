@@ -139,7 +139,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots},
 	})
 }
 
@@ -248,10 +248,6 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	manifest, err := s.ws.Archive(r.Context(), r.PathValue("id"), req)
-	if errors.Is(err, workspace.ErrArchiveCheckouts) {
-		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
-		return
-	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
@@ -308,7 +304,7 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req, model)
 	switch {
-	case errors.Is(err, workspace.ErrAuthMismatch), errors.Is(err, workspace.ErrGatewayUnsupported):
+	case errors.Is(err, workspace.ErrAuthMismatch), errors.Is(err, workspace.ErrGatewayUnsupported), errors.Is(err, workspace.ErrInvalidCheckouts):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, workspace.ErrModelUnsupported):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())

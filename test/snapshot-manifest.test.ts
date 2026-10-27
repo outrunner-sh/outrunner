@@ -112,3 +112,25 @@ test("rejects a non-string sessionId (null is allowed, number is not)", () => {
   m.sessionId = 42;
   assertFailsAt(m, "sessionId");
 });
+
+test("a multi-repository tree lists its checkouts; a bad one fails at the tree", () => {
+  const m = base();
+  m.tree = {
+    kind: "git-bundles+patches",
+    bundle: SNAPSHOT_ARTIFACTS.bundle,
+    patch: SNAPSHOT_ARTIFACTS.patch,
+    checkouts: [
+      { name: "web", fullName: "acme/web", baseBranch: "main", lastCommit: "a".repeat(40) },
+      { name: "api", lastCommit: null },
+    ],
+  };
+  const parsed = parseManifest(m);
+  assert.equal(parsed.tree.kind, "git-bundles+patches");
+  assert.equal(parsed.tree.kind === "git-bundles+patches" && parsed.tree.checkouts.length, 2);
+
+  for (const checkouts of [[{ name: "web", lastCommit: null }], [{ name: "../x", lastCommit: null }, { name: "api", lastCommit: null }]]) {
+    const bad = base();
+    bad.tree = { kind: "git-bundles+patches", bundle: SNAPSHOT_ARTIFACTS.bundle, patch: SNAPSHOT_ARTIFACTS.patch, checkouts };
+    assert.equal(SnapshotManifest.safeParse(bad).success, false, JSON.stringify(checkouts));
+  }
+});

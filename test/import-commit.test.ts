@@ -93,7 +93,7 @@ test("an imported session becomes an archived workspace whose Snapshot Restore c
   assert.deepEqual(stored, manifest());
   assert.equal(stored.cast, undefined);
   assert.equal(stored.rollout, "rollout.jsonl");
-  assert.equal(stored.tree.ref, "feature");
+  assert.equal(stored.tree.kind === "git-bundle+patch" && stored.tree.ref, "feature");
   assert.deepEqual(stored.origin, { source: "conductor", key: "codex:s-1", worktree: "/Users/ada/app", importedAt: IMPORTED_AT });
   assert.deepEqual(stored.encodings, { "uncommitted.patch": "gzip", "conversation.jsonl": "gzip", "rollout.jsonl": "gzip" });
   assert.equal(stored.checksums["conversation.jsonl"], sha("3"));
