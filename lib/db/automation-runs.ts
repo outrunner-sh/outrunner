@@ -35,12 +35,12 @@ export async function automationsForPullRequest(installationId: number, repoFull
     .maybeSingle();
   if (error) throw error;
   if (!holder?.org_id) return [];
-  const orgIds = [holder.org_id];
+  const orgId = holder.org_id;
 
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
     .select("id")
-    .in("org_id", orgIds)
+    .eq("org_id", orgId)
     .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"));
   if (projectsError) throw projectsError;
   const projectIds = (projects ?? []).map((p) => p.id);
@@ -60,7 +60,7 @@ export async function automationsForPullRequest(installationId: number, repoFull
       "id",
       repos.map((r) => r.automation_id),
     )
-    .in("org_id", orgIds)
+    .eq("org_id", orgId)
     .eq("enabled", true);
   if (automationsError) throw automationsError;
   const byId = new Map((automations ?? []).map((a) => [a.id, a]));
