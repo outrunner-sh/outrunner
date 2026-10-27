@@ -298,6 +298,68 @@ export async function listGitHubRepositories(token: string): Promise<GitHubRepos
 }
 
 /**
+ * The repositories a GitHub App installation reaches, with `token` one of its
+ * installation tokens (lib/github/app.ts): all of an account's, or the ones
+ * its owner picked. The first page says how many there are; the rest are
+ * fetched a few at a time, as {@link listGitHubRepositories} does.
+ */
+export async function listInstallationRepositoryRecords(token: string): Promise<GitHubRepositoryList> {
+  const first = await fetchInstallationPage(token, 1);
+  const lastPage = Math.max(1, Math.ceil(first.total / PER_PAGE));
+  const morePages = Array.from({ length: Math.min(lastPage, MAX_PAGES) - 1 }, (_, i) => i + 2);
+  const pages = [
+    first,
+    ...(await mapWithConcurrency(morePages, PAGE_CONCURRENCY, (page) => fetchInstallationPage(token, page))),
+  ];
+  return mergeRepositoryLists([
+    {
+      repositories: pages.flatMap((page) => page.repositories),
+      complete: lastPage <= MAX_PAGES && pages.every((page) => page.skipped === 0),
+      ssoPartialOrgIds: [],
+    },
+  ]);
+}
+
+/** Listings as one: each repository once, most recently pushed first, and
+ *  complete only if every one was. */
+export function mergeRepositoryLists(lists: GitHubRepositoryList[]): GitHubRepositoryList {
+  const byId = new Map<number, GitHubRepository>();
+  for (const list of lists) {
+    for (const repo of list.repositories) byId.set(repo.githubRepoId, repo);
+  }
+  return {
+    repositories: [...byId.values()].sort(newestPushFirst),
+    complete: lists.every((list) => list.complete),
+    ssoPartialOrgIds: [...new Set(lists.flatMap((list) => list.ssoPartialOrgIds))],
+  };
+}
+
+async function fetchInstallationPage(
+  token: string,
+  page: number,
+): Promise<{ repositories: GitHubRepository[]; skipped: number; total: number }> {
+  const url = new URL("/installation/repositories", GITHUB_API_URL);
+  url.searchParams.set("per_page", String(PER_PAGE));
+  url.searchParams.set("page", String(page));
+  const response = await fetchGitHub(url, token);
+  if (!response.ok) {
+    // An installation token GitHub refuses isn't the user's to reconnect.
+    console.error("GitHub installation repository request was rejected", { status: response.status });
+    throw new GitHubSyncError("GitHub could not list the App's repositories. Please try again.", response.status);
+  }
+  const data = (await readJson(response)) as { total_count?: unknown; repositories?: unknown } | null;
+  if (!data || !Array.isArray(data.repositories) || typeof data.total_count !== "number") {
+    throw new GitHubSyncError("GitHub returned an invalid response.");
+  }
+  const repositories: GitHubRepository[] = [];
+  for (const record of data.repositories) {
+    const repo = normalizeRepository(record);
+    if (repo) repositories.push(repo);
+  }
+  return { repositories, skipped: data.repositories.length - repositories.length, total: data.total_count };
+}
+
+/**
  * One repository, by id or `owner/name`, as `token` sees it — or null when it
  * cannot: it does not exist, is private to others, or belongs to an
  * organization whose single sign-on the token is not authorized for (a 403

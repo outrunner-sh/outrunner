@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, Lock, RefreshCw, Search } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { GitHubReconnectLink } from "@/components/github-reconnect-link";
@@ -11,7 +12,13 @@ import { useCloseWhenHidden } from "@/hooks/use-close-when-hidden";
 import { useSharedResource } from "@/hooks/use-shared-resource";
 import { type Placement, placeMenu } from "@/lib/client/menu-placement";
 import { sharedResource } from "@/lib/client/shared-resource";
-import { projectToListing, type RepositoryListing } from "@/lib/github/listing";
+import {
+  installationSettingsUrl,
+  projectToListing,
+  type ListingSource,
+  type RepositoryListing,
+  type SourceAccount,
+} from "@/lib/github/listing";
 import type { Project } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +29,8 @@ type Listing = {
   complete: boolean;
   /** Organizations whose repositories single sign-on held back. */
   ssoPartialOrgIds: number[];
+  /** The org's GitHub App, or the user's own GitHub. */
+  source: ListingSource;
 };
 
 /** What went wrong, and for a repository GitHub withheld, which one. */
@@ -66,6 +75,7 @@ const REPOSITORIES = sharedResource<ListingAnswer | null>(async () => {
         connected: data.connected ?? [],
         complete: data.complete ?? true,
         ssoPartialOrgIds: data.ssoPartialOrgIds ?? [],
+        source: data.source ?? { kind: "user" },
       },
       error: null,
     };
@@ -438,6 +448,8 @@ export function RepositorySelect({
             </p>
           )}
 
+          {listing?.source.kind === "app" && <AppSourceNote accounts={listing.source.accounts} />}
+
           {extra && (
             <div className="border-border shrink-0 border-t">
               <button
@@ -471,12 +483,16 @@ export function RepositorySelect({
                 tone={error.noAccess ? "warning" : "error"}
                 actions={
                   error.noAccess
-                    ? [{ label: "Grant access on GitHub", href: GITHUB_APP_ACCESS_URL, external: true }]
+                    ? listing?.source.kind === "app"
+                      ? [appAccessAction(listing.source, error.repo)]
+                      : [{ label: "Grant access on GitHub", href: GITHUB_APP_ACCESS_URL, external: true }]
                     : undefined
                 }
               >
                 {error.noAccess
-                  ? "GitHub isn't giving Outrunner access to it. If an organization owns it, an owner may need to approve Outrunner."
+                  ? listing?.source.kind === "app"
+                    ? "Outrunner's GitHub App can't reach it. Add it to the App's repositories on GitHub."
+                    : "GitHub isn't giving Outrunner access to it. If an organization owns it, an owner may need to approve Outrunner."
                   : error.message}
                 {error.reconnect && <GitHubReconnectLink />}
               </InlineMessage>
@@ -486,4 +502,36 @@ export function RepositorySelect({
       )}
     </div>
   );
+}
+
+/** Where the list comes from, in an org with the GitHub App: its
+ *  installations, and where to give the App more repositories. */
+function AppSourceNote({ accounts }: { accounts: SourceAccount[] }) {
+  const suspended = accounts.filter((a) => a.suspended).map((a) => a.login);
+  const only = accounts.length === 1 ? accounts[0] : null;
+  return (
+    <p className="text-muted-foreground border-border shrink-0 border-t px-3 py-2 text-xs">
+      {`From Outrunner's GitHub App on ${accounts.map((a) => a.login).join(", ")}. `}
+      {suspended.length > 0 && `It's suspended on ${suspended.join(", ")}. `}
+      {only ? (
+        <a href={installationSettingsUrl(only)} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">
+          Add repositories
+        </a>
+      ) : (
+        <Link href="/settings/org/github" className="text-foreground underline underline-offset-2">
+          Add repositories
+        </Link>
+      )}
+    </p>
+  );
+}
+
+/** Where to give the App a repository it can't reach: its owner's
+ *  installation on GitHub, or the org's GitHub settings. */
+function appAccessAction(source: { accounts: SourceAccount[] }, repo: string | undefined) {
+  const owner = repo?.split("/")[0]?.toLowerCase();
+  const account = source.accounts.find((a) => a.login.toLowerCase() === owner);
+  return account
+    ? { label: "Add it on GitHub", href: installationSettingsUrl(account), external: true }
+    : { label: "Settings → Org → GitHub", href: "/settings/org/github" };
 }

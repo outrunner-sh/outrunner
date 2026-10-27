@@ -8,6 +8,7 @@ import { GitHubIcon } from "@/components/brand-icons";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { InlineMessage } from "@/components/ui/notice";
 import type { OrgInstallation } from "@/lib/db/github-installations";
+import { installationSettingsUrl } from "@/lib/github/listing";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org } from "@/lib/orgs/active";
 
@@ -27,16 +28,15 @@ const ERRORS: Record<string, string> = {
   not_installer: "Only whoever installed the App on GitHub can add it to an org. Ask them to add it here.",
   removed_elsewhere:
     "Another Outrunner org removed that installation, and only it can add it back. To use it here, uninstall it on GitHub and install it again from this page.",
-  no_installation: "GitHub has no such installation of the App. It may have been uninstalled.",
+  no_installation:
+    "Outrunner has no record of that installation from GitHub. If the App is still installed there, uninstall it on GitHub, then install it again from here.",
   taken: "Another Outrunner org has that GitHub account's installation. Uninstall it there first, or ask its admins.",
   failed: "Couldn't keep the installation. Try again.",
 };
 
 /** Where an installation is managed (its repositories, uninstalling) on GitHub. */
 function manageUrl(i: OrgInstallation): string {
-  return i.accountType === "Organization"
-    ? `https://github.com/organizations/${i.accountLogin}/settings/installations/${i.id}`
-    : `https://github.com/settings/installations/${i.id}`;
+  return installationSettingsUrl({ installationId: i.id, login: i.accountLogin, type: i.accountType });
 }
 
 /**

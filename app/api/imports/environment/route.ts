@@ -3,10 +3,9 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { EnvironmentAccessError, EnvironmentConflictError, mergeIntoDefaultEnvironment } from "@/lib/db/environments";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
-import { getGitHubRepository } from "@/lib/github/client";
 import { connectRepositories } from "@/lib/github/connect";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGithubToken } from "@/lib/github/token";
+import { repositorySource } from "@/lib/github/repository-source";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 import { EnvironmentRuleError } from "@/lib/environments/rules";
@@ -35,15 +34,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const token = await requireGithubToken(owner.id);
     // Into the active org, where the user is looking.
     const orgId = await activeOrgId();
     const refused = await connectRefusal(owner.id, orgId);
     if (refused) return refused;
+    const { lookup } = await repositorySource(owner.id, orgId);
     const result = await importEnvironment(parsed.data, {
       async projectFor(repo) {
-        const { repositories } = await connectRepositories(owner.id, token, [repo], {
-          lookup: getGitHubRepository,
+        const { repositories } = await connectRepositories(owner.id, [repo], {
+          lookup,
           upsert: (ownerId, repos) => upsertProjects(ownerId, repos, orgId),
         });
         const repository = repositories[0];
