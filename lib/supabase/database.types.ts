@@ -67,6 +67,9 @@ export type LinearIssueRef = {
 
 type ProjectRow = {
   id: string;
+  /** The org it's in; given none, its owner's personal org
+   *  (20261027120000_organizations.sql). */
+  org_id: string;
   owner_id: string;
   github_repo_id: number;
   full_name: string;
@@ -86,6 +89,8 @@ type ProjectRow = {
 
 type WorkspaceRow = {
   id: string;
+  /** Its project's org, set from the project. */
+  org_id: string;
   owner_id: string;
   project_id: string;
   status: WorkspaceStatusDb;
@@ -117,6 +122,8 @@ type WorkspaceRow = {
 
 type RuntimeComputerRow = {
   id: string;
+  /** Its project's org, set from the project. */
+  org_id: string;
   owner_id: string;
   project_id: string;
   /** The workspace whose own box it is; null for a project's shared box from
@@ -380,6 +387,25 @@ type CliLoginCodeRow = {
   created_at: string;
 };
 
+type OrganizationRow = {
+  id: string;
+  name: string;
+  /** Set on a user's personal org, and only there. */
+  personal_owner_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OrgRoleDb = "admin" | "member";
+
+type OrganizationMemberRow = {
+  org_id: string;
+  user_id: string;
+  role: OrgRoleDb;
+  created_at: string;
+};
+
 type CliTokenRow = {
   id: string;
   user_id: string;
@@ -396,6 +422,18 @@ type Insert<Row, Required extends keyof Row> = Pick<Row, Required> &
 export type Database = {
   public: {
     Tables: {
+      organizations: {
+        Row: OrganizationRow;
+        Insert: Insert<OrganizationRow, "name">;
+        Update: Partial<OrganizationRow>;
+        Relationships: [];
+      };
+      organization_members: {
+        Row: OrganizationMemberRow;
+        Insert: Insert<OrganizationMemberRow, "org_id" | "user_id" | "role">;
+        Update: Partial<OrganizationMemberRow>;
+        Relationships: [];
+      };
       projects: {
         Row: ProjectRow;
         Insert: Insert<
@@ -420,11 +458,11 @@ export type Database = {
         Update: Partial<WorkspaceRow>;
         Relationships: [
           {
-            foreignKeyName: "workspaces_owner_project_fkey";
-            columns: ["owner_id", "project_id"];
+            foreignKeyName: "workspaces_org_project_fkey";
+            columns: ["org_id", "project_id"];
             isOneToOne: false;
             referencedRelation: "projects";
-            referencedColumns: ["owner_id", "id"];
+            referencedColumns: ["org_id", "id"];
           },
           {
             foreignKeyName: "workspaces_computer_fkey";
@@ -441,11 +479,11 @@ export type Database = {
         Update: Partial<RuntimeComputerRow>;
         Relationships: [
           {
-            foreignKeyName: "runtime_computers_owner_project_fkey";
-            columns: ["owner_id", "project_id"];
+            foreignKeyName: "runtime_computers_org_project_fkey";
+            columns: ["org_id", "project_id"];
             isOneToOne: false;
             referencedRelation: "projects";
-            referencedColumns: ["owner_id", "id"];
+            referencedColumns: ["org_id", "id"];
           },
         ];
       };
@@ -611,6 +649,11 @@ export type Database = {
     };
     Views: Record<never, never>;
     Functions: {
+      // supabase/migrations/20261027120000_organizations.sql
+      is_org_member: {
+        Args: { org: string };
+        Returns: boolean;
+      };
       // supabase/migrations/20261019130000_move_claude_slot_key.sql
       move_claude_slot_key: {
         Args: { mover: string; sealed: string; hint: string };

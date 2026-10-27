@@ -74,7 +74,8 @@ export async function getProjects(ids: string[]): Promise<Project[]> {
   return (data ?? []).map(toProject);
 }
 
-/** Upsert the repositories returned by GitHub, keyed on (owner, repo id). */
+/** Upsert the repositories returned by GitHub, keyed on (org, repo id): the
+ *  database puts them in the owner's personal org, given no org. */
 export async function upsertProjects(
   ownerId: string,
   repos: Array<{
@@ -109,7 +110,7 @@ export async function upsertProjects(
         html_url: r.htmlUrl,
         pushed_at: r.pushedAt,
       })),
-      { onConflict: "owner_id,github_repo_id", count: "exact" },
+      { onConflict: "org_id,github_repo_id", count: "exact" },
     );
 
   if (error) throw error;
