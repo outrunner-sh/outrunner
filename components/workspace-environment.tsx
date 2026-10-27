@@ -412,6 +412,9 @@ function PullRequestRow({
   // request (the page loads the session's own one's): until the first look
   // says whether it has one, Create PR waits, so it can't ask for a second.
   const [looked, setLooked] = useState(!repo);
+  // When the last look went out: an effect re-run by its own answer (looked
+  // turning true changes the poll) doesn't look again at once.
+  const lastLook = useRef(0);
   const opened = found ?? pullRequest;
   const hasPullRequest = opened !== null;
   // Looked for every PR_POLL_MS while the agent is at it, re-read every
@@ -423,7 +426,7 @@ function PullRequestRow({
     ? settled
       ? null
       : PR_STATUS_POLL_MS
-    : phase === "waiting" || !looked
+    : phase === "waiting" || (!looked && !error?.reconnect)
       ? PR_POLL_MS
       : null;
 
@@ -434,6 +437,7 @@ function PullRequestRow({
   useEffect(() => {
     let live = true;
     const look = async () => {
+      lastLook.current = Date.now();
       const result = await lookUpPullRequest(workspaceId, repo?.projectId);
       if (!live) return;
       if (result.answered) setLooked(true);
@@ -454,7 +458,7 @@ function PullRequestRow({
         setError({ message: result.error ?? "Reconnect GitHub to see the pull request.", reconnect: true });
       }
     };
-    void look();
+    if (Date.now() - lastLook.current > PR_POLL_MS / 2) void look();
     if (pollMs === null) return () => void (live = false);
     const poll = setInterval(() => void look(), pollMs);
     const giveUp = hasPullRequest ? undefined : setTimeout(() => setPhase("idle"), PR_WAIT_MS);
@@ -516,7 +520,9 @@ function PullRequestRow({
           !sender
             ? "Available once the session is connected"
             : !looked
-              ? "Checking for a pull request"
+              ? error?.reconnect
+                ? "Reconnect GitHub to check for a pull request first"
+                : "Checking for a pull request"
               : phase === "waiting"
               ? "The agent is creating the pull request; it shows here once it's open"
               : `Ask the agent to commit, push ${branch} and open a pull request into ${baseBranch}${repo ? ` on ${repo.fullName}` : ""}`
