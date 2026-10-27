@@ -13,7 +13,7 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
@@ -341,41 +341,55 @@ function FileView({
   const [reloads, setReloads] = useState(0);
   const backRef = useRef<HTMLButtonElement>(null);
   useEffect(() => backRef.current?.focus(), []);
+  // Both readers below number their reads from here: only the latest one
+  // started may land, so a slower, older read can't put old text back.
+  const latest = useRef(0);
+  const reading = useRef(0);
+  const read = useCallback(async (): Promise<{ file?: FileContent; error?: string } | null> => {
+    const ticket = ++latest.current;
+    reading.current += 1;
+    try {
+      const file = await readWorkspaceFile(workspaceId, local, path);
+      return ticket === latest.current ? { file } : null;
+    } catch (e) {
+      return ticket === latest.current ? { error: e instanceof Error ? e.message : "Couldn't open this file." } : null;
+    } finally {
+      reading.current -= 1;
+    }
+  }, [workspaceId, local, path]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const read = await readWorkspaceFile(workspaceId, local, path);
-        if (cancelled) return;
-        setFile((shown) => sameFile(shown, read));
+      const result = await read();
+      if (cancelled || !result) return;
+      if (result.file) {
+        const file = result.file;
+        setFile((shown) => sameFile(shown, file));
         setError(null);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't open this file.");
+      } else {
+        setError(result.error ?? null);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, local, path, version, reloads]);
+  }, [read, version, reloads]);
 
   // The poll runs on its own, each read the given time after the last one
-  // finished, so a slow read is never cut off by the next. A failed one is
-  // left for the next to retry.
+  // finished, so a slow read is never cut off by the next; it skips a turn
+  // while another read is out. A failed one is left for the next to retry.
   useEffect(() => {
     if (!live) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
-      if (!document.hidden) {
-        try {
-          const read = await readWorkspaceFile(workspaceId, local, path);
-          if (!stopped) {
-            setFile((shown) => sameFile(shown, read));
-            setError(null);
-          }
-        } catch {
-          // Transient: the next poll tries again.
+      if (!document.hidden && reading.current === 0) {
+        const result = await read();
+        if (!stopped && result?.file) {
+          const file = result.file;
+          setFile((shown) => sameFile(shown, file));
+          setError(null);
         }
       }
       if (!stopped) timer = setTimeout(() => void poll(), FILE_POLL_MS);
@@ -385,7 +399,7 @@ function FileView({
       stopped = true;
       clearTimeout(timer);
     };
-  }, [live, workspaceId, local, path]);
+  }, [live, read]);
 
   // Highlighting loads on first use, so the panel doesn't carry it until then.
   const language = codeLanguage(path);
