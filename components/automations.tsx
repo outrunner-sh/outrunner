@@ -32,7 +32,7 @@ export function Automations({
   appSlug: string | null;
   /** The accounts the app is installed on for the org; null when they
    *  couldn't be read. */
-  installations: string[] | null;
+  installations: { login: string; suspended: boolean }[] | null;
   /** Null when they couldn't be read. */
   automations: Automation[] | null;
   templates: Pick<AutomationTemplate, "id" | "name" | "description" | "category">[];
@@ -57,7 +57,7 @@ export function Automations({
           ) : null}
         </header>
 
-        <GitHubAppStatus appSlug={appSlug} installations={installations} />
+        <GitHubAppStatus appSlug={appSlug} installations={installations} admin={admin} />
 
         <AutomationList orgId={org.id} automations={automations} admin={admin} />
 
@@ -89,15 +89,24 @@ export function Automations({
 
 /** One line on the Outrunner GitHub App: what automations post as, and where
  *  it's installed (Settings → Org → GitHub, where its admins install it). */
-function GitHubAppStatus({ appSlug, installations }: { appSlug: string | null; installations: string[] | null }) {
+function GitHubAppStatus({
+  appSlug,
+  installations,
+  admin,
+}: {
+  appSlug: string | null;
+  installations: { login: string; suspended: boolean }[] | null;
+  admin: boolean;
+}) {
+  const accounts = installations?.map((i) => (i.suspended ? `${i.login} (suspended on GitHub)` : i.login));
   const detail =
     appSlug === null
       ? "Not set up on this deployment yet, so automations can't run."
       : installations === null
         ? "Couldn't load where it's installed. Reload the page to try again."
         : installations.length === 0
-          ? `Not installed for this org yet: automations run once it is, and post as ${appSlug}[bot].`
-          : `Automations post as ${appSlug}[bot]. Installed on ${installations.join(", ")}.`;
+          ? `Not installed for this org yet: automations run once ${admin ? "it is" : "an admin installs it"}, and post as ${appSlug}[bot].`
+          : `Automations post as ${appSlug}[bot]. Installed on ${accounts?.join(", ")}.`;
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-[13px]">
       <Github className="size-4 shrink-0 text-muted-foreground" />
@@ -107,7 +116,7 @@ function GitHubAppStatus({ appSlug, installations }: { appSlug: string | null; i
       </div>
       {appSlug !== null ? (
         <Link href="/settings/org/github" className="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground">
-          {installations?.length ? "Manage" : "Install"}
+          {installations?.length || !admin ? "Manage" : "Install"}
         </Link>
       ) : null}
     </div>

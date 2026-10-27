@@ -37,5 +37,5 @@ export async function DELETE(request: Request, { params }: Params) {
   return savingAutomation(async () => {
     if (!(await deleteAutomation(id, automationId))) return NextResponse.json(NOT_FOUND, { status: 404 });
     return NextResponse.json({ deleted: true });
-  });
+  }, "delete");
 }

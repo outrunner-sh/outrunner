@@ -58,7 +58,7 @@ async function AutomationsSection() {
     <Automations
       org={active}
       appSlug={config?.slug ?? null}
-      installations={installations?.map((i) => i.accountLogin) ?? null}
+      installations={installations?.map((i) => ({ login: i.accountLogin, suspended: i.suspended })) ?? null}
       automations={automations}
       templates={AUTOMATION_TEMPLATES.map(({ id, name, description, category }) => ({ id, name, description, category }))}
     />

@@ -47,7 +47,9 @@ async function AutomationSection({ params }: { params: Params }) {
         triggers: automation.triggers,
         projectIds: automation.repos.map((r) => r.projectId),
         enabled: automation.enabled,
-        runsAs: automation.runsAs?.login || null,
+        // Its runner's login, "" when it can't be told (no GitHub login on
+        // record), null once they've left.
+        runsAs: automation.runsAs ? automation.runsAs.login : null,
       }}
       repos={repos}
       coverage={coverage}

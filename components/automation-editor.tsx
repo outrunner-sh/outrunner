@@ -32,7 +32,8 @@ export type AutomationDraft = {
   triggers: AutomationTrigger[];
   projectIds: string[];
   enabled: boolean;
-  /** Who it runs as, for one that exists. */
+  /** Who it runs as, for one that exists: their login, "" when it can't be
+   *  told, null once they've left. */
   runsAs: string | null;
 };
 
@@ -137,8 +138,18 @@ export function AutomationEditor({
           <h1 className="text-lg font-semibold text-foreground">{creating ? "New automation" : draft.name}</h1>
           <p className="text-[13px] text-muted-foreground">
             {creating
-              ? "Runs as you, with your Claude and plan, and posts as the Outrunner GitHub App."
-              : `Runs as ${draft.runsAs ? `@${draft.runsAs}` : "no one: whoever set it up has left"}, and posts as the Outrunner GitHub App. Changing its prompt, triggers or repositories makes it run as you, with your Claude and plan.`}
+              ? "Runs as you, on Outrunner's models and your allowance of them, and posts as the Outrunner GitHub App."
+              : `${
+                  draft.runsAs === null
+                    ? "Runs as no one: whoever last changed it has left the org"
+                    : draft.runsAs === ""
+                      ? "Runs as whoever last changed what it does"
+                      : `Runs as @${draft.runsAs}`
+                }, and posts as the Outrunner GitHub App.${
+                  editable
+                    ? " Changing its prompt, triggers or repositories makes it run as you, on your allowance of Outrunner's models."
+                    : ""
+                }`}
           </p>
         </header>
 
