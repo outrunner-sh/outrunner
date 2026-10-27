@@ -51,8 +51,11 @@ test("the URL carries the path as one value", () => {
 
 // The box's exec parses one command line, as sh -c does; a login shell's
 // banner can land in its output ahead of the image.
-function runOnBox(path: string, banner = ""): { output: string; code: number | null } {
-  const run = spawnSync("sh", ["-c", `${banner ? `printf '%s' '${banner}'; ` : ""}${imageReadCommand(path)}`], { maxBuffer: 1e8 });
+function runOnBox(path: string, banner = "", env?: NodeJS.ProcessEnv): { output: string; code: number | null } {
+  const run = spawnSync("sh", ["-c", `${banner ? `printf '%s' '${banner}'; ` : ""}${imageReadCommand(path)}`], {
+    maxBuffer: 1e8,
+    env,
+  });
   return { output: run.stdout.toString(), code: run.status };
 }
 
@@ -86,4 +89,21 @@ test("output without the image's markers, or with more than base64 between them,
   assert.equal(imageBase64("no markers here"), null);
   assert.equal(imageBase64("<<outrunner-image>>iVBO$$Rw0<</outrunner-image>>"), null);
   assert.equal(imageBase64("motd\n<<outrunner-image>>iVBORw0=<</outrunner-image>>"), "iVBORw0=");
+});
+
+test("a read that fails part way fails the command, not a cut-off image", () => {
+  const dir = mkdtempSync(join(tmpdir(), "chat-image-"));
+  try {
+    const image = join(dir, "a.png");
+    writeFileSync(image, Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(1_000, 7)]));
+    // A head that gives some of the file, then fails.
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "head"), "#!/bin/sh\nprintf '\\211PNG'\nexit 1\n", { mode: 0o755 });
+    const read = runOnBox(image, "", { ...process.env, PATH: `${bin}:${process.env.PATH}` });
+    assert.notEqual(read.code, 0);
+    assert.equal(read.output.includes("<</outrunner-image>>"), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

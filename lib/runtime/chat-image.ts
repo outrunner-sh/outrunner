@@ -82,7 +82,8 @@ export function imageReadCommand(path: string): string {
     `[ -f "$f" ] && [ -r "$f" ] || exit ${IMAGE_MISSING}`,
     `[ "$(wc -c < "$f" 2>/dev/null)" -le ${BOX_IMAGE_MAX_BYTES} ] || exit ${IMAGE_TOO_LARGE}`,
     `printf '%s' ${quote(START)}`,
-    `head -c ${BOX_IMAGE_MAX_BYTES + 1} "$f" 2>/dev/null | base64 | tr -d '\\n'`,
+    // Out before the closing marker, whose printf would exit 0 over it.
+    `head -c ${BOX_IMAGE_MAX_BYTES + 1} "$f" 2>/dev/null | base64 | tr -d '\\n' || exit 1`,
     `printf '%s' ${quote(END)}`,
   ].join("; ");
   return `bash -c ${quote(script)}`;
