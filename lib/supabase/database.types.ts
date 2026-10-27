@@ -526,6 +526,26 @@ type AccessGrantRow = {
   created_at: string;
 };
 
+type GithubInstallationRow = {
+  installation_id: number;
+  /** Null until its installer claims it for an org (20261029110000). */
+  org_id: string | null;
+  account_login: string;
+  account_type: "User" | "Organization";
+  repository_selection: "all" | "selected";
+  installed_by: string | null;
+  /** The GitHub user who installed it (the webhook's sender), by numeric
+   *  id: what a claim is matched by. */
+  installer_id: number | null;
+  /** Their login then, for showing. */
+  installer_login: string | null;
+  /** The org that removed it (unclaimed it): the only one it goes back to. */
+  removed_from: string | null;
+  suspended_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type CliTokenRow = {
   id: string;
   user_id: string;
@@ -588,6 +608,12 @@ export type Database = {
         Row: AccessGrantRow;
         Insert: Insert<AccessGrantRow, "org_id" | "level">;
         Update: Partial<AccessGrantRow>;
+        Relationships: [];
+      };
+      github_installations: {
+        Row: GithubInstallationRow;
+        Insert: Insert<GithubInstallationRow, "installation_id" | "account_login" | "account_type" | "repository_selection">;
+        Update: Partial<GithubInstallationRow>;
         Relationships: [];
       };
       organization_members: {

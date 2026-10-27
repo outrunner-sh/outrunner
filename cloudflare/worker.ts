@@ -55,6 +55,20 @@ interface Env {
    * Type "Sandboxes" (sk-nc-…). See docs/deploy-cloudflare.md.
    */
   RUNTIME_PROVIDER?: string;
+  /**
+   * The Outrunner GitHub App (lib/github/app.ts): its Client ID, slug,
+   * private key (the .pem, as it is) and webhook secret. Without them an
+   * org can't install the App, and sessions keep using each user's own
+   * GitHub sign-in.
+   */
+  GITHUB_APP_CLIENT_ID?: string;
+  GITHUB_APP_SLUG?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_APP_WEBHOOK_SECRET?: string;
+  /** Email through Resend (lib/email/send.ts): org invites and requests to
+   *  join. Without them, an invite's link is shown to the admin to share. */
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
   NEEV_API_KEY?: string;
   NEEV_ORG_ID?: string;
   NEEV_PROJECT_ID?: string;
@@ -112,6 +126,12 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.BILLING_CRON_SECRET ? { BILLING_CRON_SECRET: env.BILLING_CRON_SECRET } : {}),
       ...(env.STRIPE_SECRET_KEY ? { STRIPE_SECRET_KEY: env.STRIPE_SECRET_KEY } : {}),
       ...(env.STRIPE_WEBHOOK_SECRET ? { STRIPE_WEBHOOK_SECRET: env.STRIPE_WEBHOOK_SECRET } : {}),
+      ...(env.GITHUB_APP_CLIENT_ID ? { GITHUB_APP_CLIENT_ID: env.GITHUB_APP_CLIENT_ID } : {}),
+      ...(env.GITHUB_APP_SLUG ? { GITHUB_APP_SLUG: env.GITHUB_APP_SLUG } : {}),
+      ...(env.GITHUB_APP_PRIVATE_KEY ? { GITHUB_APP_PRIVATE_KEY: env.GITHUB_APP_PRIVATE_KEY } : {}),
+      ...(env.GITHUB_APP_WEBHOOK_SECRET ? { GITHUB_APP_WEBHOOK_SECRET: env.GITHUB_APP_WEBHOOK_SECRET } : {}),
+      ...(env.RESEND_API_KEY ? { RESEND_API_KEY: env.RESEND_API_KEY } : {}),
+      ...(env.EMAIL_FROM ? { EMAIL_FROM: env.EMAIL_FROM } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own

@@ -1493,3 +1493,71 @@ begin
   end if;
   raise notice 'ok: grants and roles change in one step, and a refused change keeps what was there';
 end $$;
+
+-- 36. The GitHub App's installations: one org each, the server's alone, and
+-- gone with their org.
+do $$
+declare personal uuid := (select id from organizations where personal_owner_id = '33333333-3333-3333-3333-333333333333');
+begin
+  if has_table_privilege('authenticated', 'github_installations', 'select')
+     or has_table_privilege('anon', 'github_installations', 'select') then
+    raise exception 'FAIL: users may read the App''s installations';
+  end if;
+  insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+  values (12345, personal, 'third', 'User', 'all');
+  begin
+    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+    values (12345, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'third', 'User', 'all');
+    raise exception 'FAIL: one installation kept by two orgs';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+    values (999, personal, 'x', 'Enterprise', 'all');
+    raise exception 'FAIL: an installation on an account GitHub has no such type of';
+  exception when check_violation then
+    null;
+  end;
+  raise notice 'ok: an installation is one org''s, and only the server reaches it';
+end $$;
+
+-- 37. An installation GitHub told of but no org has claimed keeps who
+-- installed it; one with neither isn't kept.
+do $$
+begin
+  insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, installer_login)
+  values (777, 'acme', 'Organization', 'all', 4242, 'acme-owner');
+  begin
+    insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_login)
+    values (778, 'acme', 'Organization', 'all', 'only-a-login');
+    raise exception 'FAIL: an unclaimed installation with no installer to claim it';
+  exception when check_violation then
+    null;
+  end;
+  raise notice 'ok: an unclaimed installation keeps its installer';
+end $$;
+
+-- 38. An installation an org removed remembers which, gone with that org.
+do $$
+begin
+  update github_installations set removed_from = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' where installation_id = 777;
+  if (select removed_from from github_installations where installation_id = 777) <> 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' then
+    raise exception 'FAIL: removed_from not kept';
+  end if;
+  raise notice 'ok: an installation remembers the org that removed it';
+end $$;
+
+-- 39. Deleting the org that removed an installation deletes it with the org,
+-- rather than clearing the mark that keeps it from other orgs.
+do $$
+declare doomed uuid;
+begin
+  insert into organizations (name, created_by) values ('Doomed', null) returning id into doomed;
+  update github_installations set removed_from = doomed where installation_id = 777;
+  delete from organizations where id = doomed;
+  if exists (select 1 from github_installations where installation_id = 777) then
+    raise exception 'FAIL: an installation outlived the org that removed it, claimable by any org';
+  end if;
+  raise notice 'ok: an installation goes with the org that removed it';
+end $$;
