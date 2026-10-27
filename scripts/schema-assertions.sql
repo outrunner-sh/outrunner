@@ -1236,3 +1236,65 @@ begin
   end if;
   raise notice 'ok: an org keeps an admin, a personal org its owner, and a removal is recorded until they return';
 end $$;
+
+-- 32. A project (environments) is its org's: one default per repository,
+-- which any member makes and every member's session starts from; its
+-- repositories are in its org; and a session's project is in the session's.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  shared uuid;
+  personal_env uuid;
+  personal_project uuid;
+begin
+  -- Made by a member who isn't the repository's owner: in the team org.
+  insert into environments (owner_id, name, default_for_project_id)
+  values ('22222222-2222-2222-2222-222222222222', 'app', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+  returning id into shared;
+  if (select org_id from environments where id = shared) <> team then
+    raise exception 'FAIL: a repository''s default project isn''t in the repository''s org';
+  end if;
+  insert into environment_repos (owner_id, environment_id, project_id, checkout_name)
+  values ('22222222-2222-2222-2222-222222222222', shared, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'app');
+  if (select org_id from environment_repos where environment_id = shared) <> team then
+    raise exception 'FAIL: a project''s repository took another org';
+  end if;
+
+  begin
+    insert into environments (owner_id, name, default_for_project_id)
+    values ('11111111-1111-1111-1111-111111111111', 'app again', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+    raise exception 'FAIL: a repository got a second default project';
+  exception when unique_violation then
+    null;
+  end;
+
+  -- A repository of another org can't be one of the project's.
+  select id into personal_project from projects
+  where owner_id = '22222222-2222-2222-2222-222222222222' and org_id <> team limit 1;
+  begin
+    insert into environment_repos (owner_id, environment_id, project_id, checkout_name)
+    values ('22222222-2222-2222-2222-222222222222', shared, personal_project, 'other');
+    raise exception 'FAIL: a project took a repository from another org';
+  exception when foreign_key_violation then
+    null;
+  end;
+
+  -- The admin's session starts from the project the member made.
+  insert into workspaces (owner_id, project_id, branch, environment_id)
+  values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'from-shared', shared);
+
+  -- But not from a project of another org.
+  insert into environments (owner_id, name) values ('11111111-1111-1111-1111-111111111111', 'mine')
+  returning id into personal_env;
+  if (select org_id from environments where id = personal_env) =  team then
+    raise exception 'FAIL: a project made with no repository went to a team org';
+  end if;
+  begin
+    insert into workspaces (owner_id, project_id, branch, environment_id)
+    values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'from-personal', personal_env);
+    raise exception 'FAIL: a session started from another org''s project';
+  exception when foreign_key_violation then
+    null;
+  end;
+  raise notice 'ok: a project is its org''s, one default per repository, shared by its members';
+end $$;
