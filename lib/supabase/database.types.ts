@@ -111,6 +111,9 @@ type WorkspaceRow = {
   /** The environment (the app's Project) it started from; null for a
    *  session from before environments. */
   environment_id: string | null;
+  /** A multi-repository session's repositories (20261028160000); null for
+   *  one of one. */
+  checkouts: Json | null;
   /** The coding agent it runs: "claude" or "codex". */
   agent: string;
   /** The model it runs, whose it is, and its effort; null before the first
@@ -845,7 +848,7 @@ export type Database = {
         Args: { member: string; target_environment: string };
         Returns: AccessLevelDb | null;
       };
-      // supabase/migrations/20261028160000_org_access_atomic.sql
+      // supabase/migrations/20261028155000_org_access_atomic.sql
       set_grant: {
         Args: { target_org: string; target_role: string | null; target_project: string | null; new_level: AccessLevelDb | null };
         Returns: undefined;
