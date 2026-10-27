@@ -20,9 +20,9 @@
  */
 
 import { open, seal } from "@/lib/crypto/secret-box";
-import { mergeProjectEnvironment, type ProjectEnvironment, type ProjectScripts } from "@/lib/db/project-environment";
+import type { ProjectEnvironment, ProjectScripts } from "@/lib/db/project-environment";
+import { ImportError } from "@/lib/imports/commit";
 import { applySecretsEdit, checkoutNameFor, type EnvironmentSecrets, type SecretsEdit } from "@/lib/environments/rules";
-import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** The orgs `userId` is a member of: the projects they may reach are theirs.
@@ -88,7 +88,6 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
     .eq("id", id)
     .is("archived_at", null)
     .maybeSingle();
-  if (error && probeStatus(error) === "missing") return null;
   if (error) throw error;
   if (!data) return null;
   return {
@@ -149,7 +148,6 @@ export async function findDefaultEnvironmentId(userId: string, projectId: string
     .in("org_id", await memberOrgIds(userId))
     .eq("default_for_project_id", projectId)
     .maybeSingle();
-  if (error && probeStatus(error) === "missing") return null;
   if (error) throw error;
   return data?.id ?? null;
 }
@@ -181,7 +179,6 @@ export async function defaultEnvironmentId(
     .eq("org_id", project.org_id)
     .eq("default_for_project_id", projectId)
     .maybeSingle();
-  if (found.error && probeStatus(found.error) === "missing") return null;
   if (found.error) throw found.error;
   if (found.data) return found.data.id;
 
@@ -226,7 +223,6 @@ export async function environmentSetup(userId: string, id: string): Promise<Envi
     .in("org_id", await memberOrgIds(userId))
     .eq("id", id)
     .maybeSingle();
-  if (error && probeStatus(error) === "missing") return null;
   if (error) throw error;
   if (!data) return null;
   return {
@@ -348,8 +344,8 @@ export async function editEnvironmentSecrets(
 
 /** Keep what the user picked of a repository's environment on their Mac in
  *  the repository's default project: a variable of the same name, a file at
- *  the same path, or a script given, replaces the one there. Before the
- *  migration that adds projects, in project_environment as before. */
+ *  the same path, or a script given, replaces the one there. A repository
+ *  that isn't in one of the user's orgs is refused, not kept anywhere. */
 export async function mergeIntoDefaultEnvironment(
   ownerId: string,
   projectId: string,
@@ -357,7 +353,7 @@ export async function mergeIntoDefaultEnvironment(
 ): Promise<void> {
   const orgs = await memberOrgIds(ownerId);
   const id = await defaultEnvironmentId(ownerId, projectId, orgs);
-  if (!id) return mergeProjectEnvironment(ownerId, projectId, add);
+  if (!id) throw new ImportError("That repository isn't in one of your orgs. Connect it there first.", 404);
   await editEnvironmentSecrets(ownerId, id, { setEnv: add.env, setFiles: add.files }, orgs);
   if (Object.keys(add.scripts).length > 0) await updateEnvironment(ownerId, id, { scripts: add.scripts }, orgs);
 }
