@@ -59,6 +59,7 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
           title: start.title,
           firstMessage: start.prompt,
           inline: true,
+          meteredOnly: true,
           onSettled: async (settled) => {
             outcome = settled;
           },
