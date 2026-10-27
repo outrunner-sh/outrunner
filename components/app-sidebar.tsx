@@ -151,7 +151,7 @@ export function AppSidebar({
         {/* The org being shown, which switches orgs; before they've loaded
             (or with none, before orgs), the app's mark, home. */}
         {orgs.length > 0 ? (
-          <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} avatarUrl={ownerAvatarUrl} />
+          <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} />
         ) : (
           <Link href="/" aria-label="Home" className="flex items-center text-foreground">
             <Terminal className="size-4" />

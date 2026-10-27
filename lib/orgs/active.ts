@@ -18,6 +18,13 @@ export type Org = {
   role: OrgRole;
 };
 
+/** The line under an org's name in the switcher: whose it is, and the
+ *  user's part in a team's. */
+export function orgSummary(org: Pick<Org, "personal" | "role">): string {
+  if (org.personal) return "Personal";
+  return org.role === "admin" ? "Team · Admin" : "Team · Member";
+}
+
 /** The personal org first, then team orgs by name. */
 export function sortOrgs(orgs: readonly Org[]): Org[] {
   return [...orgs].sort((a, b) => Number(b.personal) - Number(a.personal) || a.name.localeCompare(b.name));

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, ChevronsUpDown, CreditCard, Plus, Settings, Users } from "lucide-react";
+import { Check, ChevronsUpDown, CreditCard, Plus, Settings, Terminal, Users } from "lucide-react";
 import { useState } from "react";
 
 import { CreateOrgDialog } from "@/components/create-org-dialog";
@@ -15,27 +15,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
-import type { Org } from "@/lib/orgs/active";
-import { orgInitial, orgSummary, orgTint } from "@/lib/orgs/badge";
+import { type Org, orgSummary } from "@/lib/orgs/active";
 import { requestJson } from "@/lib/http/request-json";
-import { cn } from "@/lib/utils";
 
 /**
- * The org the sidebar lists, as its header: its mark and name, opening onto
+ * The org the sidebar lists, as its header: Outrunner's mark and the org's
+ * name, opening onto
  * where it's set up (settings, billing, members) and the user's other orgs to
  * switch to, or a new team org. Switching goes home, since the session open
  * may be in the org left behind.
  */
-export function OrgSwitcher({
-  orgs,
-  activeOrgId,
-  avatarUrl,
-}: {
-  orgs: Org[];
-  activeOrgId: string | null;
-  /** The user's own picture, the personal org's mark. */
-  avatarUrl: string | null;
-}) {
+export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: string | null }) {
   const router = useRouter();
   const active = orgs.find((o) => o.id === activeOrgId) ?? orgs[0];
   const [switching, setSwitching] = useState<string | null>(null);
@@ -69,13 +59,13 @@ export function OrgSwitcher({
           className="-ml-1 flex min-w-0 max-w-full items-center gap-2 rounded-md px-1 py-1 text-sm font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
           aria-label={`Org: ${active.name}. Switch org`}
         >
-          {switching ? <Spinner /> : <OrgMark org={active} avatarUrl={avatarUrl} size="sm" />}
+          {switching ? <Spinner /> : <OrgMark size="sm" />}
           <span className="min-w-0 truncate">{active.name}</span>
           <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-64">
           <div className="flex items-center gap-3 px-2 py-2">
-            <OrgMark org={active} avatarUrl={avatarUrl} size="lg" />
+            <OrgMark size="lg" />
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{active.name}</p>
               <p className="text-xs text-muted-foreground">{orgSummary(active)}</p>
@@ -104,7 +94,6 @@ export function OrgSwitcher({
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Switch organization</DropdownMenuLabel>
           {orgs.map((org) => (
             <DropdownMenuItem key={org.id} onSelect={() => void show(org)} className="gap-2">
-              <OrgMark org={org} avatarUrl={avatarUrl} size="sm" />
               <span className="min-w-0 flex-1 truncate">{org.name}</span>
               {org.id === active.id ? <Check className="size-3.5" /> : null}
             </DropdownMenuItem>
@@ -124,21 +113,13 @@ export function OrgSwitcher({
   );
 }
 
-/** An org's mark: the user's picture for their personal org, else the first
- *  letter of its name on its own tint. */
-function OrgMark({ org, avatarUrl, size }: { org: Org; avatarUrl: string | null; size: "sm" | "lg" }) {
-  const box = size === "sm" ? "size-5 rounded-[5px] text-[11px]" : "size-9 rounded-md text-base";
-  if (org.personal && avatarUrl) {
-    // eslint-disable-next-line @next/next/no-img-element -- the user's GitHub avatar, already sized
-    return <img src={avatarUrl} alt="" className={cn("shrink-0 object-cover", box)} />;
-  }
-  return (
-    <span
-      aria-hidden
-      className={cn("flex shrink-0 items-center justify-center font-semibold text-white", box)}
-      style={{ backgroundColor: orgTint(org.id) }}
-    >
-      {orgInitial(org.name)}
+/** The org's mark: Outrunner's, the same for every org. */
+function OrgMark({ size }: { size: "sm" | "lg" }) {
+  return size === "sm" ? (
+    <Terminal aria-hidden className="size-4 shrink-0" />
+  ) : (
+    <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-md bg-accent">
+      <Terminal className="size-4" />
     </span>
   );
 }
