@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 import { requireEnv } from "@/lib/env";
+import { actingUserClient } from "@/lib/supabase/acting-user";
 import type { Database } from "@/lib/supabase/database.types";
 
 /**
@@ -12,6 +13,10 @@ import type { Database } from "@/lib/supabase/database.types";
  * silent session loss.
  */
 export async function createSupabaseServerClient() {
+  // Inside actAsUser (lib/supabase/acting-user.ts): that user's client, as if
+  // their browser had asked.
+  const acting = actingUserClient();
+  if (acting) return acting;
   const cookieStore = await cookies();
 
   return createServerClient<Database>(
