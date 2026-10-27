@@ -453,13 +453,16 @@ export async function sessionCheckouts(userId: string, id: string): Promise<Sess
 /** Add a repository of the project's org to it, in a folder named after it
  *  (made unique), last. Refused past MAX_REPOS, or for a repository of
  *  another org. Needs write on the project (else EnvironmentAccessError),
- *  and a repository the user can see. */
+ *  and on the repository: a project's level is its repositories' lowest, so
+ *  adding one the user only reads would leave them unable to change it. */
 export async function addEnvironmentRepo(userId: string, id: string, projectId: string): Promise<void> {
   const environment = await getEnvironment(userId, id);
   if (!environment) throw new EnvironmentRuleError("Project not found.");
   if (!allows(environment.access, "write")) throw new EnvironmentAccessError();
-  if (!(await projectLevel(userId, projectId))) {
-    throw new EnvironmentRuleError("That repository isn't connected to this project's organization.");
+  const repoLevel = await projectLevel(userId, projectId);
+  if (!repoLevel) throw new EnvironmentRuleError("That repository isn't connected to this project's organization.");
+  if (!allows(repoLevel, "write")) {
+    throw new EnvironmentRuleError("You can only add a repository you can change. Ask an admin for write access on it.");
   }
   if (environment.repos.some((r) => r.projectId === projectId)) return;
   if (environment.repos.length >= MAX_REPOS) {

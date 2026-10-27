@@ -12,6 +12,8 @@ import { listProjects } from "@/lib/db/repositories";
 import { EnvironmentRuleError, MAX_REPOS } from "@/lib/environments/rules";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
+import { projectLevel } from "@/lib/db/org-access";
+import { allows } from "@/lib/orgs/access";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -43,9 +45,14 @@ export async function GET(request: Request, context: RouteContext) {
   const environment = await getEnvironment(c.owner.id, c.id);
   if (!environment) return notFound();
   const inIt = new Set(environment.repos.map((r) => r.projectId));
-  // Only the project's org's: a project's repositories are its org's.
-  const repositories = (await listProjects(environment.orgId))
-    .filter((p) => !inIt.has(p.id))
+  // Only the project's org's: a project's repositories are its org's. And
+  // only ones the user may write: a project's level is its repositories'
+  // lowest, so adding one they only read would leave them unable to change
+  // the project again (addEnvironmentRepo refuses it too).
+  const candidates = (await listProjects(environment.orgId)).filter((p) => !inIt.has(p.id));
+  const levels = await Promise.all(candidates.map((p) => projectLevel(c.owner.id, p.id)));
+  const repositories = candidates
+    .filter((_, i) => allows(levels[i], "write"))
     .map((p) => ({ projectId: p.id, fullName: p.fullName, defaultBranch: p.defaultBranch, private: p.private }));
   return NextResponse.json({ repositories, max: MAX_REPOS });
 }
