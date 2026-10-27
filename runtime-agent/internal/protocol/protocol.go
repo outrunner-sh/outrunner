@@ -243,6 +243,35 @@ type SetEnvironmentRequest struct {
 	// own orientation at every launch (FeatureInstructions). Empty removes
 	// them.
 	Instructions string `json:"instructions,omitempty"`
+	// WarmHook runs once in the session's worktree at its first launch,
+	// unless the worktree was warmed on a ready box; StartHook at every
+	// launch (FeatureWarmHooks). Empty removes them.
+	WarmHook  string `json:"warmHook,omitempty"`
+	StartHook string `json:"startHook,omitempty"`
+}
+
+// FeatureWarmHooks is POST/GET /warm, a ready box's warming, and
+// SetEnvironmentRequest's WarmHook and StartHook.
+const FeatureWarmHooks = "warm-hooks"
+
+// WarmRequest warms a ready box (POST /warm, the listing token): a checkout
+// of BaseBranch with the project's files in it and its hook run there.
+type WarmRequest struct {
+	BaseBranch string            `json:"baseBranch"`
+	Env        map[string]string `json:"env,omitempty"`
+	Files      map[string]string `json:"files,omitempty"`
+	Hook       string            `json:"hook,omitempty"`
+}
+
+// WarmStatus is how a box's warming went (GET /warm): State is "", running,
+// succeeded or failed; Log the end of the hook's output.
+type WarmStatus struct {
+	State      string `json:"state"`
+	BaseBranch string `json:"baseBranch,omitempty"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+	ExitCode   int    `json:"exitCode,omitempty"`
+	Log        string `json:"log,omitempty"`
 }
 
 // SetAgentConfigRequest is the user's own agent setup for this computer

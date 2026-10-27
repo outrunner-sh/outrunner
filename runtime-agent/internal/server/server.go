@@ -114,6 +114,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
 	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
+	mux.HandleFunc("POST /warm", s.authed(s.startWarm))
+	mux.HandleFunc("GET /warm", s.authed(s.warmStatus))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -137,7 +139,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks},
 	})
 }
 
@@ -364,6 +366,48 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 		LastActivity:   last.UTC().Format(time.RFC3339),
 		TurnInProgress: turnInProgress,
 	})
+}
+
+// startWarm starts warming this box ahead of a session (workspace.Warm).
+// Box-wide, so only the listing token may.
+func (s *Server) startWarm(w http.ResponseWriter, r *http.Request) {
+	if !s.listingOnly(w, r, "warming the box") {
+		return
+	}
+	var req protocol.WarmRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.Warm(r.Context(), workspace.WarmRequest{BaseBranch: req.BaseBranch, Env: req.Env, Files: req.Files, Hook: req.Hook})
+	switch {
+	case errors.Is(err, workspace.ErrWarmBusy):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrInvalidEnvironment):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	default:
+		respond(w, "warming", err)
+	}
+}
+
+// warmStatus says how the box's warming went.
+func (s *Server) warmStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.listingOnly(w, r, "reading the box's warming") {
+		return
+	}
+	st := s.ws.WarmState()
+	writeJSON(w, http.StatusOK, protocol.WarmStatus{
+		State: st.State, BaseBranch: st.BaseBranch, StartedAt: st.StartedAt, FinishedAt: st.FinishedAt, ExitCode: st.ExitCode, Log: st.Log,
+	})
+}
+
+// listingOnly refuses a box-wide call made with a workspace's own token.
+func (s *Server) listingOnly(w http.ResponseWriter, r *http.Request, what string) bool {
+	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
+	if claims == nil || claims.WorkspaceID != protocol.ListingWorkspaceID {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize "+what)
+		return false
+	}
+	return true
 }
 
 func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
@@ -734,10 +778,16 @@ func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
 	// and setup without the instructions.
 	err := workspace.ValidInstructions(req.Instructions)
 	if err == nil {
+		err = workspace.ValidHooks(req.WarmHook, req.StartHook)
+	}
+	if err == nil {
 		err = s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
 	}
 	if err == nil {
 		err = s.ws.SetInstructions(r.PathValue("id"), req.Instructions)
+	}
+	if err == nil {
+		err = s.ws.SetHooks(r.PathValue("id"), req.WarmHook, req.StartHook)
 	}
 	if errors.Is(err, workspace.ErrInvalidEnvironment) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())

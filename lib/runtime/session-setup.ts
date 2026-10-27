@@ -12,6 +12,7 @@ import {
   AGENT_FEATURE_AGENT_CONFIG,
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_INSTRUCTIONS,
+  AGENT_FEATURE_WARM_HOOKS,
   type SetAgentConfigRequest,
   type SetEnvironmentRequest,
 } from "@/lib/runtime/agent-protocol";
@@ -59,7 +60,14 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
   if (environment.instructions && (await supports(client, AGENT_FEATURE_INSTRUCTIONS, "take a project's instructions"))) {
     req.instructions = environment.instructions;
   }
-  if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions) return;
+  const hooks = environment.hooks;
+  if ((hooks?.warm || hooks?.start) && (await supports(client, AGENT_FEATURE_WARM_HOOKS, "run a project's warm and start hooks"))) {
+    if (hooks.warm) req.warmHook = hooks.warm;
+    if (hooks.start) req.startHook = hooks.start;
+  }
+  if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions && !req.warmHook && !req.startHook) {
+    return;
+  }
   if (await supports(client, AGENT_FEATURE_ENVIRONMENT, "take a project's environment")) {
     await client.setEnvironment(req);
   }

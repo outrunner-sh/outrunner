@@ -149,6 +149,9 @@ type workspaceFacts struct {
 	// commit yet): there is nothing to branch, so Claude works in the folder
 	// itself rather than a worktree, and Destroy must never remove it.
 	InPlace bool `json:"inPlace,omitempty"`
+	// Warmed marks a worktree taken from a ready box's warmed checkout
+	// (warm.go): the project's warm hook ran in it already.
+	Warmed bool `json:"warmed,omitempty"`
 	// ClaudeSessionID names an in-place session's conversation. Its working
 	// directory is the user's folder, not its own, so Claude's project directory
 	// for it may hold other sessions' conversations there — or the user's own
@@ -458,10 +461,17 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 		return "", err
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
-		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	// The box's warmed checkout, when it has one for this base (warm.go);
+	// otherwise a new worktree.
+	if s.adoptWarm(ctx, worktree, in.Branch, in.BaseBranch) {
+		facts.Warmed = true
+		s.setFacts(in.WorkspaceID, facts)
+	} else {
+		out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
+			"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
 	// Configure git author so commits are attributed to the Outrunner user.
 	if in.GitUser != nil && in.GitUser.Name != "" && in.GitUser.Email != "" {

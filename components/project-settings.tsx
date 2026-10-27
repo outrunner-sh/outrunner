@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "variables", label: "Environment variables", icon: KeyRound },
-  { id: "setup", label: "Setup script", icon: SquareTerminal },
+  { id: "setup", label: "Setup scripts", icon: SquareTerminal },
   { id: "files", label: "Files", icon: FileText },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -340,40 +340,161 @@ function VariablesSection({ environment, onSaved }: { environment: Environment; 
   );
 }
 
+/** Where the project's ready boxes stand, from its warm hook's last run:
+ *  ready, being made, or failed. */
+function warmState(environment: Environment): { tone: "ready" | "applying" | "failed" | "none"; text: string } {
+  const run = environment.warm;
+  if (!environment.hooks.warm) return { tone: "none", text: "No warm hook: new sessions start from a plain checkout." };
+  if (!run || run.generation !== environment.setupGeneration) {
+    return { tone: "applying", text: "Applying: ready boxes are being made with these changes." };
+  }
+  if (run.status === "running") return { tone: "applying", text: "Applying: the warm hook is running." };
+  if (run.status === "failed") return { tone: "failed", text: "Needs attention: the warm hook failed on the ready boxes. New sessions run it themselves as they start." };
+  return { tone: "ready", text: `Ready: the warm hook succeeded${run.finishedAt ? ` ${relativeTime(run.finishedAt)}` : ""}.` };
+}
+
+function relativeTime(iso: string): string {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+}
+
 function SetupSection({ environment, onSaved }: { environment: Environment; onSaved: (e: Environment) => void }) {
-  const [setup, setSetup] = useState(environment.scripts.setup ?? "");
-  const save = useSave();
+  const status = warmState(environment);
+  const [showLog, setShowLog] = useState(false);
+  const retry = useSave();
   return (
     <section className="space-y-5">
       <SectionTitle
-        title="Setup script"
-        detail="Runs once in a new session's checkout when it first starts, with the project's variables and files. Its output is in the session's setup log."
+        title="Setup scripts"
+        detail="The warm hook prepares sessions ahead of time. The start hook runs each time a session's agent starts."
       />
-      <Panel>
-        <div className="space-y-3 p-4">
-          <Textarea
-            value={setup}
-            onChange={(e) => setSetup(e.target.value)}
-            placeholder={"#!/bin/bash\n# e.g. pnpm install"}
-            aria-label="Setup script"
-            spellCheck={false}
-            className="min-h-48 font-mono text-xs"
-          />
-          <div className="flex items-center justify-end gap-3">
-            {save.error && <InlineMessage>{save.error}</InlineMessage>}
-            <LoadingButton
-              status={save.status}
-              disabled={setup === (environment.scripts.setup ?? "")}
-              labels={{ idle: "Save", success: "Saved" }}
-              onClick={async () => {
-                const saved = await save.run(() => patchEnvironment(environment.id, { scripts: { setup: setup || null } }));
-                if (saved) onSaved(saved);
-              }}
+      <div className="space-y-2 rounded-lg border border-border/60 px-4 py-3 text-[13px]">
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 rounded-full",
+                status.tone === "ready" && "bg-positive",
+                status.tone === "applying" && "bg-warning",
+                status.tone === "failed" && "bg-destructive",
+                status.tone === "none" && "bg-muted-foreground/50",
+              )}
             />
-          </div>
+            <span className="text-foreground/80">{status.text}</span>
+          </span>
+          <span className="flex items-center gap-2">
+            {environment.warm?.log && (
+              <Button size="xs" variant="ghost" onClick={() => setShowLog((v) => !v)}>
+                {showLog ? "Hide log" : "View log"}
+              </Button>
+            )}
+            {status.tone === "failed" && (
+              <LoadingButton
+                size="sm"
+                variant="outline"
+                status={retry.status}
+                labels={{ idle: "Try again" }}
+                onClick={async () => {
+                  const saved = await retry.run(() =>
+                    requestJson<Environment>(`/api/environments/${environment.id}/warm`, {
+                      method: "POST",
+                      has: (d) => d.id !== undefined,
+                    }),
+                  );
+                  if (saved) onSaved(saved);
+                }}
+              />
+            )}
+          </span>
         </div>
+        {retry.error && <InlineMessage>{retry.error}</InlineMessage>}
+        {showLog && environment.warm?.log && (
+          <pre className="max-h-72 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-xs whitespace-pre-wrap text-foreground/80">
+            {environment.warm.log}
+          </pre>
+        )}
+      </div>
+      <Panel>
+        <ScriptEditor
+          title="Warm hook"
+          detail="Runs ahead of time on the project's ready boxes, in a checkout of the repository with the project's variables and files, before any session takes one: dependency installs, builds. Its work (node_modules, build output) is kept for the session. Up to an hour. Changing it makes the ready boxes again."
+          placeholder={"#!/bin/bash\n# e.g. pnpm install"}
+          value={environment.hooks.warm}
+          save={(warm) => patchEnvironment(environment.id, { hooks: { warm } })}
+          onSaved={onSaved}
+        />
+        <ScriptEditor
+          title="Start hook"
+          detail="Runs in the session's checkout each time its agent starts, after the warm hook: keep it quick. Its output is in the session's setup log."
+          placeholder={"#!/bin/bash\n# e.g. docker compose up -d db"}
+          value={environment.hooks.start}
+          save={(start) => patchEnvironment(environment.id, { hooks: { start } })}
+          onSaved={onSaved}
+        />
+        {environment.scripts.setup !== null && (
+          <ScriptEditor
+            title="Session setup script"
+            detail="Imported from Conductor: runs once in each new session's checkout, after the warm hook. Move what it does into the warm or start hook, then clear it."
+            placeholder=""
+            value={environment.scripts.setup}
+            save={(setup) => patchEnvironment(environment.id, { scripts: { setup } })}
+            onSaved={onSaved}
+          />
+        )}
       </Panel>
     </section>
+  );
+}
+
+/** One script: its editor and Save. */
+function ScriptEditor({
+  title,
+  detail,
+  placeholder,
+  value,
+  save: send,
+  onSaved,
+}: {
+  title: string;
+  detail: string;
+  placeholder: string;
+  value: string | null;
+  save: (value: string | null) => Promise<Environment>;
+  onSaved: (e: Environment) => void;
+}) {
+  const [text, setText] = useState(value ?? "");
+  const save = useSave();
+  return (
+    <div className="space-y-3 p-4">
+      <div className="space-y-0.5">
+        <SectionHeader title={title} />
+        <p className="text-xs text-muted-foreground">{detail}</p>
+      </div>
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={placeholder}
+        aria-label={title}
+        spellCheck={false}
+        className="min-h-36 font-mono text-xs"
+      />
+      <div className="flex items-center justify-end gap-3">
+        {save.error && <InlineMessage>{save.error}</InlineMessage>}
+        <LoadingButton
+          status={save.status}
+          disabled={text === (value ?? "")}
+          labels={{ idle: "Save", success: "Saved" }}
+          onClick={async () => {
+            const saved = await save.run(() => send(text || null));
+            if (saved) onSaved(saved);
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

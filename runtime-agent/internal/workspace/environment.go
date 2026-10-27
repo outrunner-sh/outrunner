@@ -117,6 +117,42 @@ func (s *Service) instructions(workspaceID string) string {
 	return strings.TrimSpace(string(data))
 }
 
+func (s *Service) warmHookPath(workspaceID string) string {
+	return filepath.Join(s.Root, "setup", workspaceID+".warm.sh")
+}
+
+func (s *Service) startHookPath(workspaceID string) string {
+	return filepath.Join(s.Root, "setup", workspaceID+".start.sh")
+}
+
+// SetHooks gives a session its project's warm hook (run once, at its first
+// launch, unless its worktree was warmed on a ready box) and start hook (run
+// at every launch), replacing any it had; empty removes one.
+func (s *Service) SetHooks(workspaceID, warmHook, startHook string) error {
+	for _, h := range []struct{ path, script string }{{s.warmHookPath(workspaceID), warmHook}, {s.startHookPath(workspaceID), startHook}} {
+		if strings.TrimSpace(h.script) == "" {
+			if err := os.Remove(h.path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			continue
+		}
+		if err := writeKeysFile(h.path, h.script); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidHooks accepts hooks a session can take.
+func ValidHooks(warmHook, startHook string) error {
+	for _, h := range []string{warmHook, startHook} {
+		if len(h) > maxSetupBytes || strings.ContainsRune(h, 0) {
+			return fmt.Errorf("%w: hook too large", ErrInvalidEnvironment)
+		}
+	}
+	return nil
+}
+
 func (s *Service) setupLogPath(workspaceID string) string {
 	return filepath.Join(s.Root, "logs", "setup-"+workspaceID+".log")
 }
@@ -223,19 +259,39 @@ func (s *Service) withEnvironment(workspaceID string, argv []string) []string {
 	return claude.WithEnvFile(argv, path)
 }
 
-// startSetup runs the session's setup script in its worktree, once: the
-// script is moved aside as it starts, so a relaunch doesn't run it again. It
-// runs beside the session, as Conductor's does, with the session's
-// environment and variables, its output in the setup log.
+// startSetup runs the session's scripts beside it, in its worktree, one
+// after another, with its environment and variables, their output in the
+// setup log:
+//
+//   - the project's warm hook, once, unless the session's worktree was
+//     already warmed on a ready box (warm.go);
+//   - the setup script (Conductor's), once;
+//   - the project's start hook, at every launch.
+//
+// A once-only script is moved aside as it starts, so a relaunch doesn't run
+// it again. With no setup script, the session's files are copied into its
+// worktree, once.
 func (s *Service) startSetup(workspaceID, worktree string, env []string) {
-	script := s.setupPath(workspaceID)
-	running := script + ".run"
-	if err := os.Rename(script, running); err != nil {
-		// None, or it ran already: with none, the session's files are its
-		// worktree's.
-		if os.IsNotExist(err) && !fileExists(running) {
-			s.copyEnvFilesOnce(workspaceID, worktree)
+	setup := s.setupPath(workspaceID)
+	if !fileExists(setup) && !fileExists(setup+".run") {
+		s.copyEnvFilesOnce(workspaceID, worktree)
+	}
+	type step struct{ name, path string }
+	var steps []step
+	timeout := setupTimeout
+	if f, _ := s.getFacts(workspaceID); !f.Warmed {
+		if path := s.claimOnce(s.warmHookPath(workspaceID)); path != "" {
+			steps = append(steps, step{"warm hook", path})
+			timeout += WarmTimeout
 		}
+	}
+	if path := s.claimOnce(setup); path != "" {
+		steps = append(steps, step{"setup", path})
+	}
+	if path := s.startHookPath(workspaceID); fileExists(path) {
+		steps = append(steps, step{"start hook", path})
+	}
+	if len(steps) == 0 {
 		return
 	}
 	logPath := s.setupLogPath(workspaceID)
@@ -246,35 +302,48 @@ func (s *Service) startSetup(workspaceID, worktree string, env []string) {
 	if err != nil {
 		return
 	}
-	argv := []string{"sh", running}
-	if path := s.envFiles().path(workspaceID); fileExists(path) {
-		argv = claude.WithEnvFile(argv, path)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = worktree
-	cmd.Env = append(append([]string(nil), env...),
+	cmdEnv := append(append([]string(nil), env...),
 		"CONDUCTOR_ROOT_PATH="+s.envRoot(workspaceID),
 		"CONDUCTOR_WORKSPACE_PATH="+worktree,
 		"CONDUCTOR_WORKSPACE_NAME="+filepath.Base(worktree),
 	)
-	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(log, "setup did not start: %v\n", err)
-		log.Close()
-		cancel()
-		return
-	}
 	go func() {
-		defer cancel()
 		defer log.Close()
-		if err := cmd.Wait(); err != nil {
-			fmt.Fprintf(log, "\nsetup failed: %v\n", err)
-		} else {
-			fmt.Fprintln(log, "\nsetup finished")
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		for _, st := range steps {
+			if len(steps) > 1 {
+				fmt.Fprintf(log, "== %s ==\n", st.name)
+			}
+			argv := []string{"sh", st.path}
+			if path := s.envFiles().path(workspaceID); fileExists(path) {
+				argv = claude.WithEnvFile(argv, path)
+			}
+			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+			cmd.Dir = worktree
+			cmd.Env = cmdEnv
+			cmd.Stdout, cmd.Stderr = log, log
+			err := cmd.Run()
+			if strings.HasSuffix(st.path, ".run") {
+				_ = os.Remove(st.path)
+			}
+			if err != nil {
+				fmt.Fprintf(log, "\n%s failed: %v\n", st.name, err)
+				return // a later step may need what this one didn't do
+			}
+			fmt.Fprintf(log, "\n%s finished\n", st.name)
 		}
-		_ = os.Remove(running)
 	}()
+}
+
+// claimOnce moves a run-once script aside to run it, returning where it now
+// is; "" when there is none, or it ran already.
+func (s *Service) claimOnce(script string) string {
+	running := script + ".run"
+	if err := os.Rename(script, running); err != nil {
+		return ""
+	}
+	return running
 }
 
 // copyEnvFilesOnce puts a copy of each of the session's files in its
@@ -345,7 +414,8 @@ func (s *Service) removeEnvironment(workspaceID string) {
 	_ = os.Remove(s.instructionsPath(workspaceID))
 	_ = os.RemoveAll(s.envRoot(workspaceID))
 	setup := s.setupPath(workspaceID)
-	for _, path := range []string{setup, setup + ".run", setup + ".copied", s.setupLogPath(workspaceID)} {
+	warm, startHook := s.warmHookPath(workspaceID), s.startHookPath(workspaceID)
+	for _, path := range []string{setup, setup + ".run", setup + ".copied", s.setupLogPath(workspaceID), warm, warm + ".run", startHook} {
 		_ = os.Remove(path)
 	}
 }

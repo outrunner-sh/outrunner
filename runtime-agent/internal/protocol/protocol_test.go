@@ -95,6 +95,10 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &SetAgentConfigRequest{})
 	case "SetEnvironmentRequest":
 		return json.Unmarshal(raw, &SetEnvironmentRequest{})
+	case "WarmRequest":
+		return json.Unmarshal(raw, &WarmRequest{})
+	case "WarmStatus":
+		return json.Unmarshal(raw, &WarmStatus{})
 	case "ProvideSecretsRequest":
 		return json.Unmarshal(raw, &ProvideSecretsRequest{})
 	case "ProviderPorts":
