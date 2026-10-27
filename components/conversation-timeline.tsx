@@ -27,6 +27,7 @@ import {
   thoughtLabel,
   type ToolKind,
   toolRow,
+  workingElapsed,
 } from "@/lib/runtime/conversation-format";
 import { isInterruption } from "@/lib/runtime/conversation-events";
 import {
@@ -246,7 +247,7 @@ function WorkingIndicator() {
       {/* The timer ticks ten times a second, so it stays out of the live
           region; "Working" is the announcement, once. */}
       <TickingFact className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
-        {(elapsed / 1000).toFixed(1)}s
+        {workingElapsed(elapsed)}
       </TickingFact>
     </div>
   );

@@ -253,6 +253,16 @@ function multiEditStats(input: unknown): LineStats | null {
 }
 
 /** A thought's row: "Thought for 9s", "Thought for 1m 5s", or just "Thought". */
+/** How long Claude has been working, for the working indicator: tenths of a
+ *  second under a minute ("12.3s"), then whole minutes and seconds ("3m 57s",
+ *  "1h 4m 5s"), as a tenth no longer tells anything. */
+export function workingElapsed(ms: number): string {
+  if (ms < 60_000) return `${(Math.floor(Math.max(0, ms) / 100) / 10).toFixed(1)}s`;
+  const total = Math.floor(ms / 1000);
+  const [h, m, s] = [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60];
+  return h > 0 ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`;
+}
+
 export function thoughtLabel(seconds: number | null): string {
   if (seconds === null) return "Thought";
   if (seconds < 60) return `Thought for ${seconds}s`;
