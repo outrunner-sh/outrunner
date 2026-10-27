@@ -187,7 +187,9 @@ function AutomationList({
                       {automation.name}
                     </Link>
                     {automation.runsAs === null ? (
-                      <div className="text-xs text-warning">Runs as no one: open it and save to run it as you</div>
+                      <div className="text-xs text-warning">
+                        Runs as no one{admin ? ": open it and save to run it as you" : " until an admin saves it"}
+                      </div>
                     ) : automation.runsAs.login ? (
                       <div className="text-xs text-muted-foreground">Runs as @{automation.runsAs.login}</div>
                     ) : null}
