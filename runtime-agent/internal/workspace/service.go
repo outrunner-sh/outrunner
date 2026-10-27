@@ -189,6 +189,9 @@ type workspaceFacts struct {
 	// Auth is the kind of the session's own credential (SetAuth), kept in its
 	// auth file; empty runs on its agent's own login.
 	Auth string `json:"auth,omitempty"`
+	// OwnGitHub marks a session given a GitHub token of its own (github.go):
+	// it runs with that one, never the box's.
+	OwnGitHub bool `json:"ownGitHub,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -226,6 +229,9 @@ type CreateInput struct {
 	// of worktrees (checkouts.go). Each base branch is its own; BaseBranch is
 	// the first's.
 	Checkouts []Checkout
+	// GitHubToken, when set, is the session's own GitHub token, in place of
+	// the box's (github.go). A repeated Create may bring a fresh one.
+	GitHubToken string
 }
 
 func NewService(root string) *Service {
@@ -297,7 +303,7 @@ var githubCredentialEnv = []string{
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
 	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
-	secrets = append(secrets, s.providedTokens()...)
+	secrets = append(append(secrets, s.providedTokens()...), s.githubFiles().tokens()...)
 	return append(secrets, agentConfigTokens()...)
 }
 
@@ -453,6 +459,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 			}
 		}
 	}
+	// A session given its own GitHub token keeps to it, a repeated Create's
+	// fresh one or the one it has.
+	facts.OwnGitHub = prior.OwnGitHub || in.GitHubToken != ""
+	if in.GitHubToken != "" {
+		if err := s.setSessionGitHubToken(in.WorkspaceID, in.GitHubToken); err != nil {
+			return "", fmt.Errorf("keep the session's GitHub token: %w", err)
+		}
+	}
 	// Record the facts Start/Resume need, even on the idempotent path below so a
 	// re-Create after a restart repopulates them.
 	s.setFacts(in.WorkspaceID, facts)
@@ -578,7 +592,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		return "", err
 	}
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := a.env(anthropicToken)
+	env := s.launchEnv(a, workspaceID, anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
@@ -840,7 +854,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := a.env(anthropicToken)
+	env := s.launchEnv(a, workspaceID, anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
@@ -1562,6 +1576,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	_ = os.Remove(s.factsPath(workspaceID))
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
+	s.githubFiles().remove(workspaceID)
 	s.removeEnvironment(workspaceID)
 	s.removeProvided(workspaceID)
 	s.forgetAsk(workspaceID)

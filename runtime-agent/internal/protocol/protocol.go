@@ -89,7 +89,16 @@ type CreateWorkspaceRequest struct {
 	// its mirror at $ROOT/repos/<checkout>.git, all on Branch. RepoFullName
 	// and BaseBranch are then the first's.
 	Repos []RepoCheckout `json:"repos,omitempty"`
+	// GitHubToken, when set, is the session's own GitHub token, run with as
+	// GH_TOKEN in place of the box's (FeatureSessionGitHubToken): an
+	// automation's session posts as the Outrunner GitHub App, not its user.
+	GitHubToken string `json:"githubToken,omitempty"`
 }
+
+// FeatureSessionGitHubToken is CreateWorkspaceRequest's GitHubToken. An
+// agent without it would ignore the token and run the session as its user,
+// so the control plane asks for it first.
+const FeatureSessionGitHubToken = "session-github-token"
 
 // RepoCheckout is one repository of a multi-repository session.
 type RepoCheckout struct {

@@ -130,6 +130,11 @@ export const AGENT_FEATURE_MULTI_REPO = "multi-repo";
  *  (RestoreWorkspaceRequest's `repos`). */
 export const AGENT_FEATURE_MULTI_REPO_SNAPSHOTS = "multi-repo-snapshots";
 
+/** The agent runs a session on a GitHub token of its own
+ *  (CreateWorkspaceRequest's `githubToken`). One without it would ignore the
+ *  token and run the session as its user: ask first. */
+export const AGENT_FEATURE_SESSION_GITHUB_TOKEN = "session-github-token";
+
 /** The agent warms a ready box (POST/GET /warm) and runs a session's warm
  *  and start hooks. */
 export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
@@ -326,6 +331,10 @@ export const CreateWorkspaceRequest = z.object({
     .min(2)
     .max(5)
     .optional(),
+  /** The session's own GitHub token (AGENT_FEATURE_SESSION_GITHUB_TOKEN), its
+   *  GH_TOKEN in place of the box's: an automation's session posts as the
+   *  Outrunner GitHub App. A repeated create may bring a fresh one. */
+  githubToken: z.string().min(1).optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 

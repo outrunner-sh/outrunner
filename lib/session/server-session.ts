@@ -27,6 +27,9 @@ export type ServerSessionStart = {
   /** Which of Outrunner's models it runs (OUTRUNNER_MODELS); their first
    *  when not given. */
   model?: string;
+  /** Its own GitHub token, in place of the user's: the Outrunner GitHub
+   *  App's, so what it posts is the app's. */
+  githubToken?: string;
 };
 
 /** Made and set up: ready (its prompt sent) or failed, with why. Or not made
@@ -58,6 +61,7 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
           baseBranch: start.baseBranch,
           title: start.title,
           firstMessage: start.prompt,
+          sessionGithubToken: start.githubToken,
           inline: true,
           meteredOnly: true,
           onSettled: async (settled) => {

@@ -45,7 +45,11 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
+import {
+  AGENT_FEATURE_CODEX_GATEWAY,
+  AGENT_FEATURE_MULTI_REPO,
+  AGENT_FEATURE_SESSION_GITHUB_TOKEN,
+} from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
@@ -130,6 +134,9 @@ export type ServerSessionOptions = {
   title?: string;
   /** Sent to the agent once it's ready, as the user's first message would be. */
   firstMessage?: string;
+  /** The session's own GitHub token, in place of its user's on the box: an
+   *  automation's, the Outrunner GitHub App's for the one repository. */
+  sessionGithubToken?: string;
   /** Set it up before answering, not after: for a caller with no page waiting. */
   inline?: boolean;
   /** Only on Outrunner's models metered to the user (their allowance): a
@@ -267,7 +274,7 @@ export async function createCloudSession(
   }
   // A first message is delivered to a Runtime Computer's agent; no other
   // sandbox takes one from the server.
-  if (options.firstMessage && !isComputerProvider(provider)) {
+  if ((options.firstMessage || options.sessionGithubToken) && !isComputerProvider(provider)) {
     return needsSandbox("Automations run on Outrunner's or your Daytona sandboxes. Choose one under Settings → Sandbox.");
   }
   // Only a Runtime Computer switches models: on any other sandbox, a session
@@ -383,6 +390,7 @@ export async function createCloudSession(
       agentId,
       auth,
       firstMessage: options.firstMessage,
+      sessionGithubToken: options.sessionGithubToken,
       onSettled: options.onSettled,
       inline: options.inline ?? false,
     });
@@ -415,6 +423,7 @@ async function provisionWorkspace({
   agentId,
   auth,
   firstMessage,
+  sessionGithubToken,
   onSettled,
   inline,
 }: {
@@ -438,6 +447,7 @@ async function provisionWorkspace({
   agentId: AgentId;
   auth: ResolvedAuth;
   firstMessage?: string;
+  sessionGithubToken?: string;
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
   /** Set up before the create answered (ServerSessionOptions.inline). */
   inline: boolean;
@@ -461,7 +471,12 @@ async function provisionWorkspace({
     await settle({ status: "provisioning", phase: next });
   };
   // Cut from any error the session page shows.
-  const secrets: (string | undefined)[] = [githubToken, auth.credential?.token, ...Object.values(sessionEnv)];
+  const secrets: (string | undefined)[] = [
+    githubToken,
+    sessionGithubToken,
+    auth.credential?.token,
+    ...Object.values(sessionEnv),
+  ];
 
   try {
     if (isComputerProvider(provider)) {
@@ -549,6 +564,12 @@ async function provisionWorkspace({
         const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
         await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
       }
+      // A session on a GitHub token of its own: an agent that would ignore it
+      // would run the session as its user instead.
+      if (sessionGithubToken) {
+        const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+        await requireFeature(features, AGENT_FEATURE_SESSION_GITHUB_TOKEN, "run a session on its own GitHub token");
+      }
       // A session of several repositories: a mirror of each on the box,
       // brought up to date, for its folder of checkouts.
       const checkouts = workspace.checkouts;
@@ -575,6 +596,7 @@ async function provisionWorkspace({
           ...(agentId !== "claude" && { agent: agentId }),
           // Configure git author so commits are attributed to the user.
           ...(owner.email && { gitUser: { name: owner.name, email: owner.email } }),
+          ...(sessionGithubToken && { githubToken: sessionGithubToken }),
         },
         identity,
       );

@@ -139,7 +139,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureSessionGitHubToken},
 	})
 }
 
@@ -197,6 +197,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		Agent:          req.Agent,
 		GitUser:        gitUser,
 		Checkouts:      checkouts(req.Repos),
+		GitHubToken:    req.GitHubToken,
 	})
 	switch {
 	case errors.Is(err, workspace.ErrBypassInFolder), errors.Is(err, workspace.ErrInvalidCheckouts):
