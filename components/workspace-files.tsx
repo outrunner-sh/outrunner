@@ -378,12 +378,14 @@ function FileView({
       </div>
 
       <div className="studio-changes-scroll">
-        {error ? (
-          <p aria-live="polite" className="px-4 py-3 text-destructive text-xs">{error}</p>
-        ) : !file ? (
-          <p className="flex items-center gap-1.5 px-4 py-3 text-muted-foreground text-xs">
-            <Spinner className="size-3.5" /> Loading…
-          </p>
+        {/* A read that fails once the file has shown leaves its last text up. */}
+        {error && <p aria-live="polite" className="px-4 py-3 text-destructive text-xs">{error}</p>}
+        {!file ? (
+          !error && (
+            <p className="flex items-center gap-1.5 px-4 py-3 text-muted-foreground text-xs">
+              <Spinner className="size-3.5" /> Loading…
+            </p>
+          )
         ) : file.binary ? (
           <div className="studio-changes-empty">This is a binary file ({formatSize(file.size)}), so there&apos;s no text to show.</div>
         ) : (
@@ -404,7 +406,7 @@ function FileView({
             </div>
             {file.truncated && (
               <p className="px-4 py-3 text-muted-foreground text-[11px]">
-                Showing the first {formatSize(file.content.length)} of {formatSize(file.size)}.
+                Showing the first {formatSize(new TextEncoder().encode(file.content).length)} of {formatSize(file.size)}.
               </p>
             )}
           </>
