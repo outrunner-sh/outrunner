@@ -193,6 +193,14 @@ async function archiveDaytonaWorkspace(
       { status: 409 },
     );
   }
+  // A snapshot holds one repository: one of several keeps running until
+  // snapshots hold more (the agent refuses it too).
+  if (workspace.checkouts) {
+    return NextResponse.json(
+      { error: "A session of several repositories can't be archived yet. Delete it when you're done instead." },
+      { status: 409 },
+    );
+  }
   const transitioned = await startTransition(workspace, ["ready", "idle"], "archiving");
   if (!transitioned) return lifecycleConflict();
 

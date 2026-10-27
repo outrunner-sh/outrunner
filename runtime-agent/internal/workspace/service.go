@@ -149,6 +149,12 @@ type workspaceFacts struct {
 	// commit yet): there is nothing to branch, so Claude works in the folder
 	// itself rather than a worktree, and Destroy must never remove it.
 	InPlace bool `json:"inPlace,omitempty"`
+	// Warmed marks a worktree taken from a ready box's warmed checkout
+	// (warm.go): the project's warm hook ran in it already.
+	Warmed bool `json:"warmed,omitempty"`
+	// Checkouts are a multi-repository session's repositories (checkouts.go);
+	// none for a session of one.
+	Checkouts []Checkout `json:"checkouts,omitempty"`
 	// ClaudeSessionID names an in-place session's conversation. Its working
 	// directory is the user's folder, not its own, so Claude's project directory
 	// for it may hold other sessions' conversations there — or the user's own
@@ -216,6 +222,10 @@ type CreateInput struct {
 	Agent string
 	// GitUser is the git identity for commits; nil uses the system default.
 	GitUser *GitUser
+	// Checkouts, when set, make a session of several repositories: a folder
+	// of worktrees (checkouts.go). Each base branch is its own; BaseBranch is
+	// the first's.
+	Checkouts []Checkout
 }
 
 func NewService(root string) *Service {
@@ -375,6 +385,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if in.RepoPath != "" && in.PermissionMode == claude.Bypass {
 		return "", ErrBypassInFolder
 	}
+	if len(in.Checkouts) > 0 {
+		if in.RepoPath != "" {
+			return "", fmt.Errorf("%w: a local session has one folder", ErrInvalidCheckouts)
+		}
+		if err := ValidCheckouts(in.Checkouts); err != nil {
+			return "", err
+		}
+		in.BaseBranch = in.Checkouts[0].BaseBranch
+	}
 	defer s.lockLifecycle(in.WorkspaceID)()
 	facts := workspaceFacts{
 		Branch:         in.Branch,
@@ -408,6 +427,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	}
 	// Its effort is SetModel's alone, so a repeated Create keeps it as well.
 	facts.Effort = prior.Effort
+	facts.Checkouts = in.Checkouts
+	if existed {
+		// A retry keeps what the first Create recorded (before it made
+		// anything): a session never switches between one and several.
+		facts.Checkouts = prior.Checkouts
+	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
 		if err != nil {
@@ -458,10 +483,23 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 		return "", err
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
-		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	if len(facts.Checkouts) > 0 {
+		if err := s.createCheckouts(ctx, worktree, in.Branch, facts.Checkouts, in.GitUser); err != nil {
+			return "", err
+		}
+		return worktree, nil
+	}
+	// The box's warmed checkout, when it has one for this base (warm.go);
+	// otherwise a new worktree.
+	if s.adoptWarm(ctx, worktree, in.Branch, in.BaseBranch) {
+		facts.Warmed = true
+		s.setFacts(in.WorkspaceID, facts)
+	} else {
+		out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
+			"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
 	// Configure git author so commits are attributed to the Outrunner user.
 	if in.GitUser != nil && in.GitUser.Name != "" && in.GitUser.Email != "" {
@@ -470,6 +508,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	}
 	return worktree, nil
 }
+
+// ErrArchiveCheckouts refuses archiving a session of several repositories,
+// which a snapshot can't hold yet: it keeps running instead.
+var ErrArchiveCheckouts = errors.New("a session of several repositories can't be archived yet")
 
 // ErrBypassInFolder refuses bypassPermissions for a session in a folder on the
 // user's own machine, whoever asks for it: there Claude would run every command
@@ -830,6 +872,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
 	// A session in the user's own folder has no branch of its own.
 	o := claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+	if len(f.Checkouts) > 0 {
+		o += "\n\n" + checkoutsNote(f.Checkouts, f.Branch)
+	}
 	switch {
 	case !f.Gateway.SpeaksAsOutrunner():
 	case f.Agent == AgentCodex:
@@ -852,6 +897,17 @@ var placeholderBranch = regexp.MustCompile(`^runtime/[0-9a-z]+-[0-9a-f]{8}$`)
 // from git each launch, so a branch renamed since (at the user's request)
 // isn't called a placeholder.
 func onPlaceholderBranch(worktree string) bool {
+	if !fileExists(filepath.Join(worktree, ".git")) {
+		// A folder of checkouts: they share the branch, so the first's.
+		if entries, err := os.ReadDir(worktree); err == nil {
+			for _, e := range entries {
+				if e.IsDir() && fileExists(filepath.Join(worktree, e.Name(), ".git")) {
+					worktree = filepath.Join(worktree, e.Name())
+					break
+				}
+			}
+		}
+	}
 	if worktree == "" {
 		return false
 	}
@@ -1216,6 +1272,10 @@ func (s *Service) SessionName(workspaceID string) string { return sessionName(wo
 // revive it. Archive is idempotent — re-archiving a stopped session simply
 // re-captures and re-uploads.
 func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.ArchiveWorkspaceRequest) (*snapshot.Manifest, error) {
+	// A snapshot holds one repository's tree; one of several comes later.
+	if f, _ := s.getFacts(workspaceID); len(f.Checkouts) > 0 {
+		return nil, ErrArchiveCheckouts
+	}
 	if err := s.Stop(ctx, workspaceID); err != nil {
 		return nil, err
 	}
@@ -1466,6 +1526,17 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 		return nil
 	}
 	worktree := s.worktreePath(workspaceID)
+	if f, _ := s.getFacts(workspaceID); len(f.Checkouts) > 0 {
+		// A folder of checkouts: each leaves its own mirror, then the folder.
+		for _, c := range f.Checkouts {
+			s.removeCheckout(ctx, worktree, c)
+		}
+		if err := os.RemoveAll(worktree); err != nil {
+			return fmt.Errorf("remove the session's folder: %w", err)
+		}
+		s.forgetWorkspace(workspaceID)
+		return nil
+	}
 	if _, err := os.Stat(worktree); os.IsNotExist(err) {
 		s.forgetWorkspace(workspaceID)
 		return nil
@@ -1528,7 +1599,9 @@ func (s *Service) beginSummary(workspaceID, worktree string) {
 	s.summariesMu.Lock()
 	sum, ok := s.summaries[workspaceID]
 	if !ok {
+		f, _ := s.getFacts(workspaceID)
 		sum = newSummary(workspaceID, worktree)
+		sum.checkouts = checkoutDirs(worktree, f.Checkouts)
 		s.summaries[workspaceID] = sum
 	}
 	s.summariesMu.Unlock()

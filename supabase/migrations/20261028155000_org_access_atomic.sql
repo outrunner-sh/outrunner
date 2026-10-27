@@ -1,4 +1,4 @@
--- Review fixes to 20261028150000_org_access.sql (a migration of their own, so
+-- Review fixes to 20261028145000_org_access.sql (a migration of their own, so
 -- they apply whether that one has run or not): each change to who may do
 -- what is one transaction, so a failure leaves what was there.
 -- ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ begin
 end;
 $$;
 
--- As 20261028150000, with each repository's level worked out once.
+-- As 20261028145000, with each repository's level worked out once.
 create or replace function environment_level(member uuid, target_environment uuid)
 returns text
 language sql

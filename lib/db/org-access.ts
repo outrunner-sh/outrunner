@@ -1,5 +1,5 @@
 /**
- * Roles and access (supabase/migrations/20261028150000_org_access.sql): what
+ * Roles and access (supabase/migrations/20261028145000_org_access.sql): what
  * a member may do with an org's projects, and the roles and grants an admin
  * sets it with. The tables and the level functions are the server's alone
  * (service role); the routes calling the writers here have checked the

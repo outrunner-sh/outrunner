@@ -111,6 +111,9 @@ type WorkspaceRow = {
   /** The environment (the app's Project) it started from; null for a
    *  session from before environments. */
   environment_id: string | null;
+  /** A multi-repository session's repositories (20261028160000); null for
+   *  one of one. */
+  checkouts: Json | null;
   /** The coding agent it runs: "claude" or "codex". */
   agent: string;
   /** The model it runs, whose it is, and its effort; null before the first
@@ -135,6 +138,10 @@ type RuntimeComputerRow = {
   /** Made ready ahead of a session and stopped, for the next one to take
    *  (20261025120000_warm_pool.sql). */
   pooled: boolean;
+  /** Which of the project's two ready boxes it is (20261028150000_warm_hooks.sql). */
+  pool_slot: number;
+  /** The project's setup_generation it was made from. */
+  generation: number | null;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -285,6 +292,11 @@ type EnvironmentRow = {
   archive_script: string | null;
   default_for_project_id: string | null;
   archived_at: string | null;
+  warm_hook: string | null;
+  start_hook: string | null;
+  setup_generation: number;
+  /** Each member's last warm run, by user id (20261028150000_warm_hooks.sql). */
+  warm_runs: Json;
   created_at: string;
   updated_at: string;
 };
@@ -823,7 +835,7 @@ export type Database = {
         Args: { org_name: string; creator: string; claimed_domain: string | null };
         Returns: string;
       };
-      // supabase/migrations/20261028150000_org_access.sql
+      // supabase/migrations/20261028145000_org_access.sql
       project_level: {
         Args: { member: string; target_project: string };
         Returns: AccessLevelDb | null;
@@ -836,7 +848,7 @@ export type Database = {
         Args: { member: string; target_environment: string };
         Returns: AccessLevelDb | null;
       };
-      // supabase/migrations/20261028160000_org_access_atomic.sql
+      // supabase/migrations/20261028155000_org_access_atomic.sql
       set_grant: {
         Args: { target_org: string; target_role: string | null; target_project: string | null; new_level: AccessLevelDb | null };
         Returns: undefined;
@@ -875,8 +887,16 @@ export type Database = {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;
       };
+      record_warm_run: {
+        Args: { target: string; member: string; run: Json };
+        Returns: undefined;
+      };
+      bump_environment_generation: {
+        Args: { target: string };
+        Returns: number;
+      };
       claim_pooled_computer: {
-        Args: { requested_workspace_id: string; requested_provider: string };
+        Args: { requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
         Returns: string | null;
       };
       claim_workspace_computer: {

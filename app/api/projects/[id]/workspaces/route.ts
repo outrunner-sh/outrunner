@@ -25,7 +25,7 @@ import {
   recordWorkspaceModel,
   transitionWorkspace,
 } from "@/lib/db/repositories";
-import { defaultEnvironmentId } from "@/lib/db/environments";
+import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
@@ -39,7 +39,7 @@ import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_CODEX_GATEWAY } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { NoDaytonaKeyError } from "@/lib/runtime/daytona-provider";
@@ -267,6 +267,23 @@ export async function POST(request: Request, context: RouteContext) {
     console.error(`Project for ${project.fullName} couldn't be found or made`, error);
     return null;
   });
+  // A project of several repositories: the session works on each, in its own
+  // folder. Only on a Runtime Computer, whose agent makes the folder.
+  const checkouts = environmentId ? await sessionCheckouts(owner.id, environmentId) : null;
+  if (checkouts) {
+    if (!isComputerProvider(provider)) {
+      return NextResponse.json(
+        { error: "Projects with several repositories run on Outrunner's or your Daytona sandboxes. Choose one in Settings → Sandbox." },
+        { status: 409 },
+      );
+    }
+    for (const other of checkouts.filter((c) => c.projectId !== project.id)) {
+      // As for the session's own repository: a public one GitHub doesn't show
+      // this token still clones, so only a private one is refused.
+      const refused = await githubRefusal(githubToken, { fullName: other.fullName, private: other.private ?? true });
+      if (refused) return refused;
+    }
+  }
 
   let workspace;
   try {
@@ -274,6 +291,7 @@ export async function POST(request: Request, context: RouteContext) {
       ownerId: owner.id,
       projectId: project.id,
       environmentId,
+      checkouts,
       branch: requestedBranch || generatedBranch(),
       baseBranch: project.defaultBranch,
       provider: provider.name,
@@ -398,7 +416,9 @@ async function provisionWorkspace({
       // The project's pooled box, made ready ahead (lib/runtime/warm-pool.ts),
       // becomes this session's, stopped: it starts again below on its disk,
       // as a box that ended does, in seconds.
-      await takePooledBox(provider, workspace.id);
+      // Only one warmed from the project's setup as it is now.
+      const generation = await setupGeneration(owner.id, workspace.environmentId).catch(() => null);
+      await takePooledBox(provider, workspace.id, generation);
       const currentComputer = await getRuntimeComputer(scope);
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
@@ -472,12 +492,28 @@ async function provisionWorkspace({
         const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
         await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
       }
+      // A session of several repositories: a mirror of each on the box,
+      // brought up to date, for its folder of checkouts.
+      const checkouts = workspace.checkouts;
+      if (checkouts) {
+        const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+        await requireFeature(features, AGENT_FEATURE_MULTI_REPO, "work on several repositories");
+        await setPhase("clone");
+        await provider.syncRepoMirrors(
+          computer.daytonaSandboxId,
+          checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
+          githubToken,
+        );
+      }
       const created = await agent.createWorkspace(
         {
           workspaceId: workspace.id,
-          repoFullName: project.fullName,
-          baseBranch: project.defaultBranch,
+          repoFullName: checkouts?.[0].fullName ?? project.fullName,
+          baseBranch: checkouts?.[0].baseBranch ?? project.defaultBranch,
           branch: workspace.branch,
+          ...(checkouts && {
+            repos: checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch })),
+          }),
           // Named only for Codex: Claude Code is every agent's default.
           ...(agentId !== "claude" && { agent: agentId }),
           // Configure git author so commits are attributed to the user.
@@ -526,7 +562,9 @@ async function provisionWorkspace({
       }
       // Ready: the project's next session gets a box made ahead, after this
       // session's setup rather than as part of it.
-      after(() => refillProjectPool({ provider, ownerId: owner.id, project, githubToken, sessionEnv }));
+      after(() =>
+        refillProjectPool({ provider, ownerId: owner.id, project, environmentId: workspace.environmentId, githubToken, sessionEnv }),
+      );
       return;
     }
 

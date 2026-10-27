@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { orgName, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
+import { orgName, orgSummary, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
 import { emailDomain, isPublicDomain, primaryDomain } from "@/lib/orgs/domains";
 
 const personal: Org = { id: "p", name: "Personal", personal: true, role: "admin" };
@@ -84,4 +84,10 @@ test("the domain an org claims is the primary verified email's, never a secondar
   );
   assert.equal(primaryDomain([{ email: "me@old-job.com", primary: false }]), null);
   assert.equal(primaryDomain([]), null);
+});
+
+test("the switcher says whose an org is, and the user's part in a team's", () => {
+  assert.equal(orgSummary({ personal: true, role: "admin" }), "Personal");
+  assert.equal(orgSummary({ personal: false, role: "admin" }), "Team · Admin");
+  assert.equal(orgSummary({ personal: false, role: "member" }), "Team · Member");
 });

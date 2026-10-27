@@ -4,7 +4,7 @@ import { orgProjectsLevel } from "@/lib/db/org-access";
 import { allows } from "@/lib/orgs/access";
 
 /** The answer to give someone who may not connect repositories to the org:
- *  that needs write on all its projects (20261028150000_org_access.sql), as
+ *  that needs write on all its projects (20261028145000_org_access.sql), as
  *  the database holds too. Null when they may, or there's no org (before
  *  orgs). */
 export async function connectRefusal(userId: string, orgId: string | undefined): Promise<Response | null> {

@@ -87,6 +87,17 @@ export function opensInBrowser(provider: ProviderName): boolean {
   return provider === "daytona" || provider === "user-daytona";
 }
 
+/** One repository of a multi-repository session. */
+export type SessionCheckout = {
+  projectId: string;
+  fullName: string;
+  /** Its folder in the session's. */
+  checkout: string;
+  baseBranch: string;
+  /** Whether GitHub keeps it private; absent on a session recorded before. */
+  private?: boolean;
+};
+
 export type Workspace = {
   id: string;
   projectId: string;
@@ -117,6 +128,9 @@ export type Workspace = {
   /** The project (an `environments` row) it started from; null for a
    *  session from before projects. */
   environmentId: string | null;
+  /** A multi-repository session's repositories, each in its own folder of
+   *  the session's; null for a session of one (its worktree is the repo). */
+  checkouts: SessionCheckout[] | null;
   /** The coding agent the session runs, for good: its model can change only
    *  to another this agent runs. */
   agent: AgentId;
@@ -173,6 +187,10 @@ export type RuntimeComputer = {
   /** Made ready ahead of a session and stopped, for the next new session of
    *  its project to take (lib/runtime/warm-pool.ts). */
   pooled: boolean;
+  /** Which of the project's ready boxes it is: 0 or 1. */
+  poolSlot: number;
+  /** The project setup's generation it was made from; null before. */
+  generation: number | null;
   status: RuntimeComputerStatus;
   /** Frozen image tag this box was built from, e.g. `v1`. */
   imageVersion: string;

@@ -910,7 +910,7 @@ begin
   if not exists (select 1 from workspaces where branch = 'member-session') then
     raise exception 'FAIL: a member can''t see their own session in the org';
   end if;
-  -- The org gives Everyone write (as every org starts, 20261028150000), so
+  -- The org gives Everyone write (as every org starts, 20261028145000), so
   -- a member may change a project they didn't connect.
   update projects set description = 'changed' where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
   get diagnostics n = row_count;
