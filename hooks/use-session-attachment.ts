@@ -175,6 +175,8 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     // attachment, rather than either projection, owns the retry so that one
     // close produces one fresh pair of short-lived URLs.
     if (inflight.current || reconnectTimer.current) return;
+    // The URLs whose socket just closed aren't kept for going back.
+    attachedWith.current = null;
     reconnectTimer.current = setTimeout(() => {
       reconnectTimer.current = null;
       refresh();
