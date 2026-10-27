@@ -154,6 +154,7 @@ export function toWorkspacePullRequest(
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    projectId: row.project_id,
     number: row.github_number,
     url: row.url,
     title: row.title,

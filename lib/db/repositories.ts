@@ -821,14 +821,18 @@ export async function transitionJob(input: {
   return data ? toJob(data) : null;
 }
 
+/** The session's pull request in `projectId`, a repository of it (a session
+ *  of several has one in each). */
 export async function getWorkspacePullRequest(
   workspaceId: string,
+  projectId: string,
 ): Promise<WorkspacePullRequest | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("pull_requests")
     .select("*")
     .eq("workspace_id", workspaceId)
+    .eq("project_id", projectId)
     .maybeSingle();
   if (error) throw error;
   return data ? toWorkspacePullRequest(data) : null;
@@ -838,7 +842,12 @@ export async function getWorkspacePullRequest(
 export async function listWorkspacePullRequests(workspaceIds: string[]): Promise<WorkspacePullRequest[]> {
   if (workspaceIds.length === 0) return [];
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.from("pull_requests").select("*").in("workspace_id", workspaceIds);
+  // Oldest first: callers that keep one a session keep its first.
+  const { data, error } = await supabase
+    .from("pull_requests")
+    .select("*")
+    .in("workspace_id", workspaceIds)
+    .order("created_at", { ascending: true });
   if (error) throw error;
   return (data ?? []).map(toWorkspacePullRequest);
 }
@@ -846,6 +855,7 @@ export async function listWorkspacePullRequests(workspaceIds: string[]): Promise
 export async function createWorkspacePullRequest(input: {
   ownerId: string;
   workspaceId: string;
+  projectId: string;
   number: number;
   url: string;
   title: string;
@@ -858,6 +868,7 @@ export async function createWorkspacePullRequest(input: {
     .insert({
       owner_id: input.ownerId,
       workspace_id: input.workspaceId,
+      project_id: input.projectId,
       github_number: input.number,
       url: input.url,
       title: input.title,

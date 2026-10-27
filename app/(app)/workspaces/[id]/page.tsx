@@ -5,7 +5,7 @@ import { RouteLoading } from "@/components/route-states";
 import { ServerAnswer } from "@/components/server-answer";
 import { SessionRoute } from "@/components/session-route";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
+import { getWorkspace, getWorkspacePullRequest, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { getProjectOnce } from "@/lib/db/request-cache";
 import type { SessionAnswer } from "@/lib/session/session-view";
 
@@ -59,15 +59,23 @@ async function ServerSession({ params }: { params: Params }) {
   // A deleted session keeps its row, marked destroyed: say so, rather than
   // leaving the user to wonder whether the link was wrong.
   if (workspace.status === "destroyed") {
+    // One read: its own repository's, and for a session of several, each's.
+    const pullRequests = await listWorkspacePullRequests([workspace.id]);
     return (
       <ServerAnswer<SessionAnswer>
-        value={{ gone: { workspace, pullRequest: await getWorkspacePullRequest(workspace.id) } }}
+        value={{
+          gone: {
+            workspace,
+            pullRequest: pullRequests.find((pr) => pr.projectId === workspace.projectId) ?? null,
+            ...(workspace.checkouts && { pullRequests }),
+          },
+        }}
       />
     );
   }
   const [project, pullRequest] = await Promise.all([
     getProjectOnce(workspace.projectId),
-    getWorkspacePullRequest(workspace.id),
+    getWorkspacePullRequest(workspace.id, workspace.projectId),
   ]);
   if (!project) notFound();
 

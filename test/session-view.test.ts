@@ -36,6 +36,7 @@ function workspace(id: string, over: Partial<Workspace> = {}): Workspace {
 const pr: WorkspacePullRequest = {
   id: "pr1",
   workspaceId: "w1",
+  projectId: "p",
   number: 7,
   url: "https://github.com/o/r/pull/7",
   title: "Fix",
