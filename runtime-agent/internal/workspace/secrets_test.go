@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"runtime-agent/internal/ask"
+	"runtime-agent/internal/redact"
 )
 
 // The user's answer to a session's request is kept for the session, owner
@@ -37,6 +38,9 @@ func TestProvidedSecretsReachTheSessionAndAreMasked(t *testing.T) {
 	if err := s.ProvideSecrets("ws1", names, map[string]string{"VERCEL_TOKEN": "tok-abc'123", "OTHER": "x"}, false); !errors.Is(err, ErrInvalidEnvironment) {
 		t.Fatalf("a value nobody asked for = %v, want ErrInvalidEnvironment", err)
 	}
+	if err := s.ProvideSecrets("ws1", names, map[string]string{"VERCEL_TOKEN": "a\x00b"}, false); err == nil || !strings.Contains(err.Error(), "NUL") {
+		t.Fatalf("a NUL = %v, want it named", err)
+	}
 	if err := s.ProvideSecrets("ws1", names, map[string]string{"VERCEL_ORG": "org"}, false); !errors.Is(err, ErrInvalidEnvironment) {
 		t.Fatalf("without the required one = %v, want ErrInvalidEnvironment", err)
 	}
@@ -58,6 +62,11 @@ func TestProvidedSecretsReachTheSessionAndAreMasked(t *testing.T) {
 	}
 	if !slices.Contains(s.RedactionSecrets(), "tok-abc'123") {
 		t.Error("a provided value isn't masked")
+	}
+	// A terminal open before it was provided masks it too.
+	open := redact.New(nil).Follow(s.LiveSecrets())
+	if got := open.Redact([]byte("token is tok-abc'123!")) + open.Flush(); got != "token is ***!" {
+		t.Errorf("an open terminal shows %q", got)
 	}
 	if argv := s.launchCommand("ws1", t.TempDir(), false); !slices.Contains(argv, path) {
 		t.Errorf("launch = %q, want it to source %s", argv, path)

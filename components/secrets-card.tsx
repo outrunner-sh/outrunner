@@ -41,7 +41,9 @@ export function SecretsCard({
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
   const [pasting, setPasting] = useState(false);
   const [pasted, setPasted] = useState("");
-  const [save, setSave] = useState(canSave);
+  // Opt-in: the session gets them either way, and keeping a secret for every
+  // later session should be a choice made, not one missed.
+  const [save, setSave] = useState(false);
   const firstRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {

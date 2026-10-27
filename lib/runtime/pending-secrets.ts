@@ -43,8 +43,8 @@ export function pendingSecretRequest(events: AgentEvent[]): PendingSecretRequest
   return { toolUseId: call.id, reason: parsed.data.reason, keys: parsed.data.keys };
 }
 
-/** The values a form can send: every required variable has one. Blank
- *  ones are left out (an optional variable not given). */
+/** The values a form can send, trimmed: every required variable has one.
+ *  Blank ones are left out (an optional variable not given). */
 export function providedValues(request: PendingSecretRequest, values: Record<string, string>): Record<string, string> | null {
   const provided: Record<string, string> = {};
   for (const key of request.keys) {
@@ -53,7 +53,9 @@ export function providedValues(request: PendingSecretRequest, values: Record<str
       if (!key.optional) return null;
       continue;
     }
-    provided[key.name] = value;
+    // Trimmed: a pasted key often carries a newline, which would break it
+    // in a way the agent can't see.
+    provided[key.name] = value.trim();
   }
   return provided;
 }

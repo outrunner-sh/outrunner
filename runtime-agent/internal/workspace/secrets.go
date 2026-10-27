@@ -82,8 +82,11 @@ func (s *Service) ProvideSecrets(workspaceID string, names []string, values map[
 			if !slices.Contains(names, name) {
 				return ask.SecretReply{}, fmt.Errorf("%w: %s wasn't asked for", ErrInvalidEnvironment, name)
 			}
-			if value == "" || strings.ContainsRune(value, 0) {
+			if value == "" {
 				return ask.SecretReply{}, fmt.Errorf("%w: %s has no value", ErrInvalidEnvironment, name)
+			}
+			if strings.ContainsRune(value, 0) {
+				return ask.SecretReply{}, fmt.Errorf("%w: %s's value holds a NUL byte", ErrInvalidEnvironment, name)
 			}
 			provided = append(provided, name)
 		}
@@ -95,6 +98,15 @@ func (s *Service) ProvideSecrets(workspaceID string, names []string, values map[
 		if err := s.addProvided(workspaceID, values); err != nil {
 			return ask.SecretReply{}, err
 		}
+		// Masked at once in the terminals and recordings already open, which
+		// read RedactionSecrets when they started.
+		var live []string
+		for _, value := range values {
+			if len(value) >= minMaskedProvided {
+				live = append(live, value)
+			}
+		}
+		s.liveSecrets.Add(live...)
 		// In the order asked for, as the result names them.
 		sort.Slice(provided, func(i, j int) bool {
 			return slices.Index(names, provided[i]) < slices.Index(names, provided[j])

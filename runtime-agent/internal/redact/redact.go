@@ -1,7 +1,37 @@
 // Package redact masks secrets in a byte stream that arrives in pieces.
 package redact
 
-import "strings"
+import (
+	"strings"
+	"sync"
+	"sync/atomic"
+)
+
+// Tokens are secrets that arrive while streams are already being redacted
+// (a value the user provides mid-session): every Redactor following them
+// masks one from its next call on.
+type Tokens struct {
+	mu   sync.Mutex
+	list []string
+	gen  atomic.Uint64
+}
+
+// Add makes values secrets for every Redactor following t.
+func (t *Tokens) Add(values ...string) {
+	if len(values) == 0 {
+		return
+	}
+	t.mu.Lock()
+	t.list = append(t.list, values...)
+	t.mu.Unlock()
+	t.gen.Add(1)
+}
+
+func (t *Tokens) snapshot() ([]string, uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.list...), t.gen.Load()
+}
 
 // Redactor removes process secrets from terminal output: before it reaches a
 // browser, and before it is recorded. It retains a small suffix between calls so a secret split across
@@ -10,11 +40,40 @@ type Redactor struct {
 	secrets []string
 	maxLen  int
 	pending string
+
+	// base are the secrets it was made with; live, when followed, adds to
+	// them, and seen is the generation of live it last read.
+	base []string
+	live *Tokens
+	seen uint64
 }
 
 // New ignores empty and duplicate secrets. Sorting longest-first keeps
 // a shorter secret that is contained in a longer one from leaving a fragment.
 func New(secrets []string) *Redactor {
+	r := &Redactor{base: secrets}
+	r.secrets, r.maxLen = activeSecrets(secrets)
+	return r
+}
+
+// Follow has r mask live's tokens too, those added later included.
+func (r *Redactor) Follow(live *Tokens) *Redactor {
+	r.live = live
+	r.refresh()
+	return r
+}
+
+// refresh takes in tokens added since it last looked.
+func (r *Redactor) refresh() {
+	if r.live == nil || r.live.gen.Load() == r.seen {
+		return
+	}
+	extra, gen := r.live.snapshot()
+	r.secrets, r.maxLen = activeSecrets(append(append([]string(nil), r.base...), extra...))
+	r.seen = gen
+}
+
+func activeSecrets(secrets []string) ([]string, int) {
 	seen := make(map[string]struct{})
 	active := make([]string, 0, len(secrets))
 	maxLen := 0
@@ -38,13 +97,14 @@ func New(secrets []string) *Redactor {
 			}
 		}
 	}
-	return &Redactor{secrets: active, maxLen: maxLen}
+	return active, maxLen
 }
 
 // Redact emits only text that cannot be the beginning of a secret extending
 // into a later PTY read. Call Flush when the stream ends to emit the final
 // non-secret suffix.
 func (r *Redactor) Redact(data []byte) string {
+	r.refresh()
 	if len(r.secrets) == 0 {
 		return string(data)
 	}
@@ -82,6 +142,7 @@ func (r *Redactor) Redact(data []byte) string {
 
 // Flush emits the final buffered bytes after applying the same replacement.
 func (r *Redactor) Flush() string {
+	r.refresh()
 	out := r.replace(r.pending)
 	r.pending = ""
 	return out

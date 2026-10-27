@@ -42,4 +42,6 @@ test("a form sends once every required variable has a value, blanks left out", (
   assert.equal(providedValues(pending, { VERCEL_ORG: "org" }), null);
   assert.equal(providedValues(pending, { VERCEL_TOKEN: "  " }), null);
   assert.deepEqual(providedValues(pending, { VERCEL_TOKEN: "tok", VERCEL_ORG: "" }), { VERCEL_TOKEN: "tok" });
+  // A pasted value's newline doesn't reach the session.
+  assert.deepEqual(providedValues(pending, { VERCEL_TOKEN: " tok\n" }), { VERCEL_TOKEN: "tok" });
 });

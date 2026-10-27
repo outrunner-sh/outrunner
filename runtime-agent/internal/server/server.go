@@ -829,7 +829,9 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	// contract ("output is coalesced") and prevents one-keystroke-per-frame
 	// flooding. The redactor preserves a suffix between calls so no secret can
 	// leak when it crosses a PTY read boundary.
-	redactor := redact.New(append(s.ws.RedactionSecrets(), s.secret))
+	// Following the live ones: a secret provided while this terminal is open
+	// is masked in it from then on.
+	redactor := redact.New(append(s.ws.RedactionSecrets(), s.secret)).Follow(s.ws.LiveSecrets())
 	coalescer := ptyx.NewCoalescer(coalesceInterval, coalesceThreshold, func(seq int, data []byte) error {
 		output := redactor.Redact(data)
 		if output == "" {
