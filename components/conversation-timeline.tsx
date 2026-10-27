@@ -154,8 +154,12 @@ export function ConversationTimeline({
     // Reading back: the conversation stops following its end, as a scroll up
     // does, for the whole of the smooth scroll there.
     const top = Math.max(0, Math.min(prompt.offsetTop - 16, el.scrollHeight - el.clientHeight));
-    // One that lands within reach of the end is a return there: still following.
+    // One that lands within reach of the end is a return there: following
+    // again, whatever jump back was still under way.
     if (el.scrollHeight - top - el.clientHeight < FOLLOW_SLACK_PX) {
+      jumpingTo.current = null;
+      if (jumpTimer.current) clearTimeout(jumpTimer.current);
+      stickToBottom.current = true;
       el.scrollTo({ top, behavior: "smooth" });
       return;
     }
