@@ -25,7 +25,7 @@ import {
   recordWorkspaceModel,
   transitionWorkspace,
 } from "@/lib/db/repositories";
-import { defaultEnvironmentId } from "@/lib/db/environments";
+import { defaultEnvironmentId, setupGeneration } from "@/lib/db/environments";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { branchTakenResponse, isUniqueViolation, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
@@ -386,7 +386,9 @@ async function provisionWorkspace({
       // The project's pooled box, made ready ahead (lib/runtime/warm-pool.ts),
       // becomes this session's, stopped: it starts again below on its disk,
       // as a box that ended does, in seconds.
-      await takePooledBox(provider, workspace.id);
+      // Only one warmed from the project's setup as it is now.
+      const generation = await setupGeneration(owner.id, workspace.environmentId).catch(() => null);
+      await takePooledBox(provider, workspace.id, generation);
       const currentComputer = await getRuntimeComputer(scope);
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
@@ -512,7 +514,9 @@ async function provisionWorkspace({
       }
       // Ready: the project's next session gets a box made ahead, after this
       // session's setup rather than as part of it.
-      after(() => refillProjectPool({ provider, ownerId: owner.id, project, githubToken, sessionEnv }));
+      after(() =>
+        refillProjectPool({ provider, ownerId: owner.id, project, environmentId: workspace.environmentId, githubToken, sessionEnv }),
+      );
       return;
     }
 

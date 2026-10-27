@@ -135,6 +135,10 @@ type RuntimeComputerRow = {
   /** Made ready ahead of a session and stopped, for the next one to take
    *  (20261025120000_warm_pool.sql). */
   pooled: boolean;
+  /** Which of the project's two ready boxes it is (20261027150000). */
+  pool_slot: number;
+  /** The project's setup_generation it was made from. */
+  generation: number | null;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -281,6 +285,14 @@ type EnvironmentRow = {
   archive_script: string | null;
   default_for_project_id: string | null;
   archived_at: string | null;
+  warm_hook: string | null;
+  start_hook: string | null;
+  setup_generation: number;
+  warm_status: "running" | "succeeded" | "failed" | null;
+  warm_log: string | null;
+  warm_started_at: string | null;
+  warm_finished_at: string | null;
+  warm_generation: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -707,8 +719,12 @@ export type Database = {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;
       };
+      bump_environment_generation: {
+        Args: { target: string };
+        Returns: number;
+      };
       claim_pooled_computer: {
-        Args: { requested_workspace_id: string; requested_provider: string };
+        Args: { requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
         Returns: string | null;
       };
       claim_workspace_computer: {

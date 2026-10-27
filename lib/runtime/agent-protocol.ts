@@ -87,6 +87,11 @@ export const SetEnvironmentRequest = z
     /** The project's instructions for its agent, after Outrunner's own at
      *  every launch (AGENT_FEATURE_INSTRUCTIONS). */
     instructions: z.string().max(16 * 1024).optional(),
+    /** The project's warm hook, run once at the session's first launch
+     *  unless its worktree was warmed on a ready box, and its start hook, run
+     *  at every launch (AGENT_FEATURE_WARM_HOOKS). */
+    warmHook: z.string().max(64 * 1024).optional(),
+    startHook: z.string().max(64 * 1024).optional(),
   })
   .strict();
 export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
@@ -116,6 +121,35 @@ export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
 /** The agent gives a session its project's instructions
  *  (SetEnvironmentRequest's `instructions`); an older one ignores them. */
 export const AGENT_FEATURE_INSTRUCTIONS = "project-instructions";
+
+/** The agent warms a ready box (POST/GET /warm) and runs a session's warm
+ *  and start hooks. */
+export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
+
+/** POST /warm (the listing token): warm a ready box, a checkout of the base
+ *  branch with the project's files in it and its warm hook run there. */
+export const WarmRequest = z
+  .object({
+    baseBranch: z.string().min(1),
+    env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string()).optional(),
+    files: z.record(z.string(), z.string()).optional(),
+    hook: z.string().max(64 * 1024).optional(),
+  })
+  .strict();
+export type WarmRequest = z.infer<typeof WarmRequest>;
+
+/** GET /warm: how the box's warming went, with the end of its log. */
+export const WarmStatus = z
+  .object({
+    state: z.enum(["", "running", "succeeded", "failed"]),
+    baseBranch: z.string().optional(),
+    startedAt: z.string().optional(),
+    finishedAt: z.string().optional(),
+    exitCode: z.number().int().optional(),
+    log: z.string().optional(),
+  })
+  .strict();
+export type WarmStatus = z.infer<typeof WarmStatus>;
 
 /** What an agent can do that an older one can't: `restore-imports` restores
  *  an imported session (compressed downloads, its branch renamed, its
@@ -584,6 +618,8 @@ export const PROTOCOL_SCHEMAS = {
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  WarmRequest,
+  WarmStatus,
   ProvideSecretsRequest,
   SetEnvironmentRequest,
   SetAgentConfigRequest,

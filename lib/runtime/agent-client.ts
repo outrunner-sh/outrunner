@@ -12,6 +12,8 @@ import {
   AgentHealth,
   AnswerRequest,
   ProvideSecretsRequest,
+  WarmRequest,
+  WarmStatus,
   ArchiveWorkspaceRequest,
   CreateWorkspaceRequest,
   EditorResponse,
@@ -279,6 +281,17 @@ export class AgentClient {
   async activity(box: Omit<WorkspaceIdentity, "workspaceId">): Promise<Activity> {
     const raw = await this.get("/activity", { ...box, workspaceId: LISTING_WORKSPACE_ID });
     return Activity.parse(raw);
+  }
+
+  /** Start warming a ready box (POST /warm): box-wide, so the listing
+   *  token. A box warming already answers 409 CONFLICT. */
+  startWarm(box: Omit<WorkspaceIdentity, "workspaceId">, req: WarmRequest): Promise<unknown> {
+    return this.post("/warm", { ...box, workspaceId: LISTING_WORKSPACE_ID }, WarmRequest.parse(req));
+  }
+
+  /** How the box's warming went (GET /warm). */
+  async warmStatus(box: Omit<WorkspaceIdentity, "workspaceId">): Promise<WarmStatus> {
+    return WarmStatus.parse(await this.get("/warm", { ...box, workspaceId: LISTING_WORKSPACE_ID }));
   }
 
   /**

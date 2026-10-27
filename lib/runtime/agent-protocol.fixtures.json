@@ -416,7 +416,8 @@
         "ports",
         "codex-gateway",
         "project-instructions",
-        "request-secrets"
+        "request-secrets",
+        "warm-hooks"
       ]
     }
   ],
@@ -469,10 +470,43 @@
         "apps/backend/.env": "JWT_SECRET=x\n"
       },
       "setup": "bun install",
-      "instructions": "Use pnpm. Run pnpm test before opening a PR."
+      "instructions": "Use pnpm. Run pnpm test before opening a PR.",
+      "warmHook": "pnpm install",
+      "startHook": "docker compose up -d db"
     },
     {
       "env": {}
+    }
+  ],
+  "WarmRequest": [
+    {
+      "baseBranch": "main",
+      "env": {
+        "NPM_TOKEN": "npm_x"
+      },
+      "files": {
+        "apps/api/.env": "X=1\n"
+      },
+      "hook": "pnpm install"
+    },
+    {
+      "baseBranch": "main"
+    }
+  ],
+  "WarmStatus": [
+    {
+      "state": "succeeded",
+      "baseBranch": "main",
+      "startedAt": "2026-10-27T10:00:00Z",
+      "finishedAt": "2026-10-27T10:03:00Z",
+      "log": "done\n"
+    },
+    {
+      "state": "failed",
+      "exitCode": 1
+    },
+    {
+      "state": ""
     }
   ],
   "ProvideSecretsRequest": [

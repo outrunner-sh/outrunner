@@ -173,6 +173,10 @@ export type RuntimeComputer = {
   /** Made ready ahead of a session and stopped, for the next new session of
    *  its project to take (lib/runtime/warm-pool.ts). */
   pooled: boolean;
+  /** Which of the project's ready boxes it is: 0 or 1. */
+  poolSlot: number;
+  /** The project setup's generation it was made from; null before. */
+  generation: number | null;
   status: RuntimeComputerStatus;
   /** Frozen image tag this box was built from, e.g. `v1`. */
   imageVersion: string;

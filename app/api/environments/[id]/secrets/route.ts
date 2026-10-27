@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
@@ -6,6 +6,7 @@ import { EnvironmentConflictError, editEnvironmentSecrets, getEnvironment } from
 import { EnvironmentRuleError } from "@/lib/environments/rules";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
+import { refillAfterChange } from "@/lib/runtime/warm-pool.deps";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -42,7 +43,10 @@ export async function PATCH(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Project not found." }, { status: 404 });
     }
     try {
-      return NextResponse.json(await editEnvironmentSecrets(owner.id, id, parsed.data));
+      const kept = await editEnvironmentSecrets(owner.id, id, parsed.data);
+      // Ready boxes were warmed with the old ones: made again.
+      after(() => refillAfterChange(owner.id, id));
+      return NextResponse.json(kept);
     } catch (error) {
       if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
       if (error instanceof EnvironmentConflictError) return NextResponse.json({ error: error.message }, { status: 409 });

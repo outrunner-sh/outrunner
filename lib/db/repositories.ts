@@ -459,11 +459,17 @@ export async function claimRuntimeComputer(input: {
  * still stopped, for its setup to start again. The box's id, or null when
  * there's none to take, or before the warm pool's migration.
  */
-export async function claimPooledComputer(workspaceId: string, provider: ProviderName): Promise<string | null> {
+export async function claimPooledComputer(
+  workspaceId: string,
+  provider: ProviderName,
+  /** Only a box made from this generation of the project's setup; null: any. */
+  generation: number | null = null,
+): Promise<string | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("claim_pooled_computer", {
     requested_workspace_id: workspaceId,
     requested_provider: provider,
+    ...(generation !== null && { requested_generation: generation }),
   });
   // Before the migration: no function to call, or no column. No pool, then.
   if (error && (error.code === "PGRST202" || error.code === "42883" || probeStatus(error) === "outdated")) {
@@ -474,26 +480,27 @@ export async function claimPooledComputer(workspaceId: string, provider: Provide
   return typeof data === "string" ? data : null;
 }
 
-/** The project's pooled box, if it has one, in whatever state. */
-export async function getPooledComputer(projectId: string): Promise<RuntimeComputer | null> {
+/** The project's pooled boxes, in whatever state. */
+export async function getPooledComputers(projectId: string): Promise<RuntimeComputer[]> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .select("*")
     .eq("project_id", projectId)
-    .eq("pooled", true)
-    .maybeSingle();
+    .eq("pooled", true);
   if (error) throw error;
-  return data ? toRuntimeComputer(data) : null;
+  return (data ?? []).map(toRuntimeComputer);
 }
 
-/** Start the project's pooled box's row: null when it has one already (the
- *  unique index says so), so two refills make one box. */
+/** Start a pooled box's row in `slot`: null when the slot is taken (the
+ *  unique index says so), so two refills make one box a slot. */
 export async function createPooledComputer(input: {
   ownerId: string;
   projectId: string;
   provider: ProviderName;
   agentSecret: string;
+  slot: number;
+  generation: number | null;
 }): Promise<RuntimeComputer | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -505,6 +512,8 @@ export async function createPooledComputer(input: {
       agent_secret: input.agentSecret,
       status: "provisioning",
       pooled: true,
+      pool_slot: input.slot,
+      ...(input.generation !== null && { generation: input.generation }),
     })
     .select("*")
     .single();

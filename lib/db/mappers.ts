@@ -110,6 +110,8 @@ export function toRuntimeComputer(
     // `?? null`: a deploy can run before the migration that adds the column.
     workspaceId: row.workspace_id ?? null,
     pooled: row.pooled ?? false,
+    poolSlot: row.pool_slot ?? 0,
+    generation: row.generation ?? null,
     status: row.status,
     imageVersion: row.image_version,
     daytonaSandboxId: row.daytona_sandbox_id,
