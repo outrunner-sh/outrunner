@@ -253,8 +253,12 @@ export async function POST(request: Request, context: RouteContext) {
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
 
   // The project the session starts from: the repository's own, made on its
-  // first session.
-  const environmentId = await defaultEnvironmentId(owner.id, project.id);
+  // first session. A failure here doesn't stop the session: with none
+  // recorded, its setup looks the project up again (setUpSession).
+  const environmentId = await defaultEnvironmentId(owner.id, project.id).catch((error: unknown) => {
+    console.error(`Project for ${project.fullName} couldn't be found or made`, error);
+    return null;
+  });
 
   let workspace;
   try {

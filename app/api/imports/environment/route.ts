@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { mergeIntoDefaultEnvironment } from "@/lib/db/environments";
+import { EnvironmentConflictError, mergeIntoDefaultEnvironment } from "@/lib/db/environments";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { getGitHubRepository } from "@/lib/github/client";
 import { connectRepositories } from "@/lib/github/connect";
@@ -53,6 +53,9 @@ export async function POST(request: Request) {
     }
     if (error instanceof EnvironmentRuleError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof EnvironmentConflictError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     return (
       databaseNotUpdated(error, `${parsed.data.repo}'s environment`) ??

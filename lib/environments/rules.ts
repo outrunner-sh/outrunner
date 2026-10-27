@@ -48,9 +48,16 @@ export function checkoutNameFor(repoName: string): string {
   return name === "" || name === "." || name === ".." ? "repo" : name;
 }
 
+/** A string's length as the agent measures it: UTF-8 bytes, not the UTF-16
+ *  units `.length` counts, so non-ASCII text isn't let through here and
+ *  refused when a session starts. */
+export function utf8Bytes(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
 /** The bytes the agent counts for a set of variables: each `export NAME='value'` line. */
 export function envBytes(env: Record<string, string>): number {
-  return Object.entries(env).reduce((n, [k, v]) => n + k.length + v.length + 16, 0);
+  return Object.entries(env).reduce((n, [k, v]) => n + utf8Bytes(k) + utf8Bytes(v) + 16, 0);
 }
 
 /** A file's path as the agent takes it: relative, inside the checkout,
@@ -80,10 +87,20 @@ export function applySecretsEdit(current: EnvironmentSecrets, edit: SecretsEdit)
   if (envBytes(env) > MAX_ENV_BYTES) throw new EnvironmentRuleError("Those variables are larger than a session takes (256 KB).");
   const paths = Object.keys(files);
   if (paths.length > MAX_FILES) throw new EnvironmentRuleError(`A project keeps at most ${MAX_FILES} files.`);
-  if (Object.values(files).reduce((n, c) => n + c.length, 0) > MAX_FILES_BYTES) {
+  if (Object.values(files).reduce((n, c) => n + utf8Bytes(c), 0) > MAX_FILES_BYTES) {
     throw new EnvironmentRuleError("Those files are larger than a session takes (1 MB).");
   }
   return { env, files };
+}
+
+/** Instructions, trimmed, empty as null: at most 16 KB, measured as the
+ *  agent measures them. */
+export function instructionsText(value: string | null): string | null {
+  const trimmed = value?.trim() ?? "";
+  if (utf8Bytes(trimmed) > MAX_INSTRUCTIONS || trimmed.includes("\0")) {
+    throw new EnvironmentRuleError("The instructions are larger than a session takes (16 KB).");
+  }
+  return trimmed === "" ? null : trimmed;
 }
 
 /** A name, trimmed, or why it can't be one. */
@@ -105,7 +122,7 @@ export function optionalText(value: string | null, max: number, what: string): s
  *  trailing newline and all). */
 export function script(value: string | null, what: string): string | null {
   if (value === null || value.trim() === "") return null;
-  if (value.length > MAX_SCRIPT_BYTES || value.includes("\0")) {
+  if (utf8Bytes(value) > MAX_SCRIPT_BYTES || value.includes("\0")) {
     throw new EnvironmentRuleError(`The ${what} is larger than a session takes (64 KB).`);
   }
   return value;

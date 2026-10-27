@@ -6,7 +6,7 @@ import { getEnvironment, updateEnvironment, type EnvironmentPatch } from "@/lib/
 import {
   EnvironmentRuleError,
   MAX_DESCRIPTION,
-  MAX_INSTRUCTIONS,
+  instructionsText,
   optionalText,
   projectName,
   script,
@@ -67,7 +67,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       ...(body.name !== undefined && { name: projectName(body.name) }),
       ...(body.description !== undefined && { description: optionalText(body.description, MAX_DESCRIPTION, "A description") }),
       ...(body.instructions !== undefined && {
-        instructions: optionalText(body.instructions, MAX_INSTRUCTIONS, "The instructions"),
+        instructions: instructionsText(body.instructions),
       }),
       ...(body.scripts && {
         scripts: {

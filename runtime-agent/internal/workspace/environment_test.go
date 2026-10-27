@@ -175,7 +175,13 @@ func TestInstructionsFollowTheOrientation(t *testing.T) {
 	if o := s.orientation("ws1", wt); o != plain {
 		t.Errorf("orientation after removing = %q, want %q", o, plain)
 	}
-	if err := s.SetInstructions("ws1", strings.Repeat("x", maxInstructionsBytes+1)); !errors.Is(err, ErrInvalidEnvironment) {
+	// Measured in bytes: 16 KB of characters that take three bytes each is
+	// three times too much.
+	tooLarge := strings.Repeat("界", maxInstructionsBytes/3+1)
+	if err := ValidInstructions(tooLarge); !errors.Is(err, ErrInvalidEnvironment) {
+		t.Errorf("ValidInstructions(too large) = %v, want ErrInvalidEnvironment", err)
+	}
+	if err := s.SetInstructions("ws1", tooLarge); !errors.Is(err, ErrInvalidEnvironment) {
 		t.Errorf("too large: %v, want ErrInvalidEnvironment", err)
 	}
 }

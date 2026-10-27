@@ -124,6 +124,20 @@ async function environmentRepos(ownerId: string, environmentId: string): Promise
   });
 }
 
+/** The id of the repository's default project, or null when it has none
+ *  yet (or before the migration that adds projects). Makes nothing. */
+export async function findDefaultEnvironmentId(ownerId: string, projectId: string): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("environments")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .eq("default_for_project_id", projectId)
+    .maybeSingle();
+  if (error && probeStatus(error) === "missing") return null;
+  if (error) throw error;
+  return data?.id ?? null;
+}
+
 /**
  * The id of the repository's default project, made now if it has none; null
  * when the owner has no such repository, or before the migration that adds
@@ -244,36 +258,58 @@ export async function updateEnvironment(ownerId: string, id: string, patch: Envi
   if (error) throw error;
 }
 
+/** Another save kept changing the project's secrets while this one tried
+ *  to; nothing of this one was saved. */
+export class EnvironmentConflictError extends Error {
+  constructor() {
+    super("The project changed while saving. Try again.");
+  }
+}
+
+/** How many times an edit is tried again after losing a race with another. */
+const EDIT_TRIES = 3;
+
 /** Set and remove the project's variables and files (rules.applySecretsEdit
  *  refuses what a session can't take), resealed whole. The names and paths
- *  it keeps after. */
+ *  it keeps after.
+ *
+ *  The secrets are one sealed value, read, changed and written back, so two
+ *  edits at once (two tabs, the Mac import beside the settings page) would
+ *  each write what they read and the later one drop the earlier's. The write
+ *  only lands if the row is as it was read (its updated_at, which every
+ *  write moves); otherwise the edit is made again on what is there now. */
 export async function editEnvironmentSecrets(
   ownerId: string,
   id: string,
   edit: SecretsEdit,
 ): Promise<{ envNames: string[]; filePaths: string[] }> {
   const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("environments")
-    .select("secrets_ciphertext")
-    .eq("owner_id", ownerId)
-    .eq("id", id)
-    .single();
-  if (error) throw error;
-  const next = applySecretsEdit(openSecrets(id, data.secrets_ciphertext), edit);
-  const envNames = Object.keys(next.env).sort();
-  const filePaths = Object.keys(next.files).sort();
-  const { error: updateError } = await supabase
-    .from("environments")
-    .update({
-      secrets_ciphertext: envNames.length + filePaths.length > 0 ? seal(JSON.stringify(next)) : null,
-      env_names: envNames,
-      file_paths: filePaths,
-    })
-    .eq("owner_id", ownerId)
-    .eq("id", id);
-  if (updateError) throw updateError;
-  return { envNames, filePaths };
+  for (let attempt = 0; attempt < EDIT_TRIES; attempt++) {
+    const { data, error } = await supabase
+      .from("environments")
+      .select("secrets_ciphertext, updated_at")
+      .eq("owner_id", ownerId)
+      .eq("id", id)
+      .single();
+    if (error) throw error;
+    const next = applySecretsEdit(openSecrets(id, data.secrets_ciphertext), edit);
+    const envNames = Object.keys(next.env).sort();
+    const filePaths = Object.keys(next.files).sort();
+    const { data: written, error: updateError } = await supabase
+      .from("environments")
+      .update({
+        secrets_ciphertext: envNames.length + filePaths.length > 0 ? seal(JSON.stringify(next)) : null,
+        env_names: envNames,
+        file_paths: filePaths,
+      })
+      .eq("owner_id", ownerId)
+      .eq("id", id)
+      .eq("updated_at", data.updated_at)
+      .select("id");
+    if (updateError) throw updateError;
+    if (written.length > 0) return { envNames, filePaths };
+  }
+  throw new EnvironmentConflictError();
 }
 
 /** Keep what the user picked of a repository's environment on their Mac in

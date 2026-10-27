@@ -7,7 +7,7 @@
  * Its collaborators are passed in, so it tests without Next or a database.
  */
 
-import { MAX_ENV_BYTES, MAX_FILES, MAX_FILES_BYTES, MAX_SCRIPT_BYTES, envBytes } from "@/lib/environments/rules";
+import { MAX_ENV_BYTES, MAX_FILES, MAX_FILES_BYTES, MAX_SCRIPT_BYTES, envBytes, utf8Bytes } from "@/lib/environments/rules";
 import { ImportError } from "@/lib/imports/commit";
 import { settableEnv } from "@/lib/imports/settable-env";
 import type { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
@@ -35,13 +35,13 @@ export async function importEnvironment(
     else refused.push(name);
   }
   const files = Object.entries(req.files);
-  const filesBytes = files.reduce((n, [, content]) => n + content.length, 0);
+  const filesBytes = files.reduce((n, [, content]) => n + utf8Bytes(content), 0);
   const scripts = Object.fromEntries(Object.entries(req.scripts ?? {}).filter(([, v]) => v)) as Record<string, string>;
   if (
     envBytes(env) > MAX_ENV_BYTES ||
     files.length > MAX_FILES ||
     filesBytes > MAX_FILES_BYTES ||
-    Object.values(scripts).some((script) => script.length > MAX_SCRIPT_BYTES)
+    Object.values(scripts).some((script) => utf8Bytes(script) > MAX_SCRIPT_BYTES)
   ) {
     throw new ImportError("That environment is larger than a cloud session takes.", 413);
   }

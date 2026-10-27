@@ -5,11 +5,13 @@ import {
   applySecretsEdit,
   checkoutNameFor,
   EnvironmentRuleError,
+  instructionsText,
   MAX_FILES,
   optionalText,
   parseDotenv,
   projectName,
   script,
+  utf8Bytes,
   validFilePath,
 } from "@/lib/environments/rules";
 
@@ -77,4 +79,16 @@ test("names, text and scripts are trimmed or refused", () => {
   assert.throws(() => optionalText("x".repeat(11), 10, "x"), EnvironmentRuleError);
   assert.equal(script("  \n", "setup script"), null);
   assert.equal(script("#!/bin/bash\npnpm install\n", "setup script"), "#!/bin/bash\npnpm install\n");
+});
+
+test("limits are measured in UTF-8 bytes, as the agent measures them", () => {
+  // Three bytes a character: under the limit in characters, over it in bytes.
+  const wide = "界".repeat(Math.floor((16 * 1024) / 3) + 1);
+  assert.throws(() => instructionsText(wide), EnvironmentRuleError);
+  assert.equal(instructionsText("  Use pnpm.  "), "Use pnpm.");
+  assert.equal(instructionsText(" "), null);
+  assert.equal(utf8Bytes("é界"), 5);
+  assert.throws(() => script("界".repeat(Math.floor((64 * 1024) / 3) + 1), "setup script"), EnvironmentRuleError);
+  const files = { big: "界".repeat(Math.floor((1024 * 1024) / 3) + 1) };
+  assert.throws(() => applySecretsEdit({ env: {}, files: {} }, { setFiles: files }), EnvironmentRuleError);
 });

@@ -669,7 +669,12 @@ func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	err := s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
+	// Checked first, so a refusal changes nothing: not the variables, files
+	// and setup without the instructions.
+	err := workspace.ValidInstructions(req.Instructions)
+	if err == nil {
+		err = s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
+	}
 	if err == nil {
 		err = s.ws.SetInstructions(r.PathValue("id"), req.Instructions)
 	}

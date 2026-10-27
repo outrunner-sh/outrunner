@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
-import { defaultEnvironmentId, environmentHasSetup } from "@/lib/db/environments";
+import { environmentHasSetup, findDefaultEnvironmentId } from "@/lib/db/environments";
 import { hasProjectEnvironment } from "@/lib/db/project-environment";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -23,9 +23,10 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
   try {
-    // The repository's project; before the migration that adds projects,
-    // what was kept for the repository itself.
-    const environmentId = await defaultEnvironmentId(owner.id, id);
+    // The repository's project, if it has one yet (a GET makes none: its
+    // first session does); otherwise what was kept for the repository
+    // itself, before the migration that adds projects.
+    const environmentId = await findDefaultEnvironmentId(owner.id, id);
     const kept = environmentId
       ? await environmentHasSetup(owner.id, environmentId)
       : await hasProjectEnvironment(owner.id, id);

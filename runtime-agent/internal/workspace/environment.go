@@ -83,13 +83,23 @@ func (s *Service) instructionsPath(workspaceID string) string {
 	return filepath.Join(s.Root, "instructions", workspaceID+".md")
 }
 
+// ValidInstructions accepts instructions a session can take, so a caller can
+// check them before changing anything else.
+func ValidInstructions(instructions string) error {
+	instructions = strings.TrimSpace(instructions)
+	if len(instructions) > maxInstructionsBytes || strings.ContainsRune(instructions, 0) {
+		return fmt.Errorf("%w: instructions too large", ErrInvalidEnvironment)
+	}
+	return nil
+}
+
 // SetInstructions gives a session its project's instructions for the agent,
 // replacing any it had; empty removes them. They apply at its next launch,
 // after Outrunner's orientation (orientation).
 func (s *Service) SetInstructions(workspaceID, instructions string) error {
 	instructions = strings.TrimSpace(instructions)
-	if len(instructions) > maxInstructionsBytes || strings.ContainsRune(instructions, 0) {
-		return fmt.Errorf("%w: instructions too large", ErrInvalidEnvironment)
+	if err := ValidInstructions(instructions); err != nil {
+		return err
 	}
 	path := s.instructionsPath(workspaceID)
 	if instructions == "" {
