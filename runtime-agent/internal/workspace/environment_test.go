@@ -149,3 +149,33 @@ func TestReservedEnvMatchesTheSharedList(t *testing.T) {
 		t.Errorf("reservedEnv = %v, the shared list = %v", reservedEnv, shared)
 	}
 }
+
+// A project's instructions follow Outrunner's orientation at every launch,
+// until they are taken away; too much is refused.
+func TestInstructionsFollowTheOrientation(t *testing.T) {
+	s := NewService(t.TempDir())
+	s.setFacts("ws1", workspaceFacts{Branch: "b", BaseBranch: "main"})
+	wt := t.TempDir()
+	plain := s.orientation("ws1", wt)
+
+	if err := s.SetInstructions("ws1", "  Use pnpm. Run pnpm test before a PR.\n"); err != nil {
+		t.Fatal(err)
+	}
+	o := s.orientation("ws1", wt)
+	if !strings.HasPrefix(o, plain) || !strings.HasSuffix(o, "\n\nUse pnpm. Run pnpm test before a PR.") {
+		t.Errorf("orientation = %q, want the instructions after %q", o, plain)
+	}
+	if info, err := os.Stat(s.instructionsPath("ws1")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("instructions file: %v %v", info, err)
+	}
+
+	if err := s.SetInstructions("ws1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if o := s.orientation("ws1", wt); o != plain {
+		t.Errorf("orientation after removing = %q, want %q", o, plain)
+	}
+	if err := s.SetInstructions("ws1", strings.Repeat("x", maxInstructionsBytes+1)); !errors.Is(err, ErrInvalidEnvironment) {
+		t.Errorf("too large: %v, want ErrInvalidEnvironment", err)
+	}
+}

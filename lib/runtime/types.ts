@@ -114,6 +114,9 @@ export type Workspace = {
   tmuxSession: string | null;
   /** Agent-side workspace identifier, as known to the runtime-agent. */
   agentWorkspaceId: string | null;
+  /** The project (an `environments` row) it started from; null for a
+   *  session from before projects. */
+  environmentId: string | null;
   /** The coding agent the session runs, for good: its model can change only
    *  to another this agent runs. */
   agent: AgentId;

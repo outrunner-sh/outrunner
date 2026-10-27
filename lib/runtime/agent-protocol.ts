@@ -84,6 +84,9 @@ export const SetEnvironmentRequest = z
       )
       .optional(),
     setup: z.string().max(64 * 1024).optional(),
+    /** The project's instructions for its agent, after Outrunner's own at
+     *  every launch (AGENT_FEATURE_INSTRUCTIONS). */
+    instructions: z.string().max(16 * 1024).optional(),
   })
   .strict();
 export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
@@ -109,6 +112,10 @@ export const AGENT_FEATURE_AGENT_CONFIG = "agent-config";
 
 /** The agent takes a session's environment (POST /workspaces/{id}/environment). */
 export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
+
+/** The agent gives a session its project's instructions
+ *  (SetEnvironmentRequest's `instructions`); an older one ignores them. */
+export const AGENT_FEATURE_INSTRUCTIONS = "project-instructions";
 
 /** What an agent can do that an older one can't: `restore-imports` restores
  *  an imported session (compressed downloads, its branch renamed, its

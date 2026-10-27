@@ -7,17 +7,12 @@
  * Its collaborators are passed in, so it tests without Next or a database.
  */
 
+import { MAX_ENV_BYTES, MAX_FILES, MAX_FILES_BYTES, MAX_SCRIPT_BYTES, envBytes } from "@/lib/environments/rules";
 import { ImportError } from "@/lib/imports/commit";
 import { settableEnv } from "@/lib/imports/settable-env";
 import type { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
 
 export { RESERVED_ENV, settableEnv } from "@/lib/imports/settable-env";
-
-/** The bounds the agent holds a session's environment to. */
-const MAX_ENV_BYTES = 256 * 1024;
-const MAX_FILES = 100;
-const MAX_FILES_BYTES = 1024 * 1024;
-const MAX_SCRIPT_BYTES = 64 * 1024;
 
 export type EnvironmentDeps = {
   /** The owner's project for the repository, connected if it isn't yet; null
@@ -39,12 +34,11 @@ export async function importEnvironment(
     if (settableEnv(name) && !value.includes("\0")) env[name] = value;
     else refused.push(name);
   }
-  const envBytes = Object.entries(env).reduce((n, [k, v]) => n + k.length + v.length + 16, 0);
   const files = Object.entries(req.files);
   const filesBytes = files.reduce((n, [, content]) => n + content.length, 0);
   const scripts = Object.fromEntries(Object.entries(req.scripts ?? {}).filter(([, v]) => v)) as Record<string, string>;
   if (
-    envBytes > MAX_ENV_BYTES ||
+    envBytes(env) > MAX_ENV_BYTES ||
     files.length > MAX_FILES ||
     filesBytes > MAX_FILES_BYTES ||
     Object.values(scripts).some((script) => script.length > MAX_SCRIPT_BYTES)

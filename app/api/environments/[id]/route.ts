@@ -1,0 +1,90 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+
+import { getOwner } from "@/lib/auth/owner";
+import { getEnvironment, updateEnvironment, type EnvironmentPatch } from "@/lib/db/environments";
+import {
+  EnvironmentRuleError,
+  MAX_DESCRIPTION,
+  MAX_INSTRUCTIONS,
+  optionalText,
+  projectName,
+  script,
+} from "@/lib/environments/rules";
+import { isSameOriginRequest } from "@/lib/http/guards";
+import { savingSettings, signInFirst } from "@/lib/http/settings-save";
+
+type RouteContext = { params: Promise<{ id: string }> };
+
+/**
+ * A project (an `environments` row; lib/db/environments.ts) for its settings
+ * page. GET returns it with its variables' names and its files' paths, never
+ * their values. PATCH changes its name, description, instructions or scripts;
+ * a field left out is left as it is, an empty one is cleared.
+ */
+
+const Patch = z
+  .object({
+    name: z.string().optional(),
+    description: z.string().nullable().optional(),
+    instructions: z.string().nullable().optional(),
+    scripts: z
+      .object({ setup: z.string().nullable(), run: z.string().nullable(), archive: z.string().nullable() })
+      .partial()
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+function notFound() {
+  return NextResponse.json({ error: "Project not found." }, { status: 404 });
+}
+
+export async function GET(_request: Request, context: RouteContext) {
+  const owner = await getOwner();
+  if (!owner) return signInFirst();
+  const { id } = await context.params;
+  if (!z.string().uuid().safeParse(id).success) return notFound();
+  const environment = await getEnvironment(owner.id, id);
+  return environment ? NextResponse.json(environment) : notFound();
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
+  }
+  const owner = await getOwner();
+  if (!owner) return signInFirst();
+  const { id } = await context.params;
+  if (!z.string().uuid().safeParse(id).success) return notFound();
+  const parsed = Patch.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "That isn't a change a project takes." }, { status: 400 });
+
+  const body = parsed.data;
+  let patch: EnvironmentPatch;
+  try {
+    patch = {
+      ...(body.name !== undefined && { name: projectName(body.name) }),
+      ...(body.description !== undefined && { description: optionalText(body.description, MAX_DESCRIPTION, "A description") }),
+      ...(body.instructions !== undefined && {
+        instructions: optionalText(body.instructions, MAX_INSTRUCTIONS, "The instructions"),
+      }),
+      ...(body.scripts && {
+        scripts: {
+          ...(body.scripts.setup !== undefined && { setup: script(body.scripts.setup, "setup script") }),
+          ...(body.scripts.run !== undefined && { run: script(body.scripts.run, "run script") }),
+          ...(body.scripts.archive !== undefined && { archive: script(body.scripts.archive, "archive script") }),
+        },
+      }),
+    };
+  } catch (error) {
+    if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
+    throw error;
+  }
+
+  return savingSettings("project settings", async () => {
+    if (!(await getEnvironment(owner.id, id))) return notFound();
+    await updateEnvironment(owner.id, id, patch);
+    return NextResponse.json(await getEnvironment(owner.id, id));
+  });
+}

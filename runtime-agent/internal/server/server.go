@@ -135,7 +135,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions},
 	})
 }
 
@@ -670,6 +670,9 @@ func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
+	if err == nil {
+		err = s.ws.SetInstructions(r.PathValue("id"), req.Instructions)
+	}
 	if errors.Is(err, workspace.ErrInvalidEnvironment) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return

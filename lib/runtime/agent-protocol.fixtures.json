@@ -414,7 +414,8 @@
         "restore-model",
         "editor",
         "ports",
-        "codex-gateway"
+        "codex-gateway",
+        "project-instructions"
       ]
     }
   ],
@@ -466,7 +467,8 @@
       "files": {
         "apps/backend/.env": "JWT_SECRET=x\n"
       },
-      "setup": "bun install"
+      "setup": "bun install",
+      "instructions": "Use pnpm. Run pnpm test before opening a PR."
     },
     {
       "env": {}

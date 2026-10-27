@@ -25,6 +25,7 @@ import {
   recordWorkspaceModel,
   transitionWorkspace,
 } from "@/lib/db/repositories";
+import { defaultEnvironmentId } from "@/lib/db/environments";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import { branchTakenResponse, isUniqueViolation, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
@@ -251,11 +252,16 @@ export async function POST(request: Request, context: RouteContext) {
   const gate = await cloudBoxStartGate(owner, provider.name, null);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
 
+  // The project the session starts from: the repository's own, made on its
+  // first session.
+  const environmentId = await defaultEnvironmentId(owner.id, project.id);
+
   let workspace;
   try {
     workspace = await createWorkspaceRow({
       ownerId: owner.id,
       projectId: project.id,
+      environmentId,
       branch: requestedBranch || generatedBranch(),
       baseBranch: project.defaultBranch,
       provider: provider.name,
@@ -467,7 +473,7 @@ async function provisionWorkspace({
       await setPhase("secrets");
       await deliverSessionAuth(signIn, agentId, auth);
       // And with the user's own setup and its project's environment.
-      await setUpSession(agent, identity, upgrade, owner.id, project.id);
+      await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
       // Before the first launch, so Claude starts on it rather than switching.
       const startsOn = await startingModel({
         setModel: (req) => agent.setModel(identity, req),
