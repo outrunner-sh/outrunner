@@ -14,6 +14,7 @@ import {
   userControlsInstallation,
 } from "@/lib/github/app";
 import { handleAppEvent } from "@/lib/github/app-events";
+import { GitHubSyncError } from "@/lib/github/client";
 import { completeSetup, installCookieValue, readInstallCookie, type SetupDeps } from "@/lib/github/app-setup";
 import {
   type Installation,
@@ -343,6 +344,28 @@ test("an installation on an organization takes one of its owners", async () => {
   assert.equal(await userControlsInstallation(config, installation, user), "not_yours");
   stub(null, { "neevai-labs/a": true, "neevai-labs/b": true });
   assert.equal(await userControlsInstallation(config, installation, { login: "x", token: null }), "not_yours");
+});
+
+test("a membership GitHub won't read is GitHub's failure, not a missing permission", async () => {
+  for (const status of [403, 500]) {
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+      if (String(input).endsWith("/access_tokens")) {
+        return Promise.resolve(Response.json({ token: "ghs_x", expires_at: "2026-10-28T12:00:00Z" }, { status: 201 }));
+      }
+      return Promise.resolve(new Response("{}", { status }));
+    }) as typeof fetch;
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      await assert.rejects(
+        userControlsInstallation(config, { ...installation, repositorySelection: "all" }, { login: "x", token: "t" }),
+        GitHubSyncError,
+        String(status),
+      );
+    } finally {
+      console.error = originalError;
+    }
+  }
 });
 
 test("an install that hasn't approved reading members still links by its repositories' admin", async () => {

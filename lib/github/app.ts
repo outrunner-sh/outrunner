@@ -283,8 +283,8 @@ export type InstallationControl = "controls" | "not_yours" | "members_unreadable
 /** Whether `login` is an active owner (admin) of the installation's
  *  organization, read as the app. "unknown" when the app can't read members:
  *  an organization that installed it before Organization members: read was
- *  added hasn't approved it yet (GitHub then refuses the token itself, 422),
- *  or the registration lacks it. */
+ *  added hasn't approved it yet, or the registration lacks it: GitHub then
+ *  refuses the token itself (422). */
 async function isOrganizationOwner(
   config: GitHubAppConfig,
   installation: Installation,
@@ -305,10 +305,8 @@ async function isOrganizationOwner(
   const org = encodeURIComponent(installation.accountLogin);
   const response = await githubGet(`https://api.github.com/orgs/${org}/memberships/${encodeURIComponent(login)}`, token);
   if (response.status === 404) return false;
-  if (response.status === 403) {
-    console.warn("GitHub App couldn't read an organization membership: does it have Organization members: read?");
-    return "unknown";
-  }
+  // Not a 403 for an unapproved permission: the token above was granted it,
+  // so this is an IP allow list, SSO or a rate limit, and GitHub's to answer.
   if (!response.ok) {
     console.error("GitHub App's membership read was rejected", { status: response.status });
     throw new GitHubSyncError("GitHub didn't answer for the Outrunner app. Try again.", response.status);
