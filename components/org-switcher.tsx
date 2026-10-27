@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, ChevronsUpDown, CreditCard, Plus, Settings, Terminal, Users } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, Settings, Terminal, Users } from "lucide-react";
 import { useState } from "react";
 
 import { CreateOrgDialog } from "@/components/create-org-dialog";
@@ -20,9 +20,9 @@ import { requestJson } from "@/lib/http/request-json";
 
 /**
  * The org the sidebar lists, as its header: Outrunner's mark and the org's
- * name, opening onto
- * where it's set up (settings, billing, members) and the user's other orgs to
- * switch to, or a new team org. Switching goes home, since the session open
+ * name, opening onto where it's set up (settings, members) and the user's
+ * other orgs to switch to, or a new team org. Not billing: a plan is the
+ * account's, not an org's (Settings → Billing). Switching goes home, since the session open
  * may be in the org left behind.
  */
 export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: string | null }) {
@@ -75,11 +75,6 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
           <DropdownMenuItem asChild className="gap-2">
             <Link href="/settings/org">
               <Settings className="size-4" /> Organization settings
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild className="gap-2">
-            <Link href="/settings/billing">
-              <CreditCard className="size-4" /> Billing
             </Link>
           </DropdownMenuItem>
           {/* A personal org is the user alone. */}
