@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Check, ChevronsUpDown, Plus, Settings, Terminal, Users } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { CreateOrgDialog } from "@/components/create-org-dialog";
 import {
@@ -30,6 +30,13 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
   const active = orgs.find((o) => o.id === activeOrgId) ?? orgs[0];
   const [switching, setSwitching] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // It floats over the nav, so it doesn't stay: gone after a while, on a
+  // click, or as the menu opens again.
+  useEffect(() => {
+    if (!error) return;
+    const clear = setTimeout(() => setError(null), ERROR_SHOWN_MS);
+    return () => clearTimeout(clear);
+  }, [error]);
   const [creating, setCreating] = useState(false);
 
   const show = async (org: Org) => {
@@ -54,7 +61,7 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
   if (!active) return null;
   return (
     <div className="relative min-w-0 flex-1">
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={(open) => open && setError(null)}>
         <DropdownMenuTrigger
           className="-ml-1 flex min-w-0 max-w-full items-center gap-2 rounded-md px-1 py-1 text-sm font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
           aria-label={`Org: ${active.name}. Switch org`}
@@ -105,17 +112,23 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
       </DropdownMenu>
       {/* Under the header, not in its row: the row stays as it is. */}
       {error ? (
-        <p
+        <button
+          type="button"
           role="alert"
-          className="absolute left-0 top-full z-10 mt-1 w-56 rounded-md border border-border bg-popover px-2 py-1.5 text-xs text-destructive shadow-md"
+          onClick={() => setError(null)}
+          title="Dismiss"
+          className="absolute left-0 top-full z-10 mt-1 w-56 rounded-md border border-border bg-popover px-2 py-1.5 text-left text-xs text-destructive shadow-md"
         >
           {error}
-        </p>
+        </button>
       ) : null}
       <CreateOrgDialog open={creating} onOpenChange={setCreating} />
     </div>
   );
 }
+
+/** How long a failed switch's message stays over the nav. */
+const ERROR_SHOWN_MS = 6000;
 
 /** The org's mark: Outrunner's, the same for every org. */
 function OrgMark({ size }: { size: "sm" | "lg" }) {
