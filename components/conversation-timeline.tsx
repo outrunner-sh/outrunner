@@ -29,7 +29,7 @@ import {
   toolRow,
   workingElapsed,
 } from "@/lib/runtime/conversation-format";
-import { isInterruption } from "@/lib/runtime/conversation-events";
+import { claudeIsWorking } from "@/lib/runtime/conversation-events";
 import {
   type ConversationNode,
   conversationNodes,
@@ -231,28 +231,6 @@ function TurnRail({
       ))}
     </nav>
   );
-}
-
-/** Whether Claude is still working on the current turn — so the moving indicator
- *  shows through the whole thing, not just the gap before the first reply. It's
- *  working while the latest turn is the user's (a fresh prompt or a tool result
- *  it must act on), or while its own latest turn ended on thinking or a tool_use
- *  (more is coming). A turn that ends in text is Claude done and idle. */
-export function claudeIsWorking(events: AgentEvent[]): boolean {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event.t === "state") {
-      // A terminated session is never "working", whatever the last turn was.
-      if (event.state === "exited" || event.state === "archived") return false;
-      continue;
-    }
-    if (event.t !== "message") continue;
-    // A prompt or a tool result awaiting Claude; not the record of a stop.
-    if (event.role === "user") return !isInterruption(event);
-    const last = event.content[event.content.length - 1];
-    return last ? last.type !== "text" : false;
-  }
-  return false;
 }
 
 /** Live "Claude is working" affordance: a small dot-matrix wave and an elapsed

@@ -46,7 +46,7 @@ test("a kept queue that can't be read sends nothing it can't vouch for", () => {
 });
 
 test("the queue sends only once the turn is over and the session can take it", () => {
-  const ready = { queued: 2, attached: true, working: false, waitingOnUser: false, held: false };
+  const ready = { queued: 2, attached: true, working: false, waitingOnUser: false, held: false, awaitingLast: false };
   assert.equal(queueDrains(ready), true);
   assert.equal(queueDrains({ ...ready, queued: 0 }), false);
   assert.equal(queueDrains({ ...ready, working: true }), false);
@@ -55,4 +55,7 @@ test("the queue sends only once the turn is over and the session can take it", (
   assert.equal(queueDrains({ ...ready, waitingOnUser: true }), false);
   // A send of it failed: held until the user retries.
   assert.equal(queueDrains({ ...ready, held: true }), false);
+  // The last one sent isn't in the conversation yet (a prompt of files alone
+  // shows no bubble meanwhile): the next waits for it, not into its turn.
+  assert.equal(queueDrains({ ...ready, awaitingLast: true }), false);
 });
