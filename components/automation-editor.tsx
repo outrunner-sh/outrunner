@@ -33,7 +33,7 @@ export type AutomationDraft = {
   projectIds: string[];
   enabled: boolean;
   /** Who it runs as, for one that exists: their login, "" when it can't be
-   *  told, null once their account is gone. */
+   *  told, null once they're no longer in the org. */
   runsAs: string | null;
 };
 
@@ -141,7 +141,7 @@ export function AutomationEditor({
               ? "Runs as you, on Outrunner's models and your allowance of them, and posts as the Outrunner GitHub App."
               : `${
                   draft.runsAs === null
-                    ? "Runs as no one: whoever last changed it no longer has an account"
+                    ? `Runs as no one: whoever last changed it is no longer in the org${editable ? ". Save it to run it as you" : ""}`
                     : draft.runsAs === ""
                       ? "Runs as whoever last changed what it does"
                       : `Runs as @${draft.runsAs}`

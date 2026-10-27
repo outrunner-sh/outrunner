@@ -35,9 +35,26 @@ type AutomationRowRead = {
 
 const COLUMNS = "id, name, template, prompt, triggers, enabled, runs_as, created_at";
 
+/**
+ * Of `userIds`, those still members of the org: an automation runs only as
+ * one of them (a runner who left keeps their account, and their allowance
+ * isn't the org's to spend).
+ */
+export async function currentRunners(orgId: string, userIds: readonly string[]): Promise<Set<string>> {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return new Set();
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_members")
+    .select("user_id")
+    .eq("org_id", orgId)
+    .in("user_id", ids);
+  if (error) throw error;
+  return new Set((data ?? []).map((m) => m.user_id));
+}
+
 /** Rows as the page shows them: with their repositories, by name, and the
- *  login of who each runs as. */
-async function withDetails(rows: AutomationRowRead[]): Promise<Automation[]> {
+ *  login of who each runs as (none for a runner no longer in the org). */
+async function withDetails(orgId: string, rows: AutomationRowRead[]): Promise<Automation[]> {
   if (rows.length === 0) return [];
   const supabase = createSupabaseAdminClient();
   const links = await supabase
@@ -49,11 +66,13 @@ async function withDetails(rows: AutomationRowRead[]): Promise<Automation[]> {
     );
   if (links.error) throw links.error;
   const projectIds = [...new Set((links.data ?? []).map((l) => l.project_id))];
-  const [projects, runners] = await Promise.all([
+  const runnerIds = rows.flatMap((r) => (r.runs_as ? [r.runs_as] : []));
+  const [projects, runners, members] = await Promise.all([
     projectIds.length
       ? supabase.from("projects").select("id, full_name").in("id", projectIds)
       : Promise.resolve({ data: [], error: null }),
-    people(rows.flatMap((r) => (r.runs_as ? [r.runs_as] : []))),
+    people(runnerIds),
+    currentRunners(orgId, runnerIds),
   ]);
   if (projects.error) throw projects.error;
   const nameOf = new Map((projects.data ?? []).map((p) => [p.id, p.full_name]));
@@ -71,7 +90,7 @@ async function withDetails(rows: AutomationRowRead[]): Promise<Automation[]> {
     triggers: r.triggers,
     repos: (reposOf.get(r.id) ?? []).sort((a, b) => a.fullName.localeCompare(b.fullName)),
     enabled: r.enabled,
-    runsAs: r.runs_as ? { id: r.runs_as, login: runners.get(r.runs_as)?.login ?? "" } : null,
+    runsAs: r.runs_as && members.has(r.runs_as) ? { id: r.runs_as, login: runners.get(r.runs_as)?.login ?? "" } : null,
     createdAt: r.created_at,
   }));
 }
@@ -84,7 +103,7 @@ export async function listAutomations(orgId: string): Promise<Automation[]> {
     .eq("org_id", orgId)
     .order("created_at", { ascending: true });
   if (error) throw error;
-  return withDetails(data ?? []);
+  return withDetails(orgId, data ?? []);
 }
 
 /** One automation of an org, or null. */
@@ -96,7 +115,7 @@ export async function getAutomation(orgId: string, automationId: string): Promis
     .eq("id", automationId)
     .maybeSingle();
   if (error) throw error;
-  return data ? ((await withDetails([data]))[0] ?? null) : null;
+  return data ? ((await withDetails(orgId, [data]))[0] ?? null) : null;
 }
 
 /** Thrown when an automation names a repository that isn't the org's. */

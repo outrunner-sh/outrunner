@@ -48,7 +48,7 @@ async function AutomationSection({ params }: { params: Params }) {
         projectIds: automation.repos.map((r) => r.projectId),
         enabled: automation.enabled,
         // Its runner's login, "" when it can't be told (no GitHub login on
-        // record), null once their account is gone.
+        // record), null once they're no longer in the org.
         runsAs: automation.runsAs ? automation.runsAs.login : null,
       }}
       repos={repos}

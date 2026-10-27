@@ -6,7 +6,7 @@
 --
 -- The org's admins make and change them; every member sees them. Whoever
 -- last changed what an automation does (its prompt, triggers or
--- repositories) is who it runs as: no admin spends another's account on a
+-- repositories), or saved it once its runner left, is who it runs as: no admin spends another's account on a
 -- prompt they didn't write. Renaming it, or switching it off and on again,
 -- leaves it on the account of whoever set it up: they chose what it does.
 --
@@ -140,6 +140,12 @@ begin
         or array(select distinct unnest(coalesce(automation_triggers, current.triggers)) order by 1)
           is distinct from array(select distinct unnest(current.triggers) order by 1)
         or repos_change
+        -- And whenever its runner is gone (their account) or no longer in
+        -- the org: saving it is how an admin takes it on.
+        or current.runs_as is null
+        or not exists (
+          select 1 from organization_members m where m.org_id = target_org and m.user_id = current.runs_as
+        )
       then editor
       else runs_as
     end,
