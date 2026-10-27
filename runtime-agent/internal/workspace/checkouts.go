@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-		"strings"
+	"strings"
 )
 
 // A session of a project with several repositories works in a folder of
@@ -76,7 +76,7 @@ func (s *Service) createCheckouts(ctx context.Context, folder, branch string, ch
 		if err != nil {
 			// Their branches too: a retry makes them again with -b.
 			for _, m := range made {
-				s.removeCheckout(ctx, filepath.Join(folder, m.Name))
+				s.removeCheckout(ctx, folder, m)
 				_, _ = s.git(ctx, RepoMirrorPath(s.Root, m.Name), "branch", "-D", branch)
 			}
 			_ = os.RemoveAll(folder)
@@ -91,10 +91,13 @@ func (s *Service) createCheckouts(ctx context.Context, folder, branch string, ch
 	return nil
 }
 
-// removeCheckout removes one worktree from its mirror.
-func (s *Service) removeCheckout(ctx context.Context, dir string) {
-	_, _ = s.git(ctx, s.worktreeRepo(ctx, dir), "worktree", "remove", "--force", dir)
+// removeCheckout removes one checkout from its mirror, known from its name:
+// even when its folder (or its .git) has gone already, the mirror forgets it.
+func (s *Service) removeCheckout(ctx context.Context, folder string, c Checkout) {
+	dir, mirror := filepath.Join(folder, c.Name), RepoMirrorPath(s.Root, c.Name)
+	_, _ = s.git(ctx, mirror, "worktree", "remove", "--force", dir)
 	_ = os.RemoveAll(dir)
+	_, _ = s.git(ctx, mirror, "worktree", "prune")
 }
 
 // checkoutDirs are the checkouts of a session of several repositories, in

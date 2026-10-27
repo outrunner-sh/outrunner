@@ -1526,18 +1526,18 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 		return nil
 	}
 	worktree := s.worktreePath(workspaceID)
-	if _, err := os.Stat(worktree); os.IsNotExist(err) {
-		s.forgetWorkspace(workspaceID)
-		return nil
-	}
 	if f, _ := s.getFacts(workspaceID); len(f.Checkouts) > 0 {
 		// A folder of checkouts: each leaves its own mirror, then the folder.
-		for _, dir := range checkoutDirs(worktree, f.Checkouts) {
-			s.removeCheckout(ctx, dir)
+		for _, c := range f.Checkouts {
+			s.removeCheckout(ctx, worktree, c)
 		}
 		if err := os.RemoveAll(worktree); err != nil {
 			return fmt.Errorf("remove the session's folder: %w", err)
 		}
+		s.forgetWorkspace(workspaceID)
+		return nil
+	}
+	if _, err := os.Stat(worktree); os.IsNotExist(err) {
 		s.forgetWorkspace(workspaceID)
 		return nil
 	}

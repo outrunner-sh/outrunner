@@ -194,3 +194,31 @@ func TestASessionOfSeveralRepositoriesIsNotArchivedYet(t *testing.T) {
 		t.Fatalf("archive = %v, want ErrArchiveCheckouts", err)
 	}
 }
+
+// A checkout whose folder went before Destroy is still forgotten by its
+// mirror, as is a session whose whole folder went.
+func TestDestroyForgetsCheckoutsAlreadyGone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	repoMirror(t, RepoMirrorPath(s.Root, "web"), "main")
+	repoMirror(t, RepoMirrorPath(s.Root, "api"), "main")
+	ctx := context.Background()
+	for _, id := range []string{"ws1", "ws2"} {
+		if _, err := s.Create(ctx, CreateInput{WorkspaceID: id, Branch: "b-" + id, Checkouts: []Checkout{{Name: "web", BaseBranch: "main"}, {Name: "api", BaseBranch: "main"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.RemoveAll(filepath.Join(s.worktreePath("ws1"), "web"))
+	_ = os.RemoveAll(s.worktreePath("ws2"))
+	for _, id := range []string{"ws1", "ws2"} {
+		if err := s.Destroy(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"web", "api"} {
+		if out, _ := s.git(ctx, RepoMirrorPath(s.Root, name), "worktree", "list"); strings.Contains(out, "workspaces") {
+			t.Errorf("%s mirror still lists: %s", name, out)
+		}
+	}
+}
