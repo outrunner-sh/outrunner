@@ -53,6 +53,17 @@ export async function inTeamOrg(projectId: string): Promise<boolean> {
   return org !== null && org.personal_owner_id === null;
 }
 
+/** An org's name and kind, read as the server; null for no such org. */
+export async function getOrg(orgId: string): Promise<{ id: string; name: string; personal: boolean } | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organizations")
+    .select("id, name, personal_owner_id")
+    .eq("id", orgId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? { id: data.id, name: data.name, personal: data.personal_owner_id !== null } : null;
+}
+
 /** A user's role in an org, or null when they aren't a member. */
 export async function memberRole(orgId: string, userId: string): Promise<OrgRole | null> {
   const { data, error } = await createSupabaseAdminClient()

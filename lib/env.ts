@@ -47,6 +47,10 @@ type EnvKey =
   | "RUNTIME_BASE_URL"
   // Bearer token the Cloudflare cron sends to POST /api/billing/reconcile.
   | "BILLING_CRON_SECRET"
+  // Email through Resend (lib/email/send.ts), both optional: org invites and
+  // requests to join. Without them, an invite's link is shown to share.
+  | "RESEND_API_KEY"
+  | "EMAIL_FROM"
   // Stripe (RUNTIME_BILLING=stripe): a restricted or secret key, and the
   // webhook endpoint's signing secret.
   | "STRIPE_SECRET_KEY"
