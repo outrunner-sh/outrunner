@@ -13,7 +13,7 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
 import { TickingFact } from "@/components/ui/notice";
@@ -29,7 +29,13 @@ import {
   toolRow,
 } from "@/lib/runtime/conversation-format";
 import { isInterruption } from "@/lib/runtime/conversation-events";
-import { type ConversationNode, conversationNodes } from "@/lib/runtime/conversation-nodes";
+import {
+  type ConversationNode,
+  conversationNodes,
+  type ConversationTurn,
+  conversationTurns,
+  currentTurn,
+} from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
@@ -42,8 +48,8 @@ import { cn } from "@/lib/utils";
  * one AgentEvent; nothing is derived from PTY output (see
  * docs/architecture/session-contract.md). Each of Claude's steps is a row: its
  * words as plain prose, a thought as a quiet line, a tool call as a bordered
- * row that opens onto its input and output. A prompt is a full-width box that
- * stays pinned at the top while its turn scrolls beneath it.
+ * row that opens onto its input and output. A prompt is a full-width box, and
+ * a tick on the turn rail beside the chat, which jumps to it.
  */
 export function ConversationTimeline({
   events,
@@ -62,6 +68,22 @@ export function ConversationTimeline({
   const stickToBottom = useRef(true);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const nodes = useMemo(() => conversationNodes(events), [events]);
+  const turns = useMemo(() => conversationTurns(nodes), [nodes]);
+  // The turn being read, as the rail marks it.
+  const [current, setCurrent] = useState(-1);
+
+  // Which turn is read: the last whose prompt is above the top third of the
+  // view, or, scrolled to the end, the last.
+  const measure = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const prompts = el.querySelectorAll<HTMLElement>("[data-turn]");
+    const tops = Array.from(prompts, (prompt) => prompt.offsetTop);
+    setCurrent(
+      stickToBottom.current ? tops.length - 1 : currentTurn(tops, el.scrollTop + el.clientHeight / 3),
+    );
+  }, []);
 
   // Auto-follow: keep pinned to the bottom as the conversation grows, unless
   // the user scrolled up (then honor their position). Grows, not "as events
@@ -73,47 +95,114 @@ export function ConversationTimeline({
     if (!el || !content) return;
     const follow = () => {
       if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+      measure();
     };
     follow();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(follow);
     observer.observe(content);
     return () => observer.disconnect();
+  }, [measure]);
+
+  // A scroll is measured once a frame, however many events it fires.
+  const frame = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
   }, []);
 
+  /** Scroll the turn's prompt to the top of the view. */
+  const jumpTo = (index: number) => {
+    const el = parentRef.current;
+    const prompt = el?.querySelectorAll<HTMLElement>("[data-turn]")[index];
+    if (!el || !prompt) return;
+    el.scrollTo({ top: prompt.offsetTop - 16, behavior: "smooth" });
+  };
+
   return (
-    <div
-      ref={parentRef}
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        stickToBottom.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-      }}
-      className="min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
-    >
-      <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
-        {placeholder === "connecting" && (
-          <div role="status" className="conversation-placeholder">
-            <DotMatrix rows={6} cols={9} />
-            <span>Connecting to Claude</span>
-          </div>
-        )}
-        {placeholder === "ready" && (
-          <div className="conversation-placeholder is-ready">
-            <span>Ready when you are</span>
-            <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
-          </div>
-        )}
-        {/* Under a placeholder there is only the session's state to show,
-            which the placeholder already speaks for. */}
-        {!placeholder && conversationNodes(events).map((node) => (
-          <div key={node.key} className={cn("timeline-row", node.kind === "prompt" && "is-prompt")}>
-            <NodeRow node={node} />
-          </div>
-        ))}
-        {working && <WorkingIndicator />}
+    <div className="turn-rail-host relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={parentRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickToBottom.current =
+            el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          if (frame.current !== null) return;
+          frame.current = requestAnimationFrame(() => {
+            frame.current = null;
+            measure();
+          });
+        }}
+        // Positioned, so each prompt's offsetTop is from the conversation's top.
+        className="relative min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
+      >
+        <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
+          {placeholder === "connecting" && (
+            <div role="status" className="conversation-placeholder">
+              <DotMatrix rows={6} cols={9} />
+              <span>Connecting to Claude</span>
+            </div>
+          )}
+          {placeholder === "ready" && (
+            <div className="conversation-placeholder is-ready">
+              <span>Ready when you are</span>
+              <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
+            </div>
+          )}
+          {/* Under a placeholder there is only the session's state to show,
+              which the placeholder already speaks for. */}
+          {!placeholder && nodes.map((node) => (
+            <div key={node.key} className="timeline-row" data-turn={node.kind === "prompt" ? "" : undefined}>
+              <NodeRow node={node} />
+            </div>
+          ))}
+          {working && <WorkingIndicator />}
+        </div>
       </div>
+      {/* One turn has nowhere else to go. */}
+      {!placeholder && turns.length > 1 && <TurnRail turns={turns} current={current} onJump={jumpTo} />}
     </div>
+  );
+}
+
+/**
+ * The conversation's turns as ticks down the chat's left edge, the one being
+ * read marked: hovering (or focusing) one shows its prompt and Claude's last
+ * words in it, and clicking it scrolls there. Ticks shrink to fit a long
+ * session in the rail's height.
+ */
+function TurnRail({
+  turns,
+  current,
+  onJump,
+}: {
+  turns: ConversationTurn[];
+  current: number;
+  onJump: (index: number) => void;
+}) {
+  const [shown, setShown] = useState<number | null>(null);
+  return (
+    <nav aria-label="Turns" className="turn-rail" onMouseLeave={() => setShown(null)}>
+      {turns.map((turn, i) => (
+        <button
+          key={turn.key}
+          type="button"
+          className={cn("turn-rail-tick", i === current && "is-current")}
+          aria-label={turn.prompt || "Prompt"}
+          aria-current={i === current ? "location" : undefined}
+          onClick={() => onJump(i)}
+          onMouseEnter={() => setShown(i)}
+          onFocus={() => setShown(i)}
+          onBlur={() => setShown(null)}
+        >
+          {shown === i && (
+            <span className="turn-rail-card" aria-hidden>
+              <span className="turn-rail-card-prompt">{turn.prompt || "Prompt"}</span>
+              {turn.reply && <span className="turn-rail-card-reply">{turn.reply}</span>}
+            </span>
+          )}
+        </button>
+      ))}
+    </nav>
   );
 }
 

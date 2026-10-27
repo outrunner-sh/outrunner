@@ -101,3 +101,52 @@ export function thoughtSeconds(previousAt: string | null, at: string): number | 
   if (!Number.isFinite(ms) || ms < 1000) return null;
   return Math.round(ms / 1000);
 }
+
+/** A turn of the conversation, as the turn rail shows it: the prompt that
+ *  starts it (`key` is its row's), and the last of Claude's words in it, as
+ *  plain text; null while it has said none. */
+export type ConversationTurn = { key: string; prompt: string; reply: string | null };
+
+/** The conversation's turns, one per prompt, in order. Rows before the first
+ *  prompt (a session's state) belong to none. */
+export function conversationTurns(nodes: ConversationNode[]): ConversationTurn[] {
+  const turns: ConversationTurn[] = [];
+  for (const node of nodes) {
+    if (node.kind === "prompt") turns.push({ key: node.key, prompt: plainText(node.text), reply: null });
+    else if (node.kind === "prose" && turns.length > 0) {
+      const reply = plainText(node.text);
+      if (reply) turns[turns.length - 1].reply = reply;
+    }
+  }
+  return turns;
+}
+
+/**
+ * Markdown read as a line of plain text, for a preview: links by their text,
+ * code without its fences and backticks, and no emphasis, heading or list
+ * marks; whitespace runs as one space.
+ */
+export function plainText(markdown: string): string {
+  return markdown
+    .replace(/```[^\n]*\n?/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, "")
+    .replace(/[*_`~]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Which turn is the one being read: the last whose prompt has reached the
+ * reading line (`line`, in the same coordinates as `tops`, each prompt's
+ * offset from the conversation's top); the first while none has. -1 with no
+ * turns.
+ */
+export function currentTurn(tops: number[], line: number): number {
+  if (tops.length === 0) return -1;
+  let current = 0;
+  tops.forEach((top, i) => {
+    if (top <= line) current = i;
+  });
+  return current;
+}
