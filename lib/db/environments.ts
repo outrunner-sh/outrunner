@@ -15,7 +15,7 @@
  *
  * A project is its org's (20261028140000_org_environments.sql), as its
  * repositories are. Each function here takes the user asking, and does only
- * what their access lets them (20261028150000_org_access.sql): reading needs
+ * what their access lets them (20261028145000_org_access.sql): reading needs
  * read on every one of the project's repositories, and changing it, write
  * (environment_level). Refused, a read finds nothing and a change throws
  * EnvironmentAccessError.

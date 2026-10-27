@@ -1,5 +1,5 @@
 /**
- * What a member may do with an org's projects (20261028150000_org_access.sql):
+ * What a member may do with an org's projects (20261028145000_org_access.sql):
  * read (see it, start sessions on it) or write (also change its settings and
  * hide it; on all projects, connect new ones). Grants go to Everyone or a
  * role, on all projects or one; a member gets the highest that reaches them,

@@ -7,7 +7,7 @@ import { orgCaller } from "@/lib/orgs/routes";
 /**
  * Everything an org's Roles & access page shows (its admins only): its roles
  * and who holds each, its grants, its projects, and its members with their
- * roles (20261028150000_org_access.sql).
+ * roles (20261028145000_org_access.sql).
  */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
