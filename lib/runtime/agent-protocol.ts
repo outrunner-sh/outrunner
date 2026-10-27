@@ -122,6 +122,10 @@ export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
  *  (SetEnvironmentRequest's `instructions`); an older one ignores them. */
 export const AGENT_FEATURE_INSTRUCTIONS = "project-instructions";
 
+/** The agent makes sessions of several repositories (CreateWorkspaceRequest's
+ *  `repos`). */
+export const AGENT_FEATURE_MULTI_REPO = "multi-repo";
+
 /** The agent warms a ready box (POST/GET /warm) and runs a session's warm
  *  and start hooks. */
 export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
@@ -304,6 +308,20 @@ export const CreateWorkspaceRequest = z.object({
   agent: AgentName.optional(),
   /** Git user identity for commits; omitted uses the system default. */
   gitUser: GitUser.optional(),
+  /** A project's several repositories (AGENT_FEATURE_MULTI_REPO): the
+   *  session works in a folder of worktrees, one a repository, each off its
+   *  mirror at $ROOT/repos/<checkout>.git, all on `branch`. */
+  repos: z
+    .array(
+      z.object({
+        fullName: z.string().min(1),
+        checkout: z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/),
+        baseBranch: z.string().min(1),
+      }),
+    )
+    .min(2)
+    .max(5)
+    .optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 

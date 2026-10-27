@@ -48,6 +48,16 @@
       "baseBranch": "main"
     },
     {
+      "workspaceId": "ws-3",
+      "repoFullName": "acme/web",
+      "branch": "feat/z",
+      "baseBranch": "main",
+      "repos": [
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+      ]
+    },
+    {
       "workspaceId": "ws-2",
       "repoFullName": "acme/app",
       "branch": "feat/y",
@@ -417,7 +427,8 @@
         "codex-gateway",
         "project-instructions",
         "request-secrets",
-        "warm-hooks"
+        "warm-hooks",
+        "multi-repo"
       ]
     }
   ],
