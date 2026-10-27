@@ -10,14 +10,17 @@ function removal(daysAgo: number): Removal {
   return { orgId: "org", userId: "u", removedAt: new Date(now.getTime() - daysAgo * DAY) };
 }
 
-function deps(boxes: RemovedBox[], sessions: string[], fail: string[] = []) {
+function deps(boxes: RemovedBox[], sessions: string[], fail: string[] = [], removed: boolean[] = []) {
   const log: string[] = [];
   const step = (line: string) => {
     log.push(line);
     if (fail.includes(line)) throw new Error(line);
   };
+  let asked = 0;
   const d: RemovalDeps = {
     now: () => now,
+    // As many answers as the test gives, then still removed.
+    stillRemoved: async () => removed[asked++] ?? true,
     boxes: async () => boxes,
     sessions: async () => sessions,
     pause: async (box) => step(`pause ${box.id}`),
@@ -58,4 +61,16 @@ test("a step that fails is logged, the rest still run, and the record stays for 
 test("the sessions are kept for 30 days to the minute", () => {
   assert.equal(pastKeeping(removal(29.99), now), false);
   assert.equal(pastKeeping(removal(30), now), true);
+});
+
+test("someone who came back since the removal was read keeps everything", async () => {
+  const { d, log } = deps([running, pooled], ["w1"], [], [false]);
+  await settleRemoval(removal(31), d);
+  assert.deepEqual(log, []);
+});
+
+test("someone who came back while their boxes were being listed keeps them too", async () => {
+  const { d, log } = deps([running, pooled], ["w1"], [], [true, false]);
+  await settleRemoval(removal(31), d);
+  assert.deepEqual(log, []);
 });

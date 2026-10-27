@@ -34,8 +34,9 @@ export function emailInvite(input: { to: string; orgName: string; inviter: strin
   });
 }
 
-/** Tell an org's admins that `email` asked to join it. */
-export async function emailJoinRequest(org: DomainOrg, email: string): Promise<void> {
+/** Tell an org's admins that `email` asked to join it. `origin`: the
+ *  deployment's, for the link when RUNTIME_BASE_URL isn't set. */
+export async function emailJoinRequest(org: DomainOrg, email: string, origin?: string): Promise<void> {
   const admins = (await orgAdmins(org.id)).flatMap((a) => (a.email ? [a.email] : []));
   await sendEmail({
     to: admins,
@@ -43,7 +44,7 @@ export async function emailJoinRequest(org: DomainOrg, email: string): Promise<v
     text: [
       `${email} signed in to Outrunner and asked to join ${org.name}, whose domain (${org.domain}) their email is on.`,
       "",
-      `Approve or decline it under Settings → Org → Members: ${appUrl("/settings/org/members")}`,
+      `Approve or decline it under Settings → Org → Members: ${appUrl("/settings/org/members", origin)}`,
       "",
       "They can't use Outrunner in your org until an admin approves them.",
     ].join("\n"),

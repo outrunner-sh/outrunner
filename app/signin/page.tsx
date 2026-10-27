@@ -20,6 +20,9 @@ function errorMessage(code: string | undefined, org: string | undefined): string
   if (code === "join_requested") {
     return `You've asked to join ${name}. Its admins will see your request; sign in again once one approves it.`;
   }
+  if (code === "invited") {
+    return "You've been invited to an org. Open the invite link you were sent, and sign in from there to join.";
+  }
   if (code === "join_declined") {
     return `${name}'s admins declined your request to join. You can ask again in a few days, or ask an admin to invite you.`;
   }

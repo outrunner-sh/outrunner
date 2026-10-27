@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     }
     const email = emails.find((e) => e.primary)!.email;
     const outcome = await requestToJoin(org.id, owner.id, email);
-    if (outcome === "requested") await emailJoinRequest(org, email).catch(() => {});
+    if (outcome === "requested") await emailJoinRequest(org, email, new URL(request.url).origin).catch(() => {});
     const messages = {
       requested: `Asked. ${org.name}'s admins will see your request.`,
       pending: `You've asked already. ${org.name}'s admins will see your request.`,

@@ -4,10 +4,10 @@ import { connection, NextResponse } from "next/server";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
 import { setGithubToken } from "@/lib/db/credentials";
-import { hasOpenInviteFor, requestToJoin, setAdmitted } from "@/lib/db/org-members";
+import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { listVerifiedEmails } from "@/lib/github/client";
-import { admitOnSignIn, type Admission } from "@/lib/orgs/admission";
+import { admitOnSignIn, type Admission, isInvitePath } from "@/lib/orgs/admission";
 import { emailJoinRequest } from "@/lib/orgs/notify";
 import { optionalEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -45,15 +45,19 @@ export async function GET(request: Request) {
   }
 
   // Access is allowlisted: anyone whose GitHub login isn't in
-  // RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out, unless an org lets
-  // them in (an invite to them), or they ask to join the org that claimed
-  // their email's domain (lib/orgs/admission.ts).
+  // RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out, unless an org
+  // lets them in, or will: an invite to them gets them as far as its page,
+  // and they ask to join the org that claimed their email's domain
+  // (lib/orgs/admission.ts).
   if (!isOwner(data.user)) {
-    const admission = await admit(data.user, data.session?.provider_token);
-    if (admission.kind !== "admitted") {
+    const admission = await admit(data.user, data.session?.provider_token, base);
+    // On the way to their invite: signed in, for its page alone (it and its
+    // accept route are all that ask for less than isOwner).
+    const toInvite = admission.kind === "invited" && isInvitePath(next);
+    if (admission.kind !== "admitted" && !toInvite) {
       await supabase.auth.signOut();
       if (admission.kind === "requested") return joinRequested(base, admission);
-      return signInError(base, "not_owner");
+      return signInError(base, admission.kind === "invited" ? "invited" : "not_owner");
     }
   }
 
@@ -64,16 +68,17 @@ export async function GET(request: Request) {
 
 /** Let a user the allowlist doesn't name in, if an org does; refused when
  *  that can't be worked out (no GitHub token to ask with, GitHub down). */
-async function admit(user: User, token: string | null | undefined): Promise<Admission> {
+async function admit(user: User, token: string | null | undefined, base: string): Promise<Admission> {
   if (!token) return { kind: "refused" };
   try {
     return await admitOnSignIn({
+      inTeamOrg: async () => (await teamOrgIds(user.id)).length > 0,
       verifiedEmails: () => listVerifiedEmails(token),
       hasOpenInviteFor,
       orgsForDomains,
       requestToJoin: (orgId, email) => requestToJoin(orgId, user.id, email),
       admit: () => setAdmitted(user.id, true),
-      notifyAdmins: emailJoinRequest,
+      notifyAdmins: (org, email) => emailJoinRequest(org, email, base),
     });
   } catch (error) {
     console.error(`Could not work out whether an org lets ${user.id} in`, error);

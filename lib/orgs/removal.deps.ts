@@ -27,6 +27,16 @@ function deps(provider: ComputerRuntimeProvider): RemovalDeps {
   };
   return {
     now: () => new Date(),
+    async stillRemoved(removal) {
+      const { data, error } = await supabase
+        .from("organization_removals")
+        .select("user_id")
+        .eq("org_id", removal.orgId)
+        .eq("user_id", removal.userId)
+        .maybeSingle();
+      if (error) throw error;
+      return data !== null;
+    },
     async boxes(removal) {
       const { data, error } = await supabase
         .from("runtime_computers")

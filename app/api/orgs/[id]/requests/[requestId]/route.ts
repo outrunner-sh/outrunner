@@ -31,7 +31,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   return changingMembers("a request to join", async () => {
     const userId = await approveJoinRequest(id, requestId, caller.owner.id, role);
-    await setAdmitted(userId, true);
+    // The approval stands either way; failing this only delays their
+    // admission to their next sign-in (as a team org's member).
+    await setAdmitted(userId, true).catch((error: unknown) => console.error(`Could not admit ${userId}`, error));
     return NextResponse.json({ approved: requestId, member: { userId, role } });
   });
 }

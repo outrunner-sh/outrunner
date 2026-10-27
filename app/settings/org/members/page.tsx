@@ -35,11 +35,14 @@ async function MembersSection() {
   }
   const { active } = context;
   const admin = active.role === "admin" && !active.personal;
-  const [members, invites, requests] = await Promise.all([
+  const [listed, invites, requests] = await Promise.all([
     listMembers(active.id),
     admin ? listOpenInvites(active.id) : Promise.resolve([]),
     admin ? listJoinRequests(active.id) : Promise.resolve([]),
   ]);
+  // Members see one another by GitHub login; only admins, who invite and
+  // answer requests, see emails.
+  const members = admin ? listed : listed.map((m) => ({ ...m, email: null }));
   return (
     <OrgMembersSettings
       org={active}

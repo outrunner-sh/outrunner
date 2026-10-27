@@ -30,6 +30,9 @@ export type RemovedBox = {
 
 export type RemovalDeps = {
   now(): Date;
+  /** Whether the removal still stands: not if they came back since it was
+   *  read (an invite, an approved request). */
+  stillRemoved(removal: Removal): Promise<boolean>;
   /** Their boxes in the org: their sessions' own, and their pooled ones. */
   boxes(removal: Removal): Promise<RemovedBox[]>;
   /** Their sessions in the org not ended yet. */
@@ -51,8 +54,12 @@ export function pastKeeping(removal: Removal, now: Date): boolean {
 }
 
 /** Do what's due for one removal. Each box and session on its own: one that
- *  fails is logged and tried again on the next run. */
+ *  fails is logged and tried again on the next run. Asked again first whether
+ *  the removal stands, and again before deleting anything: a sweep reads every
+ *  removal, then settles them one by one, and one who came back in between
+ *  keeps what's theirs. */
 export async function settleRemoval(removal: Removal, deps: RemovalDeps): Promise<void> {
+  if (!(await deps.stillRemoved(removal))) return;
   const expired = pastKeeping(removal, deps.now());
   let failed = false;
   const attempt = async (what: string, step: () => Promise<void>) => {
@@ -64,7 +71,9 @@ export async function settleRemoval(removal: Removal, deps: RemovalDeps): Promis
     }
   };
 
-  for (const box of await deps.boxes(removal)) {
+  const boxes = await deps.boxes(removal);
+  if (expired && !(await deps.stillRemoved(removal))) return;
+  for (const box of boxes) {
     if (box.pooled || expired) {
       if (box.sandboxId || box.pooled) await attempt(`delete box ${box.id}`, () => deps.remove(box));
     } else if (box.status === "ready" && box.sandboxId) {

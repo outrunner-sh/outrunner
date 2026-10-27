@@ -69,7 +69,7 @@ export class MemberChangeError extends Error {
 function refusal(error: { message?: string } | null): Error | null {
   if (!error) return null;
   const word = (error.message ?? "").trim() as MemberRefusal;
-  return word in REFUSALS ? new MemberChangeError(word) : (error as Error);
+  return Object.hasOwn(REFUSALS, word) ? new MemberChangeError(word) : (error as Error);
 }
 
 function personFrom(user: User | null | undefined, userId: string): Person {

@@ -1,19 +1,20 @@
 import { redirect } from "next/navigation";
 
 import { AcceptInvite } from "@/components/accept-invite";
-import { getOwnerSafe } from "@/lib/auth/owner";
+import { getAuthUser } from "@/lib/auth/owner";
 import { inviteByToken } from "@/lib/db/org-members";
 
 /**
  * An invite's link: who invited you to which org, and Accept. Signed out, the
- * proxy sends you to sign in first and back here; someone the allowlist
- * doesn't name is let in for an open invite to one of their verified emails
- * (lib/orgs/admission.ts).
+ * proxy sends you to sign in first and back here. Anyone signed in may see
+ * it, the allowlist or not: someone it doesn't name, with an open invite to
+ * one of their verified emails, is signed in for this page alone, and is let
+ * in once they accept (lib/orgs/admission.ts).
  */
 export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const owner = await getOwnerSafe();
-  if (!owner) redirect(`/signin?next=${encodeURIComponent(`/invite/${token}`)}`);
+  const user = await getAuthUser().catch(() => null);
+  if (!user) redirect(`/signin?next=${encodeURIComponent(`/invite/${token}`)}`);
 
   const invite = token.startsWith("or_inv_") ? await inviteByToken(token).catch(() => null) : null;
 
