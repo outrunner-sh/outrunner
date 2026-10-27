@@ -408,6 +408,10 @@ function PullRequestRow({
   const [status, setStatus] = useState<PullRequestStatus | null>(null);
   const [phase, setPhase] = useState<"idle" | "sending" | "waiting">("idle");
   const [error, setError] = useState<RowError | null>(null);
+  // A repository's row of a session of several starts without its pull
+  // request (the page loads the session's own one's): until the first look
+  // says whether it has one, Create PR waits, so it can't ask for a second.
+  const [looked, setLooked] = useState(!repo);
   const opened = found ?? pullRequest;
   const hasPullRequest = opened !== null;
   // Looked for every PR_POLL_MS while the agent is at it, re-read every
@@ -424,6 +428,7 @@ function PullRequestRow({
     const look = async () => {
       const result = await lookUpPullRequest(workspaceId, repo?.projectId);
       if (!live) return;
+      setLooked(true);
       if (result.pullRequest) {
         if (!hasPullRequest) {
           setFound(result.pullRequest);
@@ -496,13 +501,15 @@ function PullRequestRow({
     <>
       <EnvRow
         onClick={() => void createPr()}
-        disabled={!sender}
+        disabled={!sender || !looked}
         busy={busy}
         icon={<GitPullRequest />}
         title={
           !sender
             ? "Available once the session is connected"
-            : phase === "waiting"
+            : !looked
+              ? "Checking for a pull request"
+              : phase === "waiting"
               ? "The agent is creating the pull request; it shows here once it's open"
               : `Ask the agent to commit, push ${branch} and open a pull request into ${baseBranch}${repo ? ` on ${repo.fullName}` : ""}`
         }

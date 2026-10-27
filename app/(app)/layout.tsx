@@ -100,13 +100,7 @@ async function SidebarData() {
           projects: listed,
           hiddenProjects: hidden,
           workspaces,
-          // Each session's own repository's: a session of several has one in
-          // each, and the session page reads the rest itself.
-          pullRequests: Object.fromEntries(
-            pullRequests
-              .filter((pr) => workspaces.some((w) => w.id === pr.workspaceId && w.projectId === pr.projectId))
-              .map((pr) => [pr.workspaceId, pr]),
-          ),
+          pullRequests: sessionPullRequests(workspaces, pullRequests),
         },
         ownerLogin: owner.githubLogin,
         ownerAvatarUrl: owner.avatarUrl,
@@ -129,4 +123,22 @@ async function hiddenSessionProjects(listed: Project[], workspaces: Workspace[])
     console.error("Sidebar: could not load hidden repositories", error);
     return [];
   });
+}
+
+/** One pull request a session for the sidebar: its own repository's, else
+ *  (a session of several that opened one elsewhere first) its oldest. The
+ *  session's page reads each repository's itself. */
+function sessionPullRequests(
+  workspaces: Workspace[],
+  pullRequests: WorkspacePullRequest[],
+): Record<string, WorkspacePullRequest> {
+  const own = new Map(workspaces.map((w) => [w.id, w.projectId]));
+  const picked: Record<string, WorkspacePullRequest> = {};
+  for (const pr of pullRequests) {
+    const current = picked[pr.workspaceId];
+    if (!current || (current.projectId !== own.get(pr.workspaceId) && pr.projectId === own.get(pr.workspaceId))) {
+      picked[pr.workspaceId] = pr;
+    }
+  }
+  return picked;
 }

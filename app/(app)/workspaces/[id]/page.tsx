@@ -5,7 +5,7 @@ import { RouteLoading } from "@/components/route-states";
 import { ServerAnswer } from "@/components/server-answer";
 import { SessionRoute } from "@/components/session-route";
 import { getOwnerSafe } from "@/lib/auth/owner";
-import { getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
+import { getWorkspace, getWorkspacePullRequest, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { getProjectOnce } from "@/lib/db/request-cache";
 import type { SessionAnswer } from "@/lib/session/session-view";
 
@@ -61,7 +61,14 @@ async function ServerSession({ params }: { params: Params }) {
   if (workspace.status === "destroyed") {
     return (
       <ServerAnswer<SessionAnswer>
-        value={{ gone: { workspace, pullRequest: await getWorkspacePullRequest(workspace.id, workspace.projectId) } }}
+        value={{
+          gone: {
+            workspace,
+            pullRequest: await getWorkspacePullRequest(workspace.id, workspace.projectId),
+            // A session of several repositories: each one's.
+            ...(workspace.checkouts && { pullRequests: await listWorkspacePullRequests([workspace.id]) }),
+          },
+        }}
       />
     );
   }

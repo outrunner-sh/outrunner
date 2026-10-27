@@ -44,7 +44,7 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
         <RouteMessage title="Session deleted" detail="This session and its worktree are gone." />
       ) : gone ? (
         // Ahead of a sidebar list from before the delete.
-        <SessionDeleted workspace={gone.workspace} pullRequest={gone.pullRequest} />
+        <SessionDeleted workspace={gone.workspace} pullRequest={gone.pullRequest} pullRequests={gone.pullRequests} />
       ) : view ? (
         <WorkspaceStudio
           workspace={view.workspace}

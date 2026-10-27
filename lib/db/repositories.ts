@@ -842,7 +842,7 @@ export async function getWorkspacePullRequest(
 export async function listWorkspacePullRequests(workspaceIds: string[]): Promise<WorkspacePullRequest[]> {
   if (workspaceIds.length === 0) return [];
   const supabase = await createSupabaseServerClient();
-  // Oldest first: a session of several repositories is listed by its first.
+  // Oldest first: callers that keep one a session keep its first.
   const { data, error } = await supabase
     .from("pull_requests")
     .select("*")

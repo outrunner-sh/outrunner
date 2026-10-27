@@ -12,6 +12,9 @@ from workspaces w
 where w.id = pr.workspace_id and pr.project_id is null;
 
 -- Given none (a deploy from before this), the session's own repository.
+-- A bridge for the deploy only: every insert since names it, and one that
+-- forgets should fail on the not null. TODO: drop this trigger in a later
+-- migration once this code is deployed everywhere.
 create or replace function pull_requests_default_project()
 returns trigger
 language plpgsql
