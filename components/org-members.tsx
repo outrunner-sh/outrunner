@@ -3,18 +3,21 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
+import type { OrgRoleInfo } from "@/lib/db/org-access";
 import type { JoinRequest, Member, OpenInvite, Person } from "@/lib/db/org-members";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org, OrgRole } from "@/lib/orgs/active";
@@ -30,6 +33,7 @@ export function OrgMembersSettings({
   members,
   invites,
   requests,
+  roles = [],
   emails,
 }: {
   org: Org;
@@ -37,6 +41,8 @@ export function OrgMembersSettings({
   members: Member[];
   invites: OpenInvite[];
   requests: JoinRequest[];
+  /** The org's roles, for an admin to give members (Roles & access). */
+  roles?: OrgRoleInfo[];
   /** Whether the deployment emails invites; else their links are shared. */
   emails: boolean;
 }) {
@@ -45,7 +51,7 @@ export function OrgMembersSettings({
   const [error, setError] = useState<string | null>(null);
   const admin = org.role === "admin" && !org.personal;
 
-  /** Run a change, then show the page as it now is. */
+  /** Run a change, then show the page as it now is. Whether it saved. */
   const change = async (key: string, url: string, method: string, body?: unknown, after?: () => void) => {
     setBusy(key);
     setError(null);
@@ -53,8 +59,10 @@ export function OrgMembersSettings({
       await requestJson(url, { method, body, fallback: "Couldn't make that change. Try again." });
       after?.();
       router.refresh();
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't make that change. Try again.");
+      return false;
     } finally {
       setBusy(null);
     }
@@ -76,7 +84,7 @@ export function OrgMembersSettings({
       <div className="space-y-1">
         <h1 className="text-lg font-semibold text-foreground">Members</h1>
         <p className="text-sm text-muted-foreground">
-          {`Everyone in ${org.name} sees its projects. Each person's sessions stay their own, admins included.`}
+          {`Who's in ${org.name}. What each may do with its projects is set on Roles & access; each person's sessions stay their own, admins included.`}
         </p>
       </div>
 
@@ -126,6 +134,16 @@ export function OrgMembersSettings({
           {members.map((m) => (
             <li key={m.userId} className="flex items-center gap-3 px-3 py-2">
               <PersonCell person={m} detail={m.login ? `@${m.login}` : m.email} you={m.userId === me} />
+              {admin && m.role === "member" && roles.length > 0 ? (
+                <RolesMenu
+                  roles={roles}
+                  held={roles.filter((r) => r.memberIds.includes(m.userId)).map((r) => r.id)}
+                  busy={busy !== null}
+                  onChange={(roleIds) =>
+                    change(`roles:${m.userId}`, `/api/orgs/${org.id}/members/${m.userId}/roles`, "PUT", { roleIds })
+                  }
+                />
+              ) : null}
               <MemberActions
                 member={m}
                 isMe={m.userId === me}
@@ -169,6 +187,65 @@ function PersonCell({ person, detail, you = false }: { person: Person; detail: s
         {detail ? <p className="truncate text-xs text-muted-foreground">{detail}</p> : null}
       </div>
     </div>
+  );
+}
+
+/** A member's roles, for an admin to give or take: what each may do is set on
+ *  Roles & access. */
+function RolesMenu({
+  roles,
+  held,
+  busy,
+  onChange,
+}: {
+  roles: OrgRoleInfo[];
+  held: string[];
+  busy: boolean;
+  /** Save these roles; whether it did. */
+  onChange: (roleIds: string[]) => Promise<boolean>;
+}) {
+  // What's ticked, at once, so the next tick builds on it (the change sends
+  // the whole set). It follows what the server says once that changes, and
+  // goes back to it when a save fails; the menu stays open throughout.
+  const heldKey = held.join(",");
+  const [shown, setShown] = useState(heldKey);
+  const [ticked, setTicked] = useState(held);
+  if (shown !== heldKey) {
+    setShown(heldKey);
+    setTicked(held);
+  }
+  // The saved roles as they are when a save fails, not as they were when
+  // its tick was clicked: a refresh may have landed in between.
+  const saved = useRef(held);
+  useEffect(() => {
+    saved.current = held;
+  });
+  const names = roles.filter((r) => ticked.includes(r.id)).map((r) => r.name);
+  const toggle = async (roleId: string, checked: boolean) => {
+    const next = checked ? [...ticked, roleId] : ticked.filter((id) => id !== roleId);
+    setTicked(next);
+    if (!(await onChange(next))) setTicked(saved.current);
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className="route-state-button max-w-48 truncate text-muted-foreground" disabled={busy}>
+        {names.length === 0 ? "No roles" : names.join(", ")}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Roles</DropdownMenuLabel>
+        {roles.map((r) => (
+          <DropdownMenuCheckboxItem
+            key={r.id}
+            checked={ticked.includes(r.id)}
+            disabled={busy}
+            onSelect={(event) => event.preventDefault()}
+            onCheckedChange={(checked) => void toggle(r.id, checked)}
+          >
+            {r.name}
+          </DropdownMenuCheckboxItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -225,7 +302,7 @@ function Invites({
   invites: OpenInvite[];
   emails: boolean;
   busy: string | null;
-  change: (key: string, url: string, method: string, body?: unknown, after?: () => void) => Promise<void>;
+  change: (key: string, url: string, method: string, body?: unknown, after?: () => void) => Promise<boolean>;
 }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
