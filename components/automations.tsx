@@ -7,12 +7,11 @@ import { useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
+import { AUTOMATIONS_PATH } from "@/lib/github/app-setup";
 import { type Installation, installationSettingsUrl } from "@/lib/github/installation";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org } from "@/lib/orgs/active";
 import { cn } from "@/lib/utils";
-
-const PATH = "/automations";
 
 /**
  * The Automations page for the org the app is showing: the Outrunner GitHub
@@ -36,7 +35,7 @@ export function Automations({
   linked: string | null;
 }) {
   const router = useRouter();
-  const dismiss = { label: "Dismiss", onClick: () => router.replace(PATH) };
+  const dismiss = { label: "Dismiss", onClick: () => router.replace(AUTOMATIONS_PATH) };
 
   return (
     <div className="px-8 py-8">
@@ -143,7 +142,7 @@ function GitHubAppPanel({
                   <div className="text-xs text-muted-foreground">
                     {installation.accountType === "Organization" ? "Organization" : "Personal account"} ·{" "}
                     {installation.repositorySelection === "all" ? "All repositories" : "Selected repositories"}
-                    {installation.suspended ? " · Suspended on GitHub" : ""}
+                    {installation.suspendedAt ? " · Suspended on GitHub" : ""}
                   </div>
                 </div>
                 <a

@@ -2,10 +2,11 @@ import { cookies } from "next/headers";
 import { connection, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { getGithubToken } from "@/lib/db/credentials";
 import { linkInstallation } from "@/lib/db/github-installations";
 import { memberRole } from "@/lib/db/orgs";
 import { requireEnv } from "@/lib/env";
-import { getInstallation, githubAppConfig } from "@/lib/github/app";
+import { getInstallation, githubAppConfig, userControlsInstallation } from "@/lib/github/app";
 import { AUTOMATIONS_PATH, completeSetup, INSTALL_COOKIE, INSTALL_COOKIE_PATH } from "@/lib/github/app-setup";
 
 /**
@@ -25,10 +26,23 @@ export async function GET(request: Request) {
   if (!config) return to(`${AUTOMATIONS_PATH}?problem=not_configured`);
 
   const jar = await cookies();
-  const path = await completeSetup(
-    { userId: owner.id, params: new URL(request.url).searchParams, cookie: jar.get(INSTALL_COOKIE)?.value },
-    { memberRole, getInstallation: (id) => getInstallation(config, id), linkInstallation },
-  );
-  jar.delete({ name: INSTALL_COOKIE, path: INSTALL_COOKIE_PATH });
-  return to(path);
+  try {
+    const path = await completeSetup(
+      { userId: owner.id, params: new URL(request.url).searchParams, cookie: jar.get(INSTALL_COOKIE)?.value },
+      {
+        memberRole,
+        getInstallation: (id) => getInstallation(config, id),
+        controlsInstallation: async (installation, userId) =>
+          userControlsInstallation(config, installation, {
+            login: owner.githubLogin,
+            token: await getGithubToken(userId),
+          }),
+        linkInstallation,
+      },
+    );
+    return to(path);
+  } finally {
+    // Used once, however it went.
+    jar.delete({ name: INSTALL_COOKIE, path: INSTALL_COOKIE_PATH });
+  }
 }

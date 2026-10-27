@@ -22,7 +22,7 @@ export async function listOrgInstallations(orgId: string): Promise<Installation[
     accountLogin: row.account_login,
     accountType: row.account_type,
     repositorySelection: row.repository_selection,
-    suspended: row.suspended_at !== null,
+    suspendedAt: row.suspended_at,
   }));
 }
 
@@ -34,7 +34,6 @@ export async function linkInstallation(input: {
   linkedBy: string;
 }): Promise<void> {
   const { installation } = input;
-  const now = new Date().toISOString();
   const { error } = await createSupabaseAdminClient()
     .from("github_app_installations")
     .upsert(
@@ -44,7 +43,7 @@ export async function linkInstallation(input: {
         account_login: installation.accountLogin,
         account_type: installation.accountType,
         repository_selection: installation.repositorySelection,
-        suspended_at: installation.suspended ? now : null,
+        suspended_at: installation.suspendedAt,
         linked_by: input.linkedBy,
       },
       { onConflict: "org_id,installation_id" },
@@ -74,16 +73,15 @@ export async function forgetInstallation(installationId: number): Promise<void> 
 }
 
 /** Keep what GitHub says changed on an installation every org linked it:
- *  suspended or not, all repositories or selected ones. */
+ *  suspended (since when) or not, all repositories or selected ones. */
 export async function updateInstallation(
   installationId: number,
-  change: { suspended?: boolean; repositorySelection?: "all" | "selected" },
+  change: { suspendedAt?: string | null; repositorySelection?: "all" | "selected" },
 ): Promise<void> {
-  const now = new Date().toISOString();
   const { error } = await createSupabaseAdminClient()
     .from("github_app_installations")
     .update({
-      ...(change.suspended === undefined ? {} : { suspended_at: change.suspended ? now : null }),
+      ...(change.suspendedAt === undefined ? {} : { suspended_at: change.suspendedAt }),
       ...(change.repositorySelection ? { repository_selection: change.repositorySelection } : {}),
     })
     .eq("installation_id", installationId);

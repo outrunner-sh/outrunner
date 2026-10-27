@@ -57,7 +57,9 @@ in `.env.local`.
    sends the admin to the app's install page.
 2. The admin picks the account and repositories on GitHub. GitHub sends them
    back to the setup URL, and Outrunner links the installation to that org
-   (`lib/github/app-setup.ts`).
+   (`lib/github/app-setup.ts`). It links only an installation the admin
+   controls: one on their own GitHub account, or on an organization where
+   they're an admin of one of the repositories it covers.
 3. Uninstalling or suspending the app on GitHub, or changing its
    repositories, reaches the webhook, which updates the link
    (`lib/github/app-events.ts`).

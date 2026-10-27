@@ -10,6 +10,8 @@ import {
   type GitHubAppConfig,
   installUrl,
   isGitHubSignature,
+  listInstallationRepositories,
+  userControlsInstallation,
 } from "@/lib/github/app";
 import { handleAppEvent } from "@/lib/github/app-events";
 import { completeSetup, installCookieValue, readInstallCookie, type SetupDeps } from "@/lib/github/app-setup";
@@ -94,7 +96,7 @@ test("an installation from GitHub keeps its account, selection and suspension", 
       repository_selection: "selected",
       suspended_at: null,
     }),
-    { installationId: 9, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "selected", suspended: false },
+    { installationId: 9, accountLogin: "neevai-labs", accountType: "Organization", repositorySelection: "selected", suspendedAt: null },
   );
   assert.equal(normalizeInstallation({ id: 9, account: { login: "x", type: "Enterprise" } }), null);
   assert.equal(normalizeInstallation({ id: "nine", account: { login: "x", type: "User" } }), null);
@@ -114,7 +116,7 @@ test("getInstallation reads as the app; a 404 is no installation", async () => {
     accountLogin: "me",
     accountType: "User",
     repositorySelection: "all",
-    suspended: false,
+    suspendedAt: null,
   });
   assert.equal(await getInstallation(config, 404), null);
   assert.equal(seen[0].url, "https://api.github.com/app/installations/5");
@@ -152,7 +154,7 @@ const installation: Installation = {
   accountLogin: "neevai-labs",
   accountType: "Organization",
   repositorySelection: "selected",
-  suspended: false,
+  suspendedAt: null,
 };
 
 function setupDeps(over: Partial<SetupDeps> = {}) {
@@ -160,6 +162,7 @@ function setupDeps(over: Partial<SetupDeps> = {}) {
   const deps: SetupDeps = {
     memberRole: async () => "admin",
     getInstallation: async () => installation,
+    controlsInstallation: async () => true,
     linkInstallation: async (input) => {
       linked.push(input);
     },
@@ -182,7 +185,7 @@ test("setup links the installation to the org the install started from", async (
     },
     deps,
   );
-  assert.equal(path, "/automations?linked=neevai-labs");
+  assert.equal(path, "/automations?linked=77");
   assert.deepEqual(linked, [{ orgId: ORG, installation, linkedBy: USER }]);
 });
 
@@ -210,6 +213,29 @@ test("setup links nothing without the matching cookie, for a member, or for an u
       { userId: USER, params: params({ installation_id: "77", state: NONCE }), cookie: installCookieValue(ORG, NONCE) },
       {
         getInstallation: async () => {
+          throw new Error("down");
+        },
+      },
+    ],
+    [
+      "not_yours",
+      { userId: USER, params: params({ installation_id: "77", state: NONCE }), cookie: installCookieValue(ORG, NONCE) },
+      { controlsInstallation: async () => false },
+    ],
+    [
+      "failed",
+      { userId: USER, params: params({ installation_id: "77", state: NONCE }), cookie: installCookieValue(ORG, NONCE) },
+      {
+        linkInstallation: async () => {
+          throw new Error("relation does not exist");
+        },
+      },
+    ],
+    [
+      "failed",
+      { userId: USER, params: params({ installation_id: "77", state: NONCE }), cookie: installCookieValue(ORG, NONCE) },
+      {
+        memberRole: async () => {
           throw new Error("down");
         },
       },
@@ -251,7 +277,10 @@ test("app events keep linked installations true to GitHub", async () => {
   };
   assert.equal(await handleAppEvent("ping", {}, deps), "pong");
   assert.equal(await handleAppEvent("installation", { action: "deleted", installation: { id: 7 } }, deps), "forgotten");
-  assert.equal(await handleAppEvent("installation", { action: "suspend", installation: { id: 7 } }, deps), "updated");
+  assert.equal(
+    await handleAppEvent("installation", { action: "suspend", installation: { id: 7, suspended_at: "2026-10-27T10:00:00Z" } }, deps),
+    "updated",
+  );
   assert.equal(await handleAppEvent("installation", { action: "unsuspend", installation: { id: 7 } }, deps), "updated");
   assert.equal(await handleAppEvent("installation", { action: "created", installation: { id: 7 } }, deps), "ignored");
   assert.equal(
@@ -262,8 +291,52 @@ test("app events keep linked installations true to GitHub", async () => {
   assert.equal(await handleAppEvent("installation", { action: "deleted" }, deps), "ignored");
   assert.deepEqual(calls, [
     ["forget", 7],
-    ["update", 7, { suspended: true }],
-    ["update", 7, { suspended: false }],
+    ["update", 7, { suspendedAt: "2026-10-27T10:00:00Z" }],
+    ["update", 7, { suspendedAt: null }],
     ["update", 7, { repositorySelection: "all" }],
   ]);
+});
+
+test("an installation on a user account is theirs only", async () => {
+  const mine = { ...installation, accountType: "User" as const, accountLogin: "ImmadSahin" };
+  assert.equal(await userControlsInstallation(config, mine, { login: "immadsahin", token: null }), true);
+  assert.equal(await userControlsInstallation(config, mine, { login: "someone-else", token: "t" }), false);
+});
+
+test("an installation on an organization takes an admin of one of its repositories", async () => {
+  const stub = (admin: Record<string, boolean>) => {
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.endsWith("/access_tokens")) {
+        return Promise.resolve(Response.json({ token: "ghs_x", expires_at: "2026-10-28T12:00:00Z" }, { status: 201 }));
+      }
+      if (url.includes("/installation/repositories")) {
+        return Promise.resolve(Response.json({ repositories: [{ full_name: "neevai-labs/a" }, { full_name: "neevai-labs/b" }] }));
+      }
+      const name = url.split("/repos/")[1];
+      if (!(name in admin)) return Promise.resolve(new Response("{}", { status: 404 }));
+      return Promise.resolve(Response.json({ permissions: { admin: admin[name] } }));
+    }) as typeof fetch;
+  };
+  stub({ "neevai-labs/a": false, "neevai-labs/b": true });
+  assert.equal(await userControlsInstallation(config, installation, { login: "x", token: "t" }), true);
+  stub({ "neevai-labs/a": false });
+  assert.equal(await userControlsInstallation(config, installation, { login: "x", token: "t" }), false);
+  assert.equal(await userControlsInstallation(config, installation, { login: "x", token: null }), false);
+});
+
+test("an installation's repository list says when it stopped short", async () => {
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    if (url.endsWith("/access_tokens")) {
+      return Promise.resolve(Response.json({ token: "ghs_x", expires_at: "2026-10-28T12:00:00Z" }, { status: 201 }));
+    }
+    const page = Number(new URL(url).searchParams.get("page"));
+    const repositories = Array.from({ length: 100 }, (_, i) => ({ full_name: `Acme/R${page}-${i}` }));
+    return Promise.resolve(Response.json({ repositories }));
+  }) as typeof fetch;
+  const listed = await listInstallationRepositories(config, 5);
+  assert.equal(listed.complete, false);
+  assert.equal(listed.names.size, 1000);
+  assert.ok(listed.names.has("acme/r1-0"));
 });

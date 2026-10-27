@@ -8,7 +8,8 @@ import { githubAppConfig } from "@/lib/github/app";
 import { AUTOMATIONS_PATH, SETUP_MESSAGES, setupProblem } from "@/lib/github/app-setup";
 import { getOrgContext } from "@/lib/orgs/server";
 
-/** Where the GitHub App's setup route sends the admin back, saying how it went. */
+/** Where the GitHub App's setup route sends the admin back, saying how it
+ *  went: `linked` is the installation id, shown only if it's the org's. */
 type SearchParams = Promise<{ problem?: string; linked?: string }>;
 
 /**
@@ -28,7 +29,10 @@ export default function AutomationsPage({ searchParams }: { searchParams: Search
 async function AutomationsSection({ searchParams }: { searchParams: SearchParams }) {
   const owner = await getOwnerSafe();
   if (!owner) redirect(`/signin?next=${AUTOMATIONS_PATH}`);
-  const context = await getOrgContext().catch(() => undefined);
+  const context = await getOrgContext().catch((error: unknown) => {
+    console.error("Automations: could not load orgs", error);
+    return undefined;
+  });
   if (!context) {
     return (
       <div className="px-8 py-8">
@@ -42,7 +46,6 @@ async function AutomationsSection({ searchParams }: { searchParams: SearchParams
   const { active } = context;
   const query = await searchParams;
   const problem = setupProblem(query.problem);
-  const linked = typeof query.linked === "string" && query.linked !== "" ? query.linked : null;
   const config = githubAppConfig();
   const installations = config
     ? await listOrgInstallations(active.id).catch((error: unknown) => {
@@ -50,6 +53,9 @@ async function AutomationsSection({ searchParams }: { searchParams: SearchParams
         return null;
       })
     : [];
+  // Named from what the org has linked, never from the URL: a crafted link
+  // can't claim a link that didn't happen.
+  const linked = installations?.find((i) => String(i.installationId) === query.linked)?.accountLogin ?? null;
   return (
     <Automations
       org={active}

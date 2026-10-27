@@ -31,7 +31,9 @@ export type Installation = {
   accountType: InstallationAccountType;
   /** "all" the account's repositories, or "selected" ones. */
   repositorySelection: "all" | "selected";
-  suspended: boolean;
+  /** When the account suspended the app, as GitHub reports it; null while
+   *  it isn't. Nothing is posted while it is. */
+  suspendedAt: string | null;
 };
 
 /** An installation record from GitHub, or null if it lacks what we keep. */
@@ -52,6 +54,6 @@ export function normalizeInstallation(record: unknown): Installation | null {
     accountLogin: login,
     accountType: type,
     repositorySelection: r.repository_selection === "all" ? "all" : "selected",
-    suspended: typeof r.suspended_at === "string",
+    suspendedAt: typeof r.suspended_at === "string" ? r.suspended_at : null,
   };
 }

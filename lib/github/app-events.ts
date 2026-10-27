@@ -13,7 +13,7 @@ export type AppEventDeps = {
   forgetInstallation(id: number): Promise<void>;
   updateInstallation(
     id: number,
-    change: { suspended?: boolean; repositorySelection?: "all" | "selected" },
+    change: { suspendedAt?: string | null; repositorySelection?: "all" | "selected" },
   ): Promise<void>;
 };
 
@@ -21,7 +21,7 @@ export type AppEventOutcome = "pong" | "forgotten" | "updated" | "ignored";
 
 type InstallationPayload = {
   action?: unknown;
-  installation?: { id?: unknown; repository_selection?: unknown } | null;
+  installation?: { id?: unknown; repository_selection?: unknown; suspended_at?: unknown } | null;
   repository_selection?: unknown;
 };
 
@@ -48,11 +48,14 @@ export async function handleAppEvent(event: string, payload: unknown, deps: AppE
     case "deleted":
       await deps.forgetInstallation(id);
       return "forgotten";
-    case "suspend":
-      await deps.updateInstallation(id, { suspended: true });
+    case "suspend": {
+      // GitHub's own time, else the event's: either way, since about now.
+      const at = body.installation?.suspended_at;
+      await deps.updateInstallation(id, { suspendedAt: typeof at === "string" ? at : new Date().toISOString() });
       return "updated";
+    }
     case "unsuspend":
-      await deps.updateInstallation(id, { suspended: false });
+      await deps.updateInstallation(id, { suspendedAt: null });
       return "updated";
     default:
       // "created" links nothing by itself: an admin links it from the setup

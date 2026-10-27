@@ -9,9 +9,9 @@
  * links the installation only when `state` matches the cookie: a setup link
  * made by someone else, or opened in another browser, links nothing.
  *
- * Linking someone else's installation id gains nothing either: the app acts
- * only on repositories the org has connected, which takes the user's own
- * GitHub access to each.
+ * Nor does editing `installation_id` in that URL link someone else's: the
+ * admin must control the installation's account (userControlsInstallation
+ * in lib/github/app.ts).
  */
 
 import type { OrgRole } from "@/lib/orgs/active";
@@ -45,7 +45,9 @@ export type SetupProblem =
   | "start_here"
   | "not_admin"
   | "not_found"
-  | "github";
+  | "not_yours"
+  | "github"
+  | "failed";
 
 export const SETUP_MESSAGES: Record<SetupProblem, string> = {
   not_configured: "The Outrunner GitHub App isn't set up on this deployment yet.",
@@ -54,7 +56,10 @@ export const SETUP_MESSAGES: Record<SetupProblem, string> = {
   start_here: "Couldn't link that installation. Start from Install on GitHub below, in this browser.",
   not_admin: "Only the org's admins can link the GitHub App.",
   not_found: "GitHub has no such installation of the Outrunner app. Install it again.",
+  not_yours:
+    "That installation isn't on your GitHub account, or on an organization where you're an admin of one of its repositories.",
   github: "Couldn't reach GitHub to check the installation. Try again.",
+  failed: "Couldn't link the installation. Try again.",
 };
 
 export function setupProblem(value: unknown): SetupProblem | null {
@@ -64,6 +69,8 @@ export function setupProblem(value: unknown): SetupProblem | null {
 export type SetupDeps = {
   memberRole(orgId: string, userId: string): Promise<OrgRole | null>;
   getInstallation(id: number): Promise<Installation | null>;
+  /** Whether the user controls the installation's GitHub account. */
+  controlsInstallation(installation: Installation, userId: string): Promise<boolean>;
   linkInstallation(input: { orgId: string; installation: Installation; linkedBy: string }): Promise<void>;
 };
 
@@ -88,17 +95,30 @@ export async function completeSetup(
     return back({ problem: "start_here" });
   }
 
-  if ((await deps.memberRole(started.orgId, input.userId)) !== "admin") return back({ problem: "not_admin" });
+  try {
+    if ((await deps.memberRole(started.orgId, input.userId)) !== "admin") return back({ problem: "not_admin" });
+  } catch (error) {
+    console.error("Could not check the admin linking a GitHub App installation", error);
+    return back({ problem: "failed" });
+  }
 
   let installation: Installation | null;
   try {
     installation = await deps.getInstallation(id);
+    if (installation && !(await deps.controlsInstallation(installation, input.userId))) {
+      return back({ problem: "not_yours" });
+    }
   } catch (error) {
     console.error("Could not read the GitHub App installation being linked", error);
     return back({ problem: "github" });
   }
   if (!installation) return back({ problem: "not_found" });
 
-  await deps.linkInstallation({ orgId: started.orgId, installation, linkedBy: input.userId });
-  return back({ linked: installation.accountLogin });
+  try {
+    await deps.linkInstallation({ orgId: started.orgId, installation, linkedBy: input.userId });
+  } catch (error) {
+    console.error("Could not link a GitHub App installation", error);
+    return back({ problem: "failed" });
+  }
+  return back({ linked: String(installation.installationId) });
 }

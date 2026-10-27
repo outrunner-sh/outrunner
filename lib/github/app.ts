@@ -33,12 +33,20 @@ export function githubAppConfig(): GitHubAppConfig | null {
   const pem = optionalEnv("GITHUB_APP_PRIVATE_KEY");
   const webhookSecret = optionalEnv("GITHUB_APP_WEBHOOK_SECRET");
   if (!appId || !slug || !pem || !webhookSecret) return null;
-  const privateKey = appPrivateKey(pem);
-  if (!privateKey) {
-    console.error("GITHUB_APP_PRIVATE_KEY is not a PEM private key: the GitHub App is off.");
-    return null;
+  const privateKey = cachedPrivateKey(pem);
+  return privateKey ? { appId, slug, privateKey, webhookSecret } : null;
+}
+
+/** The environment doesn't change while the server runs: the key is read
+ *  once (once per value, so tests can swap it), and a bad one said once. */
+let parsedKey: { pem: string; key: KeyObject | null } | null = null;
+
+function cachedPrivateKey(pem: string): KeyObject | null {
+  if (parsedKey?.pem !== pem) {
+    parsedKey = { pem, key: appPrivateKey(pem) };
+    if (!parsedKey.key) console.error("GITHUB_APP_PRIVATE_KEY is not a PEM private key: the GitHub App is off.");
   }
-  return { appId, slug, privateKey, webhookSecret };
+  return parsedKey.key;
 }
 
 /**
@@ -168,4 +176,81 @@ export async function createInstallationToken(
     throw new GitHubSyncError("GitHub sent a token Outrunner couldn't read.");
   }
   return { token: body.token, expiresAt: body.expires_at };
+}
+
+/** At most this many repositories are read from one installation (ten pages). */
+const INSTALLATION_REPOS_PAGES = 10;
+
+function githubGet(url: string, token: string): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "outrunner",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  }).catch((error: unknown) => {
+    console.error("GitHub request failed", error);
+    throw new GitHubSyncError("Could not reach GitHub. Please try again.");
+  });
+}
+
+/**
+ * The repositories an installation covers, as lower-case `owner/name`: read
+ * with a token of its own, since GitHub lists them only to the installation.
+ * `complete` is false past the page limit, when a repository missing from
+ * `names` may still be covered.
+ */
+export async function listInstallationRepositories(
+  config: GitHubAppConfig,
+  id: number,
+): Promise<{ names: Set<string>; complete: boolean }> {
+  const { token } = await createInstallationToken(config, id, { permissions: { metadata: "read" } });
+  const names = new Set<string>();
+  for (let page = 1; page <= INSTALLATION_REPOS_PAGES; page++) {
+    const response = await githubGet(`https://api.github.com/installation/repositories?per_page=100&page=${page}`, token);
+    if (!response.ok) {
+      console.error("GitHub App repository listing was rejected", { status: response.status });
+      throw new GitHubSyncError("GitHub wouldn't list the Outrunner app's repositories.", response.status);
+    }
+    const body = (await response.json().catch(() => null)) as { repositories?: { full_name?: unknown }[] } | null;
+    const repositories = body?.repositories ?? [];
+    for (const repository of repositories) {
+      if (typeof repository.full_name === "string") names.add(repository.full_name.toLowerCase());
+    }
+    if (repositories.length < 100) return { names, complete: true };
+  }
+  return { names, complete: false };
+}
+
+/** Repositories checked for an admin's rights before giving up. */
+const OWNERSHIP_CHECKS = 10;
+
+/**
+ * Whether a signed-in user may link an installation: it's on their own
+ * account, or, on an organization, they're an admin of one of the
+ * repositories it covers (`userToken` is their GitHub token, which sees
+ * their permission on each). Installing an app on an organization takes an
+ * owner, or an admin of the repositories picked, so either holds for whoever
+ * installed it; a stranger who edited the id in the setup URL has neither.
+ */
+export async function userControlsInstallation(
+  config: GitHubAppConfig,
+  installation: Installation,
+  user: { login: string; token: string | null },
+): Promise<boolean> {
+  if (installation.accountType === "User") {
+    return installation.accountLogin.toLowerCase() === user.login.toLowerCase();
+  }
+  if (!user.token) return false;
+  const { names } = await listInstallationRepositories(config, installation.installationId);
+  for (const fullName of [...names].slice(0, OWNERSHIP_CHECKS)) {
+    const response = await githubGet(`https://api.github.com/repos/${fullName}`, user.token);
+    if (!response.ok) continue;
+    const repo = (await response.json().catch(() => null)) as { permissions?: { admin?: unknown } } | null;
+    if (repo?.permissions?.admin === true) return true;
+  }
+  return false;
 }
