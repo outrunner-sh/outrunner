@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 
 import { AcceptInvite } from "@/components/accept-invite";
-import { getAuthUser } from "@/lib/auth/owner";
+import { EndInviteVisit } from "@/components/end-invite-visit";
+import { getAuthUser, isOwner } from "@/lib/auth/owner";
 import { inviteByToken } from "@/lib/db/org-members";
 
 /**
@@ -40,6 +41,8 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
           </div>
         ) : (
           <div className="space-y-2">
+            {/* Signed in by this invite alone: nothing more to do here. */}
+            {isOwner(user) ? null : <EndInviteVisit />}
             <h1 className="text-base font-medium text-foreground">This invite doesn&apos;t work any more</h1>
             <p className="text-sm text-muted-foreground">
               It has been used, withdrawn, or has expired (invites last 7 days). Ask an admin of the org for a new one.

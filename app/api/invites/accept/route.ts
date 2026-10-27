@@ -7,6 +7,7 @@ import { githubErrorResponse } from "@/lib/github/http";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { signInFirst } from "@/lib/http/settings-save";
+import { endInviteeVisit } from "@/lib/orgs/invitee";
 import { setActiveOrg } from "@/lib/orgs/server";
 
 /**
@@ -29,11 +30,15 @@ export async function POST(request: Request) {
 
   try {
     const invite = await inviteByToken(token);
+    // Each dead end signs out someone this invite alone signed in
+    // (lib/orgs/invitee.ts): to try another account, they sign in again.
     if (!invite || !invite.open) {
+      await endInviteeVisit(user);
       return NextResponse.json({ error: new MemberChangeError("invite_invalid").message }, { status: 410 });
     }
     const emails = await listVerifiedEmails(await requireGithubToken(user.id));
     if (!emails.some((e) => e.email.toLowerCase() === invite.email)) {
+      await endInviteeVisit(user);
       return NextResponse.json(
         {
           error: `This invite is for ${invite.email}. Add and verify that email on your GitHub account, or sign in with the account that has it.`,
@@ -50,7 +55,10 @@ export async function POST(request: Request) {
     await setActiveOrg(orgId).catch((error: unknown) => console.error(`Could not show org ${orgId}`, error));
     return NextResponse.json({ org: { id: orgId, name: invite.orgName } });
   } catch (error) {
-    if (error instanceof MemberChangeError) return NextResponse.json({ error: error.message }, { status: 410 });
+    if (error instanceof MemberChangeError) {
+      await endInviteeVisit(user);
+      return NextResponse.json({ error: error.message }, { status: 410 });
+    }
     return githubErrorResponse(error, "Couldn't accept the invite. Try again.");
   }
 }

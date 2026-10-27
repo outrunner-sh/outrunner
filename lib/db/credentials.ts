@@ -147,6 +147,16 @@ export async function setGithubToken(
   if (error) throw error;
 }
 
+/** Forget the user's GitHub token: for one an invite signed in who never got
+ *  in (lib/orgs/invitee.ts). */
+export async function clearGithubToken(userId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .update({ github_token_ciphertext: null, github_token_login: null, github_token_updated_at: null })
+    .eq("user_id", userId);
+  if (error) throw error;
+}
+
 /** The user's Anthropic API key, or null when unset or unreadable. */
 export async function getAnthropicKey(userId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
