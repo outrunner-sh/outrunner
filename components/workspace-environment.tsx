@@ -412,8 +412,8 @@ function PullRequestRow({
   // request (the page loads the session's own one's): until the first look
   // says whether it has one, Create PR waits, so it can't ask for a second.
   const [looked, setLooked] = useState(!repo);
-  // When the last look went out: an effect re-run by its own answer (looked
-  // turning true changes the poll) doesn't look again at once.
+  // When the last answer was applied: an effect re-run by it (looked turning
+  // true changes the poll) doesn't look again at once.
   const lastLook = useRef(0);
   const opened = found ?? pullRequest;
   const hasPullRequest = opened !== null;
@@ -437,9 +437,11 @@ function PullRequestRow({
   useEffect(() => {
     let live = true;
     const look = async () => {
-      lastLook.current = Date.now();
       const result = await lookUpPullRequest(workspaceId, repo?.projectId);
+      // Only an answer applied counts: one thrown away (the effect torn down
+      // mid-look) leaves the re-run to look itself.
       if (!live) return;
+      lastLook.current = Date.now();
       if (result.answered) setLooked(true);
       if (result.pullRequest) {
         if (!hasPullRequest) {
