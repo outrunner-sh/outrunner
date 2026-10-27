@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { Automations } from "@/components/automations";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { AUTOMATION_TEMPLATES } from "@/lib/automations/templates";
+import { listRuns } from "@/lib/db/automation-runs";
 import { listAutomations } from "@/lib/db/automations";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { githubAppConfig } from "@/lib/github/app";
@@ -42,7 +43,7 @@ async function AutomationsSection() {
   }
   const { active } = context;
   const config = githubAppConfig();
-  const [installations, automations] = await Promise.all([
+  const [installations, automations, runs] = await Promise.all([
     config
       ? listOrgInstallations(active.id).catch((error: unknown) => {
           console.error("Automations: could not load the GitHub App's installations", error);
@@ -53,6 +54,10 @@ async function AutomationsSection() {
       console.error("Automations: could not load them", error);
       return null;
     }),
+    listRuns(active.id).catch((error: unknown) => {
+      console.error("Automations: could not load their runs", error);
+      return null;
+    }),
   ]);
   return (
     <Automations
@@ -60,6 +65,7 @@ async function AutomationsSection() {
       appSlug={config?.slug ?? null}
       installations={installations?.map((i) => ({ login: i.accountLogin, suspended: i.suspended })) ?? null}
       automations={automations}
+      runs={runs}
       templates={AUTOMATION_TEMPLATES.map(({ id, name, description, category }) => ({ id, name, description, category }))}
     />
   );

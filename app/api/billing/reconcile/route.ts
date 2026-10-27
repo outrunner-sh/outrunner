@@ -10,6 +10,7 @@ import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
+import { sweepStalledRuns } from "@/lib/db/automation-runs";
 
 /**
  * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
@@ -53,7 +54,12 @@ export async function POST(request: Request) {
           return null;
         })
       : 0;
-    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept, removalsSettled });
+    // And automations' runs a restart cut off mid-setup, said as such.
+    const runsSwept = await sweepStalledRuns().catch((error: unknown) => {
+      console.error("Sweeping stalled automation runs failed", error);
+      return null;
+    });
+    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept, removalsSettled, runsSwept });
   } catch (error) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });
