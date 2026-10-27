@@ -93,3 +93,9 @@ test("a user without an email, or a sign-in as someone else, is refused before a
   );
   assert.equal(ran, false);
 });
+
+test("a sign-in as someone else is signed out, not left refreshing", async () => {
+  const calls = stubAuth({ verifiedAs: "11111111-1111-4111-8111-111111111111" });
+  await assert.rejects(actAsUser(USER, async () => {}), ActAsUserError);
+  assert.equal(calls.at(-1), "POST /auth/v1/logout");
+});
