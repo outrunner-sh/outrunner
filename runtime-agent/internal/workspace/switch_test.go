@@ -23,8 +23,6 @@ type fakeSessions struct {
 	// newErrs fail NewSession calls in order; nil entries (or none left) succeed.
 	newErrs  []error
 	launches [][]string
-	// envs are each launch's environment, in order.
-	envs [][]string
 	// keys are the keys pressed; onKey, when set, answers one with the pane
 	// it leads to ("" leaves the pane as it is).
 	keys  []string
@@ -40,11 +38,10 @@ func newFakeSessions() *fakeSessions {
 	return &fakeSessions{running: map[string]bool{}, pane: composerPane}
 }
 
-func (f *fakeSessions) NewSession(_ context.Context, name, _ string, command []string, env []string) error {
+func (f *fakeSessions) NewSession(_ context.Context, name, _ string, command []string, _ []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.launches = append(f.launches, command)
-	f.envs = append(f.envs, env)
 	if len(f.newErrs) > 0 {
 		err := f.newErrs[0]
 		f.newErrs = f.newErrs[1:]

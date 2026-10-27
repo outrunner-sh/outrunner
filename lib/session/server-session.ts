@@ -28,7 +28,10 @@ export type ServerSessionStart = {
    *  when not given. */
   model?: string;
   /** Its own GitHub token, in place of the user's: the Outrunner GitHub
-   *  App's, so what it posts is the app's. */
+   *  App's, so what it posts is the app's. Its lifetime is the caller's to
+   *  mind: an installation token lasts an hour, and the box keeps it for the
+   *  session's relaunches, which then fail on GitHub once it's expired. A run
+   *  that may outlast it needs a fresh one (a repeated create brings it). */
   githubToken?: string;
 };
 

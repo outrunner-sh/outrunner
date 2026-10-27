@@ -107,8 +107,10 @@ func (s *Service) agentFor(workspaceID string) agent {
 // launchCommand is the argv for (re)launching a workspace's session.
 func (s *Service) launchCommand(workspaceID, worktree string, resume bool) []string {
 	// The project's environment first, then what the user provided in the
-	// session (request_secrets), so a value provided wins.
-	return s.withEnvironment(workspaceID, s.withProvided(workspaceID, s.agentFor(workspaceID).command(workspaceID, worktree, resume)))
+	// session (request_secrets), so a value provided wins; innermost, a
+	// session's own GitHub token (github.go), which wins over both.
+	argv := s.withGitHub(workspaceID, s.agentFor(workspaceID).command(workspaceID, worktree, resume))
+	return s.withEnvironment(workspaceID, s.withProvided(workspaceID, argv))
 }
 
 // SessionLog returns the path of a workspace's conversation log, in Claude's

@@ -559,22 +559,22 @@ async function provisionWorkspace({
       // Before the session is made: an agent too old for Codex would make a
       // Claude Code session of it. One that is, is upgraded in place.
       await readyBox(signIn, agentId, auth);
+      // What the box's agent can do, asked as needed (an upgrade in place
+      // when it can't).
+      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
       // And one too old to run Codex through a gateway would refuse its model.
       if (chosenModel && onCodexGateway(agentId, chosenModel)) {
-        const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
         await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
       }
       // A session on a GitHub token of its own: an agent that would ignore it
       // would run the session as its user instead.
       if (sessionGithubToken) {
-        const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
         await requireFeature(features, AGENT_FEATURE_SESSION_GITHUB_TOKEN, "run a session on its own GitHub token");
       }
       // A session of several repositories: a mirror of each on the box,
       // brought up to date, for its folder of checkouts.
       const checkouts = workspace.checkouts;
       if (checkouts) {
-        const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
         await requireFeature(features, AGENT_FEATURE_MULTI_REPO, "work on several repositories");
         await setPhase("clone");
         await provider.syncRepoMirrors(

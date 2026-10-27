@@ -461,7 +461,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	}
 	// A session given its own GitHub token keeps to it, a repeated Create's
 	// fresh one or the one it has.
-	facts.OwnGitHub = prior.OwnGitHub || in.GitHubToken != ""
+	facts.OwnGitHub = prior.OwnGitHub || in.GitHubToken != "" || fileExists(s.githubFiles().path(in.WorkspaceID))
 	if in.GitHubToken != "" {
 		if err := s.setSessionGitHubToken(in.WorkspaceID, in.GitHubToken); err != nil {
 			return "", fmt.Errorf("keep the session's GitHub token: %w", err)
@@ -592,7 +592,7 @@ func (s *Service) Start(ctx context.Context, workspaceID, anthropicToken string)
 		return "", err
 	}
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := s.launchEnv(a, workspaceID, anthropicToken)
+	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, s.SessionLog(workspaceID) != "")
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
@@ -854,7 +854,7 @@ func (s *Service) relaunchHeld(ctx context.Context, workspaceID, anthropicToken 
 	_ = s.tmux.KillSession(ctx, name)
 	worktree := s.worktreePath(workspaceID)
 	s.makeContextDir(ctx, workspaceID, worktree)
-	env := s.launchEnv(a, workspaceID, anthropicToken)
+	env := a.env(anthropicToken)
 	cmd := s.launchCommand(workspaceID, worktree, resume)
 	if err := s.tmux.NewSession(ctx, name, worktree, cmd, env); err != nil {
 		return "", err
