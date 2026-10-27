@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   DropdownMenu,
@@ -214,11 +214,17 @@ function RolesMenu({
     setShown(heldKey);
     setTicked(held);
   }
+  // The saved roles as they are when a save fails, not as they were when
+  // its tick was clicked: a refresh may have landed in between.
+  const saved = useRef(held);
+  useEffect(() => {
+    saved.current = held;
+  });
   const names = roles.filter((r) => ticked.includes(r.id)).map((r) => r.name);
   const toggle = async (roleId: string, checked: boolean) => {
     const next = checked ? [...ticked, roleId] : ticked.filter((id) => id !== roleId);
     setTicked(next);
-    if (!(await onChange(next))) setTicked(held);
+    if (!(await onChange(next))) setTicked(saved.current);
   };
   return (
     <DropdownMenu>

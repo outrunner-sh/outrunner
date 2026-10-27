@@ -257,10 +257,11 @@ function PrincipalCard({
           <li key={g.projectId} className="flex items-center gap-3 px-3 py-2">
             <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
               {named.get(g.projectId!) ?? "A hidden project"}
-              {rank(g.level) <= rank(all) ? (
-                <span className="ml-2 text-xs text-muted-foreground">No effect: All projects gives as much</span>
-              ) : null}
             </span>
+            {/* Its own span: a long name truncates without hiding it. */}
+            {rank(g.level) <= rank(all) ? (
+              <span className="shrink-0 text-xs text-muted-foreground">No effect: All projects gives as much</span>
+            ) : null}
             <LevelSelect
               label={`${title} on ${named.get(g.projectId!) ?? "the project"}`}
               value={g.level}
