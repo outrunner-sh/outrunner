@@ -164,22 +164,42 @@ func TestGitNeverPushesOverTheBoxsSSHKey(t *testing.T) {
 		t.Skip("no git")
 	}
 	s, _, id := sessionWithOwnGitHubToken(t)
-	argv := s.launchCommand(id, s.worktreePath(id), false)
+	t.Run("on its own token", func(t *testing.T) { checkNoSSH(t, s.launchCommand(id, s.worktreePath(id), false)) })
+	if err := os.Remove(s.githubFiles().path(id)); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("with its token gone", func(t *testing.T) { checkNoSSH(t, s.launchCommand(id, s.worktreePath(id), false)) })
+}
+
+// checkNoSSH runs `git ls-remote` on an https remote through a launch's
+// wrappers, in a HOME whose gitconfig sends it over SSH, with an SSH agent
+// in the environment: git must refuse SSH, and the agent mustn't reach it.
+func checkNoSSH(t *testing.T, argv []string) {
+	t.Helper()
 	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
+	if i < 0 {
+		t.Fatalf("no claude in the launch %q", argv)
+	}
 	home := t.TempDir()
 	// A common line in a user's gitconfig: https remotes go over SSH.
 	if err := os.WriteFile(home+"/.gitconfig", []byte("[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	used := home + "/ssh-used"
-	probe := append(append([]string(nil), argv[:i]...), "git", "ls-remote", "https://github.com/acme/web")
+	probe := append(append([]string(nil), argv[:i]...), "sh", "-c", `echo "agent=$SSH_AUTH_SOCK"; git ls-remote https://github.com/acme/web`)
 	cmd := exec.Command(probe[0], probe[1:]...)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=touch " + used + "; false"}
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_TERMINAL_PROMPT=0",
+		"GIT_SSH_COMMAND=touch " + used + "; false", "SSH_AUTH_SOCK=/tmp/user-agent.sock",
+	}
 	out, _ := cmd.CombinedOutput()
 	if _, err := os.Stat(used); err == nil {
 		t.Errorf("git went over SSH, as the user: %s", out)
 	}
 	if !strings.Contains(string(out), "not allowed") {
 		t.Errorf("git didn't refuse SSH: %s", out)
+	}
+	if !strings.Contains(string(out), "agent=\n") {
+		t.Errorf("the user's SSH agent is reachable: %s", out)
 	}
 }

@@ -38,7 +38,7 @@ func (s *Service) githubFiles() keyFiles {
 func githubEnvFile(token, noLoginDir string) string {
 	var b strings.Builder
 	b.WriteString("export " + githubTokenEnv + "=" + claude.ShellQuote(token) + "\n")
-	b.WriteString("unset GITHUB_TOKEN\n")
+	b.WriteString("unset GITHUB_TOKEN SSH_AUTH_SOCK\n")
 	b.WriteString("export GH_CONFIG_DIR=" + claude.ShellQuote(noLoginDir) + "\n")
 	for _, entry := range sessionGitConfig(true) {
 		name, value, _ := strings.Cut(entry, "=")
@@ -59,6 +59,11 @@ func githubEnvFile(token, noLoginDir string) string {
 //
 // It replaces any GIT_CONFIG_* the project's environment or provided secrets
 // set: in this session, git's own config is what keeps it off the user's.
+//
+// This keeps git and gh off the user's credentials by accident, not against
+// an agent set on reaching them: ~/.ssh is still on the box, and `git -c`
+// overrides any of this. Dropping SSH_AUTH_SOCK takes away the easy way to a
+// key; the app token itself is what can't push, whatever git is told.
 func sessionGitConfig(helper bool) []string {
 	entries := [][2]string{{githubHelperName, ""}}
 	if helper {
@@ -76,7 +81,7 @@ func sessionGitConfig(helper bool) []string {
 // noGitHubCredentials is a session with no GitHub token of its own left:
 // none of the box's or its user's, for gh or for git.
 func (s *Service) noGitHubCredentials() []string {
-	env := []string{"env", "-u", githubTokenEnv, "-u", "GITHUB_TOKEN", "GH_CONFIG_DIR=" + s.noGitHubLoginDir()}
+	env := []string{"env", "-u", githubTokenEnv, "-u", "GITHUB_TOKEN", "-u", "SSH_AUTH_SOCK", "GH_CONFIG_DIR=" + s.noGitHubLoginDir()}
 	return append(env, sessionGitConfig(false)...)
 }
 
