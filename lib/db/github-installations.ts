@@ -1,6 +1,6 @@
 /**
  * The Outrunner GitHub App's installations, linked to orgs
- * (supabase/migrations/20261028140000_github_app_installations.sql). The
+ * (supabase/migrations/20261028170000_github_app_installations.sql). The
  * table is the server's alone, so this reaches it with the service role; the
  * routes calling it check who may (an org admin links and unlinks; the app's
  * webhook, signed by GitHub, forgets and suspends).
