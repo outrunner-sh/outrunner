@@ -521,6 +521,11 @@ export const ConversationMessage = z.object({
   // The Claude model that produced the turn (assistant only; omitted on user
   // turns). Lets the composer show the model actually in use.
   model: z.string().optional(),
+  // Why the assistant reply stopped, as Claude logs it: "tool_use" while the
+  // turn goes on (its words before a tool call are a record of their own),
+  // "end_turn" and the like once it's over. Absent from an agent from before
+  // it, a user turn, or a log that says none (a Codex translation).
+  stopReason: z.string().optional(),
   timestamp: z.string(),
   // Tolerate content blocks the UI doesn't model (e.g. redacted_thinking, image,
   // or a newer Claude block type): drop the unrenderable ones instead of failing

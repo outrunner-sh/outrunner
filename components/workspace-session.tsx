@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
+import { ConversationTimeline } from "@/components/conversation-timeline";
 import { QueuedPrompts } from "@/components/queued-prompts";
 import { QuestionCard } from "@/components/question-card";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
@@ -21,7 +21,7 @@ import {
   putOnModel,
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
-import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
+import { claudeIsWorking, firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import {
   type AskAnswer,
   isExpiredQuestionError,
