@@ -67,7 +67,10 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
   const settle = (outcome: Parameters<StartDeps["settleRun"]>[1]) =>
     deps.settleRun(run.runId, outcome).catch((error: unknown) => console.error(`Run ${run.runId} couldn't be kept`, error));
   if (!candidate.runsAs) {
-    await settle({ status: "refused", reason: "Whoever set this automation up has left the org. Save it again to run it as you." });
+    await settle({
+      status: "refused",
+      reason: "Whoever last changed this automation is no longer in the org. Save it to run it as you.",
+    });
     return;
   }
   let token: string;

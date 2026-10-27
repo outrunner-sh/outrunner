@@ -15,7 +15,7 @@ export type RunCandidate = {
   name: string;
   prompt: string;
   triggers: AutomationTrigger[];
-  /** Who it runs as; null once they've left. */
+  /** Who it runs as; null once they've left the org or lost their account. */
   runsAs: string | null;
   projectId: string;
 };
@@ -64,11 +64,19 @@ export async function automationsForPullRequest(installationId: number, repoFull
     .eq("enabled", true);
   if (automationsError) throw automationsError;
   const byId = new Map((automations ?? []).map((a) => [a.id, a]));
+  // A runner who has left the org (their account kept) runs nothing more:
+  // their allowance isn't the org's to spend.
+  const runners = [...new Set((automations ?? []).flatMap((a) => (a.runs_as ? [a.runs_as] : [])))];
+  const { data: members, error: membersError } = runners.length
+    ? await supabase.from("organization_members").select("user_id").eq("org_id", orgId).in("user_id", runners)
+    : { data: [], error: null };
+  if (membersError) throw membersError;
+  const stillMembers = new Set((members ?? []).map((m) => m.user_id));
   return repos.flatMap((r) => {
     const a = byId.get(r.automation_id);
-    return a
-      ? [{ automationId: a.id, name: a.name, prompt: a.prompt, triggers: a.triggers, runsAs: a.runs_as, projectId: r.project_id }]
-      : [];
+    if (!a) return [];
+    const runsAs = a.runs_as && stillMembers.has(a.runs_as) ? a.runs_as : null;
+    return [{ automationId: a.id, name: a.name, prompt: a.prompt, triggers: a.triggers, runsAs, projectId: r.project_id }];
   });
 }
 
