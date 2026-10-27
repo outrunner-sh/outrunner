@@ -10,7 +10,7 @@ export type Owner = {
   githubLogin: string;
   /** The GitHub user's numeric id (lib/auth/allowlist.ts githubUserId):
    *  never renamed, never reused. Null when the identity doesn't say. */
-  githubId?: number | null;
+  githubId: number | null;
   /** The user's full name from GitHub, or their login if not set. */
   name: string;
   email: string | null;

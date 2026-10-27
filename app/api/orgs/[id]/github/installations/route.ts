@@ -32,7 +32,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           ? "Another Outrunner org has this installation."
           : error.reason === "not_installer"
             ? "Only whoever installed it on GitHub can add it to an org."
-            : "Outrunner hasn't heard of this installation from GitHub.";
+            : error.reason === "removed_elsewhere"
+              ? "Another org removed this installation: only it can add it back. Install it afresh on GitHub to use it here."
+              : "Outrunner hasn't heard of this installation from GitHub.";
       return NextResponse.json({ error: message, code: error.reason }, { status: 409 });
     }
     console.error(`Could not claim installation ${installationId}`, error);

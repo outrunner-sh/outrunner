@@ -539,6 +539,8 @@ type GithubInstallationRow = {
   installer_id: number | null;
   /** Their login then, for showing. */
   installer_login: string | null;
+  /** The org that removed it (unclaimed it): the only one it goes back to. */
+  removed_from: string | null;
   suspended_at: string | null;
   created_at: string;
   updated_at: string;

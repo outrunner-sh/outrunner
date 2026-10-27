@@ -25,6 +25,8 @@ const ERRORS: Record<string, string> = {
   not_admin: "Only the org's admins can install the GitHub App.",
   link_expired: "That install link has expired, or was someone else's. Start again from here.",
   not_installer: "Only whoever installed the App on GitHub can add it to an org. Ask them to add it here.",
+  removed_elsewhere:
+    "Another Outrunner org removed that installation, and only it can add it back. To use it here, uninstall it on GitHub and install it again from this page.",
   no_installation: "GitHub has no such installation of the App. It may have been uninstalled.",
   taken: "Another Outrunner org has that GitHub account's installation. Uninstall it there first, or ask its admins.",
   failed: "Couldn't keep the installation. Try again.",

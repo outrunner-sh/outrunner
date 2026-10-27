@@ -1537,3 +1537,13 @@ begin
   end;
   raise notice 'ok: an unclaimed installation keeps its installer';
 end $$;
+
+-- 38. An installation an org removed remembers which, gone with that org.
+do $$
+begin
+  update github_installations set removed_from = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' where installation_id = 777;
+  if (select removed_from from github_installations where installation_id = 777) <> 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' then
+    raise exception 'FAIL: removed_from not kept';
+  end if;
+  raise notice 'ok: an installation remembers the org that removed it';
+end $$;
