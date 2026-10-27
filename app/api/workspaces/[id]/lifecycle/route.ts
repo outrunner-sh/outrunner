@@ -47,6 +47,7 @@ import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
 import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
+import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { canDestroy } from "@/lib/session/provisioning";
 
@@ -285,6 +286,15 @@ async function restoreDaytonaWorkspace(
       { status: 409 },
     );
   }
+  // The Snapshot's trees are the session's repositories, folder for folder:
+  // otherwise the agent would read a tar as a bundle, or miss a checkout.
+  // Checked before any box starts: such a restore can never succeed.
+  if (!snapshotMatchesSession(snapshot.manifest.tree, workspace.checkouts)) {
+    return NextResponse.json(
+      { error: "This session's Snapshot doesn't hold the repositories the session has, so it can't be restored." },
+      { status: 409 },
+    );
+  }
   // The box it restores on: its own (paused when it was archived), or, for a
   // session from before each had its own, its project's shared one.
   const currentComputer = await getWorkspaceComputer(workspace);
@@ -395,14 +405,7 @@ async function restoreDaytonaWorkspace(
     if (restoreOn && onCodexGateway(workspace.agent, restoreOn.model)) {
       await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
     }
-    // The Snapshot's trees are the session's repositories, folder for folder:
-    // otherwise the agent would read a tar as a bundle, or miss a checkout.
     const tree = manifest.tree;
-    const snapshotFolders = tree.kind === "git-bundles+patches" ? tree.checkouts.map((c) => c.name) : null;
-    const sessionFolders = workspace.checkouts?.map((c) => c.checkout) ?? null;
-    if (JSON.stringify(snapshotFolders?.toSorted() ?? null) !== JSON.stringify(sessionFolders?.toSorted() ?? null)) {
-      throw new Error("The Snapshot's repositories don't match the session's.");
-    }
     // A session of several repositories: a mirror of each, its bundle's
     // commits imported into it by the restore. After the checks: none is
     // fetched for a box that can't restore it.
@@ -804,4 +807,12 @@ function lifecycleReconciliationRequired(action: LifecycleAction) {
     },
     { status: 503 },
   );
+}
+
+/** Whether a Snapshot's tree holds the session's repositories: a tree of one
+ *  for a session of one, the same checkout folders for a session of several. */
+function snapshotMatchesSession(tree: SnapshotManifest["tree"], checkouts: Workspace["checkouts"]): boolean {
+  const inSnapshot = tree.kind === "git-bundles+patches" ? tree.checkouts.map((c) => c.name).toSorted() : null;
+  const inSession = checkouts?.map((c) => c.checkout).toSorted() ?? null;
+  return JSON.stringify(inSnapshot) === JSON.stringify(inSession);
 }
