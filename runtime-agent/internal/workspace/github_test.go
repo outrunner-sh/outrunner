@@ -203,3 +203,35 @@ func checkNoSSH(t *testing.T, argv []string) {
 		t.Errorf("the user's SSH agent is reachable: %s", out)
 	}
 }
+
+func TestASessionOnItsOwnTokenCommitsUnsigned(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	s, _, id := sessionWithOwnGitHubToken(t)
+	argv := s.launchCommand(id, s.worktreePath(id), false)
+	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
+	if i < 0 {
+		t.Fatalf("no claude in the launch %q", argv)
+	}
+	home, repo := t.TempDir(), t.TempDir()
+	// The user signs every commit with a key their SSH agent holds.
+	config := "[user]\n\tname = U\n\temail = u@example.test\n\tsigningkey = " + home + "/missing.pub\n" +
+		"[gpg]\n\tformat = ssh\n[commit]\n\tgpgsign = true\n"
+	if err := os.WriteFile(home+"/.gitconfig", []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	initRepo := exec.Command("git", "init", "-q", repo)
+	initRepo.Env = env
+	if out, err := initRepo.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	probe := append(append([]string(nil), argv[:i]...), "git", "-C", repo, "commit", "--allow-empty", "-qm", "review")
+	cmd := exec.Command(probe[0], probe[1:]...)
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Errorf("commit failed (signing?): %v %s", err, out)
+	}
+}
