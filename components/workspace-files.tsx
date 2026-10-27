@@ -339,7 +339,6 @@ function FileView({
   const [error, setError] = useState<string | null>(null);
   const [html, setHtml] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0);
-  const [polls, setPolls] = useState(0);
   const backRef = useRef<HTMLButtonElement>(null);
   useEffect(() => backRef.current?.focus(), []);
 
@@ -349,12 +348,7 @@ function FileView({
       try {
         const read = await readWorkspaceFile(workspaceId, local, path);
         if (cancelled) return;
-        // The same text keeps its object, so it isn't highlighted again.
-        setFile((shown) =>
-          shown && shown.content === read.content && shown.binary === read.binary && shown.size === read.size
-            ? shown
-            : read,
-        );
+        setFile((shown) => sameFile(shown, read));
         setError(null);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Couldn't open this file.");
@@ -363,15 +357,35 @@ function FileView({
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, local, path, version, reloads, polls]);
+  }, [workspaceId, local, path, version, reloads]);
 
+  // The poll runs on its own, each read the given time after the last one
+  // finished, so a slow read is never cut off by the next. A failed one is
+  // left for the next to retry.
   useEffect(() => {
     if (!live) return;
-    const id = setInterval(() => {
-      if (!document.hidden) setPolls((n) => n + 1);
-    }, FILE_POLL_MS);
-    return () => clearInterval(id);
-  }, [live]);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      if (!document.hidden) {
+        try {
+          const read = await readWorkspaceFile(workspaceId, local, path);
+          if (!stopped) {
+            setFile((shown) => sameFile(shown, read));
+            setError(null);
+          }
+        } catch {
+          // Transient: the next poll tries again.
+        }
+      }
+      if (!stopped) timer = setTimeout(() => void poll(), FILE_POLL_MS);
+    };
+    timer = setTimeout(() => void poll(), FILE_POLL_MS);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [live, workspaceId, local, path]);
 
   // Highlighting loads on first use, so the panel doesn't carry it until then.
   const language = codeLanguage(path);
@@ -458,6 +472,14 @@ function FileView({
       </div>
     </div>
   );
+}
+
+/** The file to show after a read: the one shown when its text is the same,
+ *  so it isn't highlighted again. */
+function sameFile(shown: FileContent | null, read: FileContent): FileContent {
+  return shown && shown.content === read.content && shown.binary === read.binary && shown.size === read.size
+    ? shown
+    : read;
 }
 
 /** Lines as an editor numbers them: a final newline starts none. */
