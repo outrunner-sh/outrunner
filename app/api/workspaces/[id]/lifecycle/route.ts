@@ -204,20 +204,6 @@ async function archiveDaytonaWorkspace(
       { status: 409 },
     );
   }
-  // A session of several repositories is archived by an agent that can
-  // (its box upgraded in place first where it can be); one that can't keeps
-  // the session running, said, rather than archive it half.
-  if (workspace.checkouts) {
-    try {
-      const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, owner);
-      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
-      await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "archive a session of several repositories");
-    } catch (error) {
-      if (error instanceof OutdatedComputerError) return NextResponse.json({ error: error.message }, { status: 409 });
-      console.error(`Workspace ${workspace.id} couldn't be checked for archiving`, error);
-      return NextResponse.json({ error: lifecycleError("archive") }, { status: 502 });
-    }
-  }
   const transitioned = await startTransition(workspace, ["ready", "idle"], "archiving");
   if (!transitioned) return lifecycleConflict();
 
@@ -234,7 +220,14 @@ async function archiveDaytonaWorkspace(
     );
     const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
 
-    const { agent, identity } = await daytonaAgent(workspace, provider, owner);
+    const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, owner);
+    // A session of several repositories is archived by an agent that can (its
+    // box upgraded in place first where it can be): after the transition, so
+    // two clicks don't both upgrade it.
+    if (workspace.checkouts) {
+      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
+      await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "archive a session of several repositories");
+    }
     const manifest = await agent.archiveWorkspace(identity, { archivedAt, uploads });
 
     await createWorkspaceSnapshot({
@@ -246,10 +239,12 @@ async function archiveDaytonaWorkspace(
     });
   } catch (error) {
     console.error(`Workspace ${workspace.id} archive failed`, error);
-    await restoreAfterFailure(workspace, "archiving", lifecycleError("archive")).catch(
+    // A box that can't archive it says so; the session runs on.
+    const message = error instanceof OutdatedComputerError ? error.message : lifecycleError("archive");
+    await restoreAfterFailure(workspace, "archiving", message).catch(
       (updateError: unknown) => console.error("Could not persist archive failure", updateError),
     );
-    return NextResponse.json({ error: lifecycleError("archive") }, { status: 502 });
+    return NextResponse.json({ error: message }, { status: error instanceof OutdatedComputerError ? 409 : 502 });
   }
 
   const completed = await completeTransition({
@@ -371,15 +366,6 @@ async function restoreDaytonaWorkspace(
     if (!ensured.provisioned) {
       await provider.fetchMirror(computer.daytonaSandboxId, githubToken);
     }
-    // A session of several repositories: a mirror of each, its bundle's
-    // commits imported into it by the restore.
-    if (workspace.checkouts) {
-      await provider.syncRepoMirrors(
-        computer.daytonaSandboxId,
-        workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
-        githubToken,
-      );
-    }
 
     const target = await provider.agentTarget(
       computer.daytonaSandboxId,
@@ -409,9 +395,26 @@ async function restoreDaytonaWorkspace(
     if (restoreOn && onCodexGateway(workspace.agent, restoreOn.model)) {
       await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
     }
+    // The Snapshot's trees are the session's repositories, folder for folder:
+    // otherwise the agent would read a tar as a bundle, or miss a checkout.
+    const tree = manifest.tree;
+    const snapshotFolders = tree.kind === "git-bundles+patches" ? tree.checkouts.map((c) => c.name) : null;
+    const sessionFolders = workspace.checkouts?.map((c) => c.checkout) ?? null;
+    if (JSON.stringify(snapshotFolders?.toSorted() ?? null) !== JSON.stringify(sessionFolders?.toSorted() ?? null)) {
+      throw new Error("The Snapshot's repositories don't match the session's.");
+    }
+    // A session of several repositories: a mirror of each, its bundle's
+    // commits imported into it by the restore. After the checks: none is
+    // fetched for a box that can't restore it.
+    if (workspace.checkouts) {
+      await provider.syncRepoMirrors(
+        computer.daytonaSandboxId,
+        workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
+        githubToken,
+      );
+    }
     // Before the restore, which launches the session at once.
     await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
-    const tree = manifest.tree;
     const bundleRef = tree.kind === "git-bundle+patch" && tree.ref && tree.ref !== workspace.branch ? tree.ref : undefined;
     let restoredWorktree: string | undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, async (credential) => {

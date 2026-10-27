@@ -62,7 +62,7 @@ func TestCheckoutsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if manifest.Tree.Kind != TreeKindCheckouts || len(manifest.Tree.Checkouts) != 2 ||
-		manifest.Tree.Checkouts[1].Name != "api" || manifest.Tree.Checkouts[1].LastCommit == nil || manifest.LastCommit == nil {
+		manifest.Tree.Checkouts[1].Name != "api" || manifest.Tree.Checkouts[1].LastCommit == nil || manifest.LastCommit != nil {
 		data, _ := json.Marshal(manifest.Tree)
 		t.Fatalf("tree = %s", data)
 	}

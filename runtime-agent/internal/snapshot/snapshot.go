@@ -171,7 +171,7 @@ func Produce(ctx context.Context, in Input) (*Manifest, error) {
 			return nil, err
 		}
 		tree.Kind = TreeKindCheckouts
-		last = tree.Checkouts[0].LastCommit
+		// No one commit is the session's: each checkout's is in its tree.
 	} else {
 		paths["bundle"], err = buildBundle(ctx, in.Worktree, filepath.Join(staging, BundleName))
 		if err != nil {
