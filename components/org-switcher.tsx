@@ -22,8 +22,8 @@ import { requestJson } from "@/lib/http/request-json";
  * The org the sidebar lists, as its header: Outrunner's mark and the org's
  * name, opening onto where it's set up (settings, members) and the user's
  * other orgs to switch to, or a new team org. Not billing: a plan is the
- * account's, not an org's (Settings → Billing). Switching goes home, since the session open
- * may be in the org left behind.
+ * account's, not an org's (Settings → Billing). Switching goes home, since
+ * the session open may be in the org left behind.
  */
 export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: string | null }) {
   const router = useRouter();
@@ -53,7 +53,7 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
 
   if (!active) return null;
   return (
-    <div className="min-w-0 flex-1">
+    <div className="relative min-w-0 flex-1">
       <DropdownMenu>
         <DropdownMenuTrigger
           className="-ml-1 flex min-w-0 max-w-full items-center gap-2 rounded-md px-1 py-1 text-sm font-semibold text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
@@ -90,6 +90,11 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
           {orgs.map((org) => (
             <DropdownMenuItem key={org.id} onSelect={() => void show(org)} className="gap-2">
               <span className="min-w-0 flex-1 truncate">{org.name}</span>
+              {/* Names are free text: which is the user's own, and where
+                  they're an admin, tells two alike apart. */}
+              {org.personal || org.role === "admin" ? (
+                <span className="text-xs text-muted-foreground">{org.personal ? "Personal" : "Admin"}</span>
+              ) : null}
               {org.id === active.id ? <Check className="size-3.5" /> : null}
             </DropdownMenuItem>
           ))}
@@ -98,8 +103,12 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      {/* Under the header, not in its row: the row stays as it is. */}
       {error ? (
-        <p role="alert" className="pt-1 text-xs text-destructive">
+        <p
+          role="alert"
+          className="absolute left-0 top-full z-10 mt-1 w-56 rounded-md border border-border bg-popover px-2 py-1.5 text-xs text-destructive shadow-md"
+        >
           {error}
         </p>
       ) : null}
