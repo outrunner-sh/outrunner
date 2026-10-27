@@ -146,6 +146,24 @@ export const PortsResponse = z
   .strict();
 export type PortsResponse = z.infer<typeof PortsResponse>;
 
+/** A session's changed files since its base branch, as git on its box reads
+ *  them (GET /workspaces/{id}/changes): the shape /api/workspaces/[id]/changes
+ *  answers in. Not strict: a field added later doesn't fail an older page. */
+export const ChangesResponse = z.object({
+  files: z.array(
+    z.object({
+      path: z.string(),
+      status: z.enum(["added", "modified", "deleted", "renamed", "untracked"]),
+      additions: z.number().int(),
+      deletions: z.number().int(),
+    }),
+  ),
+});
+export type ChangesResponse = z.infer<typeof ChangesResponse>;
+
+/** One changed file's bounded diff (GET /workspaces/{id}/changes?path=). */
+export const ChangedFileDiffResponse = z.object({ diff: z.string() });
+
 /** The agent restores a session onto its model (RestoreWorkspaceRequest's
  *  `model`); an older one ignores it, and relaunches on Claude's default. */
 export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";
