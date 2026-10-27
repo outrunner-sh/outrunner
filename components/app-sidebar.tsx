@@ -190,7 +190,13 @@ export function AppSidebar({
           count={triageCount}
           active={pathname === "/triage"}
         />
-        <NavSoon icon={<Sparkles />} label="Automations" />
+        {/* The org's automations, which post as the Outrunner GitHub App. */}
+        <NavLink
+          href="/automations"
+          icon={<Sparkles />}
+          label="Automations"
+          active={pathname === "/automations" || pathname.startsWith("/automations/")}
+        />
         {searching ? (
           <SearchField value={query} onChange={setQuery} onClose={closeSearch} />
         ) : (

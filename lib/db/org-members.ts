@@ -87,7 +87,7 @@ function personFrom(user: User | null | undefined, userId: string): Person {
 }
 
 /** The people behind some user ids, by id. One lookup each: orgs are small. */
-async function people(userIds: readonly string[]): Promise<Map<string, Person>> {
+export async function people(userIds: readonly string[]): Promise<Map<string, Person>> {
   const admin = createSupabaseAdminClient().auth.admin;
   const found = await Promise.all(
     [...new Set(userIds)].map(async (id) => {
