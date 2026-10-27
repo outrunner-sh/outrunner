@@ -8,6 +8,7 @@ import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import { getOrgContext } from "@/lib/orgs/server";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 
 /**
@@ -66,14 +67,20 @@ async function SidebarData() {
   const owner = await getOwnerSafe();
   if (!owner) return null;
 
+  // The active org's projects and the user's sessions in it (lib/orgs/active.ts).
   // The sidebar is auxiliary: a failed load shows an empty list, never an error
   // page in place of the session the user opened.
+  const orgs = await getOrgContext().catch((error: unknown) => {
+    console.error("Sidebar: could not load orgs", error);
+    return null;
+  });
+  const orgId = orgs?.active.id;
   const [listed, workspaces] = await Promise.all([
-    listProjectsOnce().catch((error: unknown): Project[] => {
+    listProjectsOnce(orgId).catch((error: unknown): Project[] => {
       console.error("Sidebar: could not load repositories", error);
       return [];
     }),
-    listWorkspacesOnce().catch((error: unknown): Workspace[] => {
+    listWorkspacesOnce(orgId).catch((error: unknown): Workspace[] => {
       console.error("Sidebar: could not load workspaces", error);
       return [];
     }),
@@ -97,6 +104,8 @@ async function SidebarData() {
         },
         ownerLogin: owner.githubLogin,
         ownerAvatarUrl: owner.avatarUrl,
+        orgs: orgs?.orgs ?? [],
+        activeOrgId: orgId ?? null,
       }}
     />
   );

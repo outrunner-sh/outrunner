@@ -48,6 +48,8 @@ import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
+import { OrgSwitcher } from "@/components/org-switcher";
+import type { Org } from "@/lib/orgs/active";
 
 /**
  * The one sidebar every app page shares (rendered by app/(app)/layout.tsx, so
@@ -61,6 +63,8 @@ export function AppSidebar({
   workspaces,
   ownerLogin,
   ownerAvatarUrl,
+  orgs = [],
+  activeOrgId = null,
   onCollapse,
   searchSignal = 0,
   initialFolded = [],
@@ -72,6 +76,10 @@ export function AppSidebar({
   workspaces: Workspace[];
   ownerLogin: string;
   ownerAvatarUrl: string | null;
+  /** The user's orgs, for the switcher above the nav; none before they load. */
+  orgs?: Org[];
+  /** The org the sidebar lists. */
+  activeOrgId?: string | null;
   onCollapse: () => void;
   /** Changes each time ⌘K is pressed: open the search field. */
   searchSignal?: number;
@@ -154,6 +162,8 @@ export function AppSidebar({
           <PanelLeft className="size-4" />
         </button>
       </div>
+
+      {orgs.length > 0 && <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} />}
 
       <nav className="space-y-0.5" aria-label="Main">
         {/* Home is the new-session screen too. */}

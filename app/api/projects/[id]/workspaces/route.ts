@@ -28,7 +28,13 @@ import {
 import { defaultEnvironmentId } from "@/lib/db/environments";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
-import { branchTakenResponse, isUniqueViolation, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
+import {
+  branchTakenByTeammateResponse,
+  branchTakenResponse,
+  isUniqueViolation,
+  workspaceCreateErrorResponse,
+} from "@/lib/http/workspace-create-errors";
+import { inTeamOrg } from "@/lib/db/orgs";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
@@ -274,14 +280,18 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
-    // (Generated branches can't collide.) If that lookup itself fails, the
-    // row's own failure is still the answer to give, not a thrown one.
+    // (Generated branches can't collide.) Not the user's own, in a team org's
+    // project: another member has it, whose session they can't open. Anywhere
+    // else (a session ended between the insert and the lookup), the plain
+    // answer. If a lookup itself fails, the row's own failure is still the
+    // answer to give, not a thrown one.
     if (requestedBranch && isUniqueViolation(error)) {
       const holder = await liveWorkspaceOnBranch(owner.id, project.id, requestedBranch).catch((lookupError) => {
         console.error("Couldn't look up the session on that branch", lookupError);
-        return null;
+        return undefined;
       });
       if (holder) return branchTakenResponse({ id: holder.id, label: workspaceLabel(holder) });
+      if (holder === null && (await inTeamOrg(project.id).catch(() => false))) return branchTakenByTeammateResponse();
     }
     return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
   }

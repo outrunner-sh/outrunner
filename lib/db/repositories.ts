@@ -39,14 +39,18 @@ import type {
 
 // --- projects --------------------------------------------------------------
 
-export async function listProjects(): Promise<Project[]> {
+/** The projects of `orgId`, or of every org the user is in when it's not
+ *  given (RLS: an org's members see its projects). */
+export async function listProjects(orgId?: string): Promise<Project[]> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("projects")
     .select("*")
     .is("hidden_at", null)
     .order("pushed_at", { ascending: false, nullsFirst: false });
+  if (orgId) query = query.eq("org_id", orgId);
 
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []).map(toProject);
 }
@@ -74,8 +78,12 @@ export async function getProjects(ids: string[]): Promise<Project[]> {
   return (data ?? []).map(toProject);
 }
 
-/** Upsert the repositories returned by GitHub, keyed on (org, repo id): the
- *  database puts them in the owner's personal org, given no org. */
+/**
+ * Upsert the repositories returned by GitHub as projects of `orgId` (the
+ * owner's personal org when not given), keyed on (org, repo id). A repository
+ * another member connected to the org already is theirs: it's left as it is
+ * (only its owner may change it) and not counted.
+ */
 export async function upsertProjects(
   ownerId: string,
   repos: Array<{
@@ -90,14 +98,32 @@ export async function upsertProjects(
     htmlUrl: string;
     pushedAt: string | null;
   }>,
+  orgId?: string,
 ): Promise<number> {
   if (repos.length === 0) return 0;
 
   const supabase = await createSupabaseServerClient();
+  let mine = repos;
+  if (orgId) {
+    const { data: theirs, error: lookupError } = await supabase
+      .from("projects")
+      .select("github_repo_id")
+      .eq("org_id", orgId)
+      .neq("owner_id", ownerId)
+      .in(
+        "github_repo_id",
+        repos.map((r) => r.githubRepoId),
+      );
+    if (lookupError) throw lookupError;
+    const taken = new Set((theirs ?? []).map((p) => p.github_repo_id));
+    mine = repos.filter((r) => !taken.has(r.githubRepoId));
+    if (mine.length === 0) return 0;
+  }
   const { error, count } = await supabase
     .from("projects")
     .upsert(
-      repos.map((r) => ({
+      mine.map((r) => ({
+        ...(orgId ? { org_id: orgId } : {}),
         owner_id: ownerId,
         github_repo_id: r.githubRepoId,
         full_name: r.fullName,
@@ -114,13 +140,15 @@ export async function upsertProjects(
     );
 
   if (error) throw error;
-  return count ?? repos.length;
+  return count ?? mine.length;
 }
 
 // --- workspaces ------------------------------------------------------------
 
+/** The user's live sessions (RLS: only their own), of one project or one
+ *  org when asked. */
 export async function listWorkspaces(
-  projectId?: string,
+  filter: { projectId?: string; orgId?: string } = {},
 ): Promise<Workspace[]> {
   const supabase = await createSupabaseServerClient();
   let query = supabase
@@ -129,7 +157,8 @@ export async function listWorkspaces(
     .neq("status", "destroyed")
     .order("last_active_at", { ascending: false, nullsFirst: false });
 
-  if (projectId) query = query.eq("project_id", projectId);
+  if (filter.projectId) query = query.eq("project_id", filter.projectId);
+  if (filter.orgId) query = query.eq("org_id", filter.orgId);
 
   const { data, error } = await query;
   if (error) throw error;

@@ -841,8 +841,7 @@ end $$;
 
 -- 24. One project per repository per org: the same repository in two orgs is
 -- two projects, and an upsert keyed on (org, repo) given no org finds its
--- owner's personal org. The upsert from before the orgs, on (owner, repo),
--- still works, for the app deployed before the migration.
+-- owner's personal org.
 do $$
 declare n integer;
 begin
@@ -858,12 +857,6 @@ begin
   if not exists (select 1 from projects where github_repo_id = 42 and description = 'again') then
     raise exception 'FAIL: the (org, repo) upsert did not update the existing project';
   end if;
-  insert into projects (owner_id, github_repo_id, full_name, owner, name, description)
-  values ('22222222-2222-2222-2222-222222222222', 42, 'immadsahin/runtime', 'immadsahin', 'runtime', 'old app')
-  on conflict (owner_id, github_repo_id) do update set description = excluded.description;
-  if not exists (select 1 from projects where github_repo_id = 42 and description = 'old app') then
-    raise exception 'FAIL: the (owner, repo) upsert from before the orgs did not update the project';
-  end if;
   raise notice 'ok: one project per repository per org, and the upsert finds it';
 end $$;
 
@@ -875,8 +868,6 @@ values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Team', '11111111-1111-1111-1111
 insert into organization_members (org_id, user_id, role)
 values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin'),
        ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'member');
--- Another repository: one per user still holds (projects_owner_repo_unique)
--- until team orgs ship.
 insert into projects (id, org_id, owner_id, github_repo_id, full_name, owner, name)
 values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         '11111111-1111-1111-1111-111111111111', 4242, 'team/app', 'team', 'app');
@@ -1017,4 +1008,101 @@ begin
     end if;
   end;
   raise notice 'ok: sessions and boxes stay with org members, and projects stay in their org';
+end $$;
+
+-- 27. Team orgs: a user may have the same repository in their personal org
+-- and a team org, makes one team org at most, and no one but the server
+-- reads or writes the domains orgs claimed.
+do $$
+begin
+  insert into projects (org_id, owner_id, github_repo_id, full_name, owner, name)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+          42, 'immadsahin/runtime', 'immadsahin', 'runtime');
+  begin
+    insert into organizations (name, created_by)
+    values ('Second team', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: a user made a second team org';
+  exception when unique_violation then
+    null;
+  end;
+  insert into organization_domains (domain, org_id, claimed_by)
+  values ('example.com', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111');
+  begin
+    insert into organization_domains (domain, org_id)
+    values ('example.com', (select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'));
+    raise exception 'FAIL: two orgs claimed one domain';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into organization_domains (domain, org_id) values ('Example.COM', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    raise exception 'FAIL: a domain was kept in capitals';
+  exception when check_violation then
+    null;
+  end;
+  if has_table_privilege('authenticated', 'organization_domains', 'select')
+     or has_table_privilege('anon', 'organization_domains', 'select') then
+    raise exception 'FAIL: users may read the domains orgs claimed';
+  end if;
+  raise notice 'ok: a repository in a personal and a team org, one team org per user, one org per domain';
+end $$;
+
+-- 28. A warm pool per member: two members of an org each keep a pooled box
+-- for the same project, and each sees only their own.
+insert into organization_members (org_id, user_id, role)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'member')
+on conflict do nothing;
+insert into runtime_computers (owner_id, project_id, pooled, status)
+values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', true, 'stopped'),
+       ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', true, 'stopped');
+
+do $$
+begin
+  insert into runtime_computers (owner_id, project_id, pooled, status)
+  values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', true, 'stopped');
+  raise exception 'FAIL: a member kept two pooled boxes for one project';
+exception when unique_violation then
+  raise notice 'ok: one pooled box per member per project';
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+begin
+  if (select count(*) from runtime_computers
+      where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and pooled) <> 1
+     or exists (select 1 from runtime_computers where owner_id <> '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a member sees a pooled box that isn''t theirs';
+  end if;
+  raise notice 'ok: a member sees only their own pooled box';
+end $$;
+
+reset role;
+
+-- 29. Making a team org is the server's: its creator is its admin, its
+-- domain is claimed with it, and a taken domain leaves nothing behind.
+do $$
+declare org uuid;
+begin
+  if has_function_privilege('authenticated', 'create_team_org(text, uuid, text)', 'execute')
+     or has_function_privilege('anon', 'create_team_org(text, uuid, text)', 'execute') then
+    raise exception 'FAIL: a user may make team orgs directly';
+  end if;
+  org := create_team_org('Third team', '33333333-3333-3333-3333-333333333333', 'third.example');
+  if not exists (select 1 from organization_members
+                 where org_id = org and user_id = '33333333-3333-3333-3333-333333333333' and role = 'admin')
+     or not exists (select 1 from organization_domains where domain = 'third.example' and org_id = org) then
+    raise exception 'FAIL: a team org was made without its admin or its domain';
+  end if;
+  begin
+    perform create_team_org('Fourth team', '22222222-2222-2222-2222-222222222222', 'third.example');
+    raise exception 'FAIL: a second org claimed a domain';
+  exception when unique_violation then
+    null;
+  end;
+  if exists (select 1 from organizations where name = 'Fourth team') then
+    raise exception 'FAIL: a failed team org left its org behind';
+  end if;
+  raise notice 'ok: a team org is made with its admin and domain, or not at all';
 end $$;

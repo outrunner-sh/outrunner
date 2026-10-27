@@ -438,6 +438,13 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
+type OrganizationDomainRow = {
+  domain: string;
+  org_id: string;
+  claimed_by: string | null;
+  created_at: string;
+};
+
 type CliTokenRow = {
   id: string;
   user_id: string;
@@ -458,6 +465,12 @@ export type Database = {
         Row: OrganizationRow;
         Insert: Insert<OrganizationRow, "name">;
         Update: Partial<OrganizationRow>;
+        Relationships: [];
+      };
+      organization_domains: {
+        Row: OrganizationDomainRow;
+        Insert: Insert<OrganizationDomainRow, "domain" | "org_id">;
+        Update: Partial<OrganizationDomainRow>;
         Relationships: [];
       };
       organization_members: {
@@ -697,6 +710,15 @@ export type Database = {
       is_org_member: {
         Args: { org: string };
         Returns: boolean;
+      };
+      // supabase/migrations/20261028120000_team_orgs.sql
+      my_org_ids: {
+        Args: Record<never, never>;
+        Returns: string[];
+      };
+      create_team_org: {
+        Args: { org_name: string; creator: string; claimed_domain: string | null };
+        Returns: string;
       };
       // supabase/migrations/20261019130000_move_claude_slot_key.sql
       move_claude_slot_key: {

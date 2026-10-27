@@ -38,6 +38,9 @@ importers:
       form-data:
         specifier: ^4.0.6
         version: 4.0.6
+      free-email-domains:
+        specifier: 1.15.16
+        version: 1.15.16
       highlight.js:
         specifier: ^11.11.1
         version: 11.11.1
@@ -2632,6 +2635,10 @@ packages:
 
   forwarded-parse@2.1.2:
     resolution: {integrity: sha512-alTFZZQDKMporBH77856pXgzhEzaUVmLCDk+egLgIgHst3Tpndzz8MnKe+GzRJRfvVdn69HhpW7cmXzvtLvJAw==}
+
+  free-email-domains@1.15.16:
+    resolution: {integrity: sha512-vex6aXQXn+MNgvaRRaeC9gv769S6dwvIQxU4TvYaYiqFa7/c8PDXc2lRqMRd03quZorYEhScxBlgtp/dcEh2dA==}
+    engines: {node: '>= 18'}
 
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
@@ -6898,6 +6905,8 @@ snapshots:
       mime-types: 2.1.35
 
   forwarded-parse@2.1.2: {}
+
+  free-email-domains@1.15.16: {}
 
   function-bind@1.1.2: {}
 

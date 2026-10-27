@@ -89,7 +89,7 @@ export async function releaseProjectBox(provider: ComputerRuntimeProvider, proje
           ? computer
           : null;
       },
-      sessions: () => listWorkspaces(projectId),
+      sessions: () => listWorkspaces({ projectId }),
       pause: (sandboxId) => provider.pauseComputer(sandboxId),
       closeInterval: closeIntervalOf,
       markStopped: (computerId, sandboxId) =>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Box, CreditCard, Info, KeyRound, Layers, Terminal, User } from "lucide-react";
+import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Info, KeyRound, Layers, Terminal, User } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -19,6 +19,13 @@ const groups = [
       // What Outrunner's models and the user's own keys have used; the sidebar's
       // allowance bar points here.
       { href: USAGE_SETTINGS_HREF, label: "Usage", icon: BarChart3 },
+    ],
+  },
+  {
+    label: "Org",
+    sections: [
+      // The org the app is showing (the sidebar's switcher picks it).
+      { href: "/settings/org", label: "General", icon: Building2 },
     ],
   },
   {
