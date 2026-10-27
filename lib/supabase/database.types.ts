@@ -269,6 +269,10 @@ type ProjectEnvironmentRow = {
 /** What the app calls a Project (20261027121000_environments.sql). */
 type EnvironmentRow = {
   id: string;
+  /** Its org (20261028140000_org_environments.sql): its repository's, for a
+   *  repository's default; given none, its maker's personal org. */
+  org_id: string;
+  /** Who made it. */
   owner_id: string;
   name: string;
   description: string | null;
@@ -286,6 +290,8 @@ type EnvironmentRow = {
 };
 
 type EnvironmentRepoRow = {
+  /** Its project's org, set from the project. */
+  org_id: string;
   owner_id: string;
   environment_id: string;
   project_id: string;
