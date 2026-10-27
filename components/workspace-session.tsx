@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
+import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
 import { QuestionCard } from "@/components/question-card";
 import { SessionComposer, type ModelChoice } from "@/components/session-composer";
@@ -649,15 +650,19 @@ export function WorkspaceSession({
 
       <section className="studio-convo-panel" aria-label="Claude conversation">
         <div className="studio-convo-body">
-          <ConversationTimeline
-            events={timelineEvents}
-            working={working}
-            placeholder={conversationPlaceholder({
-              events: timelineEvents,
-              attachment: attachment.status,
-              stream: conversation.status,
-            })}
-          />
+          {/* Images Claude shows by path are on a cloud session's box; this
+              Mac's are out of the server's reach. */}
+          <ImageBoxContext value={local ? null : workspaceId}>
+            <ConversationTimeline
+              events={timelineEvents}
+              working={working}
+              placeholder={conversationPlaceholder({
+                events: timelineEvents,
+                attachment: attachment.status,
+                stream: conversation.status,
+              })}
+            />
+          </ImageBoxContext>
         </div>
       </section>
 
