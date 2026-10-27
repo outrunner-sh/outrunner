@@ -1,0 +1,95 @@
+name: CLI publish
+
+# Publishes the outrunner CLI to npm: the platform packages
+# (outrunner-<os>-<cpu>), then the outrunner launcher that depends on them, as
+# scripts/build-cli.sh stages them. Platform packages go first, so the
+# launcher never names a version npm doesn't have yet.
+#
+#   Tag:     git tag cli-v0.1.2 && git push origin cli-v0.1.2
+#            publishes the tagged commit as 0.1.2.
+#   By hand: Actions -> CLI publish -> Run workflow, with a version, publishes
+#            the branch it's run on.
+#
+# A package already on npm at that version is skipped, so a rerun finishes
+# what a failed run started rather than failing on the first one done.
+#
+# Required configuration (Settings -> Secrets and variables -> Actions):
+#   secret   NPM_TOKEN   a granular npm access token that can publish outrunner
+#                        and every outrunner-* platform package.
+
+on:
+  push:
+    tags: ["cli-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.1.2"
+        required: true
+
+# One publish at a time: two would race to the same versions.
+concurrency:
+  group: cli-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Version
+        id: version
+        env:
+          INPUT: ${{ inputs.version }}
+          TAG: ${{ github.ref_name }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::NPM_TOKEN isn't set (Settings -> Secrets and variables -> Actions)."
+            exit 1
+          fi
+          if [ -n "$INPUT" ]; then version="$INPUT"; else version="${TAG#cli-v}"; fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Not a version: '$version' (want e.g. 0.1.2, from a cli-v0.1.2 tag)."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: runtime-agent/go.mod
+          cache-dependency-path: runtime-agent/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # The CLI's own tests, before anything goes out.
+      - name: Test the CLI
+        working-directory: runtime-agent
+        run: go test ./internal/cli/... ./cmd/outrunner/...
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/build-cli.sh "$VERSION"
+
+      - name: Publish
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          publish() {
+            name="$(node -p "require('./$1/package.json').name")"
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is on npm already; skipped."
+            else
+              npm publish "$1"
+              echo "Published $name@$VERSION."
+            fi
+          }
+          for dir in .context/cli-npm/outrunner-*/; do publish "${dir%/}"; done
+          publish .context/cli-npm/outrunner
