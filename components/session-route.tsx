@@ -47,6 +47,8 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
         <SessionDeleted workspace={gone.workspace} pullRequest={gone.pullRequest} />
       ) : view ? (
         <WorkspaceStudio
+          // One per session: nothing its panels hold carries to the next.
+          key={view.workspace.id}
           workspace={view.workspace}
           projectName={view.projectName}
           pullRequest={view.pullRequest}

@@ -24,8 +24,9 @@ import { cn } from "@/lib/utils";
 
 /** How many matches a search lists. */
 const MAX_MATCHES = 200;
-/** Past this, a file is shown plain: highlighting it would stall the page. */
-const MAX_HIGHLIGHT_BYTES = 150_000;
+/** Past this many characters, a file is shown plain: highlighting it would
+ *  stall the page. */
+const MAX_HIGHLIGHT_CHARS = 150_000;
 
 /**
  * The session's files, browsed in the Environment panel rather than in an
@@ -68,6 +69,18 @@ export function WorkspaceFiles({
     [list, query],
   );
 
+  // Closing a file puts the focus back on its row (or, gone from view, the
+  // back arrow), so the keyboard is never left on nothing.
+  const root = useRef<HTMLDivElement>(null);
+  const closed = useRef<string | null>(null);
+  useEffect(() => {
+    if (openPath !== null || closed.current === null) return;
+    const rows = root.current?.querySelectorAll<HTMLButtonElement>("button[data-path]") ?? [];
+    const row = [...rows].find((button) => button.dataset.path === closed.current);
+    (row ?? root.current?.querySelector("button"))?.focus();
+    closed.current = null;
+  }, [openPath]);
+
   if (openPath !== null) {
     return (
       <FileView
@@ -76,7 +89,10 @@ export function WorkspaceFiles({
         local={local}
         path={openPath}
         version={changed.get(openPath) ?? ""}
-        onBack={() => setOpenPath(null)}
+        onBack={() => {
+          closed.current = openPath;
+          setOpenPath(null);
+        }}
       />
     );
   }
@@ -84,6 +100,7 @@ export function WorkspaceFiles({
   return (
     // Esc steps back out of the tree, as the back arrow does.
     <div
+      ref={root}
       className="studio-changes"
       onKeyDown={(event) => {
         if (event.key === "Escape" && !(event.target instanceof HTMLInputElement && query)) {
@@ -148,6 +165,7 @@ export function WorkspaceFiles({
                     return (
                       <FileRow
                         key={path}
+                        path={path}
                         depth={0}
                         name={path.slice(slash + 1)}
                         dir={slash === -1 ? undefined : path.slice(0, slash)}
@@ -237,6 +255,7 @@ function TreeLevel({
       {dir.files.map((file) => (
         <FileRow
           key={file.path}
+          path={file.path}
           depth={depth}
           name={file.name}
           changed={changed.has(file.path)}
@@ -248,12 +267,14 @@ function TreeLevel({
 }
 
 function FileRow({
+  path,
   depth,
   name,
   dir,
   changed,
   onOpen,
 }: {
+  path: string;
   depth: number;
   name: string;
   /** Its folder, shown beside it in search results. */
@@ -265,6 +286,7 @@ function FileRow({
     <button
       type="button"
       onClick={onOpen}
+      data-path={path}
       className="studio-files-row"
       // Past the chevron a folder row has, so names line up.
       style={{ paddingLeft: 12 + depth * 14 + 18 }}
@@ -333,7 +355,7 @@ function FileView({
   // Highlighting loads on first use, so the panel doesn't carry it until then.
   const language = codeLanguage(path);
   useEffect(() => {
-    if (!file || file.binary || !language || file.content.length > MAX_HIGHLIGHT_BYTES) return;
+    if (!file || file.binary || !language || file.content.length > MAX_HIGHLIGHT_CHARS) return;
     let cancelled = false;
     void import("highlight.js/lib/common").then(({ default: hljs }) => {
       if (cancelled || !hljs.getLanguage(language)) return;

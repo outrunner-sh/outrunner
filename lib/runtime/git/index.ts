@@ -503,7 +503,11 @@ export async function readWorktreeFile(
 }
 
 /** A file's first bytes as text, or binary when they hold a NUL or bytes that
- * aren't UTF-8 (decoded as U+FFFD), cut at `maxBytes` on a character. */
+ * aren't UTF-8, cut at `maxBytes` on a character. The exec layer hands over
+ * text already decoded, so bytes that weren't UTF-8 are known only by the
+ * U+FFFD they became: a valid file that holds a real U+FFFD in its first 8000
+ * characters reads as binary here, where the agent's fileContent (which sees
+ * the bytes) shows it. */
 export function fileContent(text: string, size: number, maxBytes = MAX_FILE_BYTES): FileContent {
   const bytes = Buffer.from(text, "utf8");
   const truncated = bytes.length > maxBytes;

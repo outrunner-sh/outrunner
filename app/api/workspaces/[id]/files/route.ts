@@ -36,7 +36,8 @@ export async function GET(request: Request, context: RouteContext) {
   const reach = reachableWorktree(await getWorkspaceComputer(workspace), workspace.worktreePath);
   if (!reach.ok) return NextResponse.json({ error: reach.error }, { status: 409 });
 
-  const path = new URL(request.url).searchParams.get("path");
+  // An empty one lists, as the agent's own route does.
+  const path = new URL(request.url).searchParams.get("path") || null;
   try {
     if (path !== null) {
       return NextResponse.json(await provider.readWorkspaceFile(reach.sandboxId, reach.worktree, path));
