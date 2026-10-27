@@ -186,7 +186,9 @@ function AutomationList({
                     <Link href={`/automations/${automation.id}`} className="text-foreground hover:underline">
                       {automation.name}
                     </Link>
-                    {automation.runsAs?.login ? (
+                    {automation.runsAs === null ? (
+                      <div className="text-xs text-warning">Runs as no one: open it and save to run it as you</div>
+                    ) : automation.runsAs.login ? (
                       <div className="text-xs text-muted-foreground">Runs as @{automation.runsAs.login}</div>
                     ) : null}
                   </td>

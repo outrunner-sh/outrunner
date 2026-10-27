@@ -92,7 +92,9 @@ export function AutomationEditor({
             // The server keeps it trimmed.
             ...(prompt.trim() !== draft.prompt ? { prompt } : {}),
             ...(same(triggers, draft.triggers) ? {} : { triggers }),
-            ...(same(projectIds, draft.projectIds) ? {} : { projectIds }),
+            // With no runner, Save takes it on: sending its repositories is
+            // what does (update_automation), unchanged as they may be.
+            ...(same(projectIds, draft.projectIds) && draft.runsAs !== null ? {} : { projectIds }),
             ...(enabled !== draft.enabled ? { enabled } : {}),
           };
       await requestJson(creating ? `/api/orgs/${orgId}/automations` : `/api/orgs/${orgId}/automations/${draft.id}`, {

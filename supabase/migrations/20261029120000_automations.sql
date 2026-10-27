@@ -6,9 +6,12 @@
 --
 -- The org's admins make and change them; every member sees them. Whoever
 -- last changed what an automation does (its prompt, triggers or
--- repositories), or saved it once its runner left, is who it runs as: no admin spends another's account on a
+-- repositories) is who it runs as: no admin spends another's account on a
 -- prompt they didn't write. Renaming it, or switching it off and on again,
--- leaves it on the account of whoever set it up: they chose what it does.
+-- leaves it on its runner's account: they chose what it does. One whose
+-- runner left the org (or lost their account) runs as no one until an
+-- admin saves it from the editor, which sends its repositories: they then
+-- take it on. The list's on/off switch never does.
 --
 -- The server's alone (RLS on, no policy, grants revoked), reached through
 -- lib/db/automations.ts, whose routes check who may. Making one, and changing
@@ -101,7 +104,9 @@ $$;
 -- Change an automation of `target_org`: each argument given (not null) is
 -- set. Changing what it does (prompt, triggers, repositories) makes `editor`
 -- who it runs as: compared with what's stored, so sending a field unchanged
--- changes no one. False when the org has no automation by that id.
+-- changes no one, unless its runner is no longer in the org, when sending
+-- any of those (an editor's Save) takes it on. False when the org has no
+-- automation by that id.
 create or replace function update_automation(
   target_org uuid,
   automation uuid,
@@ -140,11 +145,14 @@ begin
         or array(select distinct unnest(coalesce(automation_triggers, current.triggers)) order by 1)
           is distinct from array(select distinct unnest(current.triggers) order by 1)
         or repos_change
-        -- And whenever its runner is gone (their account) or no longer in
-        -- the org: saving it is how an admin takes it on.
-        or current.runs_as is null
-        or not exists (
-          select 1 from organization_members m where m.org_id = target_org and m.user_id = current.runs_as
+        -- And whenever its runner is gone or no longer in the org, on a
+        -- save of what it does (an editor's Save sends its repositories),
+        -- never on a rename or the on/off switch alone.
+        or (
+          (automation_prompt is not null or automation_triggers is not null or project_ids is not null)
+          and not exists (
+            select 1 from organization_members m where m.org_id = target_org and m.user_id = current.runs_as
+          )
         )
       then editor
       else runs_as
