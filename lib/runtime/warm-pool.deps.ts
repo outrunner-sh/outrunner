@@ -115,6 +115,18 @@ export async function refillProjectPool(input: {
       discard: (sandboxId, madeBy) => discardBox(provider, madeBy, ownerId, sandboxId),
       forget: deletePooledComputer,
       release: releasePooledComputer,
+      leftover: async (slot, sandboxId) => {
+        const row = await createPooledComputer({
+          ownerId,
+          projectId: project.id,
+          provider: provider.name,
+          agentSecret: randomBytes(32).toString("hex"),
+          slot,
+          generation,
+        });
+        if (!row) throw new Error(`slot ${slot} is taken`);
+        await markPooledFailed(row.id, sandboxId);
+      },
       newSecret: () => randomBytes(32).toString("hex"),
       now: Date.now,
     });
@@ -134,11 +146,26 @@ async function warmBox(
   environmentId: string,
   req: { baseBranch: string; env: Record<string, string>; files: Record<string, string>; hook: string; generation: number | null },
 ): Promise<void> {
-  const health = await agent.health({ ...box, workspaceId: "" }).catch(() => null);
+  let healthError: unknown = null;
+  const health = await agent.health({ ...box, workspaceId: "" }).catch((error: unknown) => {
+    healthError = error;
+    return null;
+  });
   if (!health?.features?.includes(AGENT_FEATURE_WARM_HOOKS)) {
     // An older agent (or one that didn't answer): pooled unwarmed, and the
-    // session that takes it runs the warm hook itself as it starts.
-    console.warn(`Box ${box.computerId}'s agent can't run a warm hook: pooled unwarmed`);
+    // session that takes it runs the warm hook itself as it starts. Recorded,
+    // so the settings page says so rather than "Applying" until it's updated.
+    console.warn(`Box ${box.computerId}'s agent can't run a warm hook: pooled unwarmed`, healthError ?? "");
+    const at = new Date().toISOString();
+    await recordWarmRun(environmentId, {
+      status: "failed",
+      log: healthError
+        ? "The ready box didn't answer before its warm hook could start. Sessions run the warm hook themselves as they start."
+        : "This box's agent can't run warm hooks yet. Sessions run the warm hook themselves as they start.",
+      startedAt: at,
+      finishedAt: at,
+      generation: req.generation,
+    }).catch(() => {});
     return;
   }
   const startedAt = new Date().toISOString();

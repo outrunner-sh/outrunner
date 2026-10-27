@@ -79,6 +79,9 @@ export type WarmPoolDeps = {
   /** Take a box out of the pool: its row deleted only while it is still
    *  pooled. False when a session claimed it meanwhile, whose box it is now. */
   release(computerId: string): Promise<boolean>;
+  /** Record a box whose delete failed after its row went: a failed row in
+   *  `slot` keeping it, for the sweeper to delete. */
+  leftover(slot: number, sandboxId: string): Promise<void>;
   newSecret(): string;
   now(): number;
 };
@@ -109,7 +112,24 @@ export async function refillPool(deps: WarmPoolDeps): Promise<number> {
       // Out of the pool first, then its box: a box a session has just
       // claimed (its row no longer pooled) is that session's, not deleted.
       if (!(await deps.release(existing.id))) continue;
-      if (existing.daytonaSandboxId) await deps.discard(existing.daytonaSandboxId, existing.provider);
+      const sandboxId = existing.daytonaSandboxId;
+      if (sandboxId) {
+        const deleted = await deps.discard(sandboxId, existing.provider).then(
+          () => true,
+          (error: unknown) => {
+            console.error(`Pooled box ${existing.id}'s sandbox ${sandboxId} couldn't be deleted`, error);
+            return false;
+          },
+        );
+        if (!deleted) {
+          // Its row is gone: a failed one in its slot points the sweeper at
+          // the box, which would otherwise run on, unseen.
+          await deps.leftover(existing.poolSlot, sandboxId).catch((error: unknown) =>
+            console.error(`Pooled sandbox ${sandboxId} couldn't be recorded: delete it by hand`, error),
+          );
+          taken.add(existing.poolSlot);
+        }
+      }
       continue;
     }
     taken.add(existing.poolSlot);

@@ -25,6 +25,7 @@ function pool(
     rowGone?: boolean;
     discardFails?: boolean;
     claimedMeanwhile?: boolean;
+    oldDiscardFails?: boolean;
   } = {},
 ) {
   const log: string[] = [];
@@ -61,9 +62,10 @@ function pool(
     failed: async (computerId, leftover) => void log.push(`failed ${computerId}${leftover ? ` keeping ${leftover}` : ""}`),
     discard: async (sandboxId, provider) => {
       log.push(`discard ${sandboxId} on ${provider}`);
-      if (opts.discardFails) throw new Error("Daytona timed out");
+      if (opts.discardFails || (opts.oldDiscardFails && sandboxId === "sb-old")) throw new Error("Daytona timed out");
     },
     forget: async (computerId) => void log.push(`forget ${computerId}`),
+    leftover: async (slot, sandboxId) => void log.push(`leftover ${sandboxId} in ${slot}`),
     release: async (computerId) => {
       log.push(`release ${computerId}`);
       return !opts.claimedMeanwhile;
@@ -217,4 +219,10 @@ test("an outdated box a session claimed meanwhile is that session's: not deleted
   await refillPool(deps);
   assert.deepEqual(log.slice(0, 1), ["release c-old"]);
   assert.equal(log.some((l) => l.startsWith("discard")), false);
+});
+
+test("a replaced box whose delete fails is kept on a failed row for the sweeper, its slot not refilled", async () => {
+  const { deps, log } = pool({ generation: 2, existing: [box({ generation: 1 })], oldDiscardFails: true });
+  assert.equal(await refillPool(deps), 0);
+  assert.deepEqual(log, ["release c-old", "discard sb-old on daytona", "leftover sb-old in 0"]);
 });
