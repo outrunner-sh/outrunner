@@ -38,7 +38,7 @@ import {
   currentTurn,
 } from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
-import { followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
+import { FOLLOW_SLACK_PX, followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
 
@@ -96,7 +96,7 @@ export function ConversationTimeline({
   };
   // Where a jump back to a turn (the turn rail) is headed, until it gets there,
   // the user takes over, or it has had its time.
-  const jumpingTo = useRef<number | null>(null);
+  const jumpingTo = useRef<{ top: number; since: number } | null>(null);
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -154,8 +154,13 @@ export function ConversationTimeline({
     // Reading back: the conversation stops following its end, as a scroll up
     // does, for the whole of the smooth scroll there.
     const top = Math.max(0, Math.min(prompt.offsetTop - 16, el.scrollHeight - el.clientHeight));
+    // One that lands within reach of the end is a return there: still following.
+    if (el.scrollHeight - top - el.clientHeight < FOLLOW_SLACK_PX) {
+      el.scrollTo({ top, behavior: "smooth" });
+      return;
+    }
     stickToBottom.current = false;
-    jumpingTo.current = top;
+    jumpingTo.current = { top, since: performance.now() };
     if (jumpTimer.current) clearTimeout(jumpTimer.current);
     jumpTimer.current = setTimeout(() => {
       jumpingTo.current = null;
@@ -176,8 +181,13 @@ export function ConversationTimeline({
         onScroll={(e) => {
           const el = e.currentTarget;
           const byUser = pointerHeld.current || performance.now() - lastInput.current < USER_SCROLL_MS;
-          // A jump ends where it was headed, or as the user takes over.
-          if (jumpingTo.current !== null && (byUser || Math.abs(el.scrollTop - jumpingTo.current) < 2)) {
+          // A jump ends where it was headed, or as the user takes over: by
+          // input since it began, not a trackpad's momentum from before.
+          const jump = jumpingTo.current;
+          if (
+            jump &&
+            (pointerHeld.current || lastInput.current > jump.since || Math.abs(el.scrollTop - jump.top) < 2)
+          ) {
             jumpingTo.current = null;
           }
           stickToBottom.current = followsAfterScroll({
