@@ -56,6 +56,8 @@ func githubEnvFile(token, noLoginDir string) string {
 //   - no SSH, for any host: an `insteadOf` in the user's gitconfig, or an SSH
 //     remote, would push with the box's SSH key, as the user, past every
 //     helper. Such a session talks to its repository over https.
+//   - no signing of commits or tags, which the user's agent-held key would
+//     do: it isn't reachable here, and they aren't the user's.
 //
 // It replaces any GIT_CONFIG_* the project's environment or provided secrets
 // set: in this session, git's own config is what keeps it off the user's.
@@ -70,6 +72,10 @@ func sessionGitConfig(helper bool) []string {
 		entries = append(entries, [2]string{githubHelperName, githubHelperScript})
 	}
 	entries = append(entries, [2]string{"protocol.ssh.allow", "never"})
+	// Commits unsigned: a signing key held by the user's SSH agent (gone
+	// here, SSH_AUTH_SOCK) would fail every one; and they're the app's
+	// session's, not the user's to sign.
+	entries = append(entries, [2]string{"commit.gpgsign", "false"}, [2]string{"tag.gpgsign", "false"})
 	env := []string{"GIT_CONFIG_COUNT=" + strconv.Itoa(len(entries))}
 	for i, e := range entries {
 		n := strconv.Itoa(i)
