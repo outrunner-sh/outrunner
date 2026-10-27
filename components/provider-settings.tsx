@@ -109,6 +109,7 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
                 onChoice={changeChoice}
                 onKeys={changeKeys}
                 onClaude={changeClaude}
+                active={id === active}
               />
             ) : (
               <div className="space-y-6">

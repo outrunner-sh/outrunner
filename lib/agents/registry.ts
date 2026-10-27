@@ -123,6 +123,13 @@ export function authMethod(agent: AgentId, method: unknown): AuthMethod | null {
   return AGENTS[agent].methods.find((m) => m.id === method) ?? null;
 }
 
+/** `agent`'s ways of signing in that work for a session somewhere it can
+ *  run: with local sessions off (lib/session/local-sessions.ts), the ways only
+ *  a session on the Mac can use are left out, as nothing could use them. */
+export function authMethodsFor(agent: AgentId, localSessions: boolean): AuthMethod[] {
+  return AGENTS[agent].methods.filter((method) => localSessions || method.targets.includes("cloud"));
+}
+
 /** The agent whose API key a provider's is, if any: Anthropic's is Claude
  *  Code's, OpenAI's is Codex's. */
 export function agentOfKey(provider: KeyProviderId): AgentId | null {

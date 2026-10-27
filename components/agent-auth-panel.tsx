@@ -9,12 +9,13 @@ import { LocalAgentConnection } from "@/components/local-agent-connection";
 import { SectionHeader } from "@/components/settings-details";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
-import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod } from "@/lib/agents/registry";
+import { AGENTS, type AgentId, type AuthCredential, type AuthMethodId, authMethod, authMethodsFor } from "@/lib/agents/registry";
 import { AGENT_AUTH_CHOICES } from "@/lib/client/agent-auth-choices";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import { requestJson } from "@/lib/http/request-json";
 import type { KeyProviderId } from "@/lib/providers/registry";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
+import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 
 /** Whether a credential is saved with Outrunner. An own login isn't: only the
  *  Mac app can say (LocalAgentConnection). */
@@ -38,6 +39,7 @@ export function AgentAuthPanel({
   onChoice,
   onKeys,
   onClaude,
+  active = true,
 }: {
   agent: AgentId;
   choices: AgentAuthChoices;
@@ -50,14 +52,22 @@ export function AgentAuthPanel({
   /** A key card's reply: every key's status, and whose key it changed. */
   onKeys: (keys: ProviderKeys, provider: KeyProviderId) => void;
   onClaude: (meta: ClaudeTokenMeta) => void;
+  /** Whether this tab is on screen. */
+  active?: boolean;
 }) {
-  const { label, methods } = AGENTS[agent];
-  const chosen = choices[agent];
+  const { label } = AGENTS[agent];
+  // Only ways a session can use: with local sessions off, not the Mac's own
+  // CLI. A pick of one of those reads as none, here and on the cards, so the
+  // panel asks for one that works.
+  const methods = authMethodsFor(agent, LOCAL_SESSIONS);
+  const listed = (method: AuthMethodId | null | undefined) =>
+    method && methods.some((m) => m.id === method) ? method : undefined;
+  const chosen = listed(choices[agent]) ?? null;
   // Shows what a link asked for, else the pick, else the first way already
   // saved here, else the first card.
   const [shown, setShown] = useState<AuthMethodId>(
     () =>
-      initialMethod ??
+      listed(initialMethod) ??
       chosen ??
       methods.find((method) => savedCredential(method.credential, keys, claude))?.id ??
       methods[0].id,
@@ -128,7 +138,7 @@ export function AgentAuthPanel({
       {methods.map(({ id, credential }) => (
         <div key={id} hidden={id !== shown}>
           {credential.kind === "claude-slot" ? (
-            <ClaudeConnection meta={claude} onChange={onClaude} />
+            <ClaudeConnection meta={claude} onChange={onClaude} active={active && id === shown} />
           ) : credential.kind === "provider-key" ? (
             <ApiKeyCard
               provider={credential.provider}

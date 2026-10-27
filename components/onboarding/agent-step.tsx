@@ -1,18 +1,16 @@
 "use client";
 
-import { ArrowLeft, Check, ChevronRight, Copy, KeyRound, Sparkles, Terminal } from "lucide-react";
-import { type ComponentType, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { ArrowLeft, Check, ChevronRight, KeyRound, Sparkles } from "lucide-react";
+import { type ComponentType, useState } from "react";
 
 import { ClaudeIcon, OpenAIIcon } from "@/components/brand-icons";
 import { ClaudeConnection } from "@/components/claude-connection";
-import { Input } from "@/components/ui/input";
+import { ClaudeFromTerminal } from "@/components/claude-from-terminal";
 import { LoadingButton } from "@/components/ui/loading-button";
-import { CLI_DEFAULT_URL, connectClaudeCommand, freeModelsOffer } from "@/lib/onboarding/rules";
+import { SecretForm } from "@/components/ui/secret-form";
+import { freeModelsOffer } from "@/lib/onboarding/rules";
 import type { AgentPick, AgentStatus, OnboardingEnv } from "@/lib/onboarding/types";
-import { cn } from "@/lib/utils";
-
-/** How often the page looks for a subscription connected from the terminal. */
-const TERMINAL_POLL_MS = 3_000;
+import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 
 type Agent = "claude" | "codex";
 type Method = "subscription" | "api-key" | "outrunner";
@@ -24,21 +22,7 @@ type Page = { at: "agents" } | { at: "methods"; agent: Agent } | { at: "connect"
 const AGENT_NAMES: Record<Agent, string> = { claude: "Claude Code", codex: "OpenAI Codex" };
 const AGENT_ICONS: Record<Agent, ComponentType<{ className?: string }>> = { claude: ClaudeIcon, codex: OpenAIIcon };
 
-/** How each package manager runs the CLI that connects Claude from the
- *  user's terminal (it signs the terminal in, then runs `claude setup-token`). */
-const RUNNERS = [
-  ["npm", "npx"],
-  ["pnpm", "pnpm dlx"],
-  ["yarn", "yarn dlx"],
-  ["bun", "bunx"],
-] as const;
-
-/** This app's origin, which never changes while the page is open; the
- *  CLI's default on the server, which can't know it. */
-const noSubscription = () => () => {};
-function useOrigin(): string {
-  return useSyncExternalStore(noSubscription, () => window.location.origin, () => CLI_DEFAULT_URL);
-}
+const NO_SUBSCRIPTION: ClaudeTokenMeta = { connected: false, last4: null, updatedAt: null };
 
 /** Whether `method` of `agent` is connected already. */
 function connected(agent: Agent, method: Method, status: AgentStatus): boolean {
@@ -84,6 +68,13 @@ export function AgentStep({
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Onboarding's status, kept current, as the subscription it says. */
+  function heard(next: AgentStatus): ClaudeTokenMeta {
+    onStatus(next);
+    // Only "none yet" to "connected" counts here, which needs no save time.
+    return { connected: next.claude.subscription, last4: next.claude.last4, updatedAt: null };
   }
 
   if (page.at === "agents") {
@@ -148,14 +139,20 @@ export function AgentStep({
           <Connected detail={status.claude.last4 ? `Subscription · …${status.claude.last4}` : "Subscription"} />
         ) : env.desktop ? (
           <ClaudeConnection
-            meta={{ connected: false, last4: null }}
+            meta={NO_SUBSCRIPTION}
             onChange={(meta) => {
               void env.agentStatus().then(onStatus, () => {});
               if (meta.connected) void finish("claude", "subscription");
             }}
           />
         ) : (
-          <SubscriptionFromTerminal env={env} onStatus={onStatus} onConnected={() => void finish("claude", "subscription")} />
+          <ClaudeFromTerminal
+            before={NO_SUBSCRIPTION}
+            check={() => env.agentStatus().then(heard)}
+            saveToken={(token) => env.saveClaudeToken(token).then(heard)}
+            onLanded={() => void finish("claude", "subscription")}
+            next="This page moves on once it's connected."
+          />
         ))}
       {method === "api-key" &&
         (isConnected ? (
@@ -165,7 +162,7 @@ export function AgentStep({
             <p className="text-muted-foreground text-sm">
               {agent === "claude" ? "Sessions run Claude Code on your Anthropic API key." : "Sessions run Codex on your OpenAI API key."}
             </p>
-            <KeyForm
+            <SecretForm
               placeholder={agent === "claude" ? "sk-ant-api…" : "sk-…"}
               onSave={(key) => env.saveApiKey(agent === "claude" ? "anthropic" : "openai", key).then(onStatus)}
             />
@@ -250,135 +247,5 @@ function Connected({ detail }: { detail: string }) {
       </span>
       Connected <span className="text-muted-foreground">· {detail}</span>
     </p>
-  );
-}
-
-/** The CLI command to connect the subscription from the user's terminal, by
- *  package manager, as Replicas shows it; the page moves on once it lands. A
- *  token from `claude setup-token` can be pasted instead. */
-function SubscriptionFromTerminal({
-  env,
-  onStatus,
-  onConnected,
-}: {
-  env: OnboardingEnv;
-  onStatus: (status: AgentStatus) => void;
-  /** The subscription landed: the step goes on. */
-  onConnected: () => void;
-}) {
-  const [manager, setManager] = useState(0);
-  const [pasting, setPasting] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const command = connectClaudeCommand(RUNNERS[manager][1], useOrigin());
-
-  // Called once, though the poll and a pasted token can both see the
-  // subscription land; the poll reads the latest callback through `land`.
-  const went = useRef(false);
-  const landed = (status: AgentStatus) => {
-    onStatus(status);
-    if (status.claude.subscription && !went.current) {
-      went.current = true;
-      onConnected();
-    }
-  };
-  const land = useRef(landed);
-  useEffect(() => {
-    land.current = landed;
-  });
-
-  // Polled while the page shows, and at once when the user comes back to it
-  // from the terminal or Claude's sign-in tab.
-  useEffect(() => {
-    const poll = () => {
-      if (!document.hidden) env.agentStatus().then((status) => land.current(status), () => {});
-    };
-    const timer = setInterval(poll, TERMINAL_POLL_MS);
-    document.addEventListener("visibilitychange", poll);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", poll);
-    };
-  }, [env]);
-
-  return (
-    <div className="space-y-3">
-      <p className="text-muted-foreground text-sm">Run the CLI and connect your Claude Code account</p>
-      <div role="tablist" aria-label="Package manager" className="flex gap-4 text-xs">
-        {RUNNERS.map(([name], index) => (
-          <button
-            key={name}
-            type="button"
-            role="tab"
-            aria-selected={index === manager}
-            onClick={() => setManager(index)}
-            className={cn("pb-1", index === manager ? "border-foreground text-foreground border-b" : "text-muted-foreground hover:text-foreground")}
-          >
-            {name}
-          </button>
-        ))}
-      </div>
-      <div className="bg-muted/40 border-border/60 flex items-center gap-2 rounded-md border px-3 py-2.5">
-        <Terminal className="text-amber-500 size-3.5 shrink-0" />
-        <code className="flex-1 font-mono text-xs">{command}</code>
-        <button
-          type="button"
-          aria-label="Copy"
-          onClick={() => {
-            void navigator.clipboard?.writeText(command);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </button>
-      </div>
-      <p className="text-muted-foreground text-xs">Claude will give you a code to paste into your terminal. This page moves on once it&apos;s connected.</p>
-      {pasting ? (
-        <KeyForm placeholder="Paste the token from claude setup-token" onSave={(token) => env.saveClaudeToken(token).then(landed)} />
-      ) : (
-        <button type="button" onClick={() => setPasting(true)} className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline">
-          Or paste a token from <code className="font-mono">claude setup-token</code>
-        </button>
-      )}
-    </div>
-  );
-}
-
-function KeyForm({ placeholder, onSave }: { placeholder: string; onSave: (value: string) => Promise<unknown> }) {
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <form
-      className="space-y-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!value.trim() || busy) return;
-        setBusy(true);
-        setError(null);
-        onSave(value.trim())
-          .then(() => setValue(""))
-          .catch((e: unknown) => setError(e instanceof Error ? e.message : "Couldn't save that."))
-          .finally(() => setBusy(false));
-      }}
-    >
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <KeyRound className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
-          <Input
-            type="password"
-            autoComplete="off"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder={placeholder}
-            aria-label={placeholder}
-            className="pl-8 font-mono text-xs"
-          />
-        </div>
-        <LoadingButton type="submit" variant="outline" status={busy ? "pending" : "idle"} disabled={!value.trim()} labels={{ idle: "Save", pending: "Saving" }} />
-      </div>
-      {error && <p role="alert" className="text-destructive text-xs">{error}</p>}
-    </form>
   );
 }

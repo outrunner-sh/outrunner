@@ -70,7 +70,7 @@ export async function PUT(request: Request) {
   // its own answer.
   const meta: ClaudeTokenMeta = await getClaudeTokenMeta(owner.id).catch((error: unknown) => {
     console.error("Could not re-read the Claude token after saving it", error);
-    return { connected: true, last4: checked.token.slice(-4) };
+    return { connected: true, last4: checked.token.slice(-4), updatedAt: null };
   });
   return NextResponse.json(meta);
 }
@@ -91,5 +91,6 @@ export async function DELETE(request: Request) {
       { status: 500 },
     );
   }
-  return NextResponse.json({ connected: false, last4: null });
+  const disconnected: ClaudeTokenMeta = { connected: false, last4: null, updatedAt: null };
+  return NextResponse.json(disconnected);
 }
