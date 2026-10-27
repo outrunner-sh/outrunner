@@ -35,14 +35,20 @@ func launchedGitHubToken(t *testing.T, argv []string) (token, helper string) {
 	if i < 0 {
 		t.Fatalf("no claude in the launch %q", argv)
 	}
-	probe := append(append([]string(nil), argv[:i]...), "sh", "-c", `printf '%s\n%s' "$GH_TOKEN" "$GIT_CONFIG_VALUE_0"`)
+	probe := append(append([]string(nil), argv[:i]...), "sh", "-c", `printf '%s\n%s\n%s\n%s' "$GH_TOKEN" "$GIT_CONFIG_VALUE_0" "$GITHUB_TOKEN" "$GH_CONFIG_DIR"`)
 	cmd := exec.Command(probe[0], probe[1:]...)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), githubTokenEnv + "=" + testBoxGitHubToken}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), githubTokenEnv + "=" + testBoxGitHubToken, "GITHUB_TOKEN=" + testBoxGitHubToken}
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("run the launch's wrappers: %v", err)
 	}
-	token, helper, _ = strings.Cut(string(out), "\n")
+	lines := strings.Split(string(out), "\n")
+	token, helper = lines[0], lines[1]
+	// Any session on its own token, or on none, is kept off the user's other
+	// GitHub credentials.
+	if s := strings.Join(argv, " "); strings.Contains(s, "/github/") && (lines[2] != "" || lines[3] == "") {
+		t.Errorf("GITHUB_TOKEN %q and GH_CONFIG_DIR %q: the user's other credentials are reachable", lines[2], lines[3])
+	}
 	return token, helper
 }
 
