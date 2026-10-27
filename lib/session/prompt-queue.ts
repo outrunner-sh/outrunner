@@ -48,8 +48,10 @@ export function writeQueue(storage: QueueStorage | null, workspaceId: string, qu
 
 /**
  * Whether the next queued prompt goes now: the session takes prompts (it's
- * attached), its agent isn't at work or waiting on the user's answer, and the
- * queue isn't held after a send of it failed (until the user retries).
+ * attached), its agent isn't at work or waiting on the user's answer, the
+ * stream has recorded the last queued prompt sent (`awaitingLast` until it
+ * has: one of files alone shows no bubble meanwhile), and the queue isn't
+ * held after a send of it failed (until the user retries).
  */
 export function queueDrains(state: {
   queued: number;
@@ -57,6 +59,14 @@ export function queueDrains(state: {
   working: boolean;
   waitingOnUser: boolean;
   held: boolean;
+  awaitingLast: boolean;
 }): boolean {
-  return state.queued > 0 && state.attached && !state.working && !state.waitingOnUser && !state.held;
+  return (
+    state.queued > 0 &&
+    state.attached &&
+    !state.working &&
+    !state.waitingOnUser &&
+    !state.held &&
+    !state.awaitingLast
+  );
 }

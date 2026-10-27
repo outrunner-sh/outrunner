@@ -363,6 +363,11 @@ export function WorkspaceSession({
   // Bumped as each queued send settles, so the queue looks again: the turn it
   // started may have ended while the send was still being answered.
   const [queueSettled, setQueueSettled] = useState(0);
+  // The prompts the stream had recorded when the last queued prompt was sent:
+  // the next waits until the stream records that one too. A prompt of files
+  // alone has no bubble to say the session took it, so `working` alone could
+  // let the next go into the same turn.
+  const [queuedAt, setQueuedAt] = useState<number | null>(null);
   const enqueue = (text: string, attachmentIds: string[]): Promise<boolean> => {
     setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds }]);
     setSendError(null);
@@ -373,8 +378,10 @@ export function WorkspaceSession({
   const sendQueued = (prompt: QueuedPrompt): Promise<boolean> => {
     setQueue((q) => q.filter((p) => p.id !== prompt.id));
     setQueueHeld(false);
+    const recorded = userPromptCount(eventsRef.current);
     return send(prompt.text, prompt.attachmentIds, () => void sendQueued(prompt)).then((landed) => {
-      if (!landed) {
+      if (landed) setQueuedAt(recorded);
+      else {
         setQueue((q) => [prompt, ...q.filter((p) => p.id !== prompt.id)]);
         setQueueHeld(true);
       }
@@ -383,10 +390,19 @@ export function WorkspaceSession({
   };
   const removeQueued = (prompt: QueuedPrompt) => {
     setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    // The one that failed sits at the head; with it gone, the rest go on.
+    if (queue[0]?.id === prompt.id) setQueueHeld(false);
     // Its files were uploaded for it alone.
     for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
   };
-  const drains = queueDrains({ queued: queue.length, attached, working, waitingOnUser, held: queueHeld });
+  const drains = queueDrains({
+    queued: queue.length,
+    attached,
+    working,
+    waitingOnUser,
+    held: queueHeld,
+    awaitingLast: queuedAt !== null && delivered <= queuedAt,
+  });
   useEffect(() => {
     if (!drains || sendingQueued.current) return;
     sendingQueued.current = true;
@@ -414,7 +430,12 @@ export function WorkspaceSession({
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
       : stopCloudTurn(workspaceId)
     )
-      .then(() => setStoppedAt(userPromptCount(eventsRef.current)))
+      .then(() => {
+        setStoppedAt(userPromptCount(eventsRef.current));
+        // A queued prompt Claude hadn't taken up yet is handed back to its
+        // input by a stop, never recorded: the queue mustn't wait on it.
+        setQueuedAt(null);
+      })
       .catch((error: unknown) =>
         setStopError(
           local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
