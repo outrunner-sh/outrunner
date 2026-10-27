@@ -239,6 +239,10 @@ type SetEnvironmentRequest struct {
 	// session with no setup script gets them in its worktree.
 	Files map[string]string `json:"files,omitempty"`
 	Setup string            `json:"setup,omitempty"`
+	// Instructions are the project's for its agent, given after Outrunner's
+	// own orientation at every launch (FeatureInstructions). Empty removes
+	// them.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // SetAgentConfigRequest is the user's own agent setup for this computer
@@ -258,6 +262,10 @@ const FeatureAgentConfig = "agent-config"
 
 // FeatureEnvironment is POST /workspaces/{id}/environment.
 const FeatureEnvironment = "session-environment"
+
+// FeatureInstructions is SetEnvironmentRequest's Instructions: an older
+// agent ignores them.
+const FeatureInstructions = "project-instructions"
 
 // FeatureImports is restoring an imported session: compressed downloads, a
 // bundle's branch under another name, and the conversation's folder moved.

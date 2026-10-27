@@ -823,6 +823,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	default:
 		o += "\n\n" + claude.Identity(f.Model)
 	}
+	if instructions := s.instructions(workspaceID); instructions != "" {
+		o += "\n\n# Project instructions\n\nThe user gave these for every session in this project:\n\n" + instructions
+	}
 	return o
 }
 

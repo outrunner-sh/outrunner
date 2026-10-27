@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Settings,
+  Settings2,
   Sparkles,
   Terminal,
   X,
@@ -317,6 +318,18 @@ function WorkspaceGroup({
             )}
           />
         </button>
+        {start?.kind === "cloud" && (
+          // The project's settings: a repository's id opens its default
+          // project (app/(app)/projects/[id]).
+          <Link
+            href={`/projects/${start.projectId}`}
+            aria-label={`${group.label} settings`}
+            title={`${group.label} settings`}
+            className="rounded p-0.5 text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/ws:opacity-100"
+          >
+            <Settings2 className="size-3.5" />
+          </Link>
+        )}
         {start && (
           <button
             type="button"

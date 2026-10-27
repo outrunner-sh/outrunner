@@ -1,4 +1,8 @@
 /**
+ * Superseded by lib/db/environments.ts, which the migration
+ * 20261027120000_environments.sql moved these rows to: read only by a
+ * deploy running before that migration.
+ *
  * A project's environment for its cloud sessions (project_environment): its
  * variables and its checkout's .env files, sealed, and its setup, run and
  * archive scripts. Service role

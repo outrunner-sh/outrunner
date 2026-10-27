@@ -54,6 +54,9 @@ const (
 	maxEnvFilesBytes = 1 << 20
 )
 
+// maxInstructionsBytes bounds a project's instructions.
+const maxInstructionsBytes = 16 << 10
+
 // setupTimeout bounds a setup script's run.
 const setupTimeout = 30 * time.Minute
 
@@ -74,6 +77,44 @@ func (s *Service) envRoot(workspaceID string) string {
 
 func (s *Service) setupPath(workspaceID string) string {
 	return filepath.Join(s.Root, "setup", workspaceID+".sh")
+}
+
+func (s *Service) instructionsPath(workspaceID string) string {
+	return filepath.Join(s.Root, "instructions", workspaceID+".md")
+}
+
+// ValidInstructions accepts instructions a session can take, so a caller can
+// check them before changing anything else.
+func ValidInstructions(instructions string) error {
+	instructions = strings.TrimSpace(instructions)
+	if len(instructions) > maxInstructionsBytes || strings.ContainsRune(instructions, 0) {
+		return fmt.Errorf("%w: instructions too large", ErrInvalidEnvironment)
+	}
+	return nil
+}
+
+// SetInstructions gives a session its project's instructions for the agent,
+// replacing any it had; empty removes them. They apply at its next launch,
+// after Outrunner's orientation (orientation).
+func (s *Service) SetInstructions(workspaceID, instructions string) error {
+	instructions = strings.TrimSpace(instructions)
+	if err := ValidInstructions(instructions); err != nil {
+		return err
+	}
+	path := s.instructionsPath(workspaceID)
+	if instructions == "" {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	return writeKeysFile(path, instructions+"\n")
+}
+
+// instructions are the session's project instructions, or "".
+func (s *Service) instructions(workspaceID string) string {
+	data, _ := os.ReadFile(s.instructionsPath(workspaceID))
+	return strings.TrimSpace(string(data))
 }
 
 func (s *Service) setupLogPath(workspaceID string) string {
@@ -301,6 +342,7 @@ func (s *Service) envTokens() []string {
 // removeEnvironment removes a destroyed session's environment and setup.
 func (s *Service) removeEnvironment(workspaceID string) {
 	s.envFiles().remove(workspaceID)
+	_ = os.Remove(s.instructionsPath(workspaceID))
 	_ = os.RemoveAll(s.envRoot(workspaceID))
 	setup := s.setupPath(workspaceID)
 	for _, path := range []string{setup, setup + ".run", setup + ".copied", s.setupLogPath(workspaceID)} {

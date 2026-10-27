@@ -108,6 +108,9 @@ type WorkspaceRow = {
   computer_id: string | null;
   tmux_session: string | null;
   agent_workspace_id: string | null;
+  /** The environment (the app's Project) it started from; null for a
+   *  session from before environments. */
+  environment_id: string | null;
   /** The coding agent it runs: "claude" or "codex". */
   agent: string;
   /** The model it runs, whose it is, and its effort; null before the first
@@ -261,6 +264,35 @@ type ProjectEnvironmentRow = {
   archive_script: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/** What the app calls a Project (20261027120000_environments.sql). */
+type EnvironmentRow = {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  instructions: string | null;
+  secrets_ciphertext: string | null;
+  env_names: string[];
+  file_paths: string[];
+  setup_script: string | null;
+  run_script: string | null;
+  archive_script: string | null;
+  default_for_project_id: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type EnvironmentRepoRow = {
+  owner_id: string;
+  environment_id: string;
+  project_id: string;
+  checkout_name: string;
+  branch: string | null;
+  position: number;
+  created_at: string;
 };
 
 type UserAgentConfigRow = {
@@ -539,6 +571,18 @@ export type Database = {
         Row: UserAgentConfigRow;
         Insert: Insert<UserAgentConfigRow, "user_id">;
         Update: Partial<UserAgentConfigRow>;
+        Relationships: [];
+      };
+      environments: {
+        Row: EnvironmentRow;
+        Insert: Insert<EnvironmentRow, "owner_id" | "name">;
+        Update: Partial<EnvironmentRow>;
+        Relationships: [];
+      };
+      environment_repos: {
+        Row: EnvironmentRepoRow;
+        Insert: Insert<EnvironmentRepoRow, "owner_id" | "environment_id" | "project_id" | "checkout_name">;
+        Update: Partial<EnvironmentRepoRow>;
         Relationships: [];
       };
       project_environment: {

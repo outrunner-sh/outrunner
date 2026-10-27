@@ -373,7 +373,7 @@ async function restoreDaytonaWorkspace(
       await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
     }
     // Before the restore, which launches the session at once.
-    await setUpSession(agent, identity, upgrade, owner.id, project.id);
+    await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
     const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
     let restoredWorktree: string | undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, async (credential) => {
