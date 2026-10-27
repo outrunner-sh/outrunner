@@ -428,8 +428,10 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	// Its effort is SetModel's alone, so a repeated Create keeps it as well.
 	facts.Effort = prior.Effort
 	facts.Checkouts = in.Checkouts
-	if existed && len(prior.Checkouts) > 0 {
-		facts.Checkouts = prior.Checkouts // never switches between one and several
+	if existed {
+		// A retry keeps what the first Create recorded (before it made
+		// anything): a session never switches between one and several.
+		facts.Checkouts = prior.Checkouts
 	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
@@ -895,8 +897,16 @@ var placeholderBranch = regexp.MustCompile(`^runtime/[0-9a-z]+-[0-9a-f]{8}$`)
 // from git each launch, so a branch renamed since (at the user's request)
 // isn't called a placeholder.
 func onPlaceholderBranch(worktree string) bool {
-	if dirs := repoDirs(worktree); len(dirs) > 0 {
-		worktree = dirs[0] // a folder of checkouts: they share the branch
+	if !fileExists(filepath.Join(worktree, ".git")) {
+		// A folder of checkouts: they share the branch, so the first's.
+		if entries, err := os.ReadDir(worktree); err == nil {
+			for _, e := range entries {
+				if e.IsDir() && fileExists(filepath.Join(worktree, e.Name(), ".git")) {
+					worktree = filepath.Join(worktree, e.Name())
+					break
+				}
+			}
+		}
 	}
 	if worktree == "" {
 		return false
@@ -1520,9 +1530,9 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 		s.forgetWorkspace(workspaceID)
 		return nil
 	}
-	if !fileExists(filepath.Join(worktree, ".git")) {
+	if f, _ := s.getFacts(workspaceID); len(f.Checkouts) > 0 {
 		// A folder of checkouts: each leaves its own mirror, then the folder.
-		for _, dir := range repoDirs(worktree) {
+		for _, dir := range checkoutDirs(worktree, f.Checkouts) {
 			s.removeCheckout(ctx, dir)
 		}
 		if err := os.RemoveAll(worktree); err != nil {
@@ -1589,7 +1599,9 @@ func (s *Service) beginSummary(workspaceID, worktree string) {
 	s.summariesMu.Lock()
 	sum, ok := s.summaries[workspaceID]
 	if !ok {
+		f, _ := s.getFacts(workspaceID)
 		sum = newSummary(workspaceID, worktree)
+		sum.checkouts = checkoutDirs(worktree, f.Checkouts)
 		s.summaries[workspaceID] = sum
 	}
 	s.summariesMu.Unlock()

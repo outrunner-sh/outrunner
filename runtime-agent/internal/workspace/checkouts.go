@@ -8,8 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
-	"strings"
+		"strings"
 )
 
 // A session of a project with several repositories works in a folder of
@@ -75,8 +74,10 @@ func (s *Service) createCheckouts(ctx context.Context, folder, branch string, ch
 		out, err := exec.CommandContext(ctx, "git", "-C", RepoMirrorPath(s.Root, c.Name),
 			"worktree", "add", "-b", branch, dir, "origin/"+c.BaseBranch).CombinedOutput()
 		if err != nil {
+			// Their branches too: a retry makes them again with -b.
 			for _, m := range made {
 				s.removeCheckout(ctx, filepath.Join(folder, m.Name))
+				_, _ = s.git(ctx, RepoMirrorPath(s.Root, m.Name), "branch", "-D", branch)
 			}
 			_ = os.RemoveAll(folder)
 			return fmt.Errorf("worktree add %s: %v: %s", c.Name, err, strings.TrimSpace(string(out)))
@@ -96,27 +97,18 @@ func (s *Service) removeCheckout(ctx context.Context, dir string) {
 	_ = os.RemoveAll(dir)
 }
 
-// repoDirs are the git checkouts a session works in: its worktree, or, for a
-// folder of checkouts, each one in it (by name, sorted). Read from disk, so it
-// holds after an agent restart.
-func repoDirs(worktree string) []string {
-	if worktree == "" {
+// checkoutDirs are the checkouts of a session of several repositories, in
+// the order recorded; nil for any other session (its worktree is its one
+// repository, or a folder of the user's that isn't Outrunner's to scan).
+// Driven by the facts, never by what is on disk.
+func checkoutDirs(worktree string, checkouts []Checkout) []string {
+	if worktree == "" || len(checkouts) == 0 {
 		return nil
 	}
-	if fileExists(filepath.Join(worktree, ".git")) {
-		return []string{worktree}
+	dirs := make([]string, len(checkouts))
+	for i, c := range checkouts {
+		dirs[i] = filepath.Join(worktree, c.Name)
 	}
-	entries, err := os.ReadDir(worktree)
-	if err != nil {
-		return nil
-	}
-	var dirs []string
-	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") && fileExists(filepath.Join(worktree, e.Name(), ".git")) {
-			dirs = append(dirs, filepath.Join(worktree, e.Name()))
-		}
-	}
-	sort.Strings(dirs)
 	return dirs
 }
 

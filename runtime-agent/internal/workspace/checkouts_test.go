@@ -98,7 +98,8 @@ func TestASessionOfSeveralRepositories(t *testing.T) {
 	if _, err := s.FileDiff(ctx, "ws1", "README"); !errors.Is(err, ErrNotChanged) {
 		t.Errorf("a path without its folder = %v, want ErrNotChanged", err)
 	}
-	if changed, touched, _ := gitStats(ctx, folder); changed != 2 || len(touched) != 2 {
+	f, _ := s.getFacts("ws1")
+	if changed, touched, _ := gitStats(ctx, folder, checkoutDirs(folder, f.Checkouts)); changed != 2 || len(touched) != 2 {
 		t.Errorf("summary: %d changed, touched %v", changed, touched)
 	}
 
@@ -125,6 +126,41 @@ func TestACheckoutThatFailsTakesTheOthersWithIt(t *testing.T) {
 	})
 	if err == nil || fileExists(s.worktreePath("ws1")) {
 		t.Fatalf("create = %v, folder left: %v", err, fileExists(s.worktreePath("ws1")))
+	}
+	// Once the missing mirror is there, the control plane's retry succeeds:
+	// the first attempt left no branch behind.
+	repoMirror(t, RepoMirrorPath(s.Root, "api"), "main")
+	if _, err := s.Create(context.Background(), CreateInput{WorkspaceID: "ws1", Branch: "b"}); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !fileExists(filepath.Join(s.worktreePath("ws1"), "api", ".git")) {
+		t.Error("the retry made no api checkout")
+	}
+}
+
+// A session never switches between one repository and several: a retry
+// keeps what the first Create recorded.
+func TestARetryKeepsTheFirstCreatesRepositories(t *testing.T) {
+	s, _ := cloudSession(t, CreateInput{WorkspaceID: "ws1", Branch: "b", BaseBranch: "main"})
+	if _, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws1", Branch: "b",
+		Checkouts: []Checkout{{Name: "web", BaseBranch: "main"}, {Name: "api", BaseBranch: "main"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := s.getFacts("ws1"); len(f.Checkouts) != 0 {
+		t.Errorf("a single-repository session now records checkouts: %v", f.Checkouts)
+	}
+}
+
+// A folder of the user's (an in-place session) is never scanned for
+// repositories: its summary is its own.
+func TestASummaryDoesNotScanTheUsersFolder(t *testing.T) {
+	folder := t.TempDir()
+	repoMirror(t, filepath.Join(folder, "unrelated.git"), "main")
+	_ = os.MkdirAll(filepath.Join(folder, "other", ".git"), 0o755)
+	if changed, touched, commits := gitStats(context.Background(), folder, nil); changed != 0 || len(touched) != 0 || commits != 0 {
+		t.Errorf("stats of a plain folder = %d %v %d", changed, touched, commits)
 	}
 }
 

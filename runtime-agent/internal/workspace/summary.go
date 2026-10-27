@@ -39,6 +39,9 @@ type Summary struct {
 	turnOpen bool
 
 	cancel context.CancelFunc // stops the collector goroutine when non-nil
+	// checkouts are a multi-repository session's (checkoutDirs); none, its
+	// worktree is its one repository.
+	checkouts []string
 }
 
 // newSummary creates a Summary in the "running" state as of now. The collector
@@ -172,7 +175,7 @@ func (s *Summary) Snapshot(ctx context.Context) protocol.WorkspaceSummary {
 		lastMsgPtr = &v
 	}
 
-	changed, touched, commits := gitStats(ctx, s.worktree)
+	changed, touched, commits := gitStats(ctx, s.worktree, s.checkouts)
 
 	return protocol.WorkspaceSummary{
 		State:                state,
@@ -210,14 +213,18 @@ func startingSummary(worktree string) protocol.WorkspaceSummary {
 // back to zero/empty on error — the summary is best-effort, not a lock on the
 // worktree. Runs the three commands sequentially; typical wall-clock is <20ms
 // on a healthy worktree, well below the Mission poll cadence.
-func gitStats(ctx context.Context, worktree string) (int, []string, int) {
+func gitStats(ctx context.Context, worktree string, checkouts []string) (int, []string, int) {
 	if worktree == "" {
 		return 0, []string{}, 0
 	}
 	// A folder of checkouts: each one's, its paths under its folder.
 	var statusPaths, logPaths []string
 	commits := 0
-	for _, dir := range repoDirs(worktree) {
+	dirs := checkouts
+	if len(dirs) == 0 {
+		dirs = []string{worktree}
+	}
+	for _, dir := range dirs {
 		prefix := ""
 		if dir != worktree {
 			prefix = filepath.Base(dir) + "/"
