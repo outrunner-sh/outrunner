@@ -19,7 +19,7 @@ import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { readWorkspaceFile, type WorkspaceFilesState } from "@/hooks/use-workspace-files";
 import { buildFileTree, codeLanguage, type FileTreeDir, searchFiles } from "@/lib/session/file-tree";
-import type { FileContent } from "@/lib/runtime/types";
+import { type FileContent, MAX_FILE_BYTES } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** How many matches a search lists. */
@@ -428,7 +428,8 @@ function FileView({
             </div>
             {file.truncated && (
               <p className="px-4 py-3 text-muted-foreground text-[11px]">
-                Showing the first {formatSize(new TextEncoder().encode(file.content).length)} of {formatSize(file.size)}.
+                {/* A cut read is always the cap. */}
+                Showing the first {formatSize(MAX_FILE_BYTES)} of {formatSize(file.size)}.
               </p>
             )}
           </>

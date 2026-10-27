@@ -29,7 +29,6 @@ export function LocalWorkspaceView() {
   if (session) {
     return (
       <WorkspaceStudio
-        key={workspaceId}
         workspace={asWorkspace(session)}
         local={session}
         pullRequest={null}

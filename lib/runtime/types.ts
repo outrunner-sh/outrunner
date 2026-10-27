@@ -251,6 +251,9 @@ export type WorktreeFiles = {
   truncated: boolean;
 };
 
+/** How much of a file the Files panel reads: a larger one comes back cut. */
+export const MAX_FILE_BYTES = 512_000;
+
 /** One worktree file as the Files panel shows it: its text, or for a binary
  *  file only that it is one. */
 export type FileContent = {

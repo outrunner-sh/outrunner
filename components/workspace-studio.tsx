@@ -48,6 +48,13 @@ export function WorkspaceStudio({
 }) {
   const [rightOpen, setRightOpen] = useState(true);
   const [envView, setEnvView] = useState<EnvironmentView>("overview");
+  // Another session opens its panel on the rows (the panel itself stays open
+  // or hidden as it was).
+  const [envFor, setEnvFor] = useState(workspace.id);
+  if (envFor !== workspace.id) {
+    setEnvFor(workspace.id);
+    setEnvView("overview");
+  }
   const filesOpen = rightOpen && envView === "files";
   // How the Environment panel's Create PR sends into the session, while it can.
   const [sender, setSender] = useState<SessionSender | null>(null);
@@ -204,6 +211,8 @@ export function WorkspaceStudio({
       <aside className="studio-inspector studio-env" hidden={!rightOpen} aria-label="Environment">
         {rightOpen && (
           <WorkspaceEnvironment
+            // One per session: nothing its views hold carries to the next.
+            key={workspace.id}
             workspace={workspace}
             local={local}
             pullRequest={pullRequest}

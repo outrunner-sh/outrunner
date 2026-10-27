@@ -14,7 +14,7 @@
  */
 
 import { makeRedactor } from "@/lib/runtime/redact";
-import type { ChangedFile, FileContent, WorktreeFiles } from "@/lib/runtime/types";
+import { type ChangedFile, type FileContent, MAX_FILE_BYTES, type WorktreeFiles } from "@/lib/runtime/types";
 
 export type GitExecResult = {
   stdout: string;
@@ -456,7 +456,6 @@ export async function readFileDiff(
 }
 
 const MAX_LISTED_FILES = 25_000;
-const MAX_FILE_BYTES = 512_000;
 
 /** Every file in a worktree for the Files panel: tracked and untracked, not
  * the ignored ones nor those deleted from disk, sorted. Kept in step with the
