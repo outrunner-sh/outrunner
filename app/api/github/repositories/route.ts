@@ -37,7 +37,10 @@ export async function GET(request: Request) {
       cachedRepositoryList(owner.id, () => listGitHubRepositories(token), { fresh }),
       // Only marks what's connected: without the orgs, every org's projects.
       activeOrgId()
-        .catch(() => undefined)
+        .catch((error: unknown) => {
+          console.error("Repository picker: could not load orgs", error);
+          return undefined;
+        })
         .then((orgId) => listProjects(orgId)),
     ]);
 
