@@ -52,7 +52,11 @@ export async function actAsUser<T>(userId: string, work: () => Promise<T>): Prom
   if (linkError || !link.properties?.hashed_token) {
     throw new ActAsUserError(`Couldn't sign in as that user: ${linkError?.message ?? "no token"}`);
   }
-  const client = createClient<Database>(url, requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), { auth: noSession });
+  // Refreshed while the work runs: a setup that outlasts one access token
+  // (an hour) would otherwise fail its last writes.
+  const client = createClient<Database>(url, requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
+    auth: { ...noSession, autoRefreshToken: true },
+  });
   const { data: verified, error: verifyError } = await client.auth.verifyOtp({
     token_hash: link.properties.hashed_token,
     type: "email",
@@ -62,8 +66,10 @@ export async function actAsUser<T>(userId: string, work: () => Promise<T>): Prom
   }
 
   try {
+    await client.auth.startAutoRefresh();
     return await acting.run({ userId, client }, work);
   } finally {
+    await client.auth.stopAutoRefresh();
     await client.auth.signOut({ scope: "local" }).catch((error: unknown) => {
       console.warn("Couldn't sign out the session acted as", error);
     });

@@ -33,6 +33,8 @@ export type ServerSessionResult =
  * never in a request a person waits on.
  */
 export async function startServerSession(start: ServerSessionStart): Promise<ServerSessionResult> {
+  // Once its row is made, how it went is that session's: never "refused".
+  let made: string | null = null;
   try {
     return await actAsUser(start.userId, async () => {
       const owner = await getOwner();
@@ -52,17 +54,23 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
           },
         },
       );
+      const body = (await response.json().catch(() => null)) as { error?: unknown; workspace?: { id?: unknown } } | null;
       if (response.status !== 202) {
-        const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
         return refused(typeof body?.error === "string" ? body.error : `The session couldn't start (${response.status}).`);
       }
-      return outcome ?? refused("The session's setup ended without saying how.");
+      made = typeof body?.workspace?.id === "string" ? body.workspace.id : null;
+      return outcome ?? failed(made, "The session's setup ended without saying how.");
     });
   } catch (error) {
     if (error instanceof ActAsUserError) return refused(error.message);
     console.error(`Could not start a session for ${start.userId}`, error);
-    return refused("The session couldn't start. Outrunner logged why.");
+    return failed(made, "The session couldn't start. Outrunner logged why.");
   }
+}
+
+/** Failed: the session's, once there is one, else not made at all. */
+function failed(workspaceId: string | null, errorMessage: string): ServerSessionResult {
+  return workspaceId ? { workspaceId, status: "failed", errorMessage } : refused(errorMessage);
 }
 
 function refused(errorMessage: string): ServerSessionResult {
