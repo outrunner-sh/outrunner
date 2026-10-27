@@ -6,7 +6,6 @@ import { AgentClient, AgentRequestError } from "@/lib/runtime/agent-client";
 import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
-import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { reachableWorktree } from "@/lib/runtime/worktree-access";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -37,23 +36,20 @@ export async function GET(request: Request, context: RouteContext) {
   const path = new URL(request.url).searchParams.get("path");
 
   try {
-    if (isComputerProvider(provider) && workspace.checkouts) {
-      // A folder of checkouts: the agent reads each one's changes.
-      const agentReach = await reachWorkspaceAgent(workspace.id, owner.id, {
-        label: "Changes",
-        needsComputer: "Viewing changes requires a Runtime Computer provider.",
-      });
-      if (!agentReach.ok) return agentReach.response;
-      const { agent, identity } = agentReach.reached;
-      const answer = await agent.workspaceChanges(identity, path ?? undefined);
-      return NextResponse.json(path !== null ? { diff: answer.diff ?? "" } : { files: answer.files ?? [] });
-    }
     if (isComputerProvider(provider)) {
       const computer = await getWorkspaceComputer(workspace);
       const reach = reachableWorktree(computer, workspace.worktreePath);
       if (!reach.ok) return NextResponse.json({ error: reach.error }, { status: 409 });
       const fromAgent = computer && (await changesFromAgent(provider, computer, { workspace, userId: owner.id, path }));
       if (fromAgent) return fromAgent;
+      // A folder of checkouts is no repository for git from outside: only
+      // the agent reads it.
+      if (workspace.checkouts) {
+        return NextResponse.json(
+          { error: "This session's box needs an update to show the changes of several repositories. Restart the session." },
+          { status: 409 },
+        );
+      }
       if (path !== null) {
         const diff = await provider.readWorkspaceChangedFileDiff(
           reach.sandboxId,

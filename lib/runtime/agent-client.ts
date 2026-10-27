@@ -304,15 +304,6 @@ export class AgentClient {
     return Activity.parse(raw);
   }
 
-  /** The session's changed files, or with `path` one file's diff, as the
-   *  agent measures them (GET /workspaces/{id}/changes): for a session of
-   *  several repositories, whose folder the control plane's own git can't
-   *  read, each file under its repository's folder. */
-  async workspaceChanges(identity: WorkspaceIdentity, path?: string): Promise<{ files?: unknown[]; diff?: string }> {
-    const query = path === undefined ? "" : `?path=${encodeURIComponent(path)}`;
-    return (await this.get(`/workspaces/${identity.workspaceId}/changes${query}`, identity)) as { files?: unknown[]; diff?: string };
-  }
-
   /** Start warming a ready box (POST /warm): box-wide, so the listing
    *  token. A box warming already answers 409 CONFLICT. */
   startWarm(box: Omit<WorkspaceIdentity, "workspaceId">, req: WarmRequest): Promise<unknown> {
