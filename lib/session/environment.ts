@@ -1,5 +1,5 @@
 import type { LocalSession } from "@/lib/desktop/local-runtime";
-import { onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
+import type { Workspace } from "@/lib/runtime/types";
 
 /** The changed set summed up, for the Environment panel's Changes row. */
 export type ChangeTotals = { files: number; additions: number; deletions: number };
@@ -15,10 +15,8 @@ export function changeTotals(files: readonly { additions: number; deletions: num
   );
 }
 
-/** The rows above the terminal: where the session runs and what it works on. */
+/** The rows above the terminal: what the session works on. */
 export type EnvironmentSummary = {
-  /** `detail` names the machine or folder, for the row's tooltip. */
-  location: { kind: "cloud" | "local"; label: string; detail: string };
   /** The session's branch; null when Claude edits a folder in place. */
   branch: string | null;
   /** What the branch is compared with; null when there is no branch. */
@@ -28,25 +26,17 @@ export type EnvironmentSummary = {
 };
 
 export function environmentSummary(
-  workspace: Pick<Workspace, "provider" | "branch" | "baseBranch" | "worktreePath">,
-  local?: Pick<LocalSession, "name" | "folder" | "worktree" | "branch" | "baseBranch" | "inPlace">,
+  workspace: Pick<Workspace, "branch" | "baseBranch" | "worktreePath">,
+  local?: Pick<LocalSession, "folder" | "worktree" | "branch" | "baseBranch" | "inPlace">,
 ): EnvironmentSummary {
   if (local) {
     return {
-      location: { kind: "local", label: "Local", detail: `This Mac · ${local.name}` },
       branch: local.inPlace ? null : local.branch,
       baseBranch: local.inPlace ? null : local.baseBranch || null,
       workingPath: (local.inPlace ? local.folder : local.worktree) || null,
     };
   }
   return {
-    location: {
-      kind: "cloud",
-      label: "Cloud",
-      // Daytona and Neev sessions share the project's Runtime Computer; the
-      // others each have a sandbox of their own, named by their provider.
-      detail: onRuntimeComputer(workspace.provider) ? "runtime-computer" : workspace.provider,
-    },
     branch: workspace.branch || null,
     baseBranch: workspace.branch ? workspace.baseBranch || null : null,
     workingPath: workspace.worktreePath || null,
