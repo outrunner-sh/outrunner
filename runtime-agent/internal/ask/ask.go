@@ -194,19 +194,9 @@ var ErrReplaced = errors.New("asked again")
 // Broker holds each session's waiting question until the user answers it.
 // A session waits on one at a time: the card the browser shows is one set of
 // questions.
-type Broker struct {
-	mu      sync.Mutex
-	waiting map[string]*waiter
-}
+type Broker struct{ held holder[[]Question, Reply] }
 
-type waiter struct {
-	requestID string
-	questions []Question
-	replies   chan Reply
-	replaced  chan struct{}
-}
-
-func NewBroker() *Broker { return &Broker{waiting: map[string]*waiter{}} }
+func NewBroker() *Broker { return &Broker{held: newHolder[[]Question, Reply]()} }
 
 // Ask waits for the user's reply to questions asked in a session, until ctx
 // ends (the relay gave the call up). requestID names the call: a relay that
@@ -216,47 +206,97 @@ func (b *Broker) Ask(ctx context.Context, workspaceID, requestID string, questio
 	if err := Validate(questions); err != nil {
 		return Reply{}, err
 	}
-	w := &waiter{requestID: requestID, questions: questions, replies: make(chan Reply, 1), replaced: make(chan struct{})}
-	b.mu.Lock()
-	if old := b.waiting[workspaceID]; old != nil {
-		if old.requestID != requestID {
-			b.mu.Unlock()
-			return Reply{}, ErrBusy
-		}
-		close(old.replaced)
-	}
-	b.waiting[workspaceID] = w
-	b.mu.Unlock()
-
-	select {
-	case reply := <-w.replies:
-		return reply, nil
-	case <-w.replaced:
-		return Reply{}, ErrReplaced
-	case <-ctx.Done():
-		b.mu.Lock()
-		if b.waiting[workspaceID] == w {
-			delete(b.waiting, workspaceID)
-		}
-		b.mu.Unlock()
-		return Reply{}, ctx.Err()
-	}
+	return b.held.wait(ctx, workspaceID, requestID, questions)
 }
 
 // Answer delivers the user's reply to the questions a session is waiting on.
 // questions are the ones the browser showed: an answer to any others (an
 // earlier set, a set from before a restart) is ErrNotWaiting.
 func (b *Broker) Answer(workspaceID string, questions []Question, reply Reply) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	w := b.waiting[workspaceID]
-	if w == nil || !reflect.DeepEqual(w.questions, questions) {
+	return b.held.answer(workspaceID, func(asked []Question) (Reply, error) {
+		if !reflect.DeepEqual(asked, questions) {
+			return Reply{}, ErrNotWaiting
+		}
+		if err := ValidateReply(asked, reply); err != nil {
+			return Reply{}, err
+		}
+		return reply, nil
+	})
+}
+
+// holder keeps each session's one waiting request, of type Q, until its
+// reply, of type R, is delivered or the call is given up: what the question
+// and the secret request brokers share.
+type holder[Q, R any] struct {
+	mu      sync.Mutex
+	waiting map[string]*waiter[Q, R]
+}
+
+type waiter[Q, R any] struct {
+	requestID string
+	request   Q
+	replies   chan R
+	replaced  chan struct{}
+}
+
+func newHolder[Q, R any]() holder[Q, R] { return holder[Q, R]{waiting: map[string]*waiter[Q, R]{}} }
+
+// wait holds request as the session's waiting one until its reply, a newer
+// call with the same requestID takes over (ErrReplaced), or ctx ends. One
+// with another requestID while one waits is ErrBusy.
+func (h *holder[Q, R]) wait(ctx context.Context, workspaceID, requestID string, request Q) (R, error) {
+	var none R
+	w := &waiter[Q, R]{requestID: requestID, request: request, replies: make(chan R, 1), replaced: make(chan struct{})}
+	h.mu.Lock()
+	if old := h.waiting[workspaceID]; old != nil {
+		if old.requestID != requestID {
+			h.mu.Unlock()
+			return none, ErrBusy
+		}
+		close(old.replaced)
+	}
+	h.waiting[workspaceID] = w
+	h.mu.Unlock()
+
+	select {
+	case reply := <-w.replies:
+		return reply, nil
+	case <-w.replaced:
+		return none, ErrReplaced
+	case <-ctx.Done():
+		h.mu.Lock()
+		if h.waiting[workspaceID] == w {
+			delete(h.waiting, workspaceID)
+		}
+		h.mu.Unlock()
+		return none, ctx.Err()
+	}
+}
+
+// answer gives the session's waiting request to respond, which makes its
+// reply or refuses (the request isn't the one answered, the answer doesn't
+// fit it); a reply made is delivered. With none waiting, ErrNotWaiting.
+// respond runs under the lock: whatever it does happens once, for a call
+// still waiting.
+func (h *holder[Q, R]) answer(workspaceID string, respond func(request Q) (R, error)) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	w := h.waiting[workspaceID]
+	if w == nil {
 		return ErrNotWaiting
 	}
-	if err := ValidateReply(w.questions, reply); err != nil {
+	reply, err := respond(w.request)
+	if err != nil {
 		return err
 	}
-	delete(b.waiting, workspaceID)
+	delete(h.waiting, workspaceID)
 	w.replies <- reply
 	return nil
+}
+
+// has reports whether the session has a request waiting.
+func (h *holder[Q, R]) has(workspaceID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.waiting[workspaceID] != nil
 }

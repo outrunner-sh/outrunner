@@ -48,7 +48,31 @@ var protocolVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-
 
 const toolDescription = `Ask the user one to four multiple-choice questions and wait for their answers. Use it whenever you need the user to decide something, state a preference or give information you can't find yourself before you go on. Outrunner shows the questions in place of the chat box. Give each question 2 to 4 options with a short label and a description of what it means. The user can always type their own answer, so never add an "Other" option. If you recommend an option, list it first and end its label with "(Recommended)". Set multiSelect when more than one option can apply.`
 
-const serverInstructions = "To ask the user a question with choices, call ask_user rather than asking in plain text: Outrunner shows it as a card the user answers with a click."
+const serverInstructions = "To ask the user a question with choices, call ask_user rather than asking in plain text: Outrunner shows it as a card the user answers with a click. Whenever you need a secret, API key, token, password or private key you don't have, call request_secrets: never ask the user to paste one into the chat."
+
+const secretsToolDescription = `Ask the user for secrets you need and don't have (API keys, tokens, passwords, private keys) and wait for them. Outrunner shows a form in place of the chat box; the values go straight into this session's environment and never into the conversation. Use it instead of ever asking the user to paste a secret in chat. Name each variable as the code reads it (e.g. STRIPE_SECRET_KEY), say in reason what you'll use them for, and mark a variable optional when the work can go on without it. The result says which were provided; they're in your Bash environment from your next command. Never print, echo, log or commit a value. If the user skips the request, don't ask again: use a local substitute or explain why it's needed.`
+
+var secretsInputSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "reason": {"type": "string", "description": "What you'll use them for, in one sentence the user reads on the form."},
+    "keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string", "description": "The environment variable, e.g. OPENAI_API_KEY."},
+          "description": {"type": "string", "description": "Where to find it or what kind, e.g. \"A test-mode secret key from the Stripe dashboard\"."},
+          "optional": {"type": "boolean", "description": "Whether the work can go on without it."}
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  "required": ["reason", "keys"]
+}`)
 
 // inputSchema is AskUserQuestion's, so the agents ask the same way.
 var inputSchema = json.RawMessage(`{
@@ -187,13 +211,22 @@ func (r *relay) handle(ctx context.Context, msg rpcMessage) {
 	case "ping":
 		r.result(msg.ID, map[string]any{})
 	case "tools/list":
-		r.result(msg.ID, map[string]any{"tools": []any{map[string]any{
-			"name":        ToolName,
-			"title":       "Ask the user",
-			"description": toolDescription,
-			"inputSchema": inputSchema,
-			"annotations": map[string]any{"readOnlyHint": true, "openWorldHint": false},
-		}}})
+		r.result(msg.ID, map[string]any{"tools": []any{
+			map[string]any{
+				"name":        ToolName,
+				"title":       "Ask the user",
+				"description": toolDescription,
+				"inputSchema": inputSchema,
+				"annotations": map[string]any{"readOnlyHint": true, "openWorldHint": false},
+			},
+			map[string]any{
+				"name":        SecretsToolName,
+				"title":       "Ask the user for secrets",
+				"description": secretsToolDescription,
+				"inputSchema": secretsInputSchema,
+				"annotations": map[string]any{"readOnlyHint": false, "openWorldHint": false},
+			},
+		}})
 	case "tools/call":
 		r.startCall(ctx, msg)
 	case "notifications/cancelled":
@@ -249,25 +282,42 @@ func (r *relay) call(ctx context.Context, raw json.RawMessage) (string, bool) {
 		Name      string `json:"name"`
 		Arguments struct {
 			Questions json.RawMessage `json:"questions"`
+			Reason    json.RawMessage `json:"reason"`
+			Keys      json.RawMessage `json:"keys"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return "malformed tool call", true
 	}
-	if params.Name != ToolName {
+	var route string
+	var request map[string]any
+	switch params.Name {
+	case ToolName:
+		if len(params.Arguments.Questions) == 0 {
+			return "ask_user needs questions", true
+		}
+		route, request = "ask", map[string]any{"questions": params.Arguments.Questions}
+	case SecretsToolName:
+		if len(params.Arguments.Keys) == 0 {
+			return "request_secrets needs keys", true
+		}
+		reason := params.Arguments.Reason
+		if len(reason) == 0 {
+			reason = json.RawMessage(`""`)
+		}
+		route, request = "ask-secrets", map[string]any{"reason": reason, "keys": params.Arguments.Keys}
+	default:
 		return "unknown tool " + params.Name, true
 	}
-	if len(params.Arguments.Questions) == 0 {
-		return "ask_user needs questions", true
-	}
-	body, err := json.Marshal(map[string]any{"requestId": newRequestID(), "questions": params.Arguments.Questions})
+	request["requestId"] = newRequestID()
+	body, err := json.Marshal(request)
 	if err != nil {
 		return err.Error(), true
 	}
 
 	var unreachableSince time.Time
 	for {
-		text, failed, err := r.post(ctx, body)
+		text, failed, err := r.post(ctx, route, body)
 		if err == nil {
 			return text, failed
 		}
@@ -293,7 +343,7 @@ var errUnreachable = errors.New("runtime-agent unreachable")
 
 // post sends the call to the agent once. An error means it should be tried
 // again; an answer, even a refusal, is returned as the tool's text.
-func (r *relay) post(ctx context.Context, body []byte) (string, bool, error) {
+func (r *relay) post(ctx context.Context, route string, body []byte) (string, bool, error) {
 	addr, err := readTrimmed(r.cfg.AddrFile)
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %v", errUnreachable, err)
@@ -302,7 +352,7 @@ func (r *relay) post(ctx context.Context, body []byte) (string, bool, error) {
 	if err != nil {
 		return "This session can't ask questions in Outrunner (" + err.Error() + "). Ask the user in plain text instead.", true, nil
 	}
-	url := "http://" + addr + "/workspaces/" + r.cfg.WorkspaceID + "/ask"
+	url := "http://" + addr + "/workspaces/" + r.cfg.WorkspaceID + "/" + route
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err.Error(), true, nil
@@ -338,7 +388,7 @@ func (r *relay) post(ctx context.Context, body []byte) (string, bool, error) {
 		if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
 			return e.Error.Message, true, nil
 		}
-		return "Outrunner refused the question: " + resp.Status, true, nil
+		return "Outrunner refused the request: " + resp.Status, true, nil
 	}
 }
 

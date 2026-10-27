@@ -91,3 +91,61 @@ func TestAQuestionIsAnsweredFromTheBrowser(t *testing.T) {
 		t.Fatalf("second answer = %d, want 409", code)
 	}
 }
+
+// A request for secrets goes from the agent's relay to the browser's form,
+// the values into the session's provided file, and only the names back as
+// the tool's result.
+func TestSecretsAreProvidedFromTheBrowser(t *testing.T) {
+	const secret = "test-secret"
+	root := t.TempDir()
+	svc := workspace.NewService(root)
+	ts := httptest.NewServer(New(secret, svc).Handler())
+	defer ts.Close()
+	if err := svc.Announce(ts.Listener.Addr()); err != nil {
+		t.Fatal(err)
+	}
+	addrFile, tokenFile := workspace.AskPaths(root, "ws-s")
+	if err := os.MkdirAll(filepath.Dir(tokenFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenFile, []byte("session-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	call := controlCall(t, ts.URL, secret)
+
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	defer inW.Close()
+	go func() {
+		_ = ask.Relay(context.Background(), inR, outW, ask.RelayConfig{WorkspaceID: "ws-s", AddrFile: addrFile, TokenFile: tokenFile})
+		outW.Close()
+	}()
+	results := bufio.NewScanner(outR)
+	_, _ = io.WriteString(inW, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"request_secrets","arguments":{"reason":"Deploy a preview","keys":[{"name":"VERCEL_TOKEN"}]}}}`+"\n")
+
+	answer := map[string]any{"keys": []string{"VERCEL_TOKEN"}, "values": map[string]string{"VERCEL_TOKEN": "vercel-secret-123"}}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		code, out := call("ws-s", "POST", "/workspaces/ws-s/secrets", answer)
+		if code == http.StatusOK {
+			break
+		}
+		if code != http.StatusConflict || time.Now().After(deadline) {
+			t.Fatalf("provide = %d %v", code, out)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !results.Scan() {
+		t.Fatal("no tool result")
+	}
+	text := results.Text()
+	if !strings.Contains(text, "provided VERCEL_TOKEN") || strings.Contains(text, "vercel-secret-123") {
+		t.Fatalf("tool result = %s", text)
+	}
+	if data, err := os.ReadFile(svc.ProvidedEnvPath("ws-s")); err != nil || !strings.Contains(string(data), "vercel-secret-123") {
+		t.Fatalf("provided file: %q %v", data, err)
+	}
+	if code, _ := call("ws-s", "POST", "/workspaces/ws-s/secrets", answer); code != http.StatusConflict {
+		t.Fatalf("second answer = %d, want 409", code)
+	}
+}

@@ -127,7 +127,7 @@ func TestRelayServesTheToolAndForwardsCalls(t *testing.T) {
 	r.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	r.send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	tools := r.next()["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 1 || tools[0].(map[string]any)["name"] != ToolName {
+	if len(tools) != 2 || tools[0].(map[string]any)["name"] != ToolName || tools[1].(map[string]any)["name"] != SecretsToolName {
 		t.Fatalf("tools = %v", tools)
 	}
 
@@ -228,5 +228,38 @@ func TestRelayGivesUpOnAnAgentThatNeverComesBack(t *testing.T) {
 	r.send(callAsk)
 	if text, failed := toolText(t, r.next()); !failed || !strings.Contains(text, "plain text") {
 		t.Fatalf("tool result = %q (error %v)", text, failed)
+	}
+}
+
+// A request for secrets goes to the agent's own route, with its reason and
+// keys, and the agent's text is the tool's result.
+func TestRelayForwardsASecretsRequest(t *testing.T) {
+	var got struct {
+		RequestID string      `json:"requestId"`
+		Reason    string      `json:"reason"`
+		Keys      []SecretKey `json:"keys"`
+	}
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspaces/ws/ask-secrets" {
+			t.Errorf("call to %s", r.URL.Path)
+		}
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = io.WriteString(w, `{"text":"The user provided STRIPE_KEY."}`)
+	}))
+	defer agent.Close()
+	r := startRelay(t, agent, 0)
+
+	r.send(`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"request_secrets","arguments":{"reason":"Test checkout","keys":[{"name":"STRIPE_KEY","description":"test mode"}]}}}`)
+	msg := r.next()
+	if text, failed := toolText(t, msg); failed || text != "The user provided STRIPE_KEY." {
+		t.Fatalf("tool result = %q (error %v)", text, failed)
+	}
+	if got.RequestID == "" || got.Reason != "Test checkout" || len(got.Keys) != 1 || got.Keys[0].Name != "STRIPE_KEY" {
+		t.Fatalf("agent got %+v", got)
+	}
+
+	r.send(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"request_secrets","arguments":{"reason":"x"}}}`)
+	if text, failed := toolText(t, r.next()); !failed || !strings.Contains(text, "needs keys") {
+		t.Fatalf("no keys: %q (error %v)", text, failed)
 	}
 }

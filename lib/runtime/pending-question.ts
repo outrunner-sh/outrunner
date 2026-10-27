@@ -43,13 +43,28 @@ export type PendingQuestion = {
  *  they typed into "Other". */
 export type AskAnswer = { selected: string[]; other: string };
 
-/**
- * The newest ask_user call still waiting on an answer, or null. A call is
- * answered once its result is in the stream; one followed by a prompt, a
- * stopped turn or the session's end is over, whatever the agent recorded (a
- * session killed mid-question records no result).
- */
+/** The newest ask_user call still waiting on an answer, or null
+ *  (pendingToolCall). */
 export function pendingQuestion(events: AgentEvent[]): PendingQuestion | null {
+  const call = pendingToolCall(events, ASK_TOOL);
+  if (!call) return null;
+  const parsed = AskInput.safeParse(call.input);
+  if (!parsed.success) return null; // the agent refuses it too: no card to answer
+  return {
+    toolUseId: call.id,
+    questions: parsed.data.questions,
+    raw: (call.input as { questions: unknown }).questions,
+  };
+}
+
+/**
+ * The newest call of `tool` still waiting on its result, or null: what a
+ * card in place of the composer answers (ask_user, request_secrets). A call
+ * is answered once its result is in the stream; one followed by a prompt, a
+ * stopped turn or the session's end is over, whatever the agent recorded (a
+ * session killed mid-call records no result).
+ */
+export function pendingToolCall(events: AgentEvent[], tool: string): { id: string; input: unknown } | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
     if (event.t === "state") {
@@ -63,15 +78,9 @@ export function pendingQuestion(events: AgentEvent[]): PendingQuestion | null {
     }
     for (let b = event.content.length - 1; b >= 0; b--) {
       const block = event.content[b];
-      if (block.type !== "tool_use" || block.name !== ASK_TOOL) continue;
+      if (block.type !== "tool_use" || block.name !== tool) continue;
       if (answered(events, i, block.id)) return null;
-      const parsed = AskInput.safeParse(block.input);
-      if (!parsed.success) return null; // the agent refuses it too: no card to answer
-      return {
-        toolUseId: block.id,
-        questions: parsed.data.questions,
-        raw: (block.input as { questions: unknown }).questions,
-      };
+      return { id: block.id, input: block.input };
     }
   }
   return null;

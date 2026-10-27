@@ -267,6 +267,20 @@ const FeatureEnvironment = "session-environment"
 // agent ignores them.
 const FeatureInstructions = "project-instructions"
 
+// FeatureRequestSecrets is a Claude session's request_secrets tool and
+// POST /workspaces/{id}/secrets, the user's answer to it.
+const FeatureRequestSecrets = "request-secrets"
+
+// ProvideSecretsRequest is the user's answer to the request for secrets a
+// session is waiting on (POST /workspaces/{id}/secrets): the request's
+// variables, as the form showed them, and the values given for some of
+// them; or that the user skipped it.
+type ProvideSecretsRequest struct {
+	Keys    []string          `json:"keys"`
+	Values  map[string]string `json:"values,omitempty"`
+	Skipped bool              `json:"skipped,omitempty"`
+}
+
 // FeatureImports is restoring an imported session: compressed downloads, a
 // bundle's branch under another name, and the conversation's folder moved.
 const FeatureImports = "restore-imports"
