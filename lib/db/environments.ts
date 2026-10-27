@@ -63,23 +63,51 @@ export type Environment = {
   envNames: string[];
   filePaths: string[];
   scripts: ProjectScripts;
+  hooks: ProjectHooks;
   /** The repository this is the default project of; null for one the user
    *  made. */
   defaultForProjectId: string | null;
+  /** Counts the changes ready boxes are made from (warm-pool.ts). */
+  setupGeneration: number;
+  /** The warm hook's last run on the asker's ready boxes (each member has
+   *  their own pool), or null for none yet. */
+  warm: WarmRun | null;
   updatedAt: string;
   /** What the user asking may do with it: write, or only read. */
   access: AccessLevel;
 };
 
+/** The warm hook, run ahead on a ready box, and the start hook, run at each
+ *  launch of a session's agent. */
+export type ProjectHooks = { warm: string | null; start: string | null };
+
+/** A warm hook's run on a ready box, for the settings page. */
+export type WarmRun = {
+  status: "running" | "succeeded" | "failed";
+  /** The end of its output. */
+  log: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** The setup generation it ran for. */
+  generation: number | null;
+};
+
 /** What a session starts with: the secrets opened, the scripts, and the
  *  instructions for its agent. */
-export type EnvironmentSetup = ProjectEnvironment & { instructions: string | null };
+export type EnvironmentSetup = ProjectEnvironment & {
+  instructions: string | null;
+  hooks?: ProjectHooks;
+  /** The setup's generation, which a ready box must be made from to be
+   *  taken. */
+  generation?: number;
+};
 
 export type EnvironmentPatch = {
   name?: string;
   description?: string | null;
   instructions?: string | null;
   scripts?: Partial<ProjectScripts>;
+  hooks?: Partial<ProjectHooks>;
 };
 
 /** The project, or null when there's none by that id the user may read. */
@@ -90,7 +118,7 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
   const { data, error } = await supabase
     .from("environments")
     .select(
-      "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at",
+      "id, org_id, name, description, instructions, env_names, file_paths, setup_script, run_script, archive_script, default_for_project_id, updated_at, warm_hook, start_hook, setup_generation, warm_runs",
     )
     .eq("id", id)
     .is("archived_at", null)
@@ -106,7 +134,10 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
     envNames: data.env_names,
     filePaths: data.file_paths,
     scripts: { setup: data.setup_script, run: data.run_script, archive: data.archive_script },
+    hooks: { warm: data.warm_hook, start: data.start_hook },
     defaultForProjectId: data.default_for_project_id,
+    setupGeneration: data.setup_generation,
+    warm: warmRunOf(data.warm_runs, userId),
     updatedAt: data.updated_at,
     access,
   };
@@ -192,7 +223,7 @@ export async function environmentSetup(userId: string, id: string): Promise<Envi
   if (!(await environmentLevel(userId, id))) return null;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
-    .select("secrets_ciphertext, setup_script, run_script, archive_script, instructions")
+    .select("secrets_ciphertext, setup_script, run_script, archive_script, instructions, warm_hook, start_hook, setup_generation")
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
@@ -203,6 +234,8 @@ export async function environmentSetup(userId: string, id: string): Promise<Envi
     run: data.run_script,
     archive: data.archive_script,
     instructions: data.instructions,
+    hooks: { warm: data.warm_hook, start: data.start_hook },
+    generation: data.setup_generation,
   };
 }
 
@@ -223,19 +256,21 @@ export async function environmentHasSetup(userId: string, id: string): Promise<b
   if (!(await environmentLevel(userId, id))) return false;
   const { data, error } = await createSupabaseAdminClient()
     .from("environments")
-    .select("env_names, file_paths, setup_script, run_script, archive_script")
+    .select("env_names, file_paths, setup_script, run_script, archive_script, warm_hook, start_hook")
     .eq("id", id)
     .maybeSingle();
   if (error) throw error;
   if (!data) return false;
   return (
     data.env_names.length + data.file_paths.length > 0 ||
-    Boolean(data.setup_script || data.run_script || data.archive_script)
+    Boolean(data.setup_script || data.run_script || data.archive_script || data.warm_hook || data.start_hook)
   );
 }
 
-/** Change the project's name, description, instructions or scripts. A field
- *  left out is left as it is. Needs write (else EnvironmentAccessError). */
+/** Change the project's name, description, instructions, scripts or hooks.
+ *  A field left out is left as it is. A new warm hook moves the project's
+ *  setup on a generation, so its ready boxes are made again. Needs write
+ *  (else EnvironmentAccessError). */
 export async function updateEnvironment(userId: string, id: string, patch: EnvironmentPatch): Promise<void> {
   await requireWrite(userId, id);
   const { error } = await createSupabaseAdminClient()
@@ -247,9 +282,52 @@ export async function updateEnvironment(userId: string, id: string, patch: Envir
       ...(patch.scripts?.setup !== undefined && { setup_script: patch.scripts.setup }),
       ...(patch.scripts?.run !== undefined && { run_script: patch.scripts.run }),
       ...(patch.scripts?.archive !== undefined && { archive_script: patch.scripts.archive }),
+      ...(patch.hooks?.warm !== undefined && { warm_hook: patch.hooks.warm }),
+      ...(patch.hooks?.start !== undefined && { start_hook: patch.hooks.start }),
     })
     .eq("id", id);
   if (error) throw error;
+  if (patch.hooks?.warm !== undefined) await bumpGeneration(userId, id);
+}
+
+/** Move the project's setup on a generation: its ready boxes are made again
+ *  (a change they're made from, or "Try again"). The new one; null when the
+ *  user can't see the project. Needs write, as a change to the project does
+ *  (else EnvironmentAccessError): checked first, as the function takes any id. */
+export async function bumpGeneration(userId: string, id: string): Promise<number | null> {
+  const level = await environmentLevel(userId, id);
+  if (!level) return null;
+  if (!allows(level, "write")) throw new EnvironmentAccessError();
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.rpc("bump_environment_generation", { target: id });
+  // Before the migration that adds it: nothing to make again.
+  if (error && (error.code === "PGRST202" || error.code === "42883")) return null;
+  if (error) throw error;
+  return typeof data === "number" ? data : null;
+}
+
+/** Record a member's warm hook run on their ready boxes, for the settings
+ *  page (record_warm_run: a failure of a generation isn't hidden by their
+ *  other box's success). */
+export async function recordWarmRun(id: string, memberId: string, run: WarmRun): Promise<void> {
+  const { error } = await createSupabaseAdminClient().rpc("record_warm_run", { target: id, member: memberId, run });
+  if (error) throw error;
+}
+
+/** A member's warm run, read defensively from the project's map. */
+function warmRunOf(runs: unknown, memberId: string): WarmRun | null {
+  const run = runs && typeof runs === "object" ? (runs as Record<string, unknown>)[memberId] : null;
+  if (!run || typeof run !== "object") return null;
+  const r = run as Record<string, unknown>;
+  if (r.status !== "running" && r.status !== "succeeded" && r.status !== "failed") return null;
+  const text = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    status: r.status,
+    log: text(r.log),
+    startedAt: text(r.startedAt),
+    finishedAt: text(r.finishedAt),
+    generation: typeof r.generation === "number" ? r.generation : null,
+  };
 }
 
 /** Another save kept changing the project's secrets while this one tried
@@ -301,7 +379,11 @@ export async function editEnvironmentSecrets(
       .eq("updated_at", data.updated_at)
       .select("id");
     if (updateError) throw updateError;
-    if (written.length > 0) return { envNames, filePaths };
+    if (written.length > 0) {
+      // Ready boxes carry the variables and files they were warmed with.
+      await bumpGeneration(userId, id);
+      return { envNames, filePaths };
+    }
   }
   throw new EnvironmentConflictError();
 }
@@ -321,4 +403,17 @@ export async function mergeIntoDefaultEnvironment(
   await editEnvironmentSecrets(userId, id, { setEnv: add.env, setFiles: add.files });
   if (Object.keys(add.scripts).length > 0) await updateEnvironment(userId, id, { scripts: add.scripts });
   return true;
+}
+
+/** The generation of the project's setup a ready box must be made from to be
+ *  taken; null for no project (any box, then). */
+export async function setupGeneration(userId: string, id: string | null): Promise<number | null> {
+  if (!id || !(await environmentLevel(userId, id))) return null;
+  const { data, error } = await createSupabaseAdminClient()
+    .from("environments")
+    .select("setup_generation")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.setup_generation ?? null;
 }

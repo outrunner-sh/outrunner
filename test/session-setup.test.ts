@@ -89,3 +89,16 @@ test("a project's instructions go only to a box that reads them", async () => {
   });
   assert.deepEqual(onlyInstructions.sent, []);
 });
+
+test("a project's hooks go only to a box that runs them", async () => {
+  const withHooks = { ...environment, hooks: { warm: "pnpm install", start: "docker compose up -d" } };
+  const current = box([...all, "warm-hooks"]);
+  await deliverSessionSetup(current.client, { environment: withHooks, agentConfig: null, downloadUrl });
+  const sent = current.sent[0][1] as { warmHook?: string; startHook?: string };
+  assert.equal(sent.warmHook, "pnpm install");
+  assert.equal(sent.startHook, "docker compose up -d");
+
+  const old = box(all);
+  await deliverSessionSetup(old.client, { environment: withHooks, agentConfig: null, downloadUrl });
+  assert.equal((old.sent[0][1] as { warmHook?: string }).warmHook, undefined);
+});
