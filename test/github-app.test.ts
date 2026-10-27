@@ -340,6 +340,36 @@ test("an installation on an organization takes one of its owners", async () => {
   assert.equal(await userControlsInstallation(config, installation, { login: "x", token: null }), false);
 });
 
+test("an install that hasn't approved reading members still links by its repositories' admin", async () => {
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/access_tokens")) {
+      // GitHub refuses a token for a permission the installation wasn't granted.
+      const body = JSON.parse(String(init?.body)) as { permissions?: Record<string, string> };
+      if (body.permissions?.members) return Promise.resolve(new Response("{}", { status: 422 }));
+      return Promise.resolve(Response.json({ token: "ghs_x", expires_at: "2026-10-28T12:00:00Z" }, { status: 201 }));
+    }
+    if (url.includes("/installation/repositories")) {
+      return Promise.resolve(Response.json({ repositories: [{ full_name: "neevai-labs/a" }] }));
+    }
+    return Promise.resolve(Response.json({ permissions: { admin: true } }));
+  }) as typeof fetch;
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  console.warn = () => {};
+  console.error = () => {};
+  try {
+    assert.equal(await userControlsInstallation(config, installation, { login: "x", token: "t" }), true);
+    assert.equal(
+      await userControlsInstallation(config, { ...installation, repositorySelection: "all" }, { login: "x", token: "t" }),
+      false,
+    );
+  } finally {
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+});
+
 test("an installation's repository list says when it stopped short", async () => {
   globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
     const url = String(input);

@@ -273,11 +273,23 @@ export async function userControlsInstallation(
 
 /** Whether `login` is an active owner (admin) of the installation's
  *  organization, read as the app. False, said in the log, when the app
- *  can't read members: its registration lacks Organization members: read. */
+ *  can't read members: its registration lacks Organization members: read,
+ *  or an organization that installed it before hasn't approved that yet
+ *  (GitHub then refuses the token itself, 422). */
 async function isOrganizationOwner(config: GitHubAppConfig, installation: Installation, login: string): Promise<boolean> {
-  const { token } = await createInstallationToken(config, installation.installationId, {
-    permissions: { members: "read" },
-  });
+  let token: string;
+  try {
+    ({ token } = await createInstallationToken(config, installation.installationId, {
+      permissions: { members: "read" },
+    }));
+  } catch (error) {
+    if (!(error instanceof GitHubSyncError) || (error.status !== 422 && error.status !== 403)) throw error;
+    console.warn(
+      `GitHub App can't read ${installation.accountLogin}'s members: approve Organization members: read on the installation`,
+      { status: error.status },
+    );
+    return false;
+  }
   const org = encodeURIComponent(installation.accountLogin);
   const response = await githubGet(`https://api.github.com/orgs/${org}/memberships/${encodeURIComponent(login)}`, token);
   if (response.status === 404) return false;
