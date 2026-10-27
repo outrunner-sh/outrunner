@@ -83,10 +83,11 @@ After registering the staging app, try each of these from the Automations page:
 4. Edit `installation_id` in the setup URL GitHub sends you back to: it's
    refused.
 5. Uninstall the app on GitHub: it's gone from the page (the webhook).
-6. For an install made before Organization members: read was added: the
-   page asks to approve it. Approve it on GitHub, then note whether GitHub
-   sends you back to Outrunner (`setup_action=update`, and with or without
-   `state`), so the message's steps match what happens.
+6. Register the app without Members: read at first, install it on an
+   organization you own, then add the permission: the page asks to approve
+   it. Approve it on GitHub, then note whether GitHub sends you back to
+   Outrunner (`setup_action=update`, and with or without `state`), so the
+   message's steps match what happens.
 
 ## Local development
 
