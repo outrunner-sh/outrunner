@@ -46,8 +46,8 @@ export async function GET(request: Request, context: RouteContext) {
       // the agent reads it.
       if (workspace.checkouts) {
         return NextResponse.json(
-          { error: "This session's box needs an update to show the changes of several repositories. Restart the session." },
-          { status: 409 },
+          { error: "Couldn't read this session's changes from its box. Try again in a moment." },
+          { status: 503 },
         );
       }
       if (path !== null) {
