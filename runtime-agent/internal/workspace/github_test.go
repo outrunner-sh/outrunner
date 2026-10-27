@@ -35,7 +35,7 @@ func launchedGitHubToken(t *testing.T, argv []string) (token, helper string) {
 	if i < 0 {
 		t.Fatalf("no claude in the launch %q", argv)
 	}
-	probe := append(append([]string(nil), argv[:i]...), "sh", "-c", `printf '%s\n%s\n%s\n%s' "$GH_TOKEN" "$GIT_CONFIG_VALUE_0" "$GITHUB_TOKEN" "$GH_CONFIG_DIR"`)
+	probe := append(append([]string(nil), argv[:i]...), "sh", "-c", `printf '%s\n%s\n%s\n%s' "$GH_TOKEN" "$GIT_CONFIG_VALUE_1" "$GITHUB_TOKEN" "$GH_CONFIG_DIR"`)
 	cmd := exec.Command(probe[0], probe[1:]...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), githubTokenEnv + "=" + testBoxGitHubToken, "GITHUB_TOKEN=" + testBoxGitHubToken}
 	out, err := cmd.Output()
@@ -115,5 +115,45 @@ func TestForgettingASessionRemovesItsGitHubToken(t *testing.T) {
 	s.forgetWorkspace(id)
 	if _, err := os.Stat(s.githubFiles().path(id)); !os.IsNotExist(err) {
 		t.Errorf("the token file is still there: %v", err)
+	}
+}
+
+// gitCredentialFor asks git, through a launch's wrappers, for github.com's
+// credential, in a HOME whose ~/.gitconfig stores the user's own.
+func gitCredentialFor(t *testing.T, argv []string) string {
+	t.Helper()
+	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
+	if i < 0 {
+		t.Fatalf("no claude in the launch %q", argv)
+	}
+	home := t.TempDir()
+	if err := os.WriteFile(home+"/.git-credentials", []byte("https://user:"+testBoxGitHubToken+"@github.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(home+"/.gitconfig", []byte("[credential]\n\thelper = store\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	probe := append(append([]string(nil), argv[:i]...), "git", "credential", "fill")
+	cmd := exec.Command(probe[0], probe[1:]...)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_TERMINAL_PROMPT=0"}
+	cmd.Stdin = strings.NewReader("protocol=https\nhost=github.com\n\n")
+	out, _ := cmd.CombinedOutput()
+	return string(out)
+}
+
+func TestGitNeverAnswersWithTheUsersStoredCredential(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	s, _, id := sessionWithOwnGitHubToken(t)
+	if out := gitCredentialFor(t, s.launchCommand(id, s.worktreePath(id), false)); !strings.Contains(out, "password="+testSessionGitHubToken) {
+		t.Errorf("git answers %q, want the session's token", out)
+	}
+	if err := os.Remove(s.githubFiles().path(id)); err != nil {
+		t.Fatal(err)
+	}
+	if out := gitCredentialFor(t, s.launchCommand(id, s.worktreePath(id), false)); strings.Contains(out, testBoxGitHubToken) {
+		t.Errorf("with its token gone, git answers with the user's: %q", out)
 	}
 }

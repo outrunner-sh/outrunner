@@ -30,20 +30,41 @@ func (s *Service) githubFiles() keyFiles {
 	return keyFiles{dir: filepath.Join(s.Root, "github"), envs: []string{githubTokenEnv}}
 }
 
-// githubEnvFile is a session's own token, and git pointed at it for
-// github.com, as the shell file its launch sources: on a box with no GH_TOKEN
-// of its own, git has no helper to use it otherwise. `gh` is kept off any
-// other credential (noLogin).
+// githubEnvFile is a session's own token, and git pointed at it alone for
+// github.com, as the shell file its launch sources (on a box with no GH_TOKEN
+// of its own, git has no helper to use it otherwise). `gh` is kept off any
+// other credential (noLogin), and git too: its helpers add up, so one in the
+// user's ~/.gitconfig (`store`, a keychain) would be asked first and answer
+// as the user. An empty helper ahead of ours resets the list.
 func githubEnvFile(token, noLoginDir string) string {
 	var b strings.Builder
 	b.WriteString("export " + githubTokenEnv + "=" + claude.ShellQuote(token) + "\n")
 	b.WriteString("unset GITHUB_TOKEN\n")
 	b.WriteString("export GH_CONFIG_DIR=" + claude.ShellQuote(noLoginDir) + "\n")
-	for _, entry := range githubCredentialEnv {
+	_, helper, _ := strings.Cut(githubCredentialEnv[2], "=") // GIT_CONFIG_VALUE_0
+	for _, entry := range []string{
+		"GIT_CONFIG_COUNT=2",
+		githubHelperKey + "0=" + githubHelperName, "GIT_CONFIG_VALUE_0=",
+		githubHelperKey + "1=" + githubHelperName, "GIT_CONFIG_VALUE_1=" + helper,
+	} {
 		name, value, _ := strings.Cut(entry, "=")
 		b.WriteString("export " + name + "=" + claude.ShellQuote(value) + "\n")
 	}
 	return b.String()
+}
+
+const (
+	githubHelperKey  = "GIT_CONFIG_KEY_"
+	githubHelperName = "credential.https://github.com.helper"
+)
+
+// noGitHubCredentials is a session with no GitHub token of its own left:
+// none of the box's or its user's, for gh or for git.
+func (s *Service) noGitHubCredentials() []string {
+	return []string{
+		"env", "-u", githubTokenEnv, "-u", "GITHUB_TOKEN", "GH_CONFIG_DIR=" + s.noGitHubLoginDir(),
+		"GIT_CONFIG_COUNT=1", githubHelperKey + "0=" + githubHelperName, "GIT_CONFIG_VALUE_0=",
+	}
 }
 
 // setSessionGitHubToken keeps the session's own token; a new one replaces it
@@ -83,7 +104,7 @@ func (s *Service) withGitHub(workspaceID string, argv []string) []string {
 	}
 	path := s.githubFiles().path(workspaceID)
 	if !fileExists(path) {
-		return append([]string{"env", "-u", githubTokenEnv, "-u", "GITHUB_TOKEN", "GH_CONFIG_DIR=" + s.noGitHubLoginDir()}, argv...)
+		return append(s.noGitHubCredentials(), argv...)
 	}
 	return claude.WithEnvFile(argv, path)
 }
