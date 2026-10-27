@@ -92,6 +92,9 @@ type Editor struct {
 
 	mu      sync.Mutex
 	attempt *attempt // the start under way, if any
+	// started counts the starts that ended with code-server up: an open that
+	// found it down, then sees this moved, knows a start finished since.
+	started int
 }
 
 // Health is code-server's /healthz: alive while it runs, and when someone
@@ -120,10 +123,20 @@ func (e *Editor) port() int {
 // returns ErrStarting for the caller to ask again. A start that fails is told
 // to every open waiting on it; the next open tries again.
 func (e *Editor) Ensure(ctx context.Context) (int, error) {
+	e.mu.Lock()
+	seen := e.started
+	e.mu.Unlock()
 	if e.up(ctx) {
 		return e.port(), nil
 	}
 	e.mu.Lock()
+	if e.started != seen {
+		// Down when this asked, but a start has finished since (its
+		// attempt already cleared): it's up. Should it have died in the
+		// moment since, the caller's next open finds that and starts it.
+		e.mu.Unlock()
+		return e.port(), nil
+	}
 	a := e.attempt
 	if a == nil {
 		a = &attempt{done: make(chan struct{})}
@@ -132,6 +145,9 @@ func (e *Editor) Ensure(ctx context.Context) (int, error) {
 			err := e.start(context.Background())
 			e.mu.Lock()
 			a.err = err
+			if err == nil {
+				e.started++
+			}
 			e.attempt = nil
 			e.mu.Unlock()
 			close(a.done)

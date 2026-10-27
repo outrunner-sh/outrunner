@@ -142,6 +142,90 @@ func TestTwoOpensAtOnceStartOneEditor(t *testing.T) {
 	}
 }
 
+func TestAnOpenThatFoundItDownAsAStartFinishedDoesNotStartAnother(t *testing.T) {
+	noCodeServerOnPath(t)
+	home := t.TempDir()
+	binary := (&Editor{Home: home}).releaseBinary()
+	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
+	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
+	var up, hold atomic.Bool
+	held, release := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The one probe asked while held answers "down", but only once
+		// released: after another open's start has finished.
+		if hold.CompareAndSwap(true, false) {
+			close(held)
+			<-release
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if !up.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"alive","lastHeartbeat":1761400000000}`))
+	}))
+	defer srv.Close()
+	// Released on every way out, before the server closes: Close waits on
+	// the held probe, so a failure would otherwise hang rather than fail.
+	var once sync.Once
+	letGo := func() { once.Do(func() { close(release) }) }
+	defer letGo()
+	var starts atomic.Int32
+	e := &Editor{Home: home, Health: srv.URL, Start: func(context.Context, string, int) error {
+		starts.Add(1)
+		up.Store(true)
+		return nil
+	}}
+
+	hold.Store(true)
+	late := make(chan error, 1)
+	go func() {
+		_, err := e.Ensure(context.Background())
+		late <- err
+	}()
+	<-held
+	// Another open starts it and sees it through, while the first's probe is out.
+	if _, err := e.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	letGo()
+	if err := <-late; err != nil {
+		t.Fatal(err)
+	}
+	if starts.Load() != 1 {
+		t.Fatalf("started %d editors, want 1", starts.Load())
+	}
+}
+
+func TestAnEditorThatDiesAfterStartingIsStartedAgain(t *testing.T) {
+	noCodeServerOnPath(t)
+	home := t.TempDir()
+	binary := (&Editor{Home: home}).releaseBinary()
+	_ = os.MkdirAll(filepath.Dir(binary), 0o755)
+	_ = os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755)
+	var up atomic.Bool
+	srv := health(&up)
+	defer srv.Close()
+	var starts atomic.Int32
+	e := &Editor{Home: home, Health: srv.URL, Start: func(context.Context, string, int) error {
+		starts.Add(1)
+		up.Store(true)
+		return nil
+	}}
+	if _, err := e.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// It died after its start: the next open finds it down and starts it.
+	up.Store(false)
+	if _, err := e.Ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if starts.Load() != 2 {
+		t.Fatalf("started %d editors, want 2", starts.Load())
+	}
+}
+
 func TestASlowStartSaysItIsStartingThenOpens(t *testing.T) {
 	noCodeServerOnPath(t)
 	home := t.TempDir()
