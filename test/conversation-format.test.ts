@@ -9,6 +9,7 @@ import {
   thoughtLabel,
   toolResultText,
   toolRow,
+  workingElapsed,
 } from "@/lib/runtime/conversation-format";
 
 test("describeToolUse pulls the primary argument for common tools", () => {
@@ -138,4 +139,13 @@ test("a thought says how long it took, when known", () => {
   assert.equal(thoughtLabel(9), "Thought for 9s");
   assert.equal(thoughtLabel(60), "Thought for 1m");
   assert.equal(thoughtLabel(125), "Thought for 2m 5s");
+});
+
+test("working time reads in tenths of a second, then in minutes past one", () => {
+  assert.equal(workingElapsed(0), "0.0s");
+  // Never "60.0s": tenths are counted down, not rounded up to the minute.
+  assert.equal(workingElapsed(59_990), "59.9s");
+  assert.equal(workingElapsed(60_000), "1m 0s");
+  assert.equal(workingElapsed(237_800), "3m 57s");
+  assert.equal(workingElapsed(3_845_000), "1h 4m 5s");
 });

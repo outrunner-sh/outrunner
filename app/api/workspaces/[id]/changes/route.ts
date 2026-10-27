@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getWorkspaceComputer, getWorkspace } from "@/lib/db/repositories";
-import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { getWorkspaceComputer, getWorkspace, readRuntimeComputerSecret } from "@/lib/db/repositories";
+import { AgentClient, AgentRequestError } from "@/lib/runtime/agent-client";
+import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
 import { reachableWorktree } from "@/lib/runtime/worktree-access";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -16,7 +18,8 @@ type RouteContext = { params: Promise<{ id: string }> };
  * already committed or pushed still show.
  */
 export async function GET(request: Request, context: RouteContext) {
-  if (!(await getOwner())) {
+  const owner = await getOwner();
+  if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
 
@@ -34,8 +37,11 @@ export async function GET(request: Request, context: RouteContext) {
 
   try {
     if (isComputerProvider(provider)) {
-      const reach = reachableWorktree(await getWorkspaceComputer(workspace), workspace.worktreePath);
+      const computer = await getWorkspaceComputer(workspace);
+      const reach = reachableWorktree(computer, workspace.worktreePath);
       if (!reach.ok) return NextResponse.json({ error: reach.error }, { status: 409 });
+      const fromAgent = computer && (await changesFromAgent(provider, computer, { workspace, userId: owner.id, path }));
+      if (fromAgent) return fromAgent;
       if (path !== null) {
         const diff = await provider.readWorkspaceChangedFileDiff(
           reach.sandboxId,
@@ -87,5 +93,37 @@ export async function GET(request: Request, context: RouteContext) {
       { error: "Could not read workspace changes. Check Outrunner's setup and try again." },
       { status: 500 },
     );
+  }
+}
+
+/**
+ * The change set (or with `path`, one file's diff) from the box's own agent,
+ * which runs git beside the worktree: one request, where reading it from here
+ * takes a round trip to the box per git command, too slow for the panel to
+ * keep up as Claude edits. Null where the agent can't answer it (one from
+ * before it could, or a hiccup), for the caller to read it from here as before.
+ */
+async function changesFromAgent(
+  provider: ComputerRuntimeProvider,
+  computer: RuntimeComputer,
+  { workspace, userId, path }: { workspace: Workspace; userId: string; path: string | null },
+): Promise<NextResponse | null> {
+  const secret = await readRuntimeComputerSecret(computer.id);
+  if (!secret || !computer.daytonaSandboxId) return null;
+  try {
+    const agent = new AgentClient(await provider.agentTarget(computer.daytonaSandboxId, secret));
+    const identity = { workspaceId: workspace.id, projectId: workspace.projectId, computerId: computer.id, userId };
+    if (path === null) return NextResponse.json({ files: await agent.listChanges(identity) });
+    return NextResponse.json({ diff: await agent.changedFileDiff(identity, path) });
+  } catch (error) {
+    // Its answer that the path isn't one of the changes is the answer.
+    if (error instanceof AgentRequestError && (error.error?.code === "INVALID_REQUEST" || error.error?.code === "NOT_FOUND")) {
+      return NextResponse.json({ error: "That file is not part of this workspace's changes." }, { status: 400 });
+    }
+    // No such route (an agent from before it) is expected; anything else is worth a line.
+    if (!(error instanceof AgentRequestError && error.status === 404 && !error.error)) {
+      console.warn(`Workspace ${workspace.id} changes: the box's agent couldn't read them, reading them from here`, error);
+    }
+    return null;
   }
 }

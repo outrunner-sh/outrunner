@@ -180,6 +180,24 @@ export const PortsResponse = z
   .strict();
 export type PortsResponse = z.infer<typeof PortsResponse>;
 
+/** A session's changed files since its base branch, as git on its box reads
+ *  them (GET /workspaces/{id}/changes): the shape /api/workspaces/[id]/changes
+ *  answers in. Not strict: a field added later doesn't fail an older page. */
+export const ChangesResponse = z.object({
+  files: z.array(
+    z.object({
+      path: z.string(),
+      status: z.enum(["added", "modified", "deleted", "renamed", "untracked"]),
+      additions: z.number().int(),
+      deletions: z.number().int(),
+    }),
+  ),
+});
+export type ChangesResponse = z.infer<typeof ChangesResponse>;
+
+/** One changed file's bounded diff (GET /workspaces/{id}/changes?path=). */
+export const ChangedFileDiffResponse = z.object({ diff: z.string() });
+
 /** The agent restores a session onto its model (RestoreWorkspaceRequest's
  *  `model`); an older one ignores it, and relaunches on Claude's default. */
 export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";
@@ -556,6 +574,11 @@ export const ConversationMessage = z.object({
   // The Claude model that produced the turn (assistant only; omitted on user
   // turns). Lets the composer show the model actually in use.
   model: z.string().optional(),
+  // Why the assistant reply stopped, as Claude logs it: "tool_use" while the
+  // turn goes on (its words before a tool call are a record of their own),
+  // "end_turn" and the like once it's over. Absent from an agent from before
+  // it, a user turn, or a log that says none (a Codex translation).
+  stopReason: z.string().optional(),
   timestamp: z.string(),
   // Tolerate content blocks the UI doesn't model (e.g. redacted_thinking, image,
   // or a newer Claude block type): drop the unrenderable ones instead of failing

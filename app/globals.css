@@ -161,6 +161,19 @@
    above and its controls below. */
 .studio-composer { position: relative; margin: 12px auto 18px; max-width: 736px; width: calc(100% - 32px); border: 1px solid var(--studio-border); border-radius: 4px; background: var(--studio-bg); }
 .studio-composer:focus-within { border-color: #3a3a3a; }
+/* Prompts queued behind the agent's turn, just above the composer, its width. */
+.studio-queue { margin: 12px auto -4px; max-width: 736px; width: calc(100% - 32px); }
+.studio-queue-label { margin: 0 0 6px; color: #8a8a8a; font-size: 12px; }
+.studio-queue ol { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.studio-queue-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 6px 6px 12px; border: 1px dashed var(--studio-border); border-radius: 4px; color: var(--studio-text); font-size: 13px; }
+.studio-queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-queue-files { display: inline-flex; flex-shrink: 0; align-items: center; gap: 3px; color: #8a8a8a; font-size: 12px; }
+.studio-queue-files svg { width: 12px; height: 12px; }
+.studio-queue-item button { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 12px var(--font-geist-sans); cursor: pointer; transition: background-color .15s; }
+.studio-queue-item button:hover:not(:disabled) { background: rgba(255,255,255,.06); }
+.studio-queue-item button:disabled { cursor: not-allowed; opacity: .5; }
+.studio-queue-item button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+.studio-queue-item button svg { width: 13px; height: 13px; }
 .studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }
@@ -352,6 +365,11 @@
 .md-body > :first-child { margin-top: 0; }
 .md-body > :last-child { margin-bottom: 0; }
 .md-body p { margin: 0 0 12px; }
+/* An image in a reply: no wider than the column, opening full size on a click. */
+.md-body .md-image { display: inline-block; max-width: 100%; margin: 4px 0; border: 1px solid var(--studio-border); border-radius: 4px; overflow: hidden; line-height: 0; }
+.md-body .md-image img { display: block; max-width: 100%; max-height: 480px; height: auto; object-fit: contain; background: #0d0d0d; }
+.md-body .md-image-missing { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px dashed var(--studio-border); border-radius: 4px; color: #8a8a8a; font-size: 12px; }
+.md-body .md-image-missing svg { width: 13px; height: 13px; flex-shrink: 0; }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { margin: 20px 0 10px; color: #f0f0f0; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; }
 .md-body h1 { font-size: 18px; }
 .md-body h2 { font-size: 16px; }
@@ -501,12 +519,25 @@
 /* Conversation rows off screen skip layout and paint; each remembers its last
    rendered height, so the scrollbar and auto-follow stay true. */
 .timeline-row { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 60px; }
-/* A prompt stays pinned at the top while its turn scrolls beneath it, until
-   the next prompt takes its place. Always rendered: a pinned row is on screen
-   wherever it sits in the list. Capped and scrolling on its own, so a long
-   prompt (a pasted log, a file) cannot pin over the whole turn. */
-.timeline-row.is-prompt { position: sticky; top: 0; z-index: 1; content-visibility: visible; }
-.timeline-prompt { max-height: 30vh; padding: 10px 16px; overflow: auto; border-radius: 4px; color: #d8d4d2; background: #282523; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A prompt scrolls with its turn; the turn rail (.turn-rail) is the way back to it. */
+.timeline-prompt { padding: 10px 16px; border-radius: 4px; color: #d8d4d2; background: #282523; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The turn rail: a tick per prompt down the chat's left edge, centred on it,
+   the turn being read long and bright. Each tick is a taller button than its
+   line, so it is easy to hit; they shrink to fit a long session. Its card,
+   to the right of the tick hovered or focused, shows the prompt and Claude's
+   last words in its turn. Shown only where the chat is wide enough for it
+   beside the conversation's column (max-w-3xl), not over its words. */
+.turn-rail-host { container-type: inline-size; }
+.turn-rail { position: absolute; top: 50%; left: 12px; z-index: 2; display: none; max-height: 60%; flex-direction: column; transform: translateY(-50%); }
+@container (min-width: 860px) { .turn-rail { display: flex; } }
+.turn-rail-tick { position: relative; display: flex; flex: 0 1 8px; min-height: 2px; width: 28px; align-items: center; padding: 0; border: 0; background: none; cursor: pointer; }
+.turn-rail-tick::before { content: ""; width: 12px; height: 1.5px; border-radius: 1px; background: color-mix(in oklab, var(--muted-foreground) 55%, transparent); transition: width .15s, background-color .15s; }
+.turn-rail-tick:hover::before, .turn-rail-tick:focus-visible::before { width: 20px; background: color-mix(in oklab, var(--foreground) 75%, transparent); }
+.turn-rail-tick.is-current::before { width: 20px; background: var(--foreground); }
+.turn-rail-tick:focus-visible { outline: none; }
+.turn-rail-card { position: absolute; top: 50%; left: 100%; display: flex; width: 320px; flex-direction: column; gap: 4px; padding: 10px 12px; transform: translateY(-50%); border: 1px solid var(--border); border-radius: 8px; background: var(--popover); box-shadow: 0 8px 24px rgba(0,0,0,.35); color: var(--popover-foreground); text-align: left; pointer-events: none; }
+.turn-rail-card-prompt { overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.turn-rail-card-reply { display: -webkit-box; overflow: hidden; color: var(--muted-foreground); font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 /* Claude's steps: a thought as a quiet line, a tool call as a bordered row. */
 .timeline-thought { padding: 2px 8px; color: #a69996; font-size: 14px; }
 .timeline-tool { min-width: 0; border: 1px solid var(--studio-border); border-radius: 3px; }

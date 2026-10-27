@@ -9,6 +9,7 @@ import { optionalEnv } from "@/lib/env";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
+import { sweepRemovals } from "@/lib/orgs/removal.deps";
 
 /**
  * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
@@ -44,7 +45,15 @@ export async function POST(request: Request) {
           return null;
         })
       : 0;
-    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept });
+    // And the boxes and sessions of members who left an org: stopped, and
+    // 30 days on deleted (lib/orgs/removal.ts).
+    const removalsSettled = isComputerProvider(provider)
+      ? await sweepRemovals(provider).catch((error: unknown) => {
+          console.error("Settling removed members' sessions failed", error);
+          return null;
+        })
+      : 0;
+    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept, removalsSettled });
   } catch (error) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });

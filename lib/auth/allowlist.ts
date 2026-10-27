@@ -49,9 +49,29 @@ export function isOwner(user: User): boolean {
   // configured to admit everyone.
   if (allowed.size === 0) return true;
 
+  // Let in past the list: invited to an org, or approved to join one
+  // (lib/orgs/admission.ts). app_metadata, unlike user_metadata, only the
+  // server (service role) can write.
+  if (isAdmitted(user)) return true;
+
   // Restricted: now the login genuinely matters, and no login means no match.
+  return onAllowlist(user, allowed);
+}
+
+/** Whether the user's GitHub login is on `RUNTIME_OWNER_GITHUB_LOGIN` itself,
+ *  admitted to an org or not. An empty list has no one on it. */
+export function onAllowlist(user: User, allowed = parseAllowlist(optionalEnv("RUNTIME_OWNER_GITHUB_LOGIN"))): boolean {
   const login = githubLogin(user)?.toLowerCase();
   return login != null && allowed.has(login);
+}
+
+/** The app_metadata key that lets a user in past the allowlist. */
+export const ADMITTED_KEY = "outrunner_admitted";
+
+/** Whether an org let this user in past the allowlist (an invite accepted, a
+ *  request approved). Set and cleared by the server alone. */
+export function isAdmitted(user: User): boolean {
+  return (user.app_metadata as Record<string, unknown> | undefined)?.[ADMITTED_KEY] === true;
 }
 
 /**

@@ -408,11 +408,15 @@ type ContentBlock struct {
 
 // ConversationMessage is a structured turn derived from Claude's JSONL.
 type ConversationMessage struct {
-	T          string         `json:"t"` // "message"
-	UUID       string         `json:"uuid"`
-	ParentUUID *string        `json:"parentUuid"`
-	Role       string         `json:"role"`
-	Model      string         `json:"model,omitempty"` // assistant turns only
+	T          string  `json:"t"` // "message"
+	UUID       string  `json:"uuid"`
+	ParentUUID *string `json:"parentUuid"`
+	Role       string  `json:"role"`
+	Model      string  `json:"model,omitempty"` // assistant turns only
+	// Why the assistant reply stopped, as Claude logs it ("tool_use": the turn
+	// goes on; "end_turn" and the like: it's over). Empty where the log says
+	// none (a user turn, a Codex translation).
+	StopReason string         `json:"stopReason,omitempty"`
 	Timestamp  string         `json:"timestamp"`
 	Content    []ContentBlock `json:"content"`
 }

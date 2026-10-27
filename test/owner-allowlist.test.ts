@@ -51,3 +51,13 @@ test("a restricted allowlist still rejects a user with no resolvable login", () 
   assert.equal(isOwner({ identities: [] } as unknown as User), false);
   delete process.env.RUNTIME_OWNER_GITHUB_LOGIN;
 });
+
+test("a user an org let in passes a restricted allowlist; one who only set it on themselves doesn't", () => {
+  process.env.RUNTIME_OWNER_GITHUB_LOGIN = "someone";
+  const github = [{ provider: "github", identity_data: { user_name: "newcomer" } }];
+  assert.equal(isOwner({ identities: github, app_metadata: { outrunner_admitted: true } } as unknown as User), true);
+  assert.equal(isOwner({ identities: github, app_metadata: {} } as unknown as User), false);
+  // user_metadata is the user's own to write: it lets no one in.
+  assert.equal(isOwner({ identities: github, user_metadata: { outrunner_admitted: true } } as unknown as User), false);
+  delete process.env.RUNTIME_OWNER_GITHUB_LOGIN;
+});

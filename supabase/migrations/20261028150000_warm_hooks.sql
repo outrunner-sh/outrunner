@@ -11,8 +11,9 @@
 -- (claim_pooled_computer) and is replaced at the next refill. warm_* record
 -- the last warm hook's run on a ready box, for the settings page.
 --
--- The pool holds two boxes per project rather than one: pool_slot 0 or 1,
--- each unique among the project's pooled rows.
+-- The pool holds two boxes per project and member rather than one
+-- (20261028120000 made it one per member): pool_slot 0 or 1, each unique
+-- among a member's pooled rows of the project.
 -- ---------------------------------------------------------------------------
 
 alter table environments
@@ -30,8 +31,9 @@ alter table runtime_computers
   add column if not exists generation integer;
 
 drop index if exists runtime_computers_pool_project_unique;
+drop index if exists runtime_computers_pool_project_owner_unique;
 create unique index if not exists runtime_computers_pool_slot_unique
-  on runtime_computers (project_id, pool_slot) where pooled;
+  on runtime_computers (project_id, owner_id, pool_slot) where pooled;
 
 -- As 20261025120000, but only a box made from `requested_generation` of the
 -- project's setup is taken (null: any, as before), the lowest slot first.

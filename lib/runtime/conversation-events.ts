@@ -91,3 +91,28 @@ export function firstUserPrompt(events: AgentEvent[]): string | null {
   }
   return null;
 }
+
+/** Whether Claude is still working on the current turn — so the moving indicator
+ *  shows through the whole thing, not just the gap before the first reply. It's
+ *  working while the latest turn is the user's (a fresh prompt or a tool result
+ *  it must act on), or while its own latest turn ended on thinking or a tool_use
+ *  (more is coming). A turn that ends in text is Claude done and idle — unless
+ *  the reply it's part of stopped for a tool call (stopReason "tool_use"): Claude
+ *  logs its words before a tool call as a record of their own, the call next. */
+export function claudeIsWorking(events: AgentEvent[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.t === "state") {
+      // A terminated session is never "working", whatever the last turn was.
+      if (event.state === "exited" || event.state === "archived") return false;
+      continue;
+    }
+    if (event.t !== "message") continue;
+    // A prompt or a tool result awaiting Claude; not the record of a stop.
+    if (event.role === "user") return !isInterruption(event);
+    const last = event.content[event.content.length - 1];
+    if (!last) return false;
+    return last.type !== "text" || event.stopReason === "tool_use";
+  }
+  return false;
+}
