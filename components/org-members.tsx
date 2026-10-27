@@ -51,7 +51,7 @@ export function OrgMembersSettings({
   const [error, setError] = useState<string | null>(null);
   const admin = org.role === "admin" && !org.personal;
 
-  /** Run a change, then show the page as it now is. */
+  /** Run a change, then show the page as it now is. Whether it saved. */
   const change = async (key: string, url: string, method: string, body?: unknown, after?: () => void) => {
     setBusy(key);
     setError(null);
@@ -59,8 +59,10 @@ export function OrgMembersSettings({
       await requestJson(url, { method, body, fallback: "Couldn't make that change. Try again." });
       after?.();
       router.refresh();
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't make that change. Try again.");
+      return false;
     } finally {
       setBusy(null);
     }
@@ -134,14 +136,11 @@ export function OrgMembersSettings({
               <PersonCell person={m} detail={m.login ? `@${m.login}` : m.email} you={m.userId === me} />
               {admin && m.role === "member" && roles.length > 0 ? (
                 <RolesMenu
-                  // Fresh from the server after each change: it starts again
-                  // from what was saved.
-                  key={roles.filter((r) => r.memberIds.includes(m.userId)).map((r) => r.id).join(",")}
                   roles={roles}
                   held={roles.filter((r) => r.memberIds.includes(m.userId)).map((r) => r.id)}
                   busy={busy !== null}
                   onChange={(roleIds) =>
-                    void change(`roles:${m.userId}`, `/api/orgs/${org.id}/members/${m.userId}/roles`, "PUT", { roleIds })
+                    change(`roles:${m.userId}`, `/api/orgs/${org.id}/members/${m.userId}/roles`, "PUT", { roleIds })
                   }
                 />
               ) : null}
@@ -202,17 +201,24 @@ function RolesMenu({
   roles: OrgRoleInfo[];
   held: string[];
   busy: boolean;
-  onChange: (roleIds: string[]) => void;
+  /** Save these roles; whether it did. */
+  onChange: (roleIds: string[]) => Promise<boolean>;
 }) {
-  // What's ticked, at once: the menu stays open, and the next tick must
-  // build on this one, not on the roles from before it saved (the change
-  // sends the whole set).
+  // What's ticked, at once, so the next tick builds on it (the change sends
+  // the whole set). It follows what the server says once that changes, and
+  // goes back to it when a save fails; the menu stays open throughout.
+  const heldKey = held.join(",");
+  const [shown, setShown] = useState(heldKey);
   const [ticked, setTicked] = useState(held);
+  if (shown !== heldKey) {
+    setShown(heldKey);
+    setTicked(held);
+  }
   const names = roles.filter((r) => ticked.includes(r.id)).map((r) => r.name);
-  const toggle = (roleId: string, checked: boolean) => {
+  const toggle = async (roleId: string, checked: boolean) => {
     const next = checked ? [...ticked, roleId] : ticked.filter((id) => id !== roleId);
     setTicked(next);
-    onChange(next);
+    if (!(await onChange(next))) setTicked(held);
   };
   return (
     <DropdownMenu>
@@ -227,7 +233,7 @@ function RolesMenu({
             checked={ticked.includes(r.id)}
             disabled={busy}
             onSelect={(event) => event.preventDefault()}
-            onCheckedChange={(checked) => toggle(r.id, checked)}
+            onCheckedChange={(checked) => void toggle(r.id, checked)}
           >
             {r.name}
           </DropdownMenuCheckboxItem>
@@ -290,7 +296,7 @@ function Invites({
   invites: OpenInvite[];
   emails: boolean;
   busy: string | null;
-  change: (key: string, url: string, method: string, body?: unknown, after?: () => void) => Promise<void>;
+  change: (key: string, url: string, method: string, body?: unknown, after?: () => void) => Promise<boolean>;
 }) {
   const router = useRouter();
   const [email, setEmail] = useState("");

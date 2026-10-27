@@ -168,7 +168,11 @@ function PrincipalCard({
   const all = grants.find((g) => g.projectId === null)?.level ?? null;
   const exceptions = grants.filter((g) => g.projectId !== null);
   const named = new Map(projects.map((p) => [p.id, p.fullName]));
-  const addable = projects.filter((p) => !exceptions.some((g) => g.projectId === p.id));
+  // A member gets the most any grant gives, so an exception only does
+  // something above All projects: none to add once that's write, and a new
+  // one starts a level above it.
+  const addable = all === "write" ? [] : projects.filter((p) => !exceptions.some((g) => g.projectId === p.id));
+  const rank = (level: AccessLevel | null) => (level === "write" ? 2 : level === "read" ? 1 : 0);
   const disabled = busy !== null;
 
   return (
@@ -251,8 +255,11 @@ function PrincipalCard({
         </li>
         {exceptions.map((g) => (
           <li key={g.projectId} className="flex items-center gap-3 px-3 py-2">
-            <span className="flex-1 truncate text-[13px] text-foreground">
+            <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
               {named.get(g.projectId!) ?? "A hidden project"}
+              {rank(g.level) <= rank(all) ? (
+                <span className="ml-2 text-xs text-muted-foreground">No effect: All projects gives as much</span>
+              ) : null}
             </span>
             <LevelSelect
               label={`${title} on ${named.get(g.projectId!) ?? "the project"}`}
@@ -272,7 +279,7 @@ function PrincipalCard({
               onChange={async (event) => {
                 const projectId = event.target.value;
                 setAdding(projectId);
-                if (projectId) await setLevel(roleId, projectId, "read");
+                if (projectId) await setLevel(roleId, projectId, all === "read" ? "write" : "read");
                 setAdding("");
               }}
               className="h-8 flex-1 rounded-md border border-dashed border-input bg-transparent px-2 text-[13px] text-muted-foreground"
