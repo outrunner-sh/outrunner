@@ -1106,3 +1106,133 @@ begin
   end if;
   raise notice 'ok: a team org is made with its admin and domain, or not at all';
 end $$;
+
+-- 30. Members: an invite is accepted once, by its token, while it's open;
+-- inviting again while one is open is refused; a request is approved once.
+-- No user reaches any of it but the server.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  org uuid;
+begin
+  if has_table_privilege('authenticated', 'organization_invites', 'select')
+     or has_table_privilege('authenticated', 'organization_join_requests', 'select')
+     or has_table_privilege('authenticated', 'organization_removals', 'select')
+     or has_function_privilege('authenticated', 'accept_org_invite(text, uuid)', 'execute')
+     or has_function_privilege('authenticated', 'remove_org_member(uuid, uuid, uuid)', 'execute') then
+    raise exception 'FAIL: a user may reach invites, requests, removals or the member functions';
+  end if;
+
+  insert into organization_invites (org_id, email, role, token_hash, expires_at)
+  values (team, 'third@example.com', 'member', repeat('c', 64), now() + interval '7 days');
+  begin
+    insert into organization_invites (org_id, email, role, token_hash, expires_at)
+    values (team, 'third@example.com', 'admin', repeat('d', 64), now() + interval '7 days');
+    raise exception 'FAIL: two open invites for one email';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into organization_invites (org_id, email, role, token_hash, expires_at)
+    values (team, 'Third@Example.com', 'member', repeat('e', 64), now() + interval '7 days');
+    raise exception 'FAIL: an invite kept an email in capitals';
+  exception when check_violation then
+    null;
+  end;
+
+  org := accept_org_invite(repeat('c', 64), '33333333-3333-3333-3333-333333333333');
+  if org <> team or not exists (
+    select 1 from organization_members
+    where org_id = team and user_id = '33333333-3333-3333-3333-333333333333' and role = 'member'
+  ) then
+    raise exception 'FAIL: an accepted invite made no member';
+  end if;
+  begin
+    perform accept_org_invite(repeat('c', 64), '22222222-2222-2222-2222-222222222222');
+    raise exception 'FAIL: an invite was accepted twice';
+  exception when raise_exception then
+    if sqlerrm <> 'invite_invalid' then raise; end if;
+  end;
+
+  insert into organization_invites (org_id, email, role, token_hash, expires_at)
+  values (team, 'late@example.com', 'member', repeat('f', 64), now() - interval '1 minute');
+  begin
+    perform accept_org_invite(repeat('f', 64), '22222222-2222-2222-2222-222222222222');
+    raise exception 'FAIL: an expired invite was accepted';
+  exception when raise_exception then
+    if sqlerrm <> 'invite_invalid' then raise; end if;
+  end;
+
+  -- A request to join, approved once.
+  delete from organization_members where org_id = team and user_id = '22222222-2222-2222-2222-222222222222';
+  insert into organization_join_requests (id, org_id, user_id, email)
+  values ('dddddddd-dddd-dddd-dddd-dddddddddddd', team, '22222222-2222-2222-2222-222222222222', 'other@example.com');
+  begin
+    insert into organization_join_requests (org_id, user_id, email)
+    values (team, '22222222-2222-2222-2222-222222222222', 'other@example.com');
+    raise exception 'FAIL: two pending requests from one user to one org';
+  exception when unique_violation then
+    null;
+  end;
+  perform approve_join_request('dddddddd-dddd-dddd-dddd-dddddddddddd', '11111111-1111-1111-1111-111111111111', 'member');
+  if not exists (select 1 from organization_members where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: an approved request made no member';
+  end if;
+  begin
+    perform approve_join_request('dddddddd-dddd-dddd-dddd-dddddddddddd', '11111111-1111-1111-1111-111111111111', 'admin');
+    raise exception 'FAIL: a request was approved twice';
+  exception when raise_exception then
+    if sqlerrm <> 'request_not_pending' then raise; end if;
+  end;
+  raise notice 'ok: invites and requests let a member in once, and only the server reaches them';
+end $$;
+
+-- 31. Removal: never the last admin, never out of a personal org; a removed
+-- member is recorded with the time, and coming back clears it.
+do $$
+declare team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+begin
+  begin
+    perform remove_org_member(team, '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: the last admin left their org';
+  exception when raise_exception then
+    if sqlerrm <> 'last_admin' then raise; end if;
+  end;
+  begin
+    perform set_org_member_role(team, '11111111-1111-1111-1111-111111111111', 'member');
+    raise exception 'FAIL: the last admin was made a member';
+  exception when raise_exception then
+    if sqlerrm <> 'last_admin' then raise; end if;
+  end;
+  begin
+    perform remove_org_member(
+      (select id from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111'),
+      '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: someone was taken out of a personal org';
+  exception when raise_exception then
+    if sqlerrm <> 'personal_org' then raise; end if;
+  end;
+
+  -- With a second admin, the first may go.
+  perform set_org_member_role(team, '33333333-3333-3333-3333-333333333333', 'admin');
+  perform set_org_member_role(team, '11111111-1111-1111-1111-111111111111', 'member');
+  perform set_org_member_role(team, '11111111-1111-1111-1111-111111111111', 'admin');
+
+  perform remove_org_member(team, '22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111');
+  if exists (select 1 from organization_members where org_id = team and user_id = '22222222-2222-2222-2222-222222222222')
+     or not exists (select 1 from organization_removals where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a removed member is still in, or not recorded as removed';
+  end if;
+  begin
+    perform remove_org_member(team, '22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: a non-member was removed';
+  exception when raise_exception then
+    if sqlerrm <> 'not_a_member' then raise; end if;
+  end;
+
+  perform add_org_member(team, '22222222-2222-2222-2222-222222222222', 'member');
+  if exists (select 1 from organization_removals where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: coming back left the removal, and its clock, running';
+  end if;
+  raise notice 'ok: an org keeps an admin, a personal org its owner, and a removal is recorded until they return';
+end $$;

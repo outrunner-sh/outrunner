@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { InlineMessage } from "@/components/ui/notice";
 import { orgName } from "@/lib/orgs/active";
-import { reachOutrunner } from "@/lib/http/request-json";
+import { reachOutrunner, requestJson } from "@/lib/http/request-json";
 
 /**
  * Make a team org, named here. It claims the domain of the user's primary
@@ -20,12 +20,34 @@ export function CreateOrgDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // An org has the user's domain already: they can ask to join it instead.
+  const [domainOrg, setDomainOrg] = useState<string | null>(null);
+  const [asked, setAsked] = useState<string | null>(null);
   const valid = orgName(name) !== null;
 
   const close = () => {
     setName("");
     setError(null);
+    setDomainOrg(null);
+    setAsked(null);
     onOpenChange(false);
+  };
+
+  const askToJoin = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const data = await requestJson<{ message: string }>("/api/orgs/join-requests", {
+        method: "POST",
+        has: (d) => typeof d.message === "string",
+        fallback: "Couldn't send your request. Try again.",
+      });
+      setAsked(data.message);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn't send your request. Try again.");
+    } finally {
+      setPending(false);
+    }
   };
 
   const create = async () => {
@@ -38,9 +60,14 @@ export function CreateOrgDialog({ open, onOpenChange }: { open: boolean; onOpenC
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
-      const data = (await response.json().catch(() => null)) as { error?: string } | null;
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+        code?: string;
+        org?: { name?: string };
+      } | null;
       if (!response.ok) {
         setError(data?.error ?? "Couldn't make the org. Try again.");
+        setDomainOrg(data?.code === "domain_org_exists" ? (data.org?.name ?? "that org") : null);
         return;
       }
       close();
@@ -80,14 +107,26 @@ export function CreateOrgDialog({ open, onOpenChange }: { open: boolean; onOpenC
           maxLength={80}
           autoComplete="off"
         />
-        {error ? <InlineMessage>{error}</InlineMessage> : null}
+        {asked ? (
+          <InlineMessage tone="info">{asked}</InlineMessage>
+        ) : error ? (
+          <InlineMessage
+            actions={
+              domainOrg ? [{ label: `Ask to join ${domainOrg}`, onClick: () => void askToJoin() }] : undefined
+            }
+          >
+            {domainOrg ? `${domainOrg} already uses Outrunner for your email's domain. Ask its admins to let you in.` : error}
+          </InlineMessage>
+        ) : null}
         <div className="flex items-center justify-end gap-2">
           <button type="button" onClick={close} className="route-state-button">
-            Cancel
+            {asked ? "Done" : "Cancel"}
           </button>
-          <button type="button" onClick={() => void create()} disabled={!valid || pending} className="route-state-button">
-            {pending ? "Making…" : "Make org"}
-          </button>
+          {asked || domainOrg ? null : (
+            <button type="button" onClick={() => void create()} disabled={!valid || pending} className="route-state-button">
+              {pending ? "Making…" : "Make org"}
+            </button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

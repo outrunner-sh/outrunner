@@ -4,6 +4,11 @@ import { connection, NextResponse } from "next/server";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { safeRelativePath } from "@/lib/auth/redirect";
 import { setGithubToken } from "@/lib/db/credentials";
+import { hasOpenInviteFor, requestToJoin, setAdmitted } from "@/lib/db/org-members";
+import { orgsForDomains } from "@/lib/db/orgs";
+import { listVerifiedEmails } from "@/lib/github/client";
+import { admitOnSignIn, type Admission } from "@/lib/orgs/admission";
+import { emailJoinRequest } from "@/lib/orgs/notify";
 import { optionalEnv } from "@/lib/env";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -40,16 +45,48 @@ export async function GET(request: Request) {
   }
 
   // Access is allowlisted: anyone whose GitHub login isn't in
-  // RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out. This is the whole
-  // authorization model.
+  // RUNTIME_OWNER_GITHUB_LOGIN is signed straight back out, unless an org lets
+  // them in (an invite to them), or they ask to join the org that claimed
+  // their email's domain (lib/orgs/admission.ts).
   if (!isOwner(data.user)) {
-    await supabase.auth.signOut();
-    return signInError(base, "not_owner");
+    const admission = await admit(data.user, data.session?.provider_token);
+    if (admission.kind !== "admitted") {
+      await supabase.auth.signOut();
+      if (admission.kind === "requested") return joinRequested(base, admission);
+      return signInError(base, "not_owner");
+    }
   }
 
   await captureGithubToken(data);
 
   return NextResponse.redirect(`${base}${next}`);
+}
+
+/** Let a user the allowlist doesn't name in, if an org does; refused when
+ *  that can't be worked out (no GitHub token to ask with, GitHub down). */
+async function admit(user: User, token: string | null | undefined): Promise<Admission> {
+  if (!token) return { kind: "refused" };
+  try {
+    return await admitOnSignIn({
+      verifiedEmails: () => listVerifiedEmails(token),
+      hasOpenInviteFor,
+      orgsForDomains,
+      requestToJoin: (orgId, email) => requestToJoin(orgId, user.id, email),
+      admit: () => setAdmitted(user.id, true),
+      notifyAdmins: emailJoinRequest,
+    });
+  } catch (error) {
+    console.error(`Could not work out whether an org lets ${user.id} in`, error);
+    return { kind: "refused" };
+  }
+}
+
+/** Back to sign-in, saying their request to join an org is with its admins. */
+function joinRequested(base: string, admission: Extract<Admission, { kind: "requested" }>): NextResponse {
+  const url = new URL(`${base}/signin`);
+  url.searchParams.set("error", admission.outcome === "declined_recently" ? "join_declined" : "join_requested");
+  url.searchParams.set("org", admission.org.name);
+  return NextResponse.redirect(url);
 }
 
 /**
