@@ -12,9 +12,16 @@
  */
 
 import { listOrgInstallations, type OrgInstallation } from "@/lib/db/github-installations";
-import { GitHubAppError, githubAppConfig, installationToken, type GitHubAppConfig } from "@/lib/github/app";
+import {
+  dropInstallationToken,
+  GitHubAppError,
+  githubAppConfig,
+  installationToken,
+  type GitHubAppConfig,
+} from "@/lib/github/app";
 import {
   getGitHubRepository,
+  GitHubReconnectError,
   GitHubSyncError,
   listGitHubRepositories,
   listInstallationRepositoryRecords,
@@ -88,20 +95,41 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
       })),
     },
     async list() {
-      const lists = await Promise.all(
+      // What can be read, when one installation can't be: the list says it
+      // may be missing some.
+      const settled = await Promise.allSettled(
         usable.map(async (installation) => listInstallationRepositoryRecords(await tokenFor(installation))),
       );
-      return mergeRepositoryLists(lists);
+      const lists = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+      const failed = settled.flatMap((r) => (r.status === "rejected" ? [r.reason as unknown] : []));
+      if (failed.length > 0 && lists.length === 0) throw failed[0];
+      for (const reason of failed) console.error("GitHub App: an installation's repositories couldn't be listed", reason);
+      const merged = mergeRepositoryLists(lists);
+      return { ...merged, complete: merged.complete && failed.length === 0 };
     },
     async lookup(ref) {
-      // By name, only the installation on its owner's account can reach it;
-      // by id, whichever does (GitHub allows one per account).
-      const candidates =
-        typeof ref === "string"
-          ? usable.filter((i) => i.accountLogin.toLowerCase() === ref.split("/")[0]?.toLowerCase())
-          : usable;
+      // By name, the installation on its owner's account first; then the
+      // rest, for a name from before a transfer or a rename, which GitHub
+      // still answers. By id, whichever reaches it (one per account).
+      const owner = typeof ref === "string" ? ref.split("/")[0]?.toLowerCase() : undefined;
+      const candidates = [
+        ...usable.filter((i) => i.accountLogin.toLowerCase() === owner),
+        ...usable.filter((i) => i.accountLogin.toLowerCase() !== owner),
+      ];
       for (const installation of candidates) {
-        const repository = await getGitHubRepository(await tokenFor(installation), ref);
+        let repository: GitHubRepository | null;
+        try {
+          repository = await getGitHubRepository(await tokenFor(installation), ref);
+        } catch (error) {
+          // The App's token refused: one kept for an installation gone since,
+          // nothing the member's own sign-in would fix.
+          if (!(error instanceof GitHubReconnectError)) throw error;
+          dropInstallationToken(installation.id);
+          throw new GitHubSyncError(
+            `Outrunner's GitHub App couldn't reach ${installation.accountLogin} on GitHub. Try again, or check Settings → Org → GitHub.`,
+            error.status,
+          );
+        }
         if (repository) return repository;
       }
       return null;

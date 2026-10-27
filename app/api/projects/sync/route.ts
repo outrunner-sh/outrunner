@@ -77,6 +77,17 @@ export async function POST(request: Request) {
       // access since removed. The picker names the repository and says where
       // to grant access.
       if (repositories.length === 0) {
+        const suspended = access.source.kind === "app" ? access.source.accounts : [];
+        if (suspended.length > 0 && suspended.every((a) => a.suspended)) {
+          // Adding the repository on GitHub won't help while it's suspended.
+          return NextResponse.json(
+            {
+              error: `Outrunner's GitHub App is suspended on ${suspended.map((a) => a.login).join(", ")}. Unsuspend it on GitHub first.`,
+              code: "app-suspended",
+            },
+            { status: 409 },
+          );
+        }
         return NextResponse.json(
           {
             error:

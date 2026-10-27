@@ -19,7 +19,8 @@ type Entry = {
 const entries = new Map<string, Entry>();
 
 /**
- * The repository listing under `key` (a source's, lib/github/repository-source.ts): one being read now, or one read in the last
+ * The repository listing under `key` (a source's,
+ * lib/github/repository-source.ts): one being read now, or one read in the last
  * {@link REPOSITORY_CACHE_TTL_MS}; otherwise one read now with `load`. `fresh`
  * always reads anew (and the new one is what later callers reuse).
  *
