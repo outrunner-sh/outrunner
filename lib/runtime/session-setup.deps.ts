@@ -5,6 +5,7 @@
  */
 
 import { getAgentConfig } from "@/lib/db/agent-config";
+import { getGithubIdentity } from "@/lib/db/credentials";
 import { defaultEnvironmentId, environmentSetup, type EnvironmentSetup } from "@/lib/db/environments";
 import { getProjectEnvironment } from "@/lib/db/project-environment";
 import type { AgentClient, WorkspaceIdentity } from "@/lib/runtime/agent-client";
@@ -23,9 +24,10 @@ export async function setUpSession(
    *  projects, which gets its repository's default project. */
   environmentId: string | null,
 ): Promise<void> {
-  const [environment, agentConfig] = await Promise.all([
+  const [environment, agentConfig, githubIdentity] = await Promise.all([
     sessionEnvironment(ownerId, projectId, environmentId),
     getAgentConfig(ownerId),
+    getGithubIdentity(ownerId),
   ]);
   await deliverSessionSetup(
     {
@@ -37,6 +39,7 @@ export async function setUpSession(
     {
       environment,
       agentConfig,
+      appIdentity: githubIdentity === "app",
       downloadUrl: (path) => mintSnapshotDownloadUrl(supabaseSnapshotStorage(), path, ownerId),
     },
   );

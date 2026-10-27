@@ -7,7 +7,7 @@
  * through the Supabase server client.
  */
 
-import { getClaudeCredential, getGithubToken } from "@/lib/db/credentials";
+import { getClaudeCredential, getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
 import { anthropicEnvVar, hasClaudeCredential } from "@/lib/runtime/anthropic-env";
 
 /**
@@ -28,14 +28,16 @@ import { anthropicEnvVar, hasClaudeCredential } from "@/lib/runtime/anthropic-en
  * And their GitHub token as GH_TOKEN, so the agent can push its branch and run
  * `gh pr create` as its orientation tells it to. The box is theirs alone (one
  * per user and project), so it reaches no one else's; the agent masks it in
- * the terminal and points git at it for github.com only.
+ * the terminal and points git at it for github.com only. Not for a user who
+ * chose the Outrunner App to act for them (lib/github/identity.ts): their
+ * box asks for the App's tokens as it goes, and never pushes as them.
  */
 export async function runtimeSessionEnvironment(
   userId: string,
 ): Promise<Record<string, string>> {
   const [credential, githubToken] = await Promise.all([
     getClaudeCredential(userId),
-    getGithubToken(userId),
+    getGithubIdentity(userId).then((identity) => (identity === "personal" ? getGithubToken(userId) : null)),
   ]);
   return {
     ...(credential ? { [anthropicEnvVar(credential)]: credential } : {}),

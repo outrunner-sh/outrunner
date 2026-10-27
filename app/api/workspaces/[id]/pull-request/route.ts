@@ -7,10 +7,10 @@ import {
   getWorkspace,
   getWorkspacePullRequest,
 } from "@/lib/db/repositories";
-import { findPullRequest, getPullRequestStatus, MissingGithubTokenError } from "@/lib/github/client";
+import { findPullRequest, getPullRequestStatus } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
+import { requireGitToken } from "@/lib/github/identity.deps";
 import { sessionRepo } from "@/lib/session/session-repos";
-import { optionalGithubToken } from "@/lib/github/token";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -40,15 +40,21 @@ export async function GET(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "That repository isn't one of this session's." }, { status: 404 });
   }
 
-  const recorded = await getWorkspacePullRequest(workspace.id, repo.projectId);
-  const token = await optionalGithubToken(owner.id);
-  if (!token) {
-    if (recorded) return NextResponse.json({ pullRequest: recorded, status: null });
-    return githubErrorResponse(new MissingGithubTokenError(), "Connect your GitHub account.");
-  }
-  const repoFullName = repo.fullName ?? (await getProject(workspace.projectId))?.fullName;
-  if (!repoFullName) {
+  const [recorded, project] = await Promise.all([
+    getWorkspacePullRequest(workspace.id, repo.projectId),
+    getProject(repo.projectId),
+  ]);
+  if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  }
+  const repoFullName = repo.fullName ?? project.fullName;
+  // As the user chose to work on GitHub (lib/github/identity.ts).
+  let token: string;
+  try {
+    token = await requireGitToken(owner.id, { orgId: project.orgId, fullName: repoFullName });
+  } catch (error) {
+    if (recorded) return NextResponse.json({ pullRequest: recorded, status: null });
+    return githubErrorResponse(error, "Could not reach GitHub. Please try again.");
   }
 
   let pullRequest: WorkspacePullRequest | null = recorded;

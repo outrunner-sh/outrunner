@@ -5,7 +5,7 @@ import { getOwner, type Owner } from "@/lib/auth/owner";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
-import { optionalGithubToken } from "@/lib/github/token";
+import { gitTokensFor, optionalGitToken } from "@/lib/github/identity.deps";
 import {
   createWorkspaceSnapshot,
   deleteWorkspaceSnapshots,
@@ -309,7 +309,7 @@ async function restoreDaytonaWorkspace(
   try {
     const project = await getProject(workspace.projectId);
     if (!project) throw new Error("Project not found for restore.");
-    const githubToken = await optionalGithubToken(owner.id);
+    const githubToken = await optionalGitToken(owner.id, project);
 
     // Manifest pointers -> signed download URLs for exactly what the agent needs.
     const storage = supabaseSnapshotStorage();
@@ -413,7 +413,7 @@ async function restoreDaytonaWorkspace(
       await provider.syncRepoMirrors(
         computer.daytonaSandboxId,
         workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
-        githubToken,
+        gitTokensFor(owner.id, project.orgId),
       );
     }
     // Before the restore, which launches the session at once.

@@ -26,6 +26,7 @@ import (
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/editor"
+	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/ports"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
@@ -110,6 +111,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/ask", s.ask)
 	mux.HandleFunc("POST /workspaces/{id}/ask-secrets", s.askSecrets)
 	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
+	// git's credential helper and the gh wrapper on this box ask, with the
+	// agent's credential token (package gitcred).
+	mux.HandleFunc("POST /git-credential", s.gitCredential)
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
@@ -139,7 +143,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential},
 	})
 }
 
@@ -683,6 +687,59 @@ func (s *Server) provideSecrets(w http.ResponseWriter, r *http.Request) {
 	default:
 		respond(w, "provided", err)
 	}
+}
+
+// gitCredential gives git's credential helper or the gh wrapper a GitHub
+// token for a repository, from the control plane, or forgets one git was
+// refused. Its refusals are {"error": message}, the helpers' to show: a
+// message from the control plane (a repository the user's GitHub doesn't
+// reach) is passed on as it came.
+func (s *Server) gitCredential(w http.ResponseWriter, r *http.Request) {
+	refuse := func(status int, message string) {
+		writeJSON(w, status, gitcred.LocalError{Error: message})
+	}
+	if !s.ws.GitCredentialEnabled() {
+		refuse(http.StatusNotFound, "this computer gets no GitHub tokens from Outrunner")
+		return
+	}
+	if !s.ws.GitCredentialAuthorized(bearer(r)) {
+		refuse(http.StatusUnauthorized, "invalid credential token")
+		return
+	}
+	var req gitcred.LocalRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		refuse(http.StatusBadRequest, "malformed request")
+		return
+	}
+	if req.Erase {
+		if err := s.ws.EraseGitCredential(req.Repo); err != nil {
+			refuse(http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	cred, err := s.ws.GitCredential(r.Context(), req.Repo)
+	var refusal *gitcred.Error
+	switch {
+	case errors.Is(err, gitcred.ErrInvalidRepo):
+		refuse(http.StatusBadRequest, err.Error())
+		return
+	case errors.As(err, &refusal) && refusal.Refused():
+		// Outrunner said no (the user chose the App, and it isn't installed
+		// there): the helpers mustn't answer with the box's own token instead.
+		refuse(http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		refuse(http.StatusBadGateway, err.Error())
+		return
+	}
+	answer := gitcred.LocalResponse{Token: cred.Token}
+	if !cred.ExpiresAt.IsZero() {
+		at := cred.ExpiresAt.UTC().Format(time.RFC3339)
+		answer.ExpiresAt = &at
+	}
+	writeJSON(w, http.StatusOK, answer)
 }
 
 // setModel switches the workspace's session to another model, relaunching a

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { projectLevel } from "@/lib/db/org-access";
 import { getProject, getWorkspace, getWorkspacePullRequest } from "@/lib/db/repositories";
 import { getPullRequestStatus, mergePullRequest } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGithubToken } from "@/lib/github/token";
+import { requireGitToken } from "@/lib/github/identity.deps";
+import { allows } from "@/lib/orgs/access";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { sessionRepo } from "@/lib/session/session-repos";
 
@@ -44,14 +46,20 @@ export async function POST(request: Request, context: RouteContext) {
   if (!pullRequest) {
     return NextResponse.json({ error: "This session has no pull request there." }, { status: 404 });
   }
-  const repoFullName = repo.fullName ?? (await getProject(workspace.projectId))?.fullName;
-  if (!repoFullName) {
+  const project = await getProject(repo.projectId);
+  if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  }
+  const repoFullName = repo.fullName ?? project.fullName;
+  // Merging as the org's App, GitHub can't tell who asked: Outrunner's own
+  // access says whether they may.
+  if (!allows(await projectLevel(owner.id, project.id), "write")) {
+    return NextResponse.json({ error: `You can only read ${repoFullName} in this org.` }, { status: 403 });
   }
 
   let token: string;
   try {
-    token = await requireGithubToken(owner.id);
+    token = await requireGitToken(owner.id, { orgId: project.orgId, fullName: repoFullName });
     await mergePullRequest({ token, repoFullName, number: pullRequest.number, headSha });
   } catch (error) {
     console.error(`Workspace ${id} pull request merge failed`, error);

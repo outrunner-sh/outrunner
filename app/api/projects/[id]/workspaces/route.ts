@@ -80,9 +80,10 @@ import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { SETTING_UP } from "@/lib/session/provisioning";
-import { getGitHubRepository, GitHubReconnectError } from "@/lib/github/client";
+import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
-import { optionalGithubToken } from "@/lib/github/token";
+import { GitIdentityError } from "@/lib/github/identity";
+import { gitTokensFor, requireGitToken } from "@/lib/github/identity.deps";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
@@ -180,7 +181,11 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: error.message, settingsHref: error.settingsHref }, { status: 409 });
   }
 
-  const githubToken = await optionalGithubToken(owner.id);
+  // Who the session's git acts as on GitHub (lib/github/identity.ts): the
+  // repository's token now, for the box's mirror; the box asks for its own.
+  const tokenFor = gitTokenFor(owner.id, project.orgId);
+  const githubToken = await tokenFor(project.fullName);
+  if ("refusal" in githubToken) return githubToken.refusal;
   const sessionEnv = await runtimeSessionEnvironment(owner.id);
   // Whether it can run on the user's Claude: only as they picked it (or, with
   // no pick, on what they saved), which `auth` holds. Never on the box's own
@@ -194,7 +199,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return NextResponse.json({ error: NO_OUTRUNNER_MODELS, settingsHref: PROVIDERS_SETTINGS_HREF }, { status: 409 });
   }
-  if (project.private && !githubToken) {
+  if (project.private && !githubToken.token) {
     return NextResponse.json(
       {
         error:
@@ -252,7 +257,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   // Last of the checks, after the cheap local ones: it asks GitHub.
-  const github = await githubRefusal(githubToken, project);
+  const github = await githubRefusal(githubToken.token, project);
   if (github) return github;
 
   // A box is about to start, the new session's own: the plan's hours and box
@@ -280,7 +285,9 @@ export async function POST(request: Request, context: RouteContext) {
     for (const other of checkouts.filter((c) => c.projectId !== project.id)) {
       // As for the session's own repository: a public one GitHub doesn't show
       // this token still clones, so only a private one is refused.
-      const refused = await githubRefusal(githubToken, { fullName: other.fullName, private: other.private ?? true });
+      const otherToken = await tokenFor(other.fullName);
+      if ("refusal" in otherToken) return otherToken.refusal;
+      const refused = await githubRefusal(otherToken.token, { fullName: other.fullName, private: other.private ?? true });
       if (refused) return refused;
     }
   }
@@ -332,7 +339,7 @@ export async function POST(request: Request, context: RouteContext) {
       provider,
       keys,
       sandboxSettings,
-      githubToken,
+      githubToken: githubToken.token,
       sessionEnv,
       hasClaude,
       menu,
@@ -502,7 +509,7 @@ async function provisionWorkspace({
         await provider.syncRepoMirrors(
           computer.daytonaSandboxId,
           checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
-          githubToken,
+          gitTokensFor(owner.id, project.orgId),
         );
       }
       const created = await agent.createWorkspace(
@@ -609,6 +616,28 @@ async function provisionWorkspace({
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
     );
   }
+}
+
+/**
+ * The token for each repository the session clones, as its user chose
+ * (lib/github/identity.ts): their own (undefined with none stored, which
+ * only a private repository can't do without), or the App's, whose absence
+ * is said now, with where to put it right, rather than on the box later.
+ */
+function gitTokenFor(userId: string, orgId: string) {
+  return async (fullName: string): Promise<{ token: string | undefined } | { refusal: NextResponse }> => {
+    try {
+      return { token: await requireGitToken(userId, { orgId, fullName }) };
+    } catch (error) {
+      if (error instanceof GitIdentityError) {
+        return { refusal: NextResponse.json({ error: error.message, settingsHref: error.href }, { status: 409 }) };
+      }
+      if (!(error instanceof MissingGithubTokenError)) {
+        console.warn(`No GitHub token for ${fullName}'s session`, error);
+      }
+      return { token: undefined };
+    }
+  };
 }
 
 /**
