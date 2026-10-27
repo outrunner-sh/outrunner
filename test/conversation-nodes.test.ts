@@ -88,6 +88,8 @@ test("a turn is a prompt and Claude's last words in it, as plain text", () => {
 test("a preview drops markdown's marks and code fences, and runs whitespace together", () => {
   assert.equal(plainText("1. Paste `a.sql`\n```sql\nselect 1;\n```\n> _then_ ~~not~~ run"), "Paste a.sql select 1; then not run");
   assert.equal(plainText("   "), "");
+  // Underscores in names stay; only emphasis goes.
+  assert.equal(plainText("fix user_turn_count in claude_agent.go, _now_"), "fix user_turn_count in claude_agent.go, now");
 });
 
 test("the turn read is the last whose prompt reached the reading line, else the first", () => {

@@ -131,7 +131,9 @@ export function plainText(markdown: string): string {
     .replace(/```[^\n]*\n?/g, " ")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, "")
-    .replace(/[*_`~]+/g, "")
+    .replace(/[*`~]+/g, "")
+    // Underscores only as emphasis: user_turn_count and claude_agent.go keep theirs.
+    .replace(/(^|\W)_+|_+(?=\W|$)/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
 }
