@@ -24,6 +24,7 @@ function workspace(id: string, over: Partial<Workspace> = {}): Workspace {
     tmuxSession: null,
     agentWorkspaceId: null,
     environmentId: null,
+    checkouts: null,
     lastActiveAt: null,
     errorMessage: null,
     createdAt: "2026-10-01T00:00:00Z",

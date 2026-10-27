@@ -39,6 +39,7 @@ function workspace(id: string, projectId: string, at: string, title: string | nu
     tmuxSession: null,
     agentWorkspaceId: null,
     environmentId: null,
+    checkouts: null,
     agent: "claude",
     model: null,
     lastActiveAt: at,

@@ -21,7 +21,15 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import type { ProjectEnvironment, ProjectScripts } from "@/lib/db/project-environment";
-import { applySecretsEdit, checkoutNameFor, type EnvironmentSecrets, type SecretsEdit } from "@/lib/environments/rules";
+import {
+  applySecretsEdit,
+  checkoutNameFor,
+  EnvironmentRuleError,
+  type EnvironmentSecrets,
+  MAX_REPOS,
+  type SecretsEdit,
+} from "@/lib/environments/rules";
+import type { SessionCheckout } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** The orgs `userId` is a member of: the projects they may reach are theirs.
@@ -45,12 +53,17 @@ export type EnvironmentRepo = {
   /** The branch sessions start from; null is the repository's default. */
   branch: string | null;
   defaultBranch: string;
+  /** Its place in the project's list (and in a session's folder). */
+  position: number;
+  private: boolean;
 };
 
 /** A project as its settings page shows it: everything but the secrets'
  *  values. */
 export type Environment = {
   id: string;
+  /** The org it's in: its repositories are that org's. */
+  orgId: string;
   name: string;
   description: string | null;
   instructions: string | null;
@@ -122,6 +135,7 @@ export async function getEnvironment(userId: string, id: string): Promise<Enviro
     name: data.name,
     description: data.description,
     instructions: data.instructions,
+    orgId: data.org_id,
     repos: await environmentRepos(data.org_id, id),
     envNames: data.env_names,
     filePaths: data.file_paths,
@@ -138,15 +152,16 @@ async function environmentRepos(orgId: string, environmentId: string): Promise<E
   const supabase = createSupabaseAdminClient();
   const { data: rows, error } = await supabase
     .from("environment_repos")
-    .select("project_id, checkout_name, branch, position")
+    .select("project_id, checkout_name, branch, position, created_at")
     .eq("org_id", orgId)
     .eq("environment_id", environmentId)
-    .order("position", { ascending: true });
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: true });
   if (error) throw error;
   if (rows.length === 0) return [];
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
-    .select("id, full_name, default_branch")
+    .select("id, full_name, default_branch, is_private")
     .eq("org_id", orgId)
     .in(
       "id",
@@ -164,6 +179,8 @@ async function environmentRepos(orgId: string, environmentId: string): Promise<E
         checkoutName: r.checkout_name,
         branch: r.branch,
         defaultBranch: project.default_branch,
+        position: r.position,
+        private: project.is_private,
       },
     ];
   });
@@ -455,4 +472,78 @@ export async function setupGeneration(userId: string, id: string | null): Promis
     .maybeSingle();
   if (error) throw error;
   return data?.setup_generation ?? null;
+}
+
+/** The repositories a new session of the project works on, when it has
+ *  several (each in its own folder, from its branch); null for a project of
+ *  one, whose session is as every session was. */
+export async function sessionCheckouts(userId: string, id: string): Promise<SessionCheckout[] | null> {
+  const environment = await getEnvironment(userId, id);
+  if (!environment || environment.repos.length < 2) return null;
+  return environment.repos.map((r) => ({
+    projectId: r.projectId,
+    fullName: r.fullName,
+    checkout: r.checkoutName,
+    baseBranch: r.branch ?? r.defaultBranch,
+    private: r.private,
+  }));
+}
+
+/** Add a repository of the project's org to it, in a folder named after it
+ *  (made unique), last. Refused past MAX_REPOS, or for a repository of
+ *  another org. */
+export async function addEnvironmentRepo(userId: string, id: string, projectId: string): Promise<void> {
+  const environment = await getEnvironment(userId, id);
+  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (environment.repos.some((r) => r.projectId === projectId)) return;
+  if (environment.repos.length >= MAX_REPOS) {
+    throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+  }
+  const supabase = createSupabaseAdminClient();
+  const { data: project, error } = await supabase
+    .from("projects")
+    .select("id, name")
+    .eq("org_id", environment.orgId)
+    .eq("id", projectId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!project) throw new EnvironmentRuleError("That repository isn't connected to this project's organization.");
+  const taken = new Set(environment.repos.map((r) => r.checkoutName));
+  const base = checkoutNameFor(project.name);
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base.slice(0, 96)}-${n}`;
+  const { error: insertError } = await supabase.from("environment_repos").insert({
+    owner_id: userId,
+    environment_id: id,
+    project_id: projectId,
+    checkout_name: name,
+    // After the last, whatever was removed between: no two share a place.
+    position: Math.max(-1, ...environment.repos.map((r) => r.position)) + 1,
+  });
+  if (insertError?.message.includes("at most 5")) {
+    throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+  }
+  // Another add at the same moment took the folder name, or the repository.
+  if (insertError?.code === "23505") {
+    throw new EnvironmentRuleError("The project changed while adding that repository. Try again.");
+  }
+  if (insertError) throw insertError;
+}
+
+/** Remove a repository from the project; never its last, nor the one a
+ *  repository's default project is for (it would no longer be that one's). */
+export async function removeEnvironmentRepo(userId: string, id: string, projectId: string): Promise<void> {
+  const environment = await getEnvironment(userId, id);
+  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (environment.repos.length <= 1) throw new EnvironmentRuleError("A project keeps at least one repository.");
+  if (environment.defaultForProjectId === projectId) {
+    throw new EnvironmentRuleError("This project is that repository's own: remove the others instead.");
+  }
+  const { error } = await createSupabaseAdminClient()
+    .from("environment_repos")
+    .delete()
+    .eq("org_id", environment.orgId)
+    .eq("environment_id", id)
+    .eq("project_id", projectId);
+  if (error) throw error;
 }

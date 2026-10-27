@@ -42,6 +42,14 @@ export async function GET(request: Request, context: RouteContext) {
       if (!reach.ok) return NextResponse.json({ error: reach.error }, { status: 409 });
       const fromAgent = computer && (await changesFromAgent(provider, computer, { workspace, userId: owner.id, path }));
       if (fromAgent) return fromAgent;
+      // A folder of checkouts is no repository for git from outside: only
+      // the agent reads it.
+      if (workspace.checkouts) {
+        return NextResponse.json(
+          { error: "Couldn't read this session's changes from its box. Try again in a moment." },
+          { status: 503 },
+        );
+      }
       if (path !== null) {
         const diff = await provider.readWorkspaceChangedFileDiff(
           reach.sandboxId,
