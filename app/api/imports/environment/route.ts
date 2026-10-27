@@ -47,7 +47,11 @@ export async function POST(request: Request) {
         if (!repository) return null;
         return (await listProjects(orgId)).find((p) => p.githubRepoId === repository.githubRepoId)?.id ?? null;
       },
-      merge: (projectId, add) => mergeIntoDefaultEnvironment(owner.id, projectId, add),
+      merge: async (projectId, add) => {
+        if (!(await mergeIntoDefaultEnvironment(owner.id, projectId, add))) {
+          throw new ImportError("That repository isn't in one of your orgs. Connect it there first.", 404);
+        }
+      },
     });
     return NextResponse.json(result);
   } catch (error) {

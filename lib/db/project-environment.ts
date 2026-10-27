@@ -9,7 +9,7 @@
  * only — the table has no policy — and always scoped to the owner here.
  */
 
-import { open, seal } from "@/lib/crypto/secret-box";
+import { open } from "@/lib/crypto/secret-box";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -64,36 +64,4 @@ export async function hasProjectEnvironment(ownerId: string, projectId: string):
   if (error && probeStatus(error) === "missing") return false;
   if (error) throw error;
   return data !== null;
-}
-
-/** Add variables, files and scripts to a project's environment: a variable
- *  of the same name, a file at the same path, or a script given, replaces the
- *  one there. */
-export async function mergeProjectEnvironment(
-  ownerId: string,
-  projectId: string,
-  add: { env?: Record<string, string>; files?: Record<string, string>; scripts?: Partial<ProjectScripts> },
-): Promise<void> {
-  const current = await getProjectEnvironment(ownerId, projectId);
-  const env = { ...(current?.env ?? {}), ...(add.env ?? {}) };
-  const files = { ...(current?.files ?? {}), ...(add.files ?? {}) };
-  const names = Object.keys(env).sort();
-  const paths = Object.keys(files).sort();
-  const scripts = { setup: current?.setup ?? null, run: current?.run ?? null, archive: current?.archive ?? null, ...add.scripts };
-  const { error } = await createSupabaseAdminClient()
-    .from("project_environment")
-    .upsert(
-      {
-        owner_id: ownerId,
-        project_id: projectId,
-        secrets_ciphertext: names.length + paths.length > 0 ? seal(JSON.stringify({ env, files })) : null,
-        env_names: names,
-        file_paths: paths,
-        setup_script: scripts.setup,
-        run_script: scripts.run,
-        archive_script: scripts.archive,
-      },
-      { onConflict: "owner_id,project_id" },
-    );
-  if (error) throw error;
 }

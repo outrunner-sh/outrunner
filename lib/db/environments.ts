@@ -21,7 +21,6 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import type { ProjectEnvironment, ProjectScripts } from "@/lib/db/project-environment";
-import { ImportError } from "@/lib/imports/commit";
 import { applySecretsEdit, checkoutNameFor, type EnvironmentSecrets, type SecretsEdit } from "@/lib/environments/rules";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -344,16 +343,17 @@ export async function editEnvironmentSecrets(
 
 /** Keep what the user picked of a repository's environment on their Mac in
  *  the repository's default project: a variable of the same name, a file at
- *  the same path, or a script given, replaces the one there. A repository
- *  that isn't in one of the user's orgs is refused, not kept anywhere. */
+ *  the same path, or a script given, replaces the one there. False, keeping
+ *  nothing, for a repository that isn't in one of the user's orgs. */
 export async function mergeIntoDefaultEnvironment(
   ownerId: string,
   projectId: string,
   add: { env: Record<string, string>; files: Record<string, string>; scripts: Partial<ProjectScripts> },
-): Promise<void> {
+): Promise<boolean> {
   const orgs = await memberOrgIds(ownerId);
   const id = await defaultEnvironmentId(ownerId, projectId, orgs);
-  if (!id) throw new ImportError("That repository isn't in one of your orgs. Connect it there first.", 404);
+  if (!id) return false;
   await editEnvironmentSecrets(ownerId, id, { setEnv: add.env, setFiles: add.files }, orgs);
   if (Object.keys(add.scripts).length > 0) await updateEnvironment(ownerId, id, { scripts: add.scripts }, orgs);
+  return true;
 }
