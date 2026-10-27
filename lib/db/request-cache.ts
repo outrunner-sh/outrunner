@@ -8,6 +8,6 @@ import { getProject, listProjects, listWorkspaces } from "@/lib/db/repositories"
  * workspace, and should not query for them twice. Errors still throw; each
  * caller decides whether a failed load may take its view down.
  */
-export const listProjectsOnce = cache(() => listProjects());
-export const listWorkspacesOnce = cache(() => listWorkspaces());
+export const listProjectsOnce = cache((orgId?: string) => listProjects(orgId));
+export const listWorkspacesOnce = cache((orgId?: string) => listWorkspaces({ orgId }));
 export const getProjectOnce = cache((id: string) => getProject(id));

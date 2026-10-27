@@ -12,6 +12,7 @@ import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 import { ImportError } from "@/lib/imports/commit";
 import { importEnvironment } from "@/lib/imports/environment";
 import { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
+import { activeOrgId } from "@/lib/orgs/server";
 
 /**
  * Keep the environment the user picked of a repository on their Mac (the
@@ -33,15 +34,17 @@ export async function POST(request: Request) {
 
   try {
     const token = await requireGithubToken(owner.id);
+    // Into the active org, where the user is looking.
+    const orgId = await activeOrgId();
     const result = await importEnvironment(parsed.data, {
       async projectFor(repo) {
         const { repositories } = await connectRepositories(owner.id, token, [repo], {
           lookup: getGitHubRepository,
-          upsert: upsertProjects,
+          upsert: (ownerId, repos) => upsertProjects(ownerId, repos, orgId),
         });
         const repository = repositories[0];
         if (!repository) return null;
-        return (await listProjects()).find((p) => p.githubRepoId === repository.githubRepoId)?.id ?? null;
+        return (await listProjects(orgId)).find((p) => p.githubRepoId === repository.githubRepoId)?.id ?? null;
       },
       merge: (projectId, add) => mergeProjectEnvironment(owner.id, projectId, add),
     });
