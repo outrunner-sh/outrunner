@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getEnvironment, updateEnvironment, type EnvironmentPatch } from "@/lib/db/environments";
+import { EnvironmentAccessError, getEnvironment, updateEnvironment, type EnvironmentPatch } from "@/lib/db/environments";
 import {
   EnvironmentRuleError,
   MAX_DESCRIPTION,
@@ -84,7 +84,12 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   return savingSettings("project settings", async () => {
     if (!(await getEnvironment(owner.id, id))) return notFound();
-    await updateEnvironment(owner.id, id, patch);
+    try {
+      await updateEnvironment(owner.id, id, patch);
+    } catch (error) {
+      if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
+      throw error;
+    }
     return NextResponse.json(await getEnvironment(owner.id, id));
   });
 }

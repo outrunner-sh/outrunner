@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
-import { defaultEnvironmentId, EnvironmentConflictError, editEnvironmentSecrets } from "@/lib/db/environments";
+import {
+  defaultEnvironmentId,
+  EnvironmentAccessError,
+  EnvironmentConflictError,
+  editEnvironmentSecrets,
+} from "@/lib/db/environments";
 import { EnvironmentRuleError } from "@/lib/environments/rules";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { settableEnv } from "@/lib/imports/settable-env";
@@ -75,7 +80,11 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ result: "provided", saved: true });
   } catch (error) {
     const reason =
-      error instanceof EnvironmentRuleError || error instanceof EnvironmentConflictError ? error.message : null;
+      error instanceof EnvironmentRuleError ||
+      error instanceof EnvironmentConflictError ||
+      error instanceof EnvironmentAccessError
+        ? error.message
+        : null;
     if (!reason) console.error(`Secrets: couldn't save to the project of ${workspace.id}`);
     return NextResponse.json({
       result: "provided",

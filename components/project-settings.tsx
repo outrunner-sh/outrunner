@@ -52,6 +52,7 @@ export function ProjectSettings({ initial }: { initial: Environment }) {
   const setSection = (id: SectionId) => router.replace(id === "general" ? pathname : `${pathname}?tab=${id}`, { scroll: false });
   // Sessions start in a repository until a project can hold more than one.
   const repo = environment.repos[0];
+  const readOnly = environment.access !== "write";
 
   return (
     <div className="px-8 py-8">
@@ -91,18 +92,29 @@ export function ProjectSettings({ initial }: { initial: Environment }) {
               </button>
             ))}
           </nav>
-          <main className="min-w-0">
-            {section === "general" && <GeneralSection environment={environment} onSaved={setEnvironment} />}
-            {section === "variables" && (
-              <VariablesSection
-                environment={environment}
-                onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))}
-              />
+          <main className="min-w-0 space-y-4">
+            {/* Read access: everything shows, nothing changes (the server
+                refuses a change too). A disabled fieldset disables every
+                field and button in it. */}
+            {readOnly && (
+              <InlineMessage tone="info">
+                You can see this project and start sessions in it, but not change it. Ask an admin of its org for write
+                access.
+              </InlineMessage>
             )}
-            {section === "setup" && <SetupSection environment={environment} onSaved={setEnvironment} />}
-            {section === "files" && (
-              <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
-            )}
+            <fieldset disabled={readOnly} className="min-w-0">
+              {section === "general" && <GeneralSection environment={environment} onSaved={setEnvironment} />}
+              {section === "variables" && (
+                <VariablesSection
+                  environment={environment}
+                  onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))}
+                />
+              )}
+              {section === "setup" && <SetupSection environment={environment} onSaved={setEnvironment} />}
+              {section === "files" && (
+                <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
+              )}
+            </fieldset>
           </main>
         </div>
       </div>

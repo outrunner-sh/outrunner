@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { EnvironmentConflictError, mergeIntoDefaultEnvironment } from "@/lib/db/environments";
+import { EnvironmentAccessError, EnvironmentConflictError, mergeIntoDefaultEnvironment } from "@/lib/db/environments";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
 import { getGitHubRepository } from "@/lib/github/client";
 import { connectRepositories } from "@/lib/github/connect";
@@ -13,6 +13,7 @@ import { EnvironmentRuleError } from "@/lib/environments/rules";
 import { ImportError } from "@/lib/imports/commit";
 import { importEnvironment } from "@/lib/imports/environment";
 import { ImportEnvironmentRequest } from "@/lib/runtime/import-scan";
+import { connectRefusal } from "@/lib/orgs/connect-access";
 import { activeOrgId } from "@/lib/orgs/server";
 
 /**
@@ -37,6 +38,8 @@ export async function POST(request: Request) {
     const token = await requireGithubToken(owner.id);
     // Into the active org, where the user is looking.
     const orgId = await activeOrgId();
+    const refused = await connectRefusal(owner.id, orgId);
+    if (refused) return refused;
     const result = await importEnvironment(parsed.data, {
       async projectFor(repo) {
         const { repositories } = await connectRepositories(owner.id, token, [repo], {
@@ -63,6 +66,9 @@ export async function POST(request: Request) {
     }
     if (error instanceof EnvironmentConflictError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof EnvironmentAccessError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
     }
     return (
       databaseNotUpdated(error, `${parsed.data.repo}'s environment`) ??

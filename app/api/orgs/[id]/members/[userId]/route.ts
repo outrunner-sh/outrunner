@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { setMemberRoles } from "@/lib/db/org-access";
 import { closeAdmissionIfAlone, removeMember, setMemberRole } from "@/lib/db/org-members";
 import { isUuid } from "@/lib/ids";
 import { settleNewRemoval } from "@/lib/orgs/removal.deps";
@@ -23,6 +24,9 @@ export async function PATCH(request: Request, { params }: Params) {
 
   return changingMembers("a member's role", async () => {
     await setMemberRole(id, userId, role);
+    // An admin writes everything: the roles they held as a member would only
+    // mislead if they're made a member again.
+    if (role === "admin") await setMemberRoles(id, userId, []);
     return NextResponse.json({ member: { userId, role } });
   });
 }

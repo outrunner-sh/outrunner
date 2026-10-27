@@ -8,6 +8,7 @@ import { ImportError } from "@/lib/imports/commit";
 import { importProvider, planDeps } from "@/lib/imports/deps";
 import { planImports } from "@/lib/imports/plan";
 import { ImportPlanRequest } from "@/lib/runtime/import-scan";
+import { connectRefusal } from "@/lib/orgs/connect-access";
 import { activeOrgId } from "@/lib/orgs/server";
 
 /**
@@ -33,7 +34,10 @@ export async function POST(request: Request) {
     // Before anything is minted: the sessions will need a cloud computer.
     await importProvider(owner.id);
     const token = await requireGithubToken(owner.id);
-    const items = await planImports(owner.id, parsed.data, planDeps(owner.id, token, await activeOrgId()));
+    const orgId = await activeOrgId();
+    const refused = await connectRefusal(owner.id, orgId);
+    if (refused) return refused;
+    const items = await planImports(owner.id, parsed.data, planDeps(owner.id, token, orgId));
     return NextResponse.json({ items });
   } catch (error) {
     if (error instanceof ImportError) {
