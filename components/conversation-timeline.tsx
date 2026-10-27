@@ -38,6 +38,7 @@ import {
   currentTurn,
 } from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +68,15 @@ export function ConversationTimeline({
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
+  // Where the view was at the last scroll, for which way the next one went,
+  // and to put it back where the panel is shown again (followsAfterScroll).
+  const lastTop = useRef(0);
+  // When the user last touched the view's scrolling (wheel, touch, keys, its
+  // scrollbar), so a scroll they didn't make can't stop the follow.
+  const lastInput = useRef(0);
+  const userInput = () => {
+    lastInput.current = performance.now();
+  };
 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const nodes = useMemo(() => conversationNodes(events), [events]);
@@ -90,10 +100,13 @@ export function ConversationTimeline({
   // the user scrolled up (then honor their position). Grows, not "as events
   // arrive": a reply keeps lengthening after its event, as its text is
   // revealed, so this follows the content's height rather than the list.
+  // Also runs as a session kept for going back to is shown again, its view
+  // reset by being hidden: to the end, or back where the user left it.
   useEffect(() => {
     const el = parentRef.current;
     const content = contentRef.current;
     if (!el || !content) return;
+    if (!stickToBottom.current) el.scrollTop = lastTop.current;
     const follow = () => {
       if (stickToBottom.current) el.scrollTop = el.scrollHeight;
       measure();
@@ -116,6 +129,8 @@ export function ConversationTimeline({
     const el = parentRef.current;
     const prompt = el?.querySelectorAll<HTMLElement>("[data-turn]")[index];
     if (!el || !prompt) return;
+    // Reading back: the conversation stops following its end, as a scroll up does.
+    stickToBottom.current = false;
     el.scrollTo({ top: prompt.offsetTop - 16, behavior: "smooth" });
   };
 
@@ -123,10 +138,21 @@ export function ConversationTimeline({
     <div className="turn-rail-host relative flex min-h-0 flex-1 flex-col">
       <div
         ref={parentRef}
+        onWheel={userInput}
+        onTouchMove={userInput}
+        onKeyDown={userInput}
+        onPointerDown={userInput}
         onScroll={(e) => {
           const el = e.currentTarget;
-          stickToBottom.current =
-            el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          stickToBottom.current = followsAfterScroll({
+            following: stickToBottom.current,
+            byUser: performance.now() - lastInput.current < USER_SCROLL_MS,
+            top: el.scrollTop,
+            lastTop: lastTop.current,
+            viewHeight: el.clientHeight,
+            scrollHeight: el.scrollHeight,
+          });
+          if (el.clientHeight > 0) lastTop.current = el.scrollTop;
           if (frame.current !== null) return;
           frame.current = requestAnimationFrame(() => {
             frame.current = null;
