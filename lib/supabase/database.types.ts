@@ -534,7 +534,10 @@ type GithubInstallationRow = {
   account_type: "User" | "Organization";
   repository_selection: "all" | "selected";
   installed_by: string | null;
-  /** The GitHub user who installed it (the webhook's sender). */
+  /** The GitHub user who installed it (the webhook's sender), by numeric
+   *  id: what a claim is matched by. */
+  installer_id: number | null;
+  /** Their login then, for showing. */
   installer_login: string | null;
   suspended_at: string | null;
   created_at: string;

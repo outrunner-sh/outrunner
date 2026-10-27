@@ -1526,11 +1526,11 @@ end $$;
 -- installed it; one with neither isn't kept.
 do $$
 begin
-  insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_login)
-  values (777, 'acme', 'Organization', 'all', 'acme-owner');
+  insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, installer_login)
+  values (777, 'acme', 'Organization', 'all', 4242, 'acme-owner');
   begin
-    insert into github_installations (installation_id, account_login, account_type, repository_selection)
-    values (778, 'acme', 'Organization', 'all');
+    insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_login)
+    values (778, 'acme', 'Organization', 'all', 'only-a-login');
     raise exception 'FAIL: an unclaimed installation with no installer to claim it';
   exception when check_violation then
     null;

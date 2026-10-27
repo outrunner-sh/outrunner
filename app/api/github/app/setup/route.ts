@@ -64,7 +64,7 @@ export async function GET(request: Request) {
     }
     if (!holder) return back("pending=1");
 
-    await claimInstallation({ orgId, installation, githubLogin: owner.githubLogin, userId: owner.id });
+    await claimInstallation({ orgId, installation, githubId: owner.githubId, userId: owner.id });
     await setActiveOrg(orgId).catch(() => {});
     return back(`installed=${encodeURIComponent(installation.accountLogin)}`);
   } catch (error) {

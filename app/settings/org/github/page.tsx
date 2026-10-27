@@ -49,7 +49,7 @@ async function GitHubSection({ searchParams }: { searchParams: Promise<Query> })
         listOrgInstallations(org.id).catch(() => []),
         // Installed by them on GitHub, before GitHub's word reached the
         // setup route: theirs to add here.
-        org.role === "admin" ? listUnclaimedFor(owner.githubLogin).catch(() => []) : Promise.resolve([]),
+        org.role === "admin" ? listUnclaimedFor(owner.githubId).catch(() => []) : Promise.resolve([]),
       ])
     : [[], []];
   const installations: InstallationView[] = await Promise.all(

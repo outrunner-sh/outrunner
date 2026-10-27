@@ -23,7 +23,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const installation = await getInstallation(config, installationId);
     if (!installation) return NextResponse.json({ error: "GitHub has no such installation." }, { status: 404 });
-    await claimInstallation({ orgId: id, installation, githubLogin: caller.owner.githubLogin, userId: caller.owner.id });
+    await claimInstallation({ orgId: id, installation, githubId: caller.owner.githubId, userId: caller.owner.id });
     return NextResponse.json({ claimed: installationId });
   } catch (error) {
     if (error instanceof ClaimError) {

@@ -93,3 +93,18 @@ export function githubLogin(user: User): string | null {
   const login = data.user_name ?? data.preferred_username ?? data.login;
   return typeof login === "string" ? login : null;
 }
+
+/**
+ * The GitHub user's numeric id, from the same server-maintained identity as
+ * {@link githubLogin}. Unlike a login it never changes, and is never given to
+ * anyone else: what an installation's installer is matched by
+ * (lib/db/github-installations.ts). Null for a session not from GitHub.
+ */
+export function githubUserId(user: User): number | null {
+  const identity = user.identities?.find((i) => i.provider === "github");
+  if (!identity) return null;
+  const data = (identity.identity_data ?? {}) as Record<string, unknown>;
+  const raw = data.provider_id ?? data.sub ?? identity.id;
+  const id = typeof raw === "number" ? raw : typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : NaN;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}

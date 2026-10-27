@@ -113,7 +113,8 @@ export function OrgGitHubSettings({
       ) : null}
       {pending && unclaimed.length === 0 ? (
         <InlineMessage tone="info" actions={[{ label: "Reload", onClick: () => router.refresh() }]}>
-          GitHub hasn&apos;t confirmed the installation yet. It shows here in a moment, for you to add.
+          GitHub hasn&apos;t confirmed the installation yet. It shows here in a moment, for you to add. If it
+          doesn&apos;t within a minute, uninstall the App on GitHub and install it again from here.
         </InlineMessage>
       ) : null}
       {admin && unclaimed.length > 0 ? (
@@ -202,7 +203,7 @@ export function OrgGitHubSettings({
                 {installations.length === 0 ? "Install the GitHub App" : "Install on another account"}
               </a>
               <p className="text-xs text-muted-foreground">
-                {`On GitHub, pick the account and which of its repositories Outrunner may reach. Removing it here stops ${org.name} using it; uninstall it on GitHub to take its access away there too.`}
+                {`On GitHub, pick the account and which of its repositories Outrunner may reach. Removing it here stops ${org.name} using it; whoever installed it can add it back. Uninstall it on GitHub to take its access away there too.`}
               </p>
             </div>
           ) : (

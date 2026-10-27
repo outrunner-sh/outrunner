@@ -3,16 +3,22 @@
 -- (the installation event's sender), and installing on an organization needs
 -- one of its owners or App managers. So the webhook records each new
 -- installation unclaimed, with its installer; the setup route, or the
--- installer from Settings → Org → GitHub, claims it for an org.
+-- installer from Settings → Org → GitHub, claims it for an org. An admin's
+-- Remove unclaims it, for the installer to add again.
+--
+-- The installer is matched by GitHub's numeric user id, never by login: a
+-- login can be renamed and then taken by someone else. The login is kept for
+-- showing.
 -- ---------------------------------------------------------------------------
 
 alter table github_installations alter column org_id drop not null;
+alter table github_installations add column if not exists installer_id bigint;
 alter table github_installations add column if not exists installer_login text;
 
 -- An unclaimed installation has its installer to claim it.
 alter table github_installations drop constraint if exists github_installations_claimable;
 alter table github_installations add constraint github_installations_claimable
-  check (org_id is not null or installer_login is not null);
+  check (org_id is not null or installer_id is not null);
 
 create index if not exists github_installations_installer_idx
-  on github_installations (lower(installer_login)) where org_id is null;
+  on github_installations (installer_id) where org_id is null;

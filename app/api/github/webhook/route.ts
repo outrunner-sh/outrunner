@@ -22,7 +22,7 @@ type Payload = {
   };
   account?: { login?: string };
   repository_selection?: string;
-  sender?: { login?: string };
+  sender?: { id?: number; login?: string };
 };
 
 /**
@@ -59,8 +59,11 @@ export async function POST(request: Request) {
   try {
     if (event === "installation" && payload.action === "created") {
       const installation = toInstallation(payload.installation ?? {});
-      const installer = payload.sender?.login;
-      if (installation && installer) await recordInstalled(installation, installer);
+      const sender = payload.sender;
+      // By GitHub's numeric id: a login can be renamed and taken by another.
+      if (installation && typeof sender?.id === "number" && sender.login) {
+        await recordInstalled(installation, { id: sender.id, login: sender.login });
+      }
       return new NextResponse(null, { status: 204 });
     }
     if (!(await installationHolder(installationId))) return new NextResponse(null, { status: 204 });

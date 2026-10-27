@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { isOwner, parseAllowlist } from "@/lib/auth/allowlist";
+import { githubUserId, isOwner, parseAllowlist } from "@/lib/auth/allowlist";
 import type { User } from "@supabase/supabase-js";
 
 test("parseAllowlist accepts a single login", () => {
@@ -60,4 +60,14 @@ test("a user an org let in passes a restricted allowlist; one who only set it on
   // user_metadata is the user's own to write: it lets no one in.
   assert.equal(isOwner({ identities: github, user_metadata: { outrunner_admitted: true } } as unknown as User), false);
   delete process.env.RUNTIME_OWNER_GITHUB_LOGIN;
+});
+
+test("the GitHub user's numeric id comes from the server-kept identity, never user_metadata", () => {
+  const user = (identity: Record<string, unknown>, meta: Record<string, unknown> = {}) =>
+    ({ identities: [{ provider: "github", id: "ignored-if-provider-id", identity_data: identity }], user_metadata: meta }) as unknown as User;
+  assert.equal(githubUserId(user({ provider_id: "583231", user_name: "octocat" })), 583231);
+  assert.equal(githubUserId(user({ sub: "42" })), 42);
+  // Not a number: none, rather than a guess.
+  assert.equal(githubUserId(user({ provider_id: "abc" }, { provider_id: "1" })), null);
+  assert.equal(githubUserId({ identities: [{ provider: "email", identity_data: { sub: "7" } }] } as unknown as User), null);
 });

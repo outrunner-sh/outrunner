@@ -2,12 +2,15 @@
 import type { User } from "@supabase/supabase-js";
 import { cache } from "react";
 
-import { githubLogin, isOwner } from "@/lib/auth/allowlist";
+import { githubLogin, githubUserId, isOwner } from "@/lib/auth/allowlist";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type Owner = {
   id: string;
   githubLogin: string;
+  /** The GitHub user's numeric id (lib/auth/allowlist.ts githubUserId):
+   *  never renamed, never reused. Null when the identity doesn't say. */
+  githubId?: number | null;
   /** The user's full name from GitHub, or their login if not set. */
   name: string;
   email: string | null;
@@ -48,6 +51,7 @@ export function ownerFromUser(user: User): Owner {
   return {
     id: user.id,
     githubLogin: login,
+    githubId: githubUserId(user),
     name,
     email: user.email ?? null,
     avatarUrl:
