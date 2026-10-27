@@ -74,6 +74,10 @@ import { useSessionAttachment } from "@/hooks/use-session-attachment";
  * the route's, when it gave one, so a dead end offers no retry. */
 type FailedSend = { message: string; retry?: () => void; code?: string };
 
+/** How long the queue waits, the session idle, for the stream to record the
+ *  last queued prompt sent before sending the next anyway. */
+const QUEUED_ECHO_WAIT_MS = 30_000;
+
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   outrunner: true,
   allowance: false,
@@ -395,13 +399,22 @@ export function WorkspaceSession({
     // Its files were uploaded for it alone.
     for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
   };
+  const awaitingLast = queuedAt !== null && delivered <= queuedAt;
+  // A prompt the agent took but the stream never shows (Claude dropped it, or a
+  // /clear started a new conversation) mustn't hold the queue for good: once
+  // the session has sat idle that long since, the wait is over.
+  useEffect(() => {
+    if (!awaitingLast || working) return;
+    const release = setTimeout(() => setQueuedAt(null), QUEUED_ECHO_WAIT_MS);
+    return () => clearTimeout(release);
+  }, [awaitingLast, working]);
   const drains = queueDrains({
     queued: queue.length,
     attached,
     working,
     waitingOnUser,
     held: queueHeld,
-    awaitingLast: queuedAt !== null && delivered <= queuedAt,
+    awaitingLast,
   });
   useEffect(() => {
     if (!drains || sendingQueued.current) return;
