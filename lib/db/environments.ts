@@ -322,9 +322,12 @@ export async function bumpGeneration(ownerId: string, id: string): Promise<numbe
   return typeof data === "number" ? data : null;
 }
 
-/** Record the warm hook's run on a ready box, for the settings page. */
+/** Record the warm hook's run on a ready box, for the settings page. A
+ *  project's two boxes warm at once: a failure of a generation stays shown
+ *  until a new generation (an edit, "Try again"), whatever the other box's
+ *  run says after. */
 export async function recordWarmRun(id: string, run: WarmRun): Promise<void> {
-  const { error } = await createSupabaseAdminClient()
+  let query = createSupabaseAdminClient()
     .from("environments")
     .update({
       warm_status: run.status,
@@ -334,6 +337,10 @@ export async function recordWarmRun(id: string, run: WarmRun): Promise<void> {
       warm_generation: run.generation,
     })
     .eq("id", id);
+  if (run.status !== "failed" && run.generation !== null) {
+    query = query.or(`warm_status.is.null,warm_status.neq.failed,warm_generation.is.null,warm_generation.neq.${run.generation}`);
+  }
+  const { error } = await query;
   if (error) throw error;
 }
 

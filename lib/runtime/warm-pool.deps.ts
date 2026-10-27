@@ -14,6 +14,7 @@ import {
   createPooledComputer,
   deletePooledComputer,
   getPooledComputers,
+  releasePooledComputer,
   markPooledFailed,
   markPooledReady,
   updateRuntimeComputer,
@@ -54,6 +55,9 @@ export async function takePooledBox(
  *  take: the agent's own hour, and room for the box to answer. */
 const WARM_POLL_MS = 5_000;
 const WARM_WAIT_MS = 65 * 60_000;
+
+/** Status calls that may fail in a row before a warming box is given up. */
+const WARM_STATUS_MISSES = 3;
 
 /** The end of a warm log kept for the settings page. */
 const WARM_LOG_KEPT = 64 * 1024;
@@ -110,6 +114,7 @@ export async function refillProjectPool(input: {
       failed: markPooledFailed,
       discard: (sandboxId, madeBy) => discardBox(provider, madeBy, ownerId, sandboxId),
       forget: deletePooledComputer,
+      release: releasePooledComputer,
       newSecret: () => randomBytes(32).toString("hex"),
       now: Date.now,
     });
@@ -131,15 +136,35 @@ async function warmBox(
 ): Promise<void> {
   const health = await agent.health({ ...box, workspaceId: "" }).catch(() => null);
   if (!health?.features?.includes(AGENT_FEATURE_WARM_HOOKS)) {
-    throw new WarmHookError("This box's agent can't run a warm hook.");
+    // An older agent (or one that didn't answer): pooled unwarmed, and the
+    // session that takes it runs the warm hook itself as it starts.
+    console.warn(`Box ${box.computerId}'s agent can't run a warm hook: pooled unwarmed`);
+    return;
   }
   const startedAt = new Date().toISOString();
+  const failed = (log: string) =>
+    recordWarmRun(environmentId, { status: "failed", log, startedAt, finishedAt: new Date().toISOString(), generation: req.generation });
   await recordWarmRun(environmentId, { status: "running", log: null, startedAt, finishedAt: null, generation: req.generation });
-  await agent.startWarm(box, { baseBranch: req.baseBranch, env: req.env, files: req.files, hook: req.hook });
+  try {
+    await agent.startWarm(box, { baseBranch: req.baseBranch, env: req.env, files: req.files, hook: req.hook });
+  } catch (error) {
+    await failed(`The warm hook couldn't be started: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
+    throw error;
+  }
   const deadline = Date.now() + WARM_WAIT_MS;
+  let misses = 0;
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, WARM_POLL_MS));
-    const status = await agent.warmStatus(box);
+    let status;
+    try {
+      status = await agent.warmStatus(box);
+      misses = 0;
+    } catch (error) {
+      // A blip doesn't end a run that may be going fine: a few in a row do.
+      if (++misses < WARM_STATUS_MISSES && Date.now() < deadline) continue;
+      await failed(`The box stopped answering while its warm hook ran: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
+      throw error;
+    }
     if (status.state === "running" && Date.now() < deadline) continue;
     const ok = status.state === "succeeded";
     await recordWarmRun(environmentId, {

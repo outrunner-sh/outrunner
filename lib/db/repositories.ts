@@ -549,6 +549,15 @@ export async function markPooledFailed(id: string, leftover: string | null): Pro
   if (error) throw error;
 }
 
+/** Take a box out of the pool: its row deleted only while still pooled.
+ *  False when a session claimed it first (its row is no longer pooled). */
+export async function releasePooledComputer(id: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("pooled", true).select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
 /** Forget a pooled box's row whose box couldn't be made. */
 export async function deletePooledComputer(id: string): Promise<void> {
   const supabase = await createSupabaseServerClient();

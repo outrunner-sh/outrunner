@@ -76,6 +76,9 @@ export type WarmPoolDeps = {
   discard(sandboxId: string, provider: PooledBox["provider"]): Promise<void>;
   /** Forget a pooled box's row. */
   forget(computerId: string): Promise<void>;
+  /** Take a box out of the pool: its row deleted only while it is still
+   *  pooled. False when a session claimed it meanwhile, whose box it is now. */
+  release(computerId: string): Promise<boolean>;
   newSecret(): string;
   now(): number;
 };
@@ -103,8 +106,10 @@ export async function refillPool(deps: WarmPoolDeps): Promise<number> {
     const outdated = existing.status !== "provisioning" && existing.generation !== deps.generation;
     const retry = existing.status === "error" && age > REFILL_BACKOFF_MS;
     if (foreign || abandoned || outdated || retry) {
+      // Out of the pool first, then its box: a box a session has just
+      // claimed (its row no longer pooled) is that session's, not deleted.
+      if (!(await deps.release(existing.id))) continue;
       if (existing.daytonaSandboxId) await deps.discard(existing.daytonaSandboxId, existing.provider);
-      await deps.forget(existing.id);
       continue;
     }
     taken.add(existing.poolSlot);

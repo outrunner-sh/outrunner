@@ -24,6 +24,7 @@ function pool(
     pauseFails?: boolean;
     rowGone?: boolean;
     discardFails?: boolean;
+    claimedMeanwhile?: boolean;
   } = {},
 ) {
   const log: string[] = [];
@@ -63,6 +64,10 @@ function pool(
       if (opts.discardFails) throw new Error("Daytona timed out");
     },
     forget: async (computerId) => void log.push(`forget ${computerId}`),
+    release: async (computerId) => {
+      log.push(`release ${computerId}`);
+      return !opts.claimedMeanwhile;
+    },
     newSecret: () => "s3cret",
     now: () => NOW,
   };
@@ -108,18 +113,18 @@ test("a refill that died mid-way is replaced: its box deleted, its row gone, a n
   const stale = new Date(NOW - STALE_REFILL_MS - 1).toISOString();
   const { deps, log } = pool({ existing: [box({ status: "provisioning", updatedAt: stale })] });
   assert.equal(await refillPool(deps), 1);
-  assert.deepEqual(log, ["discard sb-old on daytona", "forget c-old", ...MADE]);
+  assert.deepEqual(log, ["release c-old", "discard sb-old on daytona", ...MADE]);
 
   // Cut off before its box existed: only its row.
   const early = pool({ existing: [box({ status: "provisioning", updatedAt: stale, daytonaSandboxId: null })] });
   assert.equal(await refillPool(early.deps), 1);
-  assert.deepEqual(early.log, ["forget c-old", ...MADE]);
+  assert.deepEqual(early.log, ["release c-old", ...MADE]);
 });
 
 test("a pooled box from the provider the user moved from is deleted there and replaced", async () => {
   const { deps, log } = pool({ existing: [box({ provider: "user-modal" })] });
   assert.equal(await refillPool(deps), 1);
-  assert.deepEqual(log, ["discard sb-old on user-modal", "forget c-old", ...MADE]);
+  assert.deepEqual(log, ["release c-old", "discard sb-old on user-modal", ...MADE]);
 });
 
 test("a box that couldn't be made goes, and its row is kept failed for the back-off", async () => {
@@ -158,7 +163,7 @@ test("a project whose refill failed waits before the next try", async () => {
   const old = new Date(NOW - REFILL_BACKOFF_MS - 1).toISOString();
   const later = pool({ existing: [box({ status: "error", daytonaSandboxId: null, updatedAt: old })] });
   assert.equal(await refillPool(later.deps), 1);
-  assert.deepEqual(later.log, ["forget c-old", ...MADE]);
+  assert.deepEqual(later.log, ["release c-old", ...MADE]);
 });
 
 test("a box whose delete failed stays on the failed row, and the retry deletes it", async () => {
@@ -169,7 +174,7 @@ test("a box whose delete failed stays on the failed row, and the retry deletes i
   const old = new Date(NOW - REFILL_BACKOFF_MS - 1).toISOString();
   const retry = pool({ existing: [box({ status: "error", daytonaSandboxId: "sb-1", updatedAt: old })] });
   assert.equal(await refillPool(retry.deps), 1);
-  assert.deepEqual(retry.log.slice(0, 2), ["discard sb-1 on daytona", "forget c-old"]);
+  assert.deepEqual(retry.log.slice(0, 2), ["release c-old", "discard sb-1 on daytona"]);
 });
 
 test("a project keeps two ready boxes: the free slot is filled", async () => {
@@ -188,7 +193,7 @@ test("a project keeps two ready boxes: the free slot is filled", async () => {
 test("a box made from an older setup is replaced; one still being made is left to finish", async () => {
   const { deps, log } = pool({ generation: 2, existing: [box({ generation: 1 })] });
   assert.equal(await refillPool(deps), 1);
-  assert.deepEqual(log.slice(0, 2), ["discard sb-old on daytona", "forget c-old"]);
+  assert.deepEqual(log.slice(0, 2), ["release c-old", "discard sb-old on daytona"]);
 
   const making = pool({ generation: 2, existing: [box({ generation: 1, status: "provisioning", daytonaSandboxId: null })] });
   assert.equal(await refillPool(making.deps), 0);
@@ -198,11 +203,18 @@ test("a box made from an older setup is replaced; one still being made is left t
 test("a failed refill of an older setup is tried again at once with the new one", async () => {
   const { deps, log } = pool({ generation: 2, existing: [box({ generation: 1, status: "error", daytonaSandboxId: null })] });
   assert.equal(await refillPool(deps), 1);
-  assert.deepEqual(log, ["forget c-old", ...MADE]);
+  assert.deepEqual(log, ["release c-old", ...MADE]);
 });
 
 test("a warm hook that fails deletes the box and backs off", async () => {
   const { deps, log } = pool({ warmFails: true });
   await assert.rejects(refillPool(deps), /warm hook failed/);
   assert.deepEqual(log, [...MADE.slice(0, 4), "discard sb-1 on daytona", "failed c-1"]);
+});
+
+test("an outdated box a session claimed meanwhile is that session's: not deleted", async () => {
+  const { deps, log } = pool({ generation: 2, existing: [box({ generation: 1 })], claimedMeanwhile: true });
+  await refillPool(deps);
+  assert.deepEqual(log.slice(0, 1), ["release c-old"]);
+  assert.equal(log.some((l) => l.startsWith("discard")), false);
 });
