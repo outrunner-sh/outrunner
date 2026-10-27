@@ -266,7 +266,7 @@ type ProjectEnvironmentRow = {
   updated_at: string;
 };
 
-/** What the app calls a Project (20261027120000_environments.sql). */
+/** What the app calls a Project (20261027121000_environments.sql). */
 type EnvironmentRow = {
   id: string;
   owner_id: string;

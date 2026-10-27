@@ -1,6 +1,6 @@
 /**
  * Projects, as the app calls them: an `environments` row
- * (20261027120000_environments.sql) and its repositories. Not the `projects`
+ * (20261027121000_environments.sql) and its repositories. Not the `projects`
  * table, which holds one connected GitHub repository a row and is where an
  * environment's repositories come from.
  *
