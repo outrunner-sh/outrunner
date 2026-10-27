@@ -30,3 +30,10 @@ test("a hidden panel says nothing about where the user is", () => {
   assert.equal(followsAfterScroll({ ...hidden, following: false }), false);
   assert.equal(followsAfterScroll({ ...hidden, following: true }), true);
 });
+
+test("a jump back to an earlier turn doesn't count its first frames as a return to the end", () => {
+  // Still within reach of the end as the smooth scroll starts.
+  assert.equal(followsAfterScroll({ ...view, following: false, byUser: false, jumping: true, top: 4_350, lastTop: 4_400 }), false);
+  // Landed on that turn: reading there.
+  assert.equal(followsAfterScroll({ ...view, following: false, byUser: false, top: 1_200, lastTop: 1_300 }), false);
+});

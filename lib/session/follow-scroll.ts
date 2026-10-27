@@ -13,6 +13,9 @@
 export function followsAfterScroll(input: {
   following: boolean;
   byUser: boolean;
+  /** A jump back to an earlier turn (the turn rail) is under way: its first
+   *  frames are still near the end, and mustn't take it for a return there. */
+  jumping?: boolean;
   /** Where the view's top is now, and was at the last scroll event. */
   top: number;
   lastTop: number;
@@ -20,6 +23,7 @@ export function followsAfterScroll(input: {
   scrollHeight: number;
 }): boolean {
   if (input.viewHeight === 0) return input.following;
+  if (input.jumping) return false;
   if (input.scrollHeight - input.top - input.viewHeight < FOLLOW_SLACK_PX) return true;
   if (input.byUser && input.top < input.lastTop) return false;
   return input.following;

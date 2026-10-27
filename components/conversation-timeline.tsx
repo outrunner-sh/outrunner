@@ -42,6 +42,9 @@ import { followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll"
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
 
+/** Long enough for any smooth scroll back to a turn to finish. */
+const JUMP_MS = 1500;
+
 /**
  * The Conversation projection of the Workspace Session — the ordered list of
  * AgentEvents rendered as a chat. Not virtualized: every row is in the DOM,
@@ -77,6 +80,24 @@ export function ConversationTimeline({
   const userInput = () => {
     lastInput.current = performance.now();
   };
+  // A pointer held on the view (dragging its scrollbar) is the user's however
+  // long the drag lasts; it's let go anywhere on the page.
+  const pointerHeld = useRef(false);
+  const holdPointer = () => {
+    userInput();
+    pointerHeld.current = true;
+    const release = () => {
+      pointerHeld.current = false;
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+  };
+  // Where a jump back to a turn (the turn rail) is headed, until it gets there,
+  // the user takes over, or it has had its time.
+  const jumpingTo = useRef<number | null>(null);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const nodes = useMemo(() => conversationNodes(events), [events]);
@@ -122,6 +143,7 @@ export function ConversationTimeline({
   const frame = useRef<number | null>(null);
   useEffect(() => () => {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
   }, []);
 
   /** Scroll the turn's prompt to the top of the view. */
@@ -129,24 +151,39 @@ export function ConversationTimeline({
     const el = parentRef.current;
     const prompt = el?.querySelectorAll<HTMLElement>("[data-turn]")[index];
     if (!el || !prompt) return;
-    // Reading back: the conversation stops following its end, as a scroll up does.
+    // Reading back: the conversation stops following its end, as a scroll up
+    // does, for the whole of the smooth scroll there.
+    const top = Math.max(0, Math.min(prompt.offsetTop - 16, el.scrollHeight - el.clientHeight));
     stickToBottom.current = false;
-    el.scrollTo({ top: prompt.offsetTop - 16, behavior: "smooth" });
+    jumpingTo.current = top;
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
+    jumpTimer.current = setTimeout(() => {
+      jumpingTo.current = null;
+    }, JUMP_MS);
+    el.scrollTo({ top, behavior: "smooth" });
   };
 
   return (
     <div className="turn-rail-host relative flex min-h-0 flex-1 flex-col">
       <div
         ref={parentRef}
+        // Focusable, so keys that scroll it after a click in it come through it.
+        tabIndex={-1}
         onWheel={userInput}
         onTouchMove={userInput}
         onKeyDown={userInput}
-        onPointerDown={userInput}
+        onPointerDown={holdPointer}
         onScroll={(e) => {
           const el = e.currentTarget;
+          const byUser = pointerHeld.current || performance.now() - lastInput.current < USER_SCROLL_MS;
+          // A jump ends where it was headed, or as the user takes over.
+          if (jumpingTo.current !== null && (byUser || Math.abs(el.scrollTop - jumpingTo.current) < 2)) {
+            jumpingTo.current = null;
+          }
           stickToBottom.current = followsAfterScroll({
             following: stickToBottom.current,
-            byUser: performance.now() - lastInput.current < USER_SCROLL_MS,
+            byUser,
+            jumping: jumpingTo.current !== null,
             top: el.scrollTop,
             lastTop: lastTop.current,
             viewHeight: el.clientHeight,
@@ -160,7 +197,7 @@ export function ConversationTimeline({
           });
         }}
         // Positioned, so each prompt's offsetTop is from the conversation's top.
-        className="relative min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
+        className="relative min-h-0 flex-1 overflow-auto bg-background outline-none text-[0.8125rem] leading-relaxed text-foreground"
       >
         <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
           {placeholder === "connecting" && (
