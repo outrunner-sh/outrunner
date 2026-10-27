@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Trash2, Users } from "lucide-react";
 import { useState } from "react";
 
+import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
@@ -85,6 +86,7 @@ export function OrgAccessSettings({
           key={role.id}
           title={role.name}
           detail={`${role.memberIds.length} ${role.memberIds.length === 1 ? "member" : "members"}: give it to members on the Members page.`}
+          memberCount={role.memberIds.length}
           roleId={role.id}
           grants={grants.filter((g) => g.roleId === role.id)}
           projects={projects}
@@ -146,6 +148,7 @@ function PrincipalCard({
   setLevel,
   onRename,
   onDelete,
+  memberCount = 0,
 }: {
   title: string;
   detail: string;
@@ -156,8 +159,11 @@ function PrincipalCard({
   setLevel: (roleId: string | null, projectId: string | null, level: AccessLevel | null) => Promise<boolean>;
   onRename?: (name: string) => Promise<boolean>;
   onDelete?: () => Promise<boolean>;
+  /** How many members hold the role, said before deleting it. */
+  memberCount?: number;
 }) {
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [adding, setAdding] = useState("");
   const all = grants.find((g) => g.projectId === null)?.level ?? null;
   const exceptions = grants.filter((g) => g.projectId !== null);
@@ -179,8 +185,9 @@ function PrincipalCard({
               onChange={(event) => setRenaming(event.target.value)}
               onKeyDown={async (event) => {
                 if (event.key === "Escape") setRenaming(null);
-                if (event.key === "Enter" && renaming.trim()) {
-                  if (await onRename(renaming)) setRenaming(null);
+                if (event.key === "Enter" && renaming.trim() && busy === null) {
+                  // Unchanged: nothing to send.
+                  if (renaming.trim() === title || (await onRename(renaming))) setRenaming(null);
                 }
               }}
               onBlur={() => setRenaming(null)}
@@ -199,19 +206,39 @@ function PrincipalCard({
           )}
           <p className="text-xs text-muted-foreground">{detail}</p>
         </div>
-        {onDelete ? (
+        {onDelete && !deleting ? (
           <button
             type="button"
             aria-label={`Delete ${title}`}
             title="Delete role"
             disabled={disabled}
-            onClick={() => void onDelete()}
+            onClick={() => setDeleting(true)}
             className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-destructive disabled:opacity-50"
           >
             <Trash2 className="size-3.5" />
           </button>
         ) : null}
       </div>
+      {onDelete && deleting ? (
+        // Its grants go with it, and it comes off everyone who holds it: no
+        // undo, so held rather than clicked.
+        <div className="flex items-center gap-3 border-b border-border/60 bg-destructive/5 px-3 py-2">
+          <p className="flex-1 text-xs text-muted-foreground">
+            {memberCount === 0
+              ? "Delete this role and what it may do?"
+              : `Delete this role? ${memberCount} ${memberCount === 1 ? "member loses" : "members lose"} what it gives them.`}
+          </p>
+          <button type="button" className="route-state-button" onClick={() => setDeleting(false)}>
+            Cancel
+          </button>
+          <HoldToConfirm
+            label="Delete role"
+            disabled={disabled}
+            onConfirm={() => void onDelete().then((done) => !done && setDeleting(false))}
+            className="h-7 px-2.5 text-xs"
+          />
+        </div>
+      ) : null}
       <ul className="divide-y divide-border/60">
         <li className="flex items-center gap-3 px-3 py-2">
           <span className="flex-1 text-[13px] text-foreground">All projects</span>
@@ -280,7 +307,7 @@ function NewRole({ onCreate, busy }: { onCreate: (name: string) => Promise<boole
           aria-label="New role's name"
           onChange={(event) => setName(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") void create();
+            if (event.key === "Enter" && busy === null) void create();
           }}
         />
         <LoadingButton

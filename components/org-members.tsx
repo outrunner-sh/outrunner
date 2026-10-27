@@ -134,6 +134,9 @@ export function OrgMembersSettings({
               <PersonCell person={m} detail={m.login ? `@${m.login}` : m.email} you={m.userId === me} />
               {admin && m.role === "member" && roles.length > 0 ? (
                 <RolesMenu
+                  // Fresh from the server after each change: it starts again
+                  // from what was saved.
+                  key={roles.filter((r) => r.memberIds.includes(m.userId)).map((r) => r.id).join(",")}
                   roles={roles}
                   held={roles.filter((r) => r.memberIds.includes(m.userId)).map((r) => r.id)}
                   busy={busy !== null}
@@ -201,7 +204,16 @@ function RolesMenu({
   busy: boolean;
   onChange: (roleIds: string[]) => void;
 }) {
-  const names = roles.filter((r) => held.includes(r.id)).map((r) => r.name);
+  // What's ticked, at once: the menu stays open, and the next tick must
+  // build on this one, not on the roles from before it saved (the change
+  // sends the whole set).
+  const [ticked, setTicked] = useState(held);
+  const names = roles.filter((r) => ticked.includes(r.id)).map((r) => r.name);
+  const toggle = (roleId: string, checked: boolean) => {
+    const next = checked ? [...ticked, roleId] : ticked.filter((id) => id !== roleId);
+    setTicked(next);
+    onChange(next);
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="route-state-button max-w-48 truncate text-muted-foreground" disabled={busy}>
@@ -212,11 +224,10 @@ function RolesMenu({
         {roles.map((r) => (
           <DropdownMenuCheckboxItem
             key={r.id}
-            checked={held.includes(r.id)}
+            checked={ticked.includes(r.id)}
+            disabled={busy}
             onSelect={(event) => event.preventDefault()}
-            onCheckedChange={(checked) =>
-              onChange(checked ? [...held, r.id] : held.filter((id) => id !== r.id))
-            }
+            onCheckedChange={(checked) => toggle(r.id, checked)}
           >
             {r.name}
           </DropdownMenuCheckboxItem>
