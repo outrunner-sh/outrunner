@@ -207,7 +207,11 @@ func userTurnCount(dir string) int {
 }
 
 // fileUserTurns counts the user messages in one conversation file (0 if it
-// doesn't exist yet).
+// doesn't exist yet), and the prompts queued in it: one sent while Claude is
+// mid-turn is queued, recorded as an enqueue at once but as a user message
+// only when the turn takes it up, which a long tool call can put off for
+// minutes. Counting both only ever grows the count, which is all a send
+// compares.
 func fileUserTurns(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -219,9 +223,13 @@ func fileUserTurns(path string) int {
 			continue
 		}
 		var rec struct {
-			Type string `json:"type"`
+			Type      string `json:"type"`
+			Operation string `json:"operation"`
 		}
-		if json.Unmarshal([]byte(line), &rec) == nil && rec.Type == "user" {
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		if rec.Type == "user" || (rec.Type == "queue-operation" && rec.Operation == "enqueue") {
 			count++
 		}
 	}

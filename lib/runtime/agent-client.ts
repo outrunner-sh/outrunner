@@ -72,6 +72,13 @@ const AGENT_LIFECYCLE_TIMEOUT_MS = 180_000;
 const AGENT_START_TIMEOUT_MS = 30_000;
 
 /**
+ * A send waits for Claude to record the prompt (about 8s of Enter presses),
+ * and the agent gives a hung tmux up to 30s before letting go. Outlast that,
+ * so a slow send the agent still delivers isn't reported here as unreachable.
+ */
+const AGENT_SEND_TIMEOUT_MS = 35_000;
+
+/**
  * A model switch checks the session (up to 10s on the agent) and relaunches
  * Claude on the new model (up to 60s), so it outlasts both.
  */
@@ -128,9 +135,7 @@ export class AgentClient {
    * reply streams back on the Conversation SSE; this just starts the turn.
    */
   sendMessage(identity: WorkspaceIdentity, content: string): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, {
-      content,
-    });
+    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, { content }, AGENT_SEND_TIMEOUT_MS);
   }
 
   /**
