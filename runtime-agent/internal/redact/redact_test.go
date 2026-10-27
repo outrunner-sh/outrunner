@@ -78,3 +78,13 @@ func TestFollowedTokensAddedLaterAreMasked(t *testing.T) {
 		t.Fatalf("after = %q", got)
 	}
 }
+
+func TestSetTokensTakesOneAway(t *testing.T) {
+	live := &Tokens{}
+	live.Add("first-secret", "second-secret")
+	r := New(nil).Follow(live)
+	live.Set([]string{"second-secret"})
+	if got := r.Redact([]byte("first-secret second-secret")) + r.Flush(); got != "first-secret ***" {
+		t.Fatalf("got %q", got)
+	}
+}

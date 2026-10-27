@@ -27,6 +27,15 @@ func (t *Tokens) Add(values ...string) {
 	t.gen.Add(1)
 }
 
+// Set replaces the tokens with values: one taken away (its session gone) is
+// no longer masked by the followers, who rebuild from it.
+func (t *Tokens) Set(values []string) {
+	t.mu.Lock()
+	t.list = append([]string(nil), values...)
+	t.mu.Unlock()
+	t.gen.Add(1)
+}
+
 func (t *Tokens) snapshot() ([]string, uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

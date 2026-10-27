@@ -88,6 +88,10 @@ func TestProvidedSecretsReachTheSessionAndAreMasked(t *testing.T) {
 	if fileExists(path) || len(s.provided("ws1")) != 0 {
 		t.Error("a destroyed session's secrets are still there")
 	}
+	// Nor are they kept in memory for the terminals that follow the list.
+	if got := redact.New(nil).Follow(s.LiveSecrets()).Redact([]byte("tok-abc'123")); !strings.Contains(got, "tok-abc") {
+		t.Errorf("a destroyed session's value is still masked: %q", got)
+	}
 }
 
 func TestASkippedRequestKeepsNothing(t *testing.T) {

@@ -99,14 +99,9 @@ func (s *Service) ProvideSecrets(workspaceID string, names []string, values map[
 			return ask.SecretReply{}, err
 		}
 		// Masked at once in the terminals and recordings already open, which
-		// read RedactionSecrets when they started.
-		var live []string
-		for _, value := range values {
-			if len(value) >= minMaskedProvided {
-				live = append(live, value)
-			}
-		}
-		s.liveSecrets.Add(live...)
+		// read RedactionSecrets when they started. The files are the source of
+		// truth: the live list is what they hold, no more.
+		s.liveSecrets.Set(s.providedTokens())
 		// In the order asked for, as the result names them.
 		sort.Slice(provided, func(i, j int) bool {
 			return slices.Index(names, provided[i]) < slices.Index(names, provided[j])
@@ -248,5 +243,6 @@ func userSettings() map[string]any {
 func (s *Service) removeProvided(workspaceID string) {
 	s.providedFiles().remove(workspaceID)
 	_ = os.Remove(s.providedJSONPath(workspaceID))
+	s.liveSecrets.Set(s.providedTokens())
 	_ = os.Remove(filepath.Join(s.Root, "ask", workspaceID+".settings.json"))
 }
