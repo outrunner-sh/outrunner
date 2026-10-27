@@ -15,6 +15,7 @@
  */
 
 import type { OrgRole } from "@/lib/orgs/active";
+import type { InstallationControl } from "@/lib/github/app";
 import { installationId, type Installation } from "@/lib/github/installation";
 import { isUuid } from "@/lib/ids";
 
@@ -46,6 +47,7 @@ export type SetupProblem =
   | "not_admin"
   | "not_found"
   | "not_yours"
+  | "approve_members"
   | "github"
   | "failed";
 
@@ -58,6 +60,8 @@ export const SETUP_MESSAGES: Record<SetupProblem, string> = {
   not_found: "GitHub has no such installation of the Outrunner app. Install it again.",
   not_yours:
     "You can link the app only where you installed it: your own GitHub account, an organization you own, or repositories you're an admin of.",
+  approve_members:
+    "Outrunner can't check you own that organization yet: on GitHub, approve the app's new permission to read its members (Configure on GitHub), then install again from here.",
   github: "Couldn't reach GitHub to check the installation. Try again.",
   failed: "Couldn't link the installation. Try again.",
 };
@@ -70,7 +74,7 @@ export type SetupDeps = {
   memberRole(orgId: string, userId: string): Promise<OrgRole | null>;
   getInstallation(id: number): Promise<Installation | null>;
   /** Whether the user controls the installation's GitHub account. */
-  controlsInstallation(installation: Installation, userId: string): Promise<boolean>;
+  controlsInstallation(installation: Installation, userId: string): Promise<InstallationControl>;
   linkInstallation(input: { orgId: string; installation: Installation; linkedBy: string }): Promise<void>;
 };
 
@@ -105,9 +109,9 @@ export async function completeSetup(
   let installation: Installation | null;
   try {
     installation = await deps.getInstallation(id);
-    if (installation && !(await deps.controlsInstallation(installation, input.userId))) {
-      return back({ problem: "not_yours" });
-    }
+    const control = installation ? await deps.controlsInstallation(installation, input.userId) : "controls";
+    if (control === "not_yours") return back({ problem: "not_yours" });
+    if (control === "members_unreadable") return back({ problem: "approve_members" });
   } catch (error) {
     console.error("Could not read the GitHub App installation being linked", error);
     return back({ problem: "github" });

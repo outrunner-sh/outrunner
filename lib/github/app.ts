@@ -250,15 +250,19 @@ export async function userControlsInstallation(
   config: GitHubAppConfig,
   installation: Installation,
   user: { login: string; token: string | null },
-): Promise<boolean> {
+): Promise<InstallationControl> {
   if (installation.accountType === "User") {
-    return installation.accountLogin.toLowerCase() === user.login.toLowerCase();
+    return installation.accountLogin.toLowerCase() === user.login.toLowerCase() ? "controls" : "not_yours";
   }
-  if (await isOrganizationOwner(config, installation, user.login)) return true;
-  if (installation.repositorySelection !== "selected" || !user.token) return false;
+  const owner = await isOrganizationOwner(config, installation, user.login);
+  if (owner === true) return "controls";
+  // Not an owner, or the app couldn't tell: the selected-repositories bar may
+  // still be met; failing it, "couldn't tell" is said as that.
+  const otherwise = owner === "unknown" ? "members_unreadable" : "not_yours";
+  if (installation.repositorySelection !== "selected" || !user.token) return otherwise;
 
   const { names, complete } = await listInstallationRepositories(config, installation.installationId, 1);
-  if (!complete || names.size === 0 || names.size > SELECTED_REPOS_MAX) return false;
+  if (!complete || names.size === 0 || names.size > SELECTED_REPOS_MAX) return otherwise;
   const token = user.token;
   const admin = await Promise.all(
     [...names].map(async (fullName) => {
@@ -268,36 +272,46 @@ export async function userControlsInstallation(
       return repo?.permissions?.admin === true;
     }),
   );
-  return admin.every(Boolean);
+  return admin.every(Boolean) ? "controls" : otherwise;
 }
 
+/** Whether a user may link an installation; `members_unreadable` when that
+ *  turned on the organization's owners, whom the app can't read until the
+ *  installation approves Organization members: read. */
+export type InstallationControl = "controls" | "not_yours" | "members_unreadable";
+
 /** Whether `login` is an active owner (admin) of the installation's
- *  organization, read as the app. False, said in the log, when the app
- *  can't read members: its registration lacks Organization members: read,
- *  or an organization that installed it before hasn't approved that yet
- *  (GitHub then refuses the token itself, 422). */
-async function isOrganizationOwner(config: GitHubAppConfig, installation: Installation, login: string): Promise<boolean> {
+ *  organization, read as the app. "unknown" when the app can't read members:
+ *  an organization that installed it before Organization members: read was
+ *  added hasn't approved it yet (GitHub then refuses the token itself, 422),
+ *  or the registration lacks it. */
+async function isOrganizationOwner(
+  config: GitHubAppConfig,
+  installation: Installation,
+  login: string,
+): Promise<boolean | "unknown"> {
   let token: string;
   try {
     ({ token } = await createInstallationToken(config, installation.installationId, {
       permissions: { members: "read" },
     }));
   } catch (error) {
-    if (!(error instanceof GitHubSyncError) || (error.status !== 422 && error.status !== 403)) throw error;
+    if (!(error instanceof GitHubSyncError) || error.status !== 422) throw error;
     console.warn(
       `GitHub App can't read ${installation.accountLogin}'s members: approve Organization members: read on the installation`,
-      { status: error.status },
     );
-    return false;
+    return "unknown";
   }
   const org = encodeURIComponent(installation.accountLogin);
   const response = await githubGet(`https://api.github.com/orgs/${org}/memberships/${encodeURIComponent(login)}`, token);
   if (response.status === 404) return false;
+  if (response.status === 403) {
+    console.warn("GitHub App couldn't read an organization membership: does it have Organization members: read?");
+    return "unknown";
+  }
   if (!response.ok) {
-    console.warn("GitHub App couldn't read an organization membership: does it have Organization members: read?", {
-      status: response.status,
-    });
-    return false;
+    console.error("GitHub App's membership read was rejected", { status: response.status });
+    throw new GitHubSyncError("GitHub didn't answer for the Outrunner app. Try again.", response.status);
   }
   const membership = (await response.json().catch(() => null)) as { state?: unknown; role?: unknown } | null;
   return membership?.state === "active" && membership.role === "admin";

@@ -162,7 +162,7 @@ function setupDeps(over: Partial<SetupDeps> = {}) {
   const deps: SetupDeps = {
     memberRole: async () => "admin",
     getInstallation: async () => installation,
-    controlsInstallation: async () => true,
+    controlsInstallation: async () => "controls",
     linkInstallation: async (input) => {
       linked.push(input);
     },
@@ -220,7 +220,7 @@ test("setup links nothing without the matching cookie, for a member, or for an u
     [
       "not_yours",
       { userId: USER, params: params({ installation_id: "77", state: NONCE }), cookie: installCookieValue(ORG, NONCE) },
-      { controlsInstallation: async () => false },
+      { controlsInstallation: async () => "not_yours" },
     ],
     [
       "failed",
@@ -239,6 +239,11 @@ test("setup links nothing without the matching cookie, for a member, or for an u
           throw new Error("down");
         },
       },
+    ],
+    [
+      "approve_members",
+      { userId: USER, params: params({ installation_id: "77", state: NONCE }), cookie: installCookieValue(ORG, NONCE) },
+      { controlsInstallation: async () => "members_unreadable" },
     ],
     ["requested", { userId: USER, params: params({ setup_action: "request", state: NONCE }), cookie: undefined }, {}],
   ];
@@ -299,8 +304,8 @@ test("app events keep linked installations true to GitHub", async () => {
 
 test("an installation on a user account is theirs only", async () => {
   const mine = { ...installation, accountType: "User" as const, accountLogin: "ImmadSahin" };
-  assert.equal(await userControlsInstallation(config, mine, { login: "immadsahin", token: null }), true);
-  assert.equal(await userControlsInstallation(config, mine, { login: "someone-else", token: "t" }), false);
+  assert.equal(await userControlsInstallation(config, mine, { login: "immadsahin", token: null }), "controls");
+  assert.equal(await userControlsInstallation(config, mine, { login: "someone-else", token: "t" }), "not_yours");
 });
 
 test("an installation on an organization takes one of its owners", async () => {
@@ -325,19 +330,19 @@ test("an installation on an organization takes one of its owners", async () => {
   const user = { login: "x", token: "t" };
 
   stub("admin");
-  assert.equal(await userControlsInstallation(config, all, user), true);
+  assert.equal(await userControlsInstallation(config, all, user), "controls");
   // A member who is admin of a repository (one they made, say) has no claim on an install on all of them.
   stub("member", { "neevai-labs/a": true, "neevai-labs/b": true });
-  assert.equal(await userControlsInstallation(config, all, user), false);
+  assert.equal(await userControlsInstallation(config, all, user), "not_yours");
   // On selected repositories: admin of every one of them.
   stub("member", { "neevai-labs/a": true, "neevai-labs/b": true });
-  assert.equal(await userControlsInstallation(config, installation, user), true);
+  assert.equal(await userControlsInstallation(config, installation, user), "controls");
   stub(null, { "neevai-labs/a": true, "neevai-labs/b": false });
-  assert.equal(await userControlsInstallation(config, installation, user), false);
+  assert.equal(await userControlsInstallation(config, installation, user), "not_yours");
   stub(null, {}, Array.from({ length: 31 }, (_, i) => `neevai-labs/r${i}`));
-  assert.equal(await userControlsInstallation(config, installation, user), false);
+  assert.equal(await userControlsInstallation(config, installation, user), "not_yours");
   stub(null, { "neevai-labs/a": true, "neevai-labs/b": true });
-  assert.equal(await userControlsInstallation(config, installation, { login: "x", token: null }), false);
+  assert.equal(await userControlsInstallation(config, installation, { login: "x", token: null }), "not_yours");
 });
 
 test("an install that hasn't approved reading members still links by its repositories' admin", async () => {
@@ -359,10 +364,10 @@ test("an install that hasn't approved reading members still links by its reposit
   console.warn = () => {};
   console.error = () => {};
   try {
-    assert.equal(await userControlsInstallation(config, installation, { login: "x", token: "t" }), true);
+    assert.equal(await userControlsInstallation(config, installation, { login: "x", token: "t" }), "controls");
     assert.equal(
       await userControlsInstallation(config, { ...installation, repositorySelection: "all" }, { login: "x", token: "t" }),
-      false,
+      "members_unreadable",
     );
   } finally {
     console.warn = originalWarn;
