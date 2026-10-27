@@ -4,6 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { getWorkspaceComputer, getWorkspace } from "@/lib/db/repositories";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
+import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { reachableWorktree } from "@/lib/runtime/worktree-access";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -16,7 +17,8 @@ type RouteContext = { params: Promise<{ id: string }> };
  * already committed or pushed still show.
  */
 export async function GET(request: Request, context: RouteContext) {
-  if (!(await getOwner())) {
+  const owner = await getOwner();
+  if (!owner) {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
 
@@ -33,6 +35,17 @@ export async function GET(request: Request, context: RouteContext) {
   const path = new URL(request.url).searchParams.get("path");
 
   try {
+    if (isComputerProvider(provider) && workspace.checkouts) {
+      // A folder of checkouts: the agent reads each one's changes.
+      const agentReach = await reachWorkspaceAgent(workspace.id, owner.id, {
+        label: "Changes",
+        needsComputer: "Viewing changes requires a Runtime Computer provider.",
+      });
+      if (!agentReach.ok) return agentReach.response;
+      const { agent, identity } = agentReach.reached;
+      const answer = await agent.workspaceChanges(identity, path ?? undefined);
+      return NextResponse.json(path !== null ? { diff: answer.diff ?? "" } : { files: answer.files ?? [] });
+    }
     if (isComputerProvider(provider)) {
       const reach = reachableWorktree(await getWorkspaceComputer(workspace), workspace.worktreePath);
       if (!reach.ok) return NextResponse.json({ error: reach.error }, { status: 409 });

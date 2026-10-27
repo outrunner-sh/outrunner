@@ -18,6 +18,7 @@ import {
   cloneMirror,
   commitAll,
   fetchMirror,
+  syncMirrors,
   listChangedFiles,
   pushBranch,
   readFileDiff,
@@ -393,6 +394,16 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       repoDir: `${await box.home()}/repo.git`,
       token: githubToken,
     });
+  }
+
+  /** A mirror of each repository of a multi-repository session, at
+   *  $HOME/repos/<checkout>.git where the agent finds them (its
+   *  RepoMirrorPath): fetched where the box has one, cloned where not. */
+  async syncRepoMirrors(sandboxId: string, repos: { fullName: string; checkout: string }[], githubToken?: string): Promise<void> {
+    const box = await this.backend.get(sandboxId);
+    const home = await box.home();
+    await box.gitExec(["mkdir", "-p", `${home}/repos`]);
+    await syncMirrors(box.gitExec, { root: `${home}/repos`, repos, token: githubToken });
   }
 
   /** Git projection for one interactive worktree on the shared computer: its

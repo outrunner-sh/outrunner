@@ -87,6 +87,15 @@ export function opensInBrowser(provider: ProviderName): boolean {
   return provider === "daytona" || provider === "user-daytona";
 }
 
+/** One repository of a multi-repository session. */
+export type SessionCheckout = {
+  projectId: string;
+  fullName: string;
+  /** Its folder in the session's. */
+  checkout: string;
+  baseBranch: string;
+};
+
 export type Workspace = {
   id: string;
   projectId: string;
@@ -117,6 +126,9 @@ export type Workspace = {
   /** The project (an `environments` row) it started from; null for a
    *  session from before projects. */
   environmentId: string | null;
+  /** A multi-repository session's repositories, each in its own folder of
+   *  the session's; null for a session of one (its worktree is the repo). */
+  checkouts: SessionCheckout[] | null;
   /** The coding agent the session runs, for good: its model can change only
    *  to another this agent runs. */
   agent: AgentId;

@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   addWorktree,
   cloneMirror,
+  syncMirrors,
   commitAll,
   fetchMirror,
   gitFailureOutput,
@@ -232,4 +233,31 @@ test("the change set spans the branch's commits and its working tree", async (t)
     readFileDiff(realGit, { worktree, path: "committed.ts", baseBranch: "no-such-branch" }),
     /not part of this workspace change set/,
   );
+});
+
+test("syncMirrors fetches the mirrors a box has and clones the rest", async () => {
+  const calls: Call[] = [];
+  const exec: GitExec = async (argv, options) => {
+    calls.push({ argv, options });
+    // web's mirror is there; api's isn't.
+    if (argv.includes("--is-bare-repository")) {
+      return argv.includes("/r/repos/web.git")
+        ? { stdout: "true\n", stderr: "", exitCode: 0 }
+        : { stdout: "", stderr: "not a git repository", exitCode: 128 };
+    }
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+  await syncMirrors(exec, {
+    root: "/r/repos",
+    repos: [
+      { fullName: "acme/web", checkout: "web" },
+      { fullName: "acme/api", checkout: "api" },
+    ],
+    token: "t",
+  });
+  const shown = calls.map((c) => c.argv.filter((a) => !a.startsWith("-c") && !a.startsWith("credential")).join(" "));
+  assert.ok(shown.some((c) => c.includes("/r/repos/web.git") && c.includes("fetch --prune origin")), shown.join("\n"));
+  assert.ok(!shown.some((c) => c.includes("init --bare /r/repos/web.git")));
+  assert.ok(shown.includes("rm -rf /r/repos/api.git"));
+  assert.ok(shown.includes("git init --bare /r/repos/api.git"));
 });

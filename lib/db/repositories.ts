@@ -27,6 +27,7 @@ import type {
   ProvisionTimings,
   RuntimeComputer,
   RuntimeComputerStatus,
+  SessionCheckout,
   Workspace,
   WorkspacePullRequest,
   WorkspaceStatus,
@@ -159,6 +160,8 @@ export async function createWorkspaceRow(input: {
   agent?: AgentId;
   /** The project it starts from; null before the migration that adds them. */
   environmentId?: string | null;
+  /** A multi-repository session's repositories. */
+  checkouts?: SessionCheckout[] | null;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -174,6 +177,7 @@ export async function createWorkspaceRow(input: {
       ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
       // Named only when there is one, for the same reason.
       ...(input.environmentId && { environment_id: input.environmentId }),
+      ...(input.checkouts && { checkouts: input.checkouts }),
       status: "creating",
     })
     .select("*")

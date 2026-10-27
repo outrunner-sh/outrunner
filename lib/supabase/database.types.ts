@@ -111,6 +111,9 @@ type WorkspaceRow = {
   /** The environment (the app's Project) it started from; null for a
    *  session from before environments. */
   environment_id: string | null;
+  /** A multi-repository session's repositories (20261027170000); null for
+   *  one of one. */
+  checkouts: Json | null;
   /** The coding agent it runs: "claude" or "codex". */
   agent: string;
   /** The model it runs, whose it is, and its effort; null before the first

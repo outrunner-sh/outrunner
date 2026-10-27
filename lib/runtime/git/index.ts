@@ -257,6 +257,24 @@ export async function cloneMirror(
   );
 }
 
+/** A mirror of each repository at `${root}/<checkout>.git`: fetched where one
+ *  is, cloned where none is. One at a time: a box's network is the limit. */
+export async function syncMirrors(
+  exec: GitExec,
+  input: { root: string; repos: { fullName: string; checkout: string }[]; token?: string },
+): Promise<void> {
+  for (const repo of input.repos) {
+    const dir = `${input.root}/${repo.checkout}.git`;
+    const there = await exec(["git", "-C", dir, "rev-parse", "--is-bare-repository"]);
+    if (there.exitCode === 0 && there.stdout.trim() === "true") {
+      await fetchMirror(exec, { repoDir: dir, token: input.token });
+    } else {
+      await exec(["rm", "-rf", dir]); // a clone cut off half way
+      await cloneMirror(exec, { repoFullName: repo.fullName, dir, token: input.token });
+    }
+  }
+}
+
 /** Fetch updates into a bare mirror. */
 export async function fetchMirror(
   exec: GitExec,

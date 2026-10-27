@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, KeyRound, Plus, Settings2, SquareTerminal, Trash2 } from "lucide-react";
+import { FileText, KeyRound, Plus, Settings2, SquareTerminal, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -125,6 +125,112 @@ function Panel({ children }: { children: React.ReactNode }) {
   return <div className="divide-y divide-border/60 rounded-lg border border-border/60">{children}</div>;
 }
 
+/** A connected repository that can be added to the project. */
+type Addable = { projectId: string; fullName: string; defaultBranch: string };
+
+/** The project's repositories: each cloned into its own folder of a new
+ *  session's, added from the owner's connected repositories, up to MAX_REPOS. */
+function RepositoriesEditor({ environment, onSaved }: { environment: Environment; onSaved: (e: Environment) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [addable, setAddable] = useState<Addable[] | null>(null);
+  const [picked, setPicked] = useState("");
+  const save = useSave();
+  const several = environment.repos.length > 1;
+  const full = environment.repos.length >= MAX_REPOS;
+
+  const open = async () => {
+    setAdding(true);
+    if (addable) return;
+    const answer = await save.run(() =>
+      requestJson<{ repositories: Addable[] }>(`/api/environments/${environment.id}/repos`, { has: (d) => Array.isArray(d.repositories) }),
+    );
+    if (answer) setAddable(answer.repositories);
+  };
+  const change = async (method: "POST" | "DELETE", projectId: string) => {
+    const saved = await save.run(() =>
+      requestJson<Environment>(
+        `/api/environments/${environment.id}/repos${method === "DELETE" ? `?projectId=${projectId}` : ""}`,
+        { method, body: method === "POST" ? { projectId } : undefined, has: (d) => d.id !== undefined },
+      ),
+    );
+    if (!saved) return;
+    onSaved(saved);
+    setAddable((list) => list?.filter((r) => r.projectId !== projectId) ?? null);
+    setPicked("");
+    if (method === "POST") setAdding(false);
+  };
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-0.5">
+          <SectionHeader title="Repositories" />
+          <p className="text-xs text-muted-foreground">
+            {several
+              ? "Each is cloned into its own folder of a new session's, all on the session's branch."
+              : "Cloned on its default branch. Add more to work on them together in one session."}{" "}
+            Up to {MAX_REPOS}.
+          </p>
+        </div>
+        {!adding && (
+          <Button size="sm" variant="outline" disabled={full} onClick={() => void open()}>
+            <Plus /> Add repository
+          </Button>
+        )}
+      </div>
+      <ul className="divide-y divide-border/60 rounded-md border border-border/60">
+        {environment.repos.map((r) => (
+          <li key={r.projectId} className="flex items-center gap-2.5 px-3 py-2 text-[13px]">
+            <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate text-foreground">{r.fullName}</span>
+            <span className="font-mono text-xs text-muted-foreground">{r.branch ?? r.defaultBranch}</span>
+            {several && <span className="ml-auto font-mono text-xs text-muted-foreground">{r.checkoutName}/</span>}
+            {several && r.projectId !== environment.defaultForProjectId && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="text-muted-foreground"
+                aria-label={`Remove ${r.fullName}`}
+                title={`Remove ${r.fullName}`}
+                onClick={() => void change("DELETE", r.projectId)}
+              >
+                <X />
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {adding && (
+        <div className="flex items-center gap-2">
+          <select
+            aria-label="Repository to add"
+            value={picked}
+            onChange={(e) => setPicked(e.target.value)}
+            className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30"
+          >
+            <option value="">{addable === null ? "Loading repositories…" : addable.length ? "Pick a repository" : "No other connected repositories"}</option>
+            {addable?.map((r) => (
+              <option key={r.projectId} value={r.projectId}>
+                {r.fullName}
+              </option>
+            ))}
+          </select>
+          <LoadingButton status={save.status} disabled={!picked} labels={{ idle: "Add" }} onClick={() => void change("POST", picked)} />
+          <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
+            Cancel
+          </Button>
+        </div>
+      )}
+      {several && (
+        <p className="text-xs text-muted-foreground">
+          Sessions of several repositories can&apos;t be archived yet, and open pull requests from each folder themselves.
+        </p>
+      )}
+      {save.error && <InlineMessage>{save.error}</InlineMessage>}
+    </>
+  );
+}
+
 /** Delete a variable or a file: a trash button that turns into a hold, since
  *  a value deleted can't be had back. */
 function DeleteButton({ what, onDelete }: { what: string; onDelete: () => void }) {
@@ -213,31 +319,7 @@ function GeneralSection({ environment, onSaved }: { environment: Environment; on
           />
         </div>
         <div className="space-y-3 p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-0.5">
-              <SectionHeader title="Repositories" />
-              <p className="text-xs text-muted-foreground">
-                Cloned on their default branch unless another is set. Up to {MAX_REPOS} per project.
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled
-              title="Projects with more than one repository are coming soon."
-            >
-              <Plus /> Add repository
-            </Button>
-          </div>
-          <ul className="divide-y divide-border/60 rounded-md border border-border/60">
-            {environment.repos.map((r) => (
-              <li key={r.projectId} className="flex items-center gap-2.5 px-3 py-2.5 text-[13px]">
-                <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate text-foreground">{r.fullName}</span>
-                <span className="font-mono text-xs text-muted-foreground">{r.branch ?? r.defaultBranch}</span>
-              </li>
-            ))}
-          </ul>
+          <RepositoriesEditor environment={environment} onSaved={onSaved} />
         </div>
         <div className="space-y-3 p-4">
           <div className="space-y-0.5">

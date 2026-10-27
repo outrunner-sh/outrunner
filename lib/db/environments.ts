@@ -16,7 +16,15 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import { mergeProjectEnvironment, type ProjectEnvironment, type ProjectScripts } from "@/lib/db/project-environment";
-import { applySecretsEdit, checkoutNameFor, type EnvironmentSecrets, type SecretsEdit } from "@/lib/environments/rules";
+import {
+  applySecretsEdit,
+  checkoutNameFor,
+  EnvironmentRuleError,
+  type EnvironmentSecrets,
+  MAX_REPOS,
+  type SecretsEdit,
+} from "@/lib/environments/rules";
+import type { SessionCheckout } from "@/lib/runtime/types";
 import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -431,4 +439,72 @@ export async function setupGeneration(ownerId: string, id: string | null): Promi
   if (error && (probeStatus(error) === "missing" || probeStatus(error) === "outdated")) return null;
   if (error) throw error;
   return data?.setup_generation ?? null;
+}
+
+/** The repositories a new session of the project works on, when it has
+ *  several (each in its own folder, from its branch); null for a project of
+ *  one, whose session is as every session was. */
+export async function sessionCheckouts(ownerId: string, id: string): Promise<SessionCheckout[] | null> {
+  const environment = await getEnvironment(ownerId, id);
+  if (!environment || environment.repos.length < 2) return null;
+  return environment.repos.map((r) => ({
+    projectId: r.projectId,
+    fullName: r.fullName,
+    checkout: r.checkoutName,
+    baseBranch: r.branch ?? r.defaultBranch,
+  }));
+}
+
+/** Add a connected repository to the project, in a folder named after it
+ *  (made unique), last. Refused past MAX_REPOS, or for a repository that
+ *  isn't the owner's. */
+export async function addEnvironmentRepo(ownerId: string, id: string, projectId: string): Promise<void> {
+  const environment = await getEnvironment(ownerId, id);
+  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (environment.repos.some((r) => r.projectId === projectId)) return;
+  if (environment.repos.length >= MAX_REPOS) {
+    throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+  }
+  const supabase = createSupabaseAdminClient();
+  const { data: project, error } = await supabase
+    .from("projects")
+    .select("id, name")
+    .eq("owner_id", ownerId)
+    .eq("id", projectId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!project) throw new EnvironmentRuleError("That repository isn't connected to your account.");
+  const taken = new Set(environment.repos.map((r) => r.checkoutName));
+  const base = checkoutNameFor(project.name);
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base.slice(0, 96)}-${n}`;
+  const { error: insertError } = await supabase.from("environment_repos").insert({
+    owner_id: ownerId,
+    environment_id: id,
+    project_id: projectId,
+    checkout_name: name,
+    position: environment.repos.length,
+  });
+  if (insertError?.message.includes("at most 5")) {
+    throw new EnvironmentRuleError(`A project holds at most ${MAX_REPOS} repositories.`);
+  }
+  if (insertError) throw insertError;
+}
+
+/** Remove a repository from the project; never its last, nor the one a
+ *  repository's default project is for (it would no longer be that one's). */
+export async function removeEnvironmentRepo(ownerId: string, id: string, projectId: string): Promise<void> {
+  const environment = await getEnvironment(ownerId, id);
+  if (!environment) throw new EnvironmentRuleError("Project not found.");
+  if (environment.repos.length <= 1) throw new EnvironmentRuleError("A project keeps at least one repository.");
+  if (environment.defaultForProjectId === projectId) {
+    throw new EnvironmentRuleError("This project is that repository's own: remove the others instead.");
+  }
+  const { error } = await createSupabaseAdminClient()
+    .from("environment_repos")
+    .delete()
+    .eq("owner_id", ownerId)
+    .eq("environment_id", id)
+    .eq("project_id", projectId);
+  if (error) throw error;
 }
