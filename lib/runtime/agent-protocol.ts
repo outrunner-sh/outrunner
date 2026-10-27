@@ -126,6 +126,10 @@ export const AGENT_FEATURE_INSTRUCTIONS = "project-instructions";
  *  `repos`). */
 export const AGENT_FEATURE_MULTI_REPO = "multi-repo";
 
+/** The agent archives a session of several repositories and restores one
+ *  (RestoreWorkspaceRequest's `repos`). */
+export const AGENT_FEATURE_MULTI_REPO_SNAPSHOTS = "multi-repo-snapshots";
+
 /** The agent warms a ready box (POST/GET /warm) and runs a session's warm
  *  and start hooks. */
 export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
@@ -432,6 +436,9 @@ export const RestoreWorkspaceRequest = z
         path: ["token"],
       })
       .optional(),
+    /** A session of several repositories (AGENT_FEATURE_MULTI_REPO_SNAPSHOTS):
+     *  each restored in its folder off its mirror, on the box already. */
+    repos: CreateWorkspaceRequest.shape.repos,
   })
   .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",

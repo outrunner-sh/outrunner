@@ -237,7 +237,7 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
       )}
       {several && (
         <p className="text-xs text-muted-foreground">
-          Sessions of several repositories can&apos;t be archived yet, and open pull requests from each folder themselves.
+          Sessions open a pull request in each repository they change, from its own row.
         </p>
       )}
       {save.error && <InlineMessage>{save.error}</InlineMessage>}

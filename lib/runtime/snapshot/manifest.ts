@@ -73,6 +73,29 @@ export const SnapshotTree = z.discriminatedUnion("kind", [
       ref: z.string().min(1).optional(),
     })
     .strict(),
+  /** A session of several repositories: the bundle and patch are tars of one
+   *  `<name>.bundle` / `<name>.patch` a checkout (runtime-agent
+   *  snapshot/checkouts.go), each restored in its own folder. */
+  z
+    .object({
+      kind: z.literal("git-bundles+patches"),
+      bundle: z.literal(SNAPSHOT_ARTIFACTS.bundle),
+      patch: z.literal(SNAPSHOT_ARTIFACTS.patch),
+      checkouts: z
+        .array(
+          z
+            .object({
+              name: z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/),
+              fullName: z.string().min(1).optional(),
+              baseBranch: z.string().min(1).optional(),
+              lastCommit: z.string().nullable(),
+            })
+            .strict(),
+        )
+        .min(2)
+        .max(5),
+    })
+    .strict(),
 ]);
 export type SnapshotTree = z.infer<typeof SnapshotTree>;
 

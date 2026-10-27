@@ -185,13 +185,26 @@ func TestValidCheckouts(t *testing.T) {
 	}
 }
 
-func TestASessionOfSeveralRepositoriesIsNotArchivedYet(t *testing.T) {
+// A restore of a session of several repositories records them: its changes
+// and summary span its checkouts again, as a created one's do.
+func TestARestoreRecordsTheRepositories(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	s := NewService(t.TempDir())
 	s.tmux = newFakeSessions()
-	s.setFacts("ws1", workspaceFacts{Branch: "b", Checkouts: []Checkout{{Name: "a", BaseBranch: "m"}, {Name: "b", BaseBranch: "m"}}})
-	if _, err := s.Archive(context.Background(), "ws1", protocol.ArchiveWorkspaceRequest{}); !errors.Is(err, ErrArchiveCheckouts) {
-		t.Fatalf("archive = %v, want ErrArchiveCheckouts", err)
+	id := "s1"
+	// No downloads: Materialize fails, but the facts are recorded first.
+	_, _ = s.Restore(context.Background(), "ws1", protocol.RestoreWorkspaceRequest{
+		Branch: "b", SessionID: &id,
+		Repos: []protocol.RepoCheckout{{FullName: "acme/web", Checkout: "web", BaseBranch: "main"}, {FullName: "acme/api", Checkout: "api", BaseBranch: "main"}},
+	}, nil)
+	if f, _ := s.getFacts("ws1"); len(f.Checkouts) != 2 || f.Checkouts[1].Name != "api" {
+		t.Errorf("facts = %+v", f.Checkouts)
+	}
+	if _, err := s.Restore(context.Background(), "ws2", protocol.RestoreWorkspaceRequest{
+		Branch: "b", SessionID: &id,
+		Repos: []protocol.RepoCheckout{{Checkout: "../x", BaseBranch: "main"}, {Checkout: "api", BaseBranch: "main"}},
+	}, nil); !errors.Is(err, ErrInvalidCheckouts) {
+		t.Errorf("bad folder = %v, want ErrInvalidCheckouts", err)
 	}
 }
 

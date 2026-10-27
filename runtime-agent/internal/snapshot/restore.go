@@ -40,6 +40,10 @@ type MaterializeInput struct {
 	// Downloads maps artifact (bundle/patch/conversation/rollout) -> signed
 	// download URL.
 	Downloads []protocol.RestoreDownload
+	// Checkouts, when set, restore a session of several repositories: the
+	// bundle and patch are its tars (checkouts.go), each checkout rebuilt
+	// in WorktreePath/<name> off its own mirror.
+	Checkouts []Checkout
 }
 
 // Materialize rebuilds the worktree from the Snapshot and VERIFIES it before the
@@ -89,22 +93,31 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 		return fmt.Errorf("download patch: %w", err)
 	}
 
-	// Tear down any prior worktree BEFORE importing — git refuses to fetch into a
-	// branch that's currently checked out, so a re-run must free the branch first.
-	removeWorktree(ctx, in.MirrorPath, in.WorktreePath)
+	if len(in.Checkouts) > 0 {
+		if err := os.MkdirAll(in.WorktreePath, 0o755); err != nil {
+			return err
+		}
+		if err := materializeCheckouts(ctx, in.WorktreePath, in.Branch, bundlePath, patchPath, in.Checkouts, staging); err != nil {
+			return err
+		}
+	} else {
+		// Tear down any prior worktree BEFORE importing — git refuses to fetch into a
+		// branch that's currently checked out, so a re-run must free the branch first.
+		removeWorktree(ctx, in.MirrorPath, in.WorktreePath)
 
-	bundleRef := in.BundleRef
-	if bundleRef == "" {
-		bundleRef = in.Branch
-	}
-	if err := importBundle(ctx, in.MirrorPath, bundlePath, bundleRef, in.Branch); err != nil {
-		return err
-	}
-	if err := addWorktree(ctx, in.MirrorPath, in.WorktreePath, in.Branch); err != nil {
-		return err
-	}
-	if err := applyPatch(ctx, in.WorktreePath, patchPath); err != nil {
-		return err
+		bundleRef := in.BundleRef
+		if bundleRef == "" {
+			bundleRef = in.Branch
+		}
+		if err := importBundle(ctx, in.MirrorPath, bundlePath, bundleRef, in.Branch); err != nil {
+			return err
+		}
+		if err := addWorktree(ctx, in.MirrorPath, in.WorktreePath, in.Branch); err != nil {
+			return err
+		}
+		if err := applyPatch(ctx, in.WorktreePath, patchPath); err != nil {
+			return err
+		}
 	}
 
 	if in.ConversationDest != "" {
@@ -131,6 +144,9 @@ func Materialize(ctx context.Context, in MaterializeInput) error {
 		}
 	}
 
+	if len(in.Checkouts) > 0 {
+		return nil // each checkout verified as it was rebuilt
+	}
 	return verify(ctx, in.MirrorPath, in.WorktreePath, in.Branch)
 }
 

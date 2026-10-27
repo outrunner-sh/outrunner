@@ -230,7 +230,15 @@ type RestoreWorkspaceRequest struct {
 	// /workspaces/{id}/model): a fresh box has no record of it. Absent, the
 	// session relaunches on its agent's own default.
 	Model *SetModelRequest `json:"model,omitempty"`
+	// Repos restore a session of several repositories (FeatureMultiRepoSnapshots):
+	// its folder of checkouts, each off its mirror at $ROOT/repos/<checkout>.git
+	// (on the box before the restore), from the Snapshot's tars.
+	Repos []RepoCheckout `json:"repos,omitempty"`
 }
+
+// FeatureMultiRepoSnapshots is archiving a session of several repositories,
+// and RestoreWorkspaceRequest's Repos.
+const FeatureMultiRepoSnapshots = "multi-repo-snapshots"
 
 // Health is what the unauthenticated GET /health says: that the agent is up,
 // the gateways it can run a session through, the agents it can run, and the
