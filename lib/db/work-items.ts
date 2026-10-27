@@ -200,15 +200,23 @@ async function reopenWorkItem(db: Db, ownerId: string, id: string): Promise<Work
  * seen rather than filed away where nobody looks.
  */
 export async function captureWorkItem(db: Db, ownerId: string, input: CaptureInput): Promise<CaptureResult> {
-  const asNote = async (existing: WorkItem): Promise<CaptureResult> => {
-    const note = await addNote(db, ownerId, existing.id, {
+  const asNote = async (found: WorkItem): Promise<CaptureResult> => {
+    // A duplicate's thread goes on to the item it duplicates while that one is
+    // open, keeping the triage decision and the context in one place.
+    const canonical = found.status === "duplicate" && found.duplicateOf
+      ? await getWorkItem(db, ownerId, found.duplicateOf)
+      : null;
+    const existing = canonical && isOpen(canonical.status) ? canonical : found;
+    // Reopened before the note goes on: a failure leaves no note behind for
+    // a retry to add twice.
+    const reopened = !isOpen(existing.status);
+    const item = reopened ? await reopenWorkItem(db, ownerId, existing.id) : existing;
+    const note = await addNote(db, ownerId, item.id, {
       body: input.body || input.title,
       source: input.source,
       sourceUrl: input.sourceUrl,
       author: input.author ?? null,
     });
-    const reopened = !isOpen(existing.status);
-    const item = reopened ? await reopenWorkItem(db, ownerId, existing.id) : existing;
     return { kind: "noted", item, note, reopened };
   };
 
@@ -293,6 +301,16 @@ export async function updateWorkItem(
     .select("*")
     .maybeSingle();
   if (error) throw error;
+  if (data && update.duplicate_of) {
+    // What duplicated this one now duplicates its target: one canonical item,
+    // never a chain (A → B → C).
+    const { error: repointError } = await db
+      .from("work_items")
+      .update({ duplicate_of: update.duplicate_of })
+      .eq("owner_id", ownerId)
+      .eq("duplicate_of", id);
+    if (repointError) throw repointError;
+  }
   return data ? toWorkItem(data) : null;
 }
 
