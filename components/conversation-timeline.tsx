@@ -38,8 +38,12 @@ import {
   currentTurn,
 } from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { FOLLOW_SLACK_PX, followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
+
+/** Long enough for any smooth scroll back to a turn to finish. */
+const JUMP_MS = 1500;
 
 /**
  * The Conversation projection of the Workspace Session — the ordered list of
@@ -67,6 +71,33 @@ export function ConversationTimeline({
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
+  // Where the view was at the last scroll, for which way the next one went,
+  // and to put it back where the panel is shown again (followsAfterScroll).
+  const lastTop = useRef(0);
+  // When the user last touched the view's scrolling (wheel, touch, keys, its
+  // scrollbar), so a scroll they didn't make can't stop the follow.
+  const lastInput = useRef(0);
+  const userInput = () => {
+    lastInput.current = performance.now();
+  };
+  // A pointer held on the view (dragging its scrollbar) is the user's however
+  // long the drag lasts; it's let go anywhere on the page.
+  const pointerHeld = useRef(false);
+  const holdPointer = () => {
+    userInput();
+    pointerHeld.current = true;
+    const release = () => {
+      pointerHeld.current = false;
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+  };
+  // Where a jump back to a turn (the turn rail) is headed, until it gets there,
+  // the user takes over, or it has had its time.
+  const jumpingTo = useRef<{ top: number; since: number } | null>(null);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const nodes = useMemo(() => conversationNodes(events), [events]);
@@ -90,10 +121,13 @@ export function ConversationTimeline({
   // the user scrolled up (then honor their position). Grows, not "as events
   // arrive": a reply keeps lengthening after its event, as its text is
   // revealed, so this follows the content's height rather than the list.
+  // Also runs as a session kept for going back to is shown again, its view
+  // reset by being hidden: to the end, or back where the user left it.
   useEffect(() => {
     const el = parentRef.current;
     const content = contentRef.current;
     if (!el || !content) return;
+    if (!stickToBottom.current) el.scrollTop = lastTop.current;
     const follow = () => {
       if (stickToBottom.current) el.scrollTop = el.scrollHeight;
       measure();
@@ -109,6 +143,7 @@ export function ConversationTimeline({
   const frame = useRef<number | null>(null);
   useEffect(() => () => {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
   }, []);
 
   /** Scroll the turn's prompt to the top of the view. */
@@ -116,17 +151,59 @@ export function ConversationTimeline({
     const el = parentRef.current;
     const prompt = el?.querySelectorAll<HTMLElement>("[data-turn]")[index];
     if (!el || !prompt) return;
-    el.scrollTo({ top: prompt.offsetTop - 16, behavior: "smooth" });
+    // Reading back: the conversation stops following its end, as a scroll up
+    // does, for the whole of the smooth scroll there.
+    const top = Math.max(0, Math.min(prompt.offsetTop - 16, el.scrollHeight - el.clientHeight));
+    // One that lands within reach of the end is a return there: following
+    // again, whatever jump back was still under way.
+    if (el.scrollHeight - top - el.clientHeight < FOLLOW_SLACK_PX) {
+      jumpingTo.current = null;
+      if (jumpTimer.current) clearTimeout(jumpTimer.current);
+      stickToBottom.current = true;
+      el.scrollTo({ top, behavior: "smooth" });
+      return;
+    }
+    stickToBottom.current = false;
+    jumpingTo.current = { top, since: performance.now() };
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
+    jumpTimer.current = setTimeout(() => {
+      jumpingTo.current = null;
+    }, JUMP_MS);
+    el.scrollTo({ top, behavior: "smooth" });
   };
 
   return (
     <div className="turn-rail-host relative flex min-h-0 flex-1 flex-col">
       <div
         ref={parentRef}
+        // Focusable, so keys that scroll it after a click in it come through it.
+        tabIndex={-1}
+        onWheel={userInput}
+        onTouchMove={userInput}
+        onKeyDown={userInput}
+        onPointerDown={holdPointer}
         onScroll={(e) => {
           const el = e.currentTarget;
-          stickToBottom.current =
-            el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+          const byUser = pointerHeld.current || performance.now() - lastInput.current < USER_SCROLL_MS;
+          // A jump ends where it was headed, or as the user takes over: by
+          // input since it began, not a trackpad's momentum from before.
+          const jump = jumpingTo.current;
+          if (
+            jump &&
+            (pointerHeld.current || lastInput.current > jump.since || Math.abs(el.scrollTop - jump.top) < 2)
+          ) {
+            jumpingTo.current = null;
+          }
+          stickToBottom.current = followsAfterScroll({
+            following: stickToBottom.current,
+            byUser,
+            jumping: jumpingTo.current !== null,
+            top: el.scrollTop,
+            lastTop: lastTop.current,
+            viewHeight: el.clientHeight,
+            scrollHeight: el.scrollHeight,
+          });
+          if (el.clientHeight > 0) lastTop.current = el.scrollTop;
           if (frame.current !== null) return;
           frame.current = requestAnimationFrame(() => {
             frame.current = null;
@@ -134,7 +211,7 @@ export function ConversationTimeline({
           });
         }}
         // Positioned, so each prompt's offsetTop is from the conversation's top.
-        className="relative min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
+        className="relative min-h-0 flex-1 overflow-auto bg-background outline-none text-[0.8125rem] leading-relaxed text-foreground"
       >
         <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
           {placeholder === "connecting" && (

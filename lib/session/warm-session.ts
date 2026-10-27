@@ -73,6 +73,20 @@ export async function takeWarmUrls(workspaceId: string): Promise<SessionUrls | n
   return warm.urls;
 }
 
+/**
+ * Keep the URLs a session's page attached with, fetched at `at`, as it's left:
+ * going back to it within {@link WARM_URLS_FOR_MS} of their fetch attaches
+ * with them at once, as after a warm-up, rather than asking the server again.
+ * A warm-up already under way for it is left alone.
+ */
+export function keepSessionUrls(workspaceId: string, urls: SessionUrls, at: number): void {
+  if (Date.now() - at >= WARM_URLS_FOR_MS) return;
+  const kept = warming.get(workspaceId);
+  if (kept && kept.at >= at) return;
+  kept?.stop();
+  warming.set(workspaceId, { at, urls: Promise.resolve(urls), stop: () => {} });
+}
+
 /** How long the pointer rests on a session before it is warmed up: passing
  *  over the sidebar warms nothing. */
 const HOVER_INTENT_MS = 150;

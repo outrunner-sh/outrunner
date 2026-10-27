@@ -13,7 +13,7 @@ import {
   type LocalTarget,
 } from "@/lib/desktop/local-runtime";
 import { SessionUrls, WorkspaceSummary } from "@/lib/runtime/agent-protocol";
-import { takeWarmUrls } from "@/lib/session/warm-session";
+import { keepSessionUrls, takeWarmUrls } from "@/lib/session/warm-session";
 
 /**
  * Owner of the Workspace Session's URL lifecycle: fetches
@@ -88,6 +88,9 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
   const [attachId, setAttachId] = useState(0);
 
   const inflight = useRef<AbortController | null>(null);
+  // The cloud URLs attached with, and when they were fetched, kept as the page
+  // is left (keepSessionUrls) so going back attaches at once.
+  const attachedWith = useRef<{ urls: SessionUrls; at: number } | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // `fresh` for every attach after the first: something failed, and the box's
@@ -116,9 +119,15 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
           return;
         }
         // The first attach takes the URLs a sidebar warm-up already has.
+        const fetchedAt = Date.now();
+        // A fresh attach is one because the last URLs failed: they're not kept.
+        if (fresh) attachedWith.current = null;
         const warm = fresh ? null : await takeWarmUrls(workspaceId);
         if (controller.signal.aborted) return;
         if (warm) {
+          // When the warm-up fetched them isn't known here: kept as of now
+          // would outlive them, so they aren't kept again.
+          attachedWith.current = null;
           setUrls(warm);
           setAttachId((n) => n + 1);
           setStatus("attached");
@@ -139,6 +148,7 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
         if (!parsed.success) {
           throw new Error("Malformed session response from server");
         }
+        attachedWith.current = { urls: parsed.data, at: fetchedAt };
         setUrls(parsed.data);
         setAttachId((n) => n + 1);
         setStatus("attached");
@@ -165,6 +175,8 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
     // attachment, rather than either projection, owns the retry so that one
     // close produces one fresh pair of short-lived URLs.
     if (inflight.current || reconnectTimer.current) return;
+    // The URLs whose socket just closed aren't kept for going back.
+    attachedWith.current = null;
     reconnectTimer.current = setTimeout(() => {
       reconnectTimer.current = null;
       refresh();
@@ -174,12 +186,15 @@ export function useSessionAttachment(workspaceId: string, local = false, agent: 
   useEffect(() => {
     attach(false);
     return () => {
+      if (attachedWith.current) keepSessionUrls(workspaceId, attachedWith.current.urls, attachedWith.current.at);
+      // Handed off: the next attach starts with none of its own.
+      attachedWith.current = null;
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       reconnectTimer.current = null;
       inflight.current?.abort();
       inflight.current = null;
     };
-  }, [attach]);
+  }, [attach, workspaceId]);
 
   return {
     urls,
