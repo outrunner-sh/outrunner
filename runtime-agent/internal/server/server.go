@@ -182,6 +182,12 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	// Checked as every other token that lands in a sourced key file is: one
+	// with a newline or a quote in it would be masked only in part.
+	if req.GitHubToken != "" && !claude.ValidGatewayToken(req.GitHubToken) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid githubToken")
+		return
+	}
 	var gitUser *workspace.GitUser
 	if req.GitUser != nil {
 		gitUser = &workspace.GitUser{Name: req.GitUser.Name, Email: req.GitUser.Email}
