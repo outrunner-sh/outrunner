@@ -4,12 +4,10 @@ import {
   ArrowUpRight,
   ChevronDown,
   ChevronRight,
-  Cloud,
   GitBranch,
   GitMerge,
   GitPullRequest,
   Globe,
-  Monitor,
   PanelRightClose,
   Plus,
   ScanSearch,
@@ -38,11 +36,11 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * The session's Environment: where it runs, its changes, its branch, its pull
- * request and a review, one quiet row each. Changes opens the file list in
- * place; the branch row unfolds its details beneath it, the pull request row
- * asks the agent for one and then links to the pull request it opens, and
- * Review asks the agent to review the change. The terminal docks below, in the
+ * The session's Environment: its changes, its branch, its pull request and,
+ * once that is open, a review, one quiet row each. Changes opens the file list
+ * in place; the branch row unfolds its details beneath it, the pull request
+ * row asks the agent for one and then links to the pull request it opens, and
+ * Review asks the agent to review it. The terminal docks below, in the
  * studio's slot, not here.
  */
 export function WorkspaceEnvironment({
@@ -98,18 +96,10 @@ export function WorkspaceEnvironment({
       )}
       <div hidden={view === "changes"} className="studio-env-body">
         <div className="studio-env-label">
-          Environment
           <button type="button" onClick={onClose} className="studio-env-close" title="Hide environment" aria-label="Hide environment">
             <PanelRightClose />
           </button>
         </div>
-
-        <EnvRow
-          icon={summary.location.kind === "local" ? <Monitor /> : <Cloud />}
-          title={summary.location.detail}
-        >
-          {summary.location.label}
-        </EnvRow>
 
         <EnvRow
           ref={changesRow}
@@ -152,24 +142,18 @@ export function WorkspaceEnvironment({
           </dl>
         )}
 
-        {/* Cloud sessions only: both rows hand the agent their instructions as
-            an attachment, which a session on this Mac can't take. */}
+        {/* Cloud sessions only: Create PR and Review hand the agent their
+            instructions as an attachment, which a session on this Mac can't
+            take. Review shows under the pull request once there is one. */}
         {!local && summary.branch && (
-          <>
-            <PullRequestRow
-              workspaceId={workspace.id}
-              branch={summary.branch}
-              baseBranch={summary.baseBranch ?? workspace.baseBranch}
-              uncommitted={isReady && changes.files ? changes.files.length : null}
-              pullRequest={pullRequest}
-              sender={isReady ? sender : null}
-            />
-            <ReviewRow
-              baseBranch={summary.baseBranch ?? workspace.baseBranch}
-              pullRequestNumber={pullRequest?.number ?? null}
-              sender={isReady ? sender : null}
-            />
-          </>
+          <PullRequestRow
+            workspaceId={workspace.id}
+            branch={summary.branch}
+            baseBranch={summary.baseBranch ?? workspace.baseBranch}
+            uncommitted={isReady && changes.files ? changes.files.length : null}
+            pullRequest={pullRequest}
+            sender={isReady ? sender : null}
+          />
         )}
 
         {/* The servers running on a cloud session's box, each a click from
@@ -318,10 +302,11 @@ async function askAgent(
 }
 
 /**
- * Review asks the session's agent to review the change, as Conductor's Review
- * request does: the prompt "Review my changes" with `Review request.md`
- * attached. The findings come back as the agent's final message, so unlike
- * Create PR this row has nothing to watch for once the prompt is away.
+ * Review asks the session's agent to review its open pull request, as
+ * Conductor's Review request does: the prompt "Review my changes" with
+ * `Review request.md` attached. The findings come back as the agent's final
+ * message, so unlike Create PR this row has nothing to watch for once the
+ * prompt is away.
  */
 function ReviewRow({
   baseBranch,
@@ -329,8 +314,8 @@ function ReviewRow({
   sender,
 }: {
   baseBranch: string;
-  /** The open pull request under review, where the session has one. */
-  pullRequestNumber: number | null;
+  /** The open pull request under review. */
+  pullRequestNumber: number;
   sender: SessionSender | null;
 }) {
   const [busy, setBusy] = useState(false);
@@ -358,11 +343,7 @@ function ReviewRow({
         busy={busy}
         icon={<ScanSearch />}
         title={
-          !sender
-            ? "Available once the session is connected"
-            : pullRequestNumber === null
-              ? `Ask the agent to review everything that differs from ${baseBranch}`
-              : `Ask the agent to review pull request #${pullRequestNumber}`
+          !sender ? "Available once the session is connected" : `Ask the agent to review pull request #${pullRequestNumber}`
         }
         right={busy ? <Spinner label="Asking for a review" /> : undefined}
       >
@@ -467,6 +448,8 @@ function PullRequestRow({
           onError={setError}
         />
         {errorLine}
+        {/* While it's open: a merged or closed one has nothing left to review. */}
+        {!settled && <ReviewRow baseBranch={baseBranch} pullRequestNumber={opened.number} sender={sender} />}
       </>
     );
   }

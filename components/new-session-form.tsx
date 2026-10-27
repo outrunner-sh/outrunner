@@ -61,15 +61,14 @@ export function NewSessionForm({
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal } =
     useCreateSession(listed, initialProjectId);
   // The model the session starts on, picked in the composer as in a session;
-  // none picked, what it starts on anyway: the menu's default on the cloud,
-  // and on a Mac whose Claude Code isn't logged in; otherwise the user's
-  // Claude, on CLAUDE_DEFAULT_MODEL.
+  // none picked, what it starts on anyway: the user's Claude, on
+  // CLAUDE_DEFAULT_MODEL, where it's connected; otherwise the menu's default.
   const menu = useOutrunnerModels();
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(null);
   // The effort picked in the composer; undefined until one is, when the
-  // loadout's for the model it starts on shows, else DEFAULT_EFFORT.
+  // loadout's for its default model shows, else DEFAULT_EFFORT.
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
   // Asked to open the picker, until it has been shut once: the cloud picker
   // can give way to the Mac's as this Mac's agent answers, and that one opens
@@ -113,17 +112,21 @@ export function NewSessionForm({
     : [];
   const groups = menu ? modelGroups(menu, accounts) : [];
   const connect = menu ? AGENT_IDS.filter((agent) => !accounts.includes(agent)) : [];
-  // Without the user's Claude here, a session starts on the menu's default:
-  // Outrunner's model, or one on their key.
-  const onDefault = !accounts.includes("claude") || (local ? where.outrunnerModel : menu?.available === true);
+  // Without the user's Claude here (or on a Mac whose Claude Code isn't
+  // logged in), a session starts on the menu's default: Outrunner's model, or
+  // one on their key.
+  const onDefault = !accounts.includes("claude") || (local && where.outrunnerModel);
   // The loadout's default (Settings → Default models) where the menu offers
   // it here; else what a session starts on without one: the menu's default,
   // or, where it starts on the user's Claude, Opus.
   const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
   const startsOn = picked ?? chosenDefault ?? (menu ? (onDefault ? defaultModel(menu) : CLAUDE_DEFAULT_MODEL) : null);
   const startModel = picked ?? chosenDefault ?? undefined;
+  // What the session is started at: none picked, the loadout's default goes
+  // with its effort, and the user's Claude with DEFAULT_EFFORT (the server's
+  // and createLocal's for it).
   const effort =
-    pickedEffort !== undefined ? pickedEffort : startsOn ? effortOnPick(menu?.loadout, startsOn) : DEFAULT_EFFORT;
+    pickedEffort !== undefined ? pickedEffort : chosenDefault ? effortOnPick(menu?.loadout, chosenDefault) : DEFAULT_EFFORT;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one

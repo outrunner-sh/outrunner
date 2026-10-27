@@ -95,6 +95,7 @@ export function WorkspaceStudio({
             workspaceId={workspace.id}
             projectId={isLocal ? undefined : workspace.projectId}
             agent={workspace.agent}
+            recorded={workspace.model}
             local={isLocal}
             untitled={!isLocal && !workspace.title}
             initialPrompt={initialPrompt}

@@ -1,6 +1,6 @@
 /**
  * The warm pool: two boxes per project made ready ahead of its next sessions
- * and stopped (20261025120000_warm_pool.sql, 20261027150000_warm_hooks.sql),
+ * and stopped (20261025120000_warm_pool.sql, 20261028150000_warm_hooks.sql),
  * each warmed with the project's warm hook first (runtime-agent warm.go). A new session takes it instead of
  * making a box: it starts again on its disk in about a second, its tools,
  * agent and repository already there, so the session opens in about 4

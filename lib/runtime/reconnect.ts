@@ -85,3 +85,63 @@ export function dropNarration(input: {
     lost: input.gaveUp,
   };
 }
+
+/**
+ * The Conversation socket's state (use-conversation-stream), as one slice: a
+ * reducer keeps the hook's effect free of setState, and the signals update
+ * from the same subscribe callbacks. `live`: this connection is open and
+ * streaming (it opened, or a frame has arrived on it).
+ */
+export type WsStatus = {
+  error: string | null;
+  closed: boolean;
+  live: boolean;
+  /** Consecutive failed reconnects, mirrored from the ref for rendering. */
+  attempt: number;
+  /** When the current run of drops began (ms), for the elapsed time shown. */
+  since: number | null;
+  gaveUp: boolean;
+  protocolErrorRef: string | null;
+};
+export type WsAction =
+  | { kind: "opening" }
+  | { kind: "opened" }
+  | { kind: "frame-received" }
+  | { kind: "closed"; attempt: number; at: number }
+  | { kind: "gave-up" }
+  | { kind: "rearm"; at: number }
+  | { kind: "error"; message: string }
+  | { kind: "protocol-error"; ref: string };
+
+export const WS_OPEN: WsStatus = { error: null, closed: false, live: false, attempt: 0, since: null, gaveUp: false, protocolErrorRef: null };
+
+export function wsReducer(state: WsStatus, action: WsAction): WsStatus {
+  switch (action.kind) {
+    case "opening":
+      // A new connection (a reconnect, or the page shown again): not live
+      // until it opens.
+      return state.live ? { ...state, live: false } : state;
+    case "opened":
+      // The socket is open: the agent took its token and is streaming, so
+      // the drop is over (its error with it), though no frame has come yet.
+      return { ...WS_OPEN, live: true, protocolErrorRef: state.protocolErrorRef };
+    case "frame-received":
+      // A frame means it's open, for a socket whose open went unseen.
+      return state.live && !state.closed && state.error === null
+        ? state
+        : { ...WS_OPEN, live: true, protocolErrorRef: state.protocolErrorRef };
+    case "closed":
+      return { ...state, closed: true, live: false, attempt: action.attempt, since: state.since ?? action.at };
+    case "gave-up":
+      return { ...state, gaveUp: true };
+    case "rearm":
+      // A fresh retry budget; the clock restarts only if the run had given up
+      // (rearmedSince). A re-arm mid-outage keeps it, so the elapsed time
+      // still shows how long the outage has lasted.
+      return { ...state, attempt: 0, gaveUp: false, since: rearmedSince(state, action.at) };
+    case "error":
+      return { ...state, error: action.message };
+    case "protocol-error":
+      return { ...state, protocolErrorRef: state.protocolErrorRef ?? action.ref };
+  }
+}

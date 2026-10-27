@@ -8,6 +8,9 @@ import {
   RECONNECT_MAX_MS,
   rearmedSince,
   reconnectPlan,
+  WS_OPEN,
+  type WsAction,
+  wsReducer,
 } from "@/lib/runtime/reconnect";
 
 test("a re-armed retry run starts its clock fresh only after a give-up", () => {
@@ -75,4 +78,30 @@ test("a close while a manual retry is under way hands the story back to the auto
 test("nothing is narrated while the attachment itself has the answer", () => {
   const quiet = dropNarration({ dropped: false, gaveUp: true, manual: true, attempt: 0, since: null });
   assert.deepEqual(quiet, { reconnecting: null, lost: false });
+});
+
+test("a reconnected socket ends the drop as it opens, before any frame", () => {
+  const run = (...actions: WsAction[]) => actions.reduce(wsReducer, { ...WS_OPEN, live: true });
+  // Dropped mid-tool-call, then back: the resumed stream is quiet until
+  // Claude next writes, which mustn't read as still reconnecting.
+  const back = run({ kind: "closed", attempt: 1, at: 1_000 }, { kind: "opening" }, { kind: "opened" });
+  assert.deepEqual(back, { ...WS_OPEN, live: true });
+  assert.deepEqual(dropNarration({ dropped: back.closed, gaveUp: back.gaveUp, manual: false, attempt: back.attempt, since: back.since }), {
+    reconnecting: null,
+    lost: false,
+  });
+  // Opened only: still reconnecting, counting the run's time.
+  const reopening = run({ kind: "closed", attempt: 1, at: 1_000 }, { kind: "opening" });
+  assert.equal(reopening.closed, true);
+  assert.equal(reopening.since, 1_000);
+  // Back after giving up: the lost-connection error goes too, but a frame
+  // that couldn't be read stays reported.
+  const recovered = run(
+    { kind: "protocol-error", ref: "R1" },
+    { kind: "closed", attempt: 7, at: 1_000 },
+    { kind: "gave-up" },
+    { kind: "error", message: "Lost connection to this session." },
+    { kind: "opened" },
+  );
+  assert.deepEqual(recovered, { ...WS_OPEN, live: true, protocolErrorRef: "R1" });
 });

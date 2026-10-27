@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { ConversationTimeline, claudeIsWorking } from "@/components/conversation-timeline";
+import { ConversationTimeline } from "@/components/conversation-timeline";
+import { ImageBoxContext } from "@/components/markdown";
+import { QueuedPrompts } from "@/components/queued-prompts";
 import { QuestionCard } from "@/components/question-card";
 import { pendingSecretRequest, type PendingSecretRequest } from "@/lib/runtime/pending-secrets";
 import { SecretsCard } from "@/components/secrets-card";
@@ -22,7 +24,7 @@ import {
   putOnModel,
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
-import { firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
+import { claudeIsWorking, firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
 import {
   type AskAnswer,
   isExpiredQuestionError,
@@ -55,11 +57,13 @@ import {
   modelGroups,
   type ModelProvider,
   parseAgentConnections,
+  type RecordedModel,
   runsOnOwnAccount,
   type SessionModel,
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
+import { type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
 import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
@@ -72,6 +76,10 @@ import { useSessionAttachment } from "@/hooks/use-session-attachment";
  * so the box's Retry sends the original rather than an empty box. `code` is
  * the route's, when it gave one, so a dead end offers no retry. */
 type FailedSend = { message: string; retry?: () => void; code?: string };
+
+/** How long the queue waits, the session idle, for the stream to record the
+ *  last queued prompt sent before sending the next anyway. */
+const QUEUED_ECHO_WAIT_MS = 30_000;
 
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   outrunner: true,
@@ -92,6 +100,7 @@ export function WorkspaceSession({
   workspaceId,
   projectId,
   agent = "claude",
+  recorded = null,
   local = false,
   untitled = false,
   initialPrompt,
@@ -104,6 +113,9 @@ export function WorkspaceSession({
   /** The coding agent the session runs: its model menu offers only models
    *  that agent runs. */
   agent?: AgentId;
+  /** The model and effort its row records it was last put on (a cloud
+   *  session's), shown until a reply or a pick here says otherwise. */
+  recorded?: RecordedModel | null;
   /** A local session: everything then goes through the Outrunner app to the
    *  agent on this Mac, instead of through the server. */
   local?: boolean;
@@ -282,14 +294,20 @@ export function WorkspaceSession({
   // picked here, else the one a new session starts on.
   const [providerPicked, setProviderPicked] = useState<ModelProvider | null>(() => pickedProvider(workspaceId));
   const [picked, setPicked] = useState<{ model: string; events: number } | null>(null);
-  // The effort it runs at, as last put on from here (lib/session/picked-effort.ts).
-  const [effort, setEffort] = useState<Effort | null>(() => rememberedEffort(workspaceId));
+  // The effort it runs at, as last put on from here (lib/session/picked-effort.ts);
+  // none put on from here (a session started from onboarding, or another
+  // browser), as its row records. Undefined until either says.
+  const [effortHere, setEffortHere] = useState<Effort | null | undefined>(
+    () => rememberedEffort(workspaceId) ?? undefined,
+  );
+  const effort = effortHere !== undefined ? effortHere : (recorded?.effort ?? null);
   const repliedSincePick =
     picked !== null &&
     conversation.events
       .slice(picked.events)
       .some((event) => event.t === "message" && event.role === "assistant" && event.model);
-  const shownModel = picked && !repliedSincePick ? picked.model : activeModel;
+  // Before its first reply, the model its row records it starts on.
+  const shownModel = picked && !repliedSincePick ? picked.model : (activeModel ?? recorded?.model.id);
   // Stopping the turn under way (the composer's stop button): the agent
   // presses Escape in the session and answers once the turn has stopped.
   const [stopping, setStopping] = useState(false);
@@ -373,6 +391,85 @@ export function WorkspaceSession({
     !waitingOnUser &&
     (pending.some((p) => pendingShows(p, delivered)) ||
       (claudeIsWorking(conversation.events) && stoppedAt !== delivered));
+  // Prompts sent while the agent is at work wait here (lib/session/prompt-queue.ts)
+  // and go one at a time as each turn ends. One whose send failed holds the
+  // queue (`queueHeld`) until the user retries it or sends it now, so a box
+  // that's down doesn't fail the whole queue in a row.
+  const [queue, setQueue] = useState<QueuedPrompt[]>(() => readQueue(tabStorage(), workspaceId));
+  useEffect(() => writeQueue(tabStorage(), workspaceId, queue), [workspaceId, queue]);
+  const [queueHeld, setQueueHeld] = useState(false);
+  const sendingQueued = useRef(false);
+  // Bumped as each queued send settles, so the queue looks again: the turn it
+  // started may have ended while the send was still being answered.
+  const [queueSettled, setQueueSettled] = useState(0);
+  // The prompts the stream had recorded when the last queued prompt was sent:
+  // the next waits until the stream records that one too. A prompt of files
+  // alone has no bubble to say the session took it, so `working` alone could
+  // let the next go into the same turn.
+  const [queuedAt, setQueuedAt] = useState<number | null>(null);
+  const enqueue = (text: string, attachmentIds: string[]): Promise<boolean> => {
+    setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds }]);
+    setSendError(null);
+    return Promise.resolve(true);
+  };
+  /** Send a queued prompt now: out of the queue, and back at its head, the
+   *  queue held, if it doesn't go (its Retry sends it again). */
+  const sendQueued = (prompt: QueuedPrompt): Promise<boolean> => {
+    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    setQueueHeld(false);
+    const recorded = userPromptCount(eventsRef.current);
+    return send(prompt.text, prompt.attachmentIds, () => void sendQueued(prompt)).then((landed) => {
+      if (landed) setQueuedAt(recorded);
+      else {
+        setQueue((q) => [prompt, ...q.filter((p) => p.id !== prompt.id)]);
+        setQueueHeld(true);
+      }
+      return landed;
+    });
+  };
+  const removeQueued = (prompt: QueuedPrompt) => {
+    setQueue((q) => q.filter((p) => p.id !== prompt.id));
+    // The one that failed sits at the head; with it gone, the rest go on.
+    if (queue[0]?.id === prompt.id) setQueueHeld(false);
+    // Its files were uploaded for it alone.
+    for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
+  };
+  const awaitingLast = queuedAt !== null && delivered <= queuedAt;
+  // A prompt the agent took but the stream never shows (Claude dropped it, or a
+  // /clear started a new conversation) mustn't hold the queue for good: once
+  // the session has sat idle that long since, the wait is over.
+  useEffect(() => {
+    if (!awaitingLast || working) return;
+    const release = setTimeout(() => setQueuedAt(null), QUEUED_ECHO_WAIT_MS);
+    return () => clearTimeout(release);
+  }, [awaitingLast, working]);
+  const drains = queueDrains({
+    queued: queue.length,
+    attached,
+    working,
+    waitingOnUser,
+    held: queueHeld,
+    awaitingLast,
+  });
+  useEffect(() => {
+    if (!drains || sendingQueued.current) return;
+    sendingQueued.current = true;
+    // After this commit, not inside it: the send sets state of its own.
+    const next = queue[0];
+    void Promise.resolve()
+      .then(() => sendQueued(next))
+      .finally(() => {
+        sendingQueued.current = false;
+        setQueueSettled((n) => n + 1);
+      });
+    // sendQueued is this render's; the queue's head and whether it drains are
+    // what decide a send.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drains, queue, queueSettled]);
+  // While the agent works, or others wait ahead, a prompt joins the queue.
+  const sendOrQueue = (text: string, attachmentIds: string[]) =>
+    working || queue.length > 0 ? enqueue(text, attachmentIds) : send(text, attachmentIds);
+
   const stop = () => {
     setStopping(true);
     setSendError(null);
@@ -381,7 +478,12 @@ export function WorkspaceSession({
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
       : stopCloudTurn(workspaceId)
     )
-      .then(() => setStoppedAt(userPromptCount(eventsRef.current)))
+      .then(() => {
+        setStoppedAt(userPromptCount(eventsRef.current));
+        // A queued prompt Claude hadn't taken up yet is handed back to its
+        // input by a stop, never recorded: the queue mustn't wait on it.
+        setQueuedAt(null);
+      })
       .catch((error: unknown) =>
         setStopError(
           local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
@@ -398,7 +500,7 @@ export function WorkspaceSession({
     connect: accounts.includes(agent) ? [] : [agent],
     effort,
     loadout: menu.loadout,
-    preferredProvider: providerPicked ?? defaultModel(menu)?.provider,
+    preferredProvider: providerPicked ?? recorded?.model.provider ?? defaultModel(menu)?.provider,
     switching,
     disabledReason: !attached
       ? "Waiting for the session to connect"
@@ -424,7 +526,7 @@ export function WorkspaceSession({
           setPicked({ model: model.id, events: conversation.events.length });
           setProviderPicked(model.provider);
           rememberPickedProvider(workspaceId, model.provider);
-          setEffort(next);
+          setEffortHere(next);
           rememberEffort(workspaceId, next);
         })
         .catch((error: unknown) =>
@@ -584,15 +686,19 @@ export function WorkspaceSession({
 
       <section className="studio-convo-panel" aria-label="Claude conversation">
         <div className="studio-convo-body">
-          <ConversationTimeline
-            events={timelineEvents}
-            working={working}
-            placeholder={conversationPlaceholder({
-              events: timelineEvents,
-              attachment: attachment.status,
-              stream: conversation.status,
-            })}
-          />
+          {/* Images Claude shows by path are on a cloud session's box; this
+              Mac's are out of the server's reach. */}
+          <ImageBoxContext value={local ? null : workspaceId}>
+            <ConversationTimeline
+              events={timelineEvents}
+              working={working}
+              placeholder={conversationPlaceholder({
+                events: timelineEvents,
+                attachment: attachment.status,
+                stream: conversation.status,
+              })}
+            />
+          </ImageBoxContext>
         </div>
       </section>
 
@@ -633,8 +739,17 @@ export function WorkspaceSession({
         </InlineMessage>
       ) : null}
       {!waitingOnUser && (
+        <QueuedPrompts
+          queue={queue}
+          canSendNow={attached}
+          onSendNow={(prompt) => void sendQueued(prompt)}
+          onRemove={removeQueued}
+        />
+      )}
+      {!waitingOnUser && (
         <SessionComposer
-          onSend={send}
+          onSend={sendOrQueue}
+          placeholder={working ? "Queue a message for when this turn ends…" : undefined}
           canSend={canSend}
           // Sending waits on the connection alone, so say that, not the
           // composer's default (another viewer holding the keyboard).

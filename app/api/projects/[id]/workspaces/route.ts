@@ -28,7 +28,13 @@ import {
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
-import { branchTakenResponse, isUniqueViolation, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
+import {
+  branchTakenByTeammateResponse,
+  branchTakenResponse,
+  isUniqueViolation,
+  workspaceCreateErrorResponse,
+} from "@/lib/http/workspace-create-errors";
+import { inTeamOrg } from "@/lib/db/orgs";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
@@ -159,9 +165,10 @@ export async function POST(request: Request, context: RouteContext) {
   }
   const agentId = agentOf(chosenModel?.provider ?? "claude", askedAgent);
   const menu = await modelMenu(owner.id);
-  // What it starts on: the model chosen, else the menu's default, else the
-  // user's Claude (startingModel). On a model on a key, Claude Code needs no
-  // account of the user's: one they haven't connected doesn't stop it.
+  // What it needs to start: the model chosen, else the menu's default. On a
+  // model on a key, Claude Code needs no account of the user's: one they
+  // haven't connected doesn't stop it, and one they have is still resolved,
+  // so a session with none chosen starts on it (startingModel).
   const startsOn = chosenModel ?? defaultModel(menu);
   const ownAccount = !startsOn || runsOnOwnAccount(startsOn);
   // How it signs in, said before a box is set up for it, not after.
@@ -179,9 +186,10 @@ export async function POST(request: Request, context: RouteContext) {
   // no pick, on what they saved), which `auth` holds. Never on the box's own
   // environment instead, which may hold a key the user didn't pick, or one
   // since removed: a session falling back on it would be billed to the wrong
-  // account. Sessions start on Outrunner's models (on the user's own
-  // OpenRouter key, or the server's), so only without those is Claude a
-  // must. Codex runs on its own sign-in, resolved above.
+  // account. With none chosen, a session starts on it where it is connected,
+  // else on Outrunner's models (on the user's own OpenRouter key, or the
+  // server's), so only without those is Claude a must. Codex runs on its own
+  // sign-in, resolved above.
   const hasClaude = agentId === "claude" && auth.credential !== null;
   if (agentId === "claude" && !hasClaude && !offersModels(menu)) {
     return NextResponse.json({ error: NO_OUTRUNNER_MODELS, settingsHref: PROVIDERS_SETTINGS_HREF }, { status: 409 });
@@ -292,14 +300,18 @@ export async function POST(request: Request, context: RouteContext) {
   } catch (error) {
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
-    // (Generated branches can't collide.) If that lookup itself fails, the
-    // row's own failure is still the answer to give, not a thrown one.
+    // (Generated branches can't collide.) Not the user's own, in a team org's
+    // project: another member has it, whose session they can't open. Anywhere
+    // else (a session ended between the insert and the lookup), the plain
+    // answer. If a lookup itself fails, the row's own failure is still the
+    // answer to give, not a thrown one.
     if (requestedBranch && isUniqueViolation(error)) {
       const holder = await liveWorkspaceOnBranch(owner.id, project.id, requestedBranch).catch((lookupError) => {
         console.error("Couldn't look up the session on that branch", lookupError);
-        return null;
+        return undefined;
       });
       if (holder) return branchTakenResponse({ id: holder.id, label: workspaceLabel(holder) });
+      if (holder === null && (await inTeamOrg(project.id).catch(() => false))) return branchTakenByTeammateResponse();
     }
     return workspaceCreateErrorResponse(error, "Couldn't create the session's row");
   }
@@ -521,7 +533,9 @@ async function provisionWorkspace({
         hasClaude,
         model: chosenModel,
         effort: chosenEffort,
-        fallback: defaultModel(menu),
+        // None chosen: the user's Claude where it's connected (Opus, at
+        // DEFAULT_EFFORT), as the new-session screen shows; else the menu's.
+        fallback: hasClaude ? null : defaultModel(menu),
       });
       // So its next relaunch goes back on it, its key fetched again.
       await recordWorkspaceModel(workspace.id, startsOn);

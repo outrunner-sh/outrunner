@@ -8,12 +8,13 @@ import { githubErrorResponse } from "@/lib/github/http";
 import { cachedRepositoryList } from "@/lib/github/repository-cache";
 import { requireGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { activeOrgId } from "@/lib/orgs/server";
 
 /** Repositories one request may connect by id; the picker sends one. */
 const MAX_SELECTION = 100;
 
 /**
- * Connect repositories as projects.
+ * Connect repositories as projects of the active org (lib/orgs/active.ts).
  *
  * With `{ repoIds: [...] }`, only those repositories are connected — the picker
  * posts the user's selection, so browsing hundreds of repositories does not
@@ -57,6 +58,8 @@ export async function POST(request: Request) {
   }
 
   try {
+    const orgId = await activeOrgId();
+    const upsert = (ownerId: string, repos: GitHubRepository[]) => upsertProjects(ownerId, repos, orgId);
     const token = await requireGithubToken(owner.id);
     let repositories: GitHubRepository[];
     let synced: number;
@@ -64,7 +67,7 @@ export async function POST(request: Request) {
     if (selection) {
       ({ repositories, synced } = await connectRepositories(owner.id, token, selection, {
         lookup: getGitHubRepository,
-        upsert: upsertProjects,
+        upsert,
       }));
       // Asked for specific repositories and the token can see none of them: an
       // organization that hasn't approved Outrunner, or access since removed.
@@ -85,7 +88,7 @@ export async function POST(request: Request) {
       });
       repositories = list.repositories;
       complete = list.complete;
-      synced = await upsertProjects(owner.id, repositories);
+      synced = await upsert(owner.id, repositories);
     }
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
@@ -93,7 +96,7 @@ export async function POST(request: Request) {
       synced,
       discovered: repositories.length,
       complete,
-      projects: await listProjects(),
+      projects: await listProjects(orgId),
     });
   } catch (error) {
     return githubErrorResponse(

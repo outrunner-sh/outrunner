@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { branchTakenResponse, workspaceCreateErrorResponse } from "@/lib/http/workspace-create-errors";
+import {
+  branchTakenByTeammateResponse,
+  branchTakenResponse,
+  workspaceCreateErrorResponse,
+} from "@/lib/http/workspace-create-errors";
 
 /** The error Supabase returns when the live-branch index refuses the insert. */
 function branchTaken(): { code: string; message: string } {
@@ -58,4 +62,12 @@ test("anything else answers 500 and keeps its message in the log", async () => {
   } finally {
     console.error = error;
   }
+});
+
+test("a branch another member's session holds is named as theirs, with no session to open", async () => {
+  const response = branchTakenByTeammateResponse();
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "Another member's session is working on that branch. Pick another branch.",
+  });
 });

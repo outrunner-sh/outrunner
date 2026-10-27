@@ -28,10 +28,11 @@ type rawRecord struct {
 	ParentID  *string `json:"parentUuid"`
 	Timestamp string  `json:"timestamp"`
 	Message   *struct {
-		Role    string                      `json:"role"`
-		Model   string                      `json:"model"`
-		Content json.RawMessage             `json:"content"`
-		Usage   *map[string]json.RawMessage `json:"usage"`
+		Role       string                      `json:"role"`
+		Model      string                      `json:"model"`
+		StopReason string                      `json:"stop_reason"`
+		Content    json.RawMessage             `json:"content"`
+		Usage      *map[string]json.RawMessage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -191,9 +192,13 @@ func decode(line []byte) (Event, bool) {
 		// The Claude model that produced this turn (assistant lines only; user
 		// turns carry none). Surfaced so the composer can show the model actually
 		// in use instead of a hardcoded label.
-		Model:     rec.Message.Model,
-		Timestamp: rec.Timestamp,
-		Content:   content,
+		Model: rec.Message.Model,
+		// Why the reply this record is part of stopped ("tool_use", "end_turn"):
+		// Claude logs each block of a reply as its own record, so its words
+		// before a tool call can end a record while the turn goes on.
+		StopReason: rec.Message.StopReason,
+		Timestamp:  rec.Timestamp,
+		Content:    content,
 	}
 	return Event{Message: msg}, true
 }

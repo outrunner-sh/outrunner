@@ -38,7 +38,8 @@ export async function GET(request: Request, context: RouteContext) {
   const environment = await getEnvironment(c.owner.id, c.id);
   if (!environment) return notFound();
   const inIt = new Set(environment.repos.map((r) => r.projectId));
-  const repositories = (await listProjects())
+  // Only the project's org's: a project's repositories are its org's.
+  const repositories = (await listProjects(environment.orgId))
     .filter((p) => !inIt.has(p.id))
     .map((p) => ({ projectId: p.id, fullName: p.fullName, defaultBranch: p.defaultBranch, private: p.private }));
   return NextResponse.json({ repositories, max: MAX_REPOS });

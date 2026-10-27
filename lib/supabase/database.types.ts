@@ -111,7 +111,7 @@ type WorkspaceRow = {
   /** The environment (the app's Project) it started from; null for a
    *  session from before environments. */
   environment_id: string | null;
-  /** A multi-repository session's repositories (20261027170000); null for
+  /** A multi-repository session's repositories (20261028160000); null for
    *  one of one. */
   checkouts: Json | null;
   /** The coding agent it runs: "claude" or "codex". */
@@ -138,7 +138,7 @@ type RuntimeComputerRow = {
   /** Made ready ahead of a session and stopped, for the next one to take
    *  (20261025120000_warm_pool.sql). */
   pooled: boolean;
-  /** Which of the project's two ready boxes it is (20261027150000). */
+  /** Which of the project's two ready boxes it is (20261028150000). */
   pool_slot: number;
   /** The project's setup_generation it was made from. */
   generation: number | null;
@@ -273,9 +273,13 @@ type ProjectEnvironmentRow = {
   updated_at: string;
 };
 
-/** What the app calls a Project (20261027120000_environments.sql). */
+/** What the app calls a Project (20261027121000_environments.sql). */
 type EnvironmentRow = {
   id: string;
+  /** Its org (20261028140000_org_environments.sql): its repository's, for a
+   *  repository's default; given none, its maker's personal org. */
+  org_id: string;
+  /** Who made it. */
   owner_id: string;
   name: string;
   description: string | null;
@@ -301,6 +305,8 @@ type EnvironmentRow = {
 };
 
 type EnvironmentRepoRow = {
+  /** Its project's org, set from the project. */
+  org_id: string;
   owner_id: string;
   environment_id: string;
   project_id: string;
@@ -453,6 +459,47 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
+type OrganizationDomainRow = {
+  domain: string;
+  org_id: string;
+  claimed_by: string | null;
+  created_at: string;
+};
+
+type OrganizationInviteRow = {
+  id: string;
+  org_id: string;
+  email: string;
+  role: OrgRoleDb;
+  token_hash: string;
+  invited_by: string | null;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+  accepted_by: string | null;
+  revoked_at: string | null;
+};
+
+export type JoinRequestStatusDb = "pending" | "approved" | "declined" | "cancelled";
+
+type OrganizationJoinRequestRow = {
+  id: string;
+  org_id: string;
+  user_id: string;
+  email: string;
+  status: JoinRequestStatusDb;
+  created_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+};
+
+type OrganizationRemovalRow = {
+  org_id: string;
+  user_id: string;
+  removed_by: string | null;
+  removed_at: string;
+};
+
 type CliTokenRow = {
   id: string;
   user_id: string;
@@ -473,6 +520,30 @@ export type Database = {
         Row: OrganizationRow;
         Insert: Insert<OrganizationRow, "name">;
         Update: Partial<OrganizationRow>;
+        Relationships: [];
+      };
+      organization_domains: {
+        Row: OrganizationDomainRow;
+        Insert: Insert<OrganizationDomainRow, "domain" | "org_id">;
+        Update: Partial<OrganizationDomainRow>;
+        Relationships: [];
+      };
+      organization_invites: {
+        Row: OrganizationInviteRow;
+        Insert: Insert<OrganizationInviteRow, "org_id" | "email" | "role" | "token_hash" | "expires_at">;
+        Update: Partial<OrganizationInviteRow>;
+        Relationships: [];
+      };
+      organization_join_requests: {
+        Row: OrganizationJoinRequestRow;
+        Insert: Insert<OrganizationJoinRequestRow, "org_id" | "user_id" | "email">;
+        Update: Partial<OrganizationJoinRequestRow>;
+        Relationships: [];
+      };
+      organization_removals: {
+        Row: OrganizationRemovalRow;
+        Insert: Insert<OrganizationRemovalRow, "org_id" | "user_id">;
+        Update: Partial<OrganizationRemovalRow>;
         Relationships: [];
       };
       organization_members: {
@@ -712,6 +783,32 @@ export type Database = {
       is_org_member: {
         Args: { org: string };
         Returns: boolean;
+      };
+      // supabase/migrations/20261028120000_team_orgs.sql
+      my_org_ids: {
+        Args: Record<never, never>;
+        Returns: string[];
+      };
+      create_team_org: {
+        Args: { org_name: string; creator: string; claimed_domain: string | null };
+        Returns: string;
+      };
+      // supabase/migrations/20261028130000_org_members.sql
+      accept_org_invite: {
+        Args: { invite_token_hash: string; member: string };
+        Returns: string;
+      };
+      approve_join_request: {
+        Args: { request: string; decider: string; member_role: OrgRoleDb };
+        Returns: string;
+      };
+      remove_org_member: {
+        Args: { target_org: string; member: string; remover: string };
+        Returns: undefined;
+      };
+      set_org_member_role: {
+        Args: { target_org: string; member: string; member_role: OrgRoleDb };
+        Returns: undefined;
       };
       // supabase/migrations/20261019130000_move_claude_slot_key.sql
       move_claude_slot_key: {

@@ -17,6 +17,15 @@ export function branchTakenResponse(holder: { id: string; label: string }): Resp
   );
 }
 
+/** A requested branch another member's session in the org works on: theirs
+ *  isn't the user's to open (sessions are each member's own), so only say so. */
+export function branchTakenByTeammateResponse(): Response {
+  return Response.json(
+    { error: "Another member's session is working on that branch. Pick another branch." },
+    { status: 409 },
+  );
+}
+
 /**
  * The answer to a failure to create a session's row. The index that keeps one
  * live session per branch answers Postgres' unique_violation: a conflict the
