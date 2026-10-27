@@ -115,16 +115,19 @@ export async function refillProjectPool(input: {
       discard: (sandboxId, madeBy) => discardBox(provider, madeBy, ownerId, sandboxId),
       forget: deletePooledComputer,
       release: releasePooledComputer,
-      leftover: async (slot, sandboxId) => {
+      leftover: async (box, sandboxId) => {
+        // The box's own maker and generation: an outdated one is retried at
+        // the next refill rather than backing the project off, and a foreign
+        // one stays the sweeper's to log for deleting by hand.
         const row = await createPooledComputer({
           ownerId,
           projectId: project.id,
-          provider: provider.name,
+          provider: box.provider ?? provider.name,
           agentSecret: randomBytes(32).toString("hex"),
-          slot,
-          generation,
+          slot: box.poolSlot,
+          generation: box.generation,
         });
-        if (!row) throw new Error(`slot ${slot} is taken`);
+        if (!row) throw new Error(`slot ${box.poolSlot} is taken`);
         await markPooledFailed(row.id, sandboxId);
       },
       newSecret: () => randomBytes(32).toString("hex"),

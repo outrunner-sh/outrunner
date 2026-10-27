@@ -80,8 +80,9 @@ export type WarmPoolDeps = {
    *  pooled. False when a session claimed it meanwhile, whose box it is now. */
   release(computerId: string): Promise<boolean>;
   /** Record a box whose delete failed after its row went: a failed row in
-   *  `slot` keeping it, for the sweeper to delete. */
-  leftover(slot: number, sandboxId: string): Promise<void>;
+   *  its slot keeping it, with its own provider and generation, for the
+   *  sweeper (or the next refill, when it's outdated) to delete. */
+  leftover(box: PooledBox, sandboxId: string): Promise<void>;
   newSecret(): string;
   now(): number;
 };
@@ -124,7 +125,7 @@ export async function refillPool(deps: WarmPoolDeps): Promise<number> {
         if (!deleted) {
           // Its row is gone: a failed one in its slot points the sweeper at
           // the box, which would otherwise run on, unseen.
-          await deps.leftover(existing.poolSlot, sandboxId).catch((error: unknown) =>
+          await deps.leftover(existing, sandboxId).catch((error: unknown) =>
             console.error(`Pooled sandbox ${sandboxId} couldn't be recorded: delete it by hand`, error),
           );
           taken.add(existing.poolSlot);
