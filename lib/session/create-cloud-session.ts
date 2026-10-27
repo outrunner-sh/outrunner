@@ -618,7 +618,10 @@ async function provisionWorkspace({
       // Ready: the project's next session gets a box made ahead, after this
       // session's setup rather than as part of it.
       // Inline (the server's own session), there's no response to wait for:
-      // it refills now, still signed in as the user.
+      // it refills now, still signed in as the user. Its caller has heard the
+      // outcome already (onSettled, above), so only the wait for it is longer;
+      // left running after the sign-out, the refill's writes would be on a
+      // session that has ended.
       const refill = () =>
         refillProjectPool({ provider, ownerId: owner.id, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
       if (inline) await refill();
@@ -635,7 +638,7 @@ async function provisionWorkspace({
       onPhase: setPhase,
     });
 
-    await settle({
+    const ready = await settle({
       status: "ready",
       phase: "claude_ready",
       sandboxId: result.sandboxId,
@@ -646,7 +649,7 @@ async function provisionWorkspace({
         : null,
       touchActive: true,
     });
-    await tell({ status: "ready" });
+    await tell(ready ? { status: "ready" } : { status: "failed", errorMessage: "The session was deleted while it was set up." });
   } catch (error) {
     console.error(`Workspace ${workspace.id} provisioning failed`, error);
     // The session page shows this: say what to do where the user can fix it,
