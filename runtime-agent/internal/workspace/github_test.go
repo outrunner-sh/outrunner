@@ -31,11 +31,8 @@ func sessionWithOwnGitHubToken(t *testing.T) (*Service, *fakeSessions, string) {
 // agent would get.
 func launchedGitHubToken(t *testing.T, argv []string) (token, helper string) {
 	t.Helper()
-	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
-	if i < 0 {
-		t.Fatalf("no claude in the launch %q", argv)
-	}
-	probe := append(append([]string(nil), argv[:i]...), "sh", "-c", `printf '%s\n%s\n%s\n%s' "$GH_TOKEN" "$GIT_CONFIG_VALUE_1" "$GITHUB_TOKEN" "$GH_CONFIG_DIR"`)
+	wrappers := launchWrappers(t, argv)
+	probe := append(wrappers, "sh", "-c", `printf '%s\n%s\n%s\n%s' "$GH_TOKEN" "$GIT_CONFIG_VALUE_1" "$GITHUB_TOKEN" "$GH_CONFIG_DIR"`)
 	cmd := exec.Command(probe[0], probe[1:]...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), githubTokenEnv + "=" + testBoxGitHubToken, "GITHUB_TOKEN=" + testBoxGitHubToken}
 	out, err := cmd.Output()
@@ -122,10 +119,7 @@ func TestForgettingASessionRemovesItsGitHubToken(t *testing.T) {
 // credential, in a HOME whose ~/.gitconfig stores the user's own.
 func gitCredentialFor(t *testing.T, argv []string) string {
 	t.Helper()
-	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
-	if i < 0 {
-		t.Fatalf("no claude in the launch %q", argv)
-	}
+	wrappers := launchWrappers(t, argv)
 	home := t.TempDir()
 	if err := os.WriteFile(home+"/.git-credentials", []byte("https://user:"+testBoxGitHubToken+"@github.com\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -133,7 +127,7 @@ func gitCredentialFor(t *testing.T, argv []string) string {
 	if err := os.WriteFile(home+"/.gitconfig", []byte("[credential]\n\thelper = store\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	probe := append(append([]string(nil), argv[:i]...), "git", "credential", "fill")
+	probe := append(wrappers, "git", "credential", "fill")
 	cmd := exec.Command(probe[0], probe[1:]...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_TERMINAL_PROMPT=0"}
 	cmd.Stdin = strings.NewReader("protocol=https\nhost=github.com\n\n")
@@ -176,17 +170,14 @@ func TestGitNeverPushesOverTheBoxsSSHKey(t *testing.T) {
 // in the environment: git must refuse SSH, and the agent mustn't reach it.
 func checkNoSSH(t *testing.T, argv []string) {
 	t.Helper()
-	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
-	if i < 0 {
-		t.Fatalf("no claude in the launch %q", argv)
-	}
+	wrappers := launchWrappers(t, argv)
 	home := t.TempDir()
 	// A common line in a user's gitconfig: https remotes go over SSH.
 	if err := os.WriteFile(home+"/.gitconfig", []byte("[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	used := home + "/ssh-used"
-	probe := append(append([]string(nil), argv[:i]...), "sh", "-c", `echo "agent=$SSH_AUTH_SOCK"; git ls-remote https://github.com/acme/web`)
+	probe := append(wrappers, "sh", "-c", `echo "agent=$SSH_AUTH_SOCK"; git ls-remote https://github.com/acme/web`)
 	cmd := exec.Command(probe[0], probe[1:]...)
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "GIT_TERMINAL_PROMPT=0",
@@ -210,13 +201,19 @@ func TestASessionOnItsOwnTokenCommitsUnsigned(t *testing.T) {
 		t.Skip("no git")
 	}
 	s, _, id := sessionWithOwnGitHubToken(t)
-	argv := s.launchCommand(id, s.worktreePath(id), false)
-	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
-	if i < 0 {
-		t.Fatalf("no claude in the launch %q", argv)
+	t.Run("on its own token", func(t *testing.T) { checkUnsignedCommit(t, s.launchCommand(id, s.worktreePath(id), false)) })
+	if err := os.Remove(s.githubFiles().path(id)); err != nil {
+		t.Fatal(err)
 	}
+	t.Run("with its token gone", func(t *testing.T) { checkUnsignedCommit(t, s.launchCommand(id, s.worktreePath(id), false)) })
+}
+
+// checkUnsignedCommit commits through a launch's wrappers, in a HOME whose
+// gitconfig signs every commit with a key that can't be reached.
+func checkUnsignedCommit(t *testing.T, argv []string) {
+	t.Helper()
+	wrappers := launchWrappers(t, argv)
 	home, repo := t.TempDir(), t.TempDir()
-	// The user signs every commit with a key their SSH agent holds.
 	config := "[user]\n\tname = U\n\temail = u@example.test\n\tsigningkey = " + home + "/missing.pub\n" +
 		"[gpg]\n\tformat = ssh\n[commit]\n\tgpgsign = true\n"
 	if err := os.WriteFile(home+"/.gitconfig", []byte(config), 0o600); err != nil {
@@ -228,10 +225,21 @@ func TestASessionOnItsOwnTokenCommitsUnsigned(t *testing.T) {
 	if out, err := initRepo.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
-	probe := append(append([]string(nil), argv[:i]...), "git", "-C", repo, "commit", "--allow-empty", "-qm", "review")
+	probe := append(wrappers, "git", "-C", repo, "commit", "--allow-empty", "-qm", "review")
 	cmd := exec.Command(probe[0], probe[1:]...)
 	cmd.Env = env
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("commit failed (signing?): %v %s", err, out)
 	}
+}
+
+// launchWrappers are a launch's wrappers, everything before the agent itself,
+// to run a probe in place of it.
+func launchWrappers(t *testing.T, argv []string) []string {
+	t.Helper()
+	i := slices.IndexFunc(argv, func(arg string) bool { return arg == "claude" || strings.HasSuffix(arg, "/claude") })
+	if i < 0 {
+		t.Fatalf("no claude in the launch %q", argv)
+	}
+	return append([]string(nil), argv[:i]...)
 }
