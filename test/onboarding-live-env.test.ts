@@ -4,7 +4,7 @@ import { afterEach, test } from "node:test";
 import type { RepositoryListing } from "@/lib/github/listing";
 import { firstModel, liveEnv, OnboardingError } from "@/lib/onboarding/live-env";
 import { CLI_DEFAULT_URL, connectClaudeCommand, filterRepositories, freeModelsOffer, sortRepositories } from "@/lib/onboarding/rules";
-import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
+import { CODEX_MODELS, OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 
 const user = { name: "Ada Lovelace", login: "ada", avatarUrl: null };
 const realFetch = globalThis.fetch;
@@ -74,7 +74,7 @@ test("starting the first session marks onboarding done and opens the session", a
     "POST /api/onboarding/complete": () => [200, { ok: true }],
   });
   assert.equal(await env().startSession("p1", "claude"), "/workspaces/w1");
-  assert.deepEqual(calls[0].body, { branch: "", provider: "claude", model: "opus" });
+  assert.deepEqual(calls[0].body, { branch: "", provider: "claude", model: "opus", effort: "high" });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ["POST /api/projects/p1/workspaces", "POST /api/onboarding/complete"]);
 });
 
@@ -91,10 +91,11 @@ test("skipping marks onboarding done and goes home", async () => {
   assert.equal(await env().skip(), "/");
 });
 
-test("the first session starts on the agent picked: the user's own, or the menu's default", () => {
-  assert.deepEqual(firstModel("claude"), { provider: "claude", model: "opus" });
-  assert.equal(firstModel("codex").provider, "codex");
-  assert.deepEqual(firstModel("outrunner"), {});
+test("the first session starts on the agent picked: the user's own at High, or Outrunner's, named", () => {
+  assert.deepEqual(firstModel("claude"), { provider: "claude", model: "opus", effort: "high" });
+  assert.deepEqual(firstModel("codex"), { provider: "codex", model: CODEX_MODELS[0].id, effort: "high" });
+  // Named, so a user whose Claude is connected still starts on what they picked.
+  assert.deepEqual(firstModel("outrunner"), { provider: "outrunner", model: OUTRUNNER_MODELS[0].id });
 });
 
 test("Codex on Outrunner's models starts Codex on Outrunner's first model, not Claude Code", async () => {

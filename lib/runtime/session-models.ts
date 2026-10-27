@@ -178,10 +178,12 @@ export function modelGroups(menu: ModelMenu, accounts: readonly AgentId[], agent
 }
 
 /**
- * What a new session starts on when none is chosen: Outrunner's first model,
- * on the user's own OpenRouter key when they saved one, else on Outrunner's
- * where the server has it, else the first model on the first key they have.
- * Null with none of those: the session starts on the user's Claude.
+ * What a new session starts on when none is chosen and the user's Claude
+ * isn't connected (where it is, the session starts on CLAUDE_DEFAULT_MODEL):
+ * Outrunner's first model, on the user's own OpenRouter key when they saved
+ * one, else on Outrunner's where the server has it, else the first model on
+ * the first key they have. Null with none of those: the session needs the
+ * user's Claude.
  */
 export function defaultModel(menu: ModelMenu): SessionModel | null {
   const first = OUTRUNNER_MODELS[0];

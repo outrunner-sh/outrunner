@@ -13,6 +13,8 @@ import {
   AnswerRequest,
   ProvideSecretsRequest,
   ArchiveWorkspaceRequest,
+  ChangedFileDiffResponse,
+  ChangesResponse,
   CreateWorkspaceRequest,
   EditorResponse,
   ErrorResponse,
@@ -71,6 +73,13 @@ const AGENT_LIFECYCLE_TIMEOUT_MS = 180_000;
 const AGENT_START_TIMEOUT_MS = 30_000;
 
 /**
+ * A send waits for Claude to record the prompt (about 8s of Enter presses),
+ * and the agent gives a hung tmux up to 30s before letting go. Outlast that,
+ * so a slow send the agent still delivers isn't reported here as unreachable.
+ */
+const AGENT_SEND_TIMEOUT_MS = 35_000;
+
+/**
  * A model switch checks the session (up to 10s on the agent) and relaunches
  * Claude on the new model (up to 60s), so it outlasts both.
  */
@@ -127,9 +136,7 @@ export class AgentClient {
    * reply streams back on the Conversation SSE; this just starts the turn.
    */
   sendMessage(identity: WorkspaceIdentity, content: string): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, {
-      content,
-    });
+    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, { content }, AGENT_SEND_TIMEOUT_MS);
   }
 
   /**
@@ -146,6 +153,20 @@ export class AgentClient {
   /** The servers running on the session's box, for its owner to open. */
   async listPorts(identity: WorkspaceIdentity): Promise<PortsResponse["ports"]> {
     return PortsResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/ports`, identity)).ports;
+  }
+
+  /** The session's changed files since its base branch, read by git on the
+   *  box: one request, where reading them from outside takes one per git
+   *  command. An agent from before this answers 404 with no error envelope. */
+  async listChanges(identity: WorkspaceIdentity): Promise<ChangesResponse["files"]> {
+    return ChangesResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/changes`, identity)).files;
+  }
+
+  /** One changed file's bounded diff, from the same base: 400 INVALID_REQUEST
+   *  for a path that isn't one, 404 NOT_FOUND for a file not in the changes. */
+  async changedFileDiff(identity: WorkspaceIdentity, path: string): Promise<string> {
+    const query = `?path=${encodeURIComponent(path)}`;
+    return ChangedFileDiffResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/changes${query}`, identity)).diff;
   }
 
   /** Stop the turn the workspace's session is running, as Escape does in its

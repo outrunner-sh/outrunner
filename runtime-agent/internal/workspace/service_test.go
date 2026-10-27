@@ -279,6 +279,34 @@ func TestUserTurnCountMissingDirIsZero(t *testing.T) {
 	}
 }
 
+func TestAPromptQueuedMidTurnCountsAsLanded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turn := `{"type":"user","message":{"role":"user","content":"fix it"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"on it, \"type\":\"user\""}]}}
+`
+	write(turn)
+	before := fileUserTurns(path)
+	if before != 1 {
+		t.Fatalf("one prompt counted as %d", before)
+	}
+	// Sent while Claude runs a tool: queued, not yet a user message.
+	write(turn + `{"type":"queue-operation","operation":"enqueue","content":"whats next?"}` + "\n")
+	if got := fileUserTurns(path); got <= before {
+		t.Errorf("a queued prompt didn't count: %d, was %d", got, before)
+	}
+	// Taken off the queue without being a prompt of its own (absorbed mid-turn): no more than queued.
+	write(turn + `{"type":"queue-operation","operation":"enqueue","content":"x"}` + "\n" + `{"type":"queue-operation","operation":"remove"}` + "\n")
+	if got := fileUserTurns(path); got != before+1 {
+		t.Errorf("enqueue then remove = %d, want %d", got, before+1)
+	}
+}
+
 func TestOnlyTheSameTextSoonAfterRetriesAStagedPrompt(t *testing.T) {
 	now := time.Now()
 	stage := func() *sendState {

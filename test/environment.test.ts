@@ -20,17 +20,12 @@ test("no changed files total to zero", () => {
 
 const cloud = { provider: "daytona" as const, branch: "runtime/abc", baseBranch: "main", worktreePath: "/work/abc" };
 
-test("a Daytona session runs on the project's Runtime Computer", () => {
+test("a cloud session works on its branch, in its worktree", () => {
   assert.deepEqual(environmentSummary(cloud), {
-    location: { kind: "cloud", label: "Cloud", detail: "runtime-computer" },
     branch: "runtime/abc",
     baseBranch: "main",
     workingPath: "/work/abc",
   });
-});
-
-test("another cloud provider is named by the provider", () => {
-  assert.equal(environmentSummary({ ...cloud, provider: "modal" }).location.detail, "modal");
 });
 
 test("a cloud session with no branch yet names no branch and no base", () => {
@@ -52,9 +47,8 @@ const local = {
   inPlace: false,
 };
 
-test("a local session in a worktree runs locally, on its own branch, in its worktree", () => {
+test("a local session in a worktree works on its own branch, in its worktree", () => {
   assert.deepEqual(environmentSummary(cloud, local), {
-    location: { kind: "local", label: "Local", detail: "This Mac · app" },
     branch: "runtime/xyz",
     baseBranch: "main",
     workingPath: "/Users/ada/.outrunner/workspaces/xyz",
