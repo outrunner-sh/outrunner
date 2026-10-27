@@ -132,6 +132,10 @@ export type ServerSessionOptions = {
   firstMessage?: string;
   /** Set it up before answering, not after: for a caller with no page waiting. */
   inline?: boolean;
+  /** Only on Outrunner's models metered to the user (their allowance): a
+   *  server whose models run on one shared key meters no one, and what the
+   *  server starts on its own mustn't spend it unwatched. */
+  meteredOnly?: boolean;
   /** Told how its setup ended. */
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
 };
@@ -214,6 +218,12 @@ export async function createCloudSession(
   // Said before a box is set up for it, not after.
   if (chosenModel?.provider === "outrunner" && !menu.outrunner) {
     return NextResponse.json({ error: "Outrunner's models aren't available on this server." }, { status: 409 });
+  }
+  if (options.meteredOnly && !menu.allowance) {
+    return NextResponse.json(
+      { error: "Outrunner's models aren't metered per user on this server, so automations don't run here." },
+      { status: 409 },
+    );
   }
   if (chosenModel?.provider === "claude" && !hasClaude) {
     return needsClaude("Connect Claude to start a session on your Claude account.");
