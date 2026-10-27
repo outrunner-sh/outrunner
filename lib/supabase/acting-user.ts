@@ -53,20 +53,20 @@ export async function actAsUser<T>(userId: string, work: () => Promise<T>): Prom
     throw new ActAsUserError(`Couldn't sign in as that user: ${linkError?.message ?? "no token"}`);
   }
   // Refreshed while the work runs: a setup that outlasts one access token
-  // (an hour) would otherwise fail its last writes.
+  // (an hour) would otherwise fail its last writes. Off the browser, auth-js
+  // starts that refresh as the client is made, so everything from here on is
+  // in the try: whatever happens, it stops and the session is signed out.
   const client = createClient<Database>(url, requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY"), {
     auth: { ...noSession, autoRefreshToken: true },
   });
-  const { data: verified, error: verifyError } = await client.auth.verifyOtp({
-    token_hash: link.properties.hashed_token,
-    type: "email",
-  });
-  if (verifyError || verified.user?.id !== userId) {
-    throw new ActAsUserError(`Couldn't sign in as that user: ${verifyError?.message ?? "another user"}`);
-  }
-
   try {
-    await client.auth.startAutoRefresh();
+    const { data: verified, error: verifyError } = await client.auth.verifyOtp({
+      token_hash: link.properties.hashed_token,
+      type: "email",
+    });
+    if (verifyError || verified.user?.id !== userId) {
+      throw new ActAsUserError(`Couldn't sign in as that user: ${verifyError?.message ?? "another user"}`);
+    }
     return await acting.run({ userId, client }, work);
   } finally {
     await client.auth.stopAutoRefresh();
