@@ -84,7 +84,22 @@ type CreateWorkspaceRequest struct {
 	Agent string `json:"agent,omitempty"`
 	// GitUser is the git identity for commits; nil uses the system default.
 	GitUser *GitUser `json:"gitUser,omitempty"`
+	// Repos, when set, make a session of a project's several repositories
+	// (FeatureMultiRepo): a folder of worktrees, one a repository, each off
+	// its mirror at $ROOT/repos/<checkout>.git, all on Branch. RepoFullName
+	// and BaseBranch are then the first's.
+	Repos []RepoCheckout `json:"repos,omitempty"`
 }
+
+// RepoCheckout is one repository of a multi-repository session.
+type RepoCheckout struct {
+	FullName   string `json:"fullName"`
+	Checkout   string `json:"checkout"`
+	BaseBranch string `json:"baseBranch"`
+}
+
+// FeatureMultiRepo is CreateWorkspaceRequest's Repos.
+const FeatureMultiRepo = "multi-repo"
 
 // SetModelRequest switches a workspace's session to another model. With a
 // gateway ("openrouter") the session runs through it on Token instead of the

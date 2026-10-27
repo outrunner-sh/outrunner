@@ -139,7 +139,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo},
 	})
 }
 
@@ -196,9 +196,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		Model:          req.Model,
 		Agent:          req.Agent,
 		GitUser:        gitUser,
+		Checkouts:      checkouts(req.Repos),
 	})
 	switch {
-	case errors.Is(err, workspace.ErrBypassInFolder):
+	case errors.Is(err, workspace.ErrBypassInFolder), errors.Is(err, workspace.ErrInvalidCheckouts):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	case err != nil:
@@ -247,6 +248,10 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	manifest, err := s.ws.Archive(r.Context(), r.PathValue("id"), req)
+	if errors.Is(err, workspace.ErrArchiveCheckouts) {
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
@@ -1236,4 +1241,16 @@ func validImportRestore(req protocol.RestoreWorkspaceRequest) error {
 		return fmt.Errorf("invalid origin folder %q", o)
 	}
 	return nil
+}
+
+// checkouts are a request's repositories as the workspace takes them.
+func checkouts(repos []protocol.RepoCheckout) []workspace.Checkout {
+	if len(repos) == 0 {
+		return nil
+	}
+	out := make([]workspace.Checkout, len(repos))
+	for i, r := range repos {
+		out[i] = workspace.Checkout{Name: r.Checkout, FullName: r.FullName, BaseBranch: r.BaseBranch}
+	}
+	return out
 }

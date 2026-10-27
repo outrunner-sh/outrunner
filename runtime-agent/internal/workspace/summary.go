@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -213,9 +214,22 @@ func gitStats(ctx context.Context, worktree string) (int, []string, int) {
 	if worktree == "" {
 		return 0, []string{}, 0
 	}
-	statusPaths := gitStatusPaths(ctx, worktree)
-	logPaths := gitLogPaths(ctx, worktree)
-	commits := gitCommitCount(ctx, worktree)
+	// A folder of checkouts: each one's, its paths under its folder.
+	var statusPaths, logPaths []string
+	commits := 0
+	for _, dir := range repoDirs(worktree) {
+		prefix := ""
+		if dir != worktree {
+			prefix = filepath.Base(dir) + "/"
+		}
+		for _, p := range gitStatusPaths(ctx, dir) {
+			statusPaths = append(statusPaths, prefix+p)
+		}
+		for _, p := range gitLogPaths(ctx, dir) {
+			logPaths = append(logPaths, prefix+p)
+		}
+		commits += gitCommitCount(ctx, dir)
+	}
 
 	// Union of status + log, deduped and sorted for a stable JSON response.
 	set := make(map[string]struct{}, len(statusPaths)+len(logPaths))

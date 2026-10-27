@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -29,21 +30,63 @@ var (
 )
 
 // Changes lists the worktree's changed files since it left its base branch,
-// committed or not, untracked included.
+// committed or not, untracked included. A folder of checkouts lists each
+// one's, its paths under its folder ("api/src/x.ts").
 func (s *Service) Changes(ctx context.Context, workspaceID string) ([]protocol.ChangedFile, error) {
-	files, _, err := s.changeSet(ctx, workspaceID)
-	return files, err
+	sets, err := s.changeSets(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	files := []protocol.ChangedFile{}
+	for _, set := range sets {
+		files = append(files, set.files...)
+	}
+	return files, nil
 }
 
-// changeSet is Changes and the commit it is measured from.
-func (s *Service) changeSet(ctx context.Context, workspaceID string) ([]protocol.ChangedFile, string, error) {
+// changeSetIn is one checkout's change set: its files (paths as listed),
+// where it is, the prefix its paths carry and the commit it is measured from.
+type changeSetIn struct {
+	files  []protocol.ChangedFile
+	dir    string
+	prefix string
+	base   string
+}
+
+// changeSets are the session's change sets, one a checkout.
+func (s *Service) changeSets(ctx context.Context, workspaceID string) ([]changeSetIn, error) {
 	f, ok := s.getFacts(workspaceID)
 	// A folder that is not a repository has no change set to show.
 	if ok && f.InPlace {
-		return []protocol.ChangedFile{}, "", nil
+		return nil, nil
 	}
 	worktree := s.worktreePath(workspaceID)
-	base := s.changeBase(ctx, worktree, f.BaseBranch)
+	if len(f.Checkouts) == 0 {
+		files, base, err := s.changeSet(ctx, worktree, f.BaseBranch)
+		if err != nil {
+			return nil, err
+		}
+		return []changeSetIn{{files: files, dir: worktree, base: base}}, nil
+	}
+	var sets []changeSetIn
+	for _, c := range f.Checkouts {
+		dir := filepath.Join(worktree, c.Name)
+		files, base, err := s.changeSet(ctx, dir, c.BaseBranch)
+		if err != nil {
+			return nil, err
+		}
+		prefix := c.Name + "/"
+		for i := range files {
+			files[i].Path = prefix + files[i].Path
+		}
+		sets = append(sets, changeSetIn{files: files, dir: dir, prefix: prefix, base: base})
+	}
+	return sets, nil
+}
+
+// changeSet is one checkout's changes and the commit they are measured from.
+func (s *Service) changeSet(ctx context.Context, worktree, baseBranch string) ([]protocol.ChangedFile, string, error) {
+	base := s.changeBase(ctx, worktree, baseBranch)
 	// Against a commit, `git diff` covers staged and unstaged changes alike.
 	diff := func(format string) (string, error) {
 		return s.gitRaw(ctx, worktree, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", format, "-z", base, "--")
@@ -131,15 +174,18 @@ func (s *Service) FileDiff(ctx context.Context, workspaceID, path string) (strin
 	if !safeRelativePath(path) {
 		return "", ErrInvalidPath
 	}
-	files, base, err := s.changeSet(ctx, workspaceID)
+	sets, err := s.changeSets(ctx, workspaceID)
 	if err != nil {
 		return "", err
 	}
 	var file *protocol.ChangedFile
-	for i := range files {
-		if files[i].Path == path {
-			file = &files[i]
-			break
+	var in changeSetIn
+	for _, set := range sets {
+		for i := range set.files {
+			if set.files[i].Path == path {
+				file, in = &set.files[i], set
+				break
+			}
 		}
 	}
 	if file == nil {
@@ -153,8 +199,8 @@ func (s *Service) FileDiff(ctx context.Context, workspaceID, path string) (strin
 	// file is listed only when it differs from that base, so its patch has
 	// something in it: a staged edit whose working copy was changed back is no
 	// longer listed at all.
-	diff, err := s.gitRaw(ctx, s.worktreePath(workspaceID),
-		"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", base, "--", path)
+	diff, err := s.gitRaw(ctx, in.dir,
+		"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", in.base, "--", strings.TrimPrefix(path, in.prefix))
 	if err != nil {
 		return "", err
 	}
