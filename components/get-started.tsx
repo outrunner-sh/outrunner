@@ -95,7 +95,7 @@ export function GetStarted({
         aria-expanded={!folded}
         className="flex w-full items-center gap-2 px-3 pt-3 text-left"
       >
-        <span className="text-sm font-medium">Get started</span>
+        <span className="text-[13px] font-medium">Get started</span>
         <span className="text-xs text-muted-foreground">
           {done}/{steps.length}
         </span>
@@ -116,7 +116,7 @@ export function GetStarted({
                   aria-disabled={step.done || undefined}
                   tabIndex={step.done ? -1 : undefined}
                   className={cn(
-                    "flex items-center gap-2.5 rounded-md px-1.5 py-1.5 text-sm",
+                    "flex items-center gap-2.5 rounded-md px-1.5 py-1 text-[13px]",
                     step.done ? "pointer-events-none text-muted-foreground line-through" : "hover:bg-accent",
                   )}
                 >

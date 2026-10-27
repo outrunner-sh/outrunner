@@ -3,7 +3,7 @@
 import { ArrowLeft, Check, ChevronRight, KeyRound, Sparkles } from "lucide-react";
 import { type ComponentType, useState } from "react";
 
-import { ClaudeIcon, OpenAIIcon } from "@/components/brand-icons";
+import { AgentIcon, ClaudeIcon } from "@/components/brand-icons";
 import { ClaudeConnection } from "@/components/claude-connection";
 import { ClaudeFromTerminal } from "@/components/claude-from-terminal";
 import { LoadingButton } from "@/components/ui/loading-button";
@@ -20,7 +20,6 @@ type Method = "subscription" | "api-key" | "outrunner";
 type Page = { at: "agents" } | { at: "methods"; agent: Agent } | { at: "connect"; agent: Agent; method: Method };
 
 const AGENT_NAMES: Record<Agent, string> = { claude: "Claude Code", codex: "OpenAI Codex" };
-const AGENT_ICONS: Record<Agent, ComponentType<{ className?: string }>> = { claude: ClaudeIcon, codex: OpenAIIcon };
 
 const NO_SUBSCRIPTION: ClaudeTokenMeta = { connected: false, last4: null, updatedAt: null };
 
@@ -80,9 +79,18 @@ export function AgentStep({
   if (page.at === "agents") {
     return (
       <Page title="Choose a coding agent">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {(["claude", "codex"] as const).map((agent) => (
-            <Row key={agent} icon={AGENT_ICONS[agent]} label={AGENT_NAMES[agent]} onClick={() => setPage({ at: "methods", agent })} />
+            <button
+              key={agent}
+              type="button"
+              onClick={() => setPage({ at: "methods", agent })}
+              className="border-border hover:border-foreground/40 bg-background group flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left text-sm transition-colors"
+            >
+              <AgentIcon agent={agent} className="size-5 shrink-0" />
+              <span className="flex-1">{AGENT_NAMES[agent]}</span>
+              <ChevronRight className="text-muted-foreground group-hover:text-foreground size-4" />
+            </button>
           ))}
         </div>
       </Page>
@@ -90,10 +98,9 @@ export function AgentStep({
   }
 
   const { agent } = page;
-  const Icon = AGENT_ICONS[agent];
   const title = (
     <>
-      Connect <Icon className="mx-1.5 inline size-5 align-[-3px]" /> <span className="font-normal">{AGENT_NAMES[agent]}</span>
+      Connect <AgentIcon agent={agent} className="mx-1.5 inline size-5 align-[-3px]" /> <span className="font-normal">{AGENT_NAMES[agent]}</span>
     </>
   );
 

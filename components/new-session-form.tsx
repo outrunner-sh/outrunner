@@ -30,7 +30,7 @@ import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { newSessionDetails } from "@/lib/session/new-session-target";
 
 /** One item in the row beneath the wordmark: where, what, which branch, how. */
-const CHIP = "inline-flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground";
+const CHIP = "inline-flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground [&_svg]:size-3.5";
 const CHIP_BUTTON = `${CHIP} transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50`;
 
 /**
@@ -156,7 +156,7 @@ export function NewSessionForm({
             )}
           </div>
         ) : (
-          <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[15px]">
+          <div className="flex max-w-full flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[13px]">
             {LOCAL_SESSIONS && <SessionLocationMenu state={where} disabled={busy} className={CHIP_BUTTON} />}
             {local ? (
               <LocalRepositoryButton
@@ -179,13 +179,13 @@ export function NewSessionForm({
             )}
             {details.branch && (
               <span className={CHIP} title="The branch the session starts from">
-                <GitBranch className="size-4 shrink-0" />
-                <span className="truncate font-mono text-sm">{details.branch}</span>
+                <GitBranch className="shrink-0" />
+                <span className="truncate font-mono text-[13px]">{details.branch}</span>
               </span>
             )}
             {details.worktree && (
               <span className={CHIP} title={details.worktree.title}>
-                <GitFork className="size-4 shrink-0" />
+                <GitFork className="shrink-0" />
                 {details.worktree.label}
               </span>
             )}

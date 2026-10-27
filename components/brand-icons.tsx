@@ -6,6 +6,8 @@
 
 import type { SVGProps } from "react";
 
+import { cn } from "@/lib/utils";
+
 type IconProps = SVGProps<SVGSVGElement>;
 
 /** Claude. */
@@ -122,12 +124,12 @@ export function ConductorIcon(props: IconProps) {
   );
 }
 
-/** An agent's mark, in its brand's colour. */
-export function AgentIcon({ agent, ...props }: IconProps & { agent: "claude" | "codex" }) {
+/** An agent's mark, in its brand's colour; a className sizes it without losing the colour. */
+export function AgentIcon({ agent, className, ...props }: IconProps & { agent: "claude" | "codex" }) {
   return agent === "codex" ? (
-    <CodexIcon className="size-4 text-[#7a9dff]" {...props} />
+    <CodexIcon className={cn("size-4 text-[#7a9dff]", className)} {...props} />
   ) : (
-    <ClaudeCodeIcon className="size-4 text-[#d97757]" {...props} />
+    <ClaudeCodeIcon className={cn("size-4 text-[#d97757]", className)} {...props} />
   );
 }
 

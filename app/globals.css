@@ -30,7 +30,7 @@
 }
 
 .dark {
-  --background: #060505;
+  --background: #121212;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -51,7 +51,7 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.696 0.17 162.48);
   --warning: oklch(0.769 0.157 70.08);
-  --sidebar: #0B0B0A;
+  --sidebar: #171717;
 }
 
 @theme inline {
@@ -111,18 +111,18 @@
    text on the black composer in light mode). The app is dark only — see the
    ThemeProvider in app/layout.tsx. */
 :root {
-  --studio-bg: #060505;
-  --studio-panel: #060505;
+  --studio-bg: #121212;
+  --studio-panel: #121212;
   --studio-panel-2: #1b1b1b;
   --studio-hover: #1e1e1e;
   --studio-selected: #232323;
   --studio-line: rgba(255, 255, 255, 0.08);
   --studio-line-strong: rgba(255, 255, 255, 0.14);
-  /* Warm hairline for the boxes on the page's black (the composer, its controls). */
-  --studio-border: #2d2926;
+  /* Hairline for the boxes on the page's background (the composer, its controls). */
+  --studio-border: #2a2a2a;
   --studio-text: #ededed;
   --studio-text-2: #cfcfcf;
-  --studio-muted: #978b88;
+  --studio-muted: #8f8f8f;
   --studio-dim: #6f6f6f;
   --studio-accent: #262626;
   --studio-on-accent: #ededed;
@@ -135,7 +135,7 @@
 .studio-shell {
   display: grid;
   /* A header across the top; beneath it the chat, and its Environment panel
-     as a narrow column of rows on the same black, no rule between them (it
+     as a narrow column of rows on the same background, no rule between them (it
      widens for Changes, below, where diffs open); just the chat when the
      panel is closed. The app sidebar is the layout's, outside this grid. */
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -157,10 +157,10 @@
 .studio-empty-chat code { color: var(--studio-text); font-family: var(--font-geist-mono); }
 .studio-empty-chat { max-width: 540px; margin: 17vh auto 0; text-align: center; }.studio-empty-icon { display: grid; width: 42px; height: 42px; margin: 0 auto 15px; place-items: center; border: 1px solid var(--studio-line); border-radius: 12px; color: var(--studio-muted); background: var(--studio-panel); }.studio-empty-icon svg { width:20px; }.studio-empty-chat h3 { margin: 0; color: var(--studio-text); font-size: 18px; letter-spacing: -.02em; }.studio-empty-chat p { margin: 9px auto 0; color: var(--studio-muted); font-size: 13px; line-height: 1.65; }
 
-/* Composer: a square-cornered bordered box on the page's own black, the text
+/* Composer: a square-cornered bordered box on the page's own background, the text
    above and its controls below. */
 .studio-composer { position: relative; margin: 12px auto 18px; max-width: 736px; width: calc(100% - 32px); border: 1px solid var(--studio-border); border-radius: 4px; background: var(--studio-bg); }
-.studio-composer:focus-within { border-color: #423c38; }
+.studio-composer:focus-within { border-color: #3a3a3a; }
 .studio-composer textarea { display:block; width:100%; resize:none; min-height:56px; padding:14px 16px 10px; border:0; outline:0; color:var(--studio-text); background:transparent; font:14px var(--font-geist-sans); }
 .studio-composer textarea::placeholder { color:#6f6f6f !important; opacity:1; }
 .studio-composer textarea:disabled { cursor:not-allowed; opacity:.7; }
@@ -180,7 +180,7 @@
 .studio-composer-footer .studio-composer-stop svg:not(.spinner) { width:10px; height:10px; fill:currentColor; }
 .studio-composer-footer .studio-composer-send:disabled { color:rgba(255,255,255,.45); border-color:rgba(255,255,255,.14); background:transparent; }
 .studio-question { position: relative; margin: 12px auto 18px; max-width: 736px; width: calc(100% - 32px); padding: 12px 12px 8px; border: 1px solid var(--studio-border); border-radius: 4px; color: var(--studio-text); background: var(--studio-bg); font: 14px var(--font-geist-sans); outline: 0; animation: placeholder-in .3s cubic-bezier(.23, 1, .32, 1) both; }
-.studio-question:focus-within, .studio-question:focus { border-color: #423c38; }
+.studio-question:focus-within, .studio-question:focus { border-color: #3a3a3a; }
 .studio-question-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--studio-muted); font-size: 12px; }
 .studio-question-head button { display: grid; width: 24px; height: 24px; place-items: center; border: 0; border-radius: 3px; color: var(--studio-muted); background: transparent; cursor: pointer; }
 .studio-question-head button:hover { color: var(--studio-text); background: var(--studio-hover); }
@@ -348,7 +348,7 @@
 .md-body blockquote { margin: 0 0 12px; padding: 2px 0 2px 13px; border-left: 2px solid #333; color: #9a9a9a; }
 .md-body hr { margin: 20px 0; border: 0; border-top: 1px solid rgba(255,255,255,.1); }
 /* Inline code: a dark chip with a hairline edge. */
-.md-body :not(pre) > code { padding: 2px 5px; border: 1px solid #1d1a18; border-radius: 4px; color: #fdfcfb; background: #151311; font: 0.9em var(--font-geist-mono); }
+.md-body :not(pre) > code { padding: 2px 5px; border: 1px solid #262626; border-radius: 4px; color: #fdfcfb; background: #1a1a1a; font: 0.9em var(--font-geist-mono); }
 /* Fenced blocks: framed panel on a dark field. */
 .md-body pre { margin: 0 0 14px; padding: 13px 15px; overflow-x: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; background: #161616; }
 .md-body pre code { padding: 0; border-radius: 0; color: #e6e6e6; background: transparent; font: 12.5px/1.65 var(--font-geist-mono); }
@@ -496,7 +496,7 @@
 .timeline-tool > summary::-webkit-details-marker { display: none; }
 .timeline-tool > summary:hover, .timeline-tool[open] > summary { color: var(--studio-text); }
 .timeline-tool > summary:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
-.timeline-tool > summary > svg { width: 15px; height: 15px; flex-shrink: 0; color: #8a7e7b; }
+.timeline-tool > summary > svg { width: 15px; height: 15px; flex-shrink: 0; color: #8a8a8a; }
 .timeline-tool-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px 10px; border-top: 1px solid var(--studio-border); }
-.timeline-tool-body pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 3px; color: #b9b1ae; background: #0d0b0a; font: 11.5px/1.6 var(--font-geist-mono); }
-.timeline-tool-heading { display: flex; justify-content: space-between; margin-top: 4px; color: #8a7e7b; font-size: 11px; }
+.timeline-tool-body pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 3px; color: #b4b4b4; background: #0d0d0d; font: 11.5px/1.6 var(--font-geist-mono); }
+.timeline-tool-heading { display: flex; justify-content: space-between; margin-top: 4px; color: #8a8a8a; font-size: 11px; }
