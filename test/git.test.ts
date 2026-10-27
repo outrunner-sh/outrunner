@@ -265,3 +265,20 @@ test("syncMirrors fetches the mirrors a box has and clones the rest, or another 
     assert.ok(shown.includes(`git init --bare /r/repos/${name}.git`), name);
   }
 });
+
+test("syncMirrors never deletes another repository's mirror a worktree still uses", async () => {
+  const calls: string[] = [];
+  const exec: GitExec = async (argv) => {
+    calls.push(argv.join(" "));
+    if (argv.includes("get-url")) return { stdout: "https://github.com/old-org/api.git\n", stderr: "", exitCode: 0 };
+    if (argv.includes("worktree")) {
+      return { stdout: "worktree /r/repos/api.git\nbare\n\nworktree /r/workspaces/ws1/api\nbranch refs/heads/b\n", stderr: "", exitCode: 0 };
+    }
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+  await assert.rejects(
+    syncMirrors(exec, { root: "/r/repos", repos: [{ fullName: "acme/api", checkout: "api" }] }),
+    /belongs to another repository/,
+  );
+  assert.ok(!calls.some((c) => c.startsWith("rm ")), calls.join("\n"));
+});

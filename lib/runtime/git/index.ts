@@ -265,16 +265,27 @@ export async function syncMirrors(
 ): Promise<void> {
   for (const repo of input.repos) {
     const dir = `${input.root}/${repo.checkout}.git`;
-    // A mirror of another repository in the same folder (one removed from
-    // the project, another of the same name added; or renamed on GitHub)
-    // is cloned again, never branched from.
+    // A mirror the folder already holds is fetched. One of another
+    // repository (removed from the project and another of the same name
+    // added, or renamed on GitHub) is cloned again, but only while no
+    // worktree uses it: a session's unpushed commits live in its objects.
+    // None there, or half made, is cloned.
     const origin = await exec(["git", "-C", dir, "remote", "get-url", "origin"]);
     if (origin.exitCode === 0 && origin.stdout.trim() === remoteUrl(repo.fullName)) {
       await fetchMirror(exec, { repoDir: dir, token: input.token });
-    } else {
-      await exec(["rm", "-rf", dir]); // a clone cut off half way
-      await cloneMirror(exec, { repoFullName: repo.fullName, dir, token: input.token });
+      continue;
     }
+    if (origin.exitCode === 0) {
+      const trees = await exec(["git", "-C", dir, "worktree", "list", "--porcelain"]);
+      const inUse = trees.stdout.split("\n").filter((line) => line.startsWith("worktree ")).length > 1;
+      if (trees.exitCode !== 0 || inUse) {
+        throw new Error(
+          `This box's ${repo.checkout} folder belongs to another repository (${origin.stdout.trim()}) that a session still uses.`,
+        );
+      }
+    }
+    await exec(["rm", "-rf", dir]);
+    await cloneMirror(exec, { repoFullName: repo.fullName, dir, token: input.token });
   }
 }
 
