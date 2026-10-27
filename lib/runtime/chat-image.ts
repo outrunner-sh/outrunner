@@ -12,17 +12,19 @@ export const BOX_IMAGE_MAX_BYTES = 6 * 1024 * 1024;
 /**
  * The path on the box a markdown image's `src` names, or null for one the
  * browser loads by itself (http:, https:, data:, blob: and any other scheme).
- * `file://` paths count as paths; a percent-encoded one is decoded.
+ * `file://` paths count as paths. As a URL's: what follows an unescaped `?`
+ * or `#` isn't the file's name, and percent-escapes (`%20`, `%23`) are.
  */
 export function localImagePath(src: string | undefined): string | null {
   const raw = src?.trim();
   if (!raw) return null;
   const path = raw.startsWith("file://") ? raw.slice("file://".length) : raw;
   if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("//")) return null;
+  const file = path.replace(/[?#].*$/, "");
   try {
-    return decodeURI(path) || null;
+    return decodeURIComponent(file) || null;
   } catch {
-    return path;
+    return file || null;
   }
 }
 
@@ -59,20 +61,42 @@ export function sniffImage(bytes: Uint8Array): ImageType | null {
 export const IMAGE_MISSING = 3;
 export const IMAGE_TOO_LARGE = 4;
 
+/** What {@link imageReadCommand} puts around the image's base64, so whatever
+ *  else lands in the output (a login shell's banner) is left out of it. */
+const START = "<<outrunner-image>>";
+const END = "<</outrunner-image>>";
+
 /**
- * The command that prints the file at `path` on the box as base64, or exits
- * IMAGE_MISSING (no such regular file) or IMAGE_TOO_LARGE (past
+ * The command that prints the file at `path` on the box as base64, between
+ * markers (read back with {@link imageBase64}), or exits IMAGE_MISSING
+ * (no such readable regular file) or IMAGE_TOO_LARGE (past
  * BOX_IMAGE_MAX_BYTES). Its own shell, as the box's exec isn't one, and quiet
- * on stderr, which the providers fold into the output it's decoded from.
+ * on stderr, which the providers fold into the output. The read itself is
+ * bounded too, as the file can grow after it's measured; a read that fails
+ * fails the command (pipefail).
  */
 export function imageReadCommand(path: string): string {
   const script = [
+    "set -o pipefail",
     `f=${quote(path)}`,
-    `[ -f "$f" ] || exit ${IMAGE_MISSING}`,
+    `[ -f "$f" ] && [ -r "$f" ] || exit ${IMAGE_MISSING}`,
     `[ "$(wc -c < "$f" 2>/dev/null)" -le ${BOX_IMAGE_MAX_BYTES} ] || exit ${IMAGE_TOO_LARGE}`,
-    `base64 < "$f" 2>/dev/null | tr -d '\\n'`,
+    `printf '%s' ${quote(START)}`,
+    `head -c ${BOX_IMAGE_MAX_BYTES + 1} "$f" 2>/dev/null | base64 | tr -d '\\n'`,
+    `printf '%s' ${quote(END)}`,
   ].join("; ");
   return `bash -c ${quote(script)}`;
+}
+
+/** The base64 {@link imageReadCommand} printed, or null for output it
+ *  didn't print (no markers, or something not base64 between them). Past
+ *  BOX_IMAGE_MAX_BYTES once decoded, the file grew as it was read. */
+export function imageBase64(output: string): string | null {
+  const start = output.indexOf(START);
+  const end = output.indexOf(END, start + START.length);
+  if (start < 0 || end < 0) return null;
+  const payload = output.slice(start + START.length, end);
+  return /^[A-Za-z0-9+/]*={0,2}$/.test(payload) ? payload : null;
 }
 
 /** Single-quoted for the shell. */

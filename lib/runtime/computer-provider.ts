@@ -7,7 +7,13 @@ import { optionalEnv } from "@/lib/env";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
 import { AgentEndpointCache } from "@/lib/runtime/agent-endpoint-cache";
 import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
-import { IMAGE_MISSING, IMAGE_TOO_LARGE, imageReadCommand } from "@/lib/runtime/chat-image";
+import {
+  BOX_IMAGE_MAX_BYTES,
+  IMAGE_MISSING,
+  IMAGE_TOO_LARGE,
+  imageBase64,
+  imageReadCommand,
+} from "@/lib/runtime/chat-image";
 import {
   AGENT_PORT,
   deployClaude,
@@ -469,7 +475,11 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     if (exitCode === IMAGE_MISSING) return "missing";
     if (exitCode === IMAGE_TOO_LARGE) return "too-large";
     if (exitCode !== 0) throw new Error(`Reading ${path} off the box exited ${exitCode}`);
-    return Buffer.from(stdout.trim(), "base64");
+    const base64 = imageBase64(stdout);
+    if (base64 === null) throw new Error(`Reading ${path} off the box printed no image`);
+    const bytes = Buffer.from(base64, "base64");
+    // It grew past the cap between being measured and read.
+    return bytes.length > BOX_IMAGE_MAX_BYTES ? "too-large" : bytes;
   }
 
   /** Push an interactive worktree's persisted branch with a request-scoped token. */
