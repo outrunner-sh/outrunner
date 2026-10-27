@@ -3,16 +3,16 @@
  * test on their own (wired in app/api/orgs/route.ts).
  *
  * One org per email domain: the org takes the domain of its creator's primary
- * verified email (a free mail provider's never counts). If an org has already
- * claimed one of the creator's domains, no org is made; they're pointed at
- * that one to ask to join instead.
+ * verified email (a free mail provider's never counts; lib/orgs/domains.ts).
+ * If an org has claimed that domain already, no org is made; the creator is
+ * pointed at that one to ask to join instead.
  */
 
 import type { DomainOrg } from "@/lib/db/orgs";
-import { claimableDomains, type VerifiedEmail } from "@/lib/orgs/domains";
+import { primaryDomain, type VerifiedEmail } from "@/lib/orgs/domains";
 
 export type CreateTeamOrgDeps = {
-  /** The creator's emails GitHub has verified, primary first. */
+  /** The creator's emails GitHub has verified. */
   verifiedEmails(): Promise<VerifiedEmail[]>;
   /** The orgs that have claimed any of these domains. */
   orgsForDomains(domains: string[]): Promise<DomainOrg[]>;
@@ -29,10 +29,11 @@ export async function createTeamOrgFor(
   name: string,
   deps: CreateTeamOrgDeps,
 ): Promise<CreateTeamOrgOutcome> {
-  const domains = claimableDomains(await deps.verifiedEmails());
-  const [existing] = await deps.orgsForDomains(domains);
-  if (existing) return { made: false, existing };
-  const domain = domains[0] ?? null;
+  const domain = primaryDomain(await deps.verifiedEmails());
+  if (domain) {
+    const [existing] = await deps.orgsForDomains([domain]);
+    if (existing) return { made: false, existing };
+  }
   const orgId = await deps.create({ name, creatorId, domain });
   return { made: true, orgId, domain };
 }

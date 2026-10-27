@@ -35,7 +35,10 @@ export async function GET(request: Request) {
     const token = await requireGithubToken(owner.id);
     const [list, projects] = await Promise.all([
       cachedRepositoryList(owner.id, () => listGitHubRepositories(token), { fresh }),
-      activeOrgId().then((orgId) => listProjects(orgId)),
+      // Only marks what's connected: without the orgs, every org's projects.
+      activeOrgId()
+        .catch(() => undefined)
+        .then((orgId) => listProjects(orgId)),
     ]);
 
     return NextResponse.json(

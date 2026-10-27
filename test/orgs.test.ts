@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { orgName, pickActiveOrg, sortOrgs, type Org } from "@/lib/orgs/active";
-import { claimableDomains, emailDomain, isPublicDomain } from "@/lib/orgs/domains";
+import { emailDomain, isPublicDomain, primaryDomain } from "@/lib/orgs/domains";
 
 const personal: Org = { id: "p", name: "Personal", personal: true, role: "admin" };
 const team: Org = { id: "t", name: "Zerotrail", personal: false, role: "member" };
@@ -45,22 +45,43 @@ test("an email's domain, lower case; not one for something else", () => {
 });
 
 test("free mail providers and GitHub's addresses are never claimed", () => {
-  for (const domain of ["gmail.com", "outlook.com", "proton.me", "users.noreply.github.com", "gmx.de", "yahoo.co.uk"]) {
+  for (const domain of [
+    "gmail.com",
+    "outlook.com",
+    "proton.me",
+    "users.noreply.github.com",
+    "gmx.de",
+    "yahoo.co.uk",
+    "web.de",
+    "mail.ru",
+    "tutanota.com",
+    "tuta.io",
+    "duck.com",
+    "naver.com",
+    "rediffmail.com",
+  ]) {
     assert.equal(isPublicDomain(domain), true, domain);
   }
   assert.equal(isPublicDomain("zerotrail.ai"), false);
 });
 
-test("the domains a user could claim: their primary email's first, each once, no free mail", () => {
-  assert.deepEqual(
-    claimableDomains([
-      { email: "me@gmail.com", primary: false },
+test("the domain an org claims is the primary verified email's, never a secondary one's", () => {
+  assert.equal(
+    primaryDomain([
       { email: "me@side.dev", primary: false },
       { email: "sahin@zerotrail.ai", primary: true },
-      { email: "other@side.dev", primary: false },
-      { email: "123+me@users.noreply.github.com", primary: false },
     ]),
-    ["zerotrail.ai", "side.dev"],
+    "zerotrail.ai",
   );
-  assert.deepEqual(claimableDomains([{ email: "me@gmail.com", primary: true }]), []);
+  // A primary on free mail claims nothing, even beside a work email left
+  // verified from an old job.
+  assert.equal(
+    primaryDomain([
+      { email: "me@gmail.com", primary: true },
+      { email: "me@old-job.com", primary: false },
+    ]),
+    null,
+  );
+  assert.equal(primaryDomain([{ email: "me@old-job.com", primary: false }]), null);
+  assert.equal(primaryDomain([]), null);
 });

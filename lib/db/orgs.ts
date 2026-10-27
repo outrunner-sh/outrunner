@@ -6,13 +6,16 @@
  */
 
 import { type Org, type OrgRole, sortOrgs } from "@/lib/orgs/active";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
-/** The signed-in user's orgs, personal first, with their role in each. */
+/** The signed-in user's orgs, personal first, with their role in each; none
+ *  before the migration that adds orgs. */
 export async function listMyOrgs(): Promise<Org[]> {
   const supabase = await createSupabaseServerClient();
   // RLS: their own memberships, and the orgs they're a member of.
   const { data: memberships, error } = await supabase.from("organization_members").select("org_id, role");
+  if (error && probeStatus(error) === "missing") return [];
   if (error) throw error;
   if (!memberships?.length) return [];
   const { data: orgs, error: orgsError } = await supabase
@@ -32,6 +35,22 @@ export async function listMyOrgs(): Promise<Org[]> {
       role: roles.get(o.id) ?? "member",
     })),
   );
+}
+
+/** Whether a project is in a team org, which has other members: false for a
+ *  personal org's, and for one the user can't see. */
+export async function inTeamOrg(projectId: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data: project, error } = await supabase.from("projects").select("org_id").eq("id", projectId).maybeSingle();
+  if (error) throw error;
+  if (!project) return false;
+  const { data: org, error: orgError } = await supabase
+    .from("organizations")
+    .select("personal_owner_id")
+    .eq("id", project.org_id)
+    .maybeSingle();
+  if (orgError) throw orgError;
+  return org !== null && org.personal_owner_id === null;
 }
 
 /** A user's role in an org, or null when they aren't a member. */
@@ -106,10 +125,12 @@ export async function createTeamOrg(input: { name: string; creatorId: string; do
     creator: input.creatorId,
     claimed_domain: input.domain,
   });
+  // Which unique index refused it, by name (20261028120000_team_orgs.sql);
+  // any other stays the error it is.
   if (error?.code === "23505") {
-    throw new TeamOrgError(
-      `${error.message} ${error.details ?? ""}`.includes("organization_domains") ? "domain_taken" : "one_team_org",
-    );
+    const text = `${error.message} ${error.details ?? ""}`;
+    if (text.includes("organization_domains_pkey")) throw new TeamOrgError("domain_taken");
+    if (text.includes("organizations_one_team_org_per_creator")) throw new TeamOrgError("one_team_org");
   }
   if (error) throw error;
   if (typeof data !== "string") throw new Error("create_team_org returned no org.");

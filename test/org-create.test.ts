@@ -33,7 +33,14 @@ test("a team org claims the creator's primary email's domain", async () => {
   assert.deepEqual(made, [{ name: "Zerotrail", creatorId: "u1", domain: "zerotrail.ai" }]);
 });
 
-test("an org for any of the creator's domains already: none is made, and they're pointed at it", async () => {
+test("an org has the creator's domain already: none is made, and they're pointed at it", async () => {
+  const { d, made, asked } = deps([{ email: "sahin@zerotrail.ai", primary: true }], [zerotrail]);
+  assert.deepEqual(await createTeamOrgFor("u1", "Mine", d), { made: false, existing: zerotrail });
+  assert.deepEqual(asked, [["zerotrail.ai"]]);
+  assert.deepEqual(made, []);
+});
+
+test("a secondary email's domain neither blocks the creator nor is claimed", async () => {
   const { d, made, asked } = deps(
     [
       { email: "me@side.dev", primary: true },
@@ -41,14 +48,14 @@ test("an org for any of the creator's domains already: none is made, and they're
     ],
     [zerotrail],
   );
-  assert.deepEqual(await createTeamOrgFor("u1", "Mine", d), { made: false, existing: zerotrail });
-  assert.deepEqual(asked, [["side.dev", "zerotrail.ai"]]);
-  assert.deepEqual(made, []);
+  assert.deepEqual(await createTeamOrgFor("u1", "Side", d), { made: true, orgId: "new-org", domain: "side.dev" });
+  assert.deepEqual(asked, [["side.dev"]]);
+  assert.equal(made[0]?.domain, "side.dev");
 });
 
 test("only free mail: the org is made claiming no domain, and blocks no one", async () => {
   const { d, made, asked } = deps([{ email: "me@gmail.com", primary: true }]);
   assert.deepEqual(await createTeamOrgFor("u1", "Side project", d), { made: true, orgId: "new-org", domain: null });
-  assert.deepEqual(asked, [[]]);
+  assert.deepEqual(asked, []);
   assert.equal(made[0]?.domain, null);
 });

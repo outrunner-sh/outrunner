@@ -22,7 +22,18 @@ export default function OrgSettings() {
 async function OrgSection() {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/org");
-  const context = await getOrgContext();
+  const context = await getOrgContext().catch((error: unknown) => {
+    console.error("Settings → Org: could not load orgs", error);
+    return undefined;
+  });
+  if (context === undefined) {
+    return (
+      <section className="space-y-6">
+        <h1 className="text-lg font-semibold text-foreground">Org</h1>
+        <p className="text-sm text-muted-foreground">Couldn&apos;t load your orgs. Reload the page to try again.</p>
+      </section>
+    );
+  }
   if (!context) {
     return (
       <section className="space-y-6">

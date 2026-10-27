@@ -70,7 +70,10 @@ async function SidebarData() {
   // The active org's projects and the user's sessions in it (lib/orgs/active.ts).
   // The sidebar is auxiliary: a failed load shows an empty list, never an error
   // page in place of the session the user opened.
-  const orgs = await getOrgContext();
+  const orgs = await getOrgContext().catch((error: unknown) => {
+    console.error("Sidebar: could not load orgs", error);
+    return null;
+  });
   const orgId = orgs?.active.id;
   const [listed, workspaces] = await Promise.all([
     listProjectsOnce(orgId).catch((error: unknown): Project[] => {

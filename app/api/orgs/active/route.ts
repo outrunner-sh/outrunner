@@ -15,7 +15,11 @@ export async function POST(request: Request) {
   if (!owner) return signInFirst();
 
   const body = (await request.json().catch(() => null)) as { orgId?: unknown } | null;
-  const orgs = await listMyOrgs();
+  const orgs = await listMyOrgs().catch((error: unknown) => {
+    console.error("Could not list the user's orgs", error);
+    return null;
+  });
+  if (!orgs) return NextResponse.json({ error: "Couldn't switch orgs. Try again." }, { status: 500 });
   const org = orgs.find((o) => o.id === body?.orgId);
   if (!org) return NextResponse.json({ error: "You aren't a member of that org." }, { status: 404 });
   await setActiveOrg(org.id);

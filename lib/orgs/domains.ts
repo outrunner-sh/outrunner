@@ -1,41 +1,21 @@
 /**
- * The email domain a team org claims: its creator's, from an email GitHub has
- * verified, and never a free mail provider's. Anyone can have a gmail.com
- * address, so claiming one would let one org stand in the way of every
- * gmail user making their own.
+ * The email domain a team org claims: its creator's primary email's, as
+ * GitHub has verified it, and never a free mail provider's. Anyone can have a
+ * gmail.com address, so claiming one would let one org stand in the way of
+ * every gmail user making their own.
+ *
+ * Only the primary email counts. GitHub never un-verifies an email, so a
+ * secondary one may be a job left years ago; the primary is the one its owner
+ * says is theirs now.
  */
 
-/** Free mail providers and GitHub's own addresses: never claimed. */
-const PUBLIC_DOMAINS: ReadonlySet<string> = new Set([
-  "gmail.com",
-  "googlemail.com",
-  "outlook.com",
-  "hotmail.com",
-  "live.com",
-  "msn.com",
-  "yahoo.com",
-  "ymail.com",
-  "icloud.com",
-  "me.com",
-  "mac.com",
-  "aol.com",
-  "proton.me",
-  "protonmail.com",
-  "pm.me",
-  "zoho.com",
-  "yandex.com",
-  "yandex.ru",
-  "mail.com",
-  "hey.com",
-  "fastmail.com",
-  "qq.com",
-  "163.com",
-  "126.com",
-  "users.noreply.github.com",
-]);
+import freeEmailDomains from "free-email-domains";
 
-/** Prefixes of providers with a domain per country: gmx.de, web.de's peers. */
-const PUBLIC_PREFIXES = ["gmx.", "yahoo.", "hotmail.", "outlook.", "live."];
+/** A maintained list of free mail providers (the free-email-domains package). */
+const FREE_DOMAINS: ReadonlySet<string> = new Set(freeEmailDomains);
+
+/** What that list doesn't have: GitHub's own addresses, and a few providers. */
+const ALSO_PUBLIC: ReadonlySet<string> = new Set(["users.noreply.github.com", "tutanota.com", "tutanota.de", "tutamail.com"]);
 
 /** The domain of an email, lower case; null for something that isn't one. */
 export function emailDomain(email: string): string | null {
@@ -47,22 +27,18 @@ export function emailDomain(email: string): string | null {
 
 /** Whether a domain is a free mail provider's (or GitHub's), never claimed. */
 export function isPublicDomain(domain: string): boolean {
-  return PUBLIC_DOMAINS.has(domain) || PUBLIC_PREFIXES.some((prefix) => domain.startsWith(prefix));
+  return FREE_DOMAINS.has(domain) || ALSO_PUBLIC.has(domain);
 }
 
 export type VerifiedEmail = { email: string; primary: boolean };
 
 /**
- * The domains of a user's verified emails an org could claim, their primary
- * email's first: the one a new team org takes. Empty when every one is a
- * free mail provider's.
+ * The domain a user's org would claim, and is matched against orgs that have:
+ * their primary verified email's. Null when it's a free mail provider's, or
+ * they have no primary email GitHub has verified.
  */
-export function claimableDomains(emails: readonly VerifiedEmail[]): string[] {
-  const ordered = [...emails].sort((a, b) => Number(b.primary) - Number(a.primary));
-  const domains: string[] = [];
-  for (const { email } of ordered) {
-    const domain = emailDomain(email);
-    if (domain && !isPublicDomain(domain) && !domains.includes(domain)) domains.push(domain);
-  }
-  return domains;
+export function primaryDomain(emails: readonly VerifiedEmail[]): string | null {
+  const primary = emails.find((e) => e.primary);
+  const domain = primary ? emailDomain(primary.email) : null;
+  return domain && !isPublicDomain(domain) ? domain : null;
 }

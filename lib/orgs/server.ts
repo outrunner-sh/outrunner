@@ -14,19 +14,21 @@ export type OrgContext = {
 /**
  * The signed-in user's orgs and the active one, once per request (React
  * `cache`): the sidebar, the page and the route all ask. Null for a user in
- * no org, which every user is (a personal org is made with the account), or
- * before the migration that adds orgs.
+ * no org (every user has a personal org, made with the account) or before
+ * the migration that adds orgs.
+ *
+ * Throws when the orgs can't be read. A reader may carry on without them (the
+ * sidebar lists every org's projects then); a writer must not, or what the
+ * user meant for a team org would land in their personal one.
  */
 export const getOrgContext = cache(async (): Promise<OrgContext | null> => {
-  const orgs = await listMyOrgs().catch((error: unknown) => {
-    console.error("Could not list the user's orgs", error);
-    return [];
-  });
+  const orgs = await listMyOrgs();
   const active = pickActiveOrg(orgs, (await cookies()).get(ACTIVE_ORG_COOKIE)?.value);
   return active ? { orgs, active } : null;
 });
 
-/** The active org's id, or undefined when there's none to filter by. */
+/** The active org's id, or undefined when there's none (before orgs).
+ *  Throws when the orgs can't be read: see {@link getOrgContext}. */
 export async function activeOrgId(): Promise<string | undefined> {
   return (await getOrgContext())?.active.id;
 }
