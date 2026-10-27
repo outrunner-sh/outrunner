@@ -7,6 +7,7 @@
  */
 
 import type { AutomationTrigger } from "@/lib/automations/rules";
+import { currentRunners } from "@/lib/db/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** An enabled automation a pull request event may start, on one repository. */
@@ -66,12 +67,10 @@ export async function automationsForPullRequest(installationId: number, repoFull
   const byId = new Map((automations ?? []).map((a) => [a.id, a]));
   // A runner who has left the org (their account kept) runs nothing more:
   // their allowance isn't the org's to spend.
-  const runners = [...new Set((automations ?? []).flatMap((a) => (a.runs_as ? [a.runs_as] : [])))];
-  const { data: members, error: membersError } = runners.length
-    ? await supabase.from("organization_members").select("user_id").eq("org_id", orgId).in("user_id", runners)
-    : { data: [], error: null };
-  if (membersError) throw membersError;
-  const stillMembers = new Set((members ?? []).map((m) => m.user_id));
+  const stillMembers = await currentRunners(
+    orgId,
+    (automations ?? []).flatMap((a) => (a.runs_as ? [a.runs_as] : [])),
+  );
   return repos.flatMap((r) => {
     const a = byId.get(r.automation_id);
     if (!a) return [];
