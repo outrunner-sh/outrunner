@@ -281,4 +281,7 @@ test("syncMirrors never deletes another repository's mirror a worktree still use
     /belongs to another repository/,
   );
   assert.ok(!calls.some((c) => c.startsWith("rm ")), calls.join("\n"));
+  // Stale entries are pruned before the mirror is judged in use.
+  assert.ok(calls.indexOf("git -C /r/repos/api.git worktree prune") < calls.indexOf("git -C /r/repos/api.git worktree list --porcelain"));
+  assert.ok(calls.includes("git -C /r/repos/api.git worktree prune"));
 });

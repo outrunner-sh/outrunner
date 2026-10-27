@@ -276,6 +276,8 @@ export async function syncMirrors(
       continue;
     }
     if (origin.exitCode === 0) {
+      // Entries whose folder went (a crash, a lost folder) don't count.
+      await exec(["git", "-C", dir, "worktree", "prune"]);
       const trees = await exec(["git", "-C", dir, "worktree", "list", "--porcelain"]);
       const inUse = trees.stdout.split("\n").filter((line) => line.startsWith("worktree ")).length > 1;
       if (trees.exitCode !== 0 || inUse) {
