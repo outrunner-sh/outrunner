@@ -783,3 +783,199 @@ begin
 end $$;
 
 reset role;
+
+-- 23. Orgs: every user has a personal org they're admin of, a new user's too,
+-- and their projects, sessions and boxes are in it.
+insert into auth.users (id, email)
+values ('33333333-3333-3333-3333-333333333333', 'third@example.com');
+
+do $$
+declare n integer;
+begin
+  select count(*) into n from auth.users u
+  where not exists (
+    select 1 from organizations o
+    join organization_members m on m.org_id = o.id and m.user_id = u.id and m.role = 'admin'
+    where o.personal_owner_id = u.id
+  );
+  if n <> 0 then
+    raise exception 'FAIL: % users have no personal org they are admin of', n;
+  end if;
+  select count(*) into n from projects p
+  join organizations o on o.id = p.org_id
+  where o.personal_owner_id is distinct from p.owner_id;
+  if n <> 0 then
+    raise exception 'FAIL: % projects are not in their owner''s personal org', n;
+  end if;
+  select count(*) into n from workspaces w join projects p on p.id = w.project_id
+  where w.org_id <> p.org_id;
+  if n <> 0 then
+    raise exception 'FAIL: % sessions are not in their project''s org', n;
+  end if;
+  select count(*) into n from runtime_computers c join projects p on p.id = c.project_id
+  where c.org_id <> p.org_id;
+  if n <> 0 then
+    raise exception 'FAIL: % boxes are not in their project''s org', n;
+  end if;
+  -- A session names its project's org whatever org it is given.
+  insert into workspaces (owner_id, project_id, branch, org_id)
+  select '11111111-1111-1111-1111-111111111111', p.id, 'org-forged', o.id
+  from projects p, organizations o
+  where p.owner_id = '11111111-1111-1111-1111-111111111111'
+    and o.personal_owner_id = '22222222-2222-2222-2222-222222222222'
+  limit 1;
+  if exists (
+    select 1 from workspaces w join projects p on p.id = w.project_id
+    where w.branch = 'org-forged' and w.org_id <> p.org_id
+  ) then
+    raise exception 'FAIL: a session took an org other than its project''s';
+  end if;
+  delete from workspaces where branch = 'org-forged';
+  if has_table_privilege('authenticated', 'organizations', 'insert')
+     or has_table_privilege('authenticated', 'organization_members', 'insert')
+     or has_table_privilege('anon', 'organizations', 'select') then
+    raise exception 'FAIL: users may write orgs or memberships, or anon may read them';
+  end if;
+  raise notice 'ok: every user has a personal org holding their projects, sessions and boxes';
+end $$;
+
+-- 24. One project per repository per org: the same repository in two orgs is
+-- two projects, and an upsert keyed on (org, repo) given no org finds its
+-- owner's personal org. The upsert from before the orgs, on (owner, repo),
+-- still works, for the app deployed before the migration.
+do $$
+declare n integer;
+begin
+  insert into projects (owner_id, github_repo_id, full_name, owner, name)
+  values ('22222222-2222-2222-2222-222222222222', 42, 'immadsahin/runtime', 'immadsahin', 'runtime');
+  insert into projects (owner_id, github_repo_id, full_name, owner, name, description)
+  values ('22222222-2222-2222-2222-222222222222', 42, 'immadsahin/runtime', 'immadsahin', 'runtime', 'again')
+  on conflict (org_id, github_repo_id) do update set description = excluded.description;
+  select count(*) into n from projects where github_repo_id = 42;
+  if n <> 2 then
+    raise exception 'FAIL: expected repo 42 in two orgs, found % projects', n;
+  end if;
+  if not exists (select 1 from projects where github_repo_id = 42 and description = 'again') then
+    raise exception 'FAIL: the (org, repo) upsert did not update the existing project';
+  end if;
+  insert into projects (owner_id, github_repo_id, full_name, owner, name, description)
+  values ('22222222-2222-2222-2222-222222222222', 42, 'immadsahin/runtime', 'immadsahin', 'runtime', 'old app')
+  on conflict (owner_id, github_repo_id) do update set description = excluded.description;
+  if not exists (select 1 from projects where github_repo_id = 42 and description = 'old app') then
+    raise exception 'FAIL: the (owner, repo) upsert from before the orgs did not update the project';
+  end if;
+  raise notice 'ok: one project per repository per org, and the upsert finds it';
+end $$;
+
+-- 25. A team org: its members see its projects and start sessions on them,
+-- but each sees only their own sessions; a project is changed by its owner;
+-- no one outside reaches any of it; and a removed member loses it at once.
+insert into organizations (id, name, created_by)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Team', '11111111-1111-1111-1111-111111111111');
+insert into organization_members (org_id, user_id, role)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin'),
+       ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'member');
+-- Another repository: one per user still holds (projects_owner_repo_unique)
+-- until team orgs ship.
+insert into projects (id, org_id, owner_id, github_repo_id, full_name, owner, name)
+values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        '11111111-1111-1111-1111-111111111111', 4242, 'team/app', 'team', 'app');
+insert into workspaces (owner_id, project_id, branch)
+values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'admin-session');
+
+-- An outsider can't start a session on the team's project.
+do $$
+begin
+  insert into workspaces (owner_id, project_id, branch)
+  values ('33333333-3333-3333-3333-333333333333', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'outsider');
+  raise exception 'FAIL: a non-member started a session on an org''s project';
+exception when foreign_key_violation then
+  raise notice 'ok: a non-member can''t start a session on an org''s project';
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+declare n integer;
+begin
+  if not exists (select 1 from projects where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb') then
+    raise exception 'FAIL: a member can''t see their org''s project';
+  end if;
+  if (select count(*) from organizations) <> 2 then
+    raise exception 'FAIL: a member should see exactly their two orgs';
+  end if;
+  if exists (select 1 from organization_members where user_id <> '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a member can read other people''s memberships';
+  end if;
+  -- Another member's session stays theirs.
+  select count(*) into n from workspaces where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  if n <> 0 then
+    raise exception 'FAIL: a member sees % of another member''s sessions', n;
+  end if;
+  -- Their own session on it is theirs.
+  insert into workspaces (owner_id, project_id, branch)
+  values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'member-session');
+  if not exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: a member can''t see their own session in the org';
+  end if;
+  -- The project is its owner's to change.
+  update projects set description = 'changed' where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  get diagnostics n = row_count;
+  if n <> 0 then
+    raise exception 'FAIL: a member changed a project they don''t own';
+  end if;
+  -- And they can't add themselves anywhere.
+  begin
+    insert into organization_members (org_id, user_id, role)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'admin');
+    raise exception 'FAIL: a member made themselves admin';
+  exception when insufficient_privilege or unique_violation then
+    null;
+  end;
+  raise notice 'ok: a member sees the org''s projects and only their own sessions';
+end $$;
+
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+
+do $$
+begin
+  if exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: an admin sees a member''s session';
+  end if;
+  if not exists (select 1 from workspaces where branch = 'admin-session') then
+    raise exception 'FAIL: the admin can''t see their own session';
+  end if;
+  raise notice 'ok: an admin doesn''t see members'' sessions';
+end $$;
+
+set request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+
+do $$
+begin
+  if exists (select 1 from projects where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+     or exists (select 1 from organizations where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') then
+    raise exception 'FAIL: a non-member sees an org or its projects';
+  end if;
+  raise notice 'ok: a non-member sees nothing of an org';
+end $$;
+
+reset role;
+
+delete from organization_members
+where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  and user_id = '22222222-2222-2222-2222-222222222222';
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+begin
+  if exists (select 1 from projects where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+     or exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: a removed member still reaches the org''s projects or their sessions in it';
+  end if;
+  raise notice 'ok: a removed member loses the org''s projects and their sessions in it at once';
+end $$;
+
+reset role;

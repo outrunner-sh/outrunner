@@ -83,6 +83,7 @@ test("unwired workspace methods reject pointing at the AgentClient path", async 
 test("toRuntimeComputer maps provision_timings and omits the agent secret", () => {
   const computer = toRuntimeComputer({
     id: "c1",
+    org_id: "org1",
     owner_id: "o1",
     project_id: "p1",
     workspace_id: null,
@@ -116,6 +117,7 @@ test("toRuntimeComputer maps provision_timings and omits the agent secret", () =
 test("toRuntimeComputer tolerates absent or malformed provision_timings", () => {
   const base = {
     id: "c",
+    org_id: "org",
     owner_id: "o",
     project_id: "p",
     workspace_id: null,
