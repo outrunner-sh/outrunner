@@ -1,11 +1,16 @@
 /**
  * A cloud session the server starts on a user's behalf (an automation's run),
  * with no browser of theirs: signed in as them (actAsUser), it's made and set
- * up exactly as one they start from the new-session screen, on their Claude,
- * sandbox and plan, and appears in their sessions.
+ * up exactly as one they start from the new-session screen, on their sandbox
+ * and plan, and appears in their sessions.
+ *
+ * It always runs on Outrunner's models, on the user's allowance of them (their
+ * usage, in Settings → Usage), never on their own Claude or provider keys:
+ * what the server starts on its own isn't billed to an account of theirs.
  */
 
 import { getOwner } from "@/lib/auth/owner";
+import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 import { createCloudSession, type SessionOutcome } from "@/lib/session/create-cloud-session";
 import { ActAsUserError, actAsUser } from "@/lib/supabase/acting-user";
 
@@ -19,6 +24,9 @@ export type ServerSessionStart = {
   title: string;
   /** The prompt it runs, sent once it's ready. */
   prompt: string;
+  /** Which of Outrunner's models it runs (OUTRUNNER_MODELS); their first
+   *  when not given. */
+  model?: string;
 };
 
 /** Made and set up: ready (its prompt sent) or failed, with why. Or not made
@@ -43,7 +51,9 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
       const response = await createCloudSession(
         owner,
         start.projectId,
-        { prompt: start.prompt },
+        // Outrunner's models, on Outrunner's key (not `key: "own"`): the
+        // user's allowance, not their Claude or their own OpenRouter key.
+        { provider: "outrunner", model: start.model ?? OUTRUNNER_MODELS[0].id, prompt: start.prompt },
         {
           baseBranch: start.baseBranch,
           title: start.title,
