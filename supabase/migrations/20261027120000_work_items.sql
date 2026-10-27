@@ -57,6 +57,12 @@ create table if not exists work_items (
 
 create index if not exists work_items_owner_status_idx on work_items (owner_id, status, updated_at desc);
 create index if not exists work_items_project_idx on work_items (project_id);
+-- For the `on delete set null` of a session or an item, which would otherwise
+-- scan the table.
+create index if not exists work_items_owner_workspace_idx
+  on work_items (owner_id, workspace_id) where workspace_id is not null;
+create index if not exists work_items_owner_duplicate_idx
+  on work_items (owner_id, duplicate_of) where duplicate_of is not null;
 
 -- The next number for the owner. Serialized per owner, so two captures at
 -- once never take the same one.

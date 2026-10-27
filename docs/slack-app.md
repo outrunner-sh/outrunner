@@ -63,3 +63,9 @@ that Slack user to the account. From then on, their captures land in that accoun
 
 Linking always goes through that confirmation. There is no "paste your member ID" step, so nobody can
 direct someone else's Slack captures to their own account.
+
+**Known limit (v0):** the link proves that someone signed in to Outrunner confirmed it. It doesn't prove
+they are the Slack user it names. A person could forward the link from their own reply and talk an Outrunner
+user into confirming it. After that, their Slack captures land in that user's triage. That's why the confirm
+screen says to confirm only a link you just asked for yourself. Binding the link to Slack's own sign-in
+(OAuth `users.identity`) would close this, and it should happen before triage is shared between people.

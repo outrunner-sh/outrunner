@@ -32,9 +32,10 @@ const MAX_BODY_BYTES = 256 * 1024;
  * the capture lands in their triage and the reply, shown to them alone, links
  * to it.
  *
- * Slack waits three seconds for an answer: a command is answered with its
- * reply directly, a shortcut (whose answer Slack ignores) at once and its
- * reply posted to the payload's response_url after.
+ * Slack waits three seconds for an answer, and a slow one reads as failed
+ * though the item was made (a retry would make it twice). So both are
+ * answered at once, and the reply is posted to the request's response_url
+ * once the capture is stored.
  */
 export async function POST(request: Request) {
   const secret = optionalEnv("SLACK_SIGNING_SECRET");
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
   const length = Number(request.headers.get("content-length") ?? "0");
   if (length > MAX_BODY_BYTES) return new NextResponse(null, { status: 413 });
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) return new NextResponse(null, { status: 413 });
+  if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return new NextResponse(null, { status: 413 });
   const verified = verifySlackSignature({
     secret,
     timestamp: request.headers.get("x-slack-request-timestamp"),
@@ -88,10 +89,11 @@ function shortcut(payload: string, secret: string): NextResponse {
 }
 
 /** `/triage [owner/repo] <text>`. */
-async function command(form: URLSearchParams, secret: string): Promise<NextResponse> {
+function command(form: URLSearchParams, secret: string): NextResponse {
   const teamId = form.get("team_id");
   const userId = form.get("user_id");
-  if (!teamId || !userId) return new NextResponse(null, { status: 400 });
+  const responseUrl = form.get("response_url");
+  if (!teamId || !userId || !isSlackResponseUrl(responseUrl)) return new NextResponse(null, { status: 400 });
   const parsed = parseTriageCommand(form.get("text") ?? "");
   if (!parsed) {
     return NextResponse.json(
@@ -109,8 +111,11 @@ async function command(form: URLSearchParams, secret: string): Promise<NextRespo
     userName: form.get("user_name"),
   };
   // A first word that isn't one of the user's workspaces was part of the text.
-  const reply = await captureReply(identity, { ...capture, project: parsed.project }, secret, parsed.text);
-  return NextResponse.json(reply);
+  after(async () => {
+    const reply = await captureReply(identity, { ...capture, project: parsed.project }, secret, parsed.text);
+    await postReply(responseUrl, reply);
+  });
+  return NextResponse.json(ephemeral("Adding to Outrunner triage…"));
 }
 
 type Reply = { response_type: "ephemeral"; text: string; replace_original?: boolean };
@@ -162,7 +167,11 @@ async function captureReply(
     });
     const link = `<${itemUrl(result.item)}|${itemKey(result.item)} ${escapeSlack(result.item.title)}>`;
     return ephemeral(
-      result.kind === "created" ? `Added ${link} to triage.` : `Added a note to ${link} (same thread).`,
+      result.kind === "created"
+        ? `Added ${link} to triage.`
+        : result.reopened
+          ? `Added a note to ${link} (same thread) and moved it back to triage.`
+          : `Added a note to ${link} (same thread).`,
     );
   } catch (error) {
     console.error("Slack: couldn't capture to triage", error);

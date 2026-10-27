@@ -11,6 +11,7 @@ import { isUuid } from "@/lib/ids";
 import type { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import {
+  isOpen,
   type WorkItem,
   type WorkItemNote,
   type WorkItemPatch,
@@ -165,7 +166,8 @@ export type CaptureInput = {
 
 export type CaptureResult =
   | { kind: "created"; item: WorkItem }
-  | { kind: "noted"; item: WorkItem; note: WorkItemNote };
+  /** `reopened`: the item was closed, and the note put it back in triage. */
+  | { kind: "noted"; item: WorkItem; note: WorkItemNote; reopened: boolean };
 
 async function itemBySourceRef(db: Db, ownerId: string, sourceRef: string): Promise<WorkItem | null> {
   const { data, error } = await db
@@ -178,19 +180,36 @@ async function itemBySourceRef(db: Db, ownerId: string, sourceRef: string): Prom
   return data ? toWorkItem(data) : null;
 }
 
+/** Put a closed item (done, declined, a duplicate) back in triage. */
+async function reopenWorkItem(db: Db, ownerId: string, id: string): Promise<WorkItem> {
+  const { data, error } = await db
+    .from("work_items")
+    .update({ status: "triage", duplicate_of: null })
+    .eq("owner_id", ownerId)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return toWorkItem(data);
+}
+
 /**
  * A capture: a new item in triage, or, when an item already has its source
- * ref (another message in the same Slack thread), a note on that one.
+ * ref (another message in the same Slack thread), a note on that one. A note
+ * on an item already closed puts it back in triage, so the new message is
+ * seen rather than filed away where nobody looks.
  */
 export async function captureWorkItem(db: Db, ownerId: string, input: CaptureInput): Promise<CaptureResult> {
-  const asNote = async (item: WorkItem): Promise<CaptureResult> => {
-    const note = await addNote(db, ownerId, item.id, {
+  const asNote = async (existing: WorkItem): Promise<CaptureResult> => {
+    const note = await addNote(db, ownerId, existing.id, {
       body: input.body || input.title,
       source: input.source,
       sourceUrl: input.sourceUrl,
       author: input.author ?? null,
     });
-    return { kind: "noted", item, note };
+    const reopened = !isOpen(existing.status);
+    const item = reopened ? await reopenWorkItem(db, ownerId, existing.id) : existing;
+    return { kind: "noted", item, note, reopened };
   };
 
   if (input.sourceRef) {
@@ -259,6 +278,8 @@ export async function updateWorkItem(
     if (patch.duplicateOf === id) throw new WorkItemChangeError("An item can't duplicate itself.");
     const target = await getWorkItem(db, ownerId, patch.duplicateOf);
     if (!target) throw new WorkItemChangeError("The item it duplicates wasn't found.");
+    // Only an open one, as the picker offers: no chains or cycles of duplicates.
+    if (!isOpen(target.status)) throw new WorkItemChangeError("Pick an open item to mark this a duplicate of.");
     update.duplicate_of = target.id;
     update.status = "duplicate";
     if (current.status === "triage") update.triaged_at = new Date().toISOString();
