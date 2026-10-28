@@ -323,6 +323,8 @@ test("a run's session is told only the App's bot's comments are its own earlier 
   const { deps, started } = startDeps();
   await startRun(runs[0], deps);
   assert.match(started[0].prompt, /outrunner-sh\[bot\]/);
+});
+
 test("a closed or merged pull request is read as such; nothing else is", () => {
   assert.deepEqual(readClosedPullRequest(payload({ action: "closed", pr: { merged: true } })), {
     installationId: 42,
