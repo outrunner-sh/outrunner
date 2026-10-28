@@ -408,6 +408,8 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
           candidate,
           repoFullName: "neevai-labs/outrunner",
           installationId: 42,
+          covered: true,
+          workspaceId: "w-failed",
           ...over.target,
         };
   const deps: RerunDeps = {
@@ -438,6 +440,8 @@ test("a run that failed runs again at the same commit as itself, once, told it's
   // As newly opened: not told of new commits since a look that may never have been.
   assert.equal(rerun.run.event.trigger, "pull_request.opened");
   assert.equal(rerun.run.appSlug, "outrunner-sh");
+  // Its failed session is archived as it starts over: reopening unlinks it.
+  assert.equal(rerun.staleSession, "w-failed");
   assert.deepEqual(reopened, ["r1"]);
   assert.deepEqual(recorded, []);
   // Twice at once: the second finds it running again.
@@ -452,6 +456,8 @@ test("one whose pull request has moved on runs at its head now, as a new run", a
   const rerun = await rerunRun("o1", "r1", deps);
   assert.ok(rerun.ok);
   assert.equal(rerun.run.runId, "r2");
+  // The failed run keeps its session, archived by the new run once it's ready.
+  assert.equal(rerun.staleSession, null);
   assert.deepEqual(reopened, []);
   assert.deepEqual(recorded, [
     { automationId: "a1", projectId: "p1", prNumber: 7, prTitle: "Add automations", headSha: later },
@@ -473,6 +479,7 @@ test("a run runs again only when it's the org's, failed or didn't start, and its
     ["starting", { target: { status: "started" } }, 409, /failed or didn't start/],
     ["automation off", { target: { enabled: false } }, 409, /turn it on/],
     ["no installation", { target: { installationId: null } }, 409, /isn't installed/],
+    ["repository taken off", { target: { covered: false } }, 409, /doesn't run on this repository/],
     ["closed", { pr: { state: "closed" } }, 409, /closed/],
     ["draft", { pr: { draft: true } }, 409, /draft/],
   ];

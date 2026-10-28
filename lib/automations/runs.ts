@@ -184,7 +184,15 @@ export type RerunDeps = {
   recordRuns: PlanDeps["recordRuns"];
 };
 
-export type Rerun = { ok: true; run: PendingRun } | { ok: false; status: 404 | 409; error: string };
+export type Rerun =
+  | {
+      ok: true;
+      run: PendingRun;
+      /** The session the run made before, to archive as it starts over:
+       *  reopening it unlinks it, and a failed run's box may still be up. */
+      staleSession: string | null;
+    }
+  | { ok: false; status: 404 | 409; error: string };
 
 const SKIPPED: Record<Exclude<ReturnType<typeof readPullRequestEvent>, PullRequestEvent>, string> = {
   action: "The pull request can't be read from GitHub right now.",
@@ -208,6 +216,9 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
     return { ok: false, status: 409, error: "Only a run that failed or didn't start runs again." };
   }
   if (!target.enabled) return { ok: false, status: 409, error: "The automation is off: turn it on to run it." };
+  if (!target.covered) {
+    return { ok: false, status: 409, error: "The automation doesn't run on this repository any more." };
+  }
   if (target.installationId === null) {
     return { ok: false, status: 409, error: "The GitHub App isn't installed on this repository's account." };
   }
@@ -224,8 +235,15 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
     if (!(await deps.reopenRun(target.runId))) {
       return { ok: false, status: 409, error: "It's running again already." };
     }
-    return { ok: true, run: { runId: target.runId, candidate: target.candidate, event, appSlug } };
+    return {
+      ok: true,
+      run: { runId: target.runId, candidate: target.candidate, event, appSlug },
+      staleSession: target.workspaceId,
+    };
   }
+  // Whatever the automation's triggers: an admin asked for it to run, and
+  // the head's commit is the one to look at now (one that triggers only on
+  // opened still runs here).
   const recorded = await deps.recordRuns([
     {
       automationId: target.candidate.automationId,
@@ -239,5 +257,7 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
   if (!newId) {
     return { ok: false, status: 409, error: "The pull request has newer commits, with their own run: run that one again instead." };
   }
-  return { ok: true, run: { runId: newId, candidate: target.candidate, event, appSlug } };
+  // The failed run keeps its session, if it made one: the new run archives
+  // it as an earlier one once it's ready (runNeighbours).
+  return { ok: true, run: { runId: newId, candidate: target.candidate, event, appSlug }, staleSession: null };
 }

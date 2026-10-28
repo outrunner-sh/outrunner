@@ -295,6 +295,10 @@ export type RerunTarget = {
   /** The org's installation (claimed, not suspended) on the repository's
    *  account; null when it has none. */
   installationId: number | null;
+  /** Whether the automation still covers the repository (automation_repos). */
+  covered: boolean;
+  /** The session the run made, if any: archived before it starts over. */
+  workspaceId: string | null;
 };
 
 /** One of the org's runs, to run again; null when it isn't the org's. */
@@ -302,7 +306,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   const supabase = createSupabaseAdminClient();
   const { data: run, error } = await supabase
     .from("automation_runs")
-    .select("id, automation_id, project_id, pr_number, head_sha, status")
+    .select("id, automation_id, project_id, pr_number, head_sha, status, workspace_id")
     .eq("id", runId)
     .maybeSingle();
   if (error) throw error;
@@ -323,6 +327,13 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
     .maybeSingle();
   if (projectError) throw projectError;
   if (!project?.full_name) return null;
+  const { data: covering, error: coveringError } = await supabase
+    .from("automation_repos")
+    .select("project_id")
+    .eq("automation_id", run.automation_id)
+    .eq("project_id", run.project_id)
+    .maybeSingle();
+  if (coveringError) throw coveringError;
   const { data: installations, error: installationsError } = await supabase
     .from("github_installations")
     .select("installation_id, account_login")
@@ -349,6 +360,8 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
     },
     repoFullName: project.full_name,
     installationId: installation?.installation_id ?? null,
+    covered: covering !== null,
+    workspaceId: run.workspace_id,
   };
 }
 
@@ -363,4 +376,15 @@ export async function reopenRun(runId: string): Promise<boolean> {
     .select("id");
   if (error) throw error;
   return (data ?? []).length > 0;
+}
+
+/** Who a session is: its owner, as whom it's archived; null when it's gone. */
+export async function sessionOwner(workspaceId: string): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("workspaces")
+    .select("owner_id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.owner_id ?? null;
 }
