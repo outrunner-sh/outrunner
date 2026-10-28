@@ -145,14 +145,30 @@ begin
   raise notice 'ok: updated_at trigger fires';
 end $$;
 
--- 11. Pull requests are owner-scoped and one-to-one with a workspace.
+-- 11. Pull requests are owner-scoped, one per workspace and repository
+--     (20261028170000), and name their repository (not null, no default).
 insert into pull_requests (
-  owner_id, workspace_id, github_number, url, title, base_branch, head_branch
+  owner_id, workspace_id, project_id, github_number, url, title, base_branch, head_branch
 )
 select
-  '11111111-1111-1111-1111-111111111111', id, 7,
+  '11111111-1111-1111-1111-111111111111', id, project_id, 7,
   'https://github.com/immadsahin/runtime/pull/7', 'Runtime test', 'main', 'feat/x'
 from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+
+do $$
+declare workspace uuid; repo uuid;
+begin
+  select id, project_id into workspace, repo from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  insert into pull_requests (
+    owner_id, workspace_id, project_id, github_number, url, title, base_branch, head_branch
+  ) values (
+    '11111111-1111-1111-1111-111111111111', workspace, repo, 8,
+    'https://github.com/immadsahin/runtime/pull/8', 'Duplicate', 'main', 'feat/x'
+  );
+  raise exception 'FAIL: a second pull request in the same workspace and repository was allowed';
+exception when unique_violation then
+  raise notice 'ok: one pull request per workspace and repository enforced';
+end $$;
 
 do $$
 declare workspace uuid;
@@ -161,12 +177,12 @@ begin
   insert into pull_requests (
     owner_id, workspace_id, github_number, url, title, base_branch, head_branch
   ) values (
-    '11111111-1111-1111-1111-111111111111', workspace, 8,
-    'https://github.com/immadsahin/runtime/pull/8', 'Duplicate', 'main', 'feat/x'
+    '11111111-1111-1111-1111-111111111111', workspace, 9,
+    'https://github.com/immadsahin/runtime/pull/9', 'No repository', 'main', 'feat/x'
   );
-  raise exception 'FAIL: duplicate workspace pull request was allowed';
-exception when unique_violation then
-  raise notice 'ok: one pull request per workspace enforced';
+  raise exception 'FAIL: a pull request without its repository was allowed';
+exception when not_null_violation then
+  raise notice 'ok: a pull request names its repository';
 end $$;
 
 -- 12. RLS isolates rows by owner.
