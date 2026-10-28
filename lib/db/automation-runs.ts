@@ -30,7 +30,7 @@ export type RunCandidate = {
  */
 export async function automationsForPullRequest(installationId: number, repoFullName: string): Promise<RunCandidate[]> {
   const supabase = createSupabaseAdminClient();
-  const scope = await installationProjects(installationId, repoFullName);
+  const scope = await installationProjects(supabase, installationId, repoFullName);
   if (!scope) return [];
   const { orgId, projectIds } = scope;
 
@@ -71,10 +71,10 @@ export async function automationsForPullRequest(installationId: number, repoFull
 /** The org holding the installation (claimed and not suspended), and its
  *  projects that are `repoFullName`: no other org's are an event's. */
 async function installationProjects(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
   installationId: number,
   repoFullName: string,
 ): Promise<{ orgId: string; projectIds: string[] } | null> {
-  const supabase = createSupabaseAdminClient();
   const { data: holder, error } = await supabase
     .from("github_installations")
     .select("org_id")
@@ -102,9 +102,9 @@ export async function pullRequestSessions(
   repoFullName: string,
   prNumber: number,
 ): Promise<Map<string, string[]>> {
-  const scope = await installationProjects(installationId, repoFullName);
-  if (!scope) return new Map();
   const supabase = createSupabaseAdminClient();
+  const scope = await installationProjects(supabase, installationId, repoFullName);
+  if (!scope) return new Map();
   const { data: runs, error } = await supabase
     .from("automation_runs")
     .select("workspace_id")
