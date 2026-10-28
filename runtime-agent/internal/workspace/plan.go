@@ -177,15 +177,26 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	case a.isBusy(pane):
 		return ErrCompactBusy
 	}
-	// A prompt whose send gave up may still be in the prompt box: /compact
-	// typed after it would go as that prompt's tail, an ordinary turn, and
-	// nothing would compact. The screen decides, not the bookkeeping alone: a
-	// prompt that landed since, or was cleared in the terminal, is forgotten.
+	// Text in the prompt box (typed in the session's terminal, or a prompt
+	// whose send gave up) would take /compact as its tail: an ordinary turn,
+	// and nothing compacted. The screen decides: Claude's box as its styled
+	// capture shows it, dim placeholders left out (typedLines, as a send's
+	// clearPromptBox reads it); Codex's, which that can't read, by the
+	// prompt a send left there. A prompt that landed since, or was cleared,
+	// is forgotten.
+	held := false
+	if styled, err := s.tmux.CapturePaneStyled(ctx, name); err == nil && a.typedLines(styled) > 0 {
+		held = true
+	}
 	if st := lock.staged; st != nil {
 		if s.userTurns(workspaceID) <= st.baseline && boxHolds(pane, st.content) {
-			return ErrPromptStaged
+			held = true
+		} else {
+			lock.staged = nil
 		}
-		lock.staged = nil
+	}
+	if held {
+		return ErrPromptStaged
 	}
 	command := "/compact"
 	// Codex's /compact takes no instructions: typed after it, they would go
@@ -216,10 +227,11 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	return errors.New("the compaction didn't start; try again")
 }
 
-// ErrPromptStaged is a compaction asked for while the prompt box still holds
-// a prompt whose send gave up. Sent or cleared in the session's terminal, it
-// goes: a resend from the page long after would be typed a second time.
-var ErrPromptStaged = errors.New("a message that didn't go is still in the prompt box: send it or clear it in the session's terminal, then compact")
+// ErrPromptStaged is a compaction asked for while the prompt box holds text:
+// typed in the session's terminal, or a prompt whose send gave up. Sent or
+// cleared there, it goes: a resend from the page long after would be typed a
+// second time.
+var ErrPromptStaged = errors.New("the prompt box holds text that /compact would be sent with: send it or clear it in the session's terminal, then compact")
 
 // boxHolds reports whether the agent's prompt box shows content: the start of
 // its first line, spaces collapsed, or, for a paste too long to show,

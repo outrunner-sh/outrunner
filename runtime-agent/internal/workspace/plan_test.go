@@ -449,11 +449,29 @@ func TestACompactionWaitsOnAPromptStillInTheBox(t *testing.T) {
 	if err := s.Compact(id, ""); err != nil || !slices.Equal(fake.pasted, []string{"/compact"}) || s.sendLock(id).staged != nil {
 		t.Fatalf("Compact = %v, typed %q", err, fake.pasted)
 	}
-	// Landed since (its turn recorded): the same, whatever the screen shows.
+	// Landed since (its turn recorded, its box empty): forgotten, and it goes.
 	s.sendLock(id).staged = &stagedPrompt{content: "fix the flaky test", baseline: -1, at: time.Now()}
-	fake.pane = strings.Replace(composerPane, "❯ ", "❯ fix the flaky test", 1)
-	if err := s.Compact(id, ""); err != nil {
+	fake.pane = composerPane // the last compaction over
+	if err := s.Compact(id, ""); err != nil || s.sendLock(id).staged != nil {
 		t.Fatalf("Compact after the prompt landed = %v", err)
+	}
+}
+
+// Text typed into the box in the session's terminal, which no send staged, or
+// a paste Claude shows by its placeholder: /compact would go as its tail.
+func TestACompactionWaitsOnTextTypedIntoTheBox(t *testing.T) {
+	s, fake, id := landingSession(t)
+	for _, typed := range []string{"fix the bug", "[Pasted text #1 +12 lines]"} {
+		fake.pane = strings.Replace(composerPane, "❯ ", "❯ "+typed, 1)
+		if err := s.Compact(id, ""); !errors.Is(err, ErrPromptStaged) || fake.pastes != 0 {
+			t.Fatalf("%q in the box: Compact = %v with %d pastes", typed, err, fake.pastes)
+		}
+	}
+	// Claude's dim placeholder in an empty box is no text.
+	fake.pane = strings.Replace(composerPane, "❯ ", "❯ \x1b[2mTry \"fix lint errors\"\x1b[22m", 1)
+	fake.onEnter = func() string { return "✻ Compacting conversation… (esc to interrupt)" }
+	if err := s.Compact(id, ""); err != nil {
+		t.Fatalf("a placeholder in the box: Compact = %v", err)
 	}
 }
 
