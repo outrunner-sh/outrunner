@@ -243,12 +243,14 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
   const found = new Set<string>();
   for (const [key, here] of await reposOf(runners)) {
     const repo = key.slice(key.indexOf("\u0000") + 1);
-    // The first of them whose owner can read it: one who can't leaves the
-    // others still looked for.
-    let token: string | null = null;
-    for (const runner of here) if ((token = await tokenFor(runner, repo))) break;
-    if (!token) continue;
-    const pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
+    // Read with the first of their owners whose token reads it: one with no
+    // token, or one GitHub turns away (SSO not authorized, access removed),
+    // leaves the others still tried.
+    let pulls: GitHubPull[] | null = null;
+    for (const runner of here) {
+      const token = await tokenFor(runner, repo);
+      if (token && (pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`))) break;
+    }
     for (const pull of pulls ?? []) {
       if (!pull.number || !pull.head?.ref) continue;
       for (const runner of here.filter((r) => isRunnerBranch(r.branch, pull.head!.ref!))) {

@@ -315,12 +315,14 @@ export async function reportFailedRunners(limit = 50): Promise<number> {
   for (const row of data ?? []) {
     if (await readWatch(row.id)) continue;
     // Told already, by the watch that saw it fail (whose row has closed
-    // since): the Mission hears a failure once.
+    // since): the Mission hears a failure once. Only that tell, by its key:
+    // a pull request settled as needing attention, or a question, says
+    // nothing of the session failing.
     const { count, error: toldError } = await db()
       .from("mission_events")
       .select("id", { count: "exact", head: true })
       .eq("runner_id", row.id)
-      .eq("kind", "needs_attention")
+      .like("idempotency_key", `needs_attention:${row.id}:turn:%`)
       .gte("created_at", row.failed_at ?? row.updated_at);
     if (toldError) throw toldError;
     if ((count ?? 0) > 0) continue;
