@@ -158,7 +158,8 @@ from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
 do $$
 declare workspace uuid; repo uuid;
 begin
-  select id, project_id into workspace, repo from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  -- The workspace and repository of the pull request just above.
+  select workspace_id, project_id into workspace, repo from pull_requests where github_number = 7;
   insert into pull_requests (
     owner_id, workspace_id, project_id, github_number, url, title, base_branch, head_branch
   ) values (
