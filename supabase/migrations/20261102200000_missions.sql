@@ -244,11 +244,16 @@ create or replace function missions_with_pending_events(max_missions integer)
   security definer
   set search_path = public
 as $$
+  -- A Mission whose open delivery waits (backing off, or leased) can't be
+  -- told anything now, its events in that delivery or newer ones alike.
   select e.mission_id
     from mission_events e
-    left join mission_deliveries d on d.id = e.delivery_id
     where e.delivered_at is null
-      and (d.id is null or (d.next_attempt_at <= now() and (d.lease_until is null or d.lease_until <= now())))
+      and not exists (
+        select 1 from mission_deliveries d
+          where d.mission_id = e.mission_id and d.delivered_at is null
+            and (d.next_attempt_at > now() or (d.lease_until is not null and d.lease_until > now()))
+      )
     group by e.mission_id
     order by min(e.created_at)
     limit max_missions;

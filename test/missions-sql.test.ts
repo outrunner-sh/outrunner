@@ -212,6 +212,9 @@ test("the tick is told Missions whose events are due, oldest first, not those ba
   const off = claim(backingOff);
   psql(`select fail_mission_delivery('${off!.id}', 'asleep')`);
   claim(held);
+  // News that comes while their deliveries wait isn't due either.
+  event(backingOff, runner(backingOff), `later:${backingOff}`, "1 minute");
+  event(held, runner(held), `later:${held}`, "1 minute");
   const due = psql(`select string_agg(mission_id::text, ',') from missions_with_pending_events(1000)`).split(",");
   assert.ok(due.includes(waitingLong));
   assert.ok(!due.includes(backingOff));

@@ -146,7 +146,6 @@ type WorkspaceRow = {
   /** When its status last turned failed (20261102163000); null otherwise. */
   failed_at?: string | null;
   /** A session, or a Mission (20261102200000_missions.sql). */
-  /** A session, or a Mission (20261102200000_missions.sql). */
   kind: "session" | "mission";
   /** The Mission a Runner works for; null for any other session. */
   parent_mission_id: string | null;
