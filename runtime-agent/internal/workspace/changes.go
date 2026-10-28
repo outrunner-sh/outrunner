@@ -3,6 +3,8 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,6 +21,15 @@ import (
 const (
 	maxChangedFiles = 500
 	maxDiffBytes    = 200_000
+	// maxDiffedFileBytes is the largest file whose diff is worked out: git
+	// holds both sides of a diff in memory, several times their size, so a
+	// big generated file or dump could take a small box's agent down with it.
+	// Only maxDiffBytes of a diff would show anyway.
+	maxDiffedFileBytes = 20 << 20
+	// maxCountedFileBytes is the largest untracked file whose lines are
+	// counted: git reads a file whole to count them, or to find it binary,
+	// and the panel asks every few seconds.
+	maxCountedFileBytes = 1 << 20
 )
 
 var (
@@ -111,15 +122,21 @@ func (s *Service) changeSet(ctx context.Context, worktree, baseBranch string) ([
 // countUntrackedLines sets each untracked file's additions to its line count,
 // as a diff against nothing would. One `git grep` counts them all: the empty
 // pattern matches every line and -I skips binaries, which stay at 0. The
-// counts are a nicety, so a grep that fails or matches nothing leaves them at 0.
+// counts are a nicety, so a grep that fails or matches nothing leaves them at
+// 0, as does a file over maxCountedFileBytes (model weights, a database, a
+// log), which git would read whole on every look at the panel.
 func (s *Service) countUntrackedLines(ctx context.Context, worktree string, files []protocol.ChangedFile) {
 	args := []string{"--literal-pathspecs", "grep", "--untracked", "--no-color", "-I", "-c", "-z", "-e", "", "--"}
 	var untracked []int
 	for i, f := range files {
-		if f.Status == "untracked" {
-			untracked = append(untracked, i)
-			args = append(args, f.Path)
+		if f.Status != "untracked" {
+			continue
 		}
+		if info, err := os.Stat(filepath.Join(worktree, f.Path)); err != nil || info.Size() > maxCountedFileBytes {
+			continue
+		}
+		untracked = append(untracked, i)
+		args = append(args, f.Path)
 	}
 	if len(untracked) == 0 {
 		return
@@ -199,12 +216,32 @@ func (s *Service) FileDiff(ctx context.Context, workspaceID, path string) (strin
 	// file is listed only when it differs from that base, so its patch has
 	// something in it: a staged edit whose working copy was changed back is no
 	// longer listed at all.
-	diff, err := s.gitRaw(ctx, in.dir,
-		"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", in.base, "--", strings.TrimPrefix(path, in.prefix))
+	rel := strings.TrimPrefix(path, in.prefix)
+	if size := s.diffedSize(ctx, in.dir, in.base, rel); size > maxDiffedFileBytes {
+		return fmt.Sprintf("This file is too large to show its diff here (%d MB).", size>>20), nil
+	}
+	diff, err := s.gitCapped(ctx, in.dir, maxDiffBytes,
+		"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", in.base, "--", rel)
 	if err != nil {
 		return "", err
 	}
 	return limitText(diff, maxDiffBytes), nil
+}
+
+// diffedSize is the larger side of a file's diff, in bytes: the file as it is
+// in the worktree, or as it was at the base commit (a deleted file's only
+// side). A side that isn't there counts 0.
+func (s *Service) diffedSize(ctx context.Context, dir, base, rel string) int64 {
+	var size int64
+	if info, err := os.Lstat(filepath.Join(dir, rel)); err == nil {
+		size = info.Size()
+	}
+	if out, err := s.git(ctx, dir, "cat-file", "-s", base+":"+rel); err == nil {
+		if n, err := strconv.ParseInt(out, 10, 64); err == nil && n > size {
+			size = n
+		}
+	}
+	return size
 }
 
 // parseChangedFiles joins `git diff --name-status -z`, `git diff --numstat -z`

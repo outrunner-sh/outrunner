@@ -1,8 +1,10 @@
 package snapshot
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +22,21 @@ func buildBundle(ctx context.Context, worktree, dst string) (string, error) {
 	return dst, nil
 }
 
-// buildPatch writes the worktree's WorkingPatch to dst.
+// buildPatch writes the worktree's WorkingPatch to dst, as git writes it: a
+// patch can hold big binary files, so it never passes through memory whole
+// (a 300 MB file took the agent past 1 GB).
 func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
-	if err := os.WriteFile(dst, WorkingPatch(ctx, worktree), 0o644); err != nil {
+	file, err := os.Create(dst)
+	if err != nil {
+		return "", fmt.Errorf("write patch: %w", err)
+	}
+	if !writeWorkingPatch(ctx, worktree, file) {
+		err = file.Truncate(0) // what a failed diff wrote is no patch
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
 		return "", fmt.Errorf("write patch: %w", err)
 	}
 	return dst, nil
@@ -39,26 +53,38 @@ func buildPatch(ctx context.Context, worktree, dst string) (string, error) {
 //
 // `.gitignore`d files are excluded by design.
 func WorkingPatch(ctx context.Context, worktree string) []byte {
+	var out bytes.Buffer
+	if !writeWorkingPatch(ctx, worktree, &out) {
+		return nil
+	}
+	return out.Bytes()
+}
+
+// writeWorkingPatch writes WorkingPatch to w, false when the diff failed part
+// way: a broken repo is the only real failure here, and the caller degrades to
+// an empty patch rather than aborting the whole capture over WIP.
+func writeWorkingPatch(ctx context.Context, worktree string, w io.Writer) bool {
 	env := os.Environ()
 	if others := untrackedFiles(ctx, worktree); len(others) > 0 {
 		index, cleanup, err := indexCopy(ctx, worktree)
 		if err == nil {
 			defer cleanup()
 			env = append(env, "GIT_INDEX_FILE="+index)
-			add := exec.CommandContext(ctx, "git", append([]string{"-C", worktree, "add", "-N", "--"}, others...)...)
+			// The paths go in on stdin: as arguments, an un-ignored folder of
+			// many files (a node_modules) ran past the system's limit, the add
+			// failed, and the patch left out every untracked file, the ones the
+			// agent wrote too. Literal, so a name with "*" adds just itself.
+			add := exec.CommandContext(ctx, "git", "-C", worktree, "--literal-pathspecs",
+				"add", "-N", "--pathspec-from-file=-", "--pathspec-file-nul")
 			add.Env = env
+			add.Stdin = strings.NewReader(strings.Join(others, "\x00"))
 			_ = add.Run() // best-effort: without it, only tracked changes are captured
 		}
 	}
 	diff := exec.CommandContext(ctx, "git", "-C", worktree, "diff", "HEAD", "--binary")
 	diff.Env = env
-	out, err := diff.Output()
-	if err != nil {
-		// A broken repo is the only real failure here; degrade to an empty patch
-		// rather than aborting the whole capture over WIP.
-		return nil
-	}
-	return out
+	diff.Stdout = w
+	return diff.Run() == nil
 }
 
 // indexCopy copies the worktree's index to a temporary file. Git replaces an

@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"runtime-agent/internal/codex"
+	"runtime-agent/internal/conversation"
+	"runtime-agent/internal/protocol"
 )
 
 const fixtureSessionID = "01a1596f-41f4-7f30-88f4-b569d1b5bf76"
@@ -444,5 +446,75 @@ func TestTwoSessionsInOneFolderNeverClaimTheSameRollout(t *testing.T) {
 	wg.Wait()
 	if got[0] == "" || got[1] == "" || got[0] == got[1] {
 		t.Errorf("rollouts = %q, want one each, never the same", got)
+	}
+}
+
+// lastMessage is the last message a conversation log holds, as the stream
+// reads it.
+func lastMessage(t *testing.T, log []byte) *protocol.ConversationMessage {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	if err := os.WriteFile(path, log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan conversation.Event, 256)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	go conversation.New(func() string { return path }, 0).Run(ctx, events)
+	var last *protocol.ConversationMessage
+	for {
+		select {
+		case ev := <-events:
+			if ev.Message != nil {
+				last = ev.Message
+			}
+		case <-ctx.Done():
+			return last
+		}
+	}
+}
+
+func TestAStoppedCodexTurnIsRecordedAsStopped(t *testing.T) {
+	s, id, link, sessions := localCodexSession(t)
+	resolved, _ := filepath.EvalSymlinks(link)
+	data := fixtureRollout(t, resolved)
+	// The fixture's third turn was stopped mid-reply: Codex wrote its prompt
+	// and reasoning, and nothing more, before the next turn began.
+	cut := bytes.Index(data, []byte("Reply with the word resumed."))
+	cut = bytes.LastIndex(data[:cut], []byte(`"task_started"`))
+	cut = bytes.LastIndexByte(data[:cut], '\n') + 1
+	cut = bytes.LastIndex(data[:cut-1], []byte("\n")) + 1 // its thread_settings_applied too
+	path := writeRollout(t, sessions, time.Now(), "rollout-stop.jsonl", data[:cut], time.Now())
+
+	tail := &codexTail{s: s, workspaceID: id}
+	drain(tail)
+	log := conversationPath(s.Root, id)
+	got, _ := os.ReadFile(log)
+	if conversation.IsInterruption(lastMessage(t, got)) {
+		t.Fatal("stopped before the stop")
+	}
+	tail.interrupted(time.Now())
+	got, _ = os.ReadFile(log)
+	if last := lastMessage(t, got); !conversation.IsInterruption(last) {
+		t.Fatalf("after a stop, the log ends on %+v, not the stop", last)
+	}
+
+	// The next turn follows the stop, and a tail started again (the agent
+	// restarted) writes nothing twice.
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	drain(&codexTail{s: s, workspaceID: id})
+	got, _ = os.ReadFile(log)
+	codexUUIDs := slices.DeleteFunc(logUUIDs(t, got), func(u string) bool { return strings.HasPrefix(u, "interrupted-") })
+	if !slices.Equal(codexUUIDs, translatedUUIDs(t, data)) {
+		t.Errorf("uuids after the stop = %q\nwant %q", codexUUIDs, translatedUUIDs(t, data))
+	}
+	if n := bytes.Count(got, []byte(conversation.Interrupted)); n != 1 {
+		t.Errorf("%d stops recorded, want 1", n)
+	}
+	stop := bytes.Index(got, []byte(conversation.Interrupted))
+	if next := bytes.Index(got, []byte("Reply with the word resumed.")); next < stop {
+		t.Error("the stop was recorded after the turn that came next")
 	}
 }

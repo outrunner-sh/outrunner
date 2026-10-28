@@ -3,6 +3,7 @@ package snapshot
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,5 +58,60 @@ func TestWorkingPatchLeavesTheIndexAsItWas(t *testing.T) {
 	}
 	if !bytes.Equal(before, after) {
 		t.Errorf("the worktree's index changed; status now:\n%s", git("status", "--short"))
+	}
+}
+
+// An un-ignored folder of dependencies holds tens of thousands of untracked
+// files: as arguments of one `git add -N` they ran past the system's limit,
+// the add failed, and the patch held no untracked file at all, not even the
+// one the agent wrote.
+func TestWorkingPatchKeepsUntrackedFilesWhenThereAreMany(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "base")
+	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("the agent wrote this\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deps := filepath.Join(dir, "node_modules", "a-package-with-a-rather-long-name-indeed", "dist", "internal", "modules")
+	if err := os.MkdirAll(deps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 25000; i++ {
+		if err := os.WriteFile(filepath.Join(deps, fmt.Sprintf("module_%06d.js", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	patch := filepath.Join(t.TempDir(), "patch")
+	if _, err := buildPatch(context.Background(), dir, patch); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(patch)
+	if !bytes.Contains(data, []byte("+the agent wrote this")) {
+		t.Fatalf("the patch (%d bytes) lost the untracked feature.txt", len(data))
+	}
+}
+
+// A worktree that isn't a repository any more has an empty patch, not a
+// failed capture.
+func TestBuildPatchOfABrokenRepositoryIsEmpty(t *testing.T) {
+	patch := filepath.Join(t.TempDir(), "patch")
+	if _, err := buildPatch(context.Background(), t.TempDir(), patch); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(patch); err != nil || len(data) != 0 {
+		t.Fatalf("patch = %q, %v; want an empty file", data, err)
 	}
 }

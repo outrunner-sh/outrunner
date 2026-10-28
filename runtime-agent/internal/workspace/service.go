@@ -1161,7 +1161,8 @@ func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
 	if s.jcode != nil {
 		return s.jcode.Interrupt(ctx, workspaceID)
 	}
-	if _, ok := s.getFacts(workspaceID); !ok {
+	facts, ok := s.getFacts(workspaceID)
+	if !ok {
 		return ErrUnknownWorkspace
 	}
 	lock := s.sendLock(workspaceID)
@@ -1201,6 +1202,9 @@ func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
 		case <-time.After(interruptPollEvery):
 		}
 		if idle, err := stopped(); err == nil && idle {
+			if facts.Agent == AgentCodex {
+				s.codexInterrupted(workspaceID) // Codex records no stop of its own
+			}
 			return nil
 		}
 		if time.Now().After(deadline) {
