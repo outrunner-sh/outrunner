@@ -214,7 +214,7 @@ $$;
 revoke all on function record_automation_runs(jsonb) from public, anon, authenticated;
 grant execute on function record_automation_runs(jsonb) to service_role;
 
--- As in 20261102140000_automation_webhooks.sql, and the settings above:
+-- As in 20261102195000_automation_webhooks.sql, and the settings above:
 -- `reviewers`, `labels`, `max_runs`, `archive_when_done`, `debounce_seconds`,
 -- `session_mode`, and `archived` (true archives it; false, or switching it
 -- on, brings it back).

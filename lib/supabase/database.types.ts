@@ -577,7 +577,7 @@ type AutomationRow = {
    *  again (supabase/migrations/20261102195000_automation_webhooks.sql). */
   webhook_token_hash: string | null;
   webhook_token_sealed: string | null;
-  /** supabase/migrations/20261102150000_automation_limits.sql */
+  /** supabase/migrations/20261102198000_automation_limits.sql */
   reviewers: string[];
   labels: string[];
   max_runs: number | null;
@@ -605,7 +605,7 @@ type AutomationRunRow = {
   dedupe_key: string;
   scheduled_for: string | null;
   context: Json | null;
-  /** An issue's run's (supabase/migrations/20261102150000_automation_limits.sql). */
+  /** An issue's run's (supabase/migrations/20261102198000_automation_limits.sql). */
   issue_number: number | null;
   /** What a debounce window combines on: a pull request, an issue, the
    *  schedule, the webhook. */
@@ -1537,7 +1537,7 @@ export type Database = {
         };
         Returns: boolean;
       };
-      // supabase/migrations/20261102150000_automation_limits.sql
+      // supabase/migrations/20261102198000_automation_limits.sql
       automation_times_run: {
         Args: { automation: string };
         Returns: number;
