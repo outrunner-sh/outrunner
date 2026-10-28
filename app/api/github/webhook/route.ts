@@ -3,10 +3,9 @@ import { after, NextResponse } from "next/server";
 import { closeRuns, planRuns, startRun } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import { finishCheckFromComment } from "@/lib/automations/checks";
-import { closeRunCheckWithout, closeRunCheckWithReview } from "@/lib/automations/checks.deps";
+import { checkOfRun, closeRunCheckWithout, closeRunCheckWithReview } from "@/lib/automations/checks.deps";
 import {
   automationsForPullRequest,
-  openCheckOf,
   openChecksOfPullRequest,
   pullRequestSessions,
   recordRuns,
@@ -135,7 +134,7 @@ export async function POST(request: Request) {
       // GitHub has it now (the App can be renamed).
       after(async () =>
         finishCheckFromComment(payload, await appSlug(config), {
-          openCheckOf: (runId) => openCheckOf(runId, { evenClosed: true }),
+          openCheckOf: checkOfRun,
           closeCheck: closeRunCheckWithReview,
         }).catch((error: unknown) => console.error("Couldn't close a run's check from its review", error)),
       );

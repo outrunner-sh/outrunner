@@ -116,3 +116,64 @@ export async function finishCheckFromComment(payload: unknown, appSlug: string, 
   await deps.closeCheck(runId, reviewOutcome(body, url));
   return true;
 }
+
+/** How a run's check stands, as closing it needs. */
+export type CheckStanding<C> = { check: C; closed: boolean; review: CheckOutcome | null };
+
+export type CloseDeps<C> = {
+  checkStateOf(runId: string): Promise<CheckStanding<C> | null>;
+  /** Take it to close without a review: once, and never once a review is in. */
+  claimCheck(runId: string): Promise<boolean>;
+  /** Give a claim back, unless a review is in. */
+  releaseCheck(runId: string): Promise<void>;
+  markCheckReviewed(runId: string, outcome: CheckOutcome): Promise<void>;
+  markCheckClosed(runId: string): Promise<void>;
+  /** Close it on GitHub; a completed check can be completed again. */
+  completeCheck(check: C, outcome: CheckOutcome): Promise<void>;
+};
+
+/**
+ * Close a run's check without a review, saying why: once, and never once
+ * its review is in. A close GitHub didn't take is given back for the sweep.
+ * Should the review land while this close is on its way, the review's is
+ * sent after it, so the check ends as the review's whichever GitHub took
+ * last.
+ */
+export async function closeCheckWithout<C>(runId: string, reason: string, deps: CloseDeps<C>): Promise<void> {
+  const state = await deps.checkStateOf(runId);
+  if (!state || state.closed || state.review) return;
+  if (!(await deps.claimCheck(runId))) return;
+  try {
+    await deps.completeCheck(state.check, closedWithout(reason));
+  } catch (error) {
+    await deps.releaseCheck(runId).catch(() => {});
+    throw error;
+  }
+  const after = await deps.checkStateOf(runId);
+  if (after?.review) await sendReview(runId, after.check, after.review, deps);
+}
+
+/**
+ * Close a run's check with its review, however late (after the hour's
+ * sweep closed it without one too). The review's outcome is kept first, so
+ * nothing closes the check otherwise from then on, and it's sent until
+ * GitHub takes it: should this send fail, the sweep sends it again.
+ */
+export async function closeCheckWithReview<C>(runId: string, outcome: CheckOutcome, deps: CloseDeps<C>): Promise<void> {
+  const state = await deps.checkStateOf(runId);
+  if (!state) return;
+  await deps.markCheckReviewed(runId, outcome);
+  await sendReview(runId, state.check, outcome, deps);
+}
+
+async function sendReview<C>(runId: string, check: C, outcome: CheckOutcome, deps: CloseDeps<C>): Promise<void> {
+  await deps.completeCheck(check, outcome);
+  await deps.markCheckClosed(runId);
+}
+
+/** The sweep's second half: send again the reviews GitHub didn't take. */
+export async function resendReview<C>(runId: string, deps: CloseDeps<C>): Promise<void> {
+  const state = await deps.checkStateOf(runId);
+  if (!state?.review || state.closed) return;
+  await sendReview(runId, state.check, state.review, deps);
+}

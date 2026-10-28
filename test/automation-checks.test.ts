@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  closeCheckWithout,
+  closeCheckWithReview,
+  type CloseDeps,
   closedWithout,
   type CommentDeps,
   finishCheckFromComment,
   readRunMarker,
+  resendReview,
   reviewOutcome,
   reviewScore,
   runMarker,
@@ -117,4 +121,98 @@ test("no one else's comment closes a check, nor the App's on another pull reques
   const other = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
   assert.equal(await finishCheckFromComment(comment({ body: runMarker(other) }), "outrunner-sh", d), false);
   assert.deepEqual(closed, []);
+});
+
+/** The run's row and GitHub's check, in memory, as the deps see them. */
+function fakeCheck(over: { failSends?: number } = {}) {
+  const row = { exists: true, closedAt: false, reviewedAt: false, review: null as ReturnType<typeof reviewOutcome> | ReturnType<typeof closedWithout> | null };
+  const github: string[] = [];
+  let failures = over.failSends ?? 0;
+  let beforeSend: (() => void) | null = null;
+  const deps: CloseDeps<string> = {
+    checkStateOf: async () => (row.exists ? { check: "check-1", closed: row.closedAt, review: row.review } : null),
+    claimCheck: async () => {
+      if (row.closedAt || row.reviewedAt) return false;
+      row.closedAt = true;
+      return true;
+    },
+    releaseCheck: async () => {
+      if (!row.reviewedAt) row.closedAt = false;
+    },
+    markCheckReviewed: async (_id, outcome) => {
+      row.reviewedAt = true;
+      row.review = outcome;
+      row.closedAt = false;
+    },
+    markCheckClosed: async () => {
+      row.closedAt = true;
+    },
+    completeCheck: async (_check, outcome) => {
+      const hook = beforeSend;
+      beforeSend = null;
+      await hook?.();
+      if (failures > 0) {
+        failures -= 1;
+        throw new Error("GitHub 502");
+      }
+      github.push(outcome.output.title);
+    },
+  };
+  return { row, github, deps, setBeforeSend: (f: () => void) => (beforeSend = f) };
+}
+
+const URL_7 = "https://github.com/o/r/pull/7#issuecomment-1";
+
+test("a check closes without a review once, and never once its review is in", async () => {
+  const f = fakeCheck();
+  await closeCheckWithout(RUN, "It failed.", f.deps);
+  await closeCheckWithout(RUN, "The pull request closed.", f.deps);
+  assert.deepEqual(f.github, ["No review"]);
+  const reviewed = fakeCheck();
+  await closeCheckWithReview(RUN, reviewOutcome("Score: 5/5", URL_7), reviewed.deps);
+  await closeCheckWithout(RUN, "No review was posted within an hour.", reviewed.deps);
+  assert.deepEqual(reviewed.github, ["Score: 5/5"]);
+});
+
+test("a close without a review GitHub didn't take is given back for the sweep", async () => {
+  const f = fakeCheck({ failSends: 1 });
+  await assert.rejects(closeCheckWithout(RUN, "It failed.", f.deps));
+  assert.equal(f.row.closedAt, false);
+  await closeCheckWithout(RUN, "No review was posted within an hour.", f.deps);
+  assert.deepEqual(f.github, ["No review"]);
+});
+
+test("a review GitHub didn't take is kept, and the sweep sends it again; nothing says no review meanwhile", async () => {
+  const f = fakeCheck({ failSends: 1 });
+  await assert.rejects(closeCheckWithReview(RUN, reviewOutcome("Score: 4/5", URL_7), f.deps));
+  assert.equal(f.row.closedAt, false);
+  assert.equal(f.row.reviewedAt, true);
+  // The hour's sweep can't take it for no review...
+  await closeCheckWithout(RUN, "No review was posted within an hour.", f.deps);
+  assert.deepEqual(f.github, []);
+  // ...and sends the review again.
+  await resendReview(RUN, f.deps);
+  assert.deepEqual(f.github, ["Score: 4/5"]);
+  assert.equal(f.row.closedAt, true);
+  await resendReview(RUN, f.deps);
+  assert.deepEqual(f.github, ["Score: 4/5"]);
+});
+
+test("a review after the sweep's close completes the check again, and one landing mid-close is sent after it", async () => {
+  const late = fakeCheck();
+  await closeCheckWithout(RUN, "No review was posted within an hour.", late.deps);
+  await closeCheckWithReview(RUN, reviewOutcome("Score: 5/5", URL_7), late.deps);
+  assert.deepEqual(late.github, ["No review", "Score: 5/5"]);
+
+  // The sweep's close is on its way when the review lands: the review's is
+  // sent last whichever order GitHub takes them in.
+  const racing = fakeCheck();
+  racing.setBeforeSend(() => {
+    racing.row.reviewedAt = true;
+    racing.row.review = reviewOutcome("Score: 5/5", URL_7);
+    racing.row.closedAt = false;
+  });
+  await closeCheckWithout(RUN, "No review was posted within an hour.", racing.deps);
+  assert.deepEqual(racing.github, ["No review", "Score: 5/5"]);
+  assert.equal(racing.github.at(-1), "Score: 5/5");
 });
