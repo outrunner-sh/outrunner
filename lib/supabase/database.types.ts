@@ -260,13 +260,13 @@ type PullRequestRow = {
   base_branch: string;
   head_branch: string;
   created_at: string;
-  /** As GitHub last said (20261102100000), and since when. */
+  /** As GitHub last said (20261102160000), and since when. */
   state: "open" | "closed" | "merged";
   state_at: string | null;
   checked_at: string | null;
 };
 
-// supabase/migrations/20261102100000_session_standing.sql
+// supabase/migrations/20261102160000_session_standing.sql
 type SessionActivityRow = {
   workspace_id: string;
   owner_id: string;
