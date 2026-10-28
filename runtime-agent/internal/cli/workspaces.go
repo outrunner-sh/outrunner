@@ -396,7 +396,33 @@ func sendCommand(ctx context.Context, base string, config Config, args []string,
 		}
 		return 0
 	}
+	if after == "" {
+		// The box hadn't logged the message when the send answered: as
+		// docs/api.md says, its turn is seen to start before it's waited on.
+		awaitWorking(ctx, api, id, 30*time.Second)
+	}
 	return waitAndPrint(ctx, api, id, after, 0, *f.json, stdout, stderr)
+}
+
+// awaitWorkingEvery is how often awaitWorking looks.
+var awaitWorkingEvery = 2 * time.Second
+
+// awaitWorking looks at the session until its turn is working, for at most
+// `limit`: a wait without a fence then can't take the quiet before the
+// turn for its end. Past the limit it lets the wait go on regardless.
+func awaitWorking(ctx context.Context, api API, id string, limit time.Duration) {
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		var w Workspace
+		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil && w.Turn.State != "idle" {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(awaitWorkingEvery):
+		}
+	}
 }
 
 const waitUsage = `Usage: outrunner wait <id> [--after <event>] [--timeout <duration>] [--org <name>] [--json]

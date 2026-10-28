@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeAPI answers /api/v1 as the app would, and records what it was asked.
@@ -264,5 +265,39 @@ func TestAnAPIKeyInTheEnvironmentWins(t *testing.T) {
 	t.Setenv("OUTRUNNER_API_KEY", "")
 	if code := getCommand(context.Background(), server.URL, Config{}, []string{"w1"}, &out, &errs); code != 1 {
 		t.Fatalf("no credential: exit %d", code)
+	}
+}
+
+func TestSendWithNoFenceWaitsForTheTurnToStart(t *testing.T) {
+	awaitWorkingEvery = time.Millisecond
+	defer func() { awaitWorkingEvery = 2 * time.Second }()
+	gets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"result":"sent","workspace_id":"w1","after_event":null}`))
+		case strings.HasSuffix(r.URL.Path, "/wait"):
+			if gets < 2 || r.URL.Query().Get("after_event") != "" {
+				t.Errorf("waited after %d looks, with %q", gets, r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"id":"w1","status":"ready","turn":{"state":"idle","last_message":"Fixed."}}`))
+		default:
+			gets++
+			state := "idle"
+			if gets >= 2 {
+				state = "working"
+			}
+			_, _ = w.Write([]byte(`{"id":"w1","status":"ready","turn":{"state":"` + state + `"}}`))
+		}
+	}))
+	defer server.Close()
+	t.Setenv("OUTRUNNER_API_KEY", "")
+	var out, errs bytes.Buffer
+	if code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--wait", "go"}, terminal{interactive: true}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if !strings.Contains(out.String(), "Fixed.") {
+		t.Fatalf("printed %q", out.String())
 	}
 }
