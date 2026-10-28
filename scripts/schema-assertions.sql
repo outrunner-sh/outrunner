@@ -2069,7 +2069,7 @@ begin
   raise notice 'ok: automations'' schedules save with them, and each time runs once';
 end $$;
 
--- 49. An automation's webhook token: made with the trigger, in the same
+-- 50. An automation's webhook token: made with the trigger, in the same
 -- step; kept when it's saved with one again (rotating is its own step); one
 -- per automation, hashed and sealed together.
 do $$
