@@ -182,6 +182,9 @@ export async function readableRepo(actor: TriageActor, fullName: string): Promis
   return (await readableRepos(actor)).find((r) => r.fullName.toLowerCase() === wanted) ?? null;
 }
 
+/** How long a PR's page waits to ask GitHub again whether it merges cleanly. */
+const MERGEABILITY_RETRY_MS = 1500;
+
 /** One pull request in full, or null when the viewer may not read it. */
 export async function pullDetail(actor: TriageActor, fullName: string, number: number): Promise<PullDetail | null> {
   const repo = await readableRepo(actor, fullName);
@@ -200,6 +203,14 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     outrunnerLinks([{ projectId: repo.id, number }]),
   ]);
   if (!pull) return null;
+  // GitHub works out whether a PR merges cleanly only once asked, so a PR no
+  // one has looked at lately reads "unknown" at first: asked once more, a
+  // moment later, so its page can offer Merge, or say why not.
+  let mergeStatus = status;
+  if (mergeStatus?.state === "open" && mergeStatus.mergeableState === "unknown") {
+    await new Promise((resolve) => setTimeout(resolve, MERGEABILITY_RETRY_MS));
+    mergeStatus = await getPullRequestStatus({ token, repoFullName: repo.fullName, number }).catch(() => status);
+  }
   const config = githubAppConfig();
   const slug = config ? await appSlug(config).catch(() => null) : null;
   const fromApp = (c: { user?: { login?: string; type?: string } | null }) =>
@@ -232,8 +243,8 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     additions: pull.additions ?? 0,
     deletions: pull.deletions ?? 0,
     changedFiles: pull.changed_files ?? 0,
-    checks: status?.checks ?? { passing: 0, failing: 0, pending: 0 },
-    mergeableState: status?.mergeableState ?? "unknown",
+    checks: mergeStatus?.checks ?? { passing: 0, failing: 0, pending: 0 },
+    mergeableState: mergeStatus?.mergeableState ?? "unknown",
     reviewers: (pull.requested_reviewers ?? []).flatMap((r) => (r.login ? [r.login] : [])),
     reviews: [...latest].map(([author, state]) => ({ author, state })),
     reviewScore: score ? score.replace(/\s+/g, "") : null,

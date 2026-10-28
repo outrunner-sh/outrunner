@@ -10,6 +10,7 @@ import { ReviewChat } from "@/components/review/review-chat";
 import { RouteLoading } from "@/components/route-states";
 import { pullDetail } from "@/lib/review/pulls";
 import { reviewViewer } from "@/lib/review/viewer";
+import { whyNotMergeable } from "@/lib/session/pull-request-status";
 import { cn } from "@/lib/utils";
 
 type Params = Promise<{ owner: string; repo: string; number: string }>;
@@ -42,17 +43,8 @@ async function Pull({ params }: { params: Params }) {
   if (!viewer) redirect(`/signin?next=/review/${owner}/${repo}/${number}`);
   const pr = await pullDetail(viewer.actor, `${owner}/${repo}`, Number(number)).catch(() => null);
   if (!pr) notFound();
-  const ready = pr.state === "open" && !pr.draft && pr.checks.failing === 0 && pr.checks.pending === 0;
-  const why =
-    pr.state !== "open"
-      ? `This PR is ${pr.state}.`
-      : pr.draft
-        ? "It's a draft."
-        : pr.checks.failing
-          ? "Checks are failing."
-          : pr.checks.pending
-            ? "Checks are still running."
-            : null;
+  const why = whyNotMergeable(pr);
+  const ready = why === null;
 
   return (
     <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px]">
