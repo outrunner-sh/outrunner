@@ -143,6 +143,11 @@ export async function refillProjectPool(input: {
   }
 }
 
+/** Whether a failed health check is one a box still booting gives. */
+function stillBooting(error: unknown): boolean {
+  return !(error instanceof AgentRequestError) || error.status >= 500 || error.status === 429;
+}
+
 /** A warm hook that failed: its exit code, and its log on the project. */
 export class WarmHookError extends Error {}
 
@@ -158,15 +163,17 @@ async function warmBox(
   // the listing id. A box just made may take a moment to answer.
   let healthError: unknown = null;
   let health: Awaited<ReturnType<AgentClient["health"]>> | null = null;
-  for (let attempt = 0; attempt < HEALTH_TRIES && !health; attempt++) {
+  for (let attempt = 0; attempt < HEALTH_TRIES; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, HEALTH_RETRY_MS));
-    health = await agent.health({ ...box, workspaceId: LISTING_WORKSPACE_ID }).catch((error: unknown) => {
+    try {
+      health = await agent.health({ ...box, workspaceId: LISTING_WORKSPACE_ID });
+      break;
+    } catch (error) {
       healthError = error;
-      // Only what a box still booting answers is tried again (no answer, or
-      // the proxy's 5xx): a refusal or a bug fails at once, with its error.
-      if (error instanceof AgentRequestError && error.status < 500) attempt = HEALTH_TRIES;
-      return null;
-    });
+      // Only what a box still booting answers is tried again (no answer,
+      // the proxy's 5xx or 429): a refusal or a bug fails at once.
+      if (!stillBooting(error)) break;
+    }
   }
   if (!health?.features?.includes(AGENT_FEATURE_WARM_HOOKS)) {
     // An older agent (or one that didn't answer): pooled unwarmed, and the
