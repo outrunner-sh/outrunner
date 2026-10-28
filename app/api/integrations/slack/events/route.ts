@@ -62,8 +62,8 @@ export async function POST(request: Request) {
 }
 
 /**
- * What the agent hears: a person's message, mentioning it (app_mention) or in
- * a thread or DM (message). Edits, joins and bots' messages aren't heard. A
+ * What the agent hears: a person's message, mentioning it (app_mention), in
+ * a thread or DM, or new in a channel it watches (message). Edits, joins and bots' messages aren't heard. A
  * message that mentions the bot comes as both; the handler leaves the message
  * event of it to the app_mention.
  */
@@ -73,9 +73,11 @@ function agentMessage(teamId: string, event: SlackEvent): AgentMessage | null {
     return { teamId, channel: event.channel, user: event.user, text: event.text, ts: event.ts, threadTs: event.thread_ts, mention: true };
   }
   if (event.type !== "message" || event.subtype) return null;
-  // In a channel only replies in threads are heard; in a DM, everything.
-  if (event.channel_type !== "im" && !event.thread_ts) return null;
+  // A new message in a channel (not in a thread) is heard only where the
+  // channel is watched: the handler checks.
+  const topLevel = event.channel_type !== "im" && !event.thread_ts;
   return {
+    topLevel,
     teamId,
     channel: event.channel,
     channelType: event.channel_type ?? null,

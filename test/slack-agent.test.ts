@@ -119,7 +119,7 @@ test("questions get answers or research; research needs one of the asker's repos
 test("the agent ends every turn with the reply tool, and has the read-only lookups", () => {
   assert.deepEqual(
     AGENT_TOOLS.map((t) => t.function.name),
-    ["recent_work", "find_items", "item_status", REPLY_TOOL],
+    ["recent_work", "find_items", "item_status", "channel_settings", REPLY_TOOL],
   );
   assert.match(systemPrompt({ repos: [], openItems: [], rounds: 0 }), /calling the reply tool exactly once/);
 });

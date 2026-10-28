@@ -86,6 +86,11 @@ export type SlackConversation = {
   workspaceId: string | null;
   /** The thread's research session (lib/slack/research.ts). */
   researchWorkspaceId: string | null;
+  /** Its session's pull request, as the webhook saw it open. */
+  pr: { repo: string; number: number; url: string } | null;
+  /** The validator comment last posted in the thread. */
+  verdictCommentId: number | null;
+  mergedAnnounced: boolean;
 };
 
 type ConversationRow = {
@@ -102,6 +107,11 @@ type ConversationRow = {
   item_id: string | null;
   workspace_id: string | null;
   research_workspace_id: string | null;
+  pr_repo: string | null;
+  pr_number: number | null;
+  pr_url: string | null;
+  verdict_comment_id: number | null;
+  merged_announced: boolean;
 };
 
 function toConversation(row: ConversationRow): SlackConversation {
@@ -119,6 +129,9 @@ function toConversation(row: ConversationRow): SlackConversation {
     itemId: row.item_id,
     workspaceId: row.workspace_id,
     researchWorkspaceId: row.research_workspace_id,
+    pr: row.pr_repo && row.pr_number && row.pr_url ? { repo: row.pr_repo, number: row.pr_number, url: row.pr_url } : null,
+    verdictCommentId: row.verdict_comment_id,
+    mergedAnnounced: row.merged_announced,
   };
 }
 
@@ -175,6 +188,9 @@ export async function updateConversation(
     itemId: string | null;
     workspaceId: string | null;
     researchWorkspaceId: string | null;
+    pr: { repo: string; number: number; url: string };
+    verdictCommentId: number;
+    mergedAnnounced: boolean;
   }>,
 ): Promise<void> {
   const { error } = await db()
@@ -187,9 +203,26 @@ export async function updateConversation(
       ...(patch.itemId !== undefined && { item_id: patch.itemId }),
       ...(patch.workspaceId !== undefined && { workspace_id: patch.workspaceId }),
       ...(patch.researchWorkspaceId !== undefined && { research_workspace_id: patch.researchWorkspaceId }),
+      ...(patch.pr !== undefined && { pr_repo: patch.pr.repo, pr_number: patch.pr.number, pr_url: patch.pr.url }),
+      ...(patch.verdictCommentId !== undefined && { verdict_comment_id: patch.verdictCommentId }),
+      ...(patch.mergedAnnounced !== undefined && { merged_announced: patch.mergedAnnounced }),
     })
     .eq("id", id);
   if (error) throw error;
+}
+
+/** Threads whose session has a pull request still to follow: not yet
+ *  announced as merged. */
+export async function conversationsWithOpenPullRequests(limit = 25): Promise<SlackConversation[]> {
+  const { data, error } = await db()
+    .from("slack_conversations")
+    .select("*")
+    .not("pr_number", "is", null)
+    .eq("merged_announced", false)
+    .order("updated_at", { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map(toConversation);
 }
 
 /** The thread a work item was filed from, if it came from the agent. */
@@ -197,6 +230,23 @@ export async function conversationForItem(itemId: string): Promise<SlackConversa
   const { data, error } = await db().from("slack_conversations").select("*").eq("item_id", itemId).limit(1).maybeSingle();
   if (error) throw error;
   return data ? toConversation(data) : null;
+}
+
+/**
+ * A session as the server sees it, with no one signed in: getWorkspace reads
+ * through the signed-in user's client, which the Slack agent (after Slack's
+ * answer, or on the cron) doesn't have.
+ */
+export async function sessionSummary(
+  workspaceId: string,
+): Promise<{ id: string; ownerId: string; projectId: string; status: string } | null> {
+  const { data, error } = await db()
+    .from("workspaces")
+    .select("id, owner_id, project_id, status")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? { id: data.id, ownerId: data.owner_id, projectId: data.project_id, status: data.status } : null;
 }
 
 // ---------------------------------------------------------------------------

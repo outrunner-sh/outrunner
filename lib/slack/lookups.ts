@@ -5,10 +5,9 @@
  * item stands. Each answers in short JSON for the model to read.
  */
 
-import { listOrgInstallations } from "@/lib/db/github-installations";
 import { listOrgProjects } from "@/lib/db/org-access";
-import { getWorkspace } from "@/lib/db/repositories";
-import { githubAppConfig, installationToken } from "@/lib/github/app";
+import { sessionSummary } from "@/lib/db/slack-agent";
+import { githubGet, repoToken } from "@/lib/slack/github";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { canSee, type TriageActor } from "@/lib/triage/access";
 import { itemUrl } from "@/lib/triage/urls";
@@ -33,53 +32,25 @@ export async function recentWork(actor: TriageActor, input: { days?: unknown; re
   const targets = (wanted ? repos.filter((r) => r.fullName.toLowerCase() === wanted) : repos).slice(0, 10);
   if (targets.length === 0) return JSON.stringify({ error: wanted ? `No repository ${input.repo} you can read.` : "No repositories." });
 
-  const config = githubAppConfig();
-  if (!config) return JSON.stringify({ error: "The Outrunner GitHub App isn't set up on this deployment." });
-  const installations = await listOrgInstallations(actor.orgId);
   const merged: MergedPull[] = [];
   const unreachable: string[] = [];
   await Promise.all(
     targets.map(async (repo) => {
-      const owner = repo.fullName.split("/")[0]?.toLowerCase();
-      const installation = installations.find((i) => i.accountLogin.toLowerCase() === owner && !i.suspended);
-      if (!installation) {
+      const token = await repoToken(actor.orgId, repo.fullName).catch(() => null);
+      const pulls = token
+        ? await githubGet<{ number: number; title: string; html_url: string; merged_at: string | null; user?: { login?: string } | null }[]>(
+            token,
+            `/repos/${repo.fullName}/pulls?state=closed&sort=updated&direction=desc&per_page=50`,
+          )
+        : null;
+      if (!pulls) {
         unreachable.push(repo.fullName);
         return;
       }
-      try {
-        const token = await installationToken(config, installation.id);
-        const response = await fetch(
-          `https://api.github.com/repos/${repo.fullName}/pulls?state=closed&sort=updated&direction=desc&per_page=50`,
-          {
-            headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
-            signal: AbortSignal.timeout(10_000),
-          },
-        );
-        if (!response.ok) {
-          unreachable.push(repo.fullName);
-          return;
+      for (const p of pulls) {
+        if (p.merged_at && Date.parse(p.merged_at) >= since) {
+          merged.push({ repo: repo.fullName, number: p.number, title: p.title, author: p.user?.login ?? null, mergedAt: p.merged_at, url: p.html_url });
         }
-        const pulls = (await response.json()) as {
-          number: number;
-          title: string;
-          html_url: string;
-          merged_at: string | null;
-          user?: { login?: string } | null;
-        }[];
-        for (const p of pulls) {
-          if (p.merged_at && Date.parse(p.merged_at) >= since) {
-            merged.push({
-              repo: repo.fullName,
-              number: p.number,
-              title: p.title,
-              author: p.user?.login ?? null,
-              mergedAt: p.merged_at,
-              url: p.html_url,
-            });
-          }
-        }
-      } catch {
-        unreachable.push(repo.fullName);
       }
     }),
   );
@@ -135,7 +106,7 @@ export async function itemStatus(actor: TriageActor, input: { key?: unknown }): 
     .maybeSingle();
   if (error) throw error;
   if (!item || !canSee(actor, { projectId: item.project_id })) return JSON.stringify({ error: `No OR-${number} you can see.` });
-  const session = item.workspace_id ? await getWorkspace(item.workspace_id).catch(() => null) : null;
+  const session = item.workspace_id ? await sessionSummary(item.workspace_id).catch(() => null) : null;
   const { data: pr } = item.workspace_id
     ? await db.from("pull_requests").select("github_number, url, title").eq("workspace_id", item.workspace_id).limit(1).maybeSingle()
     : { data: null };

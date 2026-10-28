@@ -66,6 +66,8 @@ export function systemPrompt(context: AgentContext): string {
    - The session prompt is for an autonomous coding agent in the repository: the goal, the context from the thread (quote specifics: error messages, URLs, steps), the acceptance criteria, and constraints. Standalone. No instructions about pull requests; they're added for you.
    - If an open item below already covers the request, say so and give its key; still propose if the thread asks for something different.
 
+3. Settings for this channel ("watch this channel", "post a daily digest here at 9am IST", "stop the digest"): call channel_settings, then reply with action "answer" saying what's now set. If they don't give a time zone for an hour, ask which.
+
 Always finish by calling the reply tool exactly once. Read the whole thread: several people may be talking, and messages are prefixed with who wrote them. Never invent facts about the codebase or the team's work. Write for Slack: short, friendly, plain sentences, *bold* sparingly, no headings; links as <url|text>.
 ${mustPropose ? "\nYou have asked enough questions about this work: propose now, with what you know. Note any open question in the problem.\n" : ""}
 Repositories this person can see:
@@ -191,6 +193,25 @@ export const AGENT_TOOLS = [
         additionalProperties: false,
         required: ["key"],
         properties: { key: { type: "string", description: "Like OR-42." } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "channel_settings",
+      description:
+        "Change what you do in this channel, when asked to: watch it (offer to file messages that look like bug reports or requests, without being mentioned), and post a daily or weekly digest (what shipped, what's in progress or stuck, what waits in triage) at an hour, local time. Leave a setting null to keep it. Answers the channel's settings after the change.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["watch", "digest", "hour", "timezone"],
+        properties: {
+          watch: { type: ["boolean", "null"] },
+          digest: { type: ["string", "null"], enum: ["daily", "weekly", "off", null] },
+          hour: { type: ["integer", "null"], description: "0 to 23, local time." },
+          timezone: { type: ["string", "null"], description: "An IANA time zone, like Asia/Kolkata or America/New_York." },
+        },
       },
     },
   },

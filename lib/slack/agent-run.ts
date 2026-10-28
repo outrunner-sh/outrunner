@@ -51,11 +51,23 @@ import {
   transcript,
   workerPrompt,
 } from "@/lib/slack/agent";
-import { agentTurn, type Lookups } from "@/lib/slack/agent-model";
+import { agentTurn, type Lookups, oneShot } from "@/lib/slack/agent-model";
 import { findItems, itemStatus, recentWork } from "@/lib/slack/lookups";
-import { askResearch } from "@/lib/slack/research";
+import { askResearch, wakeAndSend } from "@/lib/slack/research";
+import { channelSettings, setChannelSettings } from "@/lib/db/slack-channels";
+import { githubGet, repoToken } from "@/lib/slack/github";
+import { threadSession } from "@/lib/slack/proactive";
+import {
+  CLASSIFIER_PROMPT,
+  isTimeZone,
+  parseClassification,
+  PROACTIVE_ACTIONS,
+  sendBackPrompt,
+  watchOffer,
+} from "@/lib/slack/proactive-text";
+import { canTriage } from "@/lib/triage/access";
 import { signLinkToken, slackPermalink, slackToMarkdown } from "@/lib/slack/slack";
-import { postEphemeral, postMessage, threadReplies, updateMessage, userNames } from "@/lib/slack/web";
+import { deleteMessage, postEphemeral, postMessage, threadReplies, updateMessage, userNames } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { TriageActor } from "@/lib/triage/access";
 import { itemUrl } from "@/lib/triage/urls";
@@ -73,6 +85,9 @@ export type AgentMessage = {
   threadTs?: string | null;
   /** An @mention of the bot (app_mention), rather than a reply or a DM. */
   mention: boolean;
+  /** A new message in a channel, not in a thread: heard only where the
+   *  channel is watched. */
+  topLevel?: boolean;
 };
 
 function appUrl(path: string): string {
@@ -124,6 +139,10 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
   if (!message.mention && message.channelType !== "im" && message.text.includes(`<@${install.botUserId}`)) return;
   const threadTs = message.threadTs ?? message.ts;
   const reply = (text: string) => postMessage(install.botToken, { channel: message.channel, threadTs, text });
+  if (message.topLevel && !message.mention && message.channelType !== "im") {
+    await offerIfWork(install, message).catch((error: unknown) => console.error("Slack agent: watching failed", error));
+    return;
+  }
 
   try {
     let conversation = await getConversation(message.teamId, message.channel, threadTs);
@@ -236,8 +255,9 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
         recent_work: (args) => recentWork(asker, args),
         find_items: (args) => findItems(asker, args),
         item_status: (args) => itemStatus(asker, args),
+        channel_settings: (args) => changeChannel(asker, message, args),
       }
-    : { recent_work: noAccess, find_items: noAccess, item_status: noAccess };
+    : { recent_work: noAccess, find_items: noAccess, item_status: noAccess, channel_settings: noAccess };
   const context = { repos, openItems, rounds: conversation.rounds };
   const repoNames = repos.map((r) => r.fullName);
   const call = [{ role: "system" as const, content: systemPrompt(context) }, ...chat];
@@ -446,12 +466,163 @@ export async function announcePullRequest(pr: {
   for (const item of items ?? []) {
     const conversation = await conversationForItem(item.id);
     if (!conversation) continue;
+    // Followed from here on: its validator's verdict, and its merge.
+    await updateConversation(conversation.id, { pr: { repo: pr.repoFullName, number: pr.number, url: pr.url } });
     const install = await getInstallation(conversation.teamId);
     if (!install) continue;
     await postMessage(install.botToken, {
       channel: conversation.channelId,
       threadTs: conversation.threadTs,
-      text: `Pull request for OR-${item.number}: <${pr.url}|#${pr.number} ${pr.title.replace(/[<>|]/g, "")}>. A validator checks it against the acceptance criteria if the repository has the validation automation on.`,
+      text: `Pull request for OR-${item.number}: <${pr.url}|#${pr.number} ${pr.title.replace(/[<>|]/g, "")}>. If the repository has the validation automation on, I'll post its verdict here, and when it's merged.`,
     });
+  }
+}
+
+/**
+ * The channel_settings tool: what the agent does in this channel. Changing it
+ * needs write on all of the org's projects (an admin, by default): a digest
+ * shows what the person who set it may see, to everyone in the channel.
+ */
+async function changeChannel(asker: TriageActor, message: AgentMessage, args: Record<string, unknown>): Promise<string> {
+  if (message.channelType === "im") return JSON.stringify({ error: "Settings are for channels, not DMs." });
+  if (asker.orgLevel !== "write") {
+    return JSON.stringify({ error: "Changing what I do in a channel needs write on all of the org's workspaces." });
+  }
+  const tz = typeof args.timezone === "string" && args.timezone.trim() ? args.timezone.trim() : undefined;
+  if (tz && !isTimeZone(tz)) return JSON.stringify({ error: `${tz} isn't a time zone I know (use one like Asia/Kolkata).` });
+  const hour = typeof args.hour === "number" && Number.isInteger(args.hour) && args.hour >= 0 && args.hour <= 23 ? args.hour : undefined;
+  const digest = args.digest === "daily" || args.digest === "weekly" ? args.digest : args.digest === "off" ? null : undefined;
+  const settings = await setChannelSettings(
+    { teamId: message.teamId, channelId: message.channel, orgId: asker.orgId, setBy: asker.userId },
+    {
+      ...(typeof args.watch === "boolean" && { watch: args.watch }),
+      ...(digest !== undefined && { digest }),
+      ...(hour !== undefined && { digestHour: hour }),
+      ...(tz !== undefined && { digestTz: tz }),
+    },
+  );
+  return JSON.stringify({
+    watch: settings.watch,
+    digest: settings.digest ?? "off",
+    hour: settings.digestHour,
+    timezone: settings.digestTz,
+    weeklyOn: settings.digest === "weekly" ? "Mondays" : undefined,
+  });
+}
+
+/**
+ * A new message in a watched channel: if it looks like a bug report or a
+ * request, offer (in its thread) to write it up. Nothing is filed until
+ * someone says yes.
+ */
+async function offerIfWork(install: SlackInstallation, message: AgentMessage): Promise<void> {
+  if (message.text.trim().length < 15) return;
+  const settings = await channelSettings(message.teamId, message.channel);
+  if (!settings?.watch) return;
+  let key: string;
+  try {
+    key = await orgModelKey(settings.orgId);
+  } catch {
+    return;
+  }
+  const classification = parseClassification(await oneShot(key, CLASSIFIER_PROMPT, slackToMarkdown(message.text).slice(0, 4000)));
+  if (classification.kind === "none") return;
+  await postMessage(install.botToken, {
+    channel: message.channel,
+    threadTs: message.ts,
+    text: `This looks like ${classification.kind === "bug" ? "a bug report" : "a request"}: ${classification.summary}`,
+    blocks: watchOffer(classification, `${message.channel}|${message.ts}`),
+  });
+}
+
+/** A click on a button the agent posted on its own. */
+export type ProactiveAction = {
+  actionId: string;
+  value: string;
+  teamId: string;
+  user: string;
+  userName?: string | null;
+  channel?: string | null;
+  messageTs?: string | null;
+  messageBlocks?: Record<string, unknown>[] | null;
+};
+
+export async function handleProactiveAction(action: ProactiveAction): Promise<void> {
+  const install = await getInstallation(action.teamId);
+  if (!install) return;
+  try {
+    if (action.actionId === PROACTIVE_ACTIONS.watchFile || action.actionId === PROACTIVE_ACTIONS.watchDismiss) {
+      const [channel, ts] = action.value.split("|");
+      if (!channel || !ts) return;
+      if (action.messageTs) await deleteMessage(install.botToken, { channel, ts: action.messageTs }).catch(() => undefined);
+      if (action.actionId === PROACTIVE_ACTIONS.watchDismiss) return;
+      const actor = await actorFor(action.teamId, action.user);
+      if (!actor) {
+        await askToConnect(install, { channel, user: action.user, threadTs: ts });
+        return;
+      }
+      const conversation =
+        (await getConversation(action.teamId, channel, ts)) ??
+        (await openConversation({ teamId: action.teamId, channelId: channel, threadTs: ts, orgId: actor.orgId, startedBy: actor.userId }));
+      await runTurn(install, conversation, { teamId: action.teamId, channel, user: action.user, text: "", ts, threadTs: ts, mention: true });
+      return;
+    }
+
+    if (action.actionId !== PROACTIVE_ACTIONS.sendBack && action.actionId !== PROACTIVE_ACTIONS.leave) return;
+    const conversation = await getConversationById(action.value);
+    if (!conversation || conversation.teamId !== action.teamId) return;
+    const where = { channel: conversation.channelId, threadTs: conversation.threadTs };
+    const tellClicker = (text: string) => postEphemeral(install.botToken, { ...where, user: action.user, text });
+    const by = action.userName ? `@${action.userName}` : `<@${action.user}>`;
+    // The verdict stays; its buttons go.
+    const settle = async (note: string) => {
+      if (!action.messageTs || !action.messageBlocks) return;
+      await updateMessage(install.botToken, {
+        channel: conversation.channelId,
+        ts: action.messageTs,
+        text: note,
+        blocks: [...action.messageBlocks.filter((b) => b.type !== "actions"), { type: "context", elements: [{ type: "mrkdwn", text: note }] }],
+      }).catch(() => undefined);
+    };
+    if (action.actionId === PROACTIVE_ACTIONS.leave) {
+      await settle(`Left as it is by ${by}.`);
+      return;
+    }
+
+    const actor = await actorFor(action.teamId, action.user);
+    if (!actor || actor.orgId !== conversation.orgId) {
+      await askToConnect(install, { ...where, user: action.user });
+      return;
+    }
+    const item = conversation.itemId ? await getWorkItem(actor, conversation.itemId) : null;
+    const session = await threadSession(conversation);
+    if (!item || !session || !conversation.pr || !conversation.verdictCommentId) {
+      await tellClicker("There's no session or verdict to send back here.");
+      return;
+    }
+    // The session's owner, or someone who may triage the item.
+    if (actor.userId !== session.ownerId && !canTriage(actor, item)) {
+      await tellClicker("Sending work back needs write on its workspace, or to be the one whose session it is.");
+      return;
+    }
+    const token = await repoToken(conversation.orgId, conversation.pr.repo);
+    const comment = token
+      ? await githubGet<{ body?: string }>(token, `/repos/${conversation.pr.repo}/issues/comments/${conversation.verdictCommentId}`)
+      : null;
+    if (!comment?.body) {
+      await tellClicker("I couldn't read the validator's comment on GitHub.");
+      return;
+    }
+    const key = itemKey(item);
+    await settle(`Sent back to the session by ${by}.`);
+    const sent = await wakeAndSend(session.ownerId, session.id, sendBackPrompt(key, comment.body)).catch(() => false);
+    await postMessage(install.botToken, {
+      ...where,
+      text: sent
+        ? `Sent ${key} back to its session with the validator's findings. The validator checks again when the pull request updates.`
+        : `I couldn't reach ${key}'s session (it may have been archived). Start a new one from the item.`,
+    });
+  } catch (error) {
+    console.error("Slack agent: the action failed", error);
   }
 }
