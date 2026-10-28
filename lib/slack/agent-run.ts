@@ -22,6 +22,7 @@ import {
   openConversation,
   orgModelKey,
   watchModelKey,
+  forgetWatchModelKey,
   type SlackConversation,
   type SlackInstallation,
   updateConversation,
@@ -542,7 +543,16 @@ async function offerIfWork(install: SlackInstallation, message: AgentMessage): P
     // A spent allowance included; watchModelKey logs it, once a minute.
     return;
   }
-  const classification = parseClassification(await oneShot(key, CLASSIFIER_PROMPT, slackToMarkdown(message.text).slice(0, 4000)));
+  let reply: string;
+  try {
+    reply = await oneShot(key, CLASSIFIER_PROMPT, slackToMarkdown(message.text).slice(0, 4000));
+  } catch (error) {
+    // Refused since it was kept (spent, or turned off): the next message asks
+    // afresh, and is refused before calling.
+    forgetWatchModelKey(settings.orgId);
+    throw error;
+  }
+  const classification = parseClassification(reply);
   if (classification.kind === "none") return;
   await postMessage(install.botToken, {
     channel: message.channel,

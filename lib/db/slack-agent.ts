@@ -7,7 +7,7 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import { outrunnerModelKey } from "@/lib/db/credentials";
-import { keySource, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
+import { keySource, ModelKeyRefusedError, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
 import { orgOutrunnerModelKey } from "@/lib/db/org-model-allowance";
 import { personalOwners } from "@/lib/db/orgs";
 import type { AgentSpec } from "@/lib/slack/agent";
@@ -306,34 +306,44 @@ export async function orgModelKey(orgId: string): Promise<string> {
   return owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId);
 }
 
-/** How long a watched channel's answer stands (a key, or why there's none):
- *  it asks at every message, and each full ask reads the key's usage from
- *  OpenRouter. OpenRouter's own cap still holds in between. */
+/** How long a watched channel's answer stands (a key, or a refusal that
+ *  won't change in a minute): it asks at every message, and each full ask
+ *  reads the key's usage from OpenRouter. OpenRouter's own cap still holds
+ *  in between. */
 const WATCH_ANSWER_MS = 60_000;
-const watchAnswers = new Map<string, { at: number; key?: string; error?: unknown }>();
+const watchAnswers = new Map<string, { at: number; answer: Promise<string> }>();
+
+/** A refusal worth keeping: the allowance spent, the key off, or no models
+ *  on this server. A failure to ask (a blip) is asked again next time. */
+function lasting(error: unknown): boolean {
+  return error instanceof ModelKeyRefusedError || error instanceof OutrunnerModelsUnavailableError;
+}
 
 /**
- * {@link orgModelKey} for a watched channel's message: the answer from the
- * last minute, refusals included, so a busy channel neither asks OpenRouter
- * at every message nor, once the allowance is spent, at every one after.
- * A reply to someone always asks afresh (orgModelKey).
+ * {@link orgModelKey} for a watched channel's message: the last minute's
+ * answer, a lasting refusal included, so a busy channel neither asks
+ * OpenRouter at every message nor, once the allowance is spent, at every one
+ * after. Messages arriving together share one ask. A reply to someone always
+ * asks afresh (orgModelKey).
  */
-export async function watchModelKey(orgId: string): Promise<string> {
+export function watchModelKey(orgId: string): Promise<string> {
   const now = Date.now();
   const kept = watchAnswers.get(orgId);
-  if (kept && now - kept.at < WATCH_ANSWER_MS) {
-    if (kept.key !== undefined) return kept.key;
-    throw kept.error;
-  }
-  try {
-    const key = await orgModelKey(orgId);
-    watchAnswers.set(orgId, { at: now, key });
-    return key;
-  } catch (error) {
-    // Said once a minute, not at every message: a channel gone quiet has a
-    // trace without a flood.
-    console.error(`Slack agent: no model key for org ${orgId}'s watched channels`, error);
-    watchAnswers.set(orgId, { at: now, error });
-    throw error;
-  }
+  if (kept && now - kept.at < WATCH_ANSWER_MS) return kept.answer;
+  const answer = orgModelKey(orgId);
+  watchAnswers.set(orgId, { at: now, answer });
+  answer.catch((error: unknown) => {
+    if (lasting(error)) {
+      // Said once a minute, not at every message.
+      console.error(`Slack agent: no model key for org ${orgId}'s watched channels`, error);
+    } else if (watchAnswers.get(orgId)?.answer === answer) {
+      watchAnswers.delete(orgId);
+    }
+  });
+  return answer;
+}
+
+/** Forget the org's kept answer: OpenRouter refused the key it gave. */
+export function forgetWatchModelKey(orgId: string): void {
+  watchAnswers.delete(orgId);
 }
