@@ -54,9 +54,13 @@ export function ReposStep({
         }
         const active = found.orgs.find((o) => o.id === found.activeOrgId);
         const withApp = found.orgs.find((o) => o.accounts.length > 0);
-        if (active && active.accounts.length === 0 && !found.personalGithub && withApp) {
-          await env.useOrg(withApp.id);
-          if (!stale) setAccess({ ...found, activeOrgId: withApp.id });
+        if (!stale && active && active.accounts.length === 0 && !found.personalGithub && withApp) {
+          // Kept if the switch fails: the Connect panel and the org switch.
+          const switched = await env.useOrg(withApp.id).then(
+            () => true,
+            () => false,
+          );
+          if (!stale) setAccess(switched ? { ...found, activeOrgId: withApp.id } : found);
           return;
         }
         if (!stale) setAccess(found);
@@ -98,10 +102,15 @@ export function ReposStep({
 
   async function switchOrg(orgId: string) {
     if (!access || orgId === access.activeOrgId) return;
+    try {
+      await env.useOrg(orgId);
+    } catch {
+      setError({ message: "Couldn't switch orgs. Try again.", reconnect: false });
+      return;
+    }
     setList(null);
     setError(null);
     setPicked(new Set());
-    await env.useOrg(orgId);
     setAccess({ ...access, activeOrgId: orgId });
   }
 
@@ -139,7 +148,7 @@ export function ReposStep({
       </div>
 
       {access && active && (
-        <OrgSource access={access} active={active} onSwitch={(id) => void switchOrg(id).catch(() => {})} />
+        <OrgSource access={access} active={active} onSwitch={(id) => void switchOrg(id)} />
       )}
 
       {unreachable && active ? (

@@ -4,6 +4,7 @@
  * stays free of the database and unit-testable.
  */
 
+import { githubUserId } from "@/lib/auth/allowlist";
 import { getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { listOrgInstallations } from "@/lib/db/github-installations";
@@ -45,9 +46,18 @@ async function repoLevel(userId: string, orgId: string, repo: string): Promise<A
   return project ? projectLevel(userId, project.id) : null;
 }
 
+/** Whether the user has a GitHub identity linked; true when that can't be
+ *  read, so the App is never taken for their own by mistake. */
+async function githubLinked(userId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
+  if (error || !data.user) return true;
+  return githubUserId(data.user) !== null;
+}
+
 const deps: IdentityDeps = {
   identity: getGithubIdentity,
   personalToken: getGithubToken,
+  githubLinked,
   config: githubAppConfig,
   installations: listOrgInstallations,
   repoLevel,
