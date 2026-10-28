@@ -42,6 +42,11 @@ export function archiveOffer(workspace: Pick<Workspace, "status" | "provider">):
     case "resuming":
       return { can: false, why: "Only a running session can be archived." };
   }
+  // A status this build doesn't know (a server ahead of it) is not offered.
+  // Typed `never`, so a status added to the union is a build error above.
+  const unknown: never = workspace.status;
+  void unknown;
+  return null;
 }
 
 /** What the archive confirmation says will happen. */

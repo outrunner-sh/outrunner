@@ -1,9 +1,6 @@
 "use client";
 
-import { useState } from "react";
-
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/loaders";
+import { ConfirmSessionDialog } from "@/components/confirm-session-dialog";
 import { ARCHIVE_CONSEQUENCE, archiveSession } from "@/lib/session/archive-control";
 
 /**
@@ -23,61 +20,26 @@ export function ArchiveSessionDialog({
   onOpenChange: (open: boolean) => void;
   onArchived: (id: string) => void;
 }) {
-  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
-
-  const confirm = async () => {
-    if (!session) return;
-    setState({ busy: true, error: null });
-    try {
-      await archiveSession(session.id);
-      setState({ busy: false, error: null });
-      onArchived(session.id);
-      onOpenChange(false);
-    } catch (error) {
-      setState({ busy: false, error: error instanceof Error ? error.message : "Could not archive this session." });
-    }
-  };
-
   return (
-    <Dialog
+    <ConfirmSessionDialog
       open={session !== null}
-      onOpenChange={(open) => {
-        // Not while it is being archived: the outcome has to be seen.
-        if (state.busy) return;
-        if (!open) setState({ busy: false, error: null });
-        onOpenChange(open);
+      title={`Archive “${session?.title ?? ""}”?`}
+      description={ARCHIVE_CONSEQUENCE}
+      // Saving its work can take a minute on a large worktree.
+      busyLabel="Archiving"
+      failure="Could not archive this session."
+      confirm={(go) => (
+        <button type="button" onClick={go} className="route-state-button is-primary">
+          Archive session
+        </button>
+      )}
+      run={async () => {
+        if (session) await archiveSession(session.id);
       }}
-    >
-      <DialogContent className="max-w-sm gap-5 bg-[#0d0d0d]" showClose={!state.busy}>
-        <div className="space-y-2">
-          <DialogTitle className="text-[15px] font-medium leading-snug">
-            Archive “{session?.title}”?
-          </DialogTitle>
-          <DialogDescription className="text-[13px] text-muted-foreground">{ARCHIVE_CONSEQUENCE}</DialogDescription>
-        </div>
-        {state.error && (
-          <p role="alert" className="text-[13px] text-destructive">
-            {state.error}
-          </p>
-        )}
-        <div className="flex items-center justify-end gap-2">
-          {state.busy ? (
-            // Saving its work can take a minute on a large worktree.
-            <span role="status" className="inline-flex h-8 items-center gap-2 text-[13px] text-muted-foreground">
-              <Spinner /> Archiving
-            </span>
-          ) : (
-            <>
-              <button type="button" onClick={() => onOpenChange(false)} className="route-state-button">
-                Cancel
-              </button>
-              <button type="button" onClick={() => void confirm()} className="route-state-button is-primary">
-                Archive session
-              </button>
-            </>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+      onOpenChange={onOpenChange}
+      onDone={() => {
+        if (session) onArchived(session.id);
+      }}
+    />
   );
 }

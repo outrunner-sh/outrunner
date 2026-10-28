@@ -26,6 +26,10 @@ test("Archive can be pressed only from the statuses the lifecycle route archives
   assert.equal(pressable("destroyed"), null);
 });
 
+test("a status this build doesn't know is not offered", () => {
+  assert.equal(archiveOffer({ status: "hibernating" as WorkspaceStatus, provider: "daytona" }), null);
+});
+
 test("a disabled Archive says why", () => {
   assert.deepEqual(archiveOffer({ status: "provisioning", provider: "daytona" }), {
     can: false,

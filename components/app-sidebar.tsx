@@ -450,7 +450,7 @@ function WorkspaceGroup({
                   className={cn(
                     "absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition focus-visible:opacity-100 group-hover/row:opacity-100",
                     deletion ? "right-7" : "right-1",
-                    archive.can ? "hover:bg-accent hover:text-foreground" : "cursor-not-allowed group-hover/row:opacity-40",
+                    archive.can ? "hover:bg-accent hover:text-foreground" : "cursor-not-allowed group-hover/row:opacity-40 focus-visible:opacity-40",
                   )}
                 >
                   <Archive className="size-3.5" />
