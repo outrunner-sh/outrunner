@@ -272,13 +272,14 @@ export async function sendMessageApi(
   if (workspace instanceof Response) return workspace;
   const refused = await wake(context, workspace);
   if (refused) return refused;
+  const sentAt = Date.now();
   const sent = await messagePOST(
     appRequest(context.base, `/api/workspaces/${id}/message`, { body: { content } }),
     routeParams({ id }),
   );
   if (!sent.ok) return errorFromRoute(sent, context.base);
   await onSent?.(workspace);
-  const fence = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content);
+  const fence = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content, sentAt);
   return Response.json({ result: "sent", workspace_id: id, after_event: fence === null ? null : String(fence) }, { status: 202 });
 }
 
@@ -293,11 +294,11 @@ const FENCE_RETRY_MS = 1_500;
  * message. Null when the log still doesn't show it: docs/api.md says what a
  * caller does then.
  */
-async function fenceAfterSend(workspace: Workspace, content: string): Promise<number | null> {
+async function fenceAfterSend(workspace: Workspace, content: string, sentAt: number): Promise<number | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, FENCE_RETRY_MS));
     const live = await readLiveConversation(workspace).catch(() => null);
-    const fence = live ? fenceBefore(live.entries, content) : null;
+    const fence = live ? fenceBefore(live.entries, content, sentAt) : null;
     if (fence !== null) return fence;
   }
   return null;

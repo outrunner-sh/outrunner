@@ -141,16 +141,29 @@ test("a turn can be over only once its prompt is in the log", () => {
 });
 
 test("a send's fence is where the log stood before its message", () => {
+  const sentAt = Date.parse("2026-11-01T00:00:00Z");
+  const at = (ms: number) => ({ timestamp: new Date(sentAt + ms).toISOString() });
   const entries = [
-    { id: 100, event: message("u1", "user", [text("fix it")]) as AgentEvent },
-    { id: 200, event: message("a1", "assistant", [text("done")]) as AgentEvent },
-    { id: 300, event: message("u2", "user", [text("fix it")]) as AgentEvent },
+    { id: 100, event: message("u1", "user", [text("fix it")], at(-60_000)) as AgentEvent },
+    { id: 200, event: message("a1", "assistant", [text("done")], at(-50_000)) as AgentEvent },
+    { id: 300, event: message("u2", "user", [text("fix it")], at(3_000)) as AgentEvent },
   ];
-  // The newest prompt that reads as the message: the same words sent again.
-  assert.equal(fenceBefore(entries, " fix it "), 200);
-  assert.equal(promptSince(entries, fenceBefore(entries, "fix it")), true);
+  // The newest prompt that reads as the message, logged after the send.
+  assert.equal(fenceBefore(entries, " fix it ", sentAt), 200);
+  assert.equal(promptSince(entries, fenceBefore(entries, "fix it", sentAt)), true);
   assert.equal(promptSince(entries.slice(0, 2), 200), false);
-  assert.equal(fenceBefore(entries.slice(0, 1), "fix it"), 0);
+  // Its first prompt, logged a second early by the box's clock: still it.
+  assert.equal(fenceBefore([{ id: 9, event: message("u0", "user", [text("go")], at(-1_000)) as AgentEvent }], "go", sentAt), 0);
   // Not in the log yet: no fence to give.
-  assert.equal(fenceBefore(entries, "something else"), null);
+  assert.equal(fenceBefore(entries, "something else", sentAt), null);
+});
+
+test("the same words sent again aren't taken for the last send's", () => {
+  const sentAt = Date.parse("2026-11-01T00:00:00Z");
+  // "continue" in a loop: the log has the last one, not yet this one.
+  const entries = [
+    { id: 100, event: message("u1", "user", [text("continue")], { timestamp: "2026-10-31T23:59:30Z" }) as AgentEvent },
+    { id: 200, event: message("a1", "assistant", [text("ok")], { timestamp: "2026-10-31T23:59:40Z" }) as AgentEvent },
+  ];
+  assert.equal(fenceBefore(entries, "continue", sentAt), null);
 });

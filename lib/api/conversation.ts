@@ -243,18 +243,31 @@ export function promptSince(entries: readonly ConversationEntry[], afterEvent: n
   );
 }
 
+/** How far the box's clock may be behind the server's for a prompt still
+ *  to count as logged after its send began (fenceBefore). */
+export const CLOCK_SKEW_MS = 2_000;
+
 /**
  * The fence for waiting on the turn a message starts, read after its send:
  * the id of the last event before the newest prompt that reads as
- * `content` (0 when it's the first), or null when the log doesn't have it
- * yet. promptSince(entries, fence) is then true for this message alone.
+ * `content` and was logged after the send began (`sentAt`, less
+ * CLOCK_SKEW_MS), 0 when it's the first; null when the log doesn't have it
+ * yet. The time matters for words sent again ("continue" in a loop): the
+ * newest one that reads the same may be the last send's, and a fence before
+ * it would let `wait` take that turn's end for this one's. Null is safe
+ * (docs/api.md: poll for `working`); a wrong fence isn't.
  */
-export function fenceBefore(entries: readonly ConversationEntry[], content: string): number | null {
+export function fenceBefore(entries: readonly ConversationEntry[], content: string, sentAt: number): number | null {
   const wanted = content.trim();
   for (let i = entries.length - 1; i >= 0; i--) {
     const { event } = entries[i];
     if (event.t !== "message" || event.role !== "user" || isInterruption(event)) continue;
-    if (messageText(event) === wanted) return i > 0 ? entries[i - 1].id : 0;
+    if (messageText(event) !== wanted) continue;
+    const at = Date.parse(event.timestamp);
+    // The newest that reads the same is from before this send: this one
+    // isn't in the log yet.
+    if (!Number.isFinite(at) || at < sentAt - CLOCK_SKEW_MS) return null;
+    return i > 0 ? entries[i - 1].id : 0;
   }
   return null;
 }
