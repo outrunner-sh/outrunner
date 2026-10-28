@@ -5,7 +5,8 @@
  * still goes if the user leaves the session while it sets up and comes back to
  * it from the sidebar. The session page moves the URL's copy into the kept one
  * as it opens, where storage allows, so the URL never carries it into a
- * reload; it sends whichever it finds, then forgets both.
+ * reload; it sends whichever it finds, then forgets both. The kept copy is
+ * marked as its send leaves, so a reload mid-send doesn't send it twice.
  */
 export type FirstPrompt = { prompt: string; attachmentIds: string[] };
 
@@ -113,7 +114,9 @@ export function dropFirstPromptFromAddressBar(): void {
 export function keepFirstPromptFromUrl(storage: PromptStorage | null, workspaceId: string, url: URL): string | null {
   const first = firstPromptFromUrl(url);
   if (!first) return null;
-  rememberFirstPrompt(storage, workspaceId, first);
+  // The new-session screen kept it already, and a send may have marked it
+  // going: rewriting it would drop the mark.
+  if (!rememberedFirstPrompt(storage, workspaceId)) rememberFirstPrompt(storage, workspaceId, first);
   return rememberedFirstPrompt(storage, workspaceId) ? withoutFirstPrompt(url) : null;
 }
 
@@ -130,6 +133,11 @@ export function rememberFirstPrompt(storage: PromptStorage | null, workspaceId: 
 
 /** The first prompt kept for the session, if one is still waiting to go. */
 export function rememberedFirstPrompt(storage: PromptStorage | null, workspaceId: string): FirstPrompt | null {
+  return readKept(storage, workspaceId)?.first ?? null;
+}
+
+/** The kept copy as stored: the prompt, and whether its send has left. */
+function readKept(storage: PromptStorage | null, workspaceId: string): { first: FirstPrompt; going: boolean } | null {
   if (!storage) return null;
   let raw: string | null;
   try {
@@ -139,17 +147,46 @@ export function rememberedFirstPrompt(storage: PromptStorage | null, workspaceId
   }
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { prompt?: unknown; attachmentIds?: unknown };
+    const parsed = JSON.parse(raw) as { prompt?: unknown; attachmentIds?: unknown; going?: unknown };
     const first: FirstPrompt = {
       prompt: typeof parsed.prompt === "string" ? parsed.prompt : "",
       attachmentIds: Array.isArray(parsed.attachmentIds)
         ? parsed.attachmentIds.filter((id): id is string => typeof id === "string")
         : [],
     };
-    return hasFirstPrompt(first) ? first : null;
+    return hasFirstPrompt(first) ? { first, going: parsed.going === true } : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Mark the kept copy as going, synchronously as its send leaves, or back to
+ * waiting when the send fails. A page that reloads in between finds the mark
+ * (firstPromptCutOff); one that never sent leaves the copy as it was.
+ */
+export function markFirstPromptGoing(storage: PromptStorage | null, workspaceId: string, going: boolean): void {
+  const kept = readKept(storage, workspaceId);
+  if (!storage || !kept) return;
+  try {
+    storage.setItem(key(workspaceId), JSON.stringify({ ...kept.first, ...(going && { going: true }) }));
+  } catch {
+    // Unmarked, a reload mid-send can send it again: as without storage.
+  }
+}
+
+/**
+ * Whether a send of the session's first prompt was cut off: its kept copy is
+ * marked going, but no send of this page load has it. Only a reload (or a
+ * closed tab, restored) does that, and the prompt most likely reached Claude
+ * anyway: the server carries on with a request whose page has gone. Sending it
+ * again would have Claude do it twice, so the page lets it go instead. At most
+ * once, rather than at least: the rare send a reload stopped before it left is
+ * lost, and the user types it again.
+ */
+export function firstPromptCutOff(storage: PromptStorage | null, workspaceId: string): boolean {
+  if (sending.has(workspaceId) || sent.has(workspaceId)) return false;
+  return readKept(storage, workspaceId)?.going ?? false;
 }
 
 /** Hand the waiting prompt from one session to another, as Start over does:

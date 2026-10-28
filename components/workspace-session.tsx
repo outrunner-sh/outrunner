@@ -41,8 +41,10 @@ import { conversationPlaceholder } from "@/lib/session/conversation-placeholder"
 import { reachOutrunner } from "@/lib/http/request-json";
 import {
   dropFirstPromptFromAddressBar,
+  firstPromptCutOff,
   forgetFirstPrompt,
   hasFirstPrompt,
+  markFirstPromptGoing,
   rememberedFirstPrompt,
   sendFirstPromptOnce,
   tabStorage,
@@ -605,19 +607,24 @@ export function WorkspaceSession({
       if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
       if (window.location.pathname === sessionPath) dropFirstPromptFromAddressBar();
     };
-    // The conversation already has a prompt of the user's: this one went,
-    // from a page a reload cut off before it could forget it. Sending it again
-    // would have Claude do it twice.
-    if (userPromptCount(conversation.events) > 0) {
+    // A page before a reload had sent it, and the reload cut that send off
+    // before it could forget it: it most likely reached Claude, so it isn't
+    // sent again (firstPromptCutOff).
+    if (!local && firstPromptCutOff(tabStorage(), workspaceId)) {
       itWent();
       return;
     }
     // Send it, cleaning up only once it lands. A failed send keeps its Retry.
-    const attempt = (): Promise<boolean> =>
-      send(first.prompt, first.attachmentIds, retry).then((landed) => {
+    // The kept copy is marked going as the send leaves, so a reload mid-send
+    // finds it marked; a failure puts it back to waiting, for a reload to send.
+    const attempt = (): Promise<boolean> => {
+      if (!local) markFirstPromptGoing(tabStorage(), workspaceId, true);
+      return send(first.prompt, first.attachmentIds, retry).then((landed) => {
         if (landed) itWent();
+        else if (!local) markFirstPromptGoing(tabStorage(), workspaceId, false);
         return landed;
       });
+    };
     // The composer's Retry re-enters through the same once-per-tab gate as
     // the first try, so a retry racing a remounted page still sends it once.
     const retry = (): void => void sendFirstPromptOnce(workspaceId, attempt);
