@@ -523,6 +523,8 @@ export const ErrorCode = z.enum([
   "CONFLICT",
   // A session credential on an engine that runs sessions on its own login.
   "UNSUPPORTED",
+  // A plan approved that was answered already (another tab, the terminal).
+  "ANSWERED",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 

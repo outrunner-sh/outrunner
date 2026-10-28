@@ -1139,6 +1139,15 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
 	defer lock.Unlock()
+	if p.RequirePlan {
+		f, ok := s.getFacts(workspaceID)
+		switch {
+		case !ok:
+			return ErrUnknownWorkspace
+		case !f.Plan:
+			return ErrNoPlanWaiting
+		}
+	}
 	if p.Dismiss {
 		if err := s.dismissHeld(workspaceID); err != nil {
 			return err

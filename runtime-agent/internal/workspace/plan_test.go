@@ -438,13 +438,48 @@ func TestAPlanApprovedElsewhereIsntApprovedAgain(t *testing.T) {
 func TestACompactionWaitsOnAPromptStillInTheBox(t *testing.T) {
 	s, fake, id := landingSession(t)
 	fake.onEnter = func() string { return "✻ Compacting conversation… (esc to interrupt)" }
-	s.sendLock(id).staged = &stagedPrompt{content: "fix it", baseline: s.userTurns(id), at: time.Now()}
+	s.sendLock(id).staged = &stagedPrompt{content: "fix the flaky test", baseline: s.userTurns(id), at: time.Now()}
+	fake.pane = strings.Replace(composerPane, "❯ ", "❯ fix the flaky test", 1)
 	if err := s.Compact(id, ""); !errors.Is(err, ErrPromptStaged) || fake.pastes != 0 {
 		t.Fatalf("Compact = %v with %d pastes, want ErrPromptStaged and nothing typed", err, fake.pastes)
 	}
-	// It landed since: the box is empty, and /compact goes.
-	s.sendLock(id).staged.baseline = -1
-	if err := s.Compact(id, ""); err != nil || !slices.Equal(fake.pasted, []string{"/compact"}) {
+	// Cleared in the terminal: the box is empty, and /compact goes, the
+	// staged prompt forgotten.
+	fake.pane = composerPane
+	if err := s.Compact(id, ""); err != nil || !slices.Equal(fake.pasted, []string{"/compact"}) || s.sendLock(id).staged != nil {
 		t.Fatalf("Compact = %v, typed %q", err, fake.pasted)
+	}
+	// Landed since (its turn recorded): the same, whatever the screen shows.
+	s.sendLock(id).staged = &stagedPrompt{content: "fix the flaky test", baseline: -1, at: time.Now()}
+	fake.pane = strings.Replace(composerPane, "❯ ", "❯ fix the flaky test", 1)
+	if err := s.Compact(id, ""); err != nil {
+		t.Fatalf("Compact after the prompt landed = %v", err)
+	}
+}
+
+// Two Approves at once on a session without Claude's menu (Codex): the second
+// finds the plan approved, under the session's locks, and sends nothing.
+func TestTwoApprovesAtOnceApproveOnce(t *testing.T) {
+	s, fake, id := landingSession(t)
+	s.updateFacts(id, func(f *workspaceFacts) { f.Plan, f.Agent = true, AgentCodex })
+	s.lookPath = func(string) (string, error) { return "/usr/bin/codex", nil }
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { _, err := s.ApprovePlan(id); errs <- err }()
+	}
+	answered := 0
+	for i := 0; i < 2; i++ {
+		if err := <-errs; errors.Is(err, ErrNoPlanWaiting) {
+			answered++
+		}
+	}
+	approvals := 0
+	for _, text := range fake.pasted {
+		if strings.HasSuffix(text, PlanApproved) {
+			approvals++
+		}
+	}
+	if answered != 1 || approvals != 1 {
+		t.Errorf("%d approvals pasted, %d told it was answered; want one of each", approvals, answered)
 	}
 }

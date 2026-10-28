@@ -34,6 +34,10 @@ type Prompt struct {
 	Content string
 	Mode    string
 	Dismiss bool
+	// RequirePlan sends it only while the session plans (ErrNoPlanWaiting
+	// otherwise), as decided under the session's locks: a plan's approval,
+	// which a second Approve mustn't paste into the build the first began.
+	RequirePlan bool
 }
 
 // ErrModeUnsupported is plan mode asked of an engine that runs its sessions
@@ -175,10 +179,10 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	}
 	// A prompt whose send gave up may still be in the prompt box: /compact
 	// typed after it would go as that prompt's tail, an ordinary turn, and
-	// nothing would compact. Refused until it is sent again (or has landed
-	// since, its box empty).
+	// nothing would compact. The screen decides, not the bookkeeping alone: a
+	// prompt that landed since, or was cleared in the terminal, is forgotten.
 	if st := lock.staged; st != nil {
-		if s.userTurns(workspaceID) <= st.baseline {
+		if s.userTurns(workspaceID) <= st.baseline && boxHolds(pane, st.content) {
 			return ErrPromptStaged
 		}
 		lock.staged = nil
@@ -212,9 +216,24 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	return errors.New("the compaction didn't start; try again")
 }
 
-// ErrPromptStaged is a compaction asked for while the prompt box may still
-// hold a prompt whose send gave up.
-var ErrPromptStaged = errors.New("a message that didn't go may still be in the prompt box; send it again first, then compact")
+// ErrPromptStaged is a compaction asked for while the prompt box still holds
+// a prompt whose send gave up. Sent or cleared in the session's terminal, it
+// goes: a resend from the page long after would be typed a second time.
+var ErrPromptStaged = errors.New("a message that didn't go is still in the prompt box: send it or clear it in the session's terminal, then compact")
+
+// boxHolds reports whether the bottom of a pane, where the prompt box is,
+// shows the start of content: its first line, spaces collapsed.
+func boxHolds(pane, content string) bool {
+	first := strings.Join(strings.Fields(strings.SplitN(strings.TrimSpace(content), "\n", 2)[0]), " ")
+	if r := []rune(first); len(r) > 40 {
+		first = string(r[:40])
+	}
+	lines := nonBlankLines(pane)
+	if len(lines) > 8 {
+		lines = lines[len(lines)-8:]
+	}
+	return first != "" && strings.Contains(strings.Join(strings.Fields(strings.Join(lines, " ")), " "), first)
+}
 
 // ErrCompactBusy is a compaction asked for mid-turn.
 var ErrCompactBusy = errors.New("the agent is mid-turn; compact once it has finished")
@@ -296,13 +315,12 @@ func (s *Service) ApprovePlan(workspaceID string) (string, error) {
 			return ApprovedInMenu, err
 		}
 	}
-	// Answered already (another tab's Approve took the plan out of plan mode):
-	// the prompt's path would press Escape into whatever the build shows (a
-	// permission question, declined) and paste an approval into its turn.
-	if now, _ := s.getFacts(workspaceID); !now.Plan {
-		return "", ErrNoPlanWaiting
-	}
-	return ApprovedByPrompt, s.SendPrompt(workspaceID, Prompt{Content: PlanApproved, Mode: ModeBuild, Dismiss: f.Agent != AgentCodex})
+	// Only while the session still plans, decided under its locks: answered
+	// already (another tab's Approve), the prompt's path would press Escape
+	// into whatever the build shows (a permission question, declined) and
+	// paste an approval into its turn.
+	err := s.SendPrompt(workspaceID, Prompt{Content: PlanApproved, Mode: ModeBuild, Dismiss: f.Agent != AgentCodex, RequirePlan: true})
+	return ApprovedByPrompt, err
 }
 
 // pickPlanOptionHeld picks the build mode's option in Claude's plan menu, as

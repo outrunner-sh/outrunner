@@ -387,8 +387,9 @@ export function WorkspaceSession({
   // A compaction asked for, the stream's length then, until the stream shows
   // one after it: the session is busy meanwhile, and the queue waits.
   const [compactingFrom, setCompactingFrom] = useState<number | null>(null);
-  // What a compaction did differently from what was asked, said once.
-  const [compactNote, setCompactNote] = useState<string | null>(null);
+  // What happened other than what was asked (a compaction without its
+  // instructions, a plan answered elsewhere), said once.
+  const [note, setNote] = useState<string | null>(null);
   const compacting =
     compactingFrom !== null && !conversation.events.slice(compactingFrom).some((e) => e.t === "message" && e.compact);
   useEffect(() => {
@@ -577,6 +578,13 @@ export function WorkspaceSession({
       // go leaves the composer planning, so what's typed next revises.
       () => setMode("build"),
       (error: unknown) => {
+        if (error instanceof PlanAnsweredError) {
+          // Answered elsewhere: the card stays put away, and the toggle takes
+          // the mode the session is in now.
+          setMode(error.mode);
+          setNote(`This plan was answered already, so ${AGENTS[agent].label} is ${error.mode === "build" ? "building" : "still planning"}.`);
+          return;
+        }
         setAnsweredHere((prev) => {
           const next = new Set(prev);
           next.delete(id);
@@ -605,7 +613,7 @@ export function WorkspaceSession({
    *  until the stream shows it done. Resolves whether it started. */
   const compact = (instructions: string): Promise<boolean> => {
     setSendError(null);
-    setCompactNote(null);
+    setNote(null);
     const from = eventsRef.current.length;
     // Codex's /compact takes no instructions (its agent leaves them off):
     // compact all the same, and say they weren't used.
@@ -620,7 +628,7 @@ export function WorkspaceSession({
       .then(
         () => {
           setCompactingFrom(from);
-          if (dropped) setCompactNote("Codex's /compact doesn't take instructions, so it compacted without them.");
+          if (dropped) setNote("Codex's /compact doesn't take instructions, so it compacted without them.");
           return true;
         },
         (error: unknown) => {
@@ -997,9 +1005,9 @@ export function WorkspaceSession({
           Your first message was on its way when the page reloaded. If it doesn&apos;t show up, send it again.
         </InlineMessage>
       ) : null}
-      {compactNote ? (
-        <InlineMessage tone="info" actions={[{ label: "Dismiss", onClick: () => setCompactNote(null) }]}>
-          {compactNote}
+      {note ? (
+        <InlineMessage tone="info" actions={[{ label: "Dismiss", onClick: () => setNote(null) }]}>
+          {note}
         </InlineMessage>
       ) : null}
       {!waitingOnUser && questionGone ? (
@@ -1249,8 +1257,19 @@ async function approveCloudPlan(workspaceId: string): Promise<void> {
     body: JSON.stringify({ action: "approve" }),
   });
   if (res.ok) return;
-  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  const data = (await res.json().catch(() => ({}))) as { error?: string; answered?: boolean; mode?: unknown };
+  if (data.answered) throw new PlanAnsweredError(data.mode === "plan" ? "plan" : "build");
   throw new Error(data.error ?? "Couldn't approve the plan. Please try again.");
+}
+
+/** An approval of a plan answered already, with the mode the session is in. */
+class PlanAnsweredError extends Error {
+  readonly mode: SessionMode;
+  constructor(mode: SessionMode) {
+    super("This plan was answered already.");
+    this.name = "PlanAnsweredError";
+    this.mode = mode;
+  }
 }
 
 /** Compact a cloud session's conversation. The server reaches the session's
