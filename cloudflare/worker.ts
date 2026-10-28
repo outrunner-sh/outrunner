@@ -269,6 +269,10 @@ export class OutrunnerControlPlane extends Container<Env> {
       RUNTIME_BASE_URL: APP_ORIGIN,
       RUNTIME_AGENT_BINARY_PATH: "bin/runtime-agent-linux-amd64",
       DAYTONA_SNAPSHOT: "runtime-computer-v1",
+      // The Daytona account is this deployment's alone (no staging shares
+      // it), so the orphan sweep may delete boxes from before deployment
+      // labels too (lib/runtime/orphan-boxes.deps.ts).
+      ORPHAN_SWEEP_UNLABELLED: "1",
       // "stripe" sells plans, and the app refuses to start without the Stripe
       // keys then; "off" (the default here) puts everyone on Free.
       RUNTIME_BILLING: env.RUNTIME_BILLING || "off",
