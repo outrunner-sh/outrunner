@@ -54,7 +54,7 @@ export function ReposStep({
         }
         const active = found.orgs.find((o) => o.id === found.activeOrgId);
         const withApp = found.orgs.find((o) => o.accounts.length > 0);
-        if (!stale && active && active.accounts.length === 0 && !found.personalGithub && withApp) {
+        if (!stale && active && noRepositories(found, active) && withApp) {
           // Kept if the switch fails: the Connect panel and the org switch.
           const switched = await env.useOrg(withApp.id).then(
             () => true,
@@ -75,7 +75,7 @@ export function ReposStep({
 
   const active = access?.orgs.find((o) => o.id === access.activeOrgId);
   // Nothing to list from: no App in this org, and no GitHub sign-in.
-  const unreachable = !!access && !!active && active.accounts.length === 0 && !access.personalGithub;
+  const unreachable = !!access && !!active && noRepositories(access, active);
 
   useEffect(() => {
     if (access === undefined || unreachable) return;
@@ -154,8 +154,9 @@ export function ReposStep({
       {unreachable && active ? (
         <ConnectGitHub
           admin={active.admin}
-          installable={access.appInstallable && !access.installNeedsGithub}
-          linkFirst={access.appInstallable && access.installNeedsGithub}
+          installable={access.appInstallable && (access.personalGithub || !access.installNeedsGithub)}
+          linkFirst={access.appInstallable && !access.personalGithub && access.installNeedsGithub}
+          ownRepositories={active.personal}
           orgName={active.name}
         />
       ) : (
@@ -273,7 +274,7 @@ function OrgSource({
         <span className="text-foreground">{active.personal ? "Personal" : active.name}</span>
       )}
       {from && <span>{from}</span>}
-      {active.accounts.length === 0 && active.admin && access.appInstallable && access.personalGithub && (
+      {active.personal && active.accounts.length === 0 && active.admin && access.appInstallable && access.personalGithub && (
         // A plain link: the install route goes to GitHub, then back here.
         <a href="/api/github/app/install?next=/onboarding" className="text-foreground underline underline-offset-4">
           Install the GitHub App instead
@@ -291,11 +292,14 @@ function ConnectGitHub({
   admin,
   installable,
   linkFirst,
+  ownRepositories,
   orgName,
 }: {
   admin: boolean;
   installable: boolean;
   linkFirst: boolean;
+  /** A personal org, which may list the user's own repositories instead. */
+  ownRepositories: boolean;
   orgName: string;
 }) {
   return (
@@ -315,23 +319,42 @@ function ConnectGitHub({
             >
               Install GitHub App
             </a>
-            <Link href="/settings/account" className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
-              Or use your own GitHub account
-            </Link>
+            {ownRepositories && (
+              <Link href="/settings/account" className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
+                Or use your own GitHub account
+              </Link>
+            )}
           </>
-        ) : (
+        ) : admin && linkFirst ? (
           <>
             <Link href="/settings/account" className="bg-foreground text-background rounded-md px-3 py-1.5 text-sm font-medium">
               Link your GitHub account
             </Link>
             <span className="text-muted-foreground">
-              {admin && linkFirst
+              {ownRepositories
                 ? "Then come back here to install the App, or pick from your own repositories."
-                : `Or ask an admin of ${orgName} to install the GitHub App.`}
+                : "Then come back here to install the App."}
+            </span>
+          </>
+        ) : (
+          <>
+            {ownRepositories && (
+              <Link href="/settings/account" className="bg-foreground text-background rounded-md px-3 py-1.5 text-sm font-medium">
+                Link your GitHub account
+              </Link>
+            )}
+            <span className="text-muted-foreground">
+              {ownRepositories ? "Or ask" : "Ask"} an admin of {orgName} to install the GitHub App.
             </span>
           </>
         )}
       </div>
     </div>
   );
+}
+
+/** An org repositories can't come from: no App, and either a team's (which
+ *  never lists a member's own) or a personal one with no GitHub sign-in. */
+function noRepositories(access: GitHubAccess, org: GitHubAccess["orgs"][number]): boolean {
+  return org.accounts.length === 0 && (!org.personal || !access.personalGithub);
 }

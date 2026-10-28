@@ -12,6 +12,8 @@
  */
 
 import { listOrgInstallations, type OrgInstallation } from "@/lib/db/github-installations";
+import { GitIdentityError } from "@/lib/github/identity-error";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import {
   dropInstallationToken,
   GitHubAppError,
@@ -46,21 +48,33 @@ export type SourceAccess = {
 
 /**
  * The source for `orgId`, as `userId` (from the verified session): the App
- * when the org has kept an installation of it, else the user's own GitHub
- * token (MissingGithubTokenError without one).
+ * when the org has kept an installation of it, else, in the user's personal
+ * org, their own GitHub token (MissingGithubTokenError without one). A team
+ * org reaches only what its App does: a member's own repositories never
+ * land in it (GitIdentityError, to install the App, without one). Without
+ * the App on this server at all, everyone's own token, as before it.
  */
 export async function repositorySource(userId: string, orgId: string | undefined): Promise<SourceAccess> {
   const config = githubAppConfig();
-  // The App's installations unread is no reason to stop anyone picking a
-  // repository: the user's own GitHub, as before the App.
-  const installations =
-    config && orgId
+  if (config && orgId) {
+    // Only the user's own org may fall back to their own GitHub; a team's
+    // can't, so its installations unread is an error, not "none".
+    const personal = await isOwnPersonalOrg(orgId, userId);
+    const installations = personal
       ? await listOrgInstallations(orgId).catch((error: unknown) => {
           console.error(`Repositories: couldn't read org ${orgId}'s GitHub App installations`, error);
           return [];
         })
-      : [];
-  if (config && orgId && installations.length > 0) return appSource(config, orgId, installations);
+      : await listOrgInstallations(orgId);
+    if (installations.length > 0) return appSource(config, orgId, installations);
+    if (!personal) {
+      throw new GitIdentityError(
+        "no_installation",
+        "This org has no GitHub App installed, so it has no repositories yet. An admin can install it in Settings → Org → GitHub.",
+        "/settings/org/github",
+      );
+    }
+  }
   const token = await requireGithubToken(userId);
   return {
     source: { kind: "user", key: `user:${userId}` },
@@ -144,4 +158,16 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
       return null;
     },
   };
+}
+
+/** Whether the org is `userId`'s own personal org. Throws when that can't be
+ *  read: guessing personal would list a member's own repositories for a team. */
+async function isOwnPersonalOrg(orgId: string, userId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organizations")
+    .select("personal_owner_id")
+    .eq("id", orgId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.personal_owner_id === userId;
 }
