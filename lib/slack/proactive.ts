@@ -34,7 +34,9 @@ import {
   verdictBlocks,
   verdictExcerpt,
 } from "@/lib/slack/proactive-text";
-import { postMessage } from "@/lib/slack/web";
+import { relayAwaited } from "@/lib/slack/relay";
+import { addReaction, postMessage, removeReaction } from "@/lib/slack/web";
+import { archiveServerSessions } from "@/lib/session/server-session";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { itemUrl } from "@/lib/triage/urls";
 import { isOpen, itemKey } from "@/lib/triage/work-items";
@@ -57,13 +59,16 @@ async function quietly<T>(label: string, work: () => Promise<T>): Promise<T | nu
 }
 
 /** One tick: what went out. */
-export async function runTick(now = new Date()): Promise<{ digests: number; nudges: number; followUps: number }> {
-  const [digests, nudges, followUps] = await Promise.all([
+export async function runTick(now = new Date()): Promise<{ digests: number; nudges: number; followUps: number; replies: number }> {
+  const [digests, nudges, followUps, replies] = await Promise.all([
     quietly("digests", () => sendDueDigests(now)),
     quietly("nudges", () => nudgeWaitingItems(now)),
     quietly("follow-ups", () => followUpPullRequests()),
+    // Threads' sessions' replies still awaited, for turns that outlast the
+    // watch right after a send (lib/slack/relay.ts).
+    quietly("replies", () => relayAwaited()),
   ]);
-  return { digests: digests ?? 0, nudges: nudges ?? 0, followUps: followUps ?? 0 };
+  return { digests: digests ?? 0, nudges: nudges ?? 0, followUps: followUps ?? 0, replies: replies ?? 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +274,14 @@ async function followUp(conversation: SlackConversation): Promise<boolean> {
       await postMessage(install.botToken, { ...where, text: `<${pr.url}|The pull request> is merged, so ${key} is done.` });
     } else {
       await postMessage(install.botToken, { ...where, text: `<${pr.url}|The pull request> for ${key} is merged.` });
+    }
+    // Its work is in: the session is archived (🗃️). A reply in the thread
+    // restores it.
+    const session = await threadSession(conversation);
+    if (session && (await archiveServerSessions(session.ownerId, [session.id])) > 0) {
+      const root = { channel: conversation.channelId, ts: conversation.threadTs };
+      await removeReaction(install.botToken, { ...root, name: "eyes" }).catch(() => undefined);
+      await addReaction(install.botToken, { ...root, name: "card_file_box" }).catch(() => undefined);
     }
     posted = true;
   } else if (pull && !pull.merged_at && pull.state === "closed" && (await claimPullRequestEnd(conversation.id))) {

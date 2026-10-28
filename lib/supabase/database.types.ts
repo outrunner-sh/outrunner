@@ -135,6 +135,9 @@ type WorkspaceRow = {
   first_prompt_key: string | null;
   first_prompt_claimed_at: string | null;
   first_prompt_sent_at: string | null;
+  /** The Slack thread it was started from (20261031200000). */
+  slack_thread_url: string | null;
+  slack_sync: boolean;
 };
 
 type RuntimeComputerRow = {
@@ -722,6 +725,8 @@ type SlackConversationRow = {
   verdict_comment_id: number | null;
   merged_announced: boolean;
   pr_checked_at: string | null;
+  relayed_hash: string | null;
+  relay_until: string | null;
   created_at: string;
   updated_at: string;
 };

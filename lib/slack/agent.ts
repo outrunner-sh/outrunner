@@ -299,6 +299,8 @@ export function workerPrompt(spec: AgentSpec, item: { key: string; url: string }
     ...spec.acceptanceCriteria.map((c) => `- ${c}`),
     "",
     `When the work is done, open a pull request. Its description must start with "Closes ${item.key}", then list the acceptance criteria as a checklist, ticking the ones the change meets and saying how you checked each. Don't tick one you couldn't check.`,
+    "",
+    "The people who asked for this follow it in a Slack thread: the last message of each of your turns is posted there, and what they say there comes to you. End each turn with a short, plain message for them: what you did (with the pull request link once there is one), or the one question you need answered.",
   ].join("\n");
 }
 
@@ -315,8 +317,7 @@ function cap(text: string, max: number): string {
 
 function specSections(spec: AgentSpec): Block[] {
   const blocks: Block[] = [
-    { type: "section", text: { type: "mrkdwn", text: cap(`*${esc(spec.title)}*\n${spec.repo ? `\`${spec.repo}\`` : "_No repository yet: pick one when it's triaged._"}`, 2900) } },
-    { type: "section", text: { type: "mrkdwn", text: cap(esc(spec.problem), 2900) } },
+    { type: "section", text: { type: "mrkdwn", text: cap(`*${esc(spec.title)}*\n${esc(spec.problem)}`, 2900) } },
     {
       type: "section",
       text: { type: "mrkdwn", text: cap(`*Done when*\n${spec.acceptanceCriteria.map((c) => `• ${esc(c)}`).join("\n")}`, 2900) },
@@ -331,36 +332,56 @@ function specSections(spec: AgentSpec): Block[] {
   return blocks;
 }
 
-/** Action ids of the spec card's buttons. */
-export const SPEC_ACTIONS = { file: "spec_file", fileStart: "spec_file_start", refine: "spec_refine" } as const;
+/** Action ids of the card's controls. `fileStart` is Start session; `file`
+ *  and `refine` are an earlier card's, still answered. */
+export const SPEC_ACTIONS = {
+  file: "spec_file",
+  fileStart: "spec_file_start",
+  refine: "spec_refine",
+  repo: "spec_repo",
+} as const;
 
-/** The spec card: the proposal and what can be done with it. Starting needs
- *  a repository, so without one there's no start button. */
-export function specCard(spec: AgentSpec, conversationId: string): Block[] {
-  const buttons: Block[] = [
+/**
+ * The card: what the session will do, in which repository (a dropdown, to
+ * pick or change it), and Start session. Nothing runs until someone clicks
+ * Start (someone connected, who may read the repository). The dropdown's
+ * block id carries the conversation.
+ */
+export function specCard(spec: AgentSpec, conversationId: string, repos: readonly string[] = []): Block[] {
+  const options = [...new Set([...(spec.repo ? [spec.repo] : []), ...repos])].slice(0, 100).map((name) => ({
+    text: { type: "plain_text", text: cap(name, 75) },
+    value: name,
+  }));
+  const picker: Block | null = options.length
+    ? {
+        type: "static_select",
+        action_id: SPEC_ACTIONS.repo,
+        placeholder: { type: "plain_text", text: "Pick a repository" },
+        options,
+        ...(spec.repo && { initial_option: options.find((o) => o.value === spec.repo) }),
+      }
+    : null;
+  return [
+    ...specSections(spec),
     {
-      type: "button",
-      action_id: SPEC_ACTIONS.file,
-      text: { type: "plain_text", text: "File to triage" },
-      value: conversationId,
+      type: "actions",
+      block_id: `spec:${conversationId}`,
+      elements: [
+        {
+          type: "button",
+          action_id: SPEC_ACTIONS.fileStart,
+          style: "primary",
+          text: { type: "plain_text", text: "Start session" },
+          value: conversationId,
+        },
+        ...(picker ? [picker] : []),
+      ],
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: spec.repo ? `In \`${spec.repo}\`` : "_Pick a repository to start._" }],
     },
   ];
-  if (spec.repo) {
-    buttons.push({
-      type: "button",
-      action_id: SPEC_ACTIONS.fileStart,
-      style: "primary",
-      text: { type: "plain_text", text: "File & start session" },
-      value: conversationId,
-    });
-  }
-  buttons.push({
-    type: "button",
-    action_id: SPEC_ACTIONS.refine,
-    text: { type: "plain_text", text: "Keep refining" },
-    value: conversationId,
-  });
-  return [...specSections(spec), { type: "actions", elements: buttons }];
 }
 
 /** The card once it's filed: the spec, and who filed it where. */

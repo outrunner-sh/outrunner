@@ -7,6 +7,7 @@ import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
+import { SlackThreadLink } from "@/components/slack-thread-link";
 import { SessionComposer } from "@/components/session-composer";
 import { SessionDidntStart } from "@/components/session-didnt-start";
 import { SetupStalled } from "@/components/setup-stalled";
@@ -95,6 +96,9 @@ export function WorkspaceStudio({
           {place && <span className="studio-title-place">{place}</span>}
         </div>
         <div className="studio-header-actions">
+          {!isLocal && workspace.slackThreadUrl && (
+            <SlackThreadLink workspaceId={workspace.id} url={workspace.slackThreadUrl} sync={workspace.slackSync !== false} />
+          )}
           {/* The session's files, read in the Environment panel. */}
           {hasLiveSession && (
             <button

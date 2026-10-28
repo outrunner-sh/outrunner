@@ -25,13 +25,14 @@ import {
 } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { startServerSession } from "@/lib/session/server-session";
+import { FROM_HEADER } from "@/lib/slack/from";
 import { hashToken, markdownToSlack, researchPrompt, slackChunks } from "@/lib/slack/research-text";
 import { postMessage } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { actAsUser } from "@/lib/supabase/acting-user";
 import type { TriageActor } from "@/lib/triage/access";
 
-const RESUMABLE = new Set(["ready", "idle", "suspended"]);
+const RESUMABLE = new Set(["ready", "idle", "suspended", "archived"]);
 
 function base(): string {
   return optionalEnv("RUNTIME_BASE_URL") ?? "";
@@ -39,30 +40,39 @@ function base(): string {
 
 /** A route of the app's, called as the user (inside actAsUser), as the
  *  browser would: same origin, JSON. */
-function asBrowser(path: string, body: unknown): Request {
+export function asBrowser(path: string, body: unknown, from?: "slack"): Request {
   return new Request(new URL(path, base()), {
     method: "POST",
-    headers: { origin: new URL(base()).origin, "content-type": "application/json" },
+    headers: {
+      origin: new URL(base()).origin,
+      "content-type": "application/json",
+      // Said in Slack already: not posted back there (lib/slack/relay.ts).
+      ...(from && { [FROM_HEADER]: from }),
+    },
     body: JSON.stringify(body),
   });
 }
 
+
 /**
  * Send a prompt to one of `userId`'s sessions, waking it first if its box was
- * paused: the same resume and message routes the session page uses. False
+ * paused, or restoring it if it was archived: the same lifecycle and message
+ * routes the session page uses. False
  * when it can't be (gone, archived, or not answering): the caller starts a
  * new one.
  */
-export async function wakeAndSend(userId: string, workspaceId: string, prompt: string): Promise<boolean> {
+export async function wakeAndSend(userId: string, workspaceId: string, prompt: string, from?: "slack"): Promise<boolean> {
   return actAsUser(userId, async () => {
     const workspace = await getWorkspace(workspaceId);
     if (!workspace || workspace.ownerId !== userId || !RESUMABLE.has(workspace.status)) return false;
     const params = { params: Promise.resolve({ id: workspaceId }) };
-    if (workspace.status === "suspended") {
-      const resumed = await lifecyclePOST(asBrowser(`/api/workspaces/${workspaceId}/lifecycle`, { action: "resume" }), params);
-      if (!resumed.ok) return false;
+    // Paused: resumed. Archived: restored, as opening it in the app does.
+    if (workspace.status === "suspended" || workspace.status === "archived") {
+      const action = workspace.status === "suspended" ? "resume" : "restore";
+      const woken = await lifecyclePOST(asBrowser(`/api/workspaces/${workspaceId}/lifecycle`, { action }), params);
+      if (!woken.ok) return false;
     }
-    const sent = await messagePOST(asBrowser(`/api/workspaces/${workspaceId}/message`, { content: prompt }), params);
+    const sent = await messagePOST(asBrowser(`/api/workspaces/${workspaceId}/message`, { content: prompt }, from), params);
     return sent.ok;
   });
 }

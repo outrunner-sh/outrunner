@@ -98,12 +98,16 @@ function cardAction(payload: string): NextResponse {
   const action = JSON.parse(payload) as {
     team?: { id?: string; domain?: string };
     user?: { id?: string; username?: string; name?: string };
-    actions?: { action_id?: string; value?: string }[];
+    actions?: { action_id?: string; value?: string; block_id?: string; selected_option?: { value?: string } }[];
     channel?: { id?: string };
     container?: { message_ts?: string };
     message?: { ts?: string; blocks?: Record<string, unknown>[] };
   };
   const clicked = action.actions?.[0];
+  // A dropdown sends what was picked, and its block names the conversation.
+  if (clicked && !clicked.value && clicked.selected_option?.value && clicked.block_id?.startsWith("spec:")) {
+    clicked.value = clicked.block_id.slice("spec:".length);
+  }
   if (!action.team?.id || !action.user?.id || !clicked?.action_id || !clicked.value) {
     return new NextResponse(null, { status: 200 });
   }
@@ -129,6 +133,7 @@ function cardAction(payload: string): NextResponse {
     teamDomain: action.team.domain ?? null,
     user: action.user.id,
     userName: action.user.username ?? action.user.name ?? null,
+    selected: clicked.selected_option?.value ?? null,
   };
   if (isUuid(card.conversationId)) after(() => handleCardAction(card));
   return new NextResponse(null, { status: 200 });

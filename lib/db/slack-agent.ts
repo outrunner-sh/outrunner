@@ -261,6 +261,13 @@ export async function claimPullRequestEnd(id: string): Promise<boolean> {
   return (data ?? []).length > 0;
 }
 
+/** The thread a session was started from, if it was. */
+export async function conversationForWorkspace(workspaceId: string): Promise<SlackConversation | null> {
+  const { data, error } = await db().from("slack_conversations").select("*").eq("workspace_id", workspaceId).limit(1).maybeSingle();
+  if (error) throw error;
+  return data ? toConversation(data) : null;
+}
+
 /** The thread a work item was filed from, if it came from the agent. */
 export async function conversationForItem(itemId: string): Promise<SlackConversation | null> {
   const { data, error } = await db().from("slack_conversations").select("*").eq("item_id", itemId).limit(1).maybeSingle();
