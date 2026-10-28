@@ -1916,69 +1916,6 @@ begin
   raise notice 'ok: the audit log is append-only, the server''s, and goes with its org';
 end $$;
 
--- 49. Where a session stands: what the server's watch read of its agent is the
--- server's to write and its owner's to read; each person's marks are their
--- own; a pull request's state is one of three.
-do $$
-declare
-  ws uuid;
-begin
-  select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
-  insert into session_activity (workspace_id, owner_id, turn, waiting)
-  values (ws, '11111111-1111-1111-1111-111111111111', 'working', 'question');
-  begin
-    update session_activity set waiting = 'coffee' where workspace_id = ws;
-    raise exception 'FAIL: a session waited on something unknown';
-  exception when check_violation then null;
-  end;
-  insert into session_marks (user_id, workspace_id, moved_to, moved_at)
-  values ('11111111-1111-1111-1111-111111111111', ws, 'backlog', now());
-  begin
-    update session_marks set moved_to = 'somewhere' where workspace_id = ws;
-    raise exception 'FAIL: a session was moved to an unknown group';
-  exception when check_violation then null;
-  end;
-  begin
-    update pull_requests set state = 'abandoned' where workspace_id = ws;
-    if found then raise exception 'FAIL: a pull request took an unknown state'; end if;
-  exception when check_violation then null;
-  end;
-end $$;
-
-set role authed;
-set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
-do $$
-begin
-  if exists (select 1 from session_activity where owner_id = '11111111-1111-1111-1111-111111111111') then
-    raise exception 'FAIL: another user read a session''s activity';
-  end if;
-  if exists (select 1 from session_marks where user_id = '11111111-1111-1111-1111-111111111111') then
-    raise exception 'FAIL: another user read someone''s marks';
-  end if;
-end $$;
-set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
-do $$
-declare
-  ws uuid;
-begin
-  select workspace_id into ws from session_activity where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
-  if ws is null then raise exception 'FAIL: an owner can''t read their session''s activity'; end if;
-  begin
-    update session_activity set turn = 'idle' where workspace_id = ws;
-    if found then raise exception 'FAIL: an owner wrote the server''s read of their session'; end if;
-  exception when insufficient_privilege then null;
-  end;
-  update session_marks set pinned_at = now() where workspace_id = ws;
-  if not found then raise exception 'FAIL: an owner couldn''t pin their session'; end if;
-end $$;
-reset role;
-do $$
-begin
-  delete from session_marks;
-  delete from session_activity;
-  raise notice 'ok: where a session stands is the server''s to read, and marks are each person''s own';
-end $$;
-
 -- 49. The GitHub loop's follow-ups: a burst of CI events is one turn per
 -- commit, reviews join one open batch, a turn is taken once, and CI's turns
 -- stop at the limit until a person speaks.
@@ -2259,4 +2196,67 @@ begin
   end;
   delete from automations where id = a;
   raise notice 'ok: an automation''s limits and debounce window hold as its runs are recorded';
+end $$;
+
+-- 53. Where a session stands: what the server's watch read of its agent is the
+-- server's to write and its owner's to read; each person's marks are their
+-- own; a pull request's state is one of three.
+do $$
+declare
+  ws uuid;
+begin
+  select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  insert into session_activity (workspace_id, owner_id, turn, waiting)
+  values (ws, '11111111-1111-1111-1111-111111111111', 'working', 'question');
+  begin
+    update session_activity set waiting = 'coffee' where workspace_id = ws;
+    raise exception 'FAIL: a session waited on something unknown';
+  exception when check_violation then null;
+  end;
+  insert into session_marks (user_id, workspace_id, moved_to, moved_at)
+  values ('11111111-1111-1111-1111-111111111111', ws, 'backlog', now());
+  begin
+    update session_marks set moved_to = 'somewhere' where workspace_id = ws;
+    raise exception 'FAIL: a session was moved to an unknown group';
+  exception when check_violation then null;
+  end;
+  begin
+    update pull_requests set state = 'abandoned' where workspace_id = ws;
+    if found then raise exception 'FAIL: a pull request took an unknown state'; end if;
+  exception when check_violation then null;
+  end;
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$
+begin
+  if exists (select 1 from session_activity where owner_id = '11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: another user read a session''s activity';
+  end if;
+  if exists (select 1 from session_marks where user_id = '11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: another user read someone''s marks';
+  end if;
+end $$;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+declare
+  ws uuid;
+begin
+  select workspace_id into ws from session_activity where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  if ws is null then raise exception 'FAIL: an owner can''t read their session''s activity'; end if;
+  begin
+    update session_activity set turn = 'idle' where workspace_id = ws;
+    if found then raise exception 'FAIL: an owner wrote the server''s read of their session'; end if;
+  exception when insufficient_privilege then null;
+  end;
+  update session_marks set pinned_at = now() where workspace_id = ws;
+  if not found then raise exception 'FAIL: an owner couldn''t pin their session'; end if;
+end $$;
+reset role;
+do $$
+begin
+  delete from session_marks;
+  delete from session_activity;
+  raise notice 'ok: where a session stands is the server''s to read, and marks are each person''s own';
 end $$;
