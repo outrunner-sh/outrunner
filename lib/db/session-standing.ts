@@ -77,6 +77,7 @@ export async function readStandings(
       activity: activityBy.get(workspace.id) ?? null,
       pullRequest: pr ? { state: pr.state ?? "open", stateAt: pr.stateAt ?? null } : null,
       mark: markBy.get(workspace.id) ?? null,
+      owner: userId !== null,
       now,
     });
   }
