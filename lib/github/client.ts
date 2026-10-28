@@ -57,16 +57,18 @@ export class GitHubSyncError extends Error {
 
 /**
  * The user has no usable GitHub token. Recoverable, and always by the same
- * action: sign out and back in so the OAuth round trip mints a fresh one.
+ * action: (re)connecting GitHub from Settings → Account, so an OAuth round trip
+ * mints a fresh one.
  *
- * Reached when the user last signed in before the `repo` scope was requested,
+ * Reached when the user signed in with Google and never connected GitHub, last
+ * signed in before the `repo` scope was requested,
  * or when a stored token could not be decrypted (see lib/db/credentials.ts).
  * Lives here, beside the other GitHub errors, so code that maps errors to
  * responses need not pull in the credential store; lib/github/token re-exports it.
  */
 export class MissingGithubTokenError extends Error {
   constructor() {
-    super("Connect your GitHub account: sign out and back in to grant repository access.");
+    super("Connect your GitHub account in Settings → Account to grant repository access.");
     this.name = "MissingGithubTokenError";
   }
 }
@@ -418,6 +420,22 @@ export async function listVerifiedEmails(token: string): Promise<VerifiedEmail[]
     )
     .map((r) => ({ email: r.email, primary: r.primary === true }))
     .sort((a, b) => Number(b.primary) - Number(a.primary));
+}
+
+/**
+ * The numeric id of the GitHub user a token belongs to, or null when GitHub
+ * won't say (refused, failed, unreadable). Never throws: it vouches for a
+ * token before it is stored, and no answer just means not storing it.
+ */
+export async function tokenUserId(token: string): Promise<number | null> {
+  try {
+    const response = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
+    if (!response.ok) return null;
+    const body = (await readJson(response)) as { id?: unknown } | null;
+    return typeof body?.id === "number" && Number.isSafeInteger(body.id) ? body.id : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

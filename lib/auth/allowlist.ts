@@ -22,16 +22,18 @@ export function parseAllowlist(raw: string | undefined): Set<string> {
 /**
  * Whether this user may use the deployment.
  *
- * Sign-up is open: anyone who authenticates with GitHub gets in. What keeps
+ * Sign-up is open: anyone who authenticates (GitHub, Google, or an emailed
+ * code) gets in. What keeps
  * users apart is not this check but the data model — every row carries
  * `owner_id` and RLS restricts it to `auth.uid()`, so each account sees only
  * its own projects and workspaces, and each runs on credentials it supplied
  * itself (see lib/db/credentials.ts).
  *
- * Requiring a GitHub identity is still meaningful. {@link githubLogin} reads
- * `identities[]`, so this returns true only for a session that actually came
- * from GitHub — not one minted through some other provider that happens to be
- * enabled on the Supabase project.
+ * When restricted, requiring a GitHub identity is still meaningful.
+ * {@link githubLogin} reads `identities[]`, so the allowlist matches only a
+ * GitHub identity GoTrue maintains — never a name some other provider's user
+ * set on themselves. Someone signed in with Google or email alone gets past a
+ * restricted allowlist only as an org admits them.
  *
  * `RUNTIME_OWNER_GITHUB_LOGIN` narrows access back to a named allowlist when
  * set. Leave it unset for open sign-up; set it to keep a deployment private.

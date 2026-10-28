@@ -108,7 +108,7 @@ async function SidebarData() {
           workspaces,
           pullRequests: sessionPullRequests(workspaces, pullRequests),
         },
-        ownerLogin: owner.githubLogin,
+        ownerLogin: owner.githubLogin || owner.name,
         ownerAvatarUrl: owner.avatarUrl,
         orgs: orgs?.orgs ?? [],
         activeOrgId: orgId ?? null,

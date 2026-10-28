@@ -42,7 +42,7 @@ export default async function CliLoginPage({
                 <dt className="text-muted-foreground">Computer</dt>
                 <dd className="font-mono">{request.deviceName}</dd>
                 <dt className="text-muted-foreground">As</dt>
-                <dd className="font-mono">{owner.githubLogin}</dd>
+                <dd className="font-mono">{owner.githubLogin || owner.email || owner.name}</dd>
               </dl>
               <p className="text-xs text-muted-foreground">
                 Only approve this if you just ran <code className="font-mono">outrunner</code> yourself.
