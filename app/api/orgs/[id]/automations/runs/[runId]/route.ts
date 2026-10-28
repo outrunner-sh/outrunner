@@ -27,8 +27,17 @@ export async function POST(request: Request, { params }: Params) {
       runId,
       {
         rerunTarget,
-        pullRequest: async (installationId, repoFullName, number) =>
-          getPullRequest(await installationToken(config, installationId), repoFullName, number),
+        pullRequest: async (installationId, repoFullName, number) => {
+          let token: string;
+          try {
+            token = await installationToken(config, installationId);
+          } catch (error) {
+            // GitHub has no such installation: uninstalled, its webhook missed.
+            if (error instanceof GitHubAppError && error.status === 404) throw new InstallationGone();
+            throw error;
+          }
+          return getPullRequest(token, repoFullName, number);
+        },
         reopenRun,
         recordRuns,
       },
@@ -36,21 +45,18 @@ export async function POST(request: Request, { params }: Params) {
     );
     if (!rerun.ok) return NextResponse.json({ error: rerun.error }, { status: rerun.status });
     const { run, staleSession } = rerun;
-    after(async () => {
-      // The run's earlier session first, as its owner: no longer linked to
-      // the run, nothing else would.
-      if (staleSession) {
-        try {
-          const owner = await sessionOwner(staleSession);
-          if (owner) await archiveServerSessions(owner, [staleSession]);
-        } catch (error) {
-          console.error(`Run ${run.runId}: couldn't archive its earlier session`, error);
-        }
-      }
-      await startRun(run, startDeps());
-    });
+    // The run's earlier session is archived as its owner (no longer linked to
+    // the run, nothing else would), alongside the new one starting: a
+    // snapshot takes a while, and the new run doesn't need the old box gone.
+    after(() => Promise.all([startRun(run, startDeps()), staleSession ? archiveAsOwner(staleSession, run.runId) : null]));
     return NextResponse.json({ runId: run.runId });
   } catch (error) {
+    if (error instanceof InstallationGone) {
+      return NextResponse.json(
+        { error: "The GitHub App's installation on this account is gone: reinstall it in Settings → Org → GitHub." },
+        { status: 409 },
+      );
+    }
     // Its repository renamed or moved, or the App's access to it taken away.
     if (error instanceof GitHubAppError && error.status === 404) {
       return NextResponse.json(
@@ -60,5 +66,17 @@ export async function POST(request: Request, { params }: Params) {
     }
     console.error(`Couldn't run ${runId} again`, error);
     return NextResponse.json({ error: "Couldn't run it again. Try again." }, { status: 502 });
+  }
+}
+
+/** The installation GitHub no longer has, apart from a pull request it can't find. */
+class InstallationGone extends Error {}
+
+async function archiveAsOwner(workspaceId: string, runId: string): Promise<void> {
+  try {
+    const owner = await sessionOwner(workspaceId);
+    if (owner) await archiveServerSessions(owner, [workspaceId]);
+  } catch (error) {
+    console.error(`Run ${runId}: couldn't archive its earlier session`, error);
   }
 }
