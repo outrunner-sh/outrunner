@@ -53,7 +53,10 @@ export async function GET(request: Request) {
 
     if (holder?.orgId === orgId) {
       await refreshInstallation(orgId, installation);
-      if (state?.next) return NextResponse.redirect(appUrl(state.next, origin));
+      if (state?.next) {
+        await setActiveOrg(orgId).catch(() => {});
+        return NextResponse.redirect(appUrl(state.next, origin));
+      }
       return back(`installed=${encodeURIComponent(installation.accountLogin)}`);
     }
     if (!state) return back("error=link_expired");

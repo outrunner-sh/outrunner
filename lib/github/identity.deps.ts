@@ -46,12 +46,24 @@ async function repoLevel(userId: string, orgId: string, repo: string): Promise<A
   return project ? projectLevel(userId, project.id) : null;
 }
 
-/** Whether the user has a GitHub identity linked; true when that can't be
- *  read, so the App is never taken for their own by mistake. */
+/** Whether users have a GitHub identity linked, kept a minute: a box's git
+ *  asks for every fetch and push, and identities rarely change. */
+const LINKED_TTL_MS = 60 * 1000;
+const linked = new Map<string, { value: boolean; at: number }>();
+
+/** Whether the user has a GitHub identity linked; true (not kept) when that
+ *  can't be read, so the App is never taken for their own by mistake. */
 async function githubLinked(userId: string): Promise<boolean> {
+  const kept = linked.get(userId);
+  if (kept && Date.now() - kept.at < LINKED_TTL_MS) return kept.value;
   const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
-  if (error || !data.user) return true;
-  return githubUserId(data.user) !== null;
+  if (error || !data.user) {
+    console.error(`Could not read whether user ${userId} has GitHub linked; taking it they do`, error);
+    return true;
+  }
+  const value = githubUserId(data.user) !== null;
+  linked.set(userId, { value, at: Date.now() });
+  return value;
 }
 
 const deps: IdentityDeps = {
