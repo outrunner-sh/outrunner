@@ -283,13 +283,21 @@ func (s *Service) ApprovePlan(workspaceID string) (string, error) {
 			return ApprovedInMenu, err
 		}
 	}
+	// Answered already (another tab's Approve took the plan out of plan mode):
+	// the prompt's path would press Escape into whatever the build shows (a
+	// permission question, declined) and paste an approval into its turn.
+	if now, _ := s.getFacts(workspaceID); !now.Plan {
+		return "", ErrNoPlanWaiting
+	}
 	return ApprovedByPrompt, s.SendPrompt(workspaceID, Prompt{Content: PlanApproved, Mode: ModeBuild, Dismiss: f.Agent != AgentCodex})
 }
 
 // pickPlanOptionHeld picks the build mode's option in Claude's plan menu, as
 // the arrows and Enter do, for a caller holding the send lock. False, and
-// nothing pressed, where the screen isn't that menu or doesn't offer the
-// option; an error where it was, but the pick couldn't be seen to land.
+// nothing pressed, where the screen shows another menu or doesn't offer the
+// option; ErrNoPlanWaiting where it shows no plan (its prompt box, or a turn
+// under way); another error where keys were pressed but the pick couldn't be
+// seen to land.
 func (s *Service) pickPlanOptionHeld(workspaceID string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), interruptTimeout)
 	defer cancel()
@@ -298,8 +306,14 @@ func (s *Service) pickPlanOptionHeld(workspaceID string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("%w (its screen could not be read: %v)", ErrSessionUnchecked, err)
 	}
+	a := s.agentFor(workspaceID)
+	// At work: a pick that landed (another tab's, or this one's not seen to
+	// land in time) and Claude building. The plan menu never shows busy.
+	if a.isBusy(pane) {
+		return false, ErrNoPlanWaiting
+	}
 	if !strings.Contains(pane, planMenuQuestion) {
-		if s.agentFor(workspaceID).awaitsAnswer(pane) {
+		if a.awaitsAnswer(pane) {
 			return false, nil // some other menu: the prompt's path closes it
 		}
 		return false, ErrNoPlanWaiting
@@ -336,5 +350,10 @@ func (s *Service) pickPlanOptionHeld(workspaceID string) (bool, error) {
 			return false, err
 		}
 	}
-	return false, ctx.Err()
+	// Keys were pressed: never "not offered", which would approve by prompt
+	// as well. The approval fails, for the user to see and try again.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return false, fmt.Errorf("%w (the plan menu's option couldn't be reached)", ErrNotInterrupted)
 }

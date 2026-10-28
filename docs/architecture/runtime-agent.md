@@ -28,6 +28,7 @@ Called server-to-server by Next (never by the browser). All requests carry a Run
 | `POST /workspaces/:id/restore` | Recreate tmux + PTY, `claude --continue`. |
 | `POST /workspaces/:id/message` | Send a prompt (`SendMessageRequest`): `mode` (`plan`/`build`) relaunches the session into that mode first, `dismiss` closes the plan menu it waits on (Escape) so the prompt answers it. |
 | `POST /workspaces/:id/compact` | Type `/compact [instructions]` into the session; answers once compaction is under way. |
+| `POST /workspaces/:id/plan` | Approve the plan the agent waits on (`PlanActionRequest`): in Claude's own plan menu where it offers the session's build mode, else (Codex) as a prompt in build mode; `PlanActionResponse.via` says which. |
 | `DELETE /workspaces/:id` | Remove worktree + tmux for the workspace. |
 | `GET  /workspaces/:id/events` | Server-sent control/conversation events (see Event types). |
 | `GET  /health` | Liveness + basic load (drives `runtime_computers.status`, `last_active_at`). |

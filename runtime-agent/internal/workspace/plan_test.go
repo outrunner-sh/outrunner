@@ -399,3 +399,36 @@ func TestPlanningInABypassSessionCanApproveIntoBypass(t *testing.T) {
 		t.Errorf("launch = %q: a session that asks first was made able to bypass", got)
 	}
 }
+
+// Arrows pressed that never bring the selection to the option: the approval
+// fails, rather than being taken for "not offered" and approved by prompt too.
+func TestAPickThatCantReachItsOptionFailsAndSendsNothing(t *testing.T) {
+	s, fake, id := landingSession(t)
+	s.updateFacts(id, func(f *workspaceFacts) { f.Plan, f.PermissionMode = true, claude.Bypass })
+	options := []string{"Yes, manually approve edits", "Yes, and switch to Bypass Permissions for this session", "No, keep planning"}
+	fake.pane = planMenu(options, 0) // and the selection never moves
+	if _, err := s.ApprovePlan(id); !errors.Is(err, ErrNotInterrupted) {
+		t.Fatalf("ApprovePlan = %v, want ErrNotInterrupted", err)
+	}
+	if fake.pastes != 0 || slices.Contains(fake.keys, "Escape") {
+		t.Errorf("fell back to the prompt: keys %q, typed %q", fake.keys, fake.pasted)
+	}
+}
+
+// Approved in another tab: the session builds, and may show a question of
+// its build's. Nothing is pressed into it, and no approval is pasted.
+func TestAPlanApprovedElsewhereIsntApprovedAgain(t *testing.T) {
+	s, fake, id := landingSession(t)
+	s.updateFacts(id, func(f *workspaceFacts) { f.Plan = false })
+	fake.pane = permissionPane
+	if _, err := s.ApprovePlan(id); !errors.Is(err, ErrNoPlanWaiting) {
+		t.Fatalf("over a permission question = %v, want ErrNoPlanWaiting", err)
+	}
+	fake.pane = "✶ Building… (esc to interrupt)"
+	if _, err := s.ApprovePlan(id); !errors.Is(err, ErrNoPlanWaiting) {
+		t.Fatalf("mid-build = %v, want ErrNoPlanWaiting", err)
+	}
+	if len(fake.keys) != 0 || fake.pastes != 0 {
+		t.Errorf("keys %q, typed %q into a session already building", fake.keys, fake.pasted)
+	}
+}

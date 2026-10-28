@@ -572,26 +572,28 @@ export function WorkspaceSession({
     (local
       ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/plan`, { action: "approve" })
       : approveCloudPlan(workspaceId)
-    ).catch((error: unknown) => {
-      setAnsweredHere((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      setSendError({
-        message: local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't approve the plan.",
-      });
-    });
+    ).then(
+      // Building from here, once the agent says so: an approval that didn't
+      // go leaves the composer planning, so what's typed next revises.
+      () => setMode("build"),
+      (error: unknown) => {
+        setAnsweredHere((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setSendError({
+          message: local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't approve the plan.",
+        });
+      },
+    );
   };
   const [reviseSignal, setReviseSignal] = useState(0);
   const planActions =
     plan && waitingOnPlan
       ? {
           id: plan.id,
-          onApprove: () => {
-            setMode("build");
-            approvePlan(plan.id);
-          },
+          onApprove: () => approvePlan(plan.id),
           onRevise: () => {
             setMode("plan");
             setReviseSignal((n) => n + 1);

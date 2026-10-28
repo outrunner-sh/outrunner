@@ -60,9 +60,11 @@ Grounded in the real schema (Spike 3, Claude Code 2.0.24):
   `tool_result` (`{ "toolUseId", "content" }`).
 - Optional on a message, each absent from agents before it (a page drops what it doesn't know):
   `usage` (an assistant turn's tokens, for the context ring), `contextWindow` (where the log says
-  it: Codex's), `mode: "plan"` (a prompt sent in plan mode), and `compact`
-  (`{ "trigger"?, "preTokens"? }`, the conversation compacted here: an assistant record with empty
-  `content`, so an older page shows nothing and doesn't read the turn as awaiting a reply).
+  it: Codex's), `contextTokens` (the call's own context, where usage sums calls: Codex's),
+  `mode: "plan"` (a prompt sent in plan mode), and `compact`
+  (`{ "trigger"?, "preTokens"?, "postTokens"? }`, the conversation compacted here: an assistant
+  record with empty `content`, so an older page shows nothing and doesn't read the turn as
+  awaiting a reply).
 - `TokenUsage`
   ```json
   { "t": "usage", "input_tokens": n, "output_tokens": n,
