@@ -272,6 +272,16 @@ export async function mintInstallationToken(
   return { token: minted.token, expiresAt: new Date(minted.expires_at) };
 }
 
+/** A pull request as GitHub's API gives it, read as the installation. */
+export async function getPullRequest(
+  token: string,
+  repoFullName: string,
+  number: number,
+  doFetch: Fetch = fetch,
+): Promise<Record<string, unknown>> {
+  return call(doFetch, `${API}/repos/${repoFullName}/pulls/${number}`, token);
+}
+
 /** A repository an installation reaches. */
 export type InstallationRepository = {
   githubRepoId: number;

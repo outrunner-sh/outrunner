@@ -66,7 +66,7 @@ export function Automations({
 
         <AutomationList orgId={org.id} automations={automations} admin={admin} byConnector={!org.personal} />
 
-        {automations?.length ? <RecentRuns runs={runs} byConnector={!org.personal} /> : null}
+        {automations?.length ? <RecentRuns orgId={org.id} runs={runs} admin={admin} byConnector={!org.personal} /> : null}
 
         {admin && templates.length > 0 ? (
           <section className="space-y-2">
@@ -273,10 +273,43 @@ const WHEN = new Intl.DateTimeFormat("en-US", {
 
 /** The org's latest runs: which automation, on which pull request and
  *  commit, how it went, and the session it started. */
-function RecentRuns({ runs, byConnector }: { runs: AutomationRun[] | null; byConnector: boolean }) {
+function RecentRuns({
+  orgId,
+  runs,
+  admin,
+  byConnector,
+}: {
+  orgId: string;
+  runs: AutomationRun[] | null;
+  admin: boolean;
+  byConnector: boolean;
+}) {
+  const router = useRouter();
+  const [rerunning, setRerunning] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // One that failed or didn't start, on its pull request's head as it is now.
+  const rerun = async (run: AutomationRun) => {
+    if (rerunning) return;
+    setRerunning(run.id);
+    setError(null);
+    try {
+      await requestJson(`/api/orgs/${orgId}/automations/runs/${run.id}`, {
+        method: "POST",
+        fallback: "Couldn't run it again. Try again.",
+      });
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn't run it again. Try again.");
+    } finally {
+      setRerunning(null);
+    }
+  };
+
   return (
     <section className="space-y-2">
       <h2 className="text-[13px] font-medium text-foreground">Recent runs</h2>
+      {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
       {runs === null ? (
         <p className="text-[13px] text-muted-foreground">Couldn&apos;t load the runs. Reload the page to try again.</p>
       ) : runs.length === 0 ? (
@@ -322,6 +355,16 @@ function RecentRuns({ runs, byConnector }: { runs: AutomationRun[] | null; byCon
                         <Link href={`/workspaces/${run.workspaceId}`} className="text-xs text-muted-foreground hover:underline">
                           Open session
                         </Link>
+                      ) : null}
+                      {admin && (run.status === "failed" || run.status === "refused") ? (
+                        <button
+                          type="button"
+                          onClick={() => void rerun(run)}
+                          disabled={rerunning !== null}
+                          className="block text-xs text-muted-foreground hover:text-foreground hover:underline disabled:opacity-60"
+                        >
+                          {rerunning === run.id ? "Starting…" : "Run again"}
+                        </button>
                       ) : null}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{WHEN.format(new Date(run.createdAt))}</td>

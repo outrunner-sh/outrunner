@@ -1,8 +1,9 @@
 import { after, NextResponse } from "next/server";
 
-import { orgConnector } from "@/lib/automations/connector";
 import { closeRuns, planRuns, startRun } from "@/lib/automations/runs";
-import { automationsForPullRequest, pullRequestSessions, recordRuns, runNeighbours, settleRun } from "@/lib/db/automation-runs";
+import { startDeps } from "@/lib/automations/start-deps";
+import { automationsForPullRequest, pullRequestSessions, recordRuns } from "@/lib/db/automation-runs";
+import { archiveServerSessions } from "@/lib/session/server-session";
 
 import {
   forgetInstallation,
@@ -17,7 +18,6 @@ import {
   toInstallation,
   webhookSignatureMatches,
 } from "@/lib/github/app";
-import { archiveServerSessions, startServerSession } from "@/lib/session/server-session";
 import { announcePullRequest } from "@/lib/slack/agent-run";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
@@ -136,16 +136,4 @@ export async function POST(request: Request) {
     console.error(`GitHub webhook ${event} for installation ${installationId} failed`, error);
     return NextResponse.json({ error: "Couldn't record that." }, { status: 500 });
   }
-}
-
-/** How a run starts: its session as the automation's runner, working on
- *  GitHub as the App (its box asks for the App's tokens as it goes). */
-function startDeps() {
-  return {
-    startServerSession,
-    settleRun,
-    runNeighbours,
-    archiveServerSessions,
-    orgConnector,
-  };
 }
