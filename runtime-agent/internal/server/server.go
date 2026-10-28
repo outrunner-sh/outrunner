@@ -1061,6 +1061,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable nginx/proxy buffering
 	w.WriteHeader(http.StatusOK)
+	// Send the headers now: a resume with nothing new writes no frame, and the
+	// client would otherwise wait for the first heartbeat to see the stream open.
+	flusher.Flush()
 
 	// Serialize every write on this response — the ticker, the watcher goroutine,
 	// and the state emitter all write frames concurrently.
