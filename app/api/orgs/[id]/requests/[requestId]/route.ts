@@ -20,7 +20,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const body = (await request.json().catch(() => null)) as { action?: unknown; role?: unknown } | null;
   if (body?.action === "decline") {
     return changingMembers("a request to join", async () => {
-      const email = await joinRequestEmail(id, requestId);
+      // Only for the log: never what fails the change.
+      const email = await joinRequestEmail(id, requestId).catch(() => null);
       await declineJoinRequest(id, requestId, caller.owner.id);
       await recordAudit({
         orgId: id,
@@ -38,7 +39,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!role) return NextResponse.json({ error: "Approve them as an admin or a member." }, { status: 400 });
 
   return changingMembers("a request to join", async () => {
-    const email = await joinRequestEmail(id, requestId);
+    const email = await joinRequestEmail(id, requestId).catch(() => null);
     const userId = await approveJoinRequest(id, requestId, caller.owner.id, role);
     await recordAudit({
       orgId: id,

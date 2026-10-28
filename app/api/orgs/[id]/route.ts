@@ -23,7 +23,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!name) return NextResponse.json({ error: "Give the org a name, up to 80 characters." }, { status: 400 });
 
   return savingSettings("the org's name", async () => {
-    const before = await getOrg(id);
+    // Only for the log: never what fails the rename.
+    const before = await getOrg(id).catch(() => null);
     if (!(await renameOrg(id, owner.id, name))) {
       return NextResponse.json({ error: "Only a team org's admins can rename it." }, { status: 403 });
     }

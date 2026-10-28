@@ -14,7 +14,9 @@ create table if not exists audit_events (
   org_id uuid not null references organizations (id) on delete cascade,
   -- A person (actor_id their user), or Outrunner itself.
   actor_type text not null check (actor_type in ('user', 'system')),
-  actor_id uuid references auth.users (id) on delete set null,
+  -- No reference to the user: one would change the event when they go, which
+  -- the log refuses (and so refuse their going). actor_label says who.
+  actor_id uuid,
   -- Who they were at the time: a login outlives the account.
   actor_label text not null check (char_length(actor_label) between 1 and 200),
   -- e.g. member.invited, key.saved (lib/audit/actions.ts).

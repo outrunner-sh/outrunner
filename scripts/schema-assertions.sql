@@ -1905,5 +1905,13 @@ begin
   if exists (select 1 from audit_events where org_id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee') then
     raise exception 'FAIL: an org''s events outlived it';
   end if;
+  -- Someone who acted going doesn't touch (or refuse) the record of it.
+  insert into auth.users (id) values ('55555555-5555-5555-5555-555555555555');
+  insert into audit_events (org_id, actor_type, actor_id, actor_label, action)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'user', '55555555-5555-5555-5555-555555555555', 'leaver', 'member.left');
+  delete from auth.users where id = '55555555-5555-5555-5555-555555555555';
+  if not exists (select 1 from audit_events where actor_label = 'leaver') then
+    raise exception 'FAIL: an actor going took their events';
+  end if;
   raise notice 'ok: the audit log is append-only, the server''s, and goes with its org';
 end $$;

@@ -27,7 +27,8 @@ export const syncDeps: SyncDeps = {
   subscriptionById,
   // Stored, and said in the org's audit log when its plan or status moved.
   async saveSubscription(record, fetchedAt) {
-    const previous = await subscriptionById(record.stripeSubscriptionId);
+    // Only for the log: a failed read counts as a change, never fails the save.
+    const previous = await subscriptionById(record.stripeSubscriptionId).catch(() => undefined);
     const stored = await saveSubscription(record, fetchedAt);
     if (stored && (previous?.plan !== record.plan || previous?.status !== record.status)) {
       await recordAudit({
