@@ -3,7 +3,14 @@ import { after, NextResponse } from "next/server";
 import { recordAudit } from "@/lib/audit/record";
 import { closeRuns, planRuns, startRun } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
-import { automationsForPullRequest, pullRequestSessions, recordRuns } from "@/lib/db/automation-runs";
+import { finishCheckFromComment } from "@/lib/automations/checks";
+import { checkOfRun, closeRunCheckWithout, closeRunCheckWithReview } from "@/lib/automations/checks.deps";
+import {
+  automationsForPullRequest,
+  openChecksOfPullRequest,
+  pullRequestSessions,
+  recordRuns,
+} from "@/lib/db/automation-runs";
 import { archiveServerSessions } from "@/lib/session/server-session";
 
 import {
@@ -95,7 +102,16 @@ export async function POST(request: Request) {
       const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, await appSlug(config));
       after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
       // A PR closed or merged: archive its automation runs' review sessions.
-      if (payload.action === "closed") after(() => closeRuns(payload, { pullRequestSessions, archiveServerSessions }));
+      if (payload.action === "closed") {
+        after(() =>
+          closeRuns(payload, {
+            pullRequestSessions,
+            archiveServerSessions,
+            openChecksOfPullRequest,
+            closeCheck: closeRunCheckWithout,
+          }),
+        );
+      }
       // A PR from a session working on an item the Slack agent filed: its
       // thread hears of it.
       const pr = payload.pull_request;
@@ -112,6 +128,18 @@ export async function POST(request: Request) {
         );
       }
       return NextResponse.json({ received: true, runs: runs.length });
+    }
+    if (event === "issue_comment" || event === "pull_request_review") {
+      // The App's own review, posted: its run's check closes with it, even
+      // after the hour's sweep closed it without one. Its bot's login as
+      // GitHub has it now (the App can be renamed).
+      after(async () =>
+        finishCheckFromComment(payload, await appSlug(config), {
+          openCheckOf: checkOfRun,
+          closeCheck: closeRunCheckWithReview,
+        }).catch((error: unknown) => console.error("Couldn't close a run's check from its review", error)),
+      );
+      return new NextResponse(null, { status: 204 });
     }
     if (event === "installation") {
       // Said in the org's log as Outrunner's own: GitHub told it.

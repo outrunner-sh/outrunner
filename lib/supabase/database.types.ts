@@ -573,6 +573,13 @@ type AutomationRunRow = {
   workspace_id: string | null;
   status: AutomationRunStatusDb;
   reason: string | null;
+  /** Its check on the pull request (20261101120000_automation_run_checks.sql). */
+  check_run_id: number | null;
+  check_installation_id: number | null;
+  check_closed_at: string | null;
+  check_reviewed_at: string | null;
+  /** How the review closes the check: { conclusion, output }. */
+  check_review: Json | null;
   created_at: string;
   updated_at: string;
 };

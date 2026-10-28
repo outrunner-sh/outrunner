@@ -6,6 +6,7 @@
  * org's for its members.
  */
 
+import type { CheckOutcome } from "@/lib/automations/checks";
 import type { AutomationTrigger } from "@/lib/automations/rules";
 import { currentRunners } from "@/lib/db/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -433,4 +434,184 @@ export async function connectorRunSession(
   if (session.data.owner_id !== connector.data.user_id || session.data.org_id !== orgId) return null;
   if (session.data.status === "destroyed") return null;
   return { workspaceId: run.workspace_id, connectorId: connector.data.user_id };
+}
+
+/** Keep a run's check: opened on GitHub, through this installation. */
+export async function recordCheck(runId: string, checkRunId: number, installationId: number): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_run_id: checkRunId, check_installation_id: installationId })
+    .eq("id", runId);
+  if (error) throw error;
+}
+
+/** Where a run's check is on GitHub, and the pull request it's on. */
+export type OpenCheck = {
+  checkRunId: number;
+  installationId: number;
+  repoFullName: string;
+  prNumber: number;
+};
+
+/** A run's check, however it stands: closed (GitHub took a close), and the
+ *  review's outcome once one was posted. Null when it has none. */
+export type CheckState = { check: OpenCheck; closed: boolean; review: CheckOutcome | null };
+
+export async function checkStateOf(runId: string): Promise<CheckState | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data: run, error } = await supabase
+    .from("automation_runs")
+    .select("project_id, pr_number, check_run_id, check_installation_id, check_closed_at, check_review")
+    .eq("id", runId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!run?.check_run_id || !run.check_installation_id) return null;
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("full_name")
+    .eq("id", run.project_id)
+    .maybeSingle();
+  if (projectError) throw projectError;
+  if (!project?.full_name) return null;
+  return {
+    check: {
+      checkRunId: run.check_run_id,
+      installationId: run.check_installation_id,
+      repoFullName: project.full_name,
+      prNumber: run.pr_number,
+    },
+    closed: run.check_closed_at !== null,
+    review: (run.check_review as CheckOutcome | null) ?? null,
+  };
+}
+
+/** Take a run's open check to close without a review: true for the one
+ *  call that does, and never once its review is in. */
+export async function claimCheck(runId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_closed_at: new Date().toISOString() })
+    .eq("id", runId)
+    .not("check_run_id", "is", null)
+    .is("check_closed_at", null)
+    .is("check_reviewed_at", null)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** Give back a claim whose close GitHub didn't take, for the sweep to try
+ *  again: unless the review is in meanwhile, whose the check is now. */
+export async function releaseCheck(runId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_closed_at: null })
+    .eq("id", runId)
+    .is("check_reviewed_at", null);
+  if (error) throw error;
+}
+
+/** The run's review is in: its outcome is the check's from now on, sent
+ *  until GitHub takes it (markCheckClosed). */
+export async function markCheckReviewed(runId: string, outcome: CheckOutcome): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_reviewed_at: new Date().toISOString(), check_review: outcome, check_closed_at: null })
+    .eq("id", runId);
+  if (error) throw error;
+}
+
+/** GitHub took the check's close. */
+export async function markCheckClosed(runId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_closed_at: new Date().toISOString() })
+    .eq("id", runId);
+  if (error) throw error;
+}
+
+/** The runs on a pull request (it closed) whose check is open, with no
+ *  review in. */
+export async function openChecksOfPullRequest(
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+): Promise<string[]> {
+  const supabase = createSupabaseAdminClient();
+  const scope = await installationProjects(supabase, installationId, repoFullName);
+  if (!scope) return [];
+  const { data, error } = await supabase
+    .from("automation_runs")
+    .select("id")
+    .in("project_id", scope.projectIds)
+    .eq("pr_number", prNumber)
+    .not("check_run_id", "is", null)
+    .is("check_closed_at", null)
+    .is("check_reviewed_at", null);
+  if (error) throw error;
+  return (data ?? []).map((r) => r.id);
+}
+
+/** How long the sweep keeps trying a check GitHub won't take (the App
+ *  uninstalled, the repository gone, Checks taken away): a day. */
+const CHECK_RETRY_DAY_MS = 24 * 3_600_000;
+
+/** For the sweep, newest first: the runs whose check is open from before
+ *  `before` with no review in, and those whose review GitHub hasn't taken
+ *  since `retryBefore`; none older than a day, so ones GitHub never takes
+ *  stop being tried, and never crowd out those it would. */
+export async function checksToSweep(before: Date, retryBefore: Date): Promise<{ stale: string[]; unsent: string[] }> {
+  const supabase = createSupabaseAdminClient();
+  const [stale, unsent] = await Promise.all([
+    supabase
+      .from("automation_runs")
+      .select("id")
+      .not("check_run_id", "is", null)
+      .is("check_closed_at", null)
+      .is("check_reviewed_at", null)
+      .lt("created_at", before.toISOString())
+      .gt("created_at", new Date(before.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(100),
+    supabase
+      .from("automation_runs")
+      .select("id")
+      .not("check_run_id", "is", null)
+      .is("check_closed_at", null)
+      .lt("check_reviewed_at", retryBefore.toISOString())
+      .gt("check_reviewed_at", new Date(retryBefore.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .order("check_reviewed_at", { ascending: false })
+      .limit(100),
+  ]);
+  if (stale.error) throw stale.error;
+  if (unsent.error) throw unsent.error;
+  return { stale: (stale.data ?? []).map((r) => r.id), unsent: (unsent.data ?? []).map((r) => r.id) };
+}
+
+/** Give up on the checks past checksToSweep's day: kept as closed, so the
+ *  open-check index holds only the open (the sweep's warning is the record
+ *  of it). How many. */
+export async function abandonOldChecks(before: Date, retryBefore: Date): Promise<number> {
+  const supabase = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+  const [stale, unsent] = await Promise.all([
+    supabase
+      .from("automation_runs")
+      .update({ check_closed_at: now })
+      .not("check_run_id", "is", null)
+      .is("check_closed_at", null)
+      .is("check_reviewed_at", null)
+      .lte("created_at", new Date(before.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .select("id"),
+    supabase
+      .from("automation_runs")
+      .update({ check_closed_at: now })
+      .not("check_run_id", "is", null)
+      .is("check_closed_at", null)
+      .lte("check_reviewed_at", new Date(retryBefore.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .select("id"),
+  ]);
+  if (stale.error) throw stale.error;
+  if (unsent.error) throw unsent.error;
+  return (stale.data ?? []).length + (unsent.data ?? []).length;
 }

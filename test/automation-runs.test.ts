@@ -155,8 +155,15 @@ function startDeps(over: Partial<StartDeps> = {}) {
   const started: ServerSessionStart[] = [];
   const archived: { userId: string; ids: readonly string[] }[] = [];
   const neighbours: unknown[] = [];
+  const checks: string[] = [];
   const deps: StartDeps = {
     orgConnector: async () => null,
+    openCheck: async (run) => {
+      checks.push(`open ${run.runId}`);
+    },
+    closeCheck: async (runId, reason) => {
+      checks.push(`close ${runId}: ${reason}`);
+    },
     runNeighbours: async (run) => {
       neighbours.push(run);
       return { earlierSessions: ["w-old"], superseded: false };
@@ -180,7 +187,7 @@ function startDeps(over: Partial<StartDeps> = {}) {
     },
     ...over,
   };
-  return { deps, settled, started, archived, neighbours };
+  return { deps, settled, started, archived, neighbours, checks };
 }
 
 function pending(over: Partial<RunCandidate> = {}): PendingRun {
@@ -363,8 +370,18 @@ test("a pull request closing archives its review sessions, each as its runner", 
       archived.push({ userId, ids });
       return ids.length;
     },
+    openChecksOfPullRequest: async () => ["r1", "r2"],
+    closeCheck: async (runId: string, reason: string) => {
+      closedChecks.push(`${runId}: ${reason}`);
+    },
   };
+  const closedChecks: string[] = [];
   assert.equal(await closeRuns(payload({ action: "closed" }), deps), 3);
+  // Their checks no review closed say why they never will.
+  assert.deepEqual(closedChecks, [
+    "r1: The pull request closed before its review was posted.",
+    "r2: The pull request closed before its review was posted.",
+  ]);
   assert.deepEqual(asked, [[42, "neevai-labs/outrunner", 7]]);
   assert.deepEqual(archived, [
     { userId: "connector-1", ids: ["w1", "w2"] },
@@ -386,6 +403,10 @@ test("a pull request closing never throws", async () => {
         throw new Error("db down");
       },
       archiveServerSessions: async () => 0,
+      openChecksOfPullRequest: async () => {
+        throw new Error("db down");
+      },
+      closeCheck: async () => {},
     };
     assert.equal(await closeRuns(payload({ action: "closed" }), failing), 0);
   } finally {
@@ -507,4 +528,25 @@ test("a run runs again only when it's the org's, failed or didn't start, and its
   assert.equal(moved.run.event.repoFullName, "neevai-labs/renamed");
   // A refused one runs again too.
   assert.ok((await rerunRun("o1", "r1", rerunDeps({ target: { status: "refused" } }).deps)).ok);
+});
+
+test("a run's check opens before anything else, closes saying why when it doesn't run, and stays open for its review", async () => {
+  const ready = startDeps();
+  await startRun(pending(), ready.deps);
+  assert.deepEqual(ready.checks, ["open r1"]);
+  // Its session is told how to say its review is in.
+  assert.match(ready.started[0].prompt, /<!-- outrunner-run:r1 -->/);
+  // As a conversation comment, which the check's webhook hears.
+  assert.match(ready.started[0].prompt, /gh pr comment/);
+
+  const failed = startDeps({
+    startServerSession: async () => ({ workspaceId: "w2", status: "failed", errorMessage: "No allowance left." }),
+  });
+  await startRun(pending(), failed.deps);
+  assert.deepEqual(failed.checks, ["open r1", "close r1: No allowance left."]);
+
+  const noRunner = startDeps();
+  await startRun(pending({ runsAs: null }), noRunner.deps);
+  assert.equal(noRunner.checks[0], "open r1");
+  assert.match(noRunner.checks[1], /^close r1: Whoever last changed this automation/);
 });
