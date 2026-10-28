@@ -1,13 +1,22 @@
 /**
  * The Slack agent's records (20261031100000_slack_agent.sql): the app's
  * install per Slack workspace (its bot token, sealed), the threads it's in,
- * the events it has handled, and each org's own key for the models the agent
- * runs on. All the server's (service role).
+ * the events it has handled, and (org_model_keys) the keys it made for
+ * itself before it ran on the org's key for Outrunner's models, now only
+ * turned off here (retireOldSlackKeys). All the server's (service role).
  */
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import { outrunnerModelKey } from "@/lib/db/credentials";
-import { keySource, ModelKeyRefusedError, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
+import {
+  disableUserKey,
+  keySource,
+  OpenRouterKeyError,
+  ModelKeyRefusedError,
+  OutrunnerModelsUnavailableError,
+  sharedApiKey,
+} from "@/lib/openrouter/keys";
+import { probeStatus } from "@/lib/supabase/probe";
 import { orgOutrunnerModelKey } from "@/lib/db/org-model-allowance";
 import { personalOwners } from "@/lib/db/orgs";
 import type { AgentSpec } from "@/lib/slack/agent";
@@ -351,4 +360,37 @@ export function watchModelKey(orgId: string): Promise<string> {
 /** Forget the org's kept answer: OpenRouter refused the key it gave. */
 export function forgetWatchModelKey(orgId: string): void {
   watchAnswers.delete(orgId);
+}
+
+/**
+ * Turn off the Slack agent's old keys of its own (org_model_keys), unread
+ * since it runs on the org's key for Outrunner's models: each is disabled
+ * on OpenRouter, then its row goes. A few a run, from the reconciler; how
+ * many went. Nothing to do once the table is empty, or gone.
+ */
+export async function retireOldSlackKeys(limit = 20): Promise<number | null> {
+  // Null, not 0: with no management key, live keys may still be there.
+  if (keySource() !== "per-user") return null;
+  const { data, error } = await db().from("org_model_keys").select("org_id, key_hash").order("org_id").limit(limit);
+  if (error && probeStatus(error) === "missing") return 0;
+  if (error) throw error;
+  let retired = 0;
+  for (const row of data ?? []) {
+    try {
+      // A row whose key was never made has nothing on OpenRouter to turn
+      // off, nor one OpenRouter no longer has (deleted there by hand).
+      if (row.key_hash) {
+        await disableUserKey(row.key_hash).catch((error: unknown) => {
+          if (!(error instanceof OpenRouterKeyError && error.status === 404)) throw error;
+        });
+      }
+      const { error: deleteError } = await db().from("org_model_keys").delete().eq("org_id", row.org_id);
+      if (deleteError) throw deleteError;
+      retired += 1;
+    } catch (error) {
+      // One that won't go doesn't hold up the rest: it's tried again next run.
+      console.error(`Could not retire org ${row.org_id}'s old Slack agent key`, error);
+    }
+  }
+  return retired;
 }

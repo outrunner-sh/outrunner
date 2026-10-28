@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { retireOldSlackKeys } from "@/lib/db/slack-agent";
 import { billingMode } from "@/lib/billing/mode";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
@@ -18,7 +19,8 @@ import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
  * renew for sessions already running, and the warm pool's boxes nothing else
  * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
  * restart cut off (lib/session/provisioning.deps.ts), and the deployment's
- * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), for
+ * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), and
+ * the Slack agent's old keys of its own (lib/db/slack-agent.ts), for
  * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's
  * route: it takes only BILLING_CRON_SECRET, as a bearer token. Answers what
  * the run did.
@@ -74,9 +76,16 @@ export async function POST(request: Request) {
       console.error("Deleting orphaned Daytona boxes failed", error);
       return null;
     });
+    // And the Slack agent's old keys of its own, unread since it runs on the
+    // org's (lib/db/slack-agent.ts): turned off on OpenRouter, a few a run.
+    const slackKeysRetired = await retireOldSlackKeys().catch((error: unknown) => {
+      console.error("Retiring the Slack agent's old keys failed", error);
+      return null;
+    });
     return NextResponse.json({
       ...report,
       allowancesRenewed,
+      slackKeysRetired,
       poolsSwept,
       removalsSettled,
       runsSwept,
