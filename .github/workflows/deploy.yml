@@ -97,10 +97,11 @@ jobs:
           for i in $(seq 1 40); do
             build=$(curl -fsS --max-time 20 https://app.outrunner.sh/api/health | python3 -c "import json,sys; print(json.load(sys.stdin).get('build') or '')" || true)
             if [ "$build" = "$GITHUB_SHA" ]; then echo "Serving $GITHUB_SHA"; exit 0; fi
-            if [ -n "$build" ]; then
+            if [[ "$build" =~ ^[0-9a-f]{40}$ ]]; then
               # "ahead": the build served is a later commit with this one in it.
-              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$build" --jq .status 2>/dev/null || true)
+              status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...$build" --jq .status 2>&1 || true)
               if [ "$status" = "ahead" ]; then echo "Serving $build, a later deploy with $GITHUB_SHA in it"; exit 0; fi
+              echo "Compared with $build: $status"
             fi
             echo "Still serving ${build:-a build from before builds were reported}"
             sleep 15
