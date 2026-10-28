@@ -21,6 +21,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 const DELIVER_WITHIN_MS = 60 * 60_000;
 /** A digest is sent at most this often. */
 const DIGEST_EVERY_MS = 24 * 60 * 60_000;
+/** A digest that couldn't be sent is tried again this much later: soon
+ *  enough for a hiccup, rare enough for an address that never works. */
+const DIGEST_RETRY_MS = 60 * 60_000;
+/** Ids a write names at most: they all go in its URL. */
+const LET_GO_CHUNK = 100;
 
 function db() {
   return createSupabaseAdminClient();
@@ -153,13 +158,15 @@ export async function deliverNotifications(now: number = Date.now()): Promise<De
       }
     }
     for (const channel of ["emailed_at", "slacked_at"] as const) {
-      if (letGo[channel].length === 0) continue;
-      const { error: letGoError } = await db()
-        .from("session_notifications")
-        .update(channel === "emailed_at" ? { emailed_at: stamp } : { slacked_at: stamp })
-        .in("id", letGo[channel])
-        .is(channel, null);
-      if (letGoError) throw letGoError;
+      // In chunks: every id goes in the request's URL.
+      for (let i = 0; i < letGo[channel].length; i += LET_GO_CHUNK) {
+        const { error: letGoError } = await db()
+          .from("session_notifications")
+          .update(channel === "emailed_at" ? { emailed_at: stamp } : { slacked_at: stamp })
+          .in("id", letGo[channel].slice(i, i + LET_GO_CHUNK))
+          .is(channel, null);
+        if (letGoError) throw letGoError;
+      }
     }
     for (const send of sends) await send();
   }
@@ -180,6 +187,9 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
     .select("user_id, digest_sent_at")
     .eq("email", "digest")
     .or(`digest_sent_at.is.null,digest_sent_at.lt.${cutoff}`)
+    // Longest waiting first, so people whose digests go through are never
+    // crowded out by one that keeps failing.
+    .order("digest_sent_at", { ascending: true, nullsFirst: true })
     .limit(50);
   if (error) throw error;
   let sent = 0;
@@ -216,12 +226,14 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
       sent++;
       continue;
     }
-    // Not sent (no address read, or the email refused): the claim is given
-    // back where it's still ours, so the next tick tries the day's digest
-    // again rather than losing it.
+    // Not sent (no address read, or the email refused): the claim is moved
+    // back where it's still ours, so the digest is tried again in an hour,
+    // not lost and not retried every tick for an address that never works.
+    // That try reads the day before it, so it may leave out the first hour
+    // of what this one held.
     const { error: releaseError } = await db()
       .from("notification_preferences")
-      .update({ digest_sent_at: user.digest_sent_at })
+      .update({ digest_sent_at: new Date(now - DIGEST_EVERY_MS + DIGEST_RETRY_MS).toISOString() })
       .eq("user_id", user.user_id)
       .eq("digest_sent_at", stamp);
     if (releaseError) throw releaseError;

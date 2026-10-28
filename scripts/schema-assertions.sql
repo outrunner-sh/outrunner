@@ -2261,7 +2261,7 @@ begin
   raise notice 'ok: where a session stands is the server''s to read, and marks are each person''s own';
 end $$;
 
--- 51. Notifications: each event once per person and session, theirs alone to
+-- 52. Notifications: each event once per person and session, theirs alone to
 -- read; preferences each person's own, of known channels and kinds.
 do $$
 declare
@@ -2330,7 +2330,7 @@ begin
   raise notice 'ok: notifications are recorded once each and read by their person alone';
 end $$;
 
--- 52. A session's failed_at is when its status turned failed, and nothing
+-- 53. A session's failed_at is when its status turned failed, and nothing
 -- else moves it: a failure is told once, not again on a rename.
 do $$
 declare
