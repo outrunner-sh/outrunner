@@ -483,3 +483,45 @@ func TestTwoApprovesAtOnceApproveOnce(t *testing.T) {
 		t.Errorf("%d approvals pasted, %d told it was answered; want one of each", approvals, answered)
 	}
 }
+
+func TestThePromptBoxIsReadAloneAndAPasteByItsPlaceholder(t *testing.T) {
+	inBox := func(text string) string { return strings.Replace(composerPane, "❯ ", "❯ "+text, 1) }
+	// A long paste shows as Claude's placeholder, not as its text.
+	if !boxHolds(inBox("[Pasted text #1 +12 lines]"), "A very long prompt\nover many lines") {
+		t.Error("a pasted prompt's placeholder wasn't read as the prompt")
+	}
+	if !boxHolds(inBox("fix the flaky test"), "fix the flaky test") || boxHolds(composerPane, "fix the flaky test") {
+		t.Error("the prompt in the box, or its absence, misread")
+	}
+	// A short prompt that a reply above, or the footer below, also says.
+	pane := "⏺ Say yes and I'll go ahead.\n" + composerPane + "\n  yes · esc to interrupt"
+	if boxHolds(pane, "yes") {
+		t.Error("words outside the box were read as the prompt in it")
+	}
+	// A prompt echoed above (with ❯, under no rule) is not the box.
+	if boxHolds("❯ yes\n⏺ Done.\n"+composerPane, "yes") {
+		t.Error("an echoed prompt was read as the box")
+	}
+	// The real 2.1.304 prompt box, empty.
+	if boxHolds(realPane(t, "plan-ready"), "Plan a small change") {
+		t.Error("the real empty box was read as holding a prompt")
+	}
+}
+
+// A plan answered elsewhere: the mode the session is in, as its footer says
+// (the real panes), and the record brought in line with it.
+func TestAnAnsweredPlansModeIsReadOffTheScreen(t *testing.T) {
+	s, fake, id := landingSession(t)
+	s.updateFacts(id, func(f *workspaceFacts) { f.Plan = true })
+	fake.pane = realPane(t, "built") // "⏵⏵ bypass permissions on"
+	if got := s.PlanAnsweredMode(id); got != ModeBuild {
+		t.Errorf("building: mode = %q", got)
+	}
+	if f, _ := s.getFacts(id); f.Plan {
+		t.Error("the record still says planning")
+	}
+	fake.pane = realPane(t, "plan-ready") // "⏸ plan mode on"
+	if got := s.PlanAnsweredMode(id); got != ModePlan {
+		t.Errorf("planning: mode = %q", got)
+	}
+}

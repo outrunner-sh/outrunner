@@ -262,7 +262,14 @@ export type SendMessageRequest = z.infer<typeof SendMessageRequest>;
  *  answer says which (`via`). Revising is a prompt in plan mode. */
 export const PlanActionRequest = z.object({ action: z.literal("approve") }).strict();
 export type PlanActionRequest = z.infer<typeof PlanActionRequest>;
-export const PlanActionResponse = z.object({ result: z.literal("approved"), via: z.enum(["menu", "prompt"]) });
+export const PlanActionResponse = z.object({
+  result: z.enum(["approved", "answered"]),
+  // How it was approved.
+  via: z.enum(["menu", "prompt"]).optional(),
+  // "answered": no plan was waiting (answered in another tab, the terminal),
+  // and this is the mode the session is in, as its screen says.
+  mode: SessionMode.optional(),
+});
 export type PlanActionResponse = z.infer<typeof PlanActionResponse>;
 
 /** The agent compacts a session's conversation (POST /workspaces/{id}/compact). */
@@ -523,8 +530,6 @@ export const ErrorCode = z.enum([
   "CONFLICT",
   // A session credential on an engine that runs sessions on its own login.
   "UNSUPPORTED",
-  // A plan approved that was answered already (another tab, the terminal).
-  "ANSWERED",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 

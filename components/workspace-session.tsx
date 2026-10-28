@@ -4,7 +4,7 @@ import { RotateCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+import { type AgentEvent, PlanActionResponse } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
@@ -571,20 +571,22 @@ export function WorkspaceSession({
     setAnsweredHere((prev) => new Set(prev).add(id));
     setSendError(null);
     (local
-      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/plan`, { action: "approve" })
+      ? localAgentRequest<unknown>(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/plan`, { action: "approve" }).then(
+          (raw) => PlanActionResponse.parse(raw),
+        )
       : approveCloudPlan(workspaceId)
     ).then(
-      // Building from here, once the agent says so: an approval that didn't
-      // go leaves the composer planning, so what's typed next revises.
-      () => setMode("build"),
+      (outcome) => {
+        // Building from here, once the agent says so: an approval that didn't
+        // go leaves the composer planning, so what's typed next revises.
+        if (outcome.result === "approved") return setMode("build");
+        // Answered already (another tab, the terminal): the card stays put
+        // away, and the toggle takes the mode the agent read off the screen.
+        const now = outcome.mode ?? "build";
+        setMode(now);
+        setNote(`This plan was answered already, so ${AGENTS[agent].label} is ${now === "build" ? "building" : "still planning"}.`);
+      },
       (error: unknown) => {
-        if (error instanceof PlanAnsweredError) {
-          // Answered elsewhere: the card stays put away, and the toggle takes
-          // the mode the session is in now.
-          setMode(error.mode);
-          setNote(`This plan was answered already, so ${AGENTS[agent].label} is ${error.mode === "build" ? "building" : "still planning"}.`);
-          return;
-        }
         setAnsweredHere((prev) => {
           const next = new Set(prev);
           next.delete(id);
@@ -1250,26 +1252,15 @@ async function provideCloudSecrets(workspaceId: string, body: unknown): Promise<
 
 /** Approve the plan a cloud session's agent waits on. The server reaches the
  *  session's agent, as for a prompt. */
-async function approveCloudPlan(workspaceId: string): Promise<void> {
+async function approveCloudPlan(workspaceId: string): Promise<PlanActionResponse> {
   const res = await reachOutrunner(`/api/workspaces/${workspaceId}/plan`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "approve" }),
   });
-  if (res.ok) return;
-  const data = (await res.json().catch(() => ({}))) as { error?: string; answered?: boolean; mode?: unknown };
-  if (data.answered) throw new PlanAnsweredError(data.mode === "plan" ? "plan" : "build");
-  throw new Error(data.error ?? "Couldn't approve the plan. Please try again.");
-}
-
-/** An approval of a plan answered already, with the mode the session is in. */
-class PlanAnsweredError extends Error {
-  readonly mode: SessionMode;
-  constructor(mode: SessionMode) {
-    super("This plan was answered already.");
-    this.name = "PlanAnsweredError";
-    this.mode = mode;
-  }
+  const data = (await res.json().catch(() => ({}))) as unknown;
+  if (res.ok) return PlanActionResponse.parse(data);
+  throw new Error((data as { error?: string }).error ?? "Couldn't approve the plan. Please try again.");
 }
 
 /** Compact a cloud session's conversation. The server reaches the session's

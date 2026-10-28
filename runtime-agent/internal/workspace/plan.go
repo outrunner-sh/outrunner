@@ -221,18 +221,46 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 // goes: a resend from the page long after would be typed a second time.
 var ErrPromptStaged = errors.New("a message that didn't go is still in the prompt box: send it or clear it in the session's terminal, then compact")
 
-// boxHolds reports whether the bottom of a pane, where the prompt box is,
-// shows the start of content: its first line, spaces collapsed.
+// boxHolds reports whether the agent's prompt box shows content: the start of
+// its first line, spaces collapsed, or, for a paste too long to show,
+// Claude's placeholder for it ("[Pasted text #1 +12 lines]"). The box alone,
+// not the screen's last lines, where a short prompt ("yes") could match a
+// reply or the footer.
 func boxHolds(pane, content string) bool {
+	box := strings.Join(promptBox(pane), " ")
+	if strings.Contains(box, "[Pasted text #") {
+		return true
+	}
 	first := strings.Join(strings.Fields(strings.SplitN(strings.TrimSpace(content), "\n", 2)[0]), " ")
 	if r := []rune(first); len(r) > 40 {
 		first = string(r[:40])
 	}
+	return first != "" && strings.Contains(strings.Join(strings.Fields(box), " "), first)
+}
+
+// promptBox is the agent's prompt box, its lines as the pane shows them: from
+// Claude's ❯ under a rule (prompts echoed above with ❯ are under none) to the
+// rule below, or from Codex's › to its footer; none where it shows no box.
+func promptBox(pane string) []string {
 	lines := nonBlankLines(pane)
-	if len(lines) > 8 {
-		lines = lines[len(lines)-8:]
+	start := -1
+	for i, line := range lines {
+		claudes := (strings.HasPrefix(line, "❯") || strings.HasPrefix(line, ">")) && i > 0 && isRule(lines[i-1])
+		if claudes || strings.HasPrefix(line, "›") {
+			start = i
+		}
 	}
-	return first != "" && strings.Contains(strings.Join(strings.Fields(strings.Join(lines, " ")), " "), first)
+	if start < 0 {
+		return nil
+	}
+	box := []string{lines[start]}
+	for _, line := range lines[start+1:] {
+		if isRule(line) || !strings.HasPrefix(line, "  ") || strings.Contains(line, " · ") {
+			break
+		}
+		box = append(box, line)
+	}
+	return box
 }
 
 // ErrCompactBusy is a compaction asked for mid-turn.
@@ -242,6 +270,33 @@ var ErrCompactBusy = errors.New("the agent is mid-turn; compact once it has fini
 // with (Codex's, or a Claude whose menu isn't the one this agent knows), in
 // build mode.
 const PlanApproved = "The plan is approved. Go ahead and implement it."
+
+// PlanAnsweredMode is the mode a session is in whose plan was answered
+// elsewhere (another tab's Approve, its terminal): Claude's footer says it
+// ("⏸ plan mode on", "⏵⏵ bypass permissions on", testdata/claude-2.1.304),
+// else the agent's record. The record is brought in line with it, so the next
+// prompt in build mode doesn't relaunch a session that builds already.
+func (s *Service) PlanAnsweredMode(workspaceID string) string {
+	f, _ := s.getFacts(workspaceID)
+	mode := ModeBuild
+	if f.Plan {
+		mode = ModePlan
+	}
+	if s.jcode == nil && f.Agent != AgentCodex {
+		ctx, cancel := context.WithTimeout(context.Background(), switchCheckTimeout)
+		defer cancel()
+		if pane, err := s.tmux.CapturePane(ctx, sessionName(workspaceID)); err == nil {
+			switch a := s.agentFor(workspaceID); {
+			case strings.Contains(pane, "plan mode on"):
+				mode = ModePlan
+			case a.isBusy(pane) || isComposer(pane):
+				mode = ModeBuild // at work or at its prompt box, and not planning
+			}
+		}
+	}
+	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Plan = mode == ModePlan })
+	return mode
+}
 
 // Approved plans: how ApprovePlan answered.
 const (

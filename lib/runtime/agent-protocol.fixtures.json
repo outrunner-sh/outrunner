@@ -91,12 +91,6 @@
         "code": "AGENT_UNREACHABLE",
         "message": "agent did not respond"
       }
-    },
-    {
-      "error": {
-        "code": "ANSWERED",
-        "message": "the agent isn't waiting on a plan any more"
-      }
     }
   ],
   "SessionUrls": [
@@ -299,6 +293,10 @@
     {
       "result": "approved",
       "via": "prompt"
+    },
+    {
+      "result": "answered",
+      "mode": "build"
     }
   ],
   "ArchiveWorkspaceRequest": [

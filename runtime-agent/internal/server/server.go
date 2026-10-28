@@ -534,9 +534,10 @@ func (s *Server) planAction(w http.ResponseWriter, r *http.Request) {
 	via, err := s.ws.ApprovePlan(r.PathValue("id"))
 	switch {
 	case errors.Is(err, workspace.ErrNoPlanWaiting):
-		// Its own code: the page then reads the session's mode again, as
-		// it may be building, rather than leaving its toggle on Plan.
-		writeError(w, http.StatusConflict, "ANSWERED", err.Error())
+		// Answered already (another tab, the terminal): nothing failed. The
+		// answer says the mode the session is in, which only its screen
+		// knows for sure, for the page's toggle.
+		writeJSON(w, http.StatusOK, protocol.PlanActionResponse{Result: "answered", Mode: s.ws.PlanAnsweredMode(r.PathValue("id"))})
 	case errors.Is(err, workspace.ErrModeBusy),
 		errors.Is(err, workspace.ErrSessionUnchecked), errors.Is(err, workspace.ErrNotInterrupted):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())

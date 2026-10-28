@@ -506,9 +506,13 @@ type PlanActionRequest struct {
 	Action string `json:"action"`
 }
 
+// PlanActionResponse is "approved" (Via "menu" or "prompt"), or "answered":
+// no plan was waiting any more, answered elsewhere, and Mode is the one the
+// session is in ("build", "plan").
 type PlanActionResponse struct {
 	Result string `json:"result"`
-	Via    string `json:"via"`
+	Via    string `json:"via,omitempty"`
+	Mode   string `json:"mode,omitempty"`
 }
 
 // FeaturePlanMode is SendMessageRequest's Mode and Dismiss, and POST

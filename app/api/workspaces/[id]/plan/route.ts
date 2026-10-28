@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getWorkspace, recordWorkspaceMode } from "@/lib/db/repositories";
+import { recordWorkspaceMode } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_PLAN_MODE } from "@/lib/runtime/agent-protocol";
@@ -53,21 +53,14 @@ export async function POST(request: Request, context: RouteContext) {
       );
       approved = await agent.approvePlan(identity);
     }
-    if (workspace.mode !== "build") await recordWorkspaceMode(workspace.id, "build");
+    // Approved, it builds; answered already, it is in the mode its agent read
+    // off its screen. The row follows, so the session opens in it again.
+    const mode = approved.result === "answered" ? (approved.mode ?? "build") : "build";
+    if (workspace.mode !== mode) await recordWorkspaceMode(workspace.id, mode);
     return NextResponse.json(approved);
   } catch (error) {
     if (error instanceof OutdatedComputerError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
-    }
-    // Answered already (another tab, the terminal): nothing failed, and the
-    // session may be building. The page takes its mode from here, as its row
-    // has it now, rather than keeping its toggle on Plan.
-    if (error instanceof AgentRequestError && error.error?.code === "ANSWERED") {
-      const now = await getWorkspace(workspace.id);
-      return NextResponse.json(
-        { error: "This plan was answered already.", answered: true, mode: now?.mode ?? "build" },
-        { status: 409 },
-      );
     }
     // Mid-turn, or a menu that didn't take the pick: the agent's own words
     // say which.
