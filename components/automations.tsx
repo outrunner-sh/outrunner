@@ -143,7 +143,12 @@ export function Automations({
                   orgId={org.id}
                   runs={runs}
                   kind={runKind}
-                  kinds={TRIGGER_KINDS.filter((k) => automations?.some((a) => a.triggers.some((t) => triggerKind(t) === k)))}
+                  // The kinds its automations have, and the one narrowed to
+                  // (a bookmark's, after its last automation went), so its
+                  // pill shows which.
+                  kinds={TRIGGER_KINDS.filter(
+                    (k) => k === runKind || automations?.some((a) => a.triggers.some((t) => triggerKind(t) === k)),
+                  )}
                   now={now}
                   admin={admin}
                   byConnector={!org.personal}

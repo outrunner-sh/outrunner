@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, X } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 
 import { Input } from "@/components/ui/input";
 import {
@@ -103,9 +103,19 @@ export function AutomationSchedules({
   const local = useLocalZone();
   const set = (key: string, change: Partial<ScheduleForm>) =>
     onChange(schedules.map((s) => (s.key === key ? { ...s, ...change } : s)));
-  const checked = schedules.map((form) => (now === null ? null : parseSchedule(scheduleOf(form), now)));
-  const valid = checked.flatMap((c) => (c?.ok ? [c.value] : []));
-  const upcoming = now === null ? [] : upcomingRuns(valid, now, 5);
+  // Worked out again only when the schedules or the minute change: the
+  // floor across them asks each schedule's next runs of every other, which
+  // for a rare cron walks years ahead.
+  const { checked, valid, upcoming, tooOften } = useMemo(() => {
+    const checked = schedules.map((form) => (now === null ? null : parseSchedule(scheduleOf(form), now)));
+    const valid = checked.flatMap((c) => (c?.ok ? [c.value] : []));
+    return {
+      checked,
+      valid,
+      upcoming: now === null ? [] : upcomingRuns(valid, now, 5),
+      tooOften: now !== null && valid.length > 1 && runTooOften(valid, now),
+    };
+  }, [schedules, now]);
 
   return (
     <div className="space-y-3">
@@ -250,7 +260,7 @@ export function AutomationSchedules({
           <span />
         )}
       </div>
-      {now !== null && valid.length > 1 && runTooOften(valid, now) ? (
+      {tooOften ? (
         <p className="text-xs text-warning">
           Together, these run more often than every {MIN_INTERVAL_MINUTES} minutes: space them out to save.
         </p>

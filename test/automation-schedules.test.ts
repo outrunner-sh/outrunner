@@ -164,6 +164,9 @@ test("an automation's schedules together keep to the floor each keeps alone", ()
   // a Wednesday, run ten minutes apart every Monday.
   assert.equal(parseAutomationInput({ schedules: [every("0 * * * *"), every("10 9 * * 1")] }, { full: false, now: NOW }).ok, false);
   assert.ok(parseAutomationInput({ schedules: [every("0 * * * *"), every("30 9 * * 1")] }, { full: false, now: NOW }).ok);
+  // A once that fired a minute ago is over: no gap to keep with it.
+  const justFired = { kind: "once", timezone: "UTC", at: "2026-10-28T11:59" };
+  assert.ok(parseAutomationInput({ schedules: [justFired, every("5 12 * * *")] }, { full: false, now: NOW }).ok);
   // Two at the same times are one run.
   assert.ok(parseAutomationInput({ schedules: [every("*/15 * * * *"), every("0,15,30,45 * * * *")] }, { full: false, now: NOW }).ok);
 });

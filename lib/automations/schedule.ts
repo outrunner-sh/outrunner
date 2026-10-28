@@ -327,7 +327,9 @@ export function runTooOften(schedules: readonly Schedule[], now: number): boolea
     nextRuns(schedule, now, 30).some((at) =>
       schedules.some((other, j) => {
         if (j === i) return false;
-        const [near] = nextRuns(other, at - gap, 1);
+        // From now at the earliest: a run that's over (a once that fired
+        // a minute ago) is no gap to keep.
+        const [near] = nextRuns(other, Math.max(at - gap, now), 1);
         return near !== undefined && near !== at && Math.abs(near - at) < gap;
       }),
     ),
