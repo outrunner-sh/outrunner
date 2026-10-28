@@ -93,6 +93,13 @@ export async function isReviewSession(workspaceId: string): Promise<boolean> {
   return data !== null;
 }
 
+/** How a session's box works on GitHub: as an automation's review, as the
+ *  App (REVIEW_AS_APP), else as its user chose (undefined). For the tokens
+ *  the server fetches a session's mirrors with, as its box's own requests. */
+export async function sessionGitAs(workspaceId: string): Promise<typeof REVIEW_AS_APP | undefined> {
+  return (await isReviewSession(workspaceId)) ? REVIEW_AS_APP : undefined;
+}
+
 /** The token alone, for a server call that must have one; as the user chose,
  *  or as `as` says (REVIEW_AS_APP). */
 export async function requireGitToken(

@@ -11,7 +11,7 @@ import {
   markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
-import { optionalGitToken } from "@/lib/github/identity.deps";
+import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
@@ -238,7 +238,8 @@ async function bringBack(
   const ensured = await ensureComputer(provider, {
     scope,
     repoFullName: project.fullName,
-    githubToken: await optionalGitToken(owner.id, project),
+    // A review box's mirror as the App, as on create: never its user's token.
+    githubToken: await optionalGitToken(owner.id, project, await sessionGitAs(workspace.id)),
     sessionEnv: await runtimeSessionEnvironment(owner.id, workspace.id),
     // The owner's size now, as a new box on this provider would get, within
     // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
