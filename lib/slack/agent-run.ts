@@ -21,6 +21,8 @@ import {
   getInstallation,
   openConversation,
   orgModelKey,
+  watchModelKey,
+  forgetWatchModelKey,
   type SlackConversation,
   type SlackInstallation,
   updateConversation,
@@ -37,7 +39,7 @@ import {
   triageActor,
 } from "@/lib/db/work-items";
 import { optionalEnv } from "@/lib/env";
-import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
+import { ModelKeyDisabledError, ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { startServerSession } from "@/lib/session/server-session";
 import {
   type AgentSpec,
@@ -224,8 +226,15 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
       await reply("Outrunner's models aren't set up on this deployment, so I can't think this through yet.");
       return;
     }
+    if (error instanceof ModelKeyDisabledError) {
+      // Turned off by hand on OpenRouter: no plan would bring it back.
+      await reply("Outrunner's models are turned off for this org. Someone at Outrunner has to look into it.");
+      return;
+    }
     if (error instanceof ModelKeyRefusedError) {
-      await reply("This org's allowance for me is used up. An admin can raise it.");
+      await reply(
+        "This org's allowance on Outrunner's models is used up for now: I share it with its cloud sessions. A bigger plan in Settings → Billing raises it.",
+      );
       return;
     }
     throw error;
@@ -529,13 +538,22 @@ async function offerIfWork(install: SlackInstallation, message: AgentMessage): P
   if (!settings?.watch) return;
   let key: string;
   try {
-    key = await orgModelKey(settings.orgId);
-  } catch (error) {
-    // A spent allowance included: logged, so a channel gone quiet has a trace.
-    console.error(`Slack agent: no model key to watch ${message.channel} with`, error);
+    key = await watchModelKey(settings.orgId);
+  } catch {
+    // A spent allowance included; watchModelKey logs it (a lasting refusal
+    // once a minute, a blip each time).
     return;
   }
-  const classification = parseClassification(await oneShot(key, CLASSIFIER_PROMPT, slackToMarkdown(message.text).slice(0, 4000)));
+  let reply: string;
+  try {
+    reply = await oneShot(key, CLASSIFIER_PROMPT, slackToMarkdown(message.text).slice(0, 4000));
+  } catch (error) {
+    // Refused since it was kept (spent, or turned off): the next message asks
+    // afresh, and is refused before calling.
+    forgetWatchModelKey(settings.orgId);
+    throw error;
+  }
+  const classification = parseClassification(reply);
   if (classification.kind === "none") return;
   await postMessage(install.botToken, {
     channel: message.channel,

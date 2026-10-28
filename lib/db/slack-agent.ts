@@ -6,9 +6,10 @@
  */
 
 import { open, seal } from "@/lib/crypto/secret-box";
-import { createUserKey, disableUserKey, keySource, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
-import { ensureUserKey } from "@/lib/openrouter/user-key";
-import { optionalEnv } from "@/lib/env";
+import { outrunnerModelKey } from "@/lib/db/credentials";
+import { keySource, ModelKeyRefusedError, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
+import { orgOutrunnerModelKey } from "@/lib/db/org-model-allowance";
+import { personalOwners } from "@/lib/db/orgs";
 import type { AgentSpec } from "@/lib/slack/agent";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/database.types";
@@ -288,56 +289,59 @@ export async function sessionSummary(
 // The org's model key
 // ---------------------------------------------------------------------------
 
-/** What an org's key may spend, in USD, before OpenRouter refuses it. */
-function orgKeyLimitUsd(): number {
-  const raw = Number(optionalEnv("SLACK_AGENT_ORG_LIMIT_USD"));
-  return Number.isFinite(raw) && raw > 0 ? raw : 25;
-}
-
 /**
  * The OpenRouter key the Slack agent's calls for an org run on, so the org
- * pays for them: the shared API key when the server has only that, otherwise
- * one made for the org the first time (capped at SLACK_AGENT_ORG_LIMIT_USD)
- * and kept, as a user's is.
+ * pays for them: the one its members' cloud sessions run Outrunner's models
+ * on, within the same allowance from its plan (one budget per org). A team
+ * org's own key (lib/db/org-model-allowance.ts); a personal org's, its
+ * owner's. The shared API key where the server has only that. A spent
+ * allowance is refused (ModelKeyRefusedError), as for a session.
  */
 export async function orgModelKey(orgId: string): Promise<string> {
+  // Without per-org keys there's no one to look up.
   const source = keySource();
   if (source === null) throw new OutrunnerModelsUnavailableError();
   if (source === "shared") return sharedApiKey() as string;
+  const owner = (await personalOwners([orgId])).get(orgId);
+  return owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId);
+}
 
-  const client = db();
-  const { error: rowError } = await client
-    .from("org_model_keys")
-    .upsert({ org_id: orgId }, { onConflict: "org_id", ignoreDuplicates: true });
-  if (rowError) throw rowError;
-  return ensureUserKey(
-    {
-      async read() {
-        const { data, error } = await client
-          .from("org_model_keys")
-          .select("key_ciphertext, key_hash")
-          .eq("org_id", orgId)
-          .single();
-        if (error) throw error;
-        return { ciphertext: data.key_ciphertext, hash: data.key_hash };
-      },
-      async claim(key) {
-        const { data, error } = await client
-          .from("org_model_keys")
-          .update({ key_ciphertext: key.ciphertext, key_hash: key.hash, created_at: key.createdAt })
-          .eq("org_id", orgId)
-          .is("key_ciphertext", null)
-          .select("org_id");
-        if (error) throw error;
-        return data.length > 0;
-      },
-    },
-    {
-      open,
-      seal,
-      create: () => createUserKey(`outrunner-org-${orgId}`, orgKeyLimitUsd()),
-      disable: disableUserKey,
-      log: (message, error) => console.error(message, error),
-    },
-  );
+/** How long a watched channel's answer stands (a key, or a refusal that
+ *  won't change in a minute): it asks at every message, and each full ask
+ *  reads the key's usage from OpenRouter. OpenRouter's own cap still holds
+ *  in between. */
+const WATCH_ANSWER_MS = 60_000;
+const watchAnswers = new Map<string, { at: number; answer: Promise<string> }>();
+
+/** A refusal worth keeping: the allowance spent, the key off, or no models
+ *  on this server. A failure to ask (a blip) is asked again next time. */
+function lasting(error: unknown): boolean {
+  return error instanceof ModelKeyRefusedError || error instanceof OutrunnerModelsUnavailableError;
+}
+
+/**
+ * {@link orgModelKey} for a watched channel's message: the last minute's
+ * answer, a lasting refusal included, so a busy channel neither asks
+ * OpenRouter at every message nor, once the allowance is spent, at every one
+ * after. Messages arriving together share one ask. A reply to someone always
+ * asks afresh (orgModelKey).
+ */
+export function watchModelKey(orgId: string): Promise<string> {
+  const now = Date.now();
+  const kept = watchAnswers.get(orgId);
+  if (kept && now - kept.at < WATCH_ANSWER_MS) return kept.answer;
+  const answer = orgModelKey(orgId);
+  watchAnswers.set(orgId, { at: now, answer });
+  answer.catch((error: unknown) => {
+    // Said once per ask: a lasting refusal once a minute, a blip each time
+    // it happens (it isn't kept, so the next message asks again).
+    console.error(`Slack agent: no model key for org ${orgId}'s watched channels`, error);
+    if (!lasting(error) && watchAnswers.get(orgId)?.answer === answer) watchAnswers.delete(orgId);
+  });
+  return answer;
+}
+
+/** Forget the org's kept answer: OpenRouter refused the key it gave. */
+export function forgetWatchModelKey(orgId: string): void {
+  watchAnswers.delete(orgId);
 }
