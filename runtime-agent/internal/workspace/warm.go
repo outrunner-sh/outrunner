@@ -290,9 +290,11 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 // branch at its origin/base and cleaned of what git tracks or would. Whether
 // it did; one that fails half way is discarded, every checkout and branch it
 // made going with it, and the session's checkouts are made as usual. A
-// session's branch already in one of the mirrors isn't adopted over: its
-// checkouts can't be made on it either (createCheckouts says why), and the
-// branches a failed adoption takes back are only ever its own.
+// session's branch already in one of the mirrors (or one that can't be told
+// missing) isn't adopted over: its checkouts can't be made on it either
+// (createCheckouts says why), and the branches a failed adoption takes back
+// are only ever its own. A Create whose request has ended leaves the warm
+// for its retry.
 func (s *Service) adoptWarmCheckouts(ctx context.Context, folder, branch string, checkouts []Checkout) bool {
 	warmMu.Lock()
 	defer warmMu.Unlock()
@@ -300,8 +302,11 @@ func (s *Service) adoptWarmCheckouts(ctx context.Context, folder, branch string,
 	if state.State != "succeeded" || !sameCheckouts(state.Checkouts, checkouts) || !fileExists(s.warmDir()) {
 		return false
 	}
+	if ctx.Err() != nil {
+		return false
+	}
 	for _, c := range checkouts {
-		if _, err := s.git(ctx, RepoMirrorPath(s.Root, c.Name), "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+		if !s.branchMissing(ctx, RepoMirrorPath(s.Root, c.Name), branch) {
 			return false
 		}
 	}

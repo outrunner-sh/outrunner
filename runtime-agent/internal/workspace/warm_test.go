@@ -355,13 +355,7 @@ func TestAWarmFolderCutOffHalfWayLeavesNoBranches(t *testing.T) {
 	}
 	waitWarm(t, s)
 	// web switches to the session's branch; api's switch outlasts the request.
-	marker := filepath.Join(t.TempDir(), "slow")
-	_ = os.WriteFile(marker, nil, 0o644)
-	hook := filepath.Join(RepoMirrorPath(s.Root, "api"), "hooks", "post-checkout")
-	_ = os.MkdirAll(filepath.Dir(hook), 0o755)
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\n[ -f '"+marker+"' ] && exec sleep 3 >/dev/null 2>&1 </dev/null\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	marker := slowCheckouts(t, RepoMirrorPath(s.Root, "api"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -383,6 +377,52 @@ func TestAWarmFolderCutOffHalfWayLeavesNoBranches(t *testing.T) {
 		if branch, _ := s.git(context.Background(), filepath.Join(folder, c.Name), "symbolic-ref", "--short", "HEAD"); branch != "runtime/x" {
 			t.Errorf("%s branch = %q", c.Name, branch)
 		}
+	}
+}
+
+// A Create whose request has ended leaves the warm for its retry, and a
+// session's branch already in a mirror is neither adopted over nor taken
+// back.
+func TestAWarmFolderIsLeftForARetryAndAnotherBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	checkouts := twoRepoBox(t, s)
+	if err := s.Warm(context.Background(), WarmRequest{Hook: "mkdir -p web/node_modules", Checkouts: checkouts}); err != nil {
+		t.Fatal(err)
+	}
+	waitWarm(t, s)
+
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Create(done, CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", Checkouts: checkouts}); err == nil {
+		t.Fatal("a Create whose request ended made its checkouts")
+	}
+	if !fileExists(s.warmDir()) || s.readWarmState().State != "succeeded" {
+		t.Fatal("a Create whose request ended threw the warm away")
+	}
+
+	ctx := context.Background()
+	web := RepoMirrorPath(s.Root, "web")
+	if _, err := s.git(ctx, web, "branch", "runtime/y", "origin/main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws2", Branch: "runtime/y", Checkouts: checkouts}); err == nil {
+		t.Fatal("made checkouts on a branch already there")
+	}
+	if s.branchMissing(ctx, web, "runtime/y") {
+		t.Error("a branch the session didn't make was deleted")
+	}
+	if !fileExists(s.warmDir()) {
+		t.Error("the warm was adopted over a branch already there")
+	}
+
+	// The retry takes it.
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", Checkouts: checkouts}); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := s.getFacts("ws1"); !f.Warmed {
+		t.Error("the retry didn't take the warm")
 	}
 }
 

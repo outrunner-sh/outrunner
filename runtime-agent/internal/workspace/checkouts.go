@@ -89,19 +89,37 @@ func (s *Service) undoCheckouts(ctx context.Context, folder, branch string, chec
 	_ = os.RemoveAll(folder)
 }
 
+// branchMissing reports whether mirror surely has no branch: git looked and
+// found none (rev-parse's exit 1), not merely failed to say (a request that
+// ended, a mirror that isn't there).
+func (s *Service) branchMissing(ctx context.Context, mirror, branch string) bool {
+	err := exec.CommandContext(ctx, "git", "-C", mirror, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run()
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == 1
+}
+
 // createCheckouts makes the session's folder of worktrees, all on branch.
-// One that fails takes the others it made with it.
+// One that fails takes the others it made with it, and itself when the
+// branch is its own: worktree add makes the branch before the tree, so one
+// cut off half way leaves both.
 func (s *Service) createCheckouts(ctx context.Context, folder, branch string, checkouts []Checkout, user *GitUser) error {
 	if err := os.MkdirAll(folder, 0o755); err != nil {
 		return err
 	}
 	var made []Checkout
 	for _, c := range checkouts {
-		dir := filepath.Join(folder, c.Name)
-		out, err := exec.CommandContext(ctx, "git", "-C", RepoMirrorPath(s.Root, c.Name),
+		dir, mirror := filepath.Join(folder, c.Name), RepoMirrorPath(s.Root, c.Name)
+		// A branch that wasn't there before is this add's to take back; one
+		// that was (the add fails on it) isn't.
+		ours := s.branchMissing(ctx, mirror, branch)
+		out, err := exec.CommandContext(ctx, "git", "-C", mirror,
 			"worktree", "add", "-b", branch, dir, "origin/"+c.BaseBranch).CombinedOutput()
 		if err != nil {
-			s.undoCheckouts(ctx, folder, branch, made)
+			undo := made
+			if ours {
+				undo = append(undo[:len(undo):len(undo)], c)
+			}
+			s.undoCheckouts(ctx, folder, branch, undo)
 			return fmt.Errorf("worktree add %s: %v: %s", c.Name, err, strings.TrimSpace(string(out)))
 		}
 		made = append(made, c)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"runtime-agent/internal/protocol"
 )
@@ -136,6 +137,51 @@ func TestACheckoutThatFailsTakesTheOthersWithIt(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(s.worktreePath("ws1"), "api", ".git")) {
 		t.Error("the retry made no api checkout")
+	}
+}
+
+// slowCheckouts makes every checkout off mirror take 3 seconds, after git
+// has made its branch, while the file it returns is there.
+func slowCheckouts(t *testing.T, mirror string) string {
+	t.Helper()
+	marker := filepath.Join(t.TempDir(), "slow")
+	_ = os.WriteFile(marker, nil, 0o644)
+	hook := filepath.Join(mirror, "hooks", "post-checkout")
+	_ = os.MkdirAll(filepath.Dir(hook), 0o755)
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n[ -f '"+marker+"' ] && exec sleep 3 >/dev/null 2>&1 </dev/null\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return marker
+}
+
+// A checkout cut off half way (its request ended after git made its branch)
+// is taken back with the others: its retry makes it again with -b.
+func TestACheckoutCutOffHalfWayLeavesNoBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	repoMirror(t, RepoMirrorPath(s.Root, "web"), "main")
+	repoMirror(t, RepoMirrorPath(s.Root, "api"), "main")
+	checkouts := []Checkout{{Name: "web", BaseBranch: "main"}, {Name: "api", BaseBranch: "main"}}
+	marker := slowCheckouts(t, RepoMirrorPath(s.Root, "api"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws1", Branch: "b", Checkouts: checkouts}); err == nil {
+		t.Fatal("a Create whose request ended made its checkouts")
+	}
+	for _, c := range checkouts {
+		mirror := RepoMirrorPath(s.Root, c.Name)
+		if !s.branchMissing(context.Background(), mirror, "b") {
+			t.Errorf("%s's mirror kept the session's branch", c.Name)
+		}
+		if out, _ := s.git(context.Background(), mirror, "worktree", "list"); strings.Contains(out, "workspaces") {
+			t.Errorf("%s's mirror still lists the checkout: %s", c.Name, out)
+		}
+	}
+	_ = os.Remove(marker)
+	if _, err := s.Create(context.Background(), CreateInput{WorkspaceID: "ws1", Branch: "b"}); err != nil {
+		t.Fatalf("retry: %v", err)
 	}
 }
 
