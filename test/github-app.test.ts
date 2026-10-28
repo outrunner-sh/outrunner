@@ -225,6 +225,10 @@ test("the App's slug is GitHub's, renamed or not, kept an hour; the configured o
     assert.equal(await appSlug(config, renamed, 1_000), "outrunner-connector");
     assert.equal(await appSlug(config, renamed, 1_000 + 59 * 60_000), "outrunner-connector");
     assert.equal(asked, 1);
+    // Asked together: one read.
+    const together = { ...config, clientId: "Iv23together" };
+    await Promise.all([appSlug(together, renamed, 1_000), appSlug(together, renamed, 1_000), appSlug(together, renamed, 1_000)]);
+    assert.equal(asked, 2);
   } finally {
     console.warn = originalWarn;
   }
@@ -235,6 +239,18 @@ test("the App's slug is GitHub's, renamed or not, kept an hour; the configured o
     const down = (async () => new Response("{}", { status: 503 })) as typeof fetch;
     assert.equal(await appSlug(config, down, 1_000 + 61 * 60_000), "outrunner-connector");
     assert.equal(await appSlug({ ...config, clientId: "Iv23other" }, down, 1_000), "outrunner-sh");
+    // Not asked again for 5 minutes after a failed read.
+    let downAsked = 0;
+    const counted = (async () => {
+      downAsked += 1;
+      return new Response("{}", { status: 503 });
+    }) as typeof fetch;
+    const other = { ...config, clientId: "Iv23down" };
+    await appSlug(other, counted, 1_000);
+    await appSlug(other, counted, 1_000 + 4 * 60_000);
+    assert.equal(downAsked, 1);
+    await appSlug(other, counted, 1_000 + 6 * 60_000);
+    assert.equal(downAsked, 2);
   } finally {
     console.error = originalError;
   }
