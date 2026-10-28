@@ -12,6 +12,7 @@ import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sweepOrphanedBoxes } from "@/lib/runtime/orphan-boxes.deps";
 import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
+import { sweepOpenChecks } from "@/lib/automations/checks.deps";
 import { sweepStalledRuns } from "@/lib/db/automation-runs";
 import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
 
@@ -68,6 +69,11 @@ export async function POST(request: Request) {
       console.error("Sweeping stalled automation runs failed", error);
       return null;
     });
+    // And runs' checks no review closed within the hour.
+    const checksClosed = await sweepOpenChecks().catch((error: unknown) => {
+      console.error("Closing automation runs' open checks failed", error);
+      return null;
+    });
     // And sessions whose setup a restart cut off, failed with why.
     const setupsFailed = await sweepInterruptedSetups().catch((error: unknown) => {
       console.error("Failing interrupted session setups failed", error);
@@ -101,6 +107,7 @@ export async function POST(request: Request) {
       poolsSwept,
       removalsSettled,
       runsSwept,
+      checksClosed,
       setupsFailed,
       orphansDeleted: orphans?.deleted ?? null,
       orphansHeld: orphans?.held ?? null,

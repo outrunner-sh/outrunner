@@ -392,6 +392,42 @@ export async function appSlug(config: GitHubAppConfig, doFetch: Fetch = fetch, n
   })().finally(() => reading.delete(config.clientId));
   reading.set(config.clientId, read);
   return read;
+/** What a check run says: a title, and a summary in Markdown. */
+export type CheckOutput = { title: string; summary: string };
+
+/** Open a check run on a commit, in progress; its id. */
+export async function createCheckRun(
+  token: string,
+  repoFullName: string,
+  check: { name: string; headSha: string; detailsUrl?: string; externalId: string; output: CheckOutput },
+  doFetch: Fetch = fetch,
+): Promise<number> {
+  const created = await call<{ id: number }>(doFetch, `${API}/repos/${repoFullName}/check-runs`, token, {
+    method: "POST",
+    body: {
+      name: check.name,
+      head_sha: check.headSha,
+      status: "in_progress",
+      external_id: check.externalId,
+      ...(check.detailsUrl && { details_url: check.detailsUrl }),
+      output: check.output,
+    },
+  });
+  return created.id;
+}
+
+/** Close a check run with its conclusion. */
+export async function completeCheckRun(
+  token: string,
+  repoFullName: string,
+  checkRunId: number,
+  done: { conclusion: "success" | "neutral"; output: CheckOutput },
+  doFetch: Fetch = fetch,
+): Promise<void> {
+  await call(doFetch, `${API}/repos/${repoFullName}/check-runs/${checkRunId}`, token, {
+    method: "PATCH",
+    body: { status: "completed", conclusion: done.conclusion, completed_at: new Date().toISOString(), output: done.output },
+  });
 }
 
 /** A repository an installation reaches. */

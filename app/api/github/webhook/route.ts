@@ -2,7 +2,15 @@ import { after, NextResponse } from "next/server";
 
 import { closeRuns, planRuns, startRun } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
-import { automationsForPullRequest, pullRequestSessions, recordRuns } from "@/lib/db/automation-runs";
+import { finishCheckFromComment } from "@/lib/automations/checks";
+import { closeRunCheck, closeRunCheckWithout } from "@/lib/automations/checks.deps";
+import {
+  automationsForPullRequest,
+  openCheckOf,
+  openChecksOfPullRequest,
+  pullRequestSessions,
+  recordRuns,
+} from "@/lib/db/automation-runs";
 import { archiveServerSessions } from "@/lib/session/server-session";
 
 import {
@@ -94,7 +102,16 @@ export async function POST(request: Request) {
       const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, await appSlug(config));
       after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
       // A PR closed or merged: archive its automation runs' review sessions.
-      if (payload.action === "closed") after(() => closeRuns(payload, { pullRequestSessions, archiveServerSessions }));
+      if (payload.action === "closed") {
+        after(() =>
+          closeRuns(payload, {
+            pullRequestSessions,
+            archiveServerSessions,
+            openChecksOfPullRequest,
+            closeCheck: closeRunCheckWithout,
+          }),
+        );
+      }
       // A PR from a session working on an item the Slack agent filed: its
       // thread hears of it.
       const pr = payload.pull_request;
@@ -111,6 +128,15 @@ export async function POST(request: Request) {
         );
       }
       return NextResponse.json({ received: true, runs: runs.length });
+    }
+    if (event === "issue_comment") {
+      // The App's own review, posted: its run's check closes with it.
+      after(() =>
+        finishCheckFromComment(payload, config.slug, { openCheckOf, closeCheck: closeRunCheck }).catch((error: unknown) =>
+          console.error("Couldn't close a run's check from its review", error),
+        ),
+      );
+      return new NextResponse(null, { status: 204 });
     }
     if (event === "installation") {
       if (payload.action === "deleted") {

@@ -81,6 +81,10 @@ export type StartDeps = {
   /** The org's connector (lib/automations/connector.ts), made if need be;
    *  null for a personal org, which has none. */
   orgConnector(orgId: string): Promise<string | null>;
+  /** Open the run's check on its pull request (lib/automations/checks.ts),
+   *  and close it without a review, saying why. Neither throws. */
+  openCheck(run: PendingRun): Promise<void>;
+  closeCheck(runId: string, reason: string): Promise<void>;
 };
 
 /** Start a run's session and keep how it went. Never throws: the run's
@@ -92,19 +96,23 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
   // A team org's runs are its connector's: in no member's list, and paid by
   // the deployment on its own allowance. A personal org's, its owner's, who
   // set it up.
+  // Its check is on the pull request from the start: in progress until its
+  // review is posted, or it can't be.
+  await deps.openCheck(run);
+  const refuse = async (reason: string) => {
+    await settle({ status: "refused", reason });
+    await deps.closeCheck(run.runId, reason);
+  };
   let runner: string | null;
   try {
     runner = (await deps.orgConnector(candidate.orgId)) ?? candidate.runsAs;
   } catch (error) {
     console.error(`Run ${run.runId}: couldn't get the org's connector`, error);
-    await settle({ status: "refused", reason: "Outrunner couldn't set up the org's connector to run it. It runs on the next commit." });
+    await refuse("Outrunner couldn't set up the org's connector to run it. It runs on the next commit.");
     return;
   }
   if (!runner) {
-    await settle({
-      status: "refused",
-      reason: "Whoever last changed this automation is no longer in the org. It runs again once an admin saves it.",
-    });
+    await refuse("Whoever last changed this automation is no longer in the org. It runs again once an admin saves it.");
     return;
   }
   const result = await deps.startServerSession({
@@ -112,7 +120,7 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     projectId: candidate.projectId,
     baseBranch: event.headRef,
     title: runTitle(candidate.name, event),
-    prompt: runPrompt(candidate.prompt, event, run.appSlug),
+    prompt: runPrompt(candidate.prompt, event, run.appSlug, run.runId),
     // As the App, reading code and commenting, with tokens its box asks for
     // as it goes (#187's git-credential), so none expires on it mid-review.
     reviewAsApp: true,
@@ -127,6 +135,9 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     workspaceId: result.workspaceId,
     reason: result.status === "ready" ? null : (result.errorMessage ?? null),
   });
+  if (result.status !== "ready") {
+    await deps.closeCheck(run.runId, result.errorMessage ?? "Its session didn't start.");
+  }
   // The newest review takes over: the earlier ones' sessions are archived (a
   // snapshot each, restorable), so the runner's list keeps the latest and
   // their boxes are freed. Only once it's ready: a failed run keeps them.
@@ -154,6 +165,9 @@ export type CloseDeps = {
    *  their owner (pullRequestSessions). */
   pullRequestSessions(installationId: number, repoFullName: string, prNumber: number): Promise<Map<string, string[]>>;
   archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
+  /** The runs on it whose check is still open (openChecksOfPullRequest). */
+  openChecksOfPullRequest(installationId: number, repoFullName: string, prNumber: number): Promise<string[]>;
+  closeCheck(runId: string, reason: string): Promise<void>;
 };
 
 /**
@@ -165,6 +179,13 @@ export type CloseDeps = {
 export async function closeRuns(payload: unknown, deps: CloseDeps): Promise<number> {
   const closed = readClosedPullRequest(payload);
   if (!closed) return 0;
+  try {
+    // A review that never came won't now: its check says so.
+    const open = await deps.openChecksOfPullRequest(closed.installationId, closed.repoFullName, closed.number);
+    await Promise.all(open.map((runId) => deps.closeCheck(runId, "The pull request closed before its review was posted.")));
+  } catch (error) {
+    console.error(`Couldn't close the checks of ${closed.repoFullName}#${closed.number}`, error);
+  }
   try {
     const byOwner = await deps.pullRequestSessions(closed.installationId, closed.repoFullName, closed.number);
     let archived = 0;

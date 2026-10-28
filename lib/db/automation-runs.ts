@@ -434,3 +434,93 @@ export async function connectorRunSession(
   if (session.data.status === "destroyed") return null;
   return { workspaceId: run.workspace_id, connectorId: connector.data.user_id };
 }
+
+/** Keep a run's check: opened on GitHub, through this installation. */
+export async function recordCheck(runId: string, checkRunId: number, installationId: number): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_run_id: checkRunId, check_installation_id: installationId })
+    .eq("id", runId);
+  if (error) throw error;
+}
+
+/** A run's check while it's open: where it is, and the pull request it's on. */
+export type OpenCheck = {
+  checkRunId: number;
+  installationId: number;
+  repoFullName: string;
+  prNumber: number;
+};
+
+/** A run's open check, or null (none opened, or closed already). */
+export async function openCheckOf(runId: string): Promise<OpenCheck | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data: run, error } = await supabase
+    .from("automation_runs")
+    .select("project_id, pr_number, check_run_id, check_installation_id, check_closed_at")
+    .eq("id", runId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!run?.check_run_id || !run.check_installation_id || run.check_closed_at) return null;
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("full_name")
+    .eq("id", run.project_id)
+    .maybeSingle();
+  if (projectError) throw projectError;
+  if (!project?.full_name) return null;
+  return {
+    checkRunId: run.check_run_id,
+    installationId: run.check_installation_id,
+    repoFullName: project.full_name,
+    prNumber: run.pr_number,
+  };
+}
+
+/** Take a run's open check to close: true for the one call that does, so
+ *  the review, a failure, the pull request closing and the sweep never
+ *  close it twice. */
+export async function claimCheck(runId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_closed_at: new Date().toISOString() })
+    .eq("id", runId)
+    .not("check_run_id", "is", null)
+    .is("check_closed_at", null)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** The runs with an open check on a pull request (it closed). */
+export async function openChecksOfPullRequest(
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+): Promise<string[]> {
+  const supabase = createSupabaseAdminClient();
+  const scope = await installationProjects(supabase, installationId, repoFullName);
+  if (!scope) return [];
+  const { data, error } = await supabase
+    .from("automation_runs")
+    .select("id")
+    .in("project_id", scope.projectIds)
+    .eq("pr_number", prNumber)
+    .not("check_run_id", "is", null)
+    .is("check_closed_at", null);
+  if (error) throw error;
+  return (data ?? []).map((r) => r.id);
+}
+
+/** The runs whose check is still open from before `before`: no review came. */
+export async function staleOpenChecks(before: Date): Promise<string[]> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .select("id")
+    .not("check_run_id", "is", null)
+    .is("check_closed_at", null)
+    .lt("created_at", before.toISOString())
+    .limit(100);
+  if (error) throw error;
+  return (data ?? []).map((r) => r.id);
+}
