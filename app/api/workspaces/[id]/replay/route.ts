@@ -7,7 +7,7 @@ import {
   listWorkspaceSnapshots,
 } from "@/lib/db/repositories";
 import { isUuid } from "@/lib/ids";
-import { assembleReplay } from "@/lib/runtime/replay/load";
+import { assembleReplay, fetchSnapshotBytes } from "@/lib/runtime/replay/load";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { WorkspaceSnapshot } from "@/lib/runtime/snapshot/types";
 
@@ -53,7 +53,7 @@ export async function GET(request: Request, context: RouteContext) {
       snapshot,
       ownerId: owner.id,
       storage: supabaseSnapshotStorage(),
-      fetchBytes,
+      fetchBytes: fetchSnapshotBytes,
     });
     return NextResponse.json({ snapshotId: snapshot.id, ...payload });
   } catch (error) {
@@ -63,12 +63,4 @@ export async function GET(request: Request, context: RouteContext) {
       { status: 502 },
     );
   }
-}
-
-async function fetchBytes(url: string): Promise<Uint8Array> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`fetch artifact failed (${response.status})`);
-  }
-  return new Uint8Array(await response.arrayBuffer());
 }

@@ -350,10 +350,15 @@ function RecentRuns({
                     <td className="px-3 py-2.5">
                       <div className={status.tone}>{status.label}</div>
                       {run.reason ? <div className="max-w-xs text-xs text-muted-foreground">{run.reason}</div> : null}
-                      {/* A connector's session is its own, not a member's to open. */}
+                      {/* A connector's session is its own, not a member's to open:
+                          its admins read it, read-only. */}
                       {run.workspaceId && !byConnector ? (
                         <Link href={`/workspaces/${run.workspaceId}`} className="text-xs text-muted-foreground hover:underline">
                           Open session
+                        </Link>
+                      ) : run.workspaceId && admin ? (
+                        <Link href={`/automations/runs/${run.id}`} className="block text-xs text-muted-foreground hover:underline">
+                          View session
                         </Link>
                       ) : null}
                       {admin && (run.status === "failed" || run.status === "refused") ? (
