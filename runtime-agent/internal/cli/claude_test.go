@@ -180,6 +180,34 @@ func TestClaudeCommandSignsInAgainForAnotherAccount(t *testing.T) {
 	if config, _ := LoadConfig(path); config.Token != "or_cli_token" {
 		t.Errorf("kept %q", config.Token)
 	}
+	if app.tokenWorks("or_old_token") {
+		t.Error("the other account's token is still signed in")
+	}
+}
+
+// A browser signed in to yet another account: the fresh sign-in is signed
+// out again, and nothing is saved.
+func TestClaudeCommandKeepsNoSignInForTheWrongAccount(t *testing.T) {
+	app, saved := claudeApp(t)
+	fakeClaude(t, printLink+"\necho "+fakeToken)
+	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	path, _ := ConfigPath()
+	openBrowser = app.approve(t, "")
+	t.Cleanup(func() { openBrowser = OpenBrowser })
+
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "--account", "u-someone-else", "claude"}, nil, &out, &errOut); code != 1 {
+		t.Fatalf("claude: %d %s", code, out.String())
+	}
+	if !strings.Contains(errOut.String(), "this command is for another account") || *saved != "" {
+		t.Errorf("printed %q, saved %q", errOut.String(), *saved)
+	}
+	if app.tokenWorks("or_cli_token") {
+		t.Error("the wrong account's token is still signed in")
+	}
+	if config, _ := LoadConfig(path); config.Token != "" {
+		t.Errorf("saved %q", config.Token)
+	}
 }
 
 func TestOnlyATerminalIsAskedAnything(t *testing.T) {
