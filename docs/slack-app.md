@@ -41,8 +41,9 @@ reconciles billing every 2 minutes also calls `POST /api/integrations/slack/tick
 Digests, nudges and follow-ups go out from there.
 
 The agent thinks with `SLACK_AGENT_MODEL` (default `anthropic/claude-sonnet-5.5`, through OpenRouter) on the
-**org's** own key for Outrunner's models, capped at `SLACK_AGENT_ORG_LIMIT_USD` (default 25). The org pays,
-not whoever is in the thread. Starting a session always needs a click.
+**org's** own key for Outrunner's models: the one its members' cloud sessions use, within the same allowance
+from the org's plan (one budget per org; a personal org's is its owner's). The org pays, not whoever is in the
+thread. Starting a session always needs a click.
 
 Its events come to `POST /api/integrations/slack/events`. The bot token it posts with is kept, encrypted, when
 the app is installed through its install link.

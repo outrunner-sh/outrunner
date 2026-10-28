@@ -225,7 +225,9 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
       return;
     }
     if (error instanceof ModelKeyRefusedError) {
-      await reply("This org's allowance for me is used up. An admin can raise it.");
+      await reply(
+        "This org's allowance on Outrunner's models is used up for now: I share it with its cloud sessions. An admin can move to a bigger plan in Settings → Billing.",
+      );
       return;
     }
     throw error;

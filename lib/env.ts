@@ -79,7 +79,6 @@ type EnvKey =
   // anthropic/claude-sonnet-5.5), and what each org's own key for it may
   // spend in USD before it's refused (default 25).
   | "SLACK_AGENT_MODEL"
-  | "SLACK_AGENT_ORG_LIMIT_USD"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).

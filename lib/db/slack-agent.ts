@@ -6,9 +6,9 @@
  */
 
 import { open, seal } from "@/lib/crypto/secret-box";
-import { createUserKey, disableUserKey, keySource, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
-import { ensureUserKey } from "@/lib/openrouter/user-key";
-import { optionalEnv } from "@/lib/env";
+import { outrunnerModelKey } from "@/lib/db/credentials";
+import { orgOutrunnerModelKey } from "@/lib/db/org-model-allowance";
+import { personalOwners } from "@/lib/db/orgs";
 import type { AgentSpec } from "@/lib/slack/agent";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { Json } from "@/lib/supabase/database.types";
@@ -288,56 +288,15 @@ export async function sessionSummary(
 // The org's model key
 // ---------------------------------------------------------------------------
 
-/** What an org's key may spend, in USD, before OpenRouter refuses it. */
-function orgKeyLimitUsd(): number {
-  const raw = Number(optionalEnv("SLACK_AGENT_ORG_LIMIT_USD"));
-  return Number.isFinite(raw) && raw > 0 ? raw : 25;
-}
-
 /**
  * The OpenRouter key the Slack agent's calls for an org run on, so the org
- * pays for them: the shared API key when the server has only that, otherwise
- * one made for the org the first time (capped at SLACK_AGENT_ORG_LIMIT_USD)
- * and kept, as a user's is.
+ * pays for them: the one its members' cloud sessions run Outrunner's models
+ * on, within the same allowance from its plan (one budget per org). A team
+ * org's own key (lib/db/org-model-allowance.ts); a personal org's, its
+ * owner's. The shared API key where the server has only that. A spent
+ * allowance is refused (ModelKeyRefusedError), as for a session.
  */
 export async function orgModelKey(orgId: string): Promise<string> {
-  const source = keySource();
-  if (source === null) throw new OutrunnerModelsUnavailableError();
-  if (source === "shared") return sharedApiKey() as string;
-
-  const client = db();
-  const { error: rowError } = await client
-    .from("org_model_keys")
-    .upsert({ org_id: orgId }, { onConflict: "org_id", ignoreDuplicates: true });
-  if (rowError) throw rowError;
-  return ensureUserKey(
-    {
-      async read() {
-        const { data, error } = await client
-          .from("org_model_keys")
-          .select("key_ciphertext, key_hash")
-          .eq("org_id", orgId)
-          .single();
-        if (error) throw error;
-        return { ciphertext: data.key_ciphertext, hash: data.key_hash };
-      },
-      async claim(key) {
-        const { data, error } = await client
-          .from("org_model_keys")
-          .update({ key_ciphertext: key.ciphertext, key_hash: key.hash, created_at: key.createdAt })
-          .eq("org_id", orgId)
-          .is("key_ciphertext", null)
-          .select("org_id");
-        if (error) throw error;
-        return data.length > 0;
-      },
-    },
-    {
-      open,
-      seal,
-      create: () => createUserKey(`outrunner-org-${orgId}`, orgKeyLimitUsd()),
-      disable: disableUserKey,
-      log: (message, error) => console.error(message, error),
-    },
-  );
+  const owner = (await personalOwners([orgId])).get(orgId);
+  return owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId);
 }
