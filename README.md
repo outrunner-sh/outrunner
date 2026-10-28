@@ -115,6 +115,19 @@ browser on and email off until you change them.
 ## Docs
 
 - API — [`docs/api.md`](docs/api.md)
+## Missions
+
+A **Mission** is a long-lived session that owns one area of a project and
+delegates instead of coding: each piece of work goes to a **Runner**, a cloud
+session of its own with only the brief the Mission wrote. Runners' turns,
+pull requests (ready, needs attention, merged) and failures come back to the
+Mission exactly once, and it writes to you only when it needs a decision or a
+pull request is ready. Start one with `+` next to **Missions** in the sidebar.
+See [`docs/missions.md`](docs/missions.md).
+
+## Docs
+
+- Missions and Runners — [`docs/missions.md`](docs/missions.md)
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)

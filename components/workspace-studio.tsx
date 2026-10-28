@@ -7,6 +7,8 @@ import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
+import { MissionHeader } from "@/components/missions/mission-header";
+import { RunnersPane } from "@/components/missions/runners-pane";
 import { OpenEditorButton } from "@/components/open-editor-button";
 import { SlackThreadLink } from "@/components/slack-thread-link";
 import { SessionComposer } from "@/components/session-composer";
@@ -72,20 +74,29 @@ export function WorkspaceStudio({
   const archive = isLocal ? null : archiveOffer(workspace);
   const [archiving, setArchiving] = useState(false);
   const router = useRouter();
+  // A Mission's page: its header, and its Runners where a session's
+  // Environment is (components/missions).
+  const isMission = workspace.kind === "mission";
 
   return (
-    <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
+    <div className={cn("studio-shell", !rightOpen && "no-inspector", isMission && "is-mission")}>
       <header className="studio-header">
         <div className="studio-title">
           <CollapsedSidebarButtons className="mr-1 flex shrink-0 items-center gap-0.5" />
-          <span
-            className={cn("studio-status", `is-${workspace.status}`)}
-            title={workspace.status}
-            aria-label={`Session ${workspace.status}`}
-            role="img"
-          />
-          <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
-          {place && <span className="studio-title-place">{place}</span>}
+          {isMission ? (
+            <MissionHeader missionId={workspace.id} fallbackTitle={workspaceLabel(workspace)} />
+          ) : (
+            <>
+              <span
+                className={cn("studio-status", `is-${workspace.status}`)}
+                title={workspace.status}
+                aria-label={`Session ${workspace.status}`}
+                role="img"
+              />
+              <h2>{local ? localSessionLabel(local) : workspaceLabel(workspace)}</h2>
+              {place && <span className="studio-title-place">{place}</span>}
+            </>
+          )}
         </div>
         <div className="studio-header-actions">
           {/* VS Code on the session's own box: cloud sessions only. */}
@@ -110,7 +121,7 @@ export function WorkspaceStudio({
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}
-            title={rightOpen ? "Hide environment" : "Show environment"}
+            title={isMission ? (rightOpen ? "Hide Runners" : "Show Runners") : rightOpen ? "Hide environment" : "Show environment"}
             aria-pressed={rightOpen}
           >
             {rightOpen ? <PanelRightClose /> : <PanelRight />}
@@ -224,8 +235,13 @@ export function WorkspaceStudio({
       </section>
 
       {/* The rows poll for changes, so they mount only while it is open. */}
-      <aside className="studio-inspector studio-env" hidden={!rightOpen} aria-label="Environment">
-        {rightOpen && (
+      <aside
+        className={cn("studio-inspector", isMission ? "studio-runners" : "studio-env")}
+        hidden={!rightOpen}
+        aria-label={isMission ? "Runners" : "Environment"}
+      >
+        {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
+        {rightOpen && !isMission && (
           <WorkspaceEnvironment
             workspace={workspace}
             local={local}

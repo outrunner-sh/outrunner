@@ -209,6 +209,8 @@ type RunnerPullRequestRow = {
   checked_at: string | null;
   created_at: string;
 };
+// supabase/migrations/20261102220000_mission_profiles.sql
+type MissionProfileRow = { mission_id: string; icon: string | null; position: number | null; updated_at: string };
 type MissionDeliveryRow = {
   id: string;
   mission_id: string;
@@ -1451,6 +1453,12 @@ export type Database = {
         Row: RunnerPullRequestRow;
         Insert: Insert<RunnerPullRequestRow, "runner_id" | "repo" | "number" | "url" | "head_ref">;
         Update: Partial<RunnerPullRequestRow>;
+        Relationships: [];
+      };
+      mission_profiles: {
+        Row: MissionProfileRow;
+        Insert: Insert<MissionProfileRow, "mission_id">;
+        Update: Partial<MissionProfileRow>;
         Relationships: [];
       };
       mission_deliveries: {

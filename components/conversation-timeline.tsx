@@ -1,5 +1,7 @@
 "use client";
 
+import { RunnerEventCards } from "@/components/missions/runner-event-cards";
+import { parseRunnerEvents } from "@/lib/missions/events";
 import {
   Bot,
   FilePlus,
@@ -360,8 +362,14 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
           </span>
         </div>
       );
-    case "prompt":
+    case "prompt": {
+      // A Mission's news from its Runners: cards, not markup.
+      if (node.text.includes("<runner_event")) {
+        const { events, rest } = parseRunnerEvents(node.text);
+        if (events.length > 0) return <RunnerEventCards events={events} note={rest || undefined} />;
+      }
       return <Prompt text={node.text} mode={node.mode} />;
+    }
     case "interrupted":
       return <div className="timeline-thought">Interrupted</div>;
     case "prose":

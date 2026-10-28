@@ -220,4 +220,4 @@ feature builds on.
 - Progress + full-loop DoD: [`PROGRESS.md`](./PROGRESS.md)
 - Protocol detail: [`protocol.md`](./protocol.md) · Agent detail: [`runtime-agent.md`](./runtime-agent.md)
 - What M2 proved live: [`spike-m2pt2-report.md`](./spike-m2pt2-report.md), [`spike4-runtime-report.md`](./spike4-runtime-report.md)
-- The product this unblocks: [`mission-engine-v0.md`](./mission-engine-v0.md) (consumes the Workspace Session + Summary; needs M3 + a completion event)
+- The product this unblocks: [`mission-engine-v0.md`](./mission-engine-v0.md) (superseded by [Missions](../missions.md)) (consumes the Workspace Session + Summary; needs M3 + a completion event)

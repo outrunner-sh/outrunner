@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getEnvironment } from "@/lib/db/environments";
+import { defaultEnvironmentId, getEnvironment } from "@/lib/db/environments";
+import { missionsFor } from "@/lib/missions/view.deps";
+import { activeOrgId } from "@/lib/orgs/server";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { createCloudSession, type SessionRequest } from "@/lib/session/create-cloud-session";
 
@@ -20,7 +22,11 @@ export async function POST(request: Request) {
   }
   const owner = await getOwner();
   if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
-  const body = (await request.json().catch(() => null)) as (SessionRequest & { environmentId?: unknown }) | null;
+  const body = (await request.json().catch(() => null)) as (SessionRequest & { environmentId?: unknown; projectId?: unknown }) | null;
+  // A project, or a repository, whose default project it then is.
+  if (body && typeof body.environmentId !== "string" && typeof body.projectId === "string") {
+    body.environmentId = (await defaultEnvironmentId(owner.id, body.projectId)) ?? undefined;
+  }
   if (!body || typeof body.environmentId !== "string") {
     return NextResponse.json({ error: "Choose a project for the Mission." }, { status: 400 });
   }
@@ -32,7 +38,17 @@ export async function POST(request: Request) {
   if (!environment || !projectId) {
     return NextResponse.json({ error: "That project isn't one you can start a Mission in." }, { status: 404 });
   }
-  const { environmentId: _, ...session } = body;
+  const { environmentId: _, projectId: __, ...session } = body;
   void _;
+  void __;
   return createCloudSession(owner, projectId, session, { kind: "mission", environmentId: environment.id });
+}
+
+/** The owner's Missions in the org the sidebar shows, with their Runners
+ *  (lib/missions/view.ts): the sidebar and the Runners pane poll it. */
+export async function GET() {
+  const owner = await getOwner();
+  if (!owner) return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
+  const missions = await missionsFor(owner.id, (await activeOrgId()) ?? null);
+  return NextResponse.json({ missions }, { headers: { "cache-control": "no-store" } });
 }
