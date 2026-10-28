@@ -347,6 +347,35 @@ export async function installationPullRequest(
   }
 }
 
+/** The App's slug as GitHub has it, kept an hour: by its Client ID. */
+const slugs = new Map<string, { slug: string; at: number }>();
+const SLUG_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * The App's slug as GitHub has it now, which its bot's login is (`<slug>[bot]`):
+ * an App can be renamed on GitHub, and its slug and login with it, while the
+ * deployment's GITHUB_APP_SLUG stays as it was set. Asked of GitHub with the
+ * App's own JWT and kept an hour; the configured one when GitHub can't be
+ * asked.
+ */
+export async function appSlug(config: GitHubAppConfig, doFetch: Fetch = fetch, now = Date.now()): Promise<string> {
+  const kept = slugs.get(config.clientId);
+  if (kept && now - kept.at < SLUG_TTL_MS) return kept.slug;
+  try {
+    const app = await call<{ slug?: unknown }>(doFetch, `${API}/app`, appJwt(config.clientId, config.privateKey));
+    if (typeof app.slug === "string" && app.slug) {
+      if (app.slug !== config.slug && kept?.slug !== app.slug) {
+        console.warn(`The GitHub App is ${app.slug} on GitHub; GITHUB_APP_SLUG says ${config.slug}`);
+      }
+      slugs.set(config.clientId, { slug: app.slug, at: now });
+      return app.slug;
+    }
+  } catch (error) {
+    console.error("Couldn't read the GitHub App's slug", error);
+  }
+  return kept?.slug ?? config.slug;
+}
+
 /** A repository an installation reaches. */
 export type InstallationRepository = {
   githubRepoId: number;

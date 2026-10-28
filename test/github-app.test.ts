@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import {
   appJwt,
+  appSlug,
   GitHubAppError,
   dropInstallationToken,
   InstallationGoneError,
@@ -208,4 +209,33 @@ test("a pull request is read with a kept token; one GitHub refuses is minted aga
     installationPullRequest(config, 106, "o/r", 7, refusedAs(null)),
     (error: unknown) => error instanceof GitHubAppError && error.status === 403,
   );
+});
+
+test("the App's slug is GitHub's, renamed or not, kept an hour; the configured one when GitHub can't say", async () => {
+  const config = { clientId: "Iv23slug", slug: "outrunner-sh", privateKey: pem, webhookSecret: "w" };
+  let asked = 0;
+  const renamed = (async (url: string | URL) => {
+    asked += 1;
+    assert.equal(new URL(String(url)).pathname, "/app");
+    return new Response(JSON.stringify({ slug: "outrunner-connector" }), { status: 200 });
+  }) as typeof fetch;
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.equal(await appSlug(config, renamed, 1_000), "outrunner-connector");
+    assert.equal(await appSlug(config, renamed, 1_000 + 59 * 60_000), "outrunner-connector");
+    assert.equal(asked, 1);
+  } finally {
+    console.warn = originalWarn;
+  }
+  // GitHub down: what was last read, else what's configured.
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const down = (async () => new Response("{}", { status: 503 })) as typeof fetch;
+    assert.equal(await appSlug(config, down, 1_000 + 61 * 60_000), "outrunner-connector");
+    assert.equal(await appSlug({ ...config, clientId: "Iv23other" }, down, 1_000), "outrunner-sh");
+  } finally {
+    console.error = originalError;
+  }
 });

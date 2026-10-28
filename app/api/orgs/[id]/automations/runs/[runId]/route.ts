@@ -5,6 +5,7 @@ import { startDeps } from "@/lib/automations/start-deps";
 import { recordRuns, reopenRun, rerunTarget, sessionOwner } from "@/lib/db/automation-runs";
 import { setInstallationSuspended } from "@/lib/db/github-installations";
 import {
+  appSlug,
   dropInstallationToken,
   GitHubAppError,
   githubAppConfig,
@@ -40,7 +41,7 @@ export async function POST(request: Request, { params }: Params) {
         reopenRun,
         recordRuns,
       },
-      config.slug,
+      await appSlug(config),
     );
     if (!rerun.ok) return NextResponse.json({ error: rerun.error }, { status: rerun.status });
     const { run, staleSession } = rerun;
