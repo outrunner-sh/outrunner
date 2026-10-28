@@ -17,7 +17,16 @@ const LIMITS = [null, 90, 80, 50, 25] as const;
  * plan's, and its admins' controls: a limit at a share of them (no box
  * starts past it, and running ones pause), and email alerts as they're used.
  */
-export function OrgUsageSettings({ org, initial }: { org: Org; initial: Usage }) {
+export function OrgUsageSettings({
+  org,
+  initial,
+  pausesBoxes,
+}: {
+  org: Org;
+  initial: Usage;
+  /** Whether running boxes pause at the limit here (lib/billing/usage-sweep.ts). */
+  pausesBoxes: boolean;
+}) {
   const [usage, setUsage] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +118,9 @@ export function OrgUsageSettings({ org, initial }: { org: Org; initial: Usage })
           </p>
         )}
         <p className="text-xs text-muted-foreground">
-          At the limit, no new cloud session starts, and running ones pause within a couple of minutes.
+          {pausesBoxes
+            ? "At the limit, no new cloud session starts, and running ones pause within a couple of minutes."
+            : "At the limit, no new cloud session starts; running ones carry on."}
         </p>
       </div>
 

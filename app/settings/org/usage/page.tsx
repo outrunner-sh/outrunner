@@ -7,6 +7,8 @@ import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgHours } from "@/lib/billing/org-hours";
 import { getUsageControls } from "@/lib/db/org-usage";
 import { getOrgContext } from "@/lib/orgs/server";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { getRuntimeProvider } from "@/lib/runtime/provider";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
 export const unstable_instant = { prefetch: "static" };
@@ -38,5 +40,12 @@ async function UsageSection() {
     );
   }
   const controls = await getUsageControls(org.id);
-  return <OrgUsageSettings org={org} initial={{ controls, hours: await orgHours(org.id, controls) }} />;
+  const provider = getRuntimeProvider();
+  return (
+    <OrgUsageSettings
+      org={org}
+      initial={{ controls, hours: await orgHours(org.id, controls) }}
+      pausesBoxes={isComputerProvider(provider) && provider.pausesBoxes}
+    />
+  );
 }

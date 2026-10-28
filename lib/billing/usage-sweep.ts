@@ -60,7 +60,12 @@ export async function sweepOrgUsage(deps: UsageSweepDeps): Promise<UsageSweepRep
       for (const threshold of due) {
         // Claimed first: of two runs at once, one emails.
         if (!(await deps.claimAlert(orgId, period, threshold))) continue;
-        const outcome = await deps.emailAdmins(orgId, threshold, used, plan, controls);
+        // A throw is a failure too: the claim goes back, and the org's limit
+        // is still looked at below.
+        const outcome = await deps.emailAdmins(orgId, threshold, used, plan, controls).catch((error: unknown) => {
+          deps.log(`Usage alert: couldn't email org ${orgId}'s admins`, error);
+          return "failed" as const;
+        });
         if (outcome === "sent") report.alerts += 1;
         if (outcome === "failed") await deps.releaseAlert(orgId, period, threshold);
       }

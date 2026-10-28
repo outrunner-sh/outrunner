@@ -107,3 +107,15 @@ test("where boxes can't be paused, running ones run on at the limit", async () =
   await sweepOrgUsage(w.deps);
   assert.deepEqual(w.paused, []);
 });
+
+test("an email that throws gives its alert back, and the limit is still looked at", async () => {
+  const w = world(90, { limitPercent: 50, alertThresholds: [80] });
+  w.deps.emailAdmins = async () => {
+    throw new Error("database blip");
+  };
+  let released = 0;
+  w.deps.releaseAlert = async () => void (released += 1);
+  await sweepOrgUsage(w.deps);
+  assert.equal(released, 1);
+  assert.deepEqual(w.paused, ["sb-1", "sb-2"]);
+});

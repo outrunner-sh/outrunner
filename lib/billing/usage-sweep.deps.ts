@@ -78,7 +78,9 @@ export function runUsageSweep(provider: ComputerRuntimeProvider): Promise<UsageS
       const limit =
         controls.limitPercent === null
           ? ""
-          : `\nIts usage limit is ${controls.limitPercent}% (${hoursCap(plan, controls)} hours): at it, no new cloud session starts and running ones pause.`;
+          : `\nIts usage limit is ${controls.limitPercent}% (${hoursCap(plan, controls)} hours): at it, no new cloud session starts${
+              provider.pausesBoxes ? ", and running ones pause" : ""
+            }.`;
       const sent = await sendEmail({
         to,
         subject: `${org?.name ?? "Your org"} has used ${threshold}% of its cloud hours`,
