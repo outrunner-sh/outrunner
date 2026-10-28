@@ -181,10 +181,11 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 fails or stops, or `timeout` seconds (600 at most) pass, and answers with the
 session and its turn either way: `"timed_out": true` says it gave up. Call it
 again to keep waiting. A turn counts as over, or as needing input, only once
-its prompt is in the conversation: one after `after_event` when it's given, and for a session the
-API started, its first prompt (sent just after it's ready). So `POST
-/workspaces` then `wait`, or a send then `wait?after_event=`, never reads the
-quiet before the turn began as its end.
+its prompt is in the conversation: one after `after_event` when it's given,
+and for a session the API started, its first prompt (sent just after it's
+ready). So `POST /workspaces` then `wait`, or a send then
+`wait?after_event=`, never reads the quiet before the turn began (or a
+question the message answers) as its end.
 
 `after_event` is `null` when the session's box hadn't logged the message yet
 when the send answered (rare: a box just woken that's slow to serve its
