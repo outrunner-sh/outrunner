@@ -143,6 +143,14 @@ export async function refillProjectPool(input: {
   }
 }
 
+/** Why a health check failed, for the settings page's log: the error's own
+ *  words (an agent's refusal, a network failure and its cause), short. */
+function whyNot(error: unknown): string {
+  if (!(error instanceof Error)) return String(error).slice(0, 200);
+  const cause = error.cause instanceof Error ? `: ${error.cause.message}` : "";
+  return `${error.message}${cause}`.slice(0, 300);
+}
+
 /** Whether a failed health check is one a box still booting gives. */
 function stillBooting(error: unknown): boolean {
   return !(error instanceof AgentRequestError) || error.status >= 500 || error.status === 429;
@@ -184,7 +192,7 @@ async function warmBox(
     await recordWarmRun(environmentId, box.userId, {
       status: "failed",
       log: healthError
-        ? "The ready box didn't answer before its warm hook could start. Sessions run the warm hook themselves as they start."
+        ? `The ready box didn't answer before its warm hook could start (${whyNot(healthError)}). Sessions run the warm hook themselves as they start.`
         : "This box's agent can't run warm hooks yet. Sessions run the warm hook themselves as they start.",
       startedAt: at,
       finishedAt: at,
