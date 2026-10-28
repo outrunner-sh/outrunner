@@ -7,6 +7,7 @@
  * through the Supabase server client.
  */
 
+import { isReviewSession } from "@/lib/github/identity.deps";
 import { getClaudeCredential, getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
 import { anthropicEnvVar, hasClaudeCredential } from "@/lib/runtime/anthropic-env";
 
@@ -34,7 +35,18 @@ import { anthropicEnvVar, hasClaudeCredential } from "@/lib/runtime/anthropic-en
  */
 export async function runtimeSessionEnvironment(
   userId: string,
+  /** The session the box is for (null: none yet, a pooled box). An
+   *  automation's review session's (review_sessions) never gets its user's
+   *  GitHub token, on any boot of its box: it asks for the App's. */
+  workspaceId: string | null,
 ): Promise<Record<string, string>> {
+  if (workspaceId && (await isReviewSession(workspaceId))) {
+    return withoutGitHubToken(await userEnvironment(userId));
+  }
+  return userEnvironment(userId);
+}
+
+async function userEnvironment(userId: string): Promise<Record<string, string>> {
   const [credential, githubToken] = await Promise.all([
     getClaudeCredential(userId),
     getGithubIdentity(userId).then((identity) => (identity === "personal" ? getGithubToken(userId) : null)),
@@ -60,15 +72,12 @@ export function boxUpgrade(
   sandboxId: string,
   secret: string,
   userId: string,
-  /** Booted without the user's GitHub token: an automation's review box,
-   *  which asks for the App's. */
-  withoutGitHub = false,
+  /** The session the box is for: a review session's is booted without its
+   *  user's GitHub token (runtimeSessionEnvironment). */
+  workspaceId: string | null,
 ): (() => Promise<void>) | undefined {
   if (!provider.upgradesAgents) return undefined;
-  return async () => {
-    const env = await runtimeSessionEnvironment(userId);
-    await provider.upgradeAgent(sandboxId, secret, withoutGitHub ? withoutGitHubToken(env) : env);
-  };
+  return async () => provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId, workspaceId));
 }
 
 /** A box's environment without its user's GitHub token: an automation's

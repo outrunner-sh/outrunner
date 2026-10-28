@@ -167,7 +167,7 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       // Signed in as the user picks now, and on its model's key as it is
       // now, before it launches.
-      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id);
       await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
       await agent.startWorkspace(identity);
     } catch (error) {
@@ -239,7 +239,7 @@ async function bringBack(
     scope,
     repoFullName: project.fullName,
     githubToken: await optionalGitToken(owner.id, project),
-    sessionEnv: await runtimeSessionEnvironment(owner.id),
+    sessionEnv: await runtimeSessionEnvironment(owner.id, workspace.id),
     // The owner's size now, as a new box on this provider would get, within
     // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
     size: boxSizeOn(sandboxOf(provider.name), (await getSandboxSettings(owner.id)).boxSize, await planFor(owner.id)),

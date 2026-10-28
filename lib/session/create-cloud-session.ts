@@ -220,8 +220,9 @@ export async function createCloudSession(
   const tokenFor = gitTokenFor(owner.id, project.orgId, as);
   const githubToken = await tokenFor(project.fullName);
   if ("refusal" in githubToken) return githubToken.refusal;
-  const userEnv = await runtimeSessionEnvironment(owner.id);
-  // A review's box asks for the App's tokens; the user's own isn't on it.
+  // Before the session exists (its pooled box was booted for none): a
+  // review's box asks for the App's tokens, and the user's own isn't on it.
+  const userEnv = await runtimeSessionEnvironment(owner.id, null);
   const sessionEnv = options.reviewAsApp ? withoutGitHubToken(userEnv) : userEnv;
   // Whether it can run on the user's Claude: only as they picked it (or, with
   // no pick, on what they saved), which `auth` holds. Never on the box's own
@@ -599,7 +600,7 @@ async function provisionWorkspace({
         userId: owner.id,
       };
       const agent = new AgentClient(target);
-      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id, as !== undefined);
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id, workspace.id);
       const signIn = sessionAuthClient(agent, identity, upgrade);
       // Before the session is made: an agent too old for Codex would make a
       // Claude Code session of it. One that is, is upgraded in place.

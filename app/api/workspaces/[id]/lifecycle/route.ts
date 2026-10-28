@@ -359,7 +359,7 @@ async function restoreDaytonaWorkspace(
 
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
-    const sessionEnv = await runtimeSessionEnvironment(owner.id);
+    const sessionEnv = await runtimeSessionEnvironment(owner.id, workspace.id);
     const ensured = await ensureComputer(provider, {
       scope,
       repoFullName: project.fullName,
@@ -391,7 +391,7 @@ async function restoreDaytonaWorkspace(
     // The restore relaunches the session at once, so its credential rides
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
-    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id);
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id, workspace.id);
     const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
     if (manifest.origin) {
       await requireFeature(features, AGENT_FEATURE_IMPORTS, "restore a session imported from a Mac");
@@ -510,7 +510,7 @@ async function daytonaAgent(
   if (!secret) throw new Error("Runtime Computer secret is missing.");
   const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
   return {
-    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id),
+    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id),
     agent: new AgentClient(target),
     identity: {
       workspaceId: workspace.id,
