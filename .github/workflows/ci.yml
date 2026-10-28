@@ -14,6 +14,18 @@ jobs:
   app:
     name: App (typecheck, lint, tests)
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    # A Postgres for the tests that run migrations' SQL for real
+    # (test/missions-sql.test.ts); they're skipped without MISSIONS_PG.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MISSIONS_PG: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       # No version pin: pnpm/action-setup reads the pnpm version from the
