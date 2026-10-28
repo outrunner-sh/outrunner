@@ -262,7 +262,11 @@ export async function claimVerdict(id: string, commentId: number): Promise<boole
  *  one of the same repository: true when this call made it so. Conditional,
  *  so an event delivered twice, or twice at once, claims it once; and one for
  *  an older PR delivered late (#11's, once #12 replaced it) doesn't take the
- *  thread back: a repository numbers its PRs upward. */
+ *  thread back: a repository numbers its PRs upward. Across repositories
+ *  (a session of several) numbers don't compare, so another repository's PR
+ *  always takes over: one delivered late can still take the thread back. Rare
+ *  (a PR in a second repository, then a late redelivery of the first), and
+ *  closing it would take the PR's creation time kept on the thread. */
 export async function claimPullRequest(id: string, pr: { repo: string; number: number; url: string }): Promise<boolean> {
   // A repository's full name has no quotes; quoted for its "." and "/".
   const repo = `"${pr.repo.replace(/"/g, "")}"`;
