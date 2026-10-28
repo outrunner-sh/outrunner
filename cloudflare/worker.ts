@@ -14,6 +14,9 @@ import { Container, getContainer } from "@cloudflare/containers";
 
 interface Env {
   CONTROL_PLANE: DurableObjectNamespace<OutrunnerControlPlane>;
+  /** Which deploy of the Worker this is (wrangler.jsonc version_metadata):
+   *  each `wrangler deploy` makes a new one. */
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
 
   // Secrets forwarded into the container process. Set each with
   // `wrangler secret put <NAME>` (see docs/deploy-cloudflare.md) — never commit
@@ -76,6 +79,9 @@ interface Env {
   NEEV_SANDBOX_TEMPLATE?: string;
 }
 
+/** Where the Durable Object keeps the deploy its container was started under. */
+const IMAGE_VERSION_KEY = "image-version";
+
 export class OutrunnerControlPlane extends Container<Env> {
   // Next.js listens on $PORT (8080) inside the container — keep in sync with
   // the Dockerfile's `ENV PORT`.
@@ -84,6 +90,46 @@ export class OutrunnerControlPlane extends Container<Env> {
   // Keep the instance warm after the last request so the control plane isn't
   // cold on every hit after idle. Trade cost vs first-hit latency here.
   sleepAfter = "20m";
+
+  /** The deploy whose image this instance's container runs (runCurrentImage). */
+  private current: Promise<void> | null = null;
+
+  /**
+   * Every request goes to a container started from the latest deploy's image.
+   *
+   * Cloudflare's rolling update doesn't replace a container a Durable Object
+   * runs: that one stops only after `sleepAfter` idle, and the reconcile cron
+   * wakes it every 2 minutes, so it never does, and a deploy that left this
+   * file alone never reached users. A deploy restarts the Durable Object,
+   * though, and the deploy's version is stored with the container it starts:
+   * the first request under a new one replaces a container started under an
+   * older one. Destroyed, not asked to stop: `pnpm start` runs as PID 1 and
+   * doesn't answer SIGTERM.
+   */
+  override async fetch(request: Request): Promise<Response> {
+    await this.runCurrentImage();
+    return super.fetch(request);
+  }
+
+  private runCurrentImage(): Promise<void> {
+    // Once per Durable Object, which a deploy restarts: once per deploy.
+    this.current ??= (async () => {
+      const version = this.env.CF_VERSION_METADATA?.id;
+      if (!version) return;
+      const startedUnder = await this.ctx.storage.get<string>(IMAGE_VERSION_KEY);
+      if (startedUnder === version) return;
+      if (this.ctx.container?.running) {
+        console.log(`Replacing a container from deploy ${startedUnder ?? "(unrecorded)"} with deploy ${version}'s`);
+        await this.destroy();
+      }
+      await this.ctx.storage.put(IMAGE_VERSION_KEY, version);
+    })().catch((error: unknown) => {
+      // Tried again on the next request; this one goes to what's running.
+      this.current = null;
+      console.error("Couldn't check the container is the latest deploy's", error);
+    });
+    return this.current;
+  }
 
   // Mirror the base class's own ctx type rather than naming DurableObjectState
   // directly: the bare global resolves to DurableObjectState<unknown>, which is
