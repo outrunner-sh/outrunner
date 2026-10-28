@@ -1,5 +1,5 @@
 /**
- * An org's automations (supabase/migrations/20261029120000_automations.sql).
+ * An org's automations (supabase/migrations/20261030110000_automations.sql).
  * The tables are the server's alone, so this reaches them with the service
  * role; the routes calling it check who may (the org's admins change them,
  * every member reads them). Making and changing one each go through a
