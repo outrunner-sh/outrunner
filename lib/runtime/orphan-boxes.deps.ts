@@ -22,6 +22,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
  *  paused boxes rows still name. */
 const LIST_MAX = 5_000;
 
+/** The held boxes last logged, so an unchanged list isn't logged again. */
+let lastHeld = "";
+
 /** Ids asked about per query: a long `in` list makes a long URL. */
 const LOOKUP_CHUNK = 100;
 
@@ -31,12 +34,12 @@ const LOOKUP_CHUNK = 100;
  * without deleting otherwise runs, and costs, for good. Only ever the
  * deployment's own account (DAYTONA_API_KEY): a user's own Daytona (Settings
  * → Sandbox) is theirs, and never listed. For the reconciler's cron. How
- * many went; each one's id is logged.
+ * many went, each one's id logged, and how many were held (orphanedBoxes).
  */
-export async function sweepOrphanedBoxes(now = Date.now()): Promise<number> {
+export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: number; held: number }> {
   // Without a name, this deployment's boxes can't be told from another's.
   const deployment = deploymentName(optionalEnv("RUNTIME_BASE_URL"));
-  if (!optionalEnv("DAYTONA_API_KEY") || !deployment) return 0;
+  if (!optionalEnv("DAYTONA_API_KEY") || !deployment) return { deleted: 0, held: 0 };
   const backend = new DaytonaBackend();
 
   // Daytona lists only the quiet ones; each is checked again here, and only
@@ -48,16 +51,19 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<number> {
     if (sweepable(box, now, deployment)) candidates.push(box);
     if (++listed >= LIST_MAX) break;
   }
-  if (candidates.length === 0) return 0;
+  if (candidates.length === 0) return { deleted: 0, held: 0 };
 
   const named = await namedBoxes(candidates.map((box) => box.id));
   const unlabelled = optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
   const { remove, held } = orphanedBoxes(candidates, named, { now, deployment, unlabelled });
-  if (held.length > 0) {
+  // Every one, but only when they change: the cron runs every 2 minutes.
+  const heldNow = held.join(", ");
+  if (held.length > 0 && heldNow !== lastHeld) {
     console.warn(
-      `Orphaned Daytona boxes from before deployment labels, kept (set ORPHAN_SWEEP_UNLABELLED=1 to delete them): ${held.join(", ")}`,
+      `${held.length} orphaned Daytona box(es) from before deployment labels, kept (set ORPHAN_SWEEP_UNLABELLED=1 to delete them): ${heldNow}`,
     );
   }
+  lastHeld = heldNow;
   let swept = 0;
   for (const id of remove) {
     try {
@@ -69,7 +75,7 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<number> {
       console.error(`Could not delete orphaned Daytona box ${id}`, error);
     }
   }
-  return swept;
+  return { deleted: swept, held: held.length };
 }
 
 /** Which of `ids` a runtime_computers row names, in any state, pooled or

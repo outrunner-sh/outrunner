@@ -45,6 +45,12 @@ const BUSY_STATES = new Set([
   "pulling_snapshot",
   "destroying",
   "destroyed",
+  "snapshotting",
+  "forking",
+  "pausing",
+  "resuming",
+  // Not known for sure, so not swept.
+  "unknown",
 ]);
 
 /** A box as the provider lists it. */
@@ -98,8 +104,8 @@ export function sweepable(box: ListedBox, now: number, deployment: string | null
 /**
  * This run's orphans: sweepable boxes (above) that no runtime_computers row
  * names (`named`, every row's daytona_sandbox_id, in any state), longest
- * quiet first, at most `max`. Those labelled as this deployment's are to
- * delete. Unlabelled ones may be another deployment's on the same account,
+ * quiet first. Those labelled as this deployment's are to delete, at most
+ * `max`. Unlabelled ones may be another deployment's on the same account,
  * whose rows these aren't: deleted only where the deployment says the
  * account is its alone (`unlabelled`), else only held, for the log to name.
  */
@@ -113,9 +119,10 @@ export function orphanedBoxes(
     .filter((box) => !named.has(box.id) && sweepable(box, options.now, options.deployment, options.graceMs))
     .sort((a, b) => Date.parse(a.lastActivityAt!) - Date.parse(b.lastActivityAt!));
   const ours = (box: ListedBox) => box.labels[DEPLOYMENT_LABEL] !== undefined || options.unlabelled;
-  // Each capped on its own, so held boxes never crowd out ones to delete.
+  // Held boxes are only named, so all of them, for the log to list in full;
+  // nor do they take the place of ones to delete.
   return {
     remove: orphans.filter(ours).slice(0, max).map((box) => box.id),
-    held: orphans.filter((box) => !ours(box)).slice(0, max).map((box) => box.id),
+    held: orphans.filter((box) => !ours(box)).map((box) => box.id),
   };
 }

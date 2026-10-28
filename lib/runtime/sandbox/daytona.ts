@@ -111,9 +111,9 @@ export class DaytonaBackend implements SandboxBackend {
     await (await (await this.daytona()).get(id)).stop();
   }
 
-  /** The stopped box `id`, started again on the disk it kept. Null when it's
-   *  gone or broken, so a new box is the only way on. */
-  async restore(id: string): Promise<SandboxBox | null> {
+  /** The stopped box `id`, started again on the disk it kept, with `labels`
+   *  on it. Null when it's gone or broken, so a new box is the only way on. */
+  async restore(id: string, labels: Record<string, string> = {}): Promise<SandboxBox | null> {
     let sandbox: Sandbox;
     try {
       sandbox = await (await this.daytona()).get(id);
@@ -138,8 +138,20 @@ export class DaytonaBackend implements SandboxBackend {
       console.error(`Daytona box ${id} is ${state}, not stopped; starting a new one`);
       return null;
     }
+    await relabel(sandbox, labels);
     return box(sandbox);
   }
+}
+
+/** Put `labels` on a box made before them (the deployment's, which the
+ *  orphaned-box sweep goes by), keeping its others. Best effort: the box is
+ *  up either way. Exported for tests. */
+export async function relabel(sandbox: Sandbox, labels: Record<string, string>): Promise<void> {
+  const current = sandbox.labels ?? {};
+  if (Object.entries(labels).every(([key, value]) => current[key] === value)) return;
+  await sandbox
+    .setLabels({ ...current, ...labels })
+    .catch((error: unknown) => console.warn(`Could not label Daytona box ${sandbox.id}`, error));
 }
 
 /** States a box is started again from, and ones it's on its way up in. */

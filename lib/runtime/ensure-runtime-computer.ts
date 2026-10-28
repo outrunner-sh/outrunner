@@ -114,7 +114,7 @@ export async function ensureRuntimeComputer(
   // server stops before the provision is done.
   let provisioned: ProvisionedComputer | null = null;
   // Whether the row names the box as ready: past that, a failure leaves the
-  // box to the row, never deletes it.
+  // box and the row as they are.
   let recorded = false;
   try {
     if (input.previousSandboxId) {
@@ -148,10 +148,13 @@ export async function ensureRuntimeComputer(
     );
     return { computer, provisioned: true, agentSecret };
   } catch (error) {
+    // Recorded, the row has the box, running and ready: written over now, it
+    // would name the ended box, or none, while this one ran on.
+    if (recorded) throw error;
     // A box made but never recorded as ready (the write failed) was otherwise
     // left running with no row naming it. One brought back in place is
     // stopped again, as the row says below.
-    if (provisioned && !recorded) await letGo(provider, provisioned.sandboxId, input.previousSandboxId);
+    if (provisioned) await letGo(provider, provisioned.sandboxId, input.previousSandboxId);
     const errorMessage = "Runtime Computer provisioning failed. Check Runtime setup and try again.";
     await deps.update(
       claim.computer.id,

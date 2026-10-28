@@ -407,4 +407,7 @@ test("a box recorded as ready is never let go of, whatever fails after", async (
 
   await assert.rejects(() => ensureRuntimeComputer(provider, input, deps), /network blip/);
   assert.deepEqual(destroyed, []);
+  // And the row still names it, ready, for the reconciler to meter and stop.
+  assert.equal(harness.row()?.status, "ready");
+  assert.equal(harness.row()?.daytonaSandboxId, "sb-new");
 });

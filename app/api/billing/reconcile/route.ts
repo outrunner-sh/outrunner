@@ -19,8 +19,9 @@ import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
  * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
  * restart cut off (lib/session/provisioning.deps.ts), and the deployment's
  * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), for
- * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's route: it takes only
- * BILLING_CRON_SECRET, as a bearer token. Answers what the run did.
+ * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's
+ * route: it takes only BILLING_CRON_SECRET, as a bearer token. Answers what
+ * the run did.
  */
 export async function POST(request: Request) {
   const secret = optionalEnv("BILLING_CRON_SECRET");
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
     });
     // And the deployment's boxes something dropped without deleting: no row
     // names them, so nothing above would ever stop them.
-    const orphansDeleted = await sweepOrphanedBoxes().catch((error: unknown) => {
+    const orphans = await sweepOrphanedBoxes().catch((error: unknown) => {
       console.error("Deleting orphaned Daytona boxes failed", error);
       return null;
     });
@@ -80,7 +81,8 @@ export async function POST(request: Request) {
       removalsSettled,
       runsSwept,
       setupsFailed,
-      orphansDeleted,
+      orphansDeleted: orphans?.deleted ?? null,
+      orphansHeld: orphans?.held ?? null,
     });
   } catch (error) {
     console.error("Reconcile failed", error);

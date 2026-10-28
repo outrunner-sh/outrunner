@@ -78,7 +78,7 @@ test("a date that can't be read, or a box on its way into or out of a state, say
   assert.equal(sweepable(ours({ createdAt: undefined }), NOW, DEPLOYMENT), false);
   assert.equal(sweepable(ours({ lastActivityAt: undefined }), NOW, DEPLOYMENT), false);
   assert.equal(sweepable(ours({ lastActivityAt: "yesterday" }), NOW, DEPLOYMENT), false);
-  for (const state of ["creating", "starting", "restoring", "stopping", "archiving", "destroying", "destroyed"]) {
+  for (const state of ["creating", "starting", "restoring", "stopping", "archiving", "destroying", "destroyed", "pausing", "unknown"]) {
     assert.equal(sweepable(ours({ state }), NOW, DEPLOYMENT), false, state);
   }
 });
@@ -95,6 +95,9 @@ test("at most a run's worth, the longest quiet first, and held boxes don't crowd
   const older = Array.from({ length: ORPHAN_SWEEP_MAX }, (_, i) => box({ id: `old-${i}`, lastActivityAt: ago(100 * HOUR) }));
   const swept = orphanedBoxes([...older, ours()], new Set(), { ...options, unlabelled: false });
   assert.deepEqual(swept.remove, ["sb-1"]);
+  // Held boxes are listed in full, beyond a run's worth.
+  const more = [...older, box({ id: "old-extra", lastActivityAt: ago(100 * HOUR) })];
+  assert.equal(orphanedBoxes(more, new Set(), { ...options, unlabelled: false }).held.length, ORPHAN_SWEEP_MAX + 1);
   assert.equal(swept.held.length, ORPHAN_SWEEP_MAX);
 });
 
