@@ -23,7 +23,7 @@ import {
 } from "@/lib/db/slack-agent";
 import { type ChannelSettings, claimDigest, digestChannels, releaseDigest } from "@/lib/db/slack-channels";
 import { listWorkItems, triageActor } from "@/lib/db/work-items";
-import { githubAppConfig } from "@/lib/github/app";
+import { appSlug, githubAppConfig } from "@/lib/github/app";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { mergedPulls } from "@/lib/slack/lookups";
 import {
@@ -215,7 +215,8 @@ export async function newVerdict(
     `/repos/${pr.repo}/issues/${pr.number}/comments?sort=created&direction=desc&per_page=50`,
   );
   // The Outrunner App's own comments, where its name is known; else any bot's.
-  const slug = githubAppConfig()?.slug;
+  const config = githubAppConfig();
+  const slug = config ? await appSlug(config) : null;
   const fromValidator = (c: Comment) => (slug ? c.user?.login === `${slug}[bot]` : c.user?.type === "Bot");
   for (const c of comments ?? []) {
     if (afterId !== null && c.id <= afterId) break;
