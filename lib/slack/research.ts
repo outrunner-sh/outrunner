@@ -77,6 +77,19 @@ export async function wakeSession(userId: string, workspaceId: string): Promise<
   return actAsUser(userId, () => wakeAsOwner(userId, workspaceId));
 }
 
+/** Put one of `userId`'s running sessions to sleep, as pausing it in the
+ *  app does: whether it went. */
+export async function suspendSession(userId: string, workspaceId: string): Promise<boolean> {
+  return actAsUser(userId, async () => {
+    const workspace = await getWorkspace(workspaceId);
+    if (!workspace || workspace.ownerId !== userId) return false;
+    const response = await lifecyclePOST(asBrowser(`/api/workspaces/${workspaceId}/lifecycle`, { action: "suspend" }), {
+      params: Promise.resolve({ id: workspaceId }),
+    });
+    return response.ok;
+  });
+}
+
 /** Inside actAsUser: paused, resumed; archived, restored, as opening it in
  *  the app does. */
 async function wakeAsOwner(userId: string, workspaceId: string): Promise<boolean> {

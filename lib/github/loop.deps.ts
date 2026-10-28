@@ -18,7 +18,7 @@ import { reactToComment, readPull, replyToComment } from "@/lib/github/conversat
 import { archiveClosed, handleMention, type LoopDeps } from "@/lib/github/loop";
 import { readPullBranches } from "@/lib/github/mentions";
 import { archiveServerSessions, startServerSession } from "@/lib/session/server-session";
-import { wakeAndSend, wakeSession } from "@/lib/slack/research";
+import { suspendSession, wakeAndSend, wakeSession } from "@/lib/slack/research";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 async function token(installationId: number): Promise<string> {
@@ -65,6 +65,7 @@ export function loopDeps(): LoopDeps {
     },
     archiveOnClose,
     wake: wakeSession,
+    suspend: suspendSession,
     archiveServerSessions,
   };
 }

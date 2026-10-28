@@ -39,10 +39,11 @@ type Calls = {
   links: unknown[];
   archived: { userId: string; ids: readonly string[] }[];
   woken: string[];
+  suspended: string[];
 };
 
 function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendable?: string[] } = {}): { deps: LoopDeps; calls: Calls } {
-  const calls: Calls = { claims: [], released: [], replies: [], reactions: [], sent: [], started: [], links: [], archived: [], woken: [] };
+  const calls: Calls = { claims: [], released: [], replies: [], reactions: [], sent: [], started: [], links: [], archived: [], woken: [], suspended: [] };
   const claimed = new Set<string>();
   const deps: LoopDeps = {
     scope: async () => ({ orgId: "o1", projectId: "p1" }),
@@ -84,6 +85,10 @@ function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendab
     wake: async (_ownerId, workspaceId) => {
       calls.woken.push(workspaceId);
       return workspaceId !== "unwakeable";
+    },
+    suspend: async (_ownerId, workspaceId) => {
+      calls.suspended.push(workspaceId);
+      return true;
     },
     archiveServerSessions: async (userId, ids) => {
       calls.archived.push({ userId, ids });
@@ -264,8 +269,9 @@ test("a closed pull request archives its sessions, each as its owner, once per c
   const { deps, calls } = fakeDeps({ sessions });
   assert.equal(await archiveClosed("pull_request", closedPull(), deps), 3);
   assert.deepEqual(calls.archived, [
-    { userId: "u1", ids: ["w1", "w3"] },
+    { userId: "u1", ids: ["w1"] },
     { userId: "u2", ids: ["w2"] },
+    { userId: "u1", ids: ["w3"] },
   ]);
   assert.equal(await archiveClosed("pull_request", closedPull(), deps), 0);
   // Reopened and closed again: another close.
@@ -282,7 +288,22 @@ test("a session asleep when its pull request closes is woken to be archived", as
   });
   assert.equal(await archiveClosed("pull_request", closedPull(), deps), 2);
   assert.deepEqual(calls.woken, ["w1", "unwakeable"]);
-  assert.deepEqual(calls.archived, [{ userId: "u1", ids: ["w1", "w2"] }]);
+  // Side by side: in whatever order they finish.
+  assert.deepEqual(calls.archived.flatMap((a) => a.ids).sort(), ["w1", "w2"]);
+  assert.deepEqual(calls.suspended, []);
+});
+
+test("a session woken to archive that then isn't is put back to sleep; one mid another step is left", async () => {
+  const { deps, calls } = fakeDeps({
+    sessions: [
+      { id: "w1", ownerId: "u1", status: "suspended" },
+      { id: "w2", ownerId: "u1", status: "resuming" },
+    ],
+    archiveServerSessions: async () => 0,
+  });
+  assert.equal(await archiveClosed("pull_request", closedPull(), deps), 0);
+  assert.deepEqual(calls.woken, ["w1"]);
+  assert.deepEqual(calls.suspended, ["w1"]);
 });
 
 test("an org that turned archiving on close off keeps its sessions", async () => {

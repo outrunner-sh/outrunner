@@ -70,7 +70,9 @@ const LIVE = ["ready", "idle", "suspending", "suspended", "resuming", "archiving
  * mention started on it (github_session_links), and for a pull request, the
  * session that recorded it (pull_requests). Only when there are none, the
  * newest session on its head branch: a branch name can be used again, and an
- * old session on it isn't this pull request's. Never an automation's review
+ * old session on it isn't this pull request's. That one is linked outright
+ * once found, so a session linked later (a mention by someone who may not
+ * steer it, starting their own) doesn't hide it. Never an automation's review
  * sessions, nor background ones (a Slack thread's research), nor any whose
  * owner has left the org.
  */
@@ -106,6 +108,13 @@ export async function linkedSessions(link: LinkTarget, orgId: string): Promise<L
   let sessions = await keep(ids.size ? await sessionsWhere().in("id", [...ids]) : { data: [], error: null }, orgId);
   if (sessions.length === 0 && link.target === "pull" && link.headRef) {
     sessions = (await keep(await sessionsWhere().eq("branch", link.headRef), orgId)).slice(0, 1);
+    for (const s of sessions) {
+      const { error } = await supabase.from("github_session_links").upsert(
+        { project_id: link.projectId, kind: "pull", number: link.number, workspace_id: s.id },
+        { onConflict: "project_id,kind,number,workspace_id", ignoreDuplicates: true },
+      );
+      if (error) throw error;
+    }
   }
   return sessions.map((s) => ({ id: s.id, ownerId: s.owner_id, status: s.status }));
 }
