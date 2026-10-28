@@ -55,7 +55,7 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
       repos={repos}
       coverage={coverage}
       byConnector={!active.personal}
-      webhookPath={null}
+      webhook={null}
       editable
     />
   );

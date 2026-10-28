@@ -45,13 +45,19 @@ export class RateLimiter {
   }
 }
 
-/** Who sent a request: Cloudflare's client address, else the first
- *  forwarded one; "unknown" when neither says. */
+/**
+ * Who sent a request, for a limit per address. Cloudflare's client address
+ * first: the edge sets `cf-connecting-ip` itself, over anything a client
+ * sent, and the worker (cloudflare/worker.ts) is the only way to the
+ * container. Behind another proxy (Railway), the last forwarded address, the
+ * one the proxy added: earlier ones are the client's to write, and a client
+ * that could choose its own would get a new count each request. "unknown"
+ * with neither, which is only a server reached directly (`pnpm dev`).
+ */
 export function clientAddress(headers: Headers): string {
   return (
     headers.get("cf-connecting-ip")?.trim() ||
-    headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    headers.get("x-real-ip")?.trim() ||
+    headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() ||
     "unknown"
   );
 }

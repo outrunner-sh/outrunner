@@ -31,7 +31,7 @@ async function AutomationSection({ params }: { params: Params }) {
   if (!context) redirect("/automations");
   const { active } = context;
   const admin = active.role === "admin";
-  const [automation, repos, webhookPath] = await Promise.all([
+  const [automation, repos, webhook] = await Promise.all([
     getAutomation(active.id, automationId),
     listOrgRepos(active.id),
     // Its URL is a secret: its admins' alone.
@@ -69,7 +69,7 @@ async function AutomationSection({ params }: { params: Params }) {
       coverage={coverage}
       byConnector={!active.personal}
       editable={admin}
-      webhookPath={webhookPath}
+      webhook={webhook}
     />
   );
 }

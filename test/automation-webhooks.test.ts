@@ -9,6 +9,7 @@ import {
   hasPayloadPlaceholder,
   isWebhookToken,
   newWebhookToken,
+  FILLED_FROM_PAYLOAD,
   PAYLOAD_PROMPT_MAX,
   webhookDedupeKey,
   type WebhookEvent,
@@ -44,18 +45,27 @@ const payload = {
   text: "main is red",
 };
 
-test("a prompt's placeholders are filled from the payload: whole, by path, or nothing when it's missing", () => {
+test("a prompt's placeholders are filled from the payload, after a line saying they're the caller's", () => {
   assert.ok(hasPayloadPlaceholder("Look at {{payload}}"));
   assert.ok(hasPayloadPlaceholder("{{ payload.alert.name }}"));
   assert.equal(hasPayloadPlaceholder("{{ other }}"), false);
   assert.equal(
     fillPayload("Alert {{payload.alert.name}} ({{ payload.alert.severity }}) on {{payload.alert.tags.0}}: {{payload.text}}.", payload),
-    "Alert Deploy failed (2) on prod: main is red.",
+    `${FILLED_FROM_PAYLOAD}\n\nAlert Deploy failed (2) on prod: main is red.`,
   );
-  assert.equal(fillPayload("Tags: {{payload.alert.tags}}", payload), `Tags: ${JSON.stringify(payload.alert.tags, null, 2)}`);
-  assert.equal(fillPayload("All: {{payload}}", payload), `All: ${JSON.stringify(payload, null, 2)}`);
-  assert.equal(fillPayload("[{{payload.nope.deeper}}] [{{payload.text.length}}] [{{payload.constructor}}]", payload), "[] [] []");
-  assert.equal(fillPayload("[{{payload.x}}]", null), "[]");
+  const body = (prompt: string) => fillPayload(prompt, payload).slice(FILLED_FROM_PAYLOAD.length + 2);
+  // An object or array lands fenced, as data.
+  assert.equal(body("Tags: {{payload.alert.tags}}"), `Tags: \n\`\`\`json\n${JSON.stringify(payload.alert.tags, null, 2)}\n\`\`\`\n`);
+  assert.equal(body("All: {{payload}}"), `All: \n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n`);
+  assert.equal(body("[{{payload.nope.deeper}}] [{{payload.text.length}}] [{{payload.constructor}}]"), "[] [] []");
+  assert.equal(fillPayload("[{{payload.x}}]", null).slice(FILLED_FROM_PAYLOAD.length + 2), "[]");
+});
+
+test("the payload adds at most so much to a prompt, however many placeholders place it", () => {
+  const long = "x".repeat(PAYLOAD_PROMPT_MAX - 10);
+  const filled = fillPayload("{{payload}} {{payload}} {{payload}}", long);
+  assert.ok(filled.length < FILLED_FROM_PAYLOAD.length + PAYLOAD_PROMPT_MAX + 200);
+  assert.match(filled, /cut: the payload is longer/);
 });
 
 test("with no placeholder, the payload follows the prompt as JSON, said to be data; a long one is cut", () => {
@@ -65,7 +75,7 @@ test("with no placeholder, the payload follows the prompt as JSON, said to be da
   assert.ok(prompt.includes(JSON.stringify(payload, null, 2)));
   assert.match(fillPayload("Go.", null), /```json\nnull\n```$/);
   const long = fillPayload("{{payload}}", "x".repeat(PAYLOAD_PROMPT_MAX + 10));
-  assert.ok(long.length < PAYLOAD_PROMPT_MAX + 200);
+  assert.ok(long.length < FILLED_FROM_PAYLOAD.length + PAYLOAD_PROMPT_MAX + 200);
   assert.match(long, /cut: the payload is longer/);
 });
 
@@ -75,7 +85,7 @@ test("a webhook's run is told when, where, and the payload as its prompt places 
   const prompt = eventPrompt("Fix it: {{payload.text}}", event, { repoFullName: "acme/web" });
   assert.match(prompt, /^Webhook run: a POST to this automation's URL, Nov 2, 09:15 UTC\./);
   assert.match(prompt, /Repository: acme\/web/);
-  assert.ok(prompt.endsWith("\n\nFix it: main is red"));
+  assert.ok(prompt.endsWith(`\n\n${FILLED_FROM_PAYLOAD}\n\nFix it: main is red`));
   assert.equal(eventTitle("Alerts", event), "Alerts, webhook Nov 2, 09:15 UTC");
   assert.deepEqual(readRunEvent(JSON.parse(JSON.stringify(event))), event);
   assert.deepEqual(readRunEvent({ trigger: "webhook", receivedAt: "2026-11-02T09:15:00.000Z" }), { ...event, payload: null });
@@ -113,7 +123,7 @@ test("a webhook's run that failed starts again with the same payload", async () 
     enabled: true,
     candidate,
     repoFullName: "acme/web",
-    installationId: null,
+    installationId: 42,
     installationSuspended: false,
     covered: true,
     workspaceId: null,
@@ -157,8 +167,9 @@ test("a limiter keeps at most so many keys, dropping the least recently used", (
   assert.equal(limiter.take("c", 1).ok, false);
 });
 
-test("a request's address is Cloudflare's, else the first forwarded", () => {
+test("a request's address is Cloudflare's, else the one the proxy forwarded, never the client's own say", () => {
   assert.equal(clientAddress(new Headers({ "cf-connecting-ip": "1.2.3.4", "x-forwarded-for": "5.6.7.8" })), "1.2.3.4");
-  assert.equal(clientAddress(new Headers({ "x-forwarded-for": "5.6.7.8, 10.0.0.1" })), "5.6.7.8");
+  // A client wrote the first; the proxy added the last.
+  assert.equal(clientAddress(new Headers({ "x-forwarded-for": "6.6.6.6, 5.6.7.8" })), "5.6.7.8");
   assert.equal(clientAddress(new Headers()), "unknown");
 });

@@ -14,6 +14,7 @@ import { automationCandidates, recordRuns } from "@/lib/db/automation-runs";
 import { runsByKey, webhookAutomation } from "@/lib/db/automation-webhooks";
 import { optionalEnv } from "@/lib/env";
 import { githubAppConfig } from "@/lib/github/app";
+import { readCappedBody } from "@/lib/http/capped-body";
 import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 import { clientAddress, RateLimiter, type Taken } from "@/lib/http/rate-limit";
 
@@ -61,16 +62,10 @@ export async function POST(request: Request, { params }: Params) {
   if (!githubAppConfig()) {
     return NextResponse.json({ error: "Automations can't run here: the GitHub App isn't set up." }, { status: 503 });
   }
-  if (Number(request.headers.get("content-length") ?? 0) > WEBHOOK_BODY_MAX) {
-    return NextResponse.json({ error: `Send at most ${WEBHOOK_BODY_MAX / 1024} KB.` }, { status: 413 });
-  }
-  const raw = await request.text();
-  // A body with no Content-Length (chunked) is measured once read.
-  if (Buffer.byteLength(raw) > WEBHOOK_BODY_MAX) {
-    return NextResponse.json({ error: `Send at most ${WEBHOOK_BODY_MAX / 1024} KB.` }, { status: 413 });
-  }
 
   try {
+    // Its automation first: a token that's none is answered without its body
+    // being read at all.
     const automation = await webhookAutomation(token);
     if (!automation) return NextResponse.json(NOT_FOUND, { status: 404 });
     if (!automation.live) {
@@ -78,6 +73,12 @@ export async function POST(request: Request, { params }: Params) {
     }
     const limit = perAutomation.take(automation.automationId);
     if (!limit.ok) return tooMany(limit);
+    // Read only as far as the limit, a chunked body (no Content-Length)
+    // included: what's past it is never held.
+    const raw = await readCappedBody(request, WEBHOOK_BODY_MAX);
+    if (raw === null) {
+      return NextResponse.json({ error: `Send at most ${WEBHOOK_BODY_MAX / 1024} KB of JSON.` }, { status: 413 });
+    }
 
     let payload: unknown = null;
     if (raw.trim() !== "") {
@@ -159,10 +160,14 @@ export async function POST(request: Request, { params }: Params) {
       const runs = pending.map((run) => ({ runId: run.runId, repository: run.candidate.repoFullName, status: "starting" }));
       return NextResponse.json({ ...single(runs), runs }, { status: 202 });
     }
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const outcomes = await Promise.race([
       Promise.all(made),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), WAIT_MS).unref?.()),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), WAIT_MS);
+      }),
     ]);
+    clearTimeout(timer);
     const settled = outcomes ?? (await Promise.all(made.map((m) => Promise.race([m, Promise.resolve(null)]))));
     const runs = pending.map((run, i) => {
       const outcome = settled[i];

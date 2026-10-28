@@ -5,6 +5,7 @@ import { useState, useSyncExternalStore } from "react";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
 import { InlineMessage } from "@/components/ui/notice";
+import type { WebhookUrl } from "@/lib/db/automation-webhooks";
 import { requestJson } from "@/lib/http/request-json";
 
 const noSubscription = () => () => {};
@@ -17,19 +18,18 @@ const noSubscription = () => () => {};
 export function AutomationWebhook({
   orgId,
   automationId,
-  path,
+  webhook,
   editable,
 }: {
   orgId: string;
   /** Null for one not saved yet. */
   automationId: string | null;
-  /** Its URL's path; null when it has none yet, or it isn't the viewer's
-   *  to see. */
-  path: string | null;
+  /** Its URL; null when it isn't the viewer's to see, or it's new. */
+  webhook: WebhookUrl | null;
   editable: boolean;
 }) {
   const origin = useSyncExternalStore(noSubscription, () => window.location.origin, () => "");
-  const [current, setCurrent] = useState(path);
+  const [current, setCurrent] = useState(webhook?.path ?? null);
   const [copied, setCopied] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,10 +58,22 @@ export function AutomationWebhook({
     return <p className="text-xs text-muted-foreground">Only the org&apos;s admins see its URL.</p>;
   }
   if (!url) {
+    if (!automationId) return <p className="text-xs text-muted-foreground">Create it to get its URL.</p>;
+    // Saving keeps a token it has, readable or not: only a new one fixes
+    // one that can't be read, and it's offered whenever there's none to show.
+    const unreadable = webhook !== null && webhook.path === null && webhook.unreadable;
     return (
-      <p className="text-xs text-muted-foreground">
-        {automationId ? "Save with Webhook ticked to get its URL." : "Create it to get its URL."}
-      </p>
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-muted-foreground">
+            {unreadable
+              ? "Its URL can't be shown (Outrunner's encryption key has changed since it was made). Make a new one: the old one stops working."
+              : "Save with Webhook ticked to get its URL, or make one now."}
+          </p>
+          <HoldToConfirm label="New URL" onConfirm={() => void rotate()} disabled={rotating} className="h-7 shrink-0 px-2.5 text-xs" />
+        </div>
+        {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
+      </div>
     );
   }
   return (

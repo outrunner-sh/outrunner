@@ -23,6 +23,7 @@ import {
 } from "@/lib/automations/rules";
 import type { Schedule } from "@/lib/automations/schedule";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
+import type { WebhookUrl } from "@/lib/db/automation-webhooks";
 import { requestJson } from "@/lib/http/request-json";
 import { cn } from "@/lib/utils";
 
@@ -62,7 +63,7 @@ export function AutomationEditor({
   coverage,
   editable,
   byConnector,
-  webhookPath,
+  webhook,
 }: {
   orgId: string;
   draft: AutomationDraft;
@@ -72,8 +73,8 @@ export function AutomationEditor({
   editable: boolean;
   /** A team org's: it runs as the org's connector, not whoever saves it. */
   byConnector: boolean;
-  /** Its webhook URL's path, for an admin; null when it has none yet. */
-  webhookPath: string | null;
+  /** Its webhook's URL, for an admin; null for a member, or a new one. */
+  webhook: WebhookUrl | null;
 }) {
   const router = useRouter();
   const [name, setName] = useState(draft.name);
@@ -150,7 +151,7 @@ export function AutomationEditor({
         },
       );
       // Given a webhook it had none of: back to it, where its URL is now.
-      router.push(triggers.includes("webhook") && !webhookPath ? `/automations/${id}` : "/automations");
+      router.push(triggers.includes("webhook") && !webhook?.path ? `/automations/${id}` : "/automations");
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't save the automation. Try again.");
@@ -244,7 +245,7 @@ export function AutomationEditor({
           </div>
           {triggers.includes("webhook") ? (
             <div className="pt-1">
-              <AutomationWebhook orgId={orgId} automationId={draft.id} path={webhookPath} editable={editable} />
+              <AutomationWebhook orgId={orgId} automationId={draft.id} webhook={webhook} editable={editable} />
             </div>
           ) : null}
         </Field>
@@ -293,7 +294,8 @@ export function AutomationEditor({
             The session is also told what started it: the pull request (its repository, number, and base and head
             branches), the schedule and the time it was due, or the webhook&apos;s payload. Put the payload where it
             belongs with <span className="font-mono">{"{{payload}}"}</span>, or one value of it with{" "}
-            <span className="font-mono">{"{{payload.some.field}}"}</span>; with neither, it comes after the prompt.
+            <span className="font-mono">{"{{payload.some.field}}"}</span>; with neither, it comes after the prompt. Anyone
+            with the URL writes the payload, so the session is told to take it as data, not instructions.
           </p>
         </Field>
 

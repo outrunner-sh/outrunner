@@ -41,9 +41,12 @@ export async function webhookAutomation(
   };
 }
 
-/** The path an automation of the org's takes webhooks at; null when it has
- *  no token yet, or it can't be unsealed (the key changed). */
-export async function webhookPathOf(orgId: string, automationId: string): Promise<string | null> {
+/** Where an automation of the org's takes webhooks: its path; or none yet;
+ *  or a token kept that can't be unsealed (CREDENTIALS_ENCRYPTION_KEY
+ *  changed), which only a new one fixes. */
+export type WebhookUrl = { path: string } | { path: null; unreadable: boolean };
+
+export async function webhookPathOf(orgId: string, automationId: string): Promise<WebhookUrl> {
   const { data, error } = await createSupabaseAdminClient()
     .from("automations")
     .select("webhook_token_sealed")
@@ -51,12 +54,12 @@ export async function webhookPathOf(orgId: string, automationId: string): Promis
     .eq("id", automationId)
     .maybeSingle();
   if (error) throw error;
-  if (!data?.webhook_token_sealed) return null;
+  if (!data?.webhook_token_sealed) return { path: null, unreadable: false };
   try {
-    return webhookPath(open(data.webhook_token_sealed));
+    return { path: webhookPath(open(data.webhook_token_sealed)) };
   } catch (cause) {
     console.error(`Automation ${automationId}: its webhook token can't be unsealed`, cause);
-    return null;
+    return { path: null, unreadable: true };
   }
 }
 
