@@ -56,22 +56,24 @@ export type SourceAccess = {
  */
 export async function repositorySource(userId: string, orgId: string | undefined): Promise<SourceAccess> {
   const config = githubAppConfig();
-  // The App's installations unread is no reason to stop anyone picking a
-  // repository: the user's own GitHub, as before the App.
-  const installations =
-    config && orgId
+  if (config && orgId) {
+    // Only the user's own org may fall back to their own GitHub; a team's
+    // can't, so its installations unread is an error, not "none".
+    const personal = await isOwnPersonalOrg(orgId, userId);
+    const installations = personal
       ? await listOrgInstallations(orgId).catch((error: unknown) => {
           console.error(`Repositories: couldn't read org ${orgId}'s GitHub App installations`, error);
           return [];
         })
-      : [];
-  if (config && orgId && installations.length > 0) return appSource(config, orgId, installations);
-  if (config && orgId && !(await isPersonalOrg(orgId))) {
-    throw new GitIdentityError(
-      "no_installation",
-      "This org has no GitHub App installed, so it has no repositories yet. An admin can install it in Settings → Org → GitHub.",
-      "/settings/org/github",
-    );
+      : await listOrgInstallations(orgId);
+    if (installations.length > 0) return appSource(config, orgId, installations);
+    if (!personal) {
+      throw new GitIdentityError(
+        "no_installation",
+        "This org has no GitHub App installed, so it has no repositories yet. An admin can install it in Settings → Org → GitHub.",
+        "/settings/org/github",
+      );
+    }
   }
   const token = await requireGithubToken(userId);
   return {
@@ -158,14 +160,14 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
   };
 }
 
-/** Whether the org is a user's personal one. Throws when that can't be
+/** Whether the org is `userId`'s own personal org. Throws when that can't be
  *  read: guessing personal would list a member's own repositories for a team. */
-async function isPersonalOrg(orgId: string): Promise<boolean> {
+async function isOwnPersonalOrg(orgId: string, userId: string): Promise<boolean> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organizations")
     .select("personal_owner_id")
     .eq("id", orgId)
     .maybeSingle();
   if (error) throw error;
-  return !data || data.personal_owner_id !== null;
+  return data?.personal_owner_id === userId;
 }
