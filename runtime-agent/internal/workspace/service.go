@@ -1814,7 +1814,18 @@ func (s *Service) SummaryOf(ctx context.Context, workspaceID string) protocol.Wo
 	if !ok {
 		return startingSummary(s.worktreePath(workspaceID))
 	}
-	return sum.Snapshot(ctx)
+	snap := sum.Snapshot(ctx)
+	// A Claude that ended on its own (it crashed, or was quit) leaves a
+	// summary that still says running, its last turn perhaps open: its tmux
+	// session gone says otherwise. Only when tmux says so: one that couldn't
+	// be asked isn't taken for gone. A watcher of the turn (a Mission's,
+	// lib/missions/watch.ts) then hears it ended rather than wait for good.
+	if snap.State == "running" && s.jcode == nil {
+		if exists, err := s.tmux.SessionExists(ctx, sessionName(workspaceID)); err == nil && !exists {
+			snap.State = "exited"
+		}
+	}
+	return snap
 }
 
 // snapshotCheckouts are a session's checkouts as a Snapshot captures or
