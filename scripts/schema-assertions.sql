@@ -1598,3 +1598,26 @@ begin
   update user_credentials set github_identity = 'personal' where user_id = someone;
   raise notice 'ok: a GitHub identity is personal or app, personal at first';
 end $$;
+
+-- 41. A claim answers once: a session that takes a ready box (stopped, now
+-- its own) gets one row to provision it, as does a stopped project box
+-- (20261029130000; the rewrites lost 20260805150000's `return`).
+do $$
+declare someone constant uuid := '11111111-1111-1111-1111-111111111111';
+declare project uuid; session uuid; rows integer;
+begin
+  perform set_config('request.jwt.claim.sub', someone::text, true);
+  select id into project from projects where owner_id = someone limit 1;
+  insert into workspaces (owner_id, project_id, branch, base_branch, provider, status)
+    values (someone, project, 'claims-answer-once', 'main', 'daytona', 'creating') returning id into session;
+  insert into runtime_computers (owner_id, project_id, agent_secret, status, pooled, pool_slot, daytona_sandbox_id, provider)
+    values (someone, project, 's', 'stopped', true, 1, 'box-once', 'daytona');
+  if claim_pooled_computer(session, 'daytona') is distinct from 'box-once' then
+    raise exception 'FAIL: the ready box was not handed to the session';
+  end if;
+  select count(*) into rows from claim_workspace_computer(session, 'secret', 'v1', null);
+  if rows <> 1 then
+    raise exception 'FAIL: claiming a session''s stopped box answered % rows, want 1', rows;
+  end if;
+  raise notice 'ok: a claim of a stopped box answers once';
+end $$;
