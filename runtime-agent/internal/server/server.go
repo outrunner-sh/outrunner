@@ -1157,10 +1157,12 @@ func (s *Server) streamEvents(
 	// Watch for the log only while the stream is still "starting"; a nil
 	// channel never fires, so a running stream does no extra lookups.
 	var stateCheck <-chan time.Time
+	stopStateCheck := func() {}
 	if !running {
 		stateTicker := time.NewTicker(stateCheckInterval)
 		defer stateTicker.Stop()
 		stateCheck = stateTicker.C
+		stopStateCheck = func() { stateTicker.Stop(); stateCheck = nil }
 	}
 
 	for {
@@ -1168,12 +1170,8 @@ func (s *Server) streamEvents(
 		case <-ctx.Done():
 			return
 		case <-stateCheck:
-			if running {
-				stateCheck = nil // an event already reported it
-				continue
-			}
 			if s.ws.SessionLog(workspaceID) != "" {
-				stateCheck = nil
+				stopStateCheck()
 				if !reportRunning() {
 					return
 				}
@@ -1182,6 +1180,7 @@ func (s *Server) streamEvents(
 			// The log just yielded an event, so it exists: the "running" lands
 			// before the first message it explains. No SessionLog lookup here,
 			// since a fresh connect replays the whole log through this path.
+			stopStateCheck()
 			if !reportRunning() {
 				return
 			}
