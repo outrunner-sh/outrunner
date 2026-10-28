@@ -504,7 +504,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		return "", err
 	}
 	if len(facts.Checkouts) > 0 {
-		if err := s.createCheckouts(ctx, worktree, in.Branch, facts.Checkouts, in.GitUser); err != nil {
+		// The box's warmed folder, when it was warmed with these repositories
+		// (warm.go); otherwise new checkouts.
+		if s.adoptWarmCheckouts(ctx, worktree, in.Branch, facts.Checkouts) {
+			facts.Warmed = true
+			s.setFacts(in.WorkspaceID, facts)
+			for _, c := range facts.Checkouts {
+				setGitUser(ctx, filepath.Join(worktree, c.Name), in.GitUser)
+			}
+		} else if err := s.createCheckouts(ctx, worktree, in.Branch, facts.Checkouts, in.GitUser); err != nil {
 			return "", err
 		}
 		return worktree, nil
@@ -521,12 +529,17 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 			return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
-	// Configure git author so commits are attributed to the Outrunner user.
-	if in.GitUser != nil && in.GitUser.Name != "" && in.GitUser.Email != "" {
-		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.name", in.GitUser.Name).Run()
-		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.email", in.GitUser.Email).Run()
-	}
+	setGitUser(ctx, worktree, in.GitUser)
 	return worktree, nil
+}
+
+// setGitUser configures a checkout's git author so commits are attributed to
+// the Outrunner user; nil (or one without both) keeps the system default.
+func setGitUser(ctx context.Context, dir string, user *GitUser) {
+	if user != nil && user.Name != "" && user.Email != "" {
+		_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.name", user.Name).Run()
+		_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.email", user.Email).Run()
+	}
 }
 
 // ErrBypassInFolder refuses bypassPermissions for a session in a folder on the

@@ -83,10 +83,7 @@ func (s *Service) createCheckouts(ctx context.Context, folder, branch string, ch
 			return fmt.Errorf("worktree add %s: %v: %s", c.Name, err, strings.TrimSpace(string(out)))
 		}
 		made = append(made, c)
-		if user != nil && user.Name != "" && user.Email != "" {
-			_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.name", user.Name).Run()
-			_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.email", user.Email).Run()
-		}
+		setGitUser(ctx, dir, user)
 	}
 	return nil
 }

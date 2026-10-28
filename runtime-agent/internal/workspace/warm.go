@@ -25,6 +25,12 @@ import (
 // session's branch, with what git ignores (node_modules, build output) kept,
 // so the session starts with the work done.
 //
+// A project of several repositories is warmed as its sessions are laid out
+// (checkouts.go): a folder of checkouts, one a repository off its mirror at
+// $ROOT/repos/<checkout>.git, with the hook run at the folder's root, where a
+// session runs it. A session of the same repositories takes the folder
+// (adoptWarmCheckouts); any other session leaves it.
+//
 // The hook runs beside the agent; the control plane starts it (Warm) and
 // asks how it went (WarmState) until it ends.
 
@@ -44,6 +50,9 @@ type WarmRequest struct {
 	Env        map[string]string
 	Files      map[string]string
 	Hook       string
+	// Checkouts, when set, warm a folder of them, as a session of several
+	// repositories has (checkouts.go). BaseBranch is then the first's.
+	Checkouts []Checkout
 }
 
 // WarmState is how the box's warming went: State is "" (never warmed),
@@ -51,9 +60,12 @@ type WarmRequest struct {
 type WarmState struct {
 	State      string `json:"state"`
 	BaseBranch string `json:"baseBranch,omitempty"`
-	StartedAt  string `json:"startedAt,omitempty"`
-	FinishedAt string `json:"finishedAt,omitempty"`
-	ExitCode   int    `json:"exitCode,omitempty"`
+	// Checkouts are the repositories a folder of checkouts was warmed with;
+	// none for one checkout. Only a session of the same takes it.
+	Checkouts  []Checkout `json:"checkouts,omitempty"`
+	StartedAt  string     `json:"startedAt,omitempty"`
+	FinishedAt string     `json:"finishedAt,omitempty"`
+	ExitCode   int        `json:"exitCode,omitempty"`
 	// Log is the end of the hook's output (WarmState only).
 	Log string `json:"log,omitempty"`
 }
@@ -66,11 +78,17 @@ func (s *Service) warmEnvPath() string   { return filepath.Join(s.Root, "warm", 
 func (s *Service) warmHookFile() string  { return filepath.Join(s.Root, "warm", "hook.sh") }
 func (s *Service) warmLogPath() string   { return filepath.Join(s.Root, "logs", "warm.log") }
 
-// Warm starts warming the box: a fresh checkout of req.BaseBranch with the
-// files in it, and the hook run there in the background (WarmState says how
-// it went). One that runs already is ErrWarmBusy; anything warmed before is
-// replaced.
+// Warm starts warming the box: a fresh checkout of req.BaseBranch (or a
+// folder of req.Checkouts) with the files in it, and the hook run there in
+// the background (WarmState says how it went). One that runs already is
+// ErrWarmBusy; anything warmed before is replaced.
 func (s *Service) Warm(ctx context.Context, req WarmRequest) error {
+	if len(req.Checkouts) > 0 {
+		if err := ValidCheckouts(req.Checkouts); err != nil {
+			return err
+		}
+		req.BaseBranch = req.Checkouts[0].BaseBranch
+	}
 	if req.BaseBranch == "" || strings.HasPrefix(req.BaseBranch, "-") {
 		return fmt.Errorf("%w: a base branch", ErrInvalidEnvironment)
 	}
@@ -95,7 +113,12 @@ func (s *Service) Warm(ctx context.Context, req WarmRequest) error {
 	}
 	dir := s.warmDir()
 	s.discardWarm(ctx)
-	if out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
+	if len(req.Checkouts) > 0 {
+		if err := s.warmCheckouts(ctx, dir, req.Checkouts); err != nil {
+			s.discardWarm(ctx)
+			return err
+		}
+	} else if out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
 		"worktree", "add", "--detach", dir, "origin/"+req.BaseBranch).CombinedOutput(); err != nil {
 		return fmt.Errorf("warm checkout: %v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -126,12 +149,28 @@ func (s *Service) Warm(ctx context.Context, req WarmRequest) error {
 	if err != nil {
 		return err
 	}
-	state := WarmState{State: "running", BaseBranch: req.BaseBranch, StartedAt: time.Now().UTC().Format(time.RFC3339)}
+	state := WarmState{State: "running", BaseBranch: req.BaseBranch, Checkouts: req.Checkouts, StartedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := s.writeWarmState(state); err != nil {
 		log.Close()
 		return err
 	}
 	go s.runWarmHook(state, log)
+	return nil
+}
+
+// warmCheckouts makes the folder of checkouts a box is warmed in, each
+// detached at its base off its own mirror, as createCheckouts lays out a
+// session's.
+func (s *Service) warmCheckouts(ctx context.Context, dir string, checkouts []Checkout) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, c := range checkouts {
+		if out, err := exec.CommandContext(ctx, "git", "-C", RepoMirrorPath(s.Root, c.Name),
+			"worktree", "add", "--detach", filepath.Join(dir, c.Name), "origin/"+c.BaseBranch).CombinedOutput(); err != nil {
+			return fmt.Errorf("warm checkout %s: %v: %s", c.Name, err, strings.TrimSpace(string(out)))
+		}
+	}
 	return nil
 }
 
@@ -190,13 +229,20 @@ func (s *Service) writeWarmState(state WarmState) error {
 	return writeJSONFile(s.warmStatePath(), state, 0o600)
 }
 
-// discardWarm removes a warmed checkout nobody took.
+// discardWarm removes a warmed checkout (or folder of them) nobody took.
 func (s *Service) discardWarm(ctx context.Context) {
 	dir := s.warmDir()
 	if fileExists(dir) {
 		_ = exec.CommandContext(ctx, "git", "-C", s.mirrorPath(), "worktree", "remove", "--force", dir).Run()
 		_ = os.RemoveAll(dir)
 		_ = exec.CommandContext(ctx, "git", "-C", s.mirrorPath(), "worktree", "prune").Run()
+		// Every repository's mirror, not only those the state names: a warm
+		// cut off before its state was written leaves checkouts too, and a
+		// mirror still listing one refuses the next warm's.
+		mirrors, _ := filepath.Glob(filepath.Join(s.Root, "repos", "*.git"))
+		for _, mirror := range mirrors {
+			_ = exec.CommandContext(ctx, "git", "-C", mirror, "worktree", "prune").Run()
+		}
 	}
 	_ = os.Remove(s.warmStatePath())
 }
@@ -211,7 +257,7 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 	warmMu.Lock()
 	defer warmMu.Unlock()
 	state := s.readWarmState()
-	if state.State != "succeeded" || state.BaseBranch != base || !fileExists(s.warmDir()) {
+	if state.State != "succeeded" || state.BaseBranch != base || len(state.Checkouts) > 0 || !fileExists(s.warmDir()) {
 		return false
 	}
 	steps := [][]string{
@@ -231,5 +277,77 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 		}
 	}
 	_ = os.Remove(s.warmStatePath())
+	return true
+}
+
+// adoptWarmCheckouts makes the box's warmed folder of checkouts the new
+// session's, as adoptWarm does one checkout: only one warmed with the same
+// repositories (folders, repositories and base branches) whose hook
+// succeeded. Moved into place whole (what the hook made at its root stays
+// too), each checkout's mirror told where it went, and each switched to a new
+// branch at its origin/base and cleaned of what git tracks or would. Whether
+// it did; one that fails half way is discarded, every checkout and branch it
+// made going with it, and the session's checkouts are made as usual.
+func (s *Service) adoptWarmCheckouts(ctx context.Context, folder, branch string, checkouts []Checkout) bool {
+	warmMu.Lock()
+	defer warmMu.Unlock()
+	state := s.readWarmState()
+	if state.State != "succeeded" || !sameCheckouts(state.Checkouts, checkouts) || !fileExists(s.warmDir()) {
+		return false
+	}
+	if err := os.Rename(s.warmDir(), folder); err != nil {
+		fmt.Fprintf(os.Stderr, "adopting the warm checkouts: %v\n", err)
+		s.discardWarm(ctx)
+		return false
+	}
+	var branched []Checkout
+	for _, c := range checkouts {
+		dir, mirror := filepath.Join(folder, c.Name), RepoMirrorPath(s.Root, c.Name)
+		steps := [][]string{
+			{"-C", mirror, "worktree", "repair", dir},
+			{"-C", dir, "checkout", "--force", "-B", branch, "origin/" + c.BaseBranch},
+			{"-C", dir, "clean", "-fd"},
+		}
+		for i, args := range steps {
+			out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput()
+			if err == nil {
+				if i == 1 {
+					branched = append(branched, c)
+				}
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "adopting the warm checkouts: git %s: %v: %s\n", strings.Join(args, " "), err, out)
+			// The checkouts first, then their branches: createCheckouts
+			// makes them again with -b.
+			for _, m := range checkouts {
+				s.removeCheckout(ctx, folder, m)
+			}
+			for _, m := range branched {
+				_, _ = s.git(ctx, RepoMirrorPath(s.Root, m.Name), "branch", "-D", branch)
+			}
+			_ = os.RemoveAll(folder)
+			s.discardWarm(ctx)
+			return false
+		}
+	}
+	_ = os.Remove(s.warmStatePath())
+	return true
+}
+
+// sameCheckouts reports whether two sets of repositories lay out the same
+// folder, in whatever order.
+func sameCheckouts(a, b []Checkout) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	byName := make(map[string]Checkout, len(a))
+	for _, c := range a {
+		byName[c.Name] = c
+	}
+	for _, c := range b {
+		if w, ok := byName[c.Name]; !ok || w != c {
+			return false
+		}
+	}
 	return true
 }

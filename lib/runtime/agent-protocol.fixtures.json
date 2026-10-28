@@ -442,7 +442,9 @@
         "request-secrets",
         "warm-hooks",
         "multi-repo",
-        "multi-repo-snapshots"
+        "multi-repo-snapshots",
+        "git-credential",
+        "multi-repo-warm"
       ]
     }
   ],
@@ -516,6 +518,14 @@
     },
     {
       "baseBranch": "main"
+    },
+    {
+      "baseBranch": "main",
+      "hook": "pnpm -C web install && pnpm -C api install",
+      "repos": [
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+      ]
     }
   ],
   "WarmStatus": [

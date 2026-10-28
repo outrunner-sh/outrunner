@@ -13,7 +13,7 @@ import (
 )
 
 // repoMirror makes a mirror at path whose origin has one commit on branch,
-// holding README.
+// holding README and a .gitignore of node_modules.
 func repoMirror(t *testing.T, path, branch string) {
 	t.Helper()
 	src := t.TempDir()
@@ -28,6 +28,7 @@ func repoMirror(t *testing.T, path, branch string) {
 	}
 	run(src, "init", "-q", "-b", branch)
 	_ = os.WriteFile(filepath.Join(src, "README"), []byte("hi\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(src, ".gitignore"), []byte("node_modules/\n"), 0o644)
 	run(src, "add", ".")
 	run(src, "commit", "-q", "-m", "init")
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)

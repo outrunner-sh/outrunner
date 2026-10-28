@@ -284,7 +284,17 @@ type WarmRequest struct {
 	Env        map[string]string `json:"env,omitempty"`
 	Files      map[string]string `json:"files,omitempty"`
 	Hook       string            `json:"hook,omitempty"`
+	// Repos, when set, warm a folder of a project's several repositories
+	// (FeatureMultiRepoWarm), laid out as a session of them is: one checkout
+	// a repository, each off its mirror at $ROOT/repos/<checkout>.git (on the
+	// box before the warm), with the hook run at the folder's root. BaseBranch
+	// is then the first's.
+	Repos []RepoCheckout `json:"repos,omitempty"`
 }
+
+// FeatureMultiRepoWarm is WarmRequest's Repos, and a session of several
+// repositories taking the folder warmed with them.
+const FeatureMultiRepoWarm = "multi-repo-warm"
 
 // WarmStatus is how a box's warming went (GET /warm): State is "", running,
 // succeeded or failed; Log the end of the hook's output.

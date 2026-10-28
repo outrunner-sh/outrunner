@@ -85,6 +85,7 @@ import {
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
 import { boxUpgrade, runtimeSessionEnvironment, withoutGitHubToken } from "@/lib/runtime/session-environment";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
+import { projectCheckouts } from "@/lib/runtime/warm-pool";
 import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
@@ -326,11 +327,7 @@ export async function createCloudSession(
   if (!isValidBranchName(baseBranch)) {
     return NextResponse.json({ error: "The session's base branch isn't a valid Git branch name." }, { status: 400 });
   }
-  const checkouts = environmentId
-    ? (await sessionCheckouts(owner.id, environmentId))?.map((c) =>
-        c.projectId === project.id ? { ...c, baseBranch } : c,
-      ) ?? null
-    : null;
+  const checkouts = environmentId ? projectCheckouts(await sessionCheckouts(owner.id, environmentId), project.id, baseBranch) : null;
   if (checkouts) {
     if (!isComputerProvider(provider)) {
       return NextResponse.json(
