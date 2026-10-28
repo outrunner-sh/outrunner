@@ -1538,6 +1538,10 @@ export type Database = {
         Returns: boolean;
       };
       // supabase/migrations/20261102150000_automation_limits.sql
+      automation_times_run: {
+        Args: { automation: string };
+        Returns: number;
+      };
       record_automation_runs: {
         Args: { runs: Json };
         Returns: { run_id: string; run_automation_id: string; run_project_id: string; queued: boolean }[];

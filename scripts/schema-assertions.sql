@@ -2152,6 +2152,9 @@ begin
   select count(*) into n from record_automation_runs(jsonb_build_array(
     jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:4', 'subject', 'webhook')));
   if n <> 1 then raise exception 'FAIL: an automation switched on again didn''t count afresh'; end if;
+  if automation_times_run(a) <> 1 then
+    raise exception 'FAIL: automation_times_run counted % since it was switched on, not 1', automation_times_run(a);
+  end if;
   begin
     update automations set archived_at = now(), enabled = true where id = a;
     raise exception 'FAIL: an archived automation was kept on';

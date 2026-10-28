@@ -10,7 +10,7 @@ import type { CheckOutcome } from "@/lib/automations/checks";
 import { readRunEvent, type RunEvent } from "@/lib/automations/run-event";
 import type { AutomationTrigger, RunStatus, SessionMode, TriggerKind } from "@/lib/automations/rules";
 import { type Schedule, scheduleFromRow } from "@/lib/automations/schedule";
-import { currentRunners } from "@/lib/db/automations";
+import { currentRunners, timesRun } from "@/lib/db/automations";
 import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -614,20 +614,6 @@ export type RerunTarget = {
   workspaceId: string | null;
 };
 
-/** The times an automation has run since `since`: each key once, however
- *  many repositories it ran on, as record_automation_runs counts them. */
-async function timesRun(automationId: string, since: string): Promise<number> {
-  const { data, error } = await createSupabaseAdminClient()
-    .from("automation_runs")
-    .select("dedupe_key")
-    .eq("automation_id", automationId)
-    .gte("created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(1000);
-  if (error) throw error;
-  return new Set((data ?? []).map((r) => r.dedupe_key)).size;
-}
-
 /** One of the org's runs, to run again; null when it isn't the org's. */
 export async function rerunTarget(orgId: string, runId: string): Promise<RerunTarget | null> {
   const supabase = createSupabaseAdminClient();
@@ -640,7 +626,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   if (!run) return null;
   const { data: automation, error: automationError } = await supabase
     .from("automations")
-    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, runs_since, reviewers, labels, session_mode")
+    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, reviewers, labels, session_mode")
     .eq("id", run.automation_id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -679,7 +665,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
     headSha: run.head_sha,
     prNumber: run.pr_number,
     enabled: automation.enabled,
-    atLimit: automation.max_runs !== null && (await timesRun(automation.id, automation.runs_since)) >= automation.max_runs,
+    atLimit: automation.max_runs !== null && (await timesRun(automation.id)) >= automation.max_runs,
     candidate: {
       automationId: automation.id,
       name: automation.name,

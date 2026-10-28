@@ -51,27 +51,19 @@ type AutomationRowRead = {
 const COLUMNS =
   "id, name, template, prompt, triggers, enabled, runs_as, reviewers, labels, max_runs, archive_when_done, debounce_seconds, session_mode, archived_at, runs_since, created_at";
 
-/** The times each limited automation has run since its count began: each
- *  key once, however many repositories it ran on (record_automation_runs
- *  counts so). For the page: read from its latest thousand runs, as many as
- *  one read returns, past which the count is only shown as that far. */
+/** The times an automation has run since its count began: each key once,
+ *  however many repositories it ran on, as its limit is held to
+ *  (automation_times_run, which record_automation_runs counts with). */
+export async function timesRun(automationId: string): Promise<number> {
+  const { data, error } = await createSupabaseAdminClient().rpc("automation_times_run", { automation: automationId });
+  if (error) throw error;
+  return data ?? 0;
+}
+
+/** The times each limited automation has run against its count. */
 async function runsUsed(rows: readonly AutomationRowRead[]): Promise<Map<string, number>> {
   const limited = rows.filter((r) => r.max_runs !== null);
-  const used = new Map<string, number>();
-  await Promise.all(
-    limited.map(async (r) => {
-      const { data, error } = await createSupabaseAdminClient()
-        .from("automation_runs")
-        .select("dedupe_key")
-        .eq("automation_id", r.id)
-        .gte("created_at", r.runs_since)
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      if (error) throw error;
-      used.set(r.id, new Set((data ?? []).map((d) => d.dedupe_key)).size);
-    }),
-  );
-  return used;
+  return new Map(await Promise.all(limited.map(async (r) => [r.id, await timesRun(r.id)] as const)));
 }
 
 /**

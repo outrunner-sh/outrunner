@@ -80,6 +80,24 @@ create index if not exists automation_runs_queued_idx on automation_runs (not_be
 -- A limit's count, and a reused session's look-up.
 create index if not exists automation_runs_since_idx on automation_runs (automation_id, created_at);
 
+-- The times an automation has run since its count began (`runs_since`):
+-- each key once, however many repositories it ran on. What its limit is
+-- held to, here and in the editor's "3 of 10 runs".
+create or replace function automation_times_run(automation uuid)
+returns integer
+language sql
+stable
+security invoker
+set search_path = public, pg_temp
+as $$
+  select count(distinct r.dedupe_key)::integer
+  from automation_runs r join automations a on a.id = r.automation_id
+  where r.automation_id = automation and r.created_at >= a.runs_since;
+$$;
+
+revoke all on function automation_times_run(uuid) from public, anon, authenticated;
+grant execute on function automation_times_run(uuid) to service_role;
+
 -- Record `runs` (a JSON array of {automation_id, project_id, trigger,
 -- dedupe_key, subject, context, pr_number, pr_title, head_sha, issue_number,
 -- scheduled_for}): the runs made, or the waiting run each was combined into,
@@ -153,8 +171,7 @@ begin
       -- Past its limit: a new time it runs, when it has run its count. The
       -- same key on another repository is the same time.
       if a.max_runs is not null then
-        select count(distinct x.dedupe_key) into fired from automation_runs x
-        where x.automation_id = a.id and x.created_at >= a.runs_since;
+        fired := automation_times_run(a.id);
         if fired >= a.max_runs and not exists (
           select 1 from automation_runs x
           where x.automation_id = a.id and (x.dedupe_key = key or key = any (x.absorbed_keys)) and x.created_at >= a.runs_since
@@ -181,8 +198,7 @@ begin
     end loop;
     -- Its limit reached: done.
     if a.max_runs is not null then
-      select count(distinct x.dedupe_key) into fired from automation_runs x
-      where x.automation_id = a.id and x.created_at >= a.runs_since;
+      fired := automation_times_run(a.id);
       if fired >= a.max_runs then
         update automations set
           enabled = false,
