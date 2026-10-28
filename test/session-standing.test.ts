@@ -107,9 +107,22 @@ test("a finished turn its owner hasn't read needs them, until they open it", () 
   // Seen, it's done.
   const seen = { pinnedAt: null, movedTo: null, movedAt: null, seenAt: ago(MIN) };
   assert.equal(standing({ activity: replied, mark: seen }).standing, "done");
-  // With a pull request open it stays in review; merged, it needs you.
+  // With a pull request open it stays in review.
   assert.equal(standing({ activity: replied, pullRequest: { state: "open", stateAt: null } }).standing, "in_review");
-  assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: ago(MIN) } }).reason, "replied");
+  // A reply since its pull request merged or closed needs you; one from
+  // before was acted on already, as is one when it's unknown when.
+  assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: ago(3 * MIN) } }).reason, "replied");
+  assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: ago(MIN) } }).standing, "done");
+  assert.equal(standing({ activity: replied, pullRequest: { state: "closed", stateAt: ago(3 * MIN) } }).reason, "replied");
+  assert.equal(standing({ activity: replied, pullRequest: { state: "closed", stateAt: ago(MIN) } }).standing, "done");
+  assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: null } }).standing, "done");
+  // Unread as long as backlog, it's gone there.
+  const old = ago(BACKLOG_AFTER_MS + MIN);
+  const stale = standing({
+    activity: { ...replied, repliedAt: old, eventAt: old, createdAt: ago(BACKLOG_AFTER_MS * 2) },
+    workspace: { lastActiveAt: old, updatedAt: old, createdAt: ago(BACKLOG_AFTER_MS * 2) },
+  });
+  assert.equal(stale.standing, "backlog");
   // Another member's, or one put away, never needs you.
   assert.equal(standing({ activity: replied, owner: false }).standing, "done");
   assert.equal(standing({ activity: replied, workspace: { status: "archived" } }).standing, "done");

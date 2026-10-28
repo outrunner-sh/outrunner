@@ -170,8 +170,20 @@ function automatic({
   }
   const open = Boolean(pullRequest && (pullRequest.state ?? "open") === "open");
   // A turn finished that its owner hasn't read: theirs to look at, until they
-  // open it. One with a pull request open stays in review.
-  if (unseenReply && !open && !GONE.includes(workspace.status)) return needsYou("replied", activity!.repliedAt);
+  // open it. One with a pull request open stays in review; one from before its
+  // pull request merged or closed was acted on already, and one quiet as long
+  // as backlog has gone there.
+  const repliedAt = activity?.repliedAt ? Date.parse(activity.repliedAt) : NaN;
+  const settledAt = pullRequest && !open ? Date.parse(pullRequest.stateAt ?? "") : NaN;
+  if (
+    unseenReply &&
+    !open &&
+    !GONE.includes(workspace.status) &&
+    (!pullRequest || repliedAt > settledAt) &&
+    now - repliedAt < BACKLOG_AFTER_MS
+  ) {
+    return needsYou("replied", activity!.repliedAt);
+  }
   if (pullRequest?.state === "merged") return { standing: "done", reason: null, since: null };
   if (open) return { standing: "in_review", reason: null, since: null };
   const quietSince = latest(workspace.lastActiveAt, activity?.eventAt, activity?.repliedAt, workspace.createdAt);
