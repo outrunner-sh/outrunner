@@ -265,61 +265,92 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
 /**
  * Claim the session's first prompt for `key`, before it is sent: "claimed"
  * when this call took it (free, or `key`'s own claim abandoned mid-send before
- * `abandonedBefore`), "sent" when `key` holds it and its send went, "sending"
- * when that send is still going, "other" when another key holds it.
- * Conditional, as the title is, so two sends racing can't both claim it.
+ * `abandonedBefore`), with the claimed_at it wrote as the claim's token; "sent"
+ * when `key` holds it and its send went, "sending" when that send is still
+ * going, "other" when another key holds it. Conditional, as the title is, so
+ * two sends racing can't both claim it.
  */
 export async function claimFirstPrompt(id: string, key: string, abandonedBefore: string): Promise<FirstPromptClaim> {
   const supabase = await createSupabaseServerClient();
-  const now = new Date().toISOString();
+  const claimedAt = new Date().toISOString();
   const { data, error } = await supabase
     .from("workspaces")
-    .update({ first_prompt_key: key, first_prompt_claimed_at: now, first_prompt_sent_at: null })
+    .update({ first_prompt_key: key, first_prompt_claimed_at: claimedAt, first_prompt_sent_at: null })
     .eq("id", id)
     .is("first_prompt_key", null)
     .select("id");
   if (error) throw error;
-  if ((data ?? []).length > 0) return "claimed";
+  if ((data ?? []).length > 0) return { state: "claimed", claimedAt };
   const { data: retaken, error: retakeError } = await supabase
     .from("workspaces")
-    .update({ first_prompt_claimed_at: now })
+    .update({ first_prompt_claimed_at: claimedAt })
     .eq("id", id)
     .eq("first_prompt_key", key)
     .is("first_prompt_sent_at", null)
     .lt("first_prompt_claimed_at", abandonedBefore)
     .select("id");
   if (retakeError) throw retakeError;
-  if ((retaken ?? []).length > 0) return "claimed";
+  if ((retaken ?? []).length > 0) return { state: "claimed", claimedAt };
   const { data: row, error: readError } = await supabase
     .from("workspaces")
     .select("first_prompt_key, first_prompt_sent_at")
     .eq("id", id)
     .maybeSingle();
   if (readError) throw readError;
-  if (row?.first_prompt_key !== key) return "other";
-  return row.first_prompt_sent_at ? "sent" : "sending";
+  if (row?.first_prompt_key !== key) return { state: "other" };
+  return { state: row.first_prompt_sent_at ? "sent" : "sending" };
 }
 
-/** The first prompt claimed for `key` reached the box: repeats are answered as sent. */
-export async function markFirstPromptSent(id: string, key: string): Promise<void> {
-  const supabase = await createSupabaseServerClient();
-  const { error } = await supabase
-    .from("workspaces")
-    .update({ first_prompt_sent_at: new Date().toISOString() })
+/** The first-prompt claim `claimedAt` names, matched on its key and token. */
+function ownClaim<Q extends { eq: (column: string, value: string) => Q; is: (column: string, value: null) => Q }>(
+  query: Q,
+  id: string,
+  key: string,
+  claimedAt: string,
+): Q {
+  return query
     .eq("id", id)
-    .eq("first_prompt_key", key);
+    .eq("first_prompt_key", key)
+    .eq("first_prompt_claimed_at", claimedAt)
+    .is("first_prompt_sent_at", null);
+}
+
+/** Renew the claim `claimedAt` names, just before its prompt goes: its new
+ *  token, or null when another request has taken it over. */
+export async function renewFirstPrompt(id: string, key: string, claimedAt: string): Promise<string | null> {
+  const supabase = await createSupabaseServerClient();
+  const renewedAt = new Date().toISOString();
+  const { data, error } = await ownClaim(
+    supabase.from("workspaces").update({ first_prompt_claimed_at: renewedAt }),
+    id,
+    key,
+    claimedAt,
+  ).select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0 ? renewedAt : null;
+}
+
+/** The first prompt claimed under `claimedAt` reached the box: repeats are answered as sent. */
+export async function markFirstPromptSent(id: string, key: string, claimedAt: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await ownClaim(
+    supabase.from("workspaces").update({ first_prompt_sent_at: new Date().toISOString() }),
+    id,
+    key,
+    claimedAt,
+  );
   if (error) throw error;
 }
 
 /** Let the claim go, as a send that failed does, so a retry with `key` sends. */
-export async function releaseFirstPrompt(id: string, key: string): Promise<void> {
+export async function releaseFirstPrompt(id: string, key: string, claimedAt: string): Promise<void> {
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase
-    .from("workspaces")
-    .update({ first_prompt_key: null, first_prompt_claimed_at: null })
-    .eq("id", id)
-    .eq("first_prompt_key", key)
-    .is("first_prompt_sent_at", null);
+  const { error } = await ownClaim(
+    supabase.from("workspaces").update({ first_prompt_key: null, first_prompt_claimed_at: null }),
+    id,
+    key,
+    claimedAt,
+  );
   if (error) throw error;
 }
 

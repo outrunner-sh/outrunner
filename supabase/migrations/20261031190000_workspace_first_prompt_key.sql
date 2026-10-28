@@ -7,7 +7,9 @@
 -- sending; one while the claim's send is still going is told to try again.
 -- Released when the send fails, so a retry still goes; a claim whose send
 -- never finished (its server stopped) is taken over by a repeat after a
--- while (first_prompt_claimed_at). Null until a first prompt is claimed, and
+-- while. first_prompt_claimed_at is the claim's token too: renewed as the
+-- prompt goes to the box, and matched by its request's renew, mark and
+-- release, so a request whose claim was taken over can't touch the new one. Null until a first prompt is claimed, and
 -- for every session from before this.
 --
 -- One per session, so on the row itself, under its owner's policy

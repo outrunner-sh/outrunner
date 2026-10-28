@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { claimFirstPrompt, markFirstPromptSent, releaseFirstPrompt } from "@/lib/db/repositories";
+import { claimFirstPrompt, markFirstPromptSent, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
@@ -68,19 +68,20 @@ export async function POST(request: Request, context: RouteContext) {
     firstPromptKey(body?.firstPromptKey),
     {
       claim: (key) => claimFirstPrompt(workspace.id, key, abandonedBefore(new Date())),
-      sent: (key) => markFirstPromptSent(workspace.id, key),
-      release: (key) => releaseFirstPrompt(workspace.id, key),
+      renew: (key, claimedAt) => renewFirstPrompt(workspace.id, key, claimedAt),
+      sent: (key, claimedAt) => markFirstPromptSent(workspace.id, key, claimedAt),
+      release: (key, claimedAt) => releaseFirstPrompt(workspace.id, key, claimedAt),
     },
     workspace.id,
   );
   if (gate.outcome === "sent") return NextResponse.json({ result: "already", titled: false });
-  if (gate.outcome === "sending") {
-    // Not "sent": that send may yet fail, and this page would think it went.
-    return NextResponse.json(
+  // Not "sent": that send may yet fail, and this page would think it went.
+  const stillGoing = () =>
+    NextResponse.json(
       { error: "Your first message is still on its way. Try again in a moment if it doesn't show up." },
       { status: 409 },
     );
-  }
+  if (gate.outcome === "sending") return stillGoing();
 
   let prompt = content;
   try {
@@ -100,6 +101,11 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 502 },
     );
   }
+
+  // Renewed as it goes, so no repeat can take the claim over while the box
+  // has it; one that already did (attaching ran past the claim's time) sends
+  // it instead of this request.
+  if (!(await gate.held())) return stillGoing();
 
   try {
     await agent.sendMessage(identity, prompt);

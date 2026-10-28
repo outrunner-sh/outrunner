@@ -9,28 +9,43 @@ import {
   gateFirstPrompt,
 } from "@/lib/session/first-prompt-claim";
 
-/** The workspace row's first-prompt claim, as claimFirstPrompt, markFirstPromptSent
- *  and releaseFirstPrompt treat it (bar abandoning, which is the database's). */
+/** The workspace row's first-prompt claim, as claimFirstPrompt, renewFirstPrompt,
+ *  markFirstPromptSent and releaseFirstPrompt treat it. `abandon` stands for
+ *  the claim's time running out: the next claim of its key takes it over. */
 function row(held: string | null = null, sent = false) {
-  const state = { held, sent, releases: 0 };
+  const state = { held, sent, token: held ? "t0" : null as string | null, abandoned: false, releases: 0, tokens: 0 };
+  const mine = (key: string, claimedAt: string) => state.held === key && state.token === claimedAt && !state.sent;
+  const take = (key: string): FirstPromptClaim => {
+    state.held = key;
+    state.sent = false;
+    state.abandoned = false;
+    state.token = `t${++state.tokens}`;
+    return { state: "claimed", claimedAt: state.token };
+  };
   return {
     state,
+    abandon: () => void (state.abandoned = true),
     deps: {
       claim: async (key: string): Promise<FirstPromptClaim> => {
-        if (state.held === null) {
-          state.held = key;
-          state.sent = false;
-          return "claimed";
-        }
-        if (state.held !== key) return "other";
-        return state.sent ? "sent" : "sending";
+        if (state.held === null) return take(key);
+        if (state.held !== key) return { state: "other" };
+        if (!state.sent && state.abandoned) return take(key);
+        return { state: state.sent ? "sent" : "sending" };
       },
-      sent: async (key: string) => {
-        if (state.held === key) state.sent = true;
+      renew: async (key: string, claimedAt: string) => {
+        if (!mine(key, claimedAt)) return null;
+        state.token = `t${++state.tokens}`;
+        return state.token;
       },
-      release: async (key: string) => {
+      sent: async (key: string, claimedAt: string) => {
+        if (mine(key, claimedAt)) state.sent = true;
+      },
+      release: async (key: string, claimedAt: string) => {
         state.releases += 1;
-        if (state.held === key && !state.sent) state.held = null;
+        if (mine(key, claimedAt)) {
+          state.held = null;
+          state.token = null;
+        }
       },
     },
   };
@@ -79,7 +94,9 @@ test("a repeat, or another key, marks and releases nothing it didn't claim", asy
   assert.equal(other.outcome, "send");
   await other.sent();
   await other.release();
-  assert.deepEqual(state, { held: "k1", sent: false, releases: 0 });
+  assert.equal(state.held, "k1");
+  assert.equal(state.sent, false);
+  assert.equal(state.releases, 0);
 });
 
 test("no key sends unguarded, and claims nothing", async () => {
@@ -90,15 +107,50 @@ test("no key sends unguarded, and claims nothing", async () => {
 
 test("a database that can't claim (not updated yet) sends rather than refuses", async () => {
   const failing = () => Promise.reject(new Error("42703"));
-  const gate = await quietly(() => gateFirstPrompt("k1", { claim: failing, sent: failing, release: failing }, "w1"));
+  const gate = await quietly(() =>
+    gateFirstPrompt("k1", { claim: failing, renew: failing, sent: failing, release: failing }, "w1"),
+  );
   assert.equal(gate.outcome, "send");
 });
 
-test("marking or releasing that fails is logged, never thrown into the send's answer", async () => {
+test("renewing, marking or releasing that fails is logged, never thrown into the send's answer", async () => {
   const failing = () => Promise.reject(new Error("down"));
-  const gate = await gateFirstPrompt("k1", { claim: async () => "claimed", sent: failing, release: failing }, "w1");
+  const gate = await gateFirstPrompt(
+    "k1",
+    { claim: async () => ({ state: "claimed", claimedAt: "t1" }), renew: failing, sent: failing, release: failing },
+    "w1",
+  );
+  // Unrenewed, it still holds: a repeat can't take it over before this send times out.
+  assert.equal(await quietly(() => gate.held()), true);
   await quietly(() => gate.sent());
   await quietly(() => gate.release());
+});
+
+test("a request whose claim was taken over neither sends, marks nor releases the new holder's", async () => {
+  const { state, deps, abandon } = row();
+  const slow = await gateFirstPrompt("k1", deps, "w1");
+  abandon();
+  const retry = await gateFirstPrompt("k1", deps, "w1");
+  assert.equal(retry.outcome, "send");
+  // The slow one's attachments come back: it must leave the send to the retry.
+  assert.equal(await slow.held(), false);
+  await slow.release();
+  assert.equal(state.held, "k1");
+  assert.equal((await gateFirstPrompt("k1", deps, "w1")).outcome, "sending");
+  await slow.sent();
+  assert.equal(state.sent, false);
+  // The retry renews as it goes, and its own mark counts.
+  assert.equal(await retry.held(), true);
+  await retry.sent();
+  assert.equal((await gateFirstPrompt("k1", deps, "w1")).outcome, "sent");
+});
+
+test("a renewed claim is still its request's to mark sent or release", async () => {
+  const { state, deps } = row();
+  const gate = await gateFirstPrompt("k1", deps, "w1");
+  assert.equal(await gate.held(), true);
+  await gate.release();
+  assert.equal(state.held, null);
 });
 
 test("a claim is abandoned only well after its send would have timed out", () => {

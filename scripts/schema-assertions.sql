@@ -1796,8 +1796,9 @@ end $$;
 -- 47. A session's first prompt is claimed once per idempotency key
 -- (claimFirstPrompt): a second claim, the same key's or another's, finds it
 -- held; released, the key claims it again; a claim abandoned mid-send is
--- taken over by its own key, never by another, and never once sent. The key
--- is kept short.
+-- taken over by its own key, never by another, and never once sent; the
+-- request it was taken from can't release it (matched on claimed_at). The
+-- key is kept short.
 do $$
 declare
   ws uuid;
@@ -1824,6 +1825,11 @@ begin
     and first_prompt_claimed_at < now() - interval '2 minutes';
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'FAIL: an abandoned first-prompt claim could not be taken over'; end if;
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null
+    and first_prompt_claimed_at = now() - interval '10 minutes';
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: a taken-over first-prompt claim was released by its old request'; end if;
   update workspaces set first_prompt_sent_at = now() where id = ws and first_prompt_key = 'k1';
   update workspaces set first_prompt_key = null, first_prompt_claimed_at = null
   where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null;
