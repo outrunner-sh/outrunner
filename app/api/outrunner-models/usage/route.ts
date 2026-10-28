@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { outrunnerModelAllowance } from "@/lib/db/credentials";
+import { activeOrgId } from "@/lib/orgs/server";
 import { allowanceView } from "@/lib/openrouter/allowance";
 
 /**
@@ -16,7 +17,8 @@ export async function GET() {
     return NextResponse.json({ error: "Sign in to Outrunner first." }, { status: 401 });
   }
   try {
-    const allowance = await outrunnerModelAllowance(owner.id);
+    // The org's in a team org they're looking at (billing is the org's).
+    const allowance = await outrunnerModelAllowance(owner.id, await activeOrgId().catch(() => undefined));
     return NextResponse.json({ allowance: allowance && allowanceView(allowance) });
   } catch (error) {
     console.error("Could not read a user's Outrunner allowance", error);

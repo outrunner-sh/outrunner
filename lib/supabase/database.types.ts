@@ -390,6 +390,20 @@ type UserCredentialsRow = {
 // supabase/migrations/20261019120000_user_provider_keys.sql.
 // An org's keys for model providers (Settings → Org → Keys). Service-role-only;
 // see supabase/migrations/20261030115000_org_provider_keys.sql.
+// A team org's key and allowance on Outrunner's models; see
+// supabase/migrations/20261031170000_org_model_allowance.sql.
+type OrgModelAllowanceRow = {
+  org_id: string;
+  key_ciphertext: string | null;
+  key_hash: string | null;
+  key_created_at: string | null;
+  allowance_period: string | null;
+  allowance_plan: string | null;
+  allowance_baseline_usd: number | null;
+  allowance_limit_usd: number | null;
+  created_at: string;
+};
+
 // An org's defaults for its members' new sessions (Settings → Org →
 // Defaults); see supabase/migrations/20261030150000_org_defaults.sql.
 type OrganizationSettingsRow = {
@@ -1058,6 +1072,12 @@ export type Database = {
         Row: UserCredentialsRow;
         Insert: Insert<UserCredentialsRow, "user_id">;
         Update: Partial<UserCredentialsRow>;
+        Relationships: [];
+      };
+      org_model_allowance: {
+        Row: OrgModelAllowanceRow;
+        Insert: Insert<OrgModelAllowanceRow, "org_id">;
+        Update: Partial<OrgModelAllowanceRow>;
         Relationships: [];
       };
       organization_settings: {

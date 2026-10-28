@@ -31,7 +31,14 @@ import {
 import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
 import { openOrgKey, orgProviderKey, sealedOrgKeys, usableOrgProviders } from "@/lib/db/org-credentials";
-import { personalOwners } from "@/lib/db/orgs";
+import {
+  orgAllowancePeriods,
+  orgModelAllowance,
+  orgOutrunnerModelKey,
+  refreshOrgModelAllowance,
+} from "@/lib/db/org-model-allowance";
+import { getOrg, memberRole, personalOwners } from "@/lib/db/orgs";
+import { isConnector } from "@/lib/automations/connector";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
   createUserKey,
@@ -773,7 +780,11 @@ export function offersModels(menu: ModelMenu): boolean {
  * org's; or a NoProviderKeyError saying where to add one.
  */
 export async function modelKey(userId: string, holder: KeyHolder, orgId?: string): Promise<string> {
-  if (holder === "outrunner") return outrunnerModelKey(userId);
+  if (holder === "outrunner") {
+    // A team org's cloud session runs them on the org's key, within its
+    // plan's allowance; anyone else's on their own.
+    return (await orgPaysModels(userId, orgId)) ? orgOutrunnerModelKey(orgId!) : outrunnerModelKey(userId);
+  }
   const key = (await getProviderKey(userId, holder)) ?? (await orgProviderKey(userId, orgId, holder));
   if (!key) throw new NoProviderKeyError(holder);
   return key;
@@ -786,8 +797,10 @@ export async function modelKey(userId: string, holder: KeyHolder, orgId?: string
  * key exists, nothing is spent of their plan's allowance. A user with their
  * own key too still has this one, for the models they run on it.
  */
-export async function outrunnerModelAllowance(userId: string): Promise<Allowance | null> {
+export async function outrunnerModelAllowance(userId: string, orgId?: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
+  // In a team org, the org's (lib/db/org-model-allowance.ts).
+  if (await orgPaysModels(userId, orgId)) return orgModelAllowance(orgId!);
   return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await personalEntitlements(userId)).plan.models.usd };
 }
 
@@ -855,7 +868,7 @@ export async function refreshModelAllowance(userId: string): Promise<RefreshedAl
 export async function renewDueModelAllowances(now = new Date()): Promise<number> {
   if (keySource() !== "per-user") return 0;
   const subscriptions = await entitlingSubscriptions();
-  // A personal org's plan sets its owner's key, until allowances are orgs'.
+  // A personal org's plan sets its owner's key; a team org's, its own.
   const owners = await personalOwners([...new Set(subscriptions.map((s) => s.orgId))]);
   const holderOf = (subscription: { orgId: string }) => owners.get(subscription.orgId) ?? null;
   const userIds = [...new Set(owners.values())];
@@ -894,6 +907,17 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
       renewed += 1;
     } catch (error) {
       console.error(`Could not renew the model allowance of user ${userId}`, error);
+    }
+  }
+  // Team orgs with a key of their own (lib/db/org-model-allowance.ts).
+  const teams = [...new Set(subscriptions.map((s) => s.orgId))].filter((orgId) => !owners.has(orgId));
+  const orgStored = await orgAllowancePeriods(teams);
+  for (const orgId of dueForRenewal(subscriptions, (s) => (owners.has(s.orgId) ? null : s.orgId), orgStored, now)) {
+    try {
+      await refreshOrgModelAllowance(orgId);
+      renewed += 1;
+    } catch (error) {
+      console.error(`Could not renew the model allowance of org ${orgId}`, error);
     }
   }
   return renewed;
@@ -975,4 +999,16 @@ export async function outrunnerModelKey(userId: string): Promise<string> {
   });
   refuseUnusable(allowance);
   return key;
+}
+
+/**
+ * Whether `orgId` pays for `userId`'s use of Outrunner's models: a team org
+ * they're a member of (billing is the org's). Not a personal org, whose
+ * plan is its owner's key's already, nor its connector, on its own; nor a
+ * session on a Mac, which names no org.
+ */
+async function orgPaysModels(userId: string, orgId: string | undefined): Promise<boolean> {
+  if (!orgId) return false;
+  const [org, role, connector] = await Promise.all([getOrg(orgId), memberRole(orgId, userId), isConnector(userId)]);
+  return Boolean(org && !org.personal && role && !connector);
 }

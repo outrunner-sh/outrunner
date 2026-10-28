@@ -13,6 +13,7 @@ import {
 } from "@/lib/billing/billing-store";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
 import { refreshModelAllowance } from "@/lib/db/credentials";
+import { refreshOrgModelAllowance } from "@/lib/db/org-model-allowance";
 import { getOrg, personalOrgId, personalOwners } from "@/lib/db/orgs";
 import { LOOKUP_KEYS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
@@ -30,10 +31,11 @@ export const syncDeps: SyncDeps = {
   now: () => new Date(),
   log: (message) => console.warn(message),
   // An upgrade's allowance applies at once, not at the next session: a
-  // personal org's plan sets its owner's model key, until keys are orgs'.
+  // personal org's plan sets its owner's model key; a team org's, its own.
   changed: async (orgId) => {
     const owner = (await personalOwners([orgId])).get(orgId);
     if (owner) await refreshModelAllowance(owner);
+    else await refreshOrgModelAllowance(orgId);
   },
 };
 
