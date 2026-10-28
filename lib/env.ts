@@ -76,8 +76,8 @@ type EnvKey =
   | "SLACK_CLIENT_ID"
   | "SLACK_CLIENT_SECRET"
   // The Slack agent: the OpenRouter model it thinks with (default
-  // anthropic/claude-sonnet-5.5), and what each org's own key for it may
-  // spend in USD before it's refused (default 25).
+  // anthropic/claude-sonnet-5.5). It runs on the org's key for Outrunner's
+  // models, within the org's plan allowance.
   | "SLACK_AGENT_MODEL"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"

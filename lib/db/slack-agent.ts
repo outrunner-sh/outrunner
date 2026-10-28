@@ -7,6 +7,7 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import { outrunnerModelKey } from "@/lib/db/credentials";
+import { keySource, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
 import { orgOutrunnerModelKey } from "@/lib/db/org-model-allowance";
 import { personalOwners } from "@/lib/db/orgs";
 import type { AgentSpec } from "@/lib/slack/agent";
@@ -297,6 +298,21 @@ export async function sessionSummary(
  * allowance is refused (ModelKeyRefusedError), as for a session.
  */
 export async function orgModelKey(orgId: string): Promise<string> {
+  // Without per-org keys there's no one to look up.
+  const source = keySource();
+  if (source === null) throw new OutrunnerModelsUnavailableError();
+  if (source === "shared") return sharedApiKey() as string;
+  const now = Date.now();
+  const kept = keptKeys.get(orgId);
+  if (kept && now - kept.at < KEPT_KEY_MS) return kept.key;
   const owner = (await personalOwners([orgId])).get(orgId);
-  return owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId);
+  const key = await (owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId));
+  keptKeys.set(orgId, { key, at: now });
+  return key;
 }
+
+/** How long a key checked against its allowance is used without asking
+ *  OpenRouter again: a watched channel asks for one at every message, and
+ *  OpenRouter's own cap still holds in between. */
+const KEPT_KEY_MS = 60_000;
+const keptKeys = new Map<string, { key: string; at: number }>();

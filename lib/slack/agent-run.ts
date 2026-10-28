@@ -37,7 +37,7 @@ import {
   triageActor,
 } from "@/lib/db/work-items";
 import { optionalEnv } from "@/lib/env";
-import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
+import { ModelKeyDisabledError, ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
 import { startServerSession } from "@/lib/session/server-session";
 import {
   type AgentSpec,
@@ -224,9 +224,14 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
       await reply("Outrunner's models aren't set up on this deployment, so I can't think this through yet.");
       return;
     }
+    if (error instanceof ModelKeyDisabledError) {
+      // Turned off by hand on OpenRouter: no plan would bring it back.
+      await reply("Outrunner's models are turned off for this org. Someone at Outrunner has to look into it.");
+      return;
+    }
     if (error instanceof ModelKeyRefusedError) {
       await reply(
-        "This org's allowance on Outrunner's models is used up for now: I share it with its cloud sessions. An admin can move to a bigger plan in Settings → Billing.",
+        "This org's allowance on Outrunner's models is used up for now: I share it with its cloud sessions. A bigger plan in Settings → Billing raises it.",
       );
       return;
     }
