@@ -308,9 +308,9 @@ export class InstallationSuspendedError extends Error {
 /**
  * A pull request, read as the installation. A kept token GitHub refuses
  * (401) is dropped and one minted afresh, once: only if that's refused too,
- * or none can be minted (404), is the installation gone. One GitHub won't
- * mint for (403) is suspended if GitHub says so; else it was only refused
- * for now (a rate limit), and that's thrown as it is.
+ * or none can be minted (404), is the installation gone. A 403, minting a
+ * token or using one, is a suspension if GitHub says so; else it was only
+ * refused for now (a rate limit), and that's thrown as it is.
  */
 export async function installationPullRequest(
   config: GitHubAppConfig,

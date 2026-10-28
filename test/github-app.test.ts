@@ -184,21 +184,22 @@ test("a pull request is read with a kept token; one GitHub refuses is minted aga
       error.installationId === 105 &&
       error.suspendedAt === "2026-10-28T12:00:00Z",
   );
-  // A token kept from before the suspension: refused when it's used.
-  const later2 = new Date(Date.now() + 3_600_000).toISOString();
-  const keptThenSuspended = (async (url: string | URL) => {
+  // A token kept from before the suspension: refused when it's used, with
+  // no new one minted.
+  const installed = { id: 107, account: { login: "o", type: "Organization" }, repository_selection: "all" };
+  const beforeSuspension = (async () =>
+    new Response(JSON.stringify({ token: "kept", expires_at: later }), { status: 201 })) as typeof fetch;
+  const afterSuspension = (async (url: string | URL) => {
     const path = new URL(String(url)).pathname;
-    if (path.endsWith("/access_tokens")) return new Response(JSON.stringify({ token: "t", expires_at: later2 }), { status: 201 });
+    if (path.endsWith("/access_tokens")) assert.fail("minted a new token");
     if (path === "/app/installations/107") {
-      return new Response(
-        JSON.stringify({ id: 107, account: { login: "o", type: "Organization" }, repository_selection: "all", suspended_at: "2026-10-28T12:00:00Z" }),
-        { status: 200 },
-      );
+      return new Response(JSON.stringify({ ...installed, suspended_at: "2026-10-28T12:00:00Z" }), { status: 200 });
     }
     return new Response("{}", { status: 403 });
   }) as typeof fetch;
   try {
-    await assert.rejects(installationPullRequest(config, 107, "o/r", 7, keptThenSuspended), InstallationSuspendedError);
+    assert.equal(await installationToken(config, 107, beforeSuspension), "kept");
+    await assert.rejects(installationPullRequest(config, 107, "o/r", 7, afterSuspension), InstallationSuspendedError);
   } finally {
     dropInstallationToken(107);
   }
