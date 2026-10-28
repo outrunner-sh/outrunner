@@ -282,6 +282,45 @@ export async function getPullRequest(
   return call(doFetch, `${API}/repos/${repoFullName}/pulls/${number}`, token);
 }
 
+/** GitHub has no such installation any more: uninstalled, its webhook
+ *  missed or not yet handled. */
+export class InstallationGoneError extends Error {
+  constructor() {
+    super("The GitHub App's installation is gone.");
+    this.name = "InstallationGoneError";
+  }
+}
+
+/**
+ * A pull request, read as the installation. A kept token GitHub refuses
+ * (401) is dropped and one minted afresh, once: only if that's refused too,
+ * or none can be minted (404), is the installation gone.
+ */
+export async function installationPullRequest(
+  config: GitHubAppConfig,
+  installationId: number,
+  repoFullName: string,
+  number: number,
+  doFetch: Fetch = fetch,
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; ; attempt++) {
+    let token: string;
+    try {
+      token = await installationToken(config, installationId, doFetch);
+    } catch (error) {
+      if (error instanceof GitHubAppError && error.status === 404) throw new InstallationGoneError();
+      throw error;
+    }
+    try {
+      return await getPullRequest(token, repoFullName, number, doFetch);
+    } catch (error) {
+      if (!(error instanceof GitHubAppError && error.status === 401)) throw error;
+      dropInstallationToken(installationId);
+      if (attempt > 0) throw new InstallationGoneError();
+    }
+  }
+}
+
 /** A repository an installation reaches. */
 export type InstallationRepository = {
   githubRepoId: number;
