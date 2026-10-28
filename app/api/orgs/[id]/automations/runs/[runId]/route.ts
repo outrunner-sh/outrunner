@@ -1,9 +1,15 @@
 import { after, NextResponse } from "next/server";
 
-import { rerunRun, startRun } from "@/lib/automations/runs";
+import { rerunRun, startRun, SUSPENDED } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import { recordRuns, reopenRun, rerunTarget, sessionOwner } from "@/lib/db/automation-runs";
-import { GitHubAppError, githubAppConfig, InstallationGoneError, installationPullRequest } from "@/lib/github/app";
+import {
+  GitHubAppError,
+  githubAppConfig,
+  InstallationGoneError,
+  installationPullRequest,
+  InstallationSuspendedError,
+} from "@/lib/github/app";
 import { isUuid } from "@/lib/ids";
 import { orgCaller } from "@/lib/orgs/routes";
 import { archiveServerSessions } from "@/lib/session/server-session";
@@ -42,6 +48,9 @@ export async function POST(request: Request, { params }: Params) {
     after(() => Promise.all([startRun(run, startDeps()), staleSession ? archiveAsOwner(staleSession, run.runId) : null]));
     return NextResponse.json({ runId: run.runId });
   } catch (error) {
+    if (error instanceof InstallationSuspendedError) {
+      return NextResponse.json({ error: SUSPENDED }, { status: 409 });
+    }
     if (error instanceof InstallationGoneError) {
       return NextResponse.json(
         { error: "The GitHub App's installation on this account is gone: reinstall it in Settings → Org → GitHub." },

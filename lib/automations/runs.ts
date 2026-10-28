@@ -194,6 +194,11 @@ export type Rerun =
     }
   | { ok: false; status: 404 | 409; error: string };
 
+/** Why a suspended installation's run can't start: said by GitHub (a 403
+ *  minting its token) or by its webhook (github_installations). */
+export const SUSPENDED =
+  "The GitHub App is suspended on this repository's account: unsuspend it on GitHub (the account's Settings → GitHub Apps) to run it.";
+
 const SKIPPED: Record<Exclude<ReturnType<typeof readPullRequestEvent>, PullRequestEvent>, string> = {
   action: "The pull request can't be read from GitHub right now.",
   unreadable: "The pull request can't be read from GitHub right now.",
@@ -218,6 +223,9 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
   if (!target.enabled) return { ok: false, status: 409, error: "The automation is off: turn it on to run it." };
   if (!target.covered) {
     return { ok: false, status: 409, error: "The automation doesn't run on this repository any more." };
+  }
+  if (target.installationSuspended) {
+    return { ok: false, status: 409, error: SUSPENDED };
   }
   if (target.installationId === null) {
     return { ok: false, status: 409, error: "The GitHub App isn't installed on this repository's account." };

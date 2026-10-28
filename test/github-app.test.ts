@@ -7,6 +7,7 @@ import {
   GitHubAppError,
   dropInstallationToken,
   InstallationGoneError,
+  InstallationSuspendedError,
   installationPullRequest,
   installationToken,
   installUrl,
@@ -161,4 +162,7 @@ test("a pull request is read with a kept token; one GitHub refuses is minted aga
   // No token to be had: gone.
   const noToken = (async () => new Response("{}", { status: 404 })) as typeof fetch;
   await assert.rejects(installationPullRequest(config, 104, "o/r", 7, noToken), InstallationGoneError);
+  // GitHub won't mint one: suspended, its webhook missed.
+  const refused = (async () => new Response("{}", { status: 403 })) as typeof fetch;
+  await assert.rejects(installationPullRequest(config, 105, "o/r", 7, refused), InstallationSuspendedError);
 });

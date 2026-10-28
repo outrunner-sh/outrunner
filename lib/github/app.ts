@@ -291,10 +291,20 @@ export class InstallationGoneError extends Error {
   }
 }
 
+/** GitHub refuses the installation a token: it's suspended (its webhook
+ *  missed or not yet handled). */
+export class InstallationSuspendedError extends Error {
+  constructor() {
+    super("The GitHub App's installation is suspended.");
+    this.name = "InstallationSuspendedError";
+  }
+}
+
 /**
  * A pull request, read as the installation. A kept token GitHub refuses
  * (401) is dropped and one minted afresh, once: only if that's refused too,
- * or none can be minted (404), is the installation gone.
+ * or none can be minted (404), is the installation gone. One GitHub won't
+ * mint for (403) is suspended.
  */
 export async function installationPullRequest(
   config: GitHubAppConfig,
@@ -309,6 +319,7 @@ export async function installationPullRequest(
       token = await installationToken(config, installationId, doFetch);
     } catch (error) {
       if (error instanceof GitHubAppError && error.status === 404) throw new InstallationGoneError();
+      if (error instanceof GitHubAppError && error.status === 403) throw new InstallationSuspendedError();
       throw error;
     }
     try {

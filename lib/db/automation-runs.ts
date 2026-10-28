@@ -295,6 +295,9 @@ export type RerunTarget = {
   /** The org's installation (claimed, not suspended) on the repository's
    *  account; null when it has none. */
   installationId: number | null;
+  /** None live on the account, but one suspended: it can't post until it's
+   *  unsuspended. */
+  installationSuspended: boolean;
   /** Whether the automation still covers the repository (automation_repos). */
   covered: boolean;
   /** The session the run made, if any: archived before it starts over. */
@@ -336,12 +339,13 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   if (coveringError) throw coveringError;
   const { data: installations, error: installationsError } = await supabase
     .from("github_installations")
-    .select("installation_id, account_login")
-    .eq("org_id", orgId)
-    .is("suspended_at", null);
+    .select("installation_id, account_login, suspended_at")
+    .eq("org_id", orgId);
   if (installationsError) throw installationsError;
   const owner = project.full_name.split("/")[0].toLowerCase();
-  const installation = (installations ?? []).find((i) => i.account_login.toLowerCase() === owner);
+  // A live one if there is; else a suspended one, to say so.
+  const onAccount = (installations ?? []).filter((i) => i.account_login.toLowerCase() === owner);
+  const installation = onAccount.find((i) => i.suspended_at === null);
   const stillMember = automation.runs_as ? await currentRunners(orgId, [automation.runs_as]) : new Set<string>();
   return {
     runId: run.id,
@@ -360,6 +364,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
     },
     repoFullName: project.full_name,
     installationId: installation?.installation_id ?? null,
+    installationSuspended: !installation && onAccount.length > 0,
     covered: covering !== null,
     workspaceId: run.workspace_id,
   };
