@@ -60,7 +60,14 @@ export function missionToolDeps(): MissionToolDeps {
     queue: queueMessage,
     queued: queuedCounts,
     archive: (runner) => archiveAsOwner(runner.ownerId, runner.id, runner.status),
-    readNotes,
+    // Read, and laid on the Mission's box too: a box restored from archive
+    // has a fresh worktree, and its file comes back with the first read.
+    readNotes: async (missionId) => {
+      const notes = await readNotes(missionId);
+      const mission = notes.body ? await sessionById(missionId) : null;
+      if (mission) await writeBoxFile(mission, NOTES_FILE, notes.body).catch(() => false);
+      return notes;
+    },
     // Saved, then laid on the Mission's box too, so the file it reads is what
     // it saved; a box that's down gets them at its next setup.
     writeNotes: async (missionId, body) => {
