@@ -552,8 +552,14 @@ export async function openChecksOfPullRequest(
   return (data ?? []).map((r) => r.id);
 }
 
-/** For the sweep: the runs whose check is open from before `before` with no
- *  review in, and those whose review GitHub hasn't taken since `retryBefore`. */
+/** How long the sweep keeps trying a check GitHub won't take (the App
+ *  uninstalled, the repository gone, Checks taken away): a day. */
+const CHECK_RETRY_DAY_MS = 24 * 3_600_000;
+
+/** For the sweep, newest first: the runs whose check is open from before
+ *  `before` with no review in, and those whose review GitHub hasn't taken
+ *  since `retryBefore`; none older than a day, so ones GitHub never takes
+ *  stop being tried, and never crowd out those it would. */
 export async function checksToSweep(before: Date, retryBefore: Date): Promise<{ stale: string[]; unsent: string[] }> {
   const supabase = createSupabaseAdminClient();
   const [stale, unsent] = await Promise.all([
@@ -564,6 +570,8 @@ export async function checksToSweep(before: Date, retryBefore: Date): Promise<{ 
       .is("check_closed_at", null)
       .is("check_reviewed_at", null)
       .lt("created_at", before.toISOString())
+      .gt("created_at", new Date(before.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .order("created_at", { ascending: false })
       .limit(100),
     supabase
       .from("automation_runs")
@@ -571,6 +579,8 @@ export async function checksToSweep(before: Date, retryBefore: Date): Promise<{ 
       .not("check_run_id", "is", null)
       .is("check_closed_at", null)
       .lt("check_reviewed_at", retryBefore.toISOString())
+      .gt("check_reviewed_at", new Date(retryBefore.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .order("check_reviewed_at", { ascending: false })
       .limit(100),
   ]);
   if (stale.error) throw stale.error;
