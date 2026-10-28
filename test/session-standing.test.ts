@@ -30,6 +30,7 @@ function standing(patch: Partial<Omit<StandingInput, "workspace">> & { workspace
     activity: idle,
     pullRequest: null,
     mark: null,
+    owner: true,
     now: NOW,
     ...patch,
     workspace: { status: "ready", createdAt: ago(60 * MIN), updatedAt: ago(5 * MIN), lastActiveAt: ago(5 * MIN), ...patch.workspace },
@@ -95,6 +96,28 @@ test("a reply is unread until seen, and replies from before the watch never are"
   assert.equal(standing({ activity: replied }).unread, true);
   assert.equal(standing({ activity: replied, mark: { pinnedAt: null, movedTo: null, movedAt: null, seenAt: ago(MIN) } }).unread, false);
   assert.equal(standing({ activity: { ...replied, createdAt: ago(MIN) } }).unread, false);
+});
+
+test("a finished turn its owner hasn't read needs them, until they open it", () => {
+  const replied = { ...idle, repliedAt: ago(2 * MIN), createdAt: ago(60 * MIN) };
+  const s = standing({ activity: replied });
+  assert.deepEqual([s.standing, s.reason], ["needs_you", "replied"]);
+  // A paused session's reply is still unread.
+  assert.equal(standing({ activity: replied, workspace: { status: "suspended" } }).reason, "replied");
+  // Seen, it's done.
+  const seen = { pinnedAt: null, movedTo: null, movedAt: null, seenAt: ago(MIN) };
+  assert.equal(standing({ activity: replied, mark: seen }).standing, "done");
+  // With a pull request open it stays in review; merged, it needs you.
+  assert.equal(standing({ activity: replied, pullRequest: { state: "open", stateAt: null } }).standing, "in_review");
+  assert.equal(standing({ activity: replied, pullRequest: { state: "merged", stateAt: ago(MIN) } }).reason, "replied");
+  // Another member's, or one put away, never needs you.
+  assert.equal(standing({ activity: replied, owner: false }).standing, "done");
+  assert.equal(standing({ activity: replied, workspace: { status: "archived" } }).standing, "done");
+  // A move by hand since the reply holds.
+  const moved = { pinnedAt: null, movedTo: "done" as const, movedAt: ago(MIN), seenAt: null };
+  assert.deepEqual([standing({ activity: replied, mark: moved }).standing, standing({ activity: replied, mark: moved }).moved], ["done", true]);
+  // A reply from before the server read the session is never unread.
+  assert.equal(standing({ activity: { ...replied, createdAt: ago(MIN) } }).standing, "done");
 });
 
 test("the next session that needs you comes after the one on screen, pinned first, wrapping round", () => {

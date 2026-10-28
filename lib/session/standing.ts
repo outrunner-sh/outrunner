@@ -3,7 +3,8 @@
  * next:
  *
  *   needs_you  the agent asked a question, waits for a plan's approval or for
- *              secrets, the session errored, or it is stuck
+ *              secrets, finished a turn the owner hasn't read (with no pull
+ *              request open), the session errored, or it is stuck
  *   working    the agent is mid-turn (or the session is setting up)
  *   in_review  its pull request is open
  *   done       its pull request merged, or it is idle with nothing pending
@@ -38,12 +39,13 @@ export const STANDING_LABEL: Record<Standing, string> = {
 };
 
 /** Why a session needs you. */
-export type NeedsYouReason = Waiting | "error" | "stuck";
+export type NeedsYouReason = Waiting | "replied" | "error" | "stuck";
 
 export const REASON_LABEL: Record<NeedsYouReason, string> = {
   question: "Asked you a question",
   plan: "Waiting for its plan's approval",
   secrets: "Waiting for secrets",
+  replied: "Finished, waiting for you",
   error: "Errored",
   stuck: "Stuck: nothing new for a while",
 };
@@ -98,6 +100,9 @@ export type StandingInput = {
   activity: SessionActivity | null;
   pullRequest: Pick<WorkspacePullRequest, "state" | "stateAt"> | null;
   mark: SessionMark | null;
+  /** The reader owns the session: its replies are theirs to read, and one
+   *  they haven't needs them. Another member's never does. */
+  owner: boolean;
   now: number;
 };
 
@@ -106,8 +111,15 @@ export type StandingInput = {
  *  stream last said. */
 const LIVE: WorkspaceStatus[] = ["ready", "idle"];
 
-export function sessionStanding({ workspace, activity, pullRequest, mark, now }: StandingInput): SessionStanding {
-  const auto = automatic({ workspace, activity, pullRequest, now });
+/** The statuses of a session put away: a reply in it no longer needs you. */
+const GONE: WorkspaceStatus[] = ["archiving", "archived", "destroying", "destroyed"];
+
+export function sessionStanding({ workspace, activity, pullRequest, mark, owner, now }: StandingInput): SessionStanding {
+  // Unread: a reply since the user last saw it, or since the server started
+  // reading the session, so sessions from before don't all light up at once.
+  const seen = latest(mark?.seenAt, activity?.createdAt);
+  const unread = Boolean(activity?.repliedAt && (!seen || Date.parse(activity.repliedAt) > Date.parse(seen)));
+  const auto = automatic({ workspace, activity, pullRequest, now, unseenReply: owner && unread });
   const at = latest(workspace.lastActiveAt, activity?.eventAt, activity?.repliedAt, workspace.createdAt) ?? workspace.createdAt;
   // A move holds, unless the session came to need you since it was made.
   const movedAt = mark?.movedAt ? Date.parse(mark.movedAt) : NaN;
@@ -115,10 +127,6 @@ export function sessionStanding({ workspace, activity, pullRequest, mark, now }:
     auto.standing === "needs_you" && !(Date.parse(auto.since ?? "") <= movedAt);
   const moved = Boolean(mark?.movedTo) && !needsYouSinceMove;
   const standing = moved ? (mark!.movedTo as Standing) : auto.standing;
-  // Unread: a reply since the user last saw it, or since the server started
-  // reading the session, so sessions from before don't all light up at once.
-  const seen = latest(mark?.seenAt, activity?.createdAt);
-  const unread = Boolean(activity?.repliedAt && (!seen || Date.parse(activity.repliedAt) > Date.parse(seen)));
   return {
     standing,
     reason: standing === "needs_you" && !moved ? auto.reason : null,
@@ -135,7 +143,12 @@ function automatic({
   activity,
   pullRequest,
   now,
-}: Omit<StandingInput, "mark">): { standing: Standing; reason: NeedsYouReason | null; since: string | null } {
+  unseenReply,
+}: Omit<StandingInput, "mark" | "owner"> & { unseenReply: boolean }): {
+  standing: Standing;
+  reason: NeedsYouReason | null;
+  since: string | null;
+} {
   const needsYou = (reason: NeedsYouReason, since: string | null) => ({ standing: "needs_you" as const, reason, since });
   if (workspace.status === "failed") return needsYou("error", workspace.updatedAt);
   if (isSettingUp(workspace.status)) {
@@ -155,8 +168,12 @@ function automatic({
   if (workspace.status === "resuming" || workspace.status === "restoring") {
     return { standing: "working", reason: null, since: null };
   }
+  const open = Boolean(pullRequest && (pullRequest.state ?? "open") === "open");
+  // A turn finished that its owner hasn't read: theirs to look at, until they
+  // open it. One with a pull request open stays in review.
+  if (unseenReply && !open && !GONE.includes(workspace.status)) return needsYou("replied", activity!.repliedAt);
   if (pullRequest?.state === "merged") return { standing: "done", reason: null, since: null };
-  if (pullRequest && (pullRequest.state ?? "open") === "open") return { standing: "in_review", reason: null, since: null };
+  if (open) return { standing: "in_review", reason: null, since: null };
   const quietSince = latest(workspace.lastActiveAt, activity?.eventAt, activity?.repliedAt, workspace.createdAt);
   if (!pullRequest && quietSince && now - Date.parse(quietSince) >= BACKLOG_AFTER_MS) {
     return { standing: "backlog", reason: null, since: null };

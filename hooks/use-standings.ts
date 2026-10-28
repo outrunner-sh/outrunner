@@ -45,6 +45,8 @@ export async function markSession(
   id: string,
   change: { pinned?: boolean; movedTo?: Standing | null; seen?: true },
 ): Promise<void> {
+  // Seen, a finished turn no longer needs you: the server says where it goes.
+  const replied = change.seen && STANDINGS.get()[id]?.reason === "replied";
   if (change.pinned !== undefined) patch(id, { pinned: change.pinned });
   if (change.movedTo) patch(id, { standing: change.movedTo, moved: true, reason: null });
   if (change.seen) patch(id, { unread: false });
@@ -59,8 +61,9 @@ export async function markSession(
     refreshNow?.();
     throw new Error("Could not reach Outrunner. Check your connection and try again.");
   }
-  // A move back to automatic is placed by the server: read it now.
-  if (!response.ok || change.movedTo === null) refreshNow?.();
+  // A move back to automatic, or a reply seen, is placed by the server: read
+  // it now.
+  if (!response.ok || change.movedTo === null || replied) refreshNow?.();
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? "Couldn't save that. Please try again.");
