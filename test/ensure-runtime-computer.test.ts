@@ -296,3 +296,118 @@ test("the claim and the wait are for the box of the scope asked for", async () =
   assert.deepEqual(claimed, [shared]);
   assert.deepEqual(read, [shared]);
 });
+
+test("a box that ended is named on its row while it's brought back", async () => {
+  const harness = concurrencyHarness();
+  await harness.deps.claim({ scope: input.scope, agentSecret: "s", maxLiveComputers: null });
+  await harness.deps.update("computer-1", { status: "stopped", daytonaSandboxId: "sb-ended" });
+  let named: string | null | undefined;
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async () => {
+      // The claim cleared it; the box is named again before it's started.
+      named = harness.row()?.daytonaSandboxId;
+      return {
+        sandboxId: "sb-ended",
+        agentBaseUrl: "https://agent.example.test",
+        timings: { stages: [{ stage: "sandbox_restore", ms: 1 }], totalMs: 1 },
+      };
+    },
+  };
+
+  await ensureRuntimeComputer(provider, { ...input, previousSandboxId: "sb-ended" }, harness.deps);
+  assert.equal(named, "sb-ended");
+  assert.equal(harness.row()?.status, "ready");
+});
+
+test("a box provisioned but never recorded as ready is deleted, not left running", async () => {
+  const harness = concurrencyHarness();
+  const destroyed: string[] = [];
+  const paused: string[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async () => ({
+      sandboxId: "sb-new",
+      agentBaseUrl: "https://agent.example.test",
+      timings: { stages: [{ stage: "sandbox_create", ms: 1 }], totalMs: 1 },
+    }),
+    destroyComputer: async (id) => void destroyed.push(id),
+    pauseComputer: async (id) => void paused.push(id),
+  };
+  let writes = 0;
+  const deps: EnsureRuntimeComputerDependencies = {
+    ...harness.deps,
+    update: async (id, patch) => {
+      // The write recording it ready fails; the failure's own goes through.
+      if (patch.status === "ready" && ++writes === 1) throw new Error("database down");
+      return harness.deps.update(id, patch);
+    },
+  };
+
+  await assert.rejects(() => ensureRuntimeComputer(provider, input, deps), /database down/);
+  assert.deepEqual(destroyed, ["sb-new"]);
+  assert.deepEqual(paused, []);
+  assert.equal(harness.row()?.status, "error");
+});
+
+test("an ended box brought back in place but not recorded is paused again, never deleted", async () => {
+  const harness = concurrencyHarness();
+  const destroyed: string[] = [];
+  const paused: string[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async () => ({
+      sandboxId: "sb-ended",
+      agentBaseUrl: "https://agent.example.test",
+      timings: { stages: [{ stage: "sandbox_restore", ms: 1 }], totalMs: 1 },
+    }),
+    destroyComputer: async (id) => void destroyed.push(id),
+    pauseComputer: async () => {
+      paused.push("sb-ended");
+      throw new Error("Daytona unavailable");
+    },
+  };
+  const deps: EnsureRuntimeComputerDependencies = {
+    ...harness.deps,
+    // The write recording it ready fails; the rest go through.
+    update: async (id, patch) => {
+      if (patch.status === "ready") throw new Error("database down");
+      return harness.deps.update(id, patch);
+    },
+  };
+
+  await assert.rejects(
+    () => ensureRuntimeComputer(provider, { ...input, previousSandboxId: "sb-ended" }, deps),
+    /database down/,
+  );
+  assert.deepEqual(paused, ["sb-ended"]);
+  assert.deepEqual(destroyed, []);
+  // Stopped on the box that ended, for the next try to bring back.
+  assert.equal(harness.row()?.status, "stopped");
+  assert.equal(harness.row()?.daytonaSandboxId, "sb-ended");
+});
+
+test("a box recorded as ready is never let go of, whatever fails after", async () => {
+  const harness = concurrencyHarness();
+  const destroyed: string[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async () => ({
+      sandboxId: "sb-new",
+      agentBaseUrl: "https://agent.example.test",
+      timings: { stages: [{ stage: "sandbox_create", ms: 1 }], totalMs: 1 },
+    }),
+    destroyComputer: async (id) => void destroyed.push(id),
+  };
+  const deps: EnsureRuntimeComputerDependencies = {
+    ...harness.deps,
+    // The read back blips after the ready write landed.
+    get: async () => Promise.reject(new Error("network blip")),
+  };
+
+  await assert.rejects(() => ensureRuntimeComputer(provider, input, deps), /network blip/);
+  assert.deepEqual(destroyed, []);
+  // And the row still names it, ready, for the reconciler to meter and stop.
+  assert.equal(harness.row()?.status, "ready");
+  assert.equal(harness.row()?.daytonaSandboxId, "sb-new");
+});

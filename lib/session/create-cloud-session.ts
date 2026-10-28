@@ -22,10 +22,12 @@ import {
   ownSandboxKeys,
   type SandboxSettings,
 } from "@/lib/db/credentials";
+import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import {
   createWorkspaceRow,
   getProject,
   getRuntimeComputer,
+  getWorkspace,
   liveWorkspaceOnBranch,
   markRuntimeComputerStoppedIfReady,
   recordWorkspaceModel,
@@ -522,6 +524,19 @@ async function provisionWorkspace({
     phase = next;
     await settle({ status: "provisioning", phase: next });
   };
+  // A session deleted while it set up: its delete found no box to take (a
+  // box's id is recorded only once it's up), so the one this setup made goes
+  // now, as the delete would have taken it, rather than run on for good. Only
+  // once it's deleted: one the sweep failed may be tried again on this box.
+  const releaseIfDeleted = async () => {
+    if (!isComputerProvider(provider)) return;
+    const now = await getWorkspace(workspace.id).catch((error: unknown) => {
+      console.error(`Workspace ${workspace.id}: couldn't tell whether it was deleted while it set up`, error);
+      return undefined;
+    });
+    if (now === undefined || (now && now.status !== "destroying" && now.status !== "destroyed")) return;
+    await releaseWorkspaceBox(provider, workspace, true);
+  };
   // Cut from any error the session page shows.
   const secrets: (string | undefined)[] = [githubToken, auth.credential?.token, ...Object.values(sessionEnv)];
 
@@ -689,6 +704,7 @@ async function provisionWorkspace({
         await agent.destroyWorkspace(identity).catch((error: unknown) =>
           console.warn(`Workspace ${workspace.id} teardown after delete failed`, error),
         );
+        await releaseIfDeleted();
         await tell({ status: "failed", errorMessage: "The session was deleted while it was set up." });
         return;
       }
@@ -758,9 +774,11 @@ async function provisionWorkspace({
         : refused
           ? refused.message
           : provisionFailureMessage(error, phase, secrets);
-    await settle({ status: "failed", errorMessage }).catch((updateError: unknown) =>
-      console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
-    );
+    const settled = await settle({ status: "failed", errorMessage }).catch((updateError: unknown) => {
+      console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
+      return true;
+    });
+    if (!settled) await releaseIfDeleted();
     await tell({ status: "failed", errorMessage });
   }
 }
