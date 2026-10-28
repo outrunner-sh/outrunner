@@ -196,7 +196,7 @@ export function slackSignInMatches(
  * escapes Slack makes undone. Code spans and blocks are left as they are.
  */
 export function slackToMarkdown(text: string): string {
-  return text
+  const markdown = text
     .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
     .map((part, i) => {
       if (i % 2 === 1) return unescapeSlack(part);
@@ -210,12 +210,16 @@ export function slackToMarkdown(text: string): string {
           .replace(/<!(here|channel|everyone)(?:\|[^>]*)?>/g, "@$1")
           .replace(/<!subteam\^[A-Z0-9]+\|([^>]+)>/g, "$1")
           .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, "$1**$2**")
-          .replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?:;]|$)/g, "$1~~$2~~")
-          // Slack breaks a line where Markdown would join it to the next: a
-          // hard break ("  \n") keeps it a line of its own.
-          .replace(/([^\n])\n(?=[^\n])/g, "$1  \n"),
+          .replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?:;]|$)/g, "$1~~$2~~"),
       );
     })
+    .join("");
+  // Slack breaks a line where Markdown would join it to the next: a hard
+  // break ("  \n") keeps it a line of its own. Outside code blocks only, and
+  // across the edges of inline code, which can't hold a line break itself.
+  return markdown
+    .split(/(```[\s\S]*?```)/g)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(/([^\n])\n(?=[^\n])/g, "$1  \n")))
     .join("");
 }
 

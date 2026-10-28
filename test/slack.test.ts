@@ -57,6 +57,7 @@ test("Slack markup becomes Markdown, code left alone", () => {
   );
   assert.equal(slackToMarkdown("<!here> <https://x.dev>"), "@here https://x.dev");
   assert.equal(slackToMarkdown("one\ntwo\n\nthree\n```a\nb```"), "one  \ntwo\n\nthree\n```a\nb```");
+  assert.equal(slackToMarkdown("run:\n`make test`\nthen fix"), "run:  \n`make test`  \nthen fix");
 });
 
 test("a permalink is built from the payload, with its thread", () => {

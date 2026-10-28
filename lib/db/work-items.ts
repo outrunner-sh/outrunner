@@ -417,7 +417,7 @@ export async function linkWorkItemToSession(
   ) {
     return;
   }
-  const { error } = await db()
+  const update = db()
     .from("work_items")
     .update(
       triager
@@ -432,5 +432,8 @@ export async function linkWorkItemToSession(
     )
     .eq("org_id", actor.orgId)
     .eq("id", itemId);
+  // Not taken since it was read: two readers' sessions at once can't both
+  // take it.
+  const { error } = await (triager ? update : update.is("workspace_id", null));
   if (error) throw error;
 }
