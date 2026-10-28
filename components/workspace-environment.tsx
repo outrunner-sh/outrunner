@@ -286,6 +286,10 @@ const PR_POLL_MS = 15_000;
 const PR_WAIT_MS = 10 * 60_000;
 /** How often an open pull request's status (checks, mergeability) is re-read. */
 const PR_STATUS_POLL_MS = 30_000;
+/** How often a PR closed unmerged is looked at again, for one that takes its
+ *  place: each look is two calls to GitHub (its status, then the branch's
+ *  newest PR), for a PR most often abandoned. */
+const PR_CLOSED_POLL_MS = 120_000;
 /** How long Merge waits for its confirming second click. */
 const MERGE_CONFIRM_MS = 4_000;
 
@@ -420,15 +424,17 @@ function PullRequestRow({
   const openedNumber = opened?.number ?? null;
   // Looked for every PR_POLL_MS while the agent is at it, re-read every
   // PR_STATUS_POLL_MS while open, and left alone once merged. One closed
-  // unmerged is still read: the agent may open another from the branch, which
-  // takes its place.
+  // unmerged is still read, less often (PR_CLOSED_POLL_MS): the agent may open
+  // another from the branch, which takes its place.
   const settled = status !== null && status.state !== "open";
   // A first look that didn't get an answer is tried again, so Create PR
   // isn't offered blind.
   const pollMs = hasPullRequest
     ? status?.state === "merged"
       ? null
-      : PR_STATUS_POLL_MS
+      : status?.state === "closed"
+        ? PR_CLOSED_POLL_MS
+        : PR_STATUS_POLL_MS
     : phase === "waiting" || (!looked && !error?.reconnect)
       ? PR_POLL_MS
       : null;
