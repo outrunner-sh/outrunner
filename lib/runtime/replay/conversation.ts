@@ -111,7 +111,8 @@ function decodeQueuedPrompt(rec: Record<string, unknown>): AgentEvent | null {
   const attachment = rec.attachment;
   if (!isObject(attachment) || attachment.type !== "queued_command") return null;
   const mode = attachment.commandMode;
-  if (mode !== undefined && mode !== "" && mode !== "prompt") return null;
+  // As Go reads it: a mode absent, null or empty is a prompt's.
+  if (mode !== undefined && mode !== null && mode !== "" && mode !== "prompt") return null;
   const content = contentOf(attachment.prompt);
   if (!content) return null;
   return {

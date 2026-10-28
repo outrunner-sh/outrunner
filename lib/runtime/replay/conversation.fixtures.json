@@ -18,7 +18,8 @@
     "{\"type\":\"assistant\",\"uuid\":\"codex-01a1596f-41f4-7f30-88f4-b569d1b5bf76-21561\",\"parentUuid\":\"codex-01a1596f-41f4-7f30-88f4-b569d1b5bf76-21257\",\"timestamp\":\"2026-10-20T13:11:03.304Z\",\"message\":{\"role\":\"assistant\",\"model\":\"gpt-6-luna\",\"content\":[{\"type\":\"thinking\"}]}}",
     "{\"parentUuid\":\"q0\",\"isSidechain\":false,\"attachment\":{\"type\":\"queued_command\",\"prompt\":\"also update the README\",\"source_uuid\":\"s1\",\"commandMode\":\"prompt\",\"origin\":{\"kind\":\"human\"},\"timestamp\":\"t8\",\"humanTurn\":true},\"type\":\"attachment\",\"uuid\":\"q1\",\"timestamp\":\"t8\"}",
     "{\"parentUuid\":\"q1\",\"attachment\":{\"type\":\"queued_command\",\"prompt\":\"<task-notification>\\n<task-id>b1</task-id>\\n</task-notification>\",\"commandMode\":\"task-notification\",\"origin\":{\"kind\":\"task-notification\"}},\"type\":\"attachment\",\"uuid\":\"q2\",\"timestamp\":\"t9\"}",
-    "{\"parentUuid\":\"q2\",\"attachment\":{\"type\":\"date\",\"date\":\"2026-10-28\"},\"type\":\"attachment\",\"uuid\":\"q3\",\"timestamp\":\"t10\"}"
+    "{\"parentUuid\":\"q2\",\"attachment\":{\"type\":\"date\",\"date\":\"2026-10-28\"},\"type\":\"attachment\",\"uuid\":\"q3\",\"timestamp\":\"t10\"}",
+    "{\"parentUuid\":\"q3\",\"attachment\":{\"type\":\"queued_command\",\"prompt\":\"and the CHANGELOG\",\"commandMode\":null},\"type\":\"attachment\",\"uuid\":\"q4\",\"timestamp\":\"t11\"}"
   ],
   "events": [
     {
@@ -196,6 +197,19 @@
         {
           "type": "text",
           "text": "also update the README"
+        }
+      ]
+    },
+    {
+      "t": "message",
+      "uuid": "q4",
+      "parentUuid": "q3",
+      "role": "user",
+      "timestamp": "t11",
+      "content": [
+        {
+          "type": "text",
+          "text": "and the CHANGELOG"
         }
       ]
     }

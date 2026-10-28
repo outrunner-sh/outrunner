@@ -493,11 +493,24 @@ func TestAStoppedCodexTurnIsRecordedAsStopped(t *testing.T) {
 	if conversation.IsInterruption(lastMessage(t, got)) {
 		t.Fatal("stopped before the stop")
 	}
+	// Codex finishes writing the stopped turn just after its screen says it
+	// stopped: the stopped call's output lands after the stop is asked for.
+	late := `{"timestamp":"2026-10-20T13:11:04.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_late","output":"aborted"}}` + "\n"
+	go func() {
+		time.Sleep(codexTailInterval / 2)
+		file, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+		_, _ = file.WriteString(late)
+		file.Close()
+	}()
 	tail.interrupted(time.Now())
 	got, _ = os.ReadFile(log)
+	if !bytes.Contains(got, []byte("call_late")) {
+		t.Fatalf("the stopped turn's late output isn't in the log:\n%s", got)
+	}
 	if last := lastMessage(t, got); !conversation.IsInterruption(last) {
 		t.Fatalf("after a stop, the log ends on %+v, not the stop", last)
 	}
+	data = append(append([]byte(nil), data[:cut]...), append([]byte(late), data[cut:]...)...)
 
 	// The next turn follows the stop, and a tail started again (the agent
 	// restarted) writes nothing twice.

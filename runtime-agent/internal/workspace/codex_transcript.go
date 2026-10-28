@@ -38,6 +38,10 @@ func conversationPath(root, workspaceID string) string {
 // held for their usage wait at most two of these.
 const codexTailInterval = 250 * time.Millisecond
 
+// codexStopSettle bounds how long a stop's record waits for Codex to finish
+// writing the turn it stopped (codexTail.settle).
+const codexStopSettle = time.Second
+
 // rolloutFindSlack allows for a rollout's time and the launch time being read
 // off clocks of different precision.
 const rolloutFindSlack = 2 * time.Second
@@ -442,6 +446,7 @@ func (t *codexTail) readLocked() {
 // record's (codex.RecordOffset), so a restarted tail neither skips to it nor
 // writes it again.
 func (t *codexTail) interrupted(now time.Time) {
+	t.settle()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.readLocked()
@@ -464,6 +469,28 @@ func (t *codexTail) interrupted(now time.Time) {
 	}
 	t.pending = append(t.pending, append(line, '\n')...)
 	t.write(nil)
+}
+
+// settle waits, up to codexStopSettle, for the rollout to stop growing for a
+// tail interval: Codex may still write some of the stopped turn once its
+// screen says it stopped (a stopped tool call's output, say), which, read
+// after the stop's record, would leave the log ending on the turn again.
+func (t *codexTail) settle() {
+	size := func() int64 {
+		if info, err := os.Stat(t.s.codexRollout(t.workspaceID)); err == nil {
+			return info.Size()
+		}
+		return -1
+	}
+	deadline := time.Now().Add(codexStopSettle)
+	for last := size(); time.Now().Before(deadline); {
+		time.Sleep(codexTailInterval)
+		now := size()
+		if now == last {
+			return
+		}
+		last = now
+	}
 }
 
 // codexInterrupted records a stopped turn in a running Codex session's log
