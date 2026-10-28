@@ -12,8 +12,8 @@ export type AttachFailure = {
  * What a session attach answers when readying or starting its agent failed,
  * or null to attach as usual. A sign-in to fix and a box that's gone say so,
  * as before. Any other failure only matters if the session isn't running
- * after it (`running` asks its box): a hiccup putting a running session back
- * on its key leaves it working. One that isn't was attached all the same, as
+ * after it (`running` asks its box, and says true when it can't tell): a
+ * hiccup putting a running session back on its key leaves it working. One that isn't was attached all the same, as
  * if fine: its stream said it was there and every send then failed with a
  * generic "Couldn't deliver", the cause (Claude exiting at launch, a model
  * key missing) only in the server's log. Now the page says it, with its code.
@@ -31,7 +31,7 @@ export async function relaunchFailure(error: unknown, running: () => Promise<boo
     };
   }
   if (await running()) return null;
-  const reason = error instanceof AgentRequestError ? error.error?.message : undefined;
+  const reason = error instanceof AgentRequestError ? shownReason(error.error?.message) : null;
   return {
     status: 502,
     body: {
@@ -39,4 +39,19 @@ export async function relaunchFailure(error: unknown, running: () => Promise<boo
       code: SESSION_NOT_STARTED,
     },
   };
+}
+
+/** The longest reason of the agent's the page shows. */
+const MAX_REASON = 200;
+
+/**
+ * The agent's reason as the page shows it: its first line, cut to MAX_REASON.
+ * The agent answers a failed start with the error as it is ("Claude Code
+ * exited as soon as it started …"), which can wrap a command's own output;
+ * all of it is in the server's log.
+ */
+export function shownReason(message: string | undefined): string | null {
+  const line = message?.split("\n")[0].trim();
+  if (!line) return null;
+  return line.length > MAX_REASON ? `${line.slice(0, MAX_REASON - 1).trimEnd()}…` : line;
 }

@@ -42,6 +42,13 @@ func TestClaudeTypedLinesReadsThePromptBox(t *testing.T) {
 		"three lines typed":   {box("\x1b[39m❯ one", "  two", "  three"), 3},
 		"a coloured prompt":   {box("\x1b[38;5;2m❯ \x1b[2mhint\x1b[22m typed"), 1},
 		"no prompt box shown": {"Choose the text style\n❯ 1. Dark mode", 0},
+		// A reply's divider, then a quoted line, above the real box.
+		"a quote under a divider above the box, the box empty": {
+			rule + "\n> as the docs say, quoted\n" + box("\x1b[39m❯\u00a0\x1b[2mTry \"fix lint\"\x1b[0m"), 0,
+		},
+		"a quote under a divider above the box, the box holding text": {
+			rule + "\n\x1b[2m> dim quote\x1b[0m\n" + box("\x1b[39m❯\u00a0left", "  behind"), 2,
+		},
 	}
 	for name, c := range cases {
 		if got := claudeTypedLines(c.pane); got != c.want {

@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
-import { relaunchFailure } from "@/lib/session/relaunch-failure";
+import { relaunchFailure, shownReason } from "@/lib/session/relaunch-failure";
 import { BOX_GONE, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
 
 const stopped = async () => false;
@@ -39,4 +39,18 @@ test("a sign-in to fix and a box that's gone answer as they did, without asking 
   assert.equal(gone?.status, 410);
   assert.equal(gone?.body.code, BOX_GONE);
   assert.equal(asked, 0);
+});
+
+test("the agent's reason is shown as its first line, cut short", async () => {
+  const wrapped = new AgentRequestError(500, {
+    code: "INTERNAL",
+    message: `tmux new-session ws-1: exit status 1: ${"x".repeat(400)}\nstderr: more of it`,
+  });
+  const failed = await relaunchFailure(wrapped, async () => false);
+  assert.ok(failed && failed.body.error.length <= "Its agent didn't start: ".length + 200);
+  assert.doesNotMatch(failed?.body.error ?? "", /stderr/);
+  assert.match(failed?.body.error ?? "", /…$/);
+  assert.equal(shownReason("  \n"), null);
+  assert.equal(shownReason(undefined), null);
+  assert.equal(shownReason("Claude Code exited as soon as it started"), "Claude Code exited as soon as it started");
 });

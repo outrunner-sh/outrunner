@@ -174,8 +174,14 @@ export async function POST(request: Request, context: RouteContext) {
       await agent.startWorkspace(identity);
     } catch (error) {
       const failed = await relaunchFailure(error, async () => {
-        summary = await agent.workspaceSummary(identity).catch(() => undefined);
-        return summary?.state === "running";
+        try {
+          summary = await agent.workspaceSummary(identity);
+        } catch (summaryError) {
+          // Not known to have failed: attached, as before, for the stream to tell.
+          console.warn(`Session attach: couldn't ask whether ${workspace.id} is running`, summaryError);
+          return true;
+        }
+        return summary.state === "running";
       });
       if (failed) {
         if (failed.status === 502) console.error(`Session attach: ${workspace.id}'s agent didn't start`, error);

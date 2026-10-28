@@ -76,38 +76,43 @@ func isComposer(pane string) bool {
 
 // claudeTypedLines reads Claude's prompt box off a styled capture: the rows
 // from its prompt (❯, or > in 2.0) down to the rule under it, and how many
-// they are when any holds text. Claude draws its placeholders dim ("Try …",
-// "Press up to edit queued messages"), so dim text isn't counted: only what
-// was typed and left there, such as a queued prompt a stop handed back.
+// they are when any holds text. The box is the last such prompt on the
+// screen: the conversation above can hold one too (a quoted line after a
+// reply's divider). Claude draws its placeholders dim ("Try …", "Press up to
+// edit queued messages"), so dim text isn't counted: only what was typed and
+// left there, such as a prompt a stop handed back.
 func claudeTypedLines(styledPane string) int {
 	rows := strings.Split(styledPane, "\n")
-	previous := ""
+	box, previous := -1, ""
 	for i, row := range rows {
 		plain := visibleText(row, true)
 		if strings.TrimSpace(plain) == "" {
 			continue
 		}
 		if (strings.HasPrefix(plain, "❯") || strings.HasPrefix(plain, ">")) && isRule(previous) {
-			lines, typed := 0, false
-			for j, box := range rows[i:] {
-				text := visibleText(box, false)
-				if j > 0 && isRule(visibleText(box, true)) {
-					break
-				}
-				if j == 0 {
-					text = strings.TrimLeft(text, "❯>")
-				}
-				lines++
-				typed = typed || strings.TrimSpace(text) != ""
-			}
-			if !typed {
-				return 0
-			}
-			return lines
+			box = i
 		}
 		previous = plain
 	}
-	return 0
+	if box < 0 {
+		return 0
+	}
+	lines, typed := 0, false
+	for j, row := range rows[box:] {
+		text := visibleText(row, false)
+		if j > 0 && isRule(visibleText(row, true)) {
+			break
+		}
+		if j == 0 {
+			text = strings.TrimLeft(text, "❯>")
+		}
+		lines++
+		typed = typed || strings.TrimSpace(text) != ""
+	}
+	if !typed {
+		return 0
+	}
+	return lines
 }
 
 // visibleText is a styled row's text without its escape sequences; without
