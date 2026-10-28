@@ -87,6 +87,11 @@ export async function memberOrgId(userId: string, wanted: string | null): Promis
     return org ? [org] : [];
   });
   const name = wanted?.trim().toLowerCase();
-  if (!name) return orgs.find((o) => o.personal_owner_id === userId)?.id ?? orgs[0]?.id ?? null;
+  // Every user has a personal org; without one, the first by name, so the
+  // same command always lands in the same place.
+  if (!name) {
+    const fallback = [...orgs].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))[0];
+    return orgs.find((o) => o.personal_owner_id === userId)?.id ?? fallback?.id ?? null;
+  }
   return (isUuid(name) ? orgs.find((o) => o.id === name) : orgs.find((o) => o.name.toLowerCase() === name))?.id ?? null;
 }

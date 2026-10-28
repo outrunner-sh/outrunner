@@ -76,8 +76,7 @@ export default async function SlackLinkPage({
                 >
                   {orgs.orgs.map((org) => (
                     <option key={org.id} value={org.id}>
-                      {org.name}
-                      {org.personal ? " (personal)" : ""}
+                      {org.personal && org.name !== "Personal" ? `${org.name} (personal)` : org.name}
                     </option>
                   ))}
                 </select>

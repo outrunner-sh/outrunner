@@ -56,6 +56,7 @@ test("Slack markup becomes Markdown, code left alone", () => {
     "**Login** is ~~fine~~ broken, see [run 1](https://ci.dev/1) cc @ana in #eng & `<keep *this*>`",
   );
   assert.equal(slackToMarkdown("<!here> <https://x.dev>"), "@here https://x.dev");
+  assert.equal(slackToMarkdown("one\ntwo\n\nthree\n```a\nb```"), "one  \ntwo\n\nthree\n```a\nb```");
 });
 
 test("a permalink is built from the payload, with its thread", () => {
@@ -81,7 +82,7 @@ const action = (over: Partial<MessageAction["message"]> = {}): MessageAction => 
 test("a message becomes an item; messages in one thread share its ref", () => {
   const capture = captureFromMessage(action());
   assert.equal(capture.title, "Login flaky on Safari");
-  assert.match(capture.body, /^\*\*Login\*\* flaky on Safari\nseen 3x\n\n— ana in #eng · \[View in Slack\]\(https:\/\/acme\.slack\.com/);
+  assert.match(capture.body, /^\*\*Login\*\* flaky on Safari {2}\nseen 3x\n\n— ana in #eng · \[View in Slack\]\(https:\/\/acme\.slack\.com/);
   assert.equal(capture.sourceRef, "slack:T1/C1/1712.000300");
   const reply = captureFromMessage(action({ ts: "1713.000100", thread_ts: "1712.000300" }));
   assert.equal(reply.sourceRef, capture.sourceRef);

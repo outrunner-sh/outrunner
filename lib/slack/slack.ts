@@ -192,8 +192,8 @@ export function slackSignInMatches(
 
 /**
  * Slack's message markup as Markdown: links, mentions and channels unwrapped,
- * *bold* and ~strike~ in Markdown's spelling, and the three escapes Slack
- * makes undone. Code spans and blocks are left as they are.
+ * *bold* and ~strike~ in Markdown's spelling, line breaks kept, and the three
+ * escapes Slack makes undone. Code spans and blocks are left as they are.
  */
 export function slackToMarkdown(text: string): string {
   return text
@@ -210,7 +210,10 @@ export function slackToMarkdown(text: string): string {
           .replace(/<!(here|channel|everyone)(?:\|[^>]*)?>/g, "@$1")
           .replace(/<!subteam\^[A-Z0-9]+\|([^>]+)>/g, "$1")
           .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, "$1**$2**")
-          .replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?:;]|$)/g, "$1~~$2~~"),
+          .replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?:;]|$)/g, "$1~~$2~~")
+          // Slack breaks a line where Markdown would join it to the next: a
+          // hard break ("  \n") keeps it a line of its own.
+          .replace(/([^\n])\n(?=[^\n])/g, "$1  \n"),
       );
     })
     .join("");

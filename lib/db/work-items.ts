@@ -116,8 +116,16 @@ export async function ownsSession(workspaceId: string, userId: string): Promise<
 /** The org's items the actor may see: Unsorted, and those in projects they
  *  may read. `filter` narrows the query further. */
 function visible(actor: TriageActor) {
+  return visibleTo(actor, db().from("work_items").select("*").eq("org_id", actor.orgId));
+}
+
+/** Narrows a work_items query to what the actor may see: the one filter the
+ *  list and the sidebar's count share, so they can't disagree. */
+function visibleTo<Q extends { or(filter: string): Q; is(column: "project_id", value: null): Q }>(
+  actor: TriageActor,
+  query: Q,
+): Q {
   const projectIds = [...actor.levels.keys()];
-  const query = db().from("work_items").select("*").eq("org_id", actor.orgId);
   return projectIds.length > 0
     ? query.or(`project_id.is.null,project_id.in.(${projectIds.join(",")})`)
     : query.is("project_id", null);
@@ -132,15 +140,14 @@ export async function listWorkItems(actor: TriageActor): Promise<WorkItem[]> {
 
 /** How many of those wait in triage: the sidebar's count. */
 export async function countTriage(actor: TriageActor): Promise<number> {
-  const projectIds = [...actor.levels.keys()];
-  const query = db()
-    .from("work_items")
-    .select("id", { count: "exact", head: true })
-    .eq("org_id", actor.orgId)
-    .eq("status", "triage");
-  const { count, error } = await (projectIds.length > 0
-    ? query.or(`project_id.is.null,project_id.in.(${projectIds.join(",")})`)
-    : query.is("project_id", null));
+  const { count, error } = await visibleTo(
+    actor,
+    db()
+      .from("work_items")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", actor.orgId)
+      .eq("status", "triage"),
+  );
   if (error) throw error;
   return count ?? 0;
 }
@@ -276,13 +283,16 @@ export async function captureWorkItem(actor: TriageActor, input: CaptureInput): 
       throw new WorkItemChangeError("This thread is already on an item you can't see.", 403);
     }
     // A duplicate's thread goes on to the item it duplicates while that one is
-    // open, keeping the triage decision and the context in one place.
+    // open, keeping the triage decision and the context in one place. One the
+    // actor can't see still stands: the note stays on the duplicate, and the
+    // decision isn't undone.
     const canonical =
-      found.status === "duplicate" && found.duplicateOf ? await getWorkItem(actor, found.duplicateOf) : null;
-    const existing = canonical && isOpen(canonical.status) ? canonical : found;
+      found.status === "duplicate" && found.duplicateOf ? await orgItem(actor.orgId, found.duplicateOf) : null;
+    const hidden = canonical !== null && !canSee(actor, canonical);
+    const existing = canonical && !hidden && isOpen(canonical.status) ? canonical : found;
     // Reopened before the note goes on: a failure leaves no note behind for
     // a retry to add twice.
-    const reopened = !isOpen(existing.status);
+    const reopened = !hidden && !isOpen(existing.status);
     const item = reopened ? await reopenWorkItem(actor.orgId, existing.id) : existing;
     const note = await addNote(actor, item, {
       body: input.body || input.title,
@@ -395,15 +405,31 @@ export async function linkWorkItemToSession(
 ): Promise<void> {
   const current = await getWorkItem(actor, itemId);
   if (!current || !actor.levels.has(session.projectId)) return;
+  // A triager's session triages it too: it is reopened, moved, and taken.
+  // Anyone else's only marks an accepted item in its own workspace that no
+  // session has taken yet: starting one is no way round triage rights.
+  const triager = canTriage(actor, current);
+  if (
+    !triager &&
+    (!(current.status === "todo" || current.status === "in_progress") ||
+      current.projectId !== session.projectId ||
+      current.workspaceId !== null)
+  ) {
+    return;
+  }
   const { error } = await db()
     .from("work_items")
-    .update({
-      status: "in_progress",
-      workspace_id: session.workspaceId,
-      project_id: current.projectId ?? session.projectId,
-      duplicate_of: null,
-      ...(current.triagedAt ? {} : { triaged_at: new Date().toISOString() }),
-    })
+    .update(
+      triager
+        ? {
+            status: "in_progress",
+            workspace_id: session.workspaceId,
+            project_id: current.projectId ?? session.projectId,
+            duplicate_of: null,
+            ...(current.triagedAt ? {} : { triaged_at: new Date().toISOString() }),
+          }
+        : { status: "in_progress", workspace_id: session.workspaceId },
+    )
     .eq("org_id", actor.orgId)
     .eq("id", itemId);
   if (error) throw error;
