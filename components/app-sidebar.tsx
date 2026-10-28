@@ -563,21 +563,6 @@ function keyShortcut(hint: string): string {
   return hint.replace("⌘", "Meta+");
 }
 
-/** A destination that does not exist yet: shown dimmed, not clickable; its
- *  tooltip says it is coming. */
-function NavSoon({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <div
-      aria-disabled="true"
-      title={`${label} is coming soon`}
-      className={cn(SIDEBAR_ROW, "cursor-default text-muted-foreground/60")}
-    >
-      {icon}
-      {label}
-    </div>
-  );
-}
-
 /** "Search" turned into its field: filters the workspaces below as you type.
  *  Escape, the ×, or leaving it empty closes it. */
 function SearchField({

@@ -991,7 +991,7 @@ export type Database = {
         Args: { target_project: string; maker: string; checkout: string };
         Returns: string;
       };
-      // supabase/migrations/20261030110000_automations.sql
+      // supabase/migrations/20261030130000_automations.sql
       create_automation: {
         Args: {
           target_org: string;
