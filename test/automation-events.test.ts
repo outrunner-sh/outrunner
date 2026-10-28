@@ -89,14 +89,12 @@ test("a review requested names whom: a person, or a team as org/slug; a fork's i
   assert.ok(typeof team !== "string");
   assert.equal(team.reviewer, "neevai-labs/reviewers");
   assert.equal(readPullRequestEvent(prPayload("review_requested")), "unreadable");
-  // Nor a review a run's session requested, as the App.
-  assert.equal(
-    readPullRequestEvent(
-      prPayload("review_requested", { requested_reviewer: { login: "octocat" }, sender: { login: "Outrunner-Connector[bot]" } }),
-      "outrunner-connector",
-    ),
-    "bot",
+  // A review a run's session requested, as the App: marked so.
+  const requested = readPullRequestEvent(
+    prPayload("review_requested", { requested_reviewer: { login: "octocat" }, sender: { login: "Outrunner-Connector[bot]" } }),
+    "outrunner-connector",
   );
+  assert.equal((requested as PullRequestEvent).byApp, true);
   assert.equal(
     readPullRequestEvent(
       prPayload("review_requested", { requested_reviewer: { login: "octocat" } }, { head: { sha: SHA, ref: "x", repo: { full_name: "fork/outrunner" } } }),
@@ -123,12 +121,13 @@ test("an issue opened or labeled is read; a bot's, a pull request's, and other a
   assert.equal(readIssueEvent(issuePayload("opened", {}, { pull_request: {} })), "unreadable");
   assert.equal(readIssueEvent(issuePayload("opened", {}, { user: { login: "Outrunner-Connector[bot]" } }), "outrunner-connector"), "bot");
   assert.equal(readIssueEvent(issuePayload("opened", {}, { user: { login: "dependabot[bot]" } })), "bot");
-  // A run's session labeling a person's issue, as the App, doesn't start it again.
-  assert.equal(
-    readIssueEvent(issuePayload("labeled", { label: { name: "bug" }, sender: { login: "outrunner-connector[bot]" } }), "outrunner-connector"),
-    "bot",
-  );
-  assert.notEqual(readIssueEvent(issuePayload("labeled", { label: { name: "bug" }, sender: { login: "someone" } }), "outrunner-connector"), "bot");
+  // A run's session labeling a person's issue, as the App: marked so (it
+  // starts other automations, not the one that ran there).
+  const byRun = readIssueEvent(issuePayload("labeled", { label: { name: "bug" }, sender: { login: "outrunner-connector[bot]" } }), "outrunner-connector");
+  assert.equal((byRun as IssueEvent).byApp, true);
+  assert.equal((readIssueEvent(issuePayload("labeled", { label: { name: "bug" }, sender: { login: "someone" } }), "outrunner-connector") as IssueEvent).byApp, undefined);
+  // A dependency bot's label starts nothing.
+  assert.equal(readIssueEvent(issuePayload("labeled", { label: { name: "bug" }, sender: { login: "dependabot[bot]" } })), "bot");
   const event = labeled as IssueEvent;
   assert.equal(eventBaseBranch(event), undefined);
   assert.equal(eventSubject(event), "issue:12");
@@ -192,6 +191,43 @@ test("a review requested runs the automations it's a trigger of, for their revie
     writes.map((w) => [w.trigger, w.dedupeKey, w.subject, w.prNumber, w.headSha]),
     [["pull_request.review_requested", "gh:d-7", "pr:7", 7, SHA]],
   );
+});
+
+test("what the App did starts other automations, never one that just ran on the same issue", async () => {
+  const triage = { ...candidate, automationId: "triage" };
+  const fix = { ...candidate, automationId: "fix" };
+  const asked: unknown[] = [];
+  const { deps } = planDeps([triage, fix]);
+  const labeledByRun = issuePayload("labeled", { label: { name: "bug" }, sender: { login: "outrunner-connector[bot]" } });
+  const runs = await planIssueRuns(
+    labeledByRun,
+    {
+      ...deps,
+      recentlyRanOn: async (runs, subject, since) => {
+        asked.push([runs.map((r) => r.automationId), subject]);
+        assert.ok(Date.now() - since.getTime() >= 59 * 60_000);
+        return new Set(["triage:p1"]);
+      },
+    },
+    "outrunner-connector",
+    "d-1",
+  );
+  // Triage labeled it: the fix runs, triage doesn't run again.
+  assert.deepEqual(
+    runs.map((r) => r.candidate.automationId),
+    ["fix"],
+  );
+  assert.deepEqual(asked, [[["triage", "fix"], "issue:12"]]);
+  // A person's label isn't asked about.
+  const byPerson = await planIssueRuns(
+    issuePayload("labeled", { label: { name: "bug" }, sender: { login: "someone" } }),
+    { ...deps, recentlyRanOn: async () => assert.fail("not the App's") },
+    "outrunner-connector",
+    "d-2",
+  );
+  assert.equal(byPerson.length, 2);
+  // Without a way to tell, what the App did starts nothing.
+  assert.deepEqual(await planIssueRuns(labeledByRun, deps, "outrunner-connector", "d-3"), []);
 });
 
 test("an issue labeled runs its automations, as issue runs; one in a debounce window waits", async () => {

@@ -920,3 +920,24 @@ export async function abandonOldChecks(before: Date, retryBefore: Date): Promise
   if (unsent.error) throw unsent.error;
   return (stale.data ?? []).length + (unsent.data ?? []).length;
 }
+
+/** Of these automations on these repositories, those with a run on
+ *  `subject` (a pull request, an issue) since `since`, by
+ *  `${automationId}:${projectId}`: what the App did there may be their own
+ *  run's doing. */
+export async function recentlyRanOn(
+  runs: readonly { automationId: string; projectId: string }[],
+  subject: string,
+  since: Date,
+): Promise<Set<string>> {
+  if (runs.length === 0) return new Set();
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .select("automation_id, project_id")
+    .in("automation_id", [...new Set(runs.map((r) => r.automationId))])
+    .in("project_id", [...new Set(runs.map((r) => r.projectId))])
+    .eq("subject", subject)
+    .gte("created_at", since.toISOString());
+  if (error) throw error;
+  return new Set((data ?? []).map((r) => `${r.automation_id}:${r.project_id}`));
+}

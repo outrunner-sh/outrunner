@@ -141,3 +141,10 @@ export function fillPayload(prompt: string, payload: unknown): string {
     ...fenced(spend(JSON.stringify(payload ?? null, null, 2))),
   ].join("\n");
 }
+
+/** A one-element Postgres array literal of `value`, quoted and escaped, for
+ *  a containment filter (`cs`): PostgREST passes the literal on as it is,
+ *  and a caller's Idempotency-Key may hold commas, quotes or braces. */
+export function arrayLiteral(value: string): string {
+  return `{"${value.replace(/["\\]/g, "\\$&")}"}`;
+}

@@ -57,7 +57,35 @@ export type PlanDeps = {
    *  into; one whose key is recorded already, or past its automation's
    *  limit, is left out. */
   recordRuns(runs: RunRecord[]): Promise<Map<string, Recorded>>;
+  /** Of these automations on these repositories, those with a run on
+   *  `subject` since `since` (recentlyRanOn). Without it, an event the App
+   *  made starts nothing. */
+  recentlyRanOn?(runs: readonly { automationId: string; projectId: string }[], subject: string, since: Date): Promise<Set<string>>;
 };
+
+/** How long an automation that ran on a pull request or issue isn't started
+ *  again on it by what the App did there: what its own run did. */
+export const SELF_TRIGGER_WINDOW_MS = 60 * 60_000;
+
+/**
+ * What the App did (a label, a review request: an automation's run, as the
+ * App) starts the automations it's a trigger of, so one can follow another
+ * ("issue opened: triage and label it", then "labeled bug: try a fix"); but
+ * never one that ran on the same issue or pull request within the hour,
+ * which would be its own run starting it again, and again. The candidates
+ * left to run.
+ */
+async function byAppSkips(
+  event: PullRequestEvent | IssueEvent,
+  candidates: readonly RunCandidate[],
+  deps: PlanDeps,
+  now = new Date(),
+): Promise<RunCandidate[]> {
+  if (!event.byApp) return [...candidates];
+  if (!deps.recentlyRanOn) return [];
+  const ran = await deps.recentlyRanOn(candidates, eventSubject(event), new Date(now.getTime() - SELF_TRIGGER_WINDOW_MS));
+  return candidates.filter((c) => !ran.has(`${c.automationId}:${c.projectId}`));
+}
 
 /** A run's record: what started it, the key that makes it once, and what a
  *  debounce window combines it on. */
@@ -97,9 +125,11 @@ async function planEventRuns(
   appSlug: string | undefined,
   delivery: string | null,
 ): Promise<PendingRun[]> {
-  const candidates = (await deps.automationsForPullRequest(event.installationId, event.repoFullName)).filter(
+  const matched = (await deps.automationsForPullRequest(event.installationId, event.repoFullName)).filter(
     (c) => c.triggers.includes(event.trigger) && filtersTake(c, event),
   );
+  if (matched.length === 0) return [];
+  const candidates = await byAppSkips(event, matched, deps);
   if (candidates.length === 0) return [];
   const key = eventDedupeKey(event, delivery);
   const recorded = await deps.recordRuns(candidates.map((c) => recordOf(c, event, key)));

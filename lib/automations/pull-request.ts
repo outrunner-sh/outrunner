@@ -27,6 +27,8 @@ export type PullRequestEvent = {
   /** Whose review was requested (`pull_request.review_requested`): a login,
    *  or a team as `org/slug`. */
   reviewer?: string;
+  /** Requested by the Outrunner App's bot: an automation's run. */
+  byApp?: true;
 };
 
 /** Why an event starts nothing; null when it may. */
@@ -129,9 +131,10 @@ export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRe
   const author = text(pr.user?.login)?.toLowerCase();
   const skipped: readonly string[] = appSlug ? [...SKIPPED_BOTS, `${appSlug.toLowerCase()}[bot]`] : SKIPPED_BOTS;
   if (author && skipped.includes(author)) return "bot";
-  // A review a run's session requested, as the App, would start it again.
+  // A review a run's session requested, as the App: it may start another
+  // automation, never the one that just ran on it (byAppSkips).
   const sender = text(p.sender?.login)?.toLowerCase();
-  if (trigger === "pull_request.review_requested" && sender && skipped.includes(sender)) return "bot";
+  const byApp = Boolean(appSlug && trigger === "pull_request.review_requested" && sender === `${appSlug.toLowerCase()}[bot]`);
   // A team's as `org/slug`: the repository's owner is the team's org.
   const team = text(p.requested_team?.slug);
   const reviewer = text(p.requested_reviewer?.login) ?? (team ? `${repoFullName.split("/")[0]}/${team}` : null);
@@ -147,6 +150,7 @@ export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRe
     headRef,
     baseRef,
     ...(trigger === "pull_request.review_requested" && reviewer ? { reviewer } : {}),
+    ...(byApp ? { byApp: true as const } : {}),
   };
 }
 

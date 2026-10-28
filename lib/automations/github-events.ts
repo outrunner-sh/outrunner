@@ -19,6 +19,8 @@ export type IssueEvent = {
   url: string;
   /** The label added (`issues.labeled`). */
   label?: string;
+  /** Done by the Outrunner App's bot: an automation's run (see byAppSkips). */
+  byApp?: true;
 };
 
 export type IssueSkip = "action" | "bot" | "unreadable";
@@ -46,7 +48,9 @@ function text(value: unknown): string | null {
  * An `issues` event, or why it starts nothing: only opened and labeled do;
  * dependency bots' issues, and the Outrunner App's own (`appSlug`'s bot,
  * which an automation's run may have opened: it would start itself), don't,
- * nor does what they did to anyone's (a run labeling an issue).
+ * nor does what a dependency bot did to anyone's. What the App did to one (a
+ * run labeling it) is marked `byApp`: it starts other automations, never
+ * the one that just ran on it (byAppSkips).
  */
 export function readIssueEvent(payload: unknown, appSlug?: string): IssueEvent | IssueSkip {
   const p = (payload ?? {}) as IssuePayload;
@@ -75,7 +79,8 @@ export function readIssueEvent(payload: unknown, appSlug?: string): IssueEvent |
   const author = text(p.issue?.user?.login)?.toLowerCase();
   const sender = text(p.sender?.login)?.toLowerCase();
   const skipped: readonly string[] = appSlug ? [...SKIPPED_BOTS, `${appSlug.toLowerCase()}[bot]`] : SKIPPED_BOTS;
-  if ((author && skipped.includes(author)) || (sender && skipped.includes(sender))) return "bot";
+  if ((author && skipped.includes(author)) || (sender && SKIPPED_BOTS.includes(sender as never))) return "bot";
+  const byApp = Boolean(appSlug && sender === `${appSlug.toLowerCase()}[bot]`);
   return {
     installationId: id,
     trigger,
@@ -84,6 +89,7 @@ export function readIssueEvent(payload: unknown, appSlug?: string): IssueEvent |
     title: text(p.issue?.title) ?? "",
     url: text(p.issue?.html_url) ?? `https://github.com/${repoFullName}/issues/${number}`,
     ...(trigger === "issues.labeled" && label ? { label } : {}),
+    ...(byApp ? { byApp: true as const } : {}),
   };
 }
 

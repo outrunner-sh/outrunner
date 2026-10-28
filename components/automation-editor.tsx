@@ -292,7 +292,9 @@ export function AutomationEditor({
                   autoComplete="off"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Only these labels, comma between; empty, any. A label that has spaces in it can&apos;t be named here yet.
+                  Only these labels, comma between; empty, any. A label that has spaces in it can&apos;t be named here yet. A
+                  label another automation&apos;s run adds starts this one too, but a run never starts its own automation
+                  again on the same issue within the hour.
                 </p>
               </div>
             ) : null}

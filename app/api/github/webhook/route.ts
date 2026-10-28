@@ -9,6 +9,7 @@ import {
   automationsForPullRequest,
   openChecksOfPullRequest,
   pullRequestSessions,
+  recentlyRanOn,
   recordRuns,
 } from "@/lib/db/automation-runs";
 import { archiveServerSessions } from "@/lib/session/server-session";
@@ -114,7 +115,7 @@ export async function POST(request: Request) {
       // restart cuts off is swept by the reconciler (sweepStalledRuns).
       const runs = await planRuns(
         payload,
-        { automationsForPullRequest, recordRuns },
+        { automationsForPullRequest, recordRuns, recentlyRanOn },
         await appSlug(config),
         request.headers.get("x-github-delivery"),
       );
@@ -164,7 +165,7 @@ export async function POST(request: Request) {
       // (lib/automations/github-events.ts), as a pull request's event does.
       const runs = await planIssueRuns(
         payload,
-        { automationsForPullRequest, recordRuns },
+        { automationsForPullRequest, recordRuns, recentlyRanOn },
         await appSlug(config),
         request.headers.get("x-github-delivery"),
       );

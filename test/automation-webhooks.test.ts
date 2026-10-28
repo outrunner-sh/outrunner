@@ -5,6 +5,7 @@ import { eventPrompt, eventTitle, readRunEvent } from "@/lib/automations/run-eve
 import { parseAutomationInput } from "@/lib/automations/rules";
 import { rerunRun } from "@/lib/automations/runs";
 import {
+  arrayLiteral,
   fillPayload,
   hasPayloadPlaceholder,
   isWebhookToken,
@@ -188,4 +189,10 @@ test("a request's address is Cloudflare's, else the one the proxy forwarded, nev
   // A client wrote the first; the proxy added the last.
   assert.equal(clientAddress(new Headers({ "x-forwarded-for": "6.6.6.6, 5.6.7.8" })), "5.6.7.8");
   assert.equal(clientAddress(new Headers()), "unknown");
+});
+
+test("a key is one quoted array element, whatever it holds", () => {
+  assert.equal(arrayLiteral("webhook:key:deploy-1"), '{"webhook:key:deploy-1"}');
+  assert.equal(arrayLiteral('webhook:key:a,"b}'), '{"webhook:key:a,\\"b}"}');
+  assert.equal(arrayLiteral("a\\b"), '{"a\\\\b"}');
 });
