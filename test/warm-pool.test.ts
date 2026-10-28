@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { AGENT_FEATURE_MULTI_REPO_WARM, AGENT_FEATURE_WARM_HOOKS } from "@/lib/runtime/agent-protocol";
 import {
   type PooledBox,
+  projectCheckouts,
   REFILL_BACKOFF_MS,
   refillPool,
   STALE_REFILL_MS,
+  warmRefusal,
   type WarmPoolDeps,
 } from "@/lib/runtime/warm-pool";
 
@@ -225,4 +228,24 @@ test("a replaced box whose delete fails is kept on a failed row for the sweeper,
   const { deps, log } = pool({ generation: 2, existing: [box({ generation: 1 })], oldDiscardFails: true });
   assert.equal(await refillPool(deps), 0);
   assert.deepEqual(log, ["release c-old", "discard sb-old on daytona", "leftover sb-old in 0 of gen 1 on daytona"]);
+});
+
+test("a ready box is warmed with the repositories a new session works on, its own from the base it was asked for", () => {
+  const checkouts = [
+    { projectId: "p-web", fullName: "acme/web", checkout: "web", baseBranch: "release" },
+    { projectId: "p-api", fullName: "acme/api", checkout: "api", baseBranch: "develop" },
+  ];
+  assert.deepEqual(projectCheckouts(checkouts, "p-web", "main"), [
+    { projectId: "p-web", fullName: "acme/web", checkout: "web", baseBranch: "main" },
+    checkouts[1],
+  ]);
+  assert.equal(projectCheckouts(null, "p-web", "main"), null, "a project of one");
+});
+
+test("an agent that can't warm the project leaves its box unwarmed, and says why", () => {
+  assert.equal(warmRefusal([AGENT_FEATURE_WARM_HOOKS, AGENT_FEATURE_MULTI_REPO_WARM], true), null);
+  assert.equal(warmRefusal([AGENT_FEATURE_WARM_HOOKS], false), null, "one repository needs no more");
+  assert.match(warmRefusal([AGENT_FEATURE_WARM_HOOKS], true) ?? "", /several repositories/);
+  assert.match(warmRefusal(undefined, false) ?? "", /can't run warm hooks/);
+  assert.match(warmRefusal([AGENT_FEATURE_MULTI_REPO_WARM], true) ?? "", /can't run warm hooks/);
 });

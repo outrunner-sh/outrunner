@@ -134,10 +134,29 @@ export const AGENT_FEATURE_MULTI_REPO_SNAPSHOTS = "multi-repo-snapshots";
  *  and start hooks. */
 export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
 
+/** The agent warms a ready box of a project of several repositories in a
+ *  folder of their checkouts (WarmRequest's `repos`), and a session of the
+ *  same repositories takes it. An older one is left unwarmed: it would warm
+ *  one checkout no session of the project takes. */
+export const AGENT_FEATURE_MULTI_REPO_WARM = "multi-repo-warm";
+
 /** The agent's git and `gh` ask Outrunner for GitHub tokens as they need them
  *  (app/api/runtime/git-credential), rather than keep the one it booted with:
  *  the Outrunner App's last an hour. */
 export const AGENT_FEATURE_GIT_CREDENTIAL = "git-credential";
+
+/** A project's several repositories, each in its own folder (its
+ *  checkout) off its mirror at $ROOT/repos/<checkout>.git. */
+const RepoCheckouts = z
+  .array(
+    z.object({
+      fullName: z.string().min(1),
+      checkout: z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/),
+      baseBranch: z.string().min(1),
+    }),
+  )
+  .min(2)
+  .max(5);
 
 /** POST /warm (the listing token): warm a ready box, a checkout of the base
  *  branch with the project's files in it and its warm hook run there. */
@@ -147,6 +166,10 @@ export const WarmRequest = z
     env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string()).optional(),
     files: z.record(z.string(), z.string()).optional(),
     hook: z.string().max(64 * 1024).optional(),
+    /** A project's several repositories (AGENT_FEATURE_MULTI_REPO_WARM): a
+     *  folder of their checkouts, laid out as its sessions' are, with the
+     *  hook run at its root. `baseBranch` is then the first's. */
+    repos: RepoCheckouts.optional(),
   })
   .strict();
 export type WarmRequest = z.infer<typeof WarmRequest>;
@@ -320,17 +343,7 @@ export const CreateWorkspaceRequest = z.object({
   /** A project's several repositories (AGENT_FEATURE_MULTI_REPO): the
    *  session works in a folder of worktrees, one a repository, each off its
    *  mirror at $ROOT/repos/<checkout>.git, all on `branch`. */
-  repos: z
-    .array(
-      z.object({
-        fullName: z.string().min(1),
-        checkout: z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/),
-        baseBranch: z.string().min(1),
-      }),
-    )
-    .min(2)
-    .max(5)
-    .optional(),
+  repos: RepoCheckouts.optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 

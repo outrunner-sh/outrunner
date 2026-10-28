@@ -16,7 +16,8 @@
  * wiring is warm-pool.deps.ts.
  */
 
-import type { RuntimeComputer } from "@/lib/runtime/types";
+import { AGENT_FEATURE_MULTI_REPO_WARM, AGENT_FEATURE_WARM_HOOKS } from "@/lib/runtime/agent-protocol";
+import type { RuntimeComputer, SessionCheckout } from "@/lib/runtime/types";
 
 /** How many ready boxes a project keeps. */
 export const POOL_SIZE = 2;
@@ -31,6 +32,34 @@ export const STALE_REFILL_MS = 90 * 60_000;
  *  tried again on every session. A change to the project's setup (a new
  *  generation) tries again at once. */
 export const REFILL_BACKOFF_MS = 60 * 60_000;
+
+/** The repositories a new session of the project works on, from the
+ *  project's (sessionCheckouts): each from its own branch, but the session's
+ *  repository (`projectId`) from `baseBranch`, the one it was asked for. Null
+ *  for a project of one. A ready box is warmed with the same, from the
+ *  repository's default branch, so a session asked for no other takes its
+ *  warm work (runtime-agent warm.go). */
+export function projectCheckouts(
+  checkouts: SessionCheckout[] | null,
+  projectId: string,
+  baseBranch: string,
+): SessionCheckout[] | null {
+  return checkouts?.map((c) => (c.projectId === projectId ? { ...c, baseBranch } : c)) ?? null;
+}
+
+/** Why a box's agent can't warm it, for the project's settings page; null
+ *  when it can. An agent without warm hooks can't warm at all, and one
+ *  without multi-repo warms only one checkout, which no session of a project
+ *  of several repositories would take. Such a box is pooled unwarmed. */
+export function warmRefusal(features: string[] | undefined, severalRepos: boolean): string | null {
+  if (!features?.includes(AGENT_FEATURE_WARM_HOOKS)) {
+    return "This box's agent can't run warm hooks yet. Sessions run the warm hook themselves as they start.";
+  }
+  if (severalRepos && !features.includes(AGENT_FEATURE_MULTI_REPO_WARM)) {
+    return "This box's agent can't warm a project of several repositories yet. Sessions run the warm hook themselves as they start.";
+  }
+  return null;
+}
 
 /** A pooled box as the refill sees it. */
 export type PooledBox = Pick<

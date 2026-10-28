@@ -7,8 +7,8 @@ import { randomBytes } from "node:crypto";
 
 import { isMetered } from "@/lib/billing/metering-store";
 import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
-import { environmentSetup, getEnvironment, recordWarmRun } from "@/lib/db/environments";
-import { optionalGitToken } from "@/lib/github/identity.deps";
+import { environmentSetup, getEnvironment, recordWarmRun, sessionCheckouts } from "@/lib/db/environments";
+import { gitTokensFor, optionalGitToken } from "@/lib/github/identity.deps";
 import {
   claimPooledComputer,
   createPooledComputer,
@@ -20,12 +20,12 @@ import {
   updateRuntimeComputer,
 } from "@/lib/db/repositories";
 import { AgentClient, AgentRequestError } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_WARM_HOOKS, LISTING_WORKSPACE_ID } from "@/lib/runtime/agent-protocol";
+import { LISTING_WORKSPACE_ID, type WarmRequest } from "@/lib/runtime/agent-protocol";
 import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { Project, ProviderName } from "@/lib/runtime/types";
-import { POOL_SIZE, refillPool, STALE_REFILL_MS } from "@/lib/runtime/warm-pool";
+import { POOL_SIZE, projectCheckouts, refillPool, STALE_REFILL_MS, warmRefusal } from "@/lib/runtime/warm-pool";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** Whether `provider`'s boxes are pooled: Outrunner's own, on a provider
@@ -73,7 +73,7 @@ const WARM_LOG_KEPT = 64 * 1024;
 export async function refillProjectPool(input: {
   provider: ComputerRuntimeProvider;
   ownerId: string;
-  project: Pick<Project, "id" | "fullName" | "defaultBranch">;
+  project: Pick<Project, "id" | "orgId" | "fullName" | "defaultBranch">;
   /** The project (an `environments` row) whose setup the boxes are warmed
    *  with; null makes them unwarmed, as before projects. */
   environmentId: string | null;
@@ -104,13 +104,22 @@ export async function refillProjectPool(input: {
         if (!setup || !environmentId) return;
         const hook = setup.hooks?.warm ?? "";
         if (!hook && Object.keys(setup.files).length === 0) return; // nothing to warm with
+        // A project of several repositories is warmed in the folder its
+        // sessions work in, each repository's mirror on the box first, as a
+        // session syncs them; its own repository from its default branch, as
+        // a new session's is.
+        const checkouts = projectCheckouts(await sessionCheckouts(ownerId, environmentId), project.id, project.defaultBranch);
+        const repos = checkouts?.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch }));
         const agent = new AgentClient(await provider.agentTarget(sandboxId, secret));
         await warmBox(agent, { projectId: project.id, computerId, userId: ownerId }, environmentId, {
-          baseBranch: project.defaultBranch,
+          baseBranch: repos?.[0].baseBranch ?? project.defaultBranch,
           env: setup.env,
           files: setup.files,
           hook,
           generation,
+          ...(repos && {
+            severalRepos: { repos, sync: () => provider.syncRepoMirrors(sandboxId, repos, gitTokensFor(ownerId, project.orgId)) },
+          }),
         });
       },
       recordBox: (computerId, sandboxId) => updateRuntimeComputer(computerId, { daytonaSandboxId: sandboxId }),
@@ -160,12 +169,21 @@ function stillBooting(error: unknown): boolean {
 export class WarmHookError extends Error {}
 
 /** Warm a ready box and wait for it, the run recorded on the project as it
- *  goes. Throws when the hook fails or outlasts its time. */
+ *  goes. A project of several repositories (`severalRepos`) has their mirrors
+ *  synced onto the box first (its `sync`). Throws when the hook fails or
+ *  outlasts its time. */
 async function warmBox(
   agent: AgentClient,
   box: { projectId: string; computerId: string; userId: string },
   environmentId: string,
-  req: { baseBranch: string; env: Record<string, string>; files: Record<string, string>; hook: string; generation: number | null },
+  req: {
+    baseBranch: string;
+    env: Record<string, string>;
+    files: Record<string, string>;
+    hook: string;
+    generation: number | null;
+    severalRepos?: { repos: NonNullable<WarmRequest["repos"]>; sync: () => Promise<void> };
+  },
 ): Promise<void> {
   // Box-wide, as the warm itself is: a box no session has yet answers for
   // the listing id. A box just made may take a moment to answer.
@@ -183,7 +201,8 @@ async function warmBox(
       if (!stillBooting(error)) break;
     }
   }
-  if (!health?.features?.includes(AGENT_FEATURE_WARM_HOOKS)) {
+  const refusal = health ? warmRefusal(health.features, req.severalRepos !== undefined) : null;
+  if (!health || refusal) {
     // An older agent (or one that didn't answer): pooled unwarmed, and the
     // session that takes it runs the warm hook itself as it starts. Recorded,
     // so the settings page says so rather than "Applying" until it's updated.
@@ -191,9 +210,9 @@ async function warmBox(
     const at = new Date().toISOString();
     await recordWarmRun(environmentId, box.userId, {
       status: "failed",
-      log: healthError
-        ? `The ready box didn't answer before its warm hook could start (${whyNot(healthError)}). Sessions run the warm hook themselves as they start.`
-        : "This box's agent can't run warm hooks yet. Sessions run the warm hook themselves as they start.",
+      log:
+        refusal ??
+        `The ready box didn't answer before its warm hook could start (${whyNot(healthError)}). Sessions run the warm hook themselves as they start.`,
       startedAt: at,
       finishedAt: at,
       generation: req.generation,
@@ -204,8 +223,22 @@ async function warmBox(
   const failed = (log: string) =>
     recordWarmRun(environmentId, box.userId, { status: "failed", log, startedAt, finishedAt: new Date().toISOString(), generation: req.generation });
   await recordWarmRun(environmentId, box.userId, { status: "running", log: null, startedAt, finishedAt: null, generation: req.generation });
+  if (req.severalRepos) {
+    try {
+      await req.severalRepos.sync();
+    } catch (error) {
+      await failed(`The project's repositories couldn't be cloned onto the box: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
+      throw error;
+    }
+  }
   try {
-    await agent.startWarm(box, { baseBranch: req.baseBranch, env: req.env, files: req.files, hook: req.hook });
+    await agent.startWarm(box, {
+      baseBranch: req.baseBranch,
+      env: req.env,
+      files: req.files,
+      hook: req.hook,
+      ...(req.severalRepos && { repos: req.severalRepos.repos }),
+    });
   } catch (error) {
     await failed(`The warm hook couldn't be started: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
     throw error;
@@ -321,7 +354,7 @@ export async function refillAfterChange(ownerId: string, environmentId: string):
     await refillProjectPool({
       provider,
       ownerId,
-      project: { id: repo.projectId, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
+      project: { id: repo.projectId, orgId: environment.orgId, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       environmentId,
       githubToken: await optionalGitToken(ownerId, { orgId: environment.orgId, fullName: repo.fullName }),
       sessionEnv: await runtimeSessionEnvironment(ownerId, null),

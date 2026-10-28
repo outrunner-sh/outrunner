@@ -143,7 +143,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm},
 	})
 }
 
@@ -383,11 +383,11 @@ func (s *Server) startWarm(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	err := s.ws.Warm(r.Context(), workspace.WarmRequest{BaseBranch: req.BaseBranch, Env: req.Env, Files: req.Files, Hook: req.Hook})
+	err := s.ws.Warm(r.Context(), workspace.WarmRequest{BaseBranch: req.BaseBranch, Env: req.Env, Files: req.Files, Hook: req.Hook, Checkouts: checkouts(req.Repos)})
 	switch {
 	case errors.Is(err, workspace.ErrWarmBusy):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
-	case errors.Is(err, workspace.ErrInvalidEnvironment):
+	case errors.Is(err, workspace.ErrInvalidEnvironment), errors.Is(err, workspace.ErrInvalidCheckouts):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	default:
 		respond(w, "warming", err)
