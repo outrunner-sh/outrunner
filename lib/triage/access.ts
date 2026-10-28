@@ -2,7 +2,7 @@ import { allows, type AccessLevel } from "@/lib/orgs/access";
 import type { WorkItem } from "@/lib/triage/work-items";
 
 /**
- * Who may do what with an org's work items (20261029120000_work_items.sql).
+ * Who may do what with an org's work items (20261030120000_work_items.sql).
  * Items follow their project's access:
  *
  *   read  - see the item, add notes, start a session from it

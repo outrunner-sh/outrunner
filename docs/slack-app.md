@@ -60,7 +60,7 @@ are built from the payload.
    - `SLACK_SIGNING_SECRET`: the **Signing Secret**. While it is unset, the endpoint answers 404.
    - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account
      signs in with Slack, and while these are unset nobody can connect.
-4. Apply `supabase/migrations/20261029120000_work_items.sql` (`pnpm db:migrate`).
+4. Apply `supabase/migrations/20261030120000_work_items.sql` (`pnpm db:migrate`).
 
 ## Connecting a Slack user to an Outrunner account (each person, once)
 

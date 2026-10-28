@@ -13,7 +13,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
-// supabase/migrations/20261029120000_work_items.sql
+// supabase/migrations/20261030120000_work_items.sql
 export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
 export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
 
@@ -933,7 +933,7 @@ export type Database = {
         Args: { member: string; target_project: string };
         Returns: AccessLevelDb | null;
       };
-      // supabase/migrations/20261029120000_work_items.sql
+      // supabase/migrations/20261030120000_work_items.sql
       triage_project_levels: {
         Args: { member: string; target_org: string };
         Returns: { project_id: string; level: AccessLevelDb }[];
