@@ -49,6 +49,9 @@ export type WorkItem = {
   duplicateOf: string | null;
   /** The session started from it. */
   workspaceId: string | null;
+  /** The prompt it was filed with (the Slack agent writes one); Start session
+   *  uses it as written. */
+  prompt: string | null;
   triagedAt: string | null;
   createdAt: string;
   updatedAt: string;

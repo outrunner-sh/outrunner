@@ -4,6 +4,8 @@ import { isOwner } from "@/lib/auth/allowlist";
 import { slackLinkTarget } from "@/lib/db/slack-links";
 import { captureWorkItem, triageActor, WorkItemChangeError } from "@/lib/db/work-items";
 import { optionalEnv } from "@/lib/env";
+import { isUuid } from "@/lib/ids";
+import { type CardAction, handleCardAction } from "@/lib/slack/agent-run";
 import {
   captureFromCommand,
   captureFromMessage,
@@ -68,6 +70,7 @@ function shortcut(payload: string, secret: string): NextResponse {
   } catch {
     return new NextResponse(null, { status: 400 });
   }
+  if (action.type === "block_actions") return cardAction(payload);
   if (action.type !== "message_action" || action.callback_id !== CAPTURE_CALLBACK) {
     return new NextResponse(null, { status: 200 });
   }
@@ -85,6 +88,30 @@ function shortcut(payload: string, secret: string): NextResponse {
     const reply = await captureReply(identity, captureFromMessage(action), secret);
     if (isSlackResponseUrl(responseUrl)) await postReply(responseUrl, reply);
   });
+  return new NextResponse(null, { status: 200 });
+}
+
+/** A button on the Slack agent's spec card: answered at once, done after
+ *  (lib/slack/agent-run.ts), which reports in the thread. */
+function cardAction(payload: string): NextResponse {
+  const action = JSON.parse(payload) as {
+    team?: { id?: string; domain?: string };
+    user?: { id?: string; username?: string; name?: string };
+    actions?: { action_id?: string; value?: string }[];
+  };
+  const clicked = action.actions?.[0];
+  if (!action.team?.id || !action.user?.id || !clicked?.action_id || !clicked.value) {
+    return new NextResponse(null, { status: 200 });
+  }
+  const card: CardAction = {
+    actionId: clicked.action_id,
+    conversationId: clicked.value,
+    teamId: action.team.id,
+    teamDomain: action.team.domain ?? null,
+    user: action.user.id,
+    userName: action.user.username ?? action.user.name ?? null,
+  };
+  if (isUuid(card.conversationId)) after(() => handleCardAction(card));
   return new NextResponse(null, { status: 200 });
 }
 

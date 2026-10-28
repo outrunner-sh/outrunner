@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { memberRole } from "@/lib/db/orgs";
+import { saveInstallation } from "@/lib/db/slack-agent";
 import { saveSlackLink } from "@/lib/db/slack-links";
 import { slackSignInMatches, verifyLinkToken, verifySignInState } from "@/lib/slack/slack";
 import { SLACK_SIGNIN_COOKIE, SLACK_SIGNIN_PATH, slackSignInConfig } from "@/lib/slack/sign-in";
@@ -30,8 +31,8 @@ export async function GET(request: Request) {
   if (url.searchParams.get("error")) return done("cancelled");
   // The app's install link comes back here too, with a code and no state
   // (Slack sends installs to the first redirect URL). The install only takes
-  // once the code is traded; the token it gives isn't kept, as the app makes
-  // no calls of its own.
+  // once the code is traded, and the bot token it gives is what the Slack
+  // agent posts with.
   if (!url.searchParams.has("state") && url.searchParams.get("code")) {
     return done((await finishInstall(config, url.searchParams.get("code") ?? "")) ? "installed" : "failed");
   }
@@ -62,7 +63,8 @@ export async function GET(request: Request) {
   return done("linked");
 }
 
-/** Trade an install's code, which is what completes the app's install. */
+/** Trade an install's code, which is what completes the app's install, and
+ *  keep the bot token it gives: what the Slack agent posts with. */
 async function finishInstall(
   config: { clientId: string; clientSecret: string; redirectUri: string },
   code: string,
@@ -77,6 +79,21 @@ async function finishInstall(
       redirect_uri: config.redirectUri,
     }),
   }).catch(() => null);
-  const answer = (await response?.json().catch(() => null)) as { ok?: boolean } | null;
-  return answer?.ok === true;
+  const answer = (await response?.json().catch(() => null)) as {
+    ok?: boolean;
+    access_token?: string;
+    token_type?: string;
+    bot_user_id?: string;
+    team?: { id?: string; name?: string };
+  } | null;
+  if (!answer?.ok) return false;
+  if (answer.token_type === "bot" && answer.access_token && answer.bot_user_id && answer.team?.id) {
+    await saveInstallation({
+      teamId: answer.team.id,
+      teamName: answer.team.name ?? null,
+      botUserId: answer.bot_user_id,
+      botToken: answer.access_token,
+    });
+  }
+  return true;
 }

@@ -27,6 +27,7 @@ function item(over: Partial<WorkItem> = {}): WorkItem {
     sourceRef: null,
     duplicateOf: null,
     workspaceId: null,
+    prompt: null,
     triagedAt: null,
     createdAt: "2026-10-27T10:00:00Z",
     updatedAt: "2026-10-27T10:00:00Z",

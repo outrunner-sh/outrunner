@@ -25,7 +25,9 @@ export function useWorkItemPrompt(id: string | undefined): WorkItemStart | null 
           id: data.item.id,
           key: itemKey(data.item),
           title: data.item.title,
-          prompt: workItemPrompt(data.item, data.notes, url),
+          // The prompt it was filed with (the Slack agent's), else one made
+          // from its title, body and notes.
+          prompt: data.item.prompt ?? workItemPrompt(data.item, data.notes, url),
         });
       })
       .catch(() => {});

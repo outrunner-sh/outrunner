@@ -1,6 +1,28 @@
-# Slack app: capture to triage
+# Slack app: the Outrunner agent, and capture to triage
 
-Outrunner's Slack app adds two ways to send work to triage:
+**Talk to Outrunner.** Mention `@Outrunner` in a channel (or DM it) with what you need. It replies in the
+thread, where everyone can see it:
+
+1. It asks what it must to make the work clear (which repository, how to reproduce, what "done" means), a few
+   questions at a time, at most three rounds. Anyone in the thread can answer.
+2. It proposes a spec card: title, repository, the problem, **acceptance criteria**, what's out of scope.
+   - **File to triage** files it as a work item, with a ready session prompt.
+   - **File & start session** also starts a cloud session on that prompt, as the person who clicked.
+   - **Keep refining** goes back to the conversation.
+3. Once it's filed, replies in the thread become notes on the item. The thread hears when the session is up and
+   when its pull request opens.
+4. The session's PR starts with `Closes OR-N` and lists the criteria. The **Validate against acceptance
+   criteria** automation (Automations → templates), if it's on for the repository, checks the PR against them in
+   a fresh session and posts PASS, FAIL or PARTIAL on the PR. A person decides what happens next.
+
+The agent thinks with `SLACK_AGENT_MODEL` (default `anthropic/claude-sonnet-5.5`, through OpenRouter) on the
+**org's** own key for Outrunner's models, capped at `SLACK_AGENT_ORG_LIMIT_USD` (default 25). The org pays,
+not whoever is in the thread. Starting a session always needs a click.
+
+Its events come to `POST /api/integrations/slack/events`. The bot token it posts with is kept, encrypted, when
+the app is installed through its install link.
+
+**Capture without the agent:**
 
 - **Message shortcut** — a message's **⋯ → Send to Outrunner triage**. The message becomes a work item, with
   its first line as the title, the whole message as the Markdown body, and a link back to it. A second
@@ -8,9 +30,8 @@ Outrunner's Slack app adds two ways to send work to triage:
 - **Slash command** — `/triage what needs doing`. The text becomes a work item in **Unsorted**; pick its
   workspace when you triage it.
 
-Both post to `POST /api/integrations/slack`. The endpoint checks every request against the app's signing
-secret. It needs no bot token: replies go back through each request's `response_url`, and links to messages
-are built from the payload.
+Both post to `POST /api/integrations/slack`, as do the agent's buttons. Every request is checked against the
+app's signing secret.
 
 ## Set it up (once per deployment)
 
@@ -20,11 +41,14 @@ are built from the payload.
    ```yaml
    display_information:
      name: Outrunner
-     description: Send Slack messages to Outrunner triage
+     description: Outrunner in Slack, turning conversations into work
    features:
      bot_user:
        display_name: Outrunner
-       always_online: false
+       always_online: true
+     app_home:
+       messages_tab_enabled: true
+       messages_tab_read_only_enabled: false
      shortcuts:
        - name: Send to Outrunner triage
          type: message
@@ -42,9 +66,22 @@ are built from the payload.
      scopes:
        bot:
          - commands
+         - app_mentions:read
+         - chat:write
+         - channels:history
+         - groups:history
+         - im:history
+         - users:read
        user:
          - openid
    settings:
+     event_subscriptions:
+       request_url: https://outrunner.example.com/api/integrations/slack/events
+       bot_events:
+         - app_mention
+         - message.channels
+         - message.groups
+         - message.im
      interactivity:
        is_enabled: true
        request_url: https://outrunner.example.com/api/integrations/slack
@@ -53,9 +90,11 @@ are built from the payload.
      token_rotation_enabled: false
    ```
 
-2. **Install App → Install to Workspace** on the app's settings page. Slack completes that install itself.
-   The app's shareable install link also works once this code is deployed: it returns to
-   `/api/integrations/slack/oauth`, which completes the install.
+2. Install it through the app's **shareable install link** (Manage Distribution, or the `oauth_authorize_url`
+   when it's made from the manifest). That link returns to `/api/integrations/slack/oauth`, which completes the
+   install and keeps the bot token the agent needs. The **Install to Workspace** button on Slack's settings page
+   installs the app without telling Outrunner, so the agent can't post. Install again through the link after
+   any change of scopes.
 3. Copy these from **Basic Information → App Credentials** into the deployment's environment, then redeploy:
    - `SLACK_SIGNING_SECRET`: the **Signing Secret**. While it is unset, the endpoint answers 404.
    - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account

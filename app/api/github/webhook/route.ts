@@ -17,6 +17,7 @@ import {
   webhookSignatureMatches,
 } from "@/lib/github/app";
 import { archiveServerSessions, startServerSession } from "@/lib/session/server-session";
+import { announcePullRequest } from "@/lib/slack/agent-run";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -32,6 +33,8 @@ type Payload = {
   account?: { login?: string };
   repository_selection?: string;
   sender?: { id?: number; login?: string };
+  repository?: { full_name?: string };
+  pull_request?: { number?: number; html_url?: string; title?: string; head?: { ref?: string } };
 };
 
 /**
@@ -45,6 +48,8 @@ type Payload = {
  * A pull request event starts the automations of the org that has the
  * installation (lib/automations/runs.ts): their runs are recorded before the
  * answer, their sessions set up after. A redelivery starts nothing twice.
+ * An opened one is also posted in the Slack thread of the item its session
+ * works on, if the Slack agent filed it.
  */
 export async function POST(request: Request) {
   const config = githubAppConfig();
@@ -86,6 +91,21 @@ export async function POST(request: Request) {
       // restart cuts off is swept by the reconciler (sweepStalledRuns).
       const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, config.slug);
       after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
+      // A PR from a session working on an item the Slack agent filed: its
+      // thread hears of it.
+      const pr = payload.pull_request;
+      if (payload.action === "opened" && pr?.head?.ref && pr.html_url && typeof pr.number === "number" && payload.repository?.full_name) {
+        const opened = {
+          repoFullName: payload.repository.full_name,
+          headRef: pr.head.ref,
+          number: pr.number,
+          url: pr.html_url,
+          title: pr.title ?? "",
+        };
+        after(() =>
+          announcePullRequest(opened).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
+        );
+      }
       return NextResponse.json({ received: true, runs: runs.length });
     }
     if (event === "installation") {
