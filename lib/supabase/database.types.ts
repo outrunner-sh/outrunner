@@ -479,6 +479,22 @@ type AutomationRow = {
   updated_at: string;
 };
 
+export type AutomationRunStatusDb = "started" | "ready" | "failed" | "refused";
+
+type AutomationRunRow = {
+  id: string;
+  automation_id: string;
+  project_id: string;
+  pr_number: number;
+  pr_title: string;
+  head_sha: string;
+  workspace_id: string | null;
+  status: AutomationRunStatusDb;
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type AutomationRepoRow = {
   automation_id: string;
   project_id: string;
@@ -645,6 +661,18 @@ export type Database = {
         Row: AutomationRow;
         Insert: Insert<AutomationRow, "org_id" | "name" | "prompt" | "triggers">;
         Update: Partial<AutomationRow>;
+        Relationships: [];
+      };
+      review_sessions: {
+        Row: { workspace_id: string; created_at: string };
+        Insert: { workspace_id: string };
+        Update: Partial<{ workspace_id: string }>;
+        Relationships: [];
+      };
+      automation_runs: {
+        Row: AutomationRunRow;
+        Insert: Insert<AutomationRunRow, "automation_id" | "project_id" | "pr_number" | "head_sha">;
+        Update: Partial<AutomationRunRow>;
         Relationships: [];
       };
       automation_repos: {

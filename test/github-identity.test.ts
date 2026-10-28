@@ -110,6 +110,32 @@ test("read access gets a token that can only read, asked for or the member's lev
   assert.deepEqual(reader.minted[0].permissions, readOnly);
 });
 
+test("an automation's review works as the App whatever the member chose, reading code and commenting only", async () => {
+  const { d, minted } = deps({ identity: async () => "personal" });
+  const review = await resolveGitCredential({ ...ask, identity: "app", level: "review" }, d);
+  assert.equal(review.identity, "app");
+  assert.deepEqual(minted[0].permissions, {
+    contents: "read",
+    pull_requests: "write",
+    checks: "read",
+    statuses: "read",
+    metadata: "read",
+  });
+  // Its own token, apart from a member's write one for the same repository.
+  await resolveGitCredential({ ...ask, identity: "app" }, d);
+  assert.equal(minted.length, 2);
+  // Still only a project the member has access to.
+  await assert.rejects(
+    resolveGitCredential({ ...ask, identity: "app", level: "review" }, { ...d, repoLevel: async () => null }),
+    GitIdentityError,
+  );
+  // And with write access to it: the token writes to pull requests.
+  await assert.rejects(
+    resolveGitCredential({ ...ask, identity: "app", level: "review" }, { ...d, repoLevel: async () => "read" }),
+    GitIdentityError,
+  );
+});
+
 test("the App reaches only a project the member has access to", async () => {
   const { d, minted } = deps({ repoLevel: async () => null });
   await assert.rejects(resolveGitCredential(ask, d), (error: unknown) => {

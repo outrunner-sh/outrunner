@@ -5,6 +5,7 @@
  */
 
 import { getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { listOrgProjects, projectLevel } from "@/lib/db/org-access";
 import {
@@ -20,6 +21,7 @@ import {
   type GitCredential,
   type GitHubIdentity,
   type IdentityDeps,
+  type TokenLevel,
 } from "@/lib/github/identity";
 import type { AccessLevel } from "@/lib/orgs/access";
 
@@ -61,15 +63,51 @@ export function gitCredentialFor(input: {
   userId: string;
   orgId: string;
   repo: string;
-  level?: AccessLevel;
+  level?: TokenLevel;
   identity?: GitHubIdentity;
 }): Promise<GitCredential> {
   return resolveGitCredential(input, deps);
 }
 
-/** The token alone, for a server call that must have one. */
-export async function requireGitToken(userId: string, project: { orgId: string; fullName: string }): Promise<string> {
-  return (await gitCredentialFor({ userId, orgId: project.orgId, repo: project.fullName })).token;
+/** How an automation's review session works on GitHub, whatever its runner
+ *  chose for their own: as the App, reading code and commenting. */
+export const REVIEW_AS_APP = { identity: "app", level: "review" } as const;
+
+/** Record a session as an automation's review, as the App (review_sessions:
+ *  the server's alone, so its owner can't mark or unmark one). */
+export async function markReviewSession(workspaceId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("review_sessions")
+    .upsert({ workspace_id: workspaceId }, { onConflict: "workspace_id", ignoreDuplicates: true });
+  if (error) throw error;
+}
+
+/** Whether a session reviews as the App (markReviewSession). */
+export async function isReviewSession(workspaceId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("review_sessions")
+    .select("workspace_id")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}
+
+/** How a session's box works on GitHub: as an automation's review, as the
+ *  App (REVIEW_AS_APP), else as its user chose (undefined). For the tokens
+ *  the server fetches a session's mirrors with, as its box's own requests. */
+export async function sessionGitAs(workspaceId: string): Promise<typeof REVIEW_AS_APP | undefined> {
+  return (await isReviewSession(workspaceId)) ? REVIEW_AS_APP : undefined;
+}
+
+/** The token alone, for a server call that must have one; as the user chose,
+ *  or as `as` says (REVIEW_AS_APP). */
+export async function requireGitToken(
+  userId: string,
+  project: { orgId: string; fullName: string },
+  as?: { identity: GitHubIdentity; level: TokenLevel },
+): Promise<string> {
+  return (await gitCredentialFor({ userId, orgId: project.orgId, repo: project.fullName, ...as })).token;
 }
 
 /**
@@ -80,9 +118,10 @@ export async function requireGitToken(userId: string, project: { orgId: string; 
 export async function optionalGitToken(
   userId: string,
   project: { orgId: string; fullName: string },
+  as?: { identity: GitHubIdentity; level: TokenLevel },
 ): Promise<string | undefined> {
   try {
-    return await requireGitToken(userId, project);
+    return await requireGitToken(userId, project, as);
   } catch (error) {
     if (!(error instanceof MissingGithubTokenError)) {
       console.warn(`No GitHub token for ${project.fullName}`, error instanceof Error ? error.message : error);
@@ -92,6 +131,10 @@ export async function optionalGitToken(
 }
 
 /** A token for each repository of a session of several, as asked. */
-export function gitTokensFor(userId: string, orgId: string): (fullName: string) => Promise<string | undefined> {
-  return (fullName) => optionalGitToken(userId, { orgId, fullName });
+export function gitTokensFor(
+  userId: string,
+  orgId: string,
+  as?: { identity: GitHubIdentity; level: TokenLevel },
+): (fullName: string) => Promise<string | undefined> {
+  return (fullName) => optionalGitToken(userId, { orgId, fullName }, as);
 }

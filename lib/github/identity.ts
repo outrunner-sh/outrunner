@@ -66,11 +66,18 @@ export type IdentityDeps = {
  *  box may hold it a while. */
 const TOKEN_MARGIN_MS = 10 * 60 * 1000;
 
+/** What a token is asked for: a member's level, or an automation's review. */
+export type TokenLevel = AccessLevel | "review";
+
 /** What a token is for, by the member's level: a session's git and gh, and
  *  the server reading a pull request's checks. Never more than this, whatever
  *  else the App may be given later; and never more than its installation was
- *  granted ({@link narrowPermissions}). */
-const WANTED: Record<AccessLevel, TokenPermissions> = {
+ *  granted ({@link narrowPermissions}). `review` is an automation's review
+ *  session's: it reads the code and writes to pull requests (comments; the
+ *  permission also covers closing, editing and approving them), for a member
+ *  with write access, and can't push. */
+const WANTED: Record<TokenLevel, TokenPermissions> = {
+  review: { contents: "read", pull_requests: "write", checks: "read", statuses: "read", metadata: "read" },
   read: { contents: "read", pull_requests: "read", checks: "read", statuses: "read", metadata: "read" },
   write: {
     contents: "write",
@@ -105,7 +112,7 @@ const SWITCH = "or choose your own GitHub account in Settings → Account";
  * GitIdentityError (the App's, with no way to it).
  */
 export async function resolveGitCredential(
-  input: { userId: string; orgId: string; repo: string; level?: AccessLevel; identity?: GitHubIdentity },
+  input: { userId: string; orgId: string; repo: string; level?: TokenLevel; identity?: GitHubIdentity },
   deps: IdentityDeps,
 ): Promise<GitCredential> {
   const identity = input.identity ?? (await deps.identity(input.userId));
@@ -157,7 +164,17 @@ export async function resolveGitCredential(
     );
   }
 
-  const level: AccessLevel = input.level === "read" ? "read" : access;
+  // Never more than the member's own level on it. `review` writes to pull
+  // requests (comments, but its permission also lets it close, edit and
+  // approve them), so it takes write access; it never pushes.
+  if (input.level === "review" && access !== "write") {
+    throw new GitIdentityError(
+      "no_access",
+      `Reviewing ${input.repo} takes write access to it in this org, which whoever runs the automation doesn't have.`,
+      null,
+    );
+  }
+  const level: TokenLevel = input.level === "read" || input.level === "review" ? input.level : access;
   const key = `${installation.id}/${name.toLowerCase()}/${level}`;
   const kept = deps.cache.get(key);
   if (kept && kept.expiresAt.getTime() - TOKEN_MARGIN_MS > deps.now()) {

@@ -9,6 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { InlineMessage } from "@/components/ui/notice";
 import { type Automation, TRIGGER_LABELS } from "@/lib/automations/rules";
 import type { AutomationTemplate } from "@/lib/automations/templates";
+import type { AutomationRun } from "@/lib/db/automation-runs";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org } from "@/lib/orgs/active";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,7 @@ export function Automations({
   appSlug,
   installations,
   automations,
+  runs,
   templates,
 }: {
   org: Org;
@@ -35,6 +37,8 @@ export function Automations({
   installations: { login: string; suspended: boolean }[] | null;
   /** Null when they couldn't be read. */
   automations: Automation[] | null;
+  /** Their latest runs, newest first; null when they couldn't be read. */
+  runs: AutomationRun[] | null;
   templates: Pick<AutomationTemplate, "id" | "name" | "description" | "category">[];
 }) {
   const admin = org.role === "admin";
@@ -60,6 +64,8 @@ export function Automations({
         <GitHubAppStatus appSlug={appSlug} installations={installations} admin={admin} />
 
         <AutomationList orgId={org.id} automations={automations} admin={admin} />
+
+        {automations?.length ? <RecentRuns runs={runs} /> : null}
 
         {admin && templates.length > 0 ? (
           <section className="space-y-2">
@@ -243,6 +249,86 @@ function AutomationList({
         </div>
       )}
       {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
+    </section>
+  );
+}
+
+const RUN_STATUS: Record<AutomationRun["status"], { label: string; tone: string }> = {
+  started: { label: "Starting", tone: "text-muted-foreground" },
+  ready: { label: "Running", tone: "text-positive" },
+  failed: { label: "Failed", tone: "text-destructive" },
+  refused: { label: "Didn't start", tone: "text-warning" },
+};
+
+const WHEN = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
+
+/** The org's latest runs: which automation, on which pull request and
+ *  commit, how it went, and the session it started. */
+function RecentRuns({ runs }: { runs: AutomationRun[] | null }) {
+  return (
+    <section className="space-y-2">
+      <h2 className="text-[13px] font-medium text-foreground">Recent runs</h2>
+      {runs === null ? (
+        <p className="text-[13px] text-muted-foreground">Couldn&apos;t load the runs. Reload the page to try again.</p>
+      ) : runs.length === 0 ? (
+        <p className="rounded-lg border border-border/60 px-3 py-6 text-center text-[13px] text-muted-foreground">
+          No runs yet. One starts when a pull request on an automation&apos;s repository is opened or gets new commits.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border/60">
+          <table className="w-full text-[13px]">
+            <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-normal">Pull request</th>
+                <th className="px-3 py-2 font-normal">Automation</th>
+                <th className="px-3 py-2 font-normal">Status</th>
+                <th className="px-3 py-2 font-normal">When</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/60">
+              {runs.map((run) => {
+                const status = RUN_STATUS[run.status];
+                return (
+                  <tr key={run.id} className="align-top">
+                    <td className="px-3 py-2.5">
+                      <a
+                        href={`https://github.com/${run.repoFullName}/pull/${run.prNumber}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-foreground hover:underline"
+                      >
+                        {run.repoFullName}#{run.prNumber}
+                      </a>
+                      <div className="max-w-xs truncate text-xs text-muted-foreground">
+                        {run.prTitle ? `${run.prTitle} · ` : ""}
+                        <span className="font-mono">{run.headSha.slice(0, 7)}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-foreground/75">{run.automationName}</td>
+                    <td className="px-3 py-2.5">
+                      <div className={status.tone}>{status.label}</div>
+                      {run.reason ? <div className="max-w-xs text-xs text-muted-foreground">{run.reason}</div> : null}
+                      {run.workspaceId ? (
+                        <Link href={`/workspaces/${run.workspaceId}`} className="text-xs text-muted-foreground hover:underline">
+                          Open session
+                        </Link>
+                      ) : null}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">{WHEN.format(new Date(run.createdAt))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }

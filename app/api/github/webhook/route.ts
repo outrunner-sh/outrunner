@@ -1,4 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
+
+import { planRuns, startRun } from "@/lib/automations/runs";
+import { automationsForPullRequest, recordRuns, settleRun } from "@/lib/db/automation-runs";
 
 import {
   forgetInstallation,
@@ -7,7 +10,13 @@ import {
   setInstallationSuspended,
   updateInstallation,
 } from "@/lib/db/github-installations";
-import { dropInstallationToken, githubAppConfig, toInstallation, webhookSignatureMatches } from "@/lib/github/app";
+import {
+  dropInstallationToken,
+  githubAppConfig,
+  toInstallation,
+  webhookSignatureMatches,
+} from "@/lib/github/app";
+import { startServerSession } from "@/lib/session/server-session";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -32,6 +41,10 @@ type Payload = {
  * (app/api/github/app/setup). After that it keeps the installations true to
  * GitHub: an uninstalled one is forgotten, a suspension is marked, and a
  * renamed account and a changed repository choice are recorded.
+ *
+ * A pull request event starts the automations of the org that has the
+ * installation (lib/automations/runs.ts): their runs are recorded before the
+ * answer, their sessions set up after. A redelivery starts nothing twice.
  */
 export async function POST(request: Request) {
   const config = githubAppConfig();
@@ -67,6 +80,14 @@ export async function POST(request: Request) {
       return new NextResponse(null, { status: 204 });
     }
     if (!(await installationHolder(installationId))) return new NextResponse(null, { status: 204 });
+    if (event === "pull_request") {
+      // Each run's session is set up after the answer, in after(): minutes on
+      // a cold box, on Outrunner's long-running server (server.ts). One a
+      // restart cuts off is swept by the reconciler (sweepStalledRuns).
+      const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, config.slug);
+      after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
+      return NextResponse.json({ received: true, runs: runs.length });
+    }
     if (event === "installation") {
       if (payload.action === "deleted") {
         dropInstallationToken(installationId);
@@ -92,4 +113,13 @@ export async function POST(request: Request) {
     console.error(`GitHub webhook ${event} for installation ${installationId} failed`, error);
     return NextResponse.json({ error: "Couldn't record that." }, { status: 500 });
   }
+}
+
+/** How a run starts: its session as the automation's runner, working on
+ *  GitHub as the App (its box asks for the App's tokens as it goes). */
+function startDeps() {
+  return {
+    startServerSession,
+    settleRun,
+  };
 }

@@ -11,7 +11,7 @@ import {
   markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
-import { optionalGitToken } from "@/lib/github/identity.deps";
+import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
@@ -167,7 +167,7 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       // Signed in as the user picks now, and on its model's key as it is
       // now, before it launches.
-      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id);
       await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
       await agent.startWorkspace(identity);
     } catch (error) {
@@ -238,8 +238,9 @@ async function bringBack(
   const ensured = await ensureComputer(provider, {
     scope,
     repoFullName: project.fullName,
-    githubToken: await optionalGitToken(owner.id, project),
-    sessionEnv: await runtimeSessionEnvironment(owner.id),
+    // A review box's mirror as the App, as on create: never its user's token.
+    githubToken: await optionalGitToken(owner.id, project, await sessionGitAs(workspace.id)),
+    sessionEnv: await runtimeSessionEnvironment(owner.id, workspace.id),
     // The owner's size now, as a new box on this provider would get, within
     // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
     size: boxSizeOn(sandboxOf(provider.name), (await getSandboxSettings(owner.id)).boxSize, await planFor(owner.id)),

@@ -316,7 +316,7 @@ export async function refillAfterChange(ownerId: string, environmentId: string):
       project: { id: repo.projectId, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       environmentId,
       githubToken: await optionalGitToken(ownerId, { orgId: environment.orgId, fullName: repo.fullName }),
-      sessionEnv: await runtimeSessionEnvironment(ownerId),
+      sessionEnv: await runtimeSessionEnvironment(ownerId, null),
     });
   } catch (error) {
     console.error(`Could not make project ${environmentId}'s ready boxes again`, error);
