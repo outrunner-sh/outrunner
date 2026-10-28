@@ -227,7 +227,7 @@ var ErrPromptStaged = errors.New("a message that didn't go is still in the promp
 // not the screen's last lines, where a short prompt ("yes") could match a
 // reply or the footer.
 func boxHolds(pane, content string) bool {
-	box := strings.Join(promptBox(pane), " ")
+	box := strings.Join(promptBoxLines(pane), " ")
 	if strings.Contains(box, "[Pasted text #") {
 		return true
 	}
@@ -238,10 +238,10 @@ func boxHolds(pane, content string) bool {
 	return first != "" && strings.Contains(strings.Join(strings.Fields(box), " "), first)
 }
 
-// promptBox is the agent's prompt box, its lines as the pane shows them: from
+// promptBoxLines is the agent's prompt box, its lines as the pane shows them: from
 // Claude's ❯ under a rule (prompts echoed above with ❯ are under none) to the
 // rule below, or from Codex's › to its footer; none where it shows no box.
-func promptBox(pane string) []string {
+func promptBoxLines(pane string) []string {
 	lines := nonBlankLines(pane)
 	start := -1
 	for i, line := range lines {
