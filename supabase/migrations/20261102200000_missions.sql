@@ -70,6 +70,17 @@ create trigger workspaces_mission_runners
   before insert or update of parent_mission_id, status, kind on workspaces
   for each row execute function enforce_mission_runners();
 
+-- Each Runner's brief, as the Mission wrote it: the one line the Runners pane
+-- shows of its task, and what it was asked if the Mission needs reminding.
+create table if not exists mission_runner_briefs (
+  runner_id uuid primary key references workspaces (id) on delete cascade,
+  mission_id uuid not null references workspaces (id) on delete cascade,
+  brief text not null check (char_length(brief) <= 100000),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists mission_runner_briefs_mission_idx on mission_runner_briefs (mission_id);
+
 -- The Mission's MCP token: the sha256 of one minted each time its box is set
 -- up (lib/missions/token.ts), written into that box's MCP config. One a
 -- Mission: a new one replaces the last.
@@ -245,6 +256,7 @@ create table if not exists mission_queued_messages (
 create index if not exists mission_queued_messages_runner_idx
   on mission_queued_messages (runner_id, created_at) where sent_at is null;
 
+alter table mission_runner_briefs enable row level security;
 alter table mission_tokens enable row level security;
 alter table mission_notes enable row level security;
 alter table mission_deliveries enable row level security;
@@ -252,6 +264,7 @@ alter table mission_events enable row level security;
 alter table mission_queued_messages enable row level security;
 -- No policy, on purpose: see 20260928120000_user_credentials.sql. The tools
 -- check the Mission's token, then read and write with the service role.
+revoke all on table mission_runner_briefs from anon, authenticated;
 revoke all on table mission_tokens from anon, authenticated;
 revoke all on table mission_notes from anon, authenticated;
 revoke all on table mission_deliveries from anon, authenticated;

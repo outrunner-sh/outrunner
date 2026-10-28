@@ -154,6 +154,7 @@ type WorkspaceRow = {
 
 // supabase/migrations/20261102200000_missions.sql
 type MissionTokenRow = { mission_id: string; token_hash: string; minted_at: string };
+type MissionRunnerBriefRow = { runner_id: string; mission_id: string; brief: string; created_at: string };
 type MissionNotesRow = { mission_id: string; body: string; updated_at: string };
 export type MissionEventKind = "finished" | "ready" | "needs_attention" | "merged" | "closed" | "archived";
 type MissionEventRow = {
@@ -1379,6 +1380,12 @@ export type Database = {
         Row: MissionTokenRow;
         Insert: Insert<MissionTokenRow, "mission_id" | "token_hash">;
         Update: Partial<MissionTokenRow>;
+        Relationships: [];
+      };
+      mission_runner_briefs: {
+        Row: MissionRunnerBriefRow;
+        Insert: Insert<MissionRunnerBriefRow, "runner_id" | "mission_id" | "brief">;
+        Update: Partial<MissionRunnerBriefRow>;
         Relationships: [];
       };
       mission_notes: {

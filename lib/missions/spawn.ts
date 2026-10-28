@@ -13,6 +13,7 @@
 import { after } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { saveBrief } from "@/lib/missions/store";
 import type { RunnerStart } from "@/lib/missions/tools";
 import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
@@ -69,6 +70,9 @@ export async function startRunner(mission: Workspace, start: RunnerStart): Promi
           ...(mission.environmentId && { environmentId: mission.environmentId }),
           onCreated: async (id) => {
             runnerId = id;
+            await saveBrief(mission.id, id, start.brief).catch((error: unknown) =>
+              console.error(`Runner ${id}: its brief wasn't kept`, error),
+            );
             made(id);
           },
         });

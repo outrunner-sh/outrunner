@@ -110,3 +110,9 @@ export async function queuedCounts(runnerIds: string[]): Promise<Map<string, num
   for (const row of data ?? []) counts.set(row.runner_id, (counts.get(row.runner_id) ?? 0) + 1);
   return counts;
 }
+
+/** Keep a Runner's brief. */
+export async function saveBrief(missionId: string, runnerId: string, brief: string): Promise<void> {
+  const { error } = await db().from("mission_runner_briefs").upsert({ runner_id: runnerId, mission_id: missionId, brief }, { onConflict: "runner_id" });
+  if (error) throw error;
+}
