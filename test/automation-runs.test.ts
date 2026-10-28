@@ -77,9 +77,9 @@ test("drafts, forks, bots and other actions start nothing", () => {
   assert.equal(readPullRequestEvent(payload({ pr: { user: { login: "dependabot[bot]" } } })), "bot");
   assert.equal(readPullRequestEvent(payload({ pr: { user: { login: "renovate[bot]" } } })), "bot");
   // The app's own pull requests, which it would review itself.
-  assert.equal(readPullRequestEvent(payload({ pr: { user: { login: "Outrunner-SH[bot]" } } }), "outrunner-sh"), "bot");
+  assert.equal(readPullRequestEvent(payload({ pr: { user: { login: "Outrunner-Connector[bot]" } } }), "outrunner-connector"), "bot");
   // Another app's (an agent's, opening real changes) are reviewed like anyone's.
-  assert.notEqual(readPullRequestEvent(payload({ pr: { user: { login: "replicas-connector[bot]" } } }), "outrunner-sh"), "bot");
+  assert.notEqual(readPullRequestEvent(payload({ pr: { user: { login: "replicas-connector[bot]" } } }), "outrunner-connector"), "bot");
   assert.equal(readPullRequestEvent(payload({ installation: { id: "nope" } })), "unreadable");
   assert.equal(readPullRequestEvent(payload({ pr: { head: { sha: "nope", ref: "x", repo: null } } })), "unreadable");
 });
@@ -313,10 +313,10 @@ test("a run says why it didn't start, or failed", async () => {
 test("a run's session is told only the App's bot's comments are its own earlier passes", async () => {
   const event = readPullRequestEvent(payload({ action: "synchronize" }));
   assert.ok(typeof event !== "string");
-  const prompt = runPrompt("Review it.", event, "Outrunner-SH");
-  assert.match(prompt, /appears as outrunner-sh\[bot\]\. Its comments are from earlier passes of the App's automations, this one's included/);
+  const prompt = runPrompt("Review it.", event, "Outrunner-Connector");
+  assert.match(prompt, /appears as outrunner-connector\[bot\]\. Its comments are from earlier passes of the App's automations, this one's included/);
   // Its login as `gh api` gives it, not a mention it might copy into a comment.
-  assert.doesNotMatch(prompt, /@outrunner-sh/);
+  assert.doesNotMatch(prompt, /@outrunner-connector/);
   assert.match(prompt, /don't call them a previous pass or a re-run/);
   assert.ok(prompt.endsWith("\n\nReview it."));
   // From the webhook's slug to the session's prompt.
@@ -326,11 +326,11 @@ test("a run's session is told only the App's bot's comments are its own earlier 
       automationsForPullRequest: async () => [candidate],
       recordRuns: async () => new Map([["a1:p1", "r1"]]),
     },
-    "outrunner-sh",
+    "outrunner-connector",
   );
   const { deps, started } = startDeps();
   await startRun(runs[0], deps);
-  assert.match(started[0].prompt, /outrunner-sh\[bot\]/);
+  assert.match(started[0].prompt, /outrunner-connector\[bot\]/);
 });
 
 test("a closed or merged pull request is read as such; nothing else is", () => {
@@ -434,13 +434,13 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
 
 test("a run that failed runs again at the same commit as itself, once, told it's the App", async () => {
   const { deps, reopened, recorded } = rerunDeps();
-  const rerun = await rerunRun("o1", "r1", deps, "outrunner-sh");
+  const rerun = await rerunRun("o1", "r1", deps, "outrunner-connector");
   assert.ok(rerun.ok);
   assert.equal(rerun.run.runId, "r1");
   assert.equal(rerun.run.event.headSha, SHA);
   // As newly opened: not told of new commits since a look that may never have been.
   assert.equal(rerun.run.event.trigger, "pull_request.opened");
-  assert.equal(rerun.run.appSlug, "outrunner-sh");
+  assert.equal(rerun.run.appSlug, "outrunner-connector");
   // Its failed session is archived as it starts over: reopening unlinks it.
   assert.equal(rerun.staleSession, "w-failed");
   assert.deepEqual(reopened, ["r1"]);
