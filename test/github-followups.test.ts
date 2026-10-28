@@ -9,6 +9,7 @@ import {
   ciPrompt,
   type DueFollowUp,
   type FollowUpDeps,
+  FOLLOW_UP_EXPIRES_MS,
   flushFollowUps,
   logExcerpt,
   MAX_CI_TURNS,
@@ -373,6 +374,13 @@ test("reviews go as one turn, only from members who may read the repository, and
   const nobody = fakeDeps({ waiting: [due({ kind: "review", headSha: "", reviewIds: [3] })], review: async (_i, _r, _n, id) => reviews[id] });
   assert.deepEqual([...(await flushFollowUps(nobody.deps))], [["f1", "nothing"]]);
   assert.equal(nobody.recorded.sent.length, 0);
+});
+
+test("a follow-up that couldn't go for a day is let go", async () => {
+  const { deps, recorded } = fakeDeps({ waiting: [due({ firstAt: new Date(NOW - FOLLOW_UP_EXPIRES_MS - 1).toISOString() })] });
+  assert.deepEqual([...(await flushFollowUps(deps))], [["f1", "expired"]]);
+  assert.deepEqual(recorded.settled, [["f1", "expired"]]);
+  assert.equal(recorded.sent.length, 0);
 });
 
 test("a follow-up that fails before it's taken is left for the next tick", async () => {

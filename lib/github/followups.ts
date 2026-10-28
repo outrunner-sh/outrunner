@@ -452,6 +452,9 @@ export async function queueReview(event: string | null, payload: unknown, deps: 
 
 /** At most this many failing checks get their logs read. */
 const LOGS_MAX = 5;
+/** A follow-up that couldn't go for this long (GitHub refusing to read the
+ *  pull request, say) is let go rather than tried each tick for ever. */
+export const FOLLOW_UP_EXPIRES_MS = 24 * 60 * 60_000;
 
 /** Send what's due, each once. How each went, by id. Never throws: one that
  *  fails is left due, for the next tick, if it wasn't taken. */
@@ -459,6 +462,11 @@ export async function flushFollowUps(deps: FollowUpDeps, limit = 20): Promise<Ma
   const results = new Map<string, string>();
   for (const followUp of await deps.due(limit)) {
     try {
+      if (deps.now() - Date.parse(followUp.firstAt) > FOLLOW_UP_EXPIRES_MS) {
+        await deps.settle(followUp.id, "expired");
+        results.set(followUp.id, "expired");
+        continue;
+      }
       results.set(followUp.id, followUp.kind === "ci" ? await sendCi(followUp, deps) : await sendReviews(followUp, deps));
     } catch (error) {
       console.error(`GitHub follow-up ${followUp.id} failed`, error);
