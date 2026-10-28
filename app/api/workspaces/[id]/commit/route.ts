@@ -72,8 +72,9 @@ export async function POST(request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
+  // Someone who signed in with Google may have no GitHub login: their name.
   const author = {
-    name: owner.githubLogin,
+    name: owner.githubLogin || owner.name,
     email: owner.email ?? `${owner.githubLogin}@users.noreply.github.com`,
   };
 

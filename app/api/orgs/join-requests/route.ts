@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
 
-import { getOwner } from "@/lib/auth/owner";
+import { getAuthUser, getOwner } from "@/lib/auth/owner";
 import { requestToJoin } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
-import { listVerifiedEmails } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGithubToken } from "@/lib/github/token";
+import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { signInFirst } from "@/lib/http/settings-save";
 import { primaryDomain } from "@/lib/orgs/domains";
 import { emailJoinRequest } from "@/lib/orgs/notify";
+import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
 
 /**
  * Ask to join the org that claimed the signed-in user's email domain (their
- * primary verified GitHub email's): what "New team org" offers when there's
+ * primary verified email's, GitHub's or else Google's): what "New team org" offers when there's
  * one already. Its admins approve or decline.
  */
 export async function POST(request: Request) {
@@ -21,10 +21,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const owner = await getOwner();
-  if (!owner) return signInFirst();
+  const user = await getAuthUser();
+  if (!owner || !user) return signInFirst();
 
   try {
-    const emails = await listVerifiedEmails(await requireGithubToken(owner.id));
+    const emails = await verifiedEmailsFor(user, await optionalGithubToken(owner.id));
     const domain = primaryDomain(emails);
     const [org] = domain ? await orgsForDomains([domain]) : [];
     if (!org) {

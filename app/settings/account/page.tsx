@@ -5,8 +5,10 @@ import { Suspense } from "react";
 import { signOut } from "@/app/auth/actions";
 import { GitHubIdentitySettings, type IdentityOrgView } from "@/components/github-identity-settings";
 import { SettingsLoading } from "@/components/settings-loading";
+import { SignInButton } from "@/components/signin-button";
 import { SignOutButton } from "@/components/sign-out-button";
-import { getOwnerSafe } from "@/lib/auth/owner";
+import { hasGithubIdentity } from "@/lib/auth/identity";
+import { getAuthUser, getOwnerSafe } from "@/lib/auth/owner";
 import { getGithubIdentity } from "@/lib/db/credentials";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { githubAppConfig } from "@/lib/github/app";
@@ -15,9 +17,10 @@ import { getOrgContext } from "@/lib/orgs/server";
 /** Opens at once, its data streaming in behind: the build checks it. */
 export const unstable_instant = { prefetch: "static" };
 
-/** Account: the signed-in GitHub identity, who sessions work on GitHub as
- *  (lib/github/identity.ts), and sign-out — which is also how a revoked
- *  GitHub token is replaced (see components/github-reconnect-link). */
+/** Account: the signed-in identity; who sessions work on GitHub as
+ *  (lib/github/identity.ts), or connecting GitHub to an account that signed
+ *  in with Google or an emailed code; and sign-out — which is also how a
+ *  revoked GitHub token is replaced (see components/github-reconnect-link). */
 export default function AccountSettings() {
   return (
     <Suspense fallback={<SettingsLoading title="Account" />}>
@@ -34,6 +37,13 @@ async function AccountSection() {
     getGithubIdentity(owner.id).catch(() => "personal" as const),
     appOrg(appConfigured),
   ]);
+  const user = await getAuthUser();
+  const githubLinked = user ? hasGithubIdentity(user) : false;
+  const providers = [
+    githubLinked && "GitHub",
+    user?.identities?.some((i) => i.provider === "google") && "Google",
+    user?.identities?.some((i) => i.provider === "email") && "an emailed code",
+  ].filter(Boolean);
 
   return (
     <section className="space-y-6">
@@ -53,28 +63,49 @@ async function AccountSection() {
         )}
         <div>
           <p className="text-sm font-medium text-foreground">
-            {owner.githubLogin || "signed in"}
+            {owner.githubLogin || owner.name || owner.email || "signed in"}
           </p>
-          <p className="text-xs text-muted-foreground">Signed in with GitHub</p>
+          <p className="text-xs text-muted-foreground">
+            {providers.length ? `Signed in with ${providers.join(" and ")}` : "Signed in"}
+          </p>
         </div>
       </div>
 
-      <GitHubIdentitySettings
-        initial={identity}
-        login={owner.githubLogin}
-        appConfigured={appConfigured}
-        org={org}
-      />
+      {githubLinked ? (
+        <>
+          <GitHubIdentitySettings
+            initial={identity}
+            login={owner.githubLogin}
+            appConfigured={appConfigured}
+            org={org}
+          />
 
-      <div className="space-y-2">
-        <p className="text-muted-foreground text-sm">
-          If GitHub stops working (repositories won’t load, or publishing fails),
-          sign out and back in to reconnect your account.
-        </p>
-        <form action={signOut}>
-          <SignOutButton />
-        </form>
-      </div>
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-sm">
+              If GitHub stops working (repositories won’t load, or publishing fails),
+              sign out and back in with GitHub to reconnect your account.
+            </p>
+            <form action={signOut}>
+              <SignOutButton />
+            </form>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-sm">
+              Connect GitHub to work on your repositories: sessions clone, push
+              and open pull requests as your GitHub account.
+            </p>
+            <div className="max-w-xs">
+              <SignInButton provider="github" link next="/settings/account" />
+            </div>
+          </div>
+          <form action={signOut}>
+            <SignOutButton />
+          </form>
+        </>
+      )}
     </section>
   );
 }

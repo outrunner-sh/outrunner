@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 
-import { getAuthUser, githubLogin } from "@/lib/auth/owner";
+import { getAuthUser } from "@/lib/auth/owner";
 import { acceptInvite, inviteByToken, MemberChangeError, setAdmitted } from "@/lib/db/org-members";
-import { listVerifiedEmails } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGithubToken } from "@/lib/github/token";
+import { optionalGithubToken } from "@/lib/github/token";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { signInFirst } from "@/lib/http/settings-save";
 import { endInviteeVisit } from "@/lib/orgs/invitee";
 import { setActiveOrg } from "@/lib/orgs/server";
+import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
 
 /**
  * Accept an invite, `{ token }`, as the signed-in user: when the email it was
- * sent to is one GitHub has verified for them. They join the org, which the
+ * sent to is one GitHub or Google has verified for them. They join the org, which the
  * app then shows, and may sign in from then on past the allowlist.
  *
- * Any signed-in GitHub user may ask, not only those the allowlist names: this
+ * Anyone signed in (with GitHub or Google) may ask, not only those the allowlist names: this
  * is how someone it doesn't name comes in, and only with an invite to them.
  */
 export async function POST(request: Request) {
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   }
   const user = await getAuthUser();
-  if (!user || !githubLogin(user)) return signInFirst();
+  if (!user) return signInFirst();
   const body = (await request.json().catch(() => null)) as { token?: unknown } | null;
   const token = typeof body?.token === "string" ? body.token : "";
   if (!token.startsWith("or_inv_")) return NextResponse.json({ error: "That isn't an invite link." }, { status: 400 });
@@ -36,12 +36,12 @@ export async function POST(request: Request) {
       await endInviteeVisit(user);
       return NextResponse.json({ error: new MemberChangeError("invite_invalid").message }, { status: 410 });
     }
-    const emails = await listVerifiedEmails(await requireGithubToken(user.id));
+    const emails = await verifiedEmailsFor(user, await optionalGithubToken(user.id));
     if (!emails.some((e) => e.email.toLowerCase() === invite.email)) {
       await endInviteeVisit(user);
       return NextResponse.json(
         {
-          error: `This invite is for ${invite.email}. Add and verify that email on your GitHub account, or sign in with the account that has it.`,
+          error: `This invite is for ${invite.email}. Sign in with the GitHub or Google account that has that email verified.`,
           code: "invite_email_mismatch",
         },
         { status: 403 },

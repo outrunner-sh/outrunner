@@ -57,16 +57,18 @@ export class GitHubSyncError extends Error {
 
 /**
  * The user has no usable GitHub token. Recoverable, and always by the same
- * action: sign out and back in so the OAuth round trip mints a fresh one.
+ * action: (re)connecting GitHub from Settings → Account, so an OAuth round trip
+ * mints a fresh one.
  *
- * Reached when the user last signed in before the `repo` scope was requested,
+ * Reached when the user signed in with Google and never connected GitHub, last
+ * signed in before the `repo` scope was requested,
  * or when a stored token could not be decrypted (see lib/db/credentials.ts).
  * Lives here, beside the other GitHub errors, so code that maps errors to
  * responses need not pull in the credential store; lib/github/token re-exports it.
  */
 export class MissingGithubTokenError extends Error {
   constructor() {
-    super("Connect your GitHub account: sign out and back in to grant repository access.");
+    super("Connect your GitHub account in Settings → Account to grant repository access.");
     this.name = "MissingGithubTokenError";
   }
 }

@@ -243,7 +243,7 @@ export async function createCloudSession(
     return NextResponse.json(
       {
         error:
-          "Connect your GitHub account to clone a private repository: sign out and back in to grant repository access.",
+          "Connect your GitHub account in Settings → Account to clone a private repository.",
       },
       { status: 409 },
     );
@@ -809,7 +809,7 @@ async function githubRefusal(
     if (!project.private) return null;
     return NextResponse.json(
       {
-        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or sign out and back in to reconnect.`,
+        error: `Your GitHub account can't see ${project.fullName} any more. Check its access on GitHub, or reconnect it in Settings → Account.`,
         reconnect: true,
         settingsHref: GITHUB_RECONNECT_HREF,
       },

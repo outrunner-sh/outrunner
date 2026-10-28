@@ -79,6 +79,23 @@ and always removes its container.
 3. **Authentication → URL Configuration**: add `<app-origin>/auth/callback`
    (for example `http://localhost:3000/auth/callback`) to the Redirect URLs
    allowlist.
+4. **Authentication → Providers → Google**: enable it and paste the client ID
+   and secret of a Google Cloud OAuth client (type "Web application") whose
+   authorized redirect URI is the same Supabase callback as in step 2.
+5. **Authentication → Sign In / Providers**: turn on **Allow manual linking**.
+   Someone who signs in with Google connects GitHub from Settings → Account
+   (`linkIdentity`), which needs it. Keep automatic linking (the default) too:
+   a Google sign-in whose verified email matches an existing GitHub account's
+   lands in that same account.
+6. **Authentication → Providers → Email**: keep it enabled (the default), for
+   sign-in with an emailed code. Then in **Authentication → Emails →
+   Templates → Magic Link**, put the code in the email, for example
+   `<p>Your Outrunner sign-in code: <strong>{{ .Token }}</strong></p>`: the
+   default template sends only a link, and the sign-in page asks for the code.
+   Set up custom SMTP (**Authentication → Emails → SMTP Settings**) first: on
+   the free tier the templates can't be edited without it, and Supabase's
+   built-in sender is limited to 2 emails an hour. Until then the email
+   carries only a link, which works too (it lands at `/auth/callback`).
 
 `/setup` in the running app reports which of these are satisfied.
 

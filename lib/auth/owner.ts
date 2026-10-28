@@ -11,7 +11,7 @@ export type Owner = {
   /** The GitHub user's numeric id (lib/auth/allowlist.ts githubUserId):
    *  never renamed, never reused. Null when the identity doesn't say. */
   githubId: number | null;
-  /** The user's full name from GitHub, or their login if not set. */
+  /** The user's full name from GitHub or Google, else their login, else email. */
   name: string;
   email: string | null;
   avatarUrl: string | null;
@@ -43,11 +43,13 @@ export async function getOwner(): Promise<Owner | null> {
 export function ownerFromUser(user: User): Owner {
   const meta = user.user_metadata as Record<string, unknown> | null;
   const login = githubLogin(user) ?? "";
-  // GitHub provides full_name or name in user_metadata from OAuth
+  // GitHub and Google provide full_name or name in user_metadata from OAuth;
+  // an emailed code, nothing but the address.
   const name =
     (typeof meta?.full_name === "string" && meta.full_name) ||
     (typeof meta?.name === "string" && meta.name) ||
-    login;
+    login ||
+    (user.email ?? "");
   return {
     id: user.id,
     githubLogin: login,
