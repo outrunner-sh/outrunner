@@ -197,6 +197,7 @@ export async function settleRun(
 /** A run, as the Automations page shows it. */
 export type AutomationRun = {
   id: string;
+  automationId: string;
   automationName: string;
   repoFullName: string;
   prNumber: number;
@@ -208,8 +209,11 @@ export type AutomationRun = {
   createdAt: string;
 };
 
+/** How many of an org's latest runs the Automations page loads. */
+export const RECENT_RUNS = 50;
+
 /** An org's latest runs, newest first. */
-export async function listRuns(orgId: string, limit = 50, onlyId?: string): Promise<AutomationRun[]> {
+export async function listRuns(orgId: string, limit = RECENT_RUNS, onlyId?: string): Promise<AutomationRun[]> {
   const supabase = createSupabaseAdminClient();
   const { data: automations, error } = await supabase.from("automations").select("id, name").eq("org_id", orgId);
   if (error) throw error;
@@ -234,6 +238,7 @@ export async function listRuns(orgId: string, limit = 50, onlyId?: string): Prom
   const repoOf = new Map((projects ?? []).map((p) => [p.id, p.full_name]));
   return (runs ?? []).map((r) => ({
     id: r.id,
+    automationId: r.automation_id,
     automationName: nameOf.get(r.automation_id) ?? "",
     repoFullName: repoOf.get(r.project_id) ?? "",
     prNumber: r.pr_number,

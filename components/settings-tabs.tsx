@@ -24,8 +24,9 @@ export function SettingsTabs<Id extends string>({
   label: string;
   idPrefix: string;
   tabLabel: (id: Id) => React.ReactNode;
-  /** Whether a tab shows the dot that says it's connected. */
-  connected: (id: Id) => boolean;
+  /** Whether a tab shows the dot that says it's connected; none do when
+   *  left out. */
+  connected?: (id: Id) => boolean;
 }) {
   const tabs = useRef<Partial<Record<Id, HTMLButtonElement | null>>>({});
 
@@ -76,7 +77,7 @@ export function SettingsTabs<Id extends string>({
             )}
           >
             {tabLabel(id)}
-            {connected(id) ? (
+            {connected?.(id) ? (
               <>
                 <span aria-hidden className="size-1.5 rounded-full bg-positive" />
                 <span className="sr-only">(connected)</span>
