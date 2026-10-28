@@ -22,7 +22,7 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import type { Project } from "@/lib/runtime/types";
-import { firstPromptQuery, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
+import { firstPromptQuery, newFirstPrompt, rememberFirstPrompt, tabStorage } from "@/lib/session/first-prompt";
 import { initialProjectId as pickInitialProject } from "@/lib/session/initial-project";
 import { rememberEffort } from "@/lib/session/picked-effort";
 
@@ -129,7 +129,7 @@ export function useCreateSession(projects: Project[], initialProjectId?: string)
         resolve(false);
         return;
       }
-      const first = { prompt, attachmentIds };
+      const first = newFirstPrompt(prompt, attachmentIds);
       rememberFirstPrompt(tabStorage(), result.workspace.id, first);
       // None picked: the server's default, which on the user's Claude runs at
       // DEFAULT_EFFORT (a model that takes none doesn't show it).

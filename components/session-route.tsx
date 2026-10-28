@@ -37,6 +37,7 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
   // ?attachment= params are each an id.
   const search = useSearchParams();
   const initialPrompt = search.get("prompt") ?? undefined;
+  const initialPromptKey = search.get("promptKey") ?? undefined;
   const attachments = search.getAll("attachment").join("\n");
   const initialAttachmentIds = useMemo(() => (attachments ? attachments.split("\n") : []), [attachments]);
   // Out of the URL as soon as this tab keeps a copy, before it is sent: a
@@ -60,6 +61,7 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
           projectName={view.projectName}
           pullRequest={view.pullRequest}
           initialPrompt={initialPrompt}
+          initialPromptKey={initialPromptKey}
           initialAttachmentIds={initialAttachmentIds}
         />
       ) : (
