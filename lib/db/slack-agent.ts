@@ -7,7 +7,14 @@
 
 import { open, seal } from "@/lib/crypto/secret-box";
 import { outrunnerModelKey } from "@/lib/db/credentials";
-import { keySource, ModelKeyRefusedError, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
+import {
+  disableUserKey,
+  keySource,
+  ModelKeyRefusedError,
+  OutrunnerModelsUnavailableError,
+  sharedApiKey,
+} from "@/lib/openrouter/keys";
+import { probeStatus } from "@/lib/supabase/probe";
 import { orgOutrunnerModelKey } from "@/lib/db/org-model-allowance";
 import { personalOwners } from "@/lib/db/orgs";
 import type { AgentSpec } from "@/lib/slack/agent";
@@ -351,4 +358,31 @@ export function watchModelKey(orgId: string): Promise<string> {
 /** Forget the org's kept answer: OpenRouter refused the key it gave. */
 export function forgetWatchModelKey(orgId: string): void {
   watchAnswers.delete(orgId);
+}
+
+/**
+ * Turn off the Slack agent's old keys of its own (org_model_keys), unread
+ * since it runs on the org's key for Outrunner's models: each is disabled
+ * on OpenRouter, then its row goes. A few a run, from the reconciler; how
+ * many went. Nothing to do once the table is empty, or gone.
+ */
+export async function retireOldSlackKeys(limit = 20): Promise<number> {
+  if (keySource() !== "per-user") return 0;
+  const { data, error } = await db().from("org_model_keys").select("org_id, key_hash").limit(limit);
+  if (error && probeStatus(error) === "missing") return 0;
+  if (error) throw error;
+  let retired = 0;
+  for (const row of data ?? []) {
+    // A row whose key was never made has nothing on OpenRouter to turn off,
+    // nor one OpenRouter no longer has (deleted there by hand).
+    if (row.key_hash) {
+      await disableUserKey(row.key_hash).catch((error: unknown) => {
+        if (!(error instanceof Error && error.message.includes("HTTP 404"))) throw error;
+      });
+    }
+    const { error: deleteError } = await db().from("org_model_keys").delete().eq("org_id", row.org_id);
+    if (deleteError) throw deleteError;
+    retired += 1;
+  }
+  return retired;
 }
