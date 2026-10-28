@@ -20,7 +20,7 @@ import {
   updateRuntimeComputer,
 } from "@/lib/db/repositories";
 import { AgentClient } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_WARM_HOOKS } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_WARM_HOOKS, LISTING_WORKSPACE_ID } from "@/lib/runtime/agent-protocol";
 import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
 import { runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
@@ -55,6 +55,11 @@ export async function takePooledBox(
  *  take: the agent's own hour, and room for the box to answer. */
 const WARM_POLL_MS = 5_000;
 const WARM_WAIT_MS = 65 * 60_000;
+
+/** Health checks of a box just made before it's taken for one that can't
+ *  warm, and the pause between them. */
+const HEALTH_TRIES = 5;
+const HEALTH_RETRY_MS = 3_000;
 
 /** Status calls that may fail in a row before a warming box is given up. */
 const WARM_STATUS_MISSES = 3;
@@ -149,11 +154,17 @@ async function warmBox(
   environmentId: string,
   req: { baseBranch: string; env: Record<string, string>; files: Record<string, string>; hook: string; generation: number | null },
 ): Promise<void> {
+  // Box-wide, as the warm itself is: a box no session has yet answers for
+  // the listing id. A box just made may take a moment to answer.
   let healthError: unknown = null;
-  const health = await agent.health({ ...box, workspaceId: "" }).catch((error: unknown) => {
-    healthError = error;
-    return null;
-  });
+  let health: Awaited<ReturnType<AgentClient["health"]>> | null = null;
+  for (let attempt = 0; attempt < HEALTH_TRIES && !health; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, HEALTH_RETRY_MS));
+    health = await agent.health({ ...box, workspaceId: LISTING_WORKSPACE_ID }).catch((error: unknown) => {
+      healthError = error;
+      return null;
+    });
+  }
   if (!health?.features?.includes(AGENT_FEATURE_WARM_HOOKS)) {
     // An older agent (or one that didn't answer): pooled unwarmed, and the
     // session that takes it runs the warm hook itself as it starts. Recorded,

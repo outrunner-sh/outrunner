@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { AgentClient, AgentRequestError, type AgentTarget } from "@/lib/runtime/agent-client";
+import { LISTING_WORKSPACE_ID } from "@/lib/runtime/agent-protocol";
 import { verifyRuntimeToken } from "@/lib/runtime/runtime-token";
 
 const target: AgentTarget = {
@@ -338,4 +339,16 @@ test("the change set and a file's diff are read from the box's agent", async () 
     // The path is one query value, whatever it holds.
     "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/changes?path=a%20b.ts",
   ]);
+});
+
+// A box no session has yet (a ready box being warmed) is asked box-wide: the
+// listing id makes a token; an empty one doesn't, and every warm used to fail.
+test("a box-wide health check of a ready box mints a token for the listing id", async () => {
+  const fakeFetch = (async () =>
+    new Response(JSON.stringify({ status: "ok", features: ["warm-hooks"] }), { status: 200 })) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  const box = { projectId: "p-1", computerId: "c-1", userId: "u-1" };
+  const health = await client.health({ ...box, workspaceId: LISTING_WORKSPACE_ID });
+  assert.deepEqual(health.features, ["warm-hooks"]);
+  await assert.rejects(client.health({ ...box, workspaceId: "" }));
 });
