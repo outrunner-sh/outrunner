@@ -199,6 +199,11 @@ type RunnerPullRequestRow = {
   reported_verdict: string | null;
   reported_sha: string | null;
   decision_seq: number;
+  additions: number | null;
+  deletions: number | null;
+  checks: Json;
+  review_state: "approved" | "changes_requested" | "none" | null;
+  mergeable_state: string | null;
   checked_at: string | null;
   created_at: string;
 };

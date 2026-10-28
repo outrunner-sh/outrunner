@@ -40,6 +40,8 @@ export type PullRequestActivity = {
 
 type GitHubPull = {
   number?: number;
+  additions?: number;
+  deletions?: number;
   html_url?: string;
   title?: string;
   state?: string;
@@ -223,6 +225,11 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
     if (!status) continue;
     const reviews = (await githubGet<Parameters<typeof reviewState>[0][number][]>(token, `/repos/${row.repo}/pulls/${row.number}/reviews?per_page=100`)) ?? [];
     const pull = await githubGet<GitHubPull>(token, `/repos/${row.repo}/pulls/${row.number}`);
+    const runs = await githubGet<{ check_runs?: { name?: string; status?: string; conclusion?: string | null; html_url?: string }[] }>(
+      token,
+      `/repos/${row.repo}/commits/${status.headSha}/check-runs?per_page=100`,
+    );
+    const reviewed = reviewState(reviews);
     // A base that's another open pull request's head: stacked on it.
     const stackedOn = rows.find((r) => r.repo === row.repo && r.state === "open" && r.head_ref === (pull?.base?.ref ?? row.base_ref))?.number ?? null;
     const decision = settle({
@@ -230,13 +237,29 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
       firstActivityAt: Date.parse(row.first_activity_at),
       lastActivityAt: Date.parse(row.last_activity_at),
       fixRunning,
-      facts: { ...status, ...reviewState(reviews), stackedOn },
+      facts: { ...status, ...reviewed, stackedOn },
     });
     const pr: PullRequestRef = { repo: row.repo, number: row.number, url: row.url, title: pull?.title ?? row.title };
     const update = (patch: Record<string, unknown>) =>
       db()
         .from("runner_pull_requests")
-        .update({ checked_at: new Date(now).toISOString(), head_sha: status.headSha, title: pr.title, ...patch })
+        .update({
+          checked_at: new Date(now).toISOString(),
+          head_sha: status.headSha,
+          title: pr.title,
+          // What the Runners pane shows of it.
+          additions: pull?.additions ?? null,
+          deletions: pull?.deletions ?? null,
+          checks: (runs?.check_runs ?? []).slice(0, 50).map((r) => ({
+            name: r.name ?? "check",
+            status: r.status ?? "completed",
+            conclusion: r.conclusion ?? null,
+            url: r.html_url ?? null,
+          })),
+          review_state: reviewed.changesRequested ? "changes_requested" : reviewed.approved ? "approved" : "none",
+          mergeable_state: status.mergeableState,
+          ...patch,
+        })
         .eq("runner_id", runner.id)
         .eq("repo", row.repo)
         .eq("number", row.number);

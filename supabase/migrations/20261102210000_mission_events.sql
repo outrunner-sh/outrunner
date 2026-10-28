@@ -66,6 +66,13 @@ create table if not exists runner_pull_requests (
   reported_verdict text,
   reported_sha text,
   decision_seq integer not null default 0,
+  -- As last read, for the Runners pane: its size, its checks (name, status,
+  -- conclusion, link), its reviews' outcome and GitHub's word on merging.
+  additions integer,
+  deletions integer,
+  checks jsonb not null default '[]'::jsonb,
+  review_state text check (review_state in ('approved', 'changes_requested', 'none')),
+  mergeable_state text,
   checked_at timestamptz,
   created_at timestamptz not null default now(),
   primary key (runner_id, repo, number)
