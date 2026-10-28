@@ -4,6 +4,7 @@ import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { getSandboxSettings } from "@/lib/db/credentials";
+import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import {
   getProject,
   getWorkspaceComputer,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/db/repositories";
 import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { newBoxSize } from "@/lib/orgs/defaults";
 import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
@@ -243,7 +245,11 @@ async function bringBack(
     sessionEnv: await runtimeSessionEnvironment(owner.id, workspace.id),
     // The owner's size now, as a new box on this provider would get, within
     // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
-    size: boxSizeOn(sandboxOf(provider.name), (await getSandboxSettings(owner.id)).boxSize, await planFor(owner.id)),
+    size: boxSizeOn(
+      sandboxOf(provider.name),
+      newBoxSize(await getSandboxSettings(owner.id), (await orgDefaultsFor(project.orgId)).boxSize),
+      await planFor(owner.id),
+    ),
     previousSandboxId: ended,
     maxLiveComputers: gate.cap,
   });

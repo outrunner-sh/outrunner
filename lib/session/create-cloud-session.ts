@@ -42,9 +42,11 @@ import {
   workspaceCreateErrorResponse,
 } from "@/lib/http/workspace-create-errors";
 import { inTeamOrg } from "@/lib/db/orgs";
+import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
+import { newBoxSize } from "@/lib/orgs/defaults";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_MULTI_REPO } from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
@@ -571,7 +573,12 @@ async function provisionWorkspace({
         repoFullName: project.fullName,
         githubToken,
         sessionEnv,
-        size: boxSizeOn(sandboxSettings.sandbox, sandboxSettings.boxSize, await planFor(owner.id)),
+        // Theirs once they chose one, else their org's (lib/orgs/defaults.ts).
+        size: boxSizeOn(
+          sandboxSettings.sandbox,
+          newBoxSize(sandboxSettings, (await orgDefaultsFor(project.orgId)).boxSize),
+          await planFor(owner.id),
+        ),
         maxLiveComputers,
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
       });

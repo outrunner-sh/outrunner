@@ -253,6 +253,9 @@ export type SandboxSettings = {
   /** How big a new sandbox is, on Outrunner's or the user's own Modal
    *  (lib/runtime/box-sizes.ts). */
   boxSize: BoxSizeId;
+  /** Whether they chose it: until they do, their org's is theirs
+   *  (lib/orgs/defaults.ts newBoxSize). */
+  boxSizeChosen: boolean;
 };
 
 const SANDBOX_COLUMNS = "sandbox, daytona_key_ciphertext, daytona_key_hint, daytona_key_updated_at";
@@ -262,7 +265,10 @@ export async function getSandboxSettings(userId: string): Promise<SandboxSetting
   const supabase = createSupabaseAdminClient();
   const read = (columns: string) =>
     supabase.from("user_credentials").select(columns).eq("user_id", userId).maybeSingle();
-  let { data, error } = await read(`${SANDBOX_COLUMNS}, box_size, ${MODAL_COLUMNS}`);
+  let { data, error } = await read(`${SANDBOX_COLUMNS}, box_size, box_size_chosen, ${MODAL_COLUMNS}`);
+  // Until 20261030150000_org_defaults.sql, a size other than the first is
+  // one they chose.
+  if (error && probeStatus(error) === "outdated") ({ data, error } = await read(`${SANDBOX_COLUMNS}, box_size, ${MODAL_COLUMNS}`));
   // Each migration not yet applied reads as before it: until
   // 20261013140000_user_modal.sql, no Modal token; until
   // 20261013130000_user_box_size.sql, the default size; and until
@@ -285,15 +291,20 @@ export async function getSandboxSettings(userId: string): Promise<SandboxSetting
       updatedAt: row?.modal_token_updated_at ?? null,
     },
     boxSize: isBoxSizeId(row?.box_size) ? row.box_size : DEFAULT_BOX_SIZE,
+    boxSizeChosen: row?.box_size_chosen ?? (isBoxSizeId(row?.box_size) && row.box_size !== DEFAULT_BOX_SIZE),
   };
 }
 
 /** Make the user's new sandboxes this size. */
 export async function setBoxSize(userId: string, size: BoxSizeId): Promise<void> {
   const supabase = createSupabaseAdminClient();
-  const { error } = await supabase
+  let { error } = await supabase
     .from("user_credentials")
-    .upsert({ user_id: userId, box_size: size }, { onConflict: "user_id" });
+    .upsert({ user_id: userId, box_size: size, box_size_chosen: true }, { onConflict: "user_id" });
+  // Until 20261030150000_org_defaults.sql: the size alone.
+  if (error && probeStatus(error) === "outdated") {
+    ({ error } = await supabase.from("user_credentials").upsert({ user_id: userId, box_size: size }, { onConflict: "user_id" }));
+  }
 
   if (error) throw error;
 }

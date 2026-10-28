@@ -1653,3 +1653,31 @@ begin
   delete from org_provider_keys where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   raise notice 'ok: a team org keeps provider keys, a personal org none';
 end $$;
+
+-- 43. A team org keeps defaults for its members; a personal org none of its
+-- own. A user's box size is theirs only once they chose it.
+do $$
+declare personal uuid;
+begin
+  insert into organization_settings (org_id, default_model, box_size)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{"provider":"outrunner","id":"glm"}', 'medium');
+  begin
+    update organization_settings set box_size = 'huge' where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL: an unknown box size was kept';
+  exception when check_violation then
+    null;
+  end;
+  select id into personal from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
+  begin
+    insert into organization_settings (org_id, box_size) values (personal, 'small');
+    raise exception 'FAIL: a personal org kept defaults of its own';
+  exception when check_violation then
+    null;
+  end;
+  insert into user_credentials (user_id) values ('11111111-1111-1111-1111-111111111111') on conflict (user_id) do nothing;
+  if (select box_size_chosen from user_credentials where user_id = '11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: a box size no one chose counts as chosen';
+  end if;
+  delete from organization_settings where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  raise notice 'ok: a team org keeps defaults, a personal org none';
+end $$;
