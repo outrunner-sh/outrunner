@@ -565,7 +565,7 @@ type AutomationRow = {
   triggers: AutomationTriggerDb[];
   enabled: boolean;
   /** Its webhook's token: hashed, to find it by, and sealed, to show it
-   *  again (supabase/migrations/20261102140000_automation_webhooks.sql). */
+   *  again (supabase/migrations/20261102195000_automation_webhooks.sql). */
   webhook_token_hash: string | null;
   webhook_token_sealed: string | null;
   created_at: string;
