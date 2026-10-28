@@ -54,3 +54,30 @@ alter table notification_preferences enable row level security;
 drop policy if exists notification_preferences_own on notification_preferences;
 create policy notification_preferences_own on notification_preferences
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- When a session last failed: set as its status turns failed, and by nothing
+-- else, so a later write to a failed session (a rename, an archive) isn't
+-- told as a new failure, as updated_at would be.
+alter table workspaces add column if not exists failed_at timestamptz;
+
+create or replace function workspaces_mark_failed()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  if new.status = 'failed' and (tg_op = 'INSERT' or old.status is distinct from 'failed') then
+    new.failed_at := now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists workspaces_mark_failed on workspaces;
+create trigger workspaces_mark_failed
+  before insert or update of status on workspaces
+  for each row execute function workspaces_mark_failed();
+
+create index if not exists workspaces_failed_at_idx
+  on workspaces (failed_at) where status = 'failed';

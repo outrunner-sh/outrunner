@@ -2261,7 +2261,7 @@ begin
   raise notice 'ok: where a session stands is the server''s to read, and marks are each person''s own';
 end $$;
 
--- 49. Notifications: each event once per person and session, theirs alone to
+-- 50. Notifications: each event once per person and session, theirs alone to
 -- read; preferences each person's own, of known channels and kinds.
 do $$
 declare
@@ -2328,4 +2328,25 @@ begin
   delete from session_notifications;
   delete from notification_preferences;
   raise notice 'ok: notifications are recorded once each and read by their person alone';
+end $$;
+
+-- 51. A session's failed_at is when its status turned failed, and nothing
+-- else moves it: a failure is told once, not again on a rename.
+do $$
+declare
+  ws uuid;
+  first timestamptz;
+begin
+  select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  update workspaces set status = 'failed' where id = ws;
+  select failed_at into first from workspaces where id = ws;
+  if first is null then raise exception 'FAIL: a failed session has no failed_at'; end if;
+  update workspaces set failed_at = '2000-01-01' where id = ws;
+  update workspaces set title = 'renamed' where id = ws;
+  update workspaces set status = 'failed' where id = ws;
+  if (select failed_at from workspaces where id = ws) <> '2000-01-01' then
+    raise exception 'FAIL: a write to a session already failed moved its failed_at';
+  end if;
+  update workspaces set status = 'ready', failed_at = null, title = null where id = ws;
+  raise notice 'ok: failed_at marks when a session failed, and only that';
 end $$;

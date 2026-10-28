@@ -83,7 +83,8 @@ export function digestEmail(notifications: SentNotification[], base: string): { 
 
 /** One notification as a Slack DM, in Slack's mrkdwn. */
 export function slackMessage(notification: SentNotification, base: string): string {
-  const title = notification.title.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
-  const body = notification.body.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
+  const escape = (text: string) => text.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c] as string);
+  const title = escape(notification.title);
+  const body = escape(notification.body);
   return `${EMOJI[notification.kind]} *<${sessionLink(base, notification.workspaceId)}|${title}>*\n${body}`;
 }

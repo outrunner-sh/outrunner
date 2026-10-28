@@ -38,6 +38,14 @@ export async function PUT(request: Request) {
   if (!owner) return signInFirst();
   const parsed = Change.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "That isn't a notification setting." }, { status: 400 });
+  // What the page offers, held here too: what's saved never says more than
+  // can be sent (and Slack doesn't start the moment it's linked).
+  if (parsed.data.email && parsed.data.email !== "off" && !canSendEmail()) {
+    return NextResponse.json({ error: "This deployment doesn't send email." }, { status: 400 });
+  }
+  if (parsed.data.slack && (await listSlackLinks(owner.id).catch(() => [])).length === 0) {
+    return NextResponse.json({ error: "Link your Slack account in Connections first." }, { status: 400 });
+  }
   return savingSettings("notification preferences", async () => {
     const { kinds, ...rest } = parsed.data;
     const preferences = await savePreferences(owner.id, { ...rest, ...(kinds && { kinds: [...new Set(kinds)] }) });

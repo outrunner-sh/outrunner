@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { SectionHeader } from "@/components/settings-details";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loaders";
 import { requestJson } from "@/lib/http/request-json";
+import { isDesktopApp } from "@/lib/is-desktop";
 import { KIND_LABEL, NOTIFICATION_KINDS, type NotificationKind, type NotificationPreferences } from "@/lib/notifications/events";
 import { askPermission, notificationPermission, type Permission } from "@/lib/notifications/show";
 import { cn } from "@/lib/utils";
@@ -39,24 +40,35 @@ export function NotificationSettings() {
     void notificationPermission().then(setPermission);
   }, []);
 
-  const save = async (change: Partial<NotificationPreferences>) => {
+  // Saves go one at a time, in order, so a slow one never lands over a later
+  // change. Each shows at once; only the last one's answer is shown, and a
+  // failure reads what was saved back rather than guessing at it.
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const latest = useRef(0);
+  const reread = () =>
+    requestJson<Loaded>("/api/settings/notifications")
+      .then(setLoaded)
+      .catch(() => {});
+  const save = (change: Partial<NotificationPreferences>) => {
     if (!loaded) return;
-    const before = loaded;
-    setLoaded({ ...loaded, preferences: { ...loaded.preferences, ...change } });
-    setSaving(true);
+    setLoaded((current) => (current ? { ...current, preferences: { ...current.preferences, ...change } } : current));
     setError(null);
-    try {
-      const { preferences } = await requestJson<{ preferences: NotificationPreferences }>("/api/settings/notifications", {
-        method: "PUT",
-        body: change,
-      });
-      setLoaded((current) => (current ? { ...current, preferences } : current));
-    } catch (saveError) {
-      setLoaded(before);
-      setError(saveError instanceof Error ? saveError.message : "Couldn't save that.");
-    } finally {
-      setSaving(false);
-    }
+    setSaving(true);
+    const turn = ++latest.current;
+    queue.current = queue.current.then(async () => {
+      try {
+        const { preferences } = await requestJson<{ preferences: NotificationPreferences }>("/api/settings/notifications", {
+          method: "PUT",
+          body: change,
+        });
+        if (turn === latest.current) setLoaded((current) => (current ? { ...current, preferences } : current));
+      } catch (saveError) {
+        setError(saveError instanceof Error ? saveError.message : "Couldn't save that.");
+        await reread();
+      } finally {
+        if (turn === latest.current) setSaving(false);
+      }
+    });
   };
 
   if (!loaded) {
@@ -69,7 +81,7 @@ export function NotificationSettings() {
   }
   const { preferences, emailAvailable, slackLinked } = loaded;
   const toggleKind = (kind: NotificationKind) =>
-    void save({
+    save({
       kinds: preferences.kinds.includes(kind) ? preferences.kinds.filter((k) => k !== kind) : [...preferences.kinds, kind],
     });
 
@@ -84,7 +96,7 @@ export function NotificationSettings() {
         <Row
           title="Browser"
           detail="As it happens, except for the session you're looking at."
-          control={<Switch on={preferences.browser} label="Browser notifications" onChange={(on) => void save({ browser: on })} />}
+          control={<Switch on={preferences.browser} label="Browser notifications" onChange={(on) => save({ browser: on })} />}
         >
           {preferences.browser && permission !== null && permission !== "granted" && (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
@@ -97,7 +109,13 @@ export function NotificationSettings() {
                 </>
               )}
               {permission === "denied" && <span>This browser blocks them for Outrunner: allow them in its site settings.</span>}
-              {permission === "unsupported" && <span>This browser can&apos;t show them.</span>}
+              {permission === "unsupported" && (
+                <span>
+                  {isDesktopApp()
+                    ? "The Mac app doesn't show these; open Outrunner in a browser for them, or use email or Slack."
+                    : "This browser can't show them."}
+                </span>
+              )}
             </div>
           )}
         </Row>
@@ -114,7 +132,7 @@ export function NotificationSettings() {
                   role="radio"
                   aria-checked={preferences.email === choice.value}
                   disabled={!emailAvailable && choice.value !== "off"}
-                  onClick={() => void save({ email: choice.value })}
+                  onClick={() => save({ email: choice.value })}
                   className={cn(
                     "rounded px-2 py-0.5 text-xs transition-colors disabled:opacity-40",
                     preferences.email === choice.value ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
@@ -147,7 +165,7 @@ export function NotificationSettings() {
               on={preferences.slack && slackLinked}
               disabled={!slackLinked}
               label="Slack DM notifications"
-              onChange={(on) => void save({ slack: on })}
+              onChange={(on) => save({ slack: on })}
             />
           }
         />

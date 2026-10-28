@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { rememberShown, shouldShow, showNotification, type Shown } from "@/lib/notifications/show";
+import { canShowNotifications, rememberShown, shouldShow, showNotification, type Shown } from "@/lib/notifications/show";
 
 /** How often the page asks. A tab in the background is asked less often by
  *  the browser itself; it still hears within a minute or so. */
@@ -55,28 +55,51 @@ export function useNotificationsFeed({
 
   useEffect(() => {
     let stopped = false;
-    let after = new Date().toISOString();
+    // Where reading left off: the server's clock, never this browser's, which
+    // may run fast and skip what was recorded meanwhile. Null until the
+    // first read, and again while nothing can be shown, so allowing them in
+    // Settings starts from then rather than with a burst.
+    let after: string | null = null;
+    // From `after` inclusive, the last read's own come back: shown once.
+    let handled = new Set<string>();
     const read = async () => {
+      // Nothing to show with (no Notification, not allowed, the Mac app's
+      // webview): no reason to ask the server.
+      if (!canShowNotifications()) {
+        after = null;
+        return;
+      }
       try {
-        const response = await fetch(`/api/notifications?after=${encodeURIComponent(after)}`, { cache: "no-store" });
+        const query = after ? `?after=${encodeURIComponent(after)}` : "";
+        const response = await fetch(`/api/notifications${query}`, { cache: "no-store" });
         if (!response.ok || stopped) return;
         const body = (await response.json()) as {
           notifications: Array<Shown & { kind: string; createdAt: string }>;
-          browser: boolean;
-          kinds: string[];
+          now: string;
+          browser?: boolean;
+          kinds?: string[];
         };
+        if (after === null) {
+          after = body.now;
+          return;
+        }
+        const next = new Set<string>();
         for (const notification of body.notifications) {
           after = notification.createdAt;
-          if (!body.kinds.includes(notification.kind)) continue;
+          next.add(notification.id);
+          if (handled.has(notification.id)) continue;
+          if (!body.kinds?.includes(notification.kind)) continue;
           const looking = document.visibilityState === "visible" && document.hasFocus();
-          if (!shouldShow(notification, { browserOn: body.browser, onScreen: here.current.onScreen, looking })) continue;
+          if (!shouldShow(notification, { browserOn: body.browser ?? true, onScreen: here.current.onScreen, looking })) continue;
           if (!claim(notification.id)) continue;
           await showNotification(notification, (id) => here.current.open(id));
         }
+        if (next.size > 0) handled = next;
       } catch {
         // Offline for a moment: the next read catches up.
       }
     };
+    void read();
     const timer = setInterval(() => void read(), POLL_MS);
     return () => {
       stopped = true;

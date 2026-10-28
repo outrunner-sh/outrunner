@@ -43,7 +43,9 @@ test("a pull request that opens or merges is news; one closed unmerged isn't", (
   assert.equal(pullRequestNews({ from: null, to: "open", number: 7 }, session)[0].kind, "pr_opened");
   assert.equal(pullRequestNews({ from: "open", to: "merged", number: 7 }, session)[0].body, "Pull request #7 merged");
   assert.deepEqual(pullRequestNews({ from: "open", to: "closed", number: 7 }, session), []);
-  assert.deepEqual(pullRequestNews({ from: "closed", to: "open", number: 7 }, session), []);
+  // A new one on the branch replacing a closed one, or one reopened.
+  assert.equal(pullRequestNews({ from: "closed", to: "open", number: 8 }, session)[0].kind, "pr_opened");
+  assert.deepEqual(pullRequestNews({ from: "open", to: "open", number: 7 }, session), []);
 });
 
 test("a failure is news once per failure, saying why", () => {

@@ -86,7 +86,9 @@ export function activityNews(
   return [];
 }
 
-/** A pull request that opened or merged is news; one closed unmerged isn't. */
+/** A pull request that opened is news (new, or open again after closing:
+ *  a new one on the branch replacing a closed one); one merged is too; one
+ *  closed unmerged isn't. */
 export function pullRequestNews(
   change: { from: "open" | "closed" | "merged" | null; to: "open" | "closed" | "merged"; number: number },
   session: { userId: string; workspaceId: string; title: string },
@@ -94,7 +96,7 @@ export function pullRequestNews(
   if (change.to === "merged" && change.from !== "merged") {
     return [{ ...session, kind: "pr_merged", eventKey: String(change.number), body: `Pull request #${change.number} merged` }];
   }
-  if (change.to === "open" && change.from === null) {
+  if (change.to === "open" && change.from !== "open" && change.from !== "merged") {
     return [{ ...session, kind: "pr_opened", eventKey: String(change.number), body: `Pull request #${change.number} opened` }];
   }
   return [];

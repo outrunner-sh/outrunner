@@ -166,8 +166,15 @@ export async function POST(request: Request) {
       if (tracked) {
         after(() =>
           recordPullRequestEvent(tracked)
-            .then(notifyPullRequests)
-            .catch((error: unknown) => console.error("Couldn't record a session's pull request", error)),
+            .catch((error: unknown) => {
+              console.error("Couldn't record a session's pull request", error);
+              return [];
+            })
+            .then((changes) =>
+              notifyPullRequests(changes).catch((error: unknown) =>
+                console.error("Couldn't tell a session's owner of its pull request", error),
+              ),
+            ),
         );
       }
       return NextResponse.json({ received: true, runs: runs.length });

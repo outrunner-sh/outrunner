@@ -30,6 +30,11 @@ function supported(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
 }
 
+/** Whether one can be shown here now: a Notification API, and allowed. */
+export function canShowNotifications(): boolean {
+  return supported() && Notification.permission === "granted";
+}
+
 /** Whether notifications may be shown here. */
 export async function notificationPermission(): Promise<Permission> {
   return supported() ? Notification.permission : "unsupported";
@@ -42,7 +47,7 @@ export async function askPermission(): Promise<Permission> {
 
 /** Show one; a click opens its session. Quietly nothing where it can't. */
 export async function showNotification(notification: Shown, open: (workspaceId: string) => void): Promise<void> {
-  if (!supported() || Notification.permission !== "granted") return;
+  if (!canShowNotifications()) return;
   const shown = new Notification(notification.title, { body: notification.body, tag: notification.id });
   shown.onclick = () => {
     window.focus();

@@ -69,8 +69,8 @@ export async function notifyPullRequests(
   );
 }
 
-/** How far back the tick looks for sessions that failed: a little over two
- *  ticks, so none is missed between them. */
+/** How far back the tick looks for sessions that failed: five ticks, so a
+ *  tick that's missed or late loses none (each is told once, by its key). */
 const FAILED_WITHIN_MS = 10 * 60_000;
 
 /** Sessions that failed lately: told once each failure. */
@@ -80,7 +80,8 @@ export async function notifyFailures(now: number = Date.now()): Promise<number> 
     .select("*")
     .eq("status", "failed")
     .eq("background", false)
-    .gt("updated_at", new Date(now - FAILED_WITHIN_MS).toISOString())
+    // When it failed, not when its row last changed (a rename, an archive).
+    .gt("failed_at", new Date(now - FAILED_WITHIN_MS).toISOString())
     .limit(100);
   if (error) throw error;
   return recordNotifications(
@@ -90,7 +91,7 @@ export async function notifyFailures(now: number = Date.now()): Promise<number> 
         userId: workspace.ownerId,
         workspaceId: workspace.id,
         title: workspaceLabel(workspace),
-        failedAt: workspace.updatedAt,
+        failedAt: row.failed_at ?? workspace.updatedAt,
         message: workspace.errorMessage,
       });
     }),

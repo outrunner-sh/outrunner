@@ -143,6 +143,8 @@ type WorkspaceRow = {
   slack_sync: boolean;
   /** Where it came from (20261102120000_api_keys.sql). */
   source: WorkspaceSourceDb;
+  /** When its status last turned failed (20261102163000); null otherwise. */
+  failed_at?: string | null;
 };
 
 type RuntimeComputerRow = {

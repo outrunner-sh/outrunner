@@ -80,6 +80,19 @@ async function slackTargets(userIds: string[]): Promise<Map<string, { channel: s
   return targets;
 }
 
+/** Claim a notification for one channel: true when this call set it, false
+ *  when another got there first. */
+async function claimFor(id: string, channel: "emailed_at" | "slacked_at", stamp: string): Promise<boolean> {
+  const { data, error } = await db()
+    .from("session_notifications")
+    .update(channel === "emailed_at" ? { emailed_at: stamp } : { slacked_at: stamp })
+    .eq("id", id)
+    .is(channel, null)
+    .select("id");
+  if (error) throw error;
+  return Boolean(data?.length);
+}
+
 export type DeliveryReport = { emailed: number; slacked: number; digests: number };
 
 /** Instant email and Slack DMs for what's due, then digests. */
@@ -108,18 +121,16 @@ export async function deliverNotifications(now: number = Date.now()): Promise<De
       if (!sent || !prefs) continue;
       const due = dueFor(sent, prefs, seen.get(`${row.user_id}:${row.workspace_id}`) ?? null, now);
       if (due === "wait") continue;
-      const patch: { emailed_at?: string; slacked_at?: string } = {};
-      if (row.emailed_at === null) {
+      // Each channel is claimed before it's sent on (its stamp set where it
+      // was null), so two ticks at once send once. Handled whether sent or
+      // not (off, seen, a digest's, no address): never looked at again.
+      if (row.emailed_at === null && (await claimFor(row.id, "emailed_at", stamp))) {
         const email = who.get(row.user_id)?.email;
-        // Handled whether sent or not (off, seen, a digest's, or no address):
-        // it's never looked at again for this.
         if (due === "send" && prefs.email === "instant" && emailOn && email) {
-          const message = instantEmail(sent, base());
-          if (await sendEmail({ to: [email], ...message })) report.emailed++;
+          if (await sendEmail({ to: [email], ...instantEmail(sent, base()) })) report.emailed++;
         }
-        patch.emailed_at = stamp;
       }
-      if (row.slacked_at === null) {
+      if (row.slacked_at === null && (await claimFor(row.id, "slacked_at", stamp))) {
         const target = slack.get(row.user_id);
         if (due === "send" && prefs.slack && target) {
           const ok = await postMessage(target.token, { channel: target.channel, text: slackMessage(sent, base()) })
@@ -130,10 +141,7 @@ export async function deliverNotifications(now: number = Date.now()): Promise<De
             });
           if (ok) report.slacked++;
         }
-        patch.slacked_at = stamp;
       }
-      const { error: updateError } = await db().from("session_notifications").update(patch).eq("id", row.id);
-      if (updateError) throw updateError;
     }
   }
   report.digests = await deliverDigests(now);
