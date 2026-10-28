@@ -17,21 +17,26 @@ async function readableRepos(actor: TriageActor): Promise<{ id: string; fullName
   return (await listOrgProjects(actor.orgId)).filter((p) => actor.levels.has(p.id));
 }
 
-type MergedPull = { repo: string; number: number; title: string; author: string | null; mergedAt: string; url: string };
+export type MergedPull = { repo: string; number: number; title: string; author: string | null; mergedAt: string; url: string };
 
 /**
- * Pull requests merged in the last `days` (at most 30), newest first: in one
+ * Pull requests merged in the last `days` (1 to 30), newest first: in one
  * repository the actor may read, or in all of them (the first 10). Read
- * through the GitHub App installed on each repository's owner.
+ * through the GitHub App installed on each repository's owner; `unreachable`
+ * names the repositories it can't read.
  */
-export async function recentWork(actor: TriageActor, input: { days?: unknown; repo?: unknown }): Promise<string> {
+export async function mergedPulls(
+  actor: TriageActor,
+  input: { days?: unknown; repo?: unknown },
+): Promise<{ days: number; merged: MergedPull[]; unreachable: string[]; error?: string }> {
   const days = Math.min(30, Math.max(1, Number(input.days) || 7));
   const since = Date.now() - days * 24 * 60 * 60 * 1000;
   const repos = await readableRepos(actor);
   const wanted = typeof input.repo === "string" && input.repo.trim() ? input.repo.trim().toLowerCase() : null;
   const targets = (wanted ? repos.filter((r) => r.fullName.toLowerCase() === wanted) : repos).slice(0, 10);
-  if (targets.length === 0) return JSON.stringify({ error: wanted ? `No repository ${input.repo} you can read.` : "No repositories." });
-
+  if (targets.length === 0) {
+    return { days, merged: [], unreachable: [], error: wanted ? `No repository ${String(input.repo)} you can read.` : "No repositories." };
+  }
   const merged: MergedPull[] = [];
   const unreachable: string[] = [];
   await Promise.all(
@@ -55,10 +60,17 @@ export async function recentWork(actor: TriageActor, input: { days?: unknown; re
     }),
   );
   merged.sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
+  return { days, merged: merged.slice(0, 60), unreachable };
+}
+
+/** The recent_work tool: mergedPulls, for the model. */
+export async function recentWork(actor: TriageActor, input: { days?: unknown; repo?: unknown }): Promise<string> {
+  const result = await mergedPulls(actor, input);
+  if (result.error) return JSON.stringify({ error: result.error });
   return JSON.stringify({
-    days,
-    merged: merged.slice(0, 60),
-    ...(unreachable.length && { unreachable, note: "The Outrunner GitHub App can't read these repositories." }),
+    days: result.days,
+    merged: result.merged,
+    ...(result.unreachable.length && { unreachable: result.unreachable, note: "The Outrunner GitHub App can't read these repositories." }),
   });
 }
 

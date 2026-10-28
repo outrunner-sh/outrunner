@@ -14,18 +14,19 @@
 
 import { getOrg } from "@/lib/db/orgs";
 import {
+  claimPullRequestEnd,
+  claimVerdict,
   conversationsWithOpenPullRequests,
   getInstallation,
   sessionSummary,
   type SlackConversation,
-  updateConversation,
 } from "@/lib/db/slack-agent";
-import { type ChannelSettings, claimDigest, digestChannels } from "@/lib/db/slack-channels";
+import { type ChannelSettings, claimDigest, digestChannels, releaseDigest } from "@/lib/db/slack-channels";
 import { listWorkItems, triageActor } from "@/lib/db/work-items";
+import { githubAppConfig } from "@/lib/github/app";
 import { githubGet, repoToken } from "@/lib/slack/github";
-import { recentWork } from "@/lib/slack/lookups";
+import { mergedPulls } from "@/lib/slack/lookups";
 import {
-  type DigestData,
   digestDue,
   digestText,
   nudgeText,
@@ -36,7 +37,7 @@ import {
 import { postMessage } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { itemUrl } from "@/lib/triage/urls";
-import { itemKey } from "@/lib/triage/work-items";
+import { isOpen, itemKey } from "@/lib/triage/work-items";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** In progress this long with no pull request is stuck. */
@@ -77,7 +78,14 @@ async function sendDueDigests(now: Date): Promise<number> {
       now,
     );
     if (!date || !(await claimDigest(channel.teamId, channel.channelId, date))) continue;
-    if (await quietly(`digest for ${channel.channelId}`, () => sendDigest(channel, now))) sent++;
+    if (await quietly(`digest for ${channel.channelId}`, () => sendDigest(channel, now))) {
+      sent++;
+    } else {
+      // Not sent (Slack failed, or no one to send it as): the next tick in the
+      // hour tries again.
+      console.error(`Slack agent: the digest for ${channel.channelId} didn't go out`);
+      await releaseDigest(channel.teamId, channel.channelId, channel.lastDigestOn).catch(() => undefined);
+    }
   }
   return sent;
 }
@@ -91,17 +99,12 @@ export async function sendDigest(channel: ChannelSettings, now = new Date()): Pr
   const actor = channel.setBy ? await triageActor(channel.setBy, channel.orgId) : null;
   if (!install || !actor) return false;
   const period = channel.digest ?? "daily";
-  const [org, shippedRaw, items] = await Promise.all([
+  const [org, recent, items] = await Promise.all([
     getOrg(channel.orgId),
-    recentWork(actor, { days: period === "daily" ? 1 : 7 }),
+    mergedPulls(actor, { days: period === "daily" ? 1 : 7 }),
     listWorkItems(actor),
   ]);
-  const shipped = ((JSON.parse(shippedRaw) as { merged?: DigestData["shipped"] }).merged ?? []).map((p) => ({
-    repo: p.repo,
-    number: p.number,
-    title: p.title,
-    url: p.url,
-  }));
+  const shipped = recent.merged.map((p) => ({ repo: p.repo, number: p.number, title: p.title, url: p.url }));
 
   const inProgress = items.filter((i) => i.status === "in_progress");
   const db = createSupabaseAdminClient();
@@ -155,8 +158,16 @@ async function nudgeWaitingItems(now: Date): Promise<number> {
   if (error) throw error;
   let sent = 0;
   for (const item of items ?? []) {
-    // Considered once, whether or not there's anyone to tell.
-    await db.from("work_items").update({ slack_nudged_at: now.toISOString() }).eq("id", item.id);
+    // Claimed before anything is sent, and only if no other tick has: one DM
+    // at most, whether or not there's anyone to tell.
+    const { data: claimed, error: claimError } = await db
+      .from("work_items")
+      .update({ slack_nudged_at: now.toISOString() })
+      .eq("id", item.id)
+      .is("slack_nudged_at", null)
+      .select("id");
+    if (claimError) throw claimError;
+    if (!claimed?.length) continue;
     const { data: link } = await db
       .from("slack_links")
       .select("team_id, slack_user_id")
@@ -183,7 +194,7 @@ async function nudgeWaitingItems(now: Date): Promise<number> {
 // Follow-ups
 // ---------------------------------------------------------------------------
 
-type Comment = { id: number; body?: string | null; user?: { type?: string } | null };
+type Comment = { id: number; body?: string | null; user?: { type?: string; login?: string } | null };
 type Pull = { merged_at: string | null; state: string };
 
 /** The validator's newest verdict on a pull request, if one was posted after
@@ -193,10 +204,17 @@ export async function newVerdict(
   pr: { repo: string; number: number },
   afterId: number | null,
 ): Promise<{ id: number; body: string; verdict: NonNullable<ReturnType<typeof parseVerdict>> } | null> {
-  const comments = await githubGet<Comment[]>(token, `/repos/${pr.repo}/issues/${pr.number}/comments?per_page=100`);
-  for (const c of [...(comments ?? [])].reverse()) {
+  // Newest first: the validator runs again on every push.
+  const comments = await githubGet<Comment[]>(
+    token,
+    `/repos/${pr.repo}/issues/${pr.number}/comments?sort=created&direction=desc&per_page=50`,
+  );
+  // The Outrunner App's own comments, where its name is known; else any bot's.
+  const slug = githubAppConfig()?.slug;
+  const fromValidator = (c: Comment) => (slug ? c.user?.login === `${slug}[bot]` : c.user?.type === "Bot");
+  for (const c of comments ?? []) {
     if (afterId !== null && c.id <= afterId) break;
-    const verdict = c.user?.type === "Bot" && c.body ? parseVerdict(c.body) : null;
+    const verdict = fromValidator(c) && c.body ? parseVerdict(c.body) : null;
     if (verdict && c.body) return { id: c.id, body: c.body, verdict };
   }
   return null;
@@ -218,15 +236,19 @@ async function followUp(conversation: SlackConversation): Promise<boolean> {
   const token = await repoToken(conversation.orgId, pr.repo);
   if (!install || !token) return false;
   const db = createSupabaseAdminClient();
-  const { data: item } = await db.from("work_items").select("id, number, status").eq("id", conversation.itemId).maybeSingle();
+  const { data: item } = await db
+    .from("work_items")
+    .select("id, number, status, triaged_at")
+    .eq("id", conversation.itemId)
+    .maybeSingle();
   if (!item) return false;
   const key = `OR-${item.number}`;
   const where = { channel: conversation.channelId, threadTs: conversation.threadTs };
   let posted = false;
 
   const verdict = await newVerdict(token, pr, conversation.verdictCommentId);
-  if (verdict) {
-    await updateConversation(conversation.id, { verdictCommentId: verdict.id });
+  // Claimed first: an overlapping tick that found the same one posts nothing.
+  if (verdict && (await claimVerdict(conversation.id, verdict.id))) {
     await postMessage(install.botToken, {
       ...where,
       text: `The validator says ${verdict.verdict} on ${key}.`,
@@ -236,14 +258,20 @@ async function followUp(conversation: SlackConversation): Promise<boolean> {
   }
 
   const pull = await githubGet<Pull>(token, `/repos/${pr.repo}/pulls/${pr.number}`);
-  if (pull?.merged_at) {
-    await updateConversation(conversation.id, { mergedAnnounced: true });
-    // Merged is done: the work it was filed for has landed.
-    if (item.status !== "done") await db.from("work_items").update({ status: "done" }).eq("id", item.id);
-    await postMessage(install.botToken, { ...where, text: `<${pr.url}|The pull request> is merged, so ${key} is done.` });
+  if (pull?.merged_at && (await claimPullRequestEnd(conversation.id))) {
+    // Merged is done, for an item still open: one someone declined or marked a
+    // duplicate meanwhile stays as they left it.
+    if (isOpen(item.status)) {
+      await db
+        .from("work_items")
+        .update({ status: "done", duplicate_of: null, ...(item.triaged_at ? {} : { triaged_at: new Date().toISOString() }) })
+        .eq("id", item.id);
+      await postMessage(install.botToken, { ...where, text: `<${pr.url}|The pull request> is merged, so ${key} is done.` });
+    } else {
+      await postMessage(install.botToken, { ...where, text: `<${pr.url}|The pull request> for ${key} is merged.` });
+    }
     posted = true;
-  } else if (pull?.state === "closed") {
-    await updateConversation(conversation.id, { mergedAnnounced: true });
+  } else if (pull && !pull.merged_at && pull.state === "closed" && (await claimPullRequestEnd(conversation.id))) {
     await postMessage(install.botToken, { ...where, text: `<${pr.url}|The pull request> for ${key} was closed without merging. ${key} stays open.` });
     posted = true;
   }

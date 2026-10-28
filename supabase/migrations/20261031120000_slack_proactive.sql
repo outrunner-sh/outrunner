@@ -2,7 +2,8 @@
 -- a nudge to whoever filed an item that waits in triage, follow-ups in an
 -- item's thread (the validator's verdict, the merge), and, in channels that
 -- opt in, an offer to file what looks like a bug report or request. All the
--- server's (RLS on, no policy, grants revoked), through lib/db/slack-proactive.ts.
+-- server's (RLS on, no policy, grants revoked), through lib/db/slack-channels.ts
+-- and lib/db/slack-agent.ts.
 -- ---------------------------------------------------------------------------
 
 -- What the agent does in a channel, as someone with write on the org's
@@ -38,11 +39,19 @@ alter table slack_conversations add column if not exists pr_url text;
 -- The validator comment last posted in the thread (GitHub's comment id).
 alter table slack_conversations add column if not exists verdict_comment_id bigint;
 alter table slack_conversations add column if not exists merged_announced boolean not null default false;
+-- When its pull request was last checked: the tick takes the least recently
+-- checked first, so every open one gets its turn.
+alter table slack_conversations add column if not exists pr_checked_at timestamptz;
 
-create index if not exists slack_conversations_pr_idx on slack_conversations (pr_repo, pr_number) where pr_number is not null;
+create index if not exists slack_conversations_pr_check_idx
+  on slack_conversations (pr_checked_at nulls first) where pr_number is not null and not merged_announced;
 
 -- When whoever filed an item waiting in triage was nudged about it: once.
 alter table work_items add column if not exists slack_nudged_at timestamptz;
+-- What already waits isn't news: only items that start waiting from now on
+-- are nudged, rather than a burst of DMs about an old queue on the first tick.
+update work_items set slack_nudged_at = now()
+  where status = 'triage' and slack_nudged_at is null and created_at < now() - interval '1 day';
 
 alter table slack_channels enable row level security;
 -- No policy, on purpose: see 20260928120000_user_credentials.sql.

@@ -57,7 +57,8 @@ export async function channelSettings(teamId: string, channelId: string): Promis
 
 /** Change what the agent does in a channel; what isn't given stays. */
 export async function setChannelSettings(
-  where: { teamId: string; channelId: string; orgId: string; setBy: string },
+  /** `setBy` null keeps who set it before (or no one, for a new channel). */
+  where: { teamId: string; channelId: string; orgId: string; setBy: string | null },
   patch: Partial<{ watch: boolean; digest: "daily" | "weekly" | null; digestHour: number; digestTz: string }>,
 ): Promise<ChannelSettings> {
   const current = await channelSettings(where.teamId, where.channelId);
@@ -68,7 +69,7 @@ export async function setChannelSettings(
         team_id: where.teamId,
         channel_id: where.channelId,
         org_id: where.orgId,
-        set_by: where.setBy,
+        set_by: where.setBy ?? current?.setBy ?? null,
         watch: patch.watch ?? current?.watch ?? false,
         digest: patch.digest !== undefined ? patch.digest : (current?.digest ?? null),
         digest_hour: patch.digestHour ?? current?.digestHour ?? 9,
@@ -87,6 +88,17 @@ export async function digestChannels(): Promise<ChannelSettings[]> {
   const { data, error } = await createSupabaseAdminClient().from("slack_channels").select("*").not("digest", "is", null);
   if (error) throw error;
   return (data ?? []).map(toSettings);
+}
+
+/** Give a claimed day back (the digest didn't go out): `previous` is what it
+ *  was before the claim. */
+export async function releaseDigest(teamId: string, channelId: string, previous: string | null): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("slack_channels")
+    .update({ last_digest_on: previous })
+    .eq("team_id", teamId)
+    .eq("channel_id", channelId);
+  if (error) throw error;
 }
 
 /** Note a digest went out on a local date; false when another tick already

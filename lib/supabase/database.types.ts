@@ -702,6 +702,7 @@ type SlackConversationRow = {
   pr_url: string | null;
   verdict_comment_id: number | null;
   merged_announced: boolean;
+  pr_checked_at: string | null;
   created_at: string;
   updated_at: string;
 };

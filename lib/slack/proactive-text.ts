@@ -193,7 +193,9 @@ export function verdictBlocks(input: { itemKey: string; verdict: Verdict; url: s
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `The validator checked <${input.url}|${input.itemKey}'s pull request>: *${input.verdict}*\n${input.excerpt.slice(0, 2800)}`,
+        // The comment is model output shaped by the PR: escaped, so it can't
+        // ping the channel or break the markup.
+        text: `The validator checked <${input.url}|${input.itemKey}'s pull request>: *${input.verdict}*\n${esc(input.excerpt.slice(0, 2800))}`,
       },
     },
   ];

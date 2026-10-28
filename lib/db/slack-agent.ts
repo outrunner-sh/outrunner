@@ -189,7 +189,7 @@ export async function updateConversation(
     workspaceId: string | null;
     researchWorkspaceId: string | null;
     pr: { repo: string; number: number; url: string };
-    verdictCommentId: number;
+    verdictCommentId: number | null;
     mergedAnnounced: boolean;
   }>,
 ): Promise<void> {
@@ -219,10 +219,45 @@ export async function conversationsWithOpenPullRequests(limit = 25): Promise<Sla
     .select("*")
     .not("pr_number", "is", null)
     .eq("merged_announced", false)
-    .order("updated_at", { ascending: true })
+    // Least recently checked first: every open one gets its turn.
+    .order("pr_checked_at", { ascending: true, nullsFirst: true })
     .limit(limit);
   if (error) throw error;
-  return (data ?? []).map(toConversation);
+  const rows = data ?? [];
+  if (rows.length) {
+    const { error: touchError } = await db()
+      .from("slack_conversations")
+      .update({ pr_checked_at: new Date().toISOString() })
+      .in("id", rows.map((r) => r.id));
+    if (touchError) throw touchError;
+  }
+  return rows.map(toConversation);
+}
+
+/** Claim a verdict comment for posting: false when it's already been posted
+ *  (by an overlapping tick), or an older one is all this is. */
+export async function claimVerdict(id: string, commentId: number): Promise<boolean> {
+  const { data, error } = await db()
+    .from("slack_conversations")
+    .update({ verdict_comment_id: commentId })
+    .eq("id", id)
+    .or(`verdict_comment_id.is.null,verdict_comment_id.lt.${commentId}`)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** Claim announcing the end of a thread's pull request (merged or closed):
+ *  once. */
+export async function claimPullRequestEnd(id: string): Promise<boolean> {
+  const { data, error } = await db()
+    .from("slack_conversations")
+    .update({ merged_announced: true })
+    .eq("id", id)
+    .eq("merged_announced", false)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
 }
 
 /** The thread a work item was filed from, if it came from the agent. */

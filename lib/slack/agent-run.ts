@@ -466,8 +466,13 @@ export async function announcePullRequest(pr: {
   for (const item of items ?? []) {
     const conversation = await conversationForItem(item.id);
     if (!conversation) continue;
-    // Followed from here on: its validator's verdict, and its merge.
-    await updateConversation(conversation.id, { pr: { repo: pr.repoFullName, number: pr.number, url: pr.url } });
+    // Followed from here on: its validator's verdict, and its merge. A new
+    // PR on the thread (after one closed unmerged) starts over.
+    await updateConversation(conversation.id, {
+      pr: { repo: pr.repoFullName, number: pr.number, url: pr.url },
+      verdictCommentId: null,
+      mergedAnnounced: false,
+    });
     const install = await getInstallation(conversation.teamId);
     if (!install) continue;
     await postMessage(install.botToken, {
@@ -492,8 +497,11 @@ async function changeChannel(asker: TriageActor, message: AgentMessage, args: Re
   if (tz && !isTimeZone(tz)) return JSON.stringify({ error: `${tz} isn't a time zone I know (use one like Asia/Kolkata).` });
   const hour = typeof args.hour === "number" && Number.isInteger(args.hour) && args.hour >= 0 && args.hour <= 23 ? args.hour : undefined;
   const digest = args.digest === "daily" || args.digest === "weekly" ? args.digest : args.digest === "off" ? null : undefined;
+  // The digest shows what whoever set it up may see: that changes only when
+  // someone changes the digest, not when they just turn watching on or off.
+  const touchesDigest = digest !== undefined || hour !== undefined || tz !== undefined;
   const settings = await setChannelSettings(
-    { teamId: message.teamId, channelId: message.channel, orgId: asker.orgId, setBy: asker.userId },
+    { teamId: message.teamId, channelId: message.channel, orgId: asker.orgId, setBy: touchesDigest ? asker.userId : null },
     {
       ...(typeof args.watch === "boolean" && { watch: args.watch }),
       ...(digest !== undefined && { digest }),
@@ -522,7 +530,9 @@ async function offerIfWork(install: SlackInstallation, message: AgentMessage): P
   let key: string;
   try {
     key = await orgModelKey(settings.orgId);
-  } catch {
+  } catch (error) {
+    // A spent allowance included: logged, so a channel gone quiet has a trace.
+    console.error(`Slack agent: no model key to watch ${message.channel} with`, error);
     return;
   }
   const classification = parseClassification(await oneShot(key, CLASSIFIER_PROMPT, slackToMarkdown(message.text).slice(0, 4000)));
@@ -554,13 +564,19 @@ export async function handleProactiveAction(action: ProactiveAction): Promise<vo
     if (action.actionId === PROACTIVE_ACTIONS.watchFile || action.actionId === PROACTIVE_ACTIONS.watchDismiss) {
       const [channel, ts] = action.value.split("|");
       if (!channel || !ts) return;
-      if (action.messageTs) await deleteMessage(install.botToken, { channel, ts: action.messageTs }).catch(() => undefined);
-      if (action.actionId === PROACTIVE_ACTIONS.watchDismiss) return;
+      const takeDown = () =>
+        action.messageTs ? deleteMessage(install.botToken, { channel, ts: action.messageTs }).catch(() => undefined) : undefined;
+      if (action.actionId === PROACTIVE_ACTIONS.watchDismiss) {
+        await takeDown();
+        return;
+      }
+      // The offer stays for everyone until someone who can file says yes.
       const actor = await actorFor(action.teamId, action.user);
       if (!actor) {
         await askToConnect(install, { channel, user: action.user, threadTs: ts });
         return;
       }
+      await takeDown();
       const conversation =
         (await getConversation(action.teamId, channel, ts)) ??
         (await openConversation({ teamId: action.teamId, channelId: channel, threadTs: ts, orgId: actor.orgId, startedBy: actor.userId }));

@@ -77,3 +77,8 @@ test("the watch check is strict: anything unclear is nothing to file", () => {
   assert.match(JSON.stringify(offer), /a bug report: \*Fix &lt;checkout&gt;\*/);
   assert.match(JSON.stringify(offer), /"value":"C1\|1.2"/);
 });
+
+test("a verdict can't ping the channel or break the markup", () => {
+  const blocks = verdictBlocks({ itemKey: "OR-4", verdict: "FAIL", url: "https://gh/9", excerpt: "Verdict: FAIL <!channel> a < b", conversationId: "c1" });
+  assert.match(JSON.stringify(blocks), /Verdict: FAIL &lt;!channel&gt; a &lt; b/);
+});
