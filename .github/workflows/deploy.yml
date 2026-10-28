@@ -33,6 +33,9 @@ concurrency:
 
 jobs:
   deploy:
+    # Production is main's: a manual run from another ref would share the
+    # queue above, replace main's waiting deploy, and ship that ref instead.
+    if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
