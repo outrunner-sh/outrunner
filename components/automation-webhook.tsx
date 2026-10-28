@@ -70,7 +70,7 @@ export function AutomationWebhook({
               ? "Its URL can't be shown (Outrunner's encryption key has changed since it was made). Make a new one: the old one stops working."
               : "Save with Webhook ticked to get its URL, or make one now."}
           </p>
-          <HoldToConfirm label="New URL" onConfirm={() => void rotate()} disabled={rotating} className="h-7 shrink-0 px-2.5 text-xs" />
+          <HoldToConfirm label="Replace URL" onConfirm={() => void rotate()} disabled={rotating} className="h-7 shrink-0 px-2.5 text-xs" />
         </div>
         {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
       </div>
@@ -90,10 +90,10 @@ export function AutomationWebhook({
         >
           {copied ? "Copied" : "Copy"}
         </button>
-        <HoldToConfirm label="New URL" onConfirm={() => void rotate()} disabled={rotating} className="h-7 shrink-0 px-2.5 text-xs" />
+        <HoldToConfirm label="Replace URL" onConfirm={() => void rotate()} disabled={rotating} className="h-7 shrink-0 px-2.5 text-xs" />
       </div>
       <p className="text-xs text-muted-foreground">
-        Anyone with this URL can start a run: keep it secret, and make a new one if it leaks (the old one stops at
+        Anyone with this URL can start a run: keep it secret, and replace it if it leaks (the old one stops at
         once). A POST of JSON starts a run on each of the automation&apos;s repositories, or only{" "}
         <span className="font-mono">?repo=owner/name</span>. <span className="font-mono">?wait_for_workspace=true</span>{" "}
         answers once the session is made, with its id and URL. An <span className="font-mono">Idempotency-Key</span>{" "}
