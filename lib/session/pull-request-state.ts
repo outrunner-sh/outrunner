@@ -93,9 +93,11 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
         .eq("state", "closed")
         .select("id");
       if (error) throw error;
-      // Reopened meanwhile (a page's read, another delivery): nothing changed here.
+      // Reopened meanwhile (a page's read, another delivery): nothing changed
+      // here. A new pull request, not the closed one again: told as its first
+      // opening (from nothing), not as a reopen.
       if (replaced?.length) {
-        changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: "closed", to: event.state, number: event.number });
+        changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
       }
       continue;
     }

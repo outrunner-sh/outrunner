@@ -7,7 +7,7 @@ import { listSlackLinks } from "@/lib/db/slack-links";
 import { canSendEmail } from "@/lib/email/send";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
-import { NOTIFICATION_KINDS } from "@/lib/notifications/events";
+import { DEFAULT_PREFERENCES, NOTIFICATION_KINDS } from "@/lib/notifications/events";
 
 const Change = z
   .object({
@@ -26,7 +26,12 @@ const Change = z
 export async function GET() {
   const owner = await getOwner();
   if (!owner) return signInFirst();
-  const [preferences, links] = await Promise.all([getPreferences(owner.id), listSlackLinks(owner.id).catch(() => [])]);
+  // Before the migration, the defaults: the section shows, and a save says
+  // the database needs updating.
+  const [preferences, links] = await Promise.all([
+    getPreferences(owner.id).catch(() => DEFAULT_PREFERENCES),
+    listSlackLinks(owner.id).catch(() => []),
+  ]);
   return NextResponse.json({ preferences, emailAvailable: canSendEmail(), slackLinked: links.length > 0 });
 }
 

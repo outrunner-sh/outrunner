@@ -115,34 +115,53 @@ export async function deliverNotifications(now: number = Date.now()): Promise<De
     const slack = await slackTargets(slackUsers);
     const emailOn = canSendEmail();
     const stamp = new Date(now).toISOString();
+    // Rows a channel won't carry (off, seen, a digest's, no address or
+    // Slack link) are let go of in one write a channel; only those it sends
+    // are claimed one by one (its stamp set where it was null), so two ticks
+    // at once send once.
+    const letGo: Record<"emailed_at" | "slacked_at", string[]> = { emailed_at: [], slacked_at: [] };
+    const sends: Array<() => Promise<void>> = [];
     for (const row of rows) {
       const sent = toSent(row);
       const prefs = preferences.get(row.user_id);
       if (!sent || !prefs) continue;
       const due = dueFor(sent, prefs, seen.get(`${row.user_id}:${row.workspace_id}`) ?? null, now);
       if (due === "wait") continue;
-      // Each channel is claimed before it's sent on (its stamp set where it
-      // was null), so two ticks at once send once. Handled whether sent or
-      // not (off, seen, a digest's, no address): never looked at again.
-      if (row.emailed_at === null && (await claimFor(row.id, "emailed_at", stamp))) {
+      if (row.emailed_at === null) {
         const email = who.get(row.user_id)?.email;
         if (due === "send" && prefs.email === "instant" && emailOn && email) {
-          if (await sendEmail({ to: [email], ...instantEmail(sent, base()) })) report.emailed++;
-        }
+          sends.push(async () => {
+            if (!(await claimFor(row.id, "emailed_at", stamp))) return;
+            if (await sendEmail({ to: [email], ...instantEmail(sent, base()) })) report.emailed++;
+          });
+        } else letGo.emailed_at.push(row.id);
       }
-      if (row.slacked_at === null && (await claimFor(row.id, "slacked_at", stamp))) {
+      if (row.slacked_at === null) {
         const target = slack.get(row.user_id);
         if (due === "send" && prefs.slack && target) {
-          const ok = await postMessage(target.token, { channel: target.channel, text: slackMessage(sent, base()) })
-            .then(() => true)
-            .catch((slackError: unknown) => {
-              console.error(`Notifications: couldn't DM ${row.user_id} on Slack`, slackError);
-              return false;
-            });
-          if (ok) report.slacked++;
-        }
+          sends.push(async () => {
+            if (!(await claimFor(row.id, "slacked_at", stamp))) return;
+            const ok = await postMessage(target.token, { channel: target.channel, text: slackMessage(sent, base()) })
+              .then(() => true)
+              .catch((slackError: unknown) => {
+                console.error(`Notifications: couldn't DM ${row.user_id} on Slack`, slackError);
+                return false;
+              });
+            if (ok) report.slacked++;
+          });
+        } else letGo.slacked_at.push(row.id);
       }
     }
+    for (const channel of ["emailed_at", "slacked_at"] as const) {
+      if (letGo[channel].length === 0) continue;
+      const { error: letGoError } = await db()
+        .from("session_notifications")
+        .update(channel === "emailed_at" ? { emailed_at: stamp } : { slacked_at: stamp })
+        .in("id", letGo[channel])
+        .is(channel, null);
+      if (letGoError) throw letGoError;
+    }
+    for (const send of sends) await send();
   }
   report.digests = await deliverDigests(now);
   return report;
@@ -193,8 +212,19 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
       .filter((n): n is SentNotification => n !== null);
     if (news.length === 0) continue;
     const email = (await people([user.user_id]).catch(() => new Map())).get(user.user_id)?.email;
-    if (!email) continue;
-    if (await sendEmail({ to: [email], ...digestEmail(news, base()) })) sent++;
+    if (email && (await sendEmail({ to: [email], ...digestEmail(news, base()) }))) {
+      sent++;
+      continue;
+    }
+    // Not sent (no address read, or the email refused): the claim is given
+    // back where it's still ours, so the next tick tries the day's digest
+    // again rather than losing it.
+    const { error: releaseError } = await db()
+      .from("notification_preferences")
+      .update({ digest_sent_at: user.digest_sent_at })
+      .eq("user_id", user.user_id)
+      .eq("digest_sent_at", stamp);
+    if (releaseError) throw releaseError;
   }
   return sent;
 }
