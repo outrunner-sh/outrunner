@@ -86,9 +86,9 @@ export function activityNews(
   return [];
 }
 
-/** A pull request that opened is news (new, or open again after closing:
- *  a new one on the branch replacing a closed one); one merged is too; one
- *  closed unmerged isn't. */
+/** A pull request that opened, or opened again after closing (reopened, or
+ *  a new one on the branch replacing a closed one), is news; one merged is
+ *  too; one closed unmerged isn't. */
 export function pullRequestNews(
   change: { from: "open" | "closed" | "merged" | null; to: "open" | "closed" | "merged"; number: number },
   session: { userId: string; workspaceId: string; title: string },
@@ -97,7 +97,18 @@ export function pullRequestNews(
     return [{ ...session, kind: "pr_merged", eventKey: String(change.number), body: `Pull request #${change.number} merged` }];
   }
   if (change.to === "open" && change.from !== "open" && change.from !== "merged") {
-    return [{ ...session, kind: "pr_opened", eventKey: String(change.number), body: `Pull request #${change.number} opened` }];
+    // Its first opening keyed by its number; a reopening has a key of its
+    // own, so it isn't taken for the opening told before (told once a pull
+    // request: a second reopen of the same one is quiet).
+    const reopened = change.from === "closed";
+    return [
+      {
+        ...session,
+        kind: "pr_opened",
+        eventKey: reopened ? `${change.number}:reopened` : String(change.number),
+        body: `Pull request #${change.number} ${reopened ? "reopened" : "opened"}`,
+      },
+    ];
   }
   return [];
 }

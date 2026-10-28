@@ -5,9 +5,14 @@ import { getPreferences } from "@/lib/db/notification-preferences";
 import { DEFAULT_PREFERENCES } from "@/lib/notifications/events";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-/** How far back a page that just opened looks: what happened while it was
- *  closed is the sidebar's to show, not a burst of notifications. */
+/** The oldest a cursor may reach back: a tab that slept, or a stale `after`,
+ *  doesn't come back to a burst of old notifications. */
 const RECENT_MS = 10 * 60_000;
+
+/** Rows a read returns at most: well past what one person gets in ten
+ *  minutes, so rows recorded together (one time, which the cursor can't
+ *  split) all come in one read. */
+const READ_LIMIT = 200;
 
 /**
  * The user's notifications from `?after=` on (an ISO time from this route's
@@ -16,7 +21,7 @@ const RECENT_MS = 10 * 60_000;
  * and which kinds. Without `after`, none: only `now`, the server's clock, for
  * the page to start from, so a browser clock that runs fast loses nothing.
  * From `after` inclusive: the page drops the ids it has seen, and rows
- * recorded together (one time) are never cut in two by the limit.
+ * recorded together (one time) come in one read (READ_LIMIT).
  */
 export async function GET(request: Request) {
   const owner = await getOwner();
@@ -36,7 +41,7 @@ export async function GET(request: Request) {
       .eq("user_id", owner.id)
       .gte("created_at", since)
       .order("created_at", { ascending: true })
-      .limit(20),
+      .limit(READ_LIMIT),
     // Unreadable for a moment: the defaults, not nothing shown.
     getPreferences(owner.id).catch(() => DEFAULT_PREFERENCES),
   ]);

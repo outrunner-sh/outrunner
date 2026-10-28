@@ -43,8 +43,15 @@ export async function PUT(request: Request) {
   if (parsed.data.email && parsed.data.email !== "off" && !canSendEmail()) {
     return NextResponse.json({ error: "This deployment doesn't send email." }, { status: 400 });
   }
-  if (parsed.data.slack && (await listSlackLinks(owner.id).catch(() => [])).length === 0) {
-    return NextResponse.json({ error: "Link your Slack account in Connections first." }, { status: 400 });
+  if (parsed.data.slack) {
+    // A failed read isn't "not linked": the user is told to try again.
+    const links = await listSlackLinks(owner.id).catch(() => null);
+    if (links === null) {
+      return NextResponse.json({ error: "Couldn't check your Slack link. Try again." }, { status: 503 });
+    }
+    if (links.length === 0) {
+      return NextResponse.json({ error: "Link your Slack account in Connections first." }, { status: 400 });
+    }
   }
   return savingSettings("notification preferences", async () => {
     const { kinds, ...rest } = parsed.data;

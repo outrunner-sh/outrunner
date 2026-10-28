@@ -44,7 +44,9 @@ test("a pull request that opens or merges is news; one closed unmerged isn't", (
   assert.equal(pullRequestNews({ from: "open", to: "merged", number: 7 }, session)[0].body, "Pull request #7 merged");
   assert.deepEqual(pullRequestNews({ from: "open", to: "closed", number: 7 }, session), []);
   // A new one on the branch replacing a closed one, or one reopened.
-  assert.equal(pullRequestNews({ from: "closed", to: "open", number: 8 }, session)[0].kind, "pr_opened");
+  const reopened = pullRequestNews({ from: "closed", to: "open", number: 7 }, session)[0];
+  assert.deepEqual([reopened.kind, reopened.eventKey, reopened.body], ["pr_opened", "7:reopened", "Pull request #7 reopened"]);
+  assert.notEqual(reopened.eventKey, pullRequestNews({ from: null, to: "open", number: 7 }, session)[0].eventKey);
   assert.deepEqual(pullRequestNews({ from: "open", to: "open", number: 7 }, session), []);
 });
 
