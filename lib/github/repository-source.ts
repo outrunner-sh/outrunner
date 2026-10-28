@@ -116,22 +116,30 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
         ...usable.filter((i) => i.accountLogin.toLowerCase() === owner),
         ...usable.filter((i) => i.accountLogin.toLowerCase() !== owner),
       ];
+      // One installation failing doesn't stop the others being asked; with
+      // none finding it, the first failure is said rather than "can't see it".
+      let failure: unknown;
       for (const installation of candidates) {
-        let repository: GitHubRepository | null;
         try {
-          repository = await getGitHubRepository(await tokenFor(installation), ref);
+          const repository = await getGitHubRepository(await tokenFor(installation), ref);
+          if (repository) return repository;
         } catch (error) {
-          // The App's token refused: one kept for an installation gone since,
-          // nothing the member's own sign-in would fix.
-          if (!(error instanceof GitHubReconnectError)) throw error;
-          dropInstallationToken(installation.id);
-          throw new GitHubSyncError(
-            `Outrunner's GitHub App couldn't reach ${installation.accountLogin} on GitHub. Try again, or check Settings → Org → GitHub.`,
-            error.status,
-          );
+          if (error instanceof GitHubReconnectError) {
+            // The App's token refused: one kept for an installation gone
+            // since, nothing the member's own sign-in would fix.
+            dropInstallationToken(installation.id);
+            failure ??= new GitHubSyncError(
+              `Outrunner's GitHub App couldn't reach ${installation.accountLogin} on GitHub. Try again, or check Settings → Org → GitHub.`,
+              error.status,
+            );
+          } else if (error instanceof GitHubSyncError) {
+            failure ??= error;
+          } else {
+            throw error;
+          }
         }
-        if (repository) return repository;
       }
+      if (failure) throw failure;
       return null;
     },
   };
