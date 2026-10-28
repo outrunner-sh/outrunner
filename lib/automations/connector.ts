@@ -57,7 +57,14 @@ export async function orgConnector(orgId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const { data: existing, error } = await supabase.from("org_connectors").select("user_id").eq("org_id", orgId).maybeSingle();
   if (error) throw error;
-  if (existing) return existing.user_id;
+  if (existing) {
+    // Kept an admin, should someone have changed its role.
+    const { error: roleError } = await supabase
+      .from("organization_members")
+      .upsert({ org_id: orgId, user_id: existing.user_id, role: "admin" }, { onConflict: "org_id,user_id" });
+    if (roleError) throw roleError;
+    return existing.user_id;
+  }
 
   const { data: org, error: orgError } = await supabase
     .from("organizations")
@@ -81,14 +88,23 @@ export async function orgConnector(orgId: string): Promise<string | null> {
     const { data: found } = await supabase.auth.admin.getUserById(userId);
     if (!found.user) throw makeError;
   }
+  // An admin again on every call, should its role have been changed.
   const { error: memberError } = await supabase
     .from("organization_members")
-    .upsert({ org_id: orgId, user_id: userId, role: "admin" }, { onConflict: "org_id,user_id", ignoreDuplicates: true });
+    .upsert({ org_id: orgId, user_id: userId, role: "admin" }, { onConflict: "org_id,user_id" });
   if (memberError) throw memberError;
   const { error: linkError } = await supabase
     .from("org_connectors")
     .upsert({ org_id: orgId, user_id: userId }, { onConflict: "org_id", ignoreDuplicates: true });
   if (linkError) throw linkError;
-  known.set(userId, true);
-  return userId;
+  // The org's connector as recorded, which runs, Members and isConnector all
+  // go by: one recorded before ids were derived stays the org's.
+  const { data: recorded, error: readError } = await supabase
+    .from("org_connectors")
+    .select("user_id")
+    .eq("org_id", orgId)
+    .single();
+  if (readError) throw readError;
+  known.set(recorded.user_id, true);
+  return recorded.user_id;
 }

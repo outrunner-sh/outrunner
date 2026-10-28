@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { isConnector } from "@/lib/automations/connector";
 import { closeAdmissionIfAlone, removeMember, setMemberRole } from "@/lib/db/org-members";
 import { isUuid } from "@/lib/ids";
 import { settleNewRemoval } from "@/lib/orgs/removal.deps";
@@ -16,6 +17,8 @@ export async function PATCH(request: Request, { params }: Params) {
   const caller = await orgCaller(request, id, { admin: true });
   if (caller instanceof Response) return caller;
   if (!isUuid(userId)) return NextResponse.json({ error: "No such member." }, { status: 404 });
+  // The org's outrunner-connector isn't one of its people to change.
+  if (await isConnector(userId)) return NextResponse.json({ error: "No such member." }, { status: 404 });
 
   const body = (await request.json().catch(() => null)) as { role?: unknown } | null;
   const role = postedRole(body?.role);
@@ -38,6 +41,8 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(request: Request, { params }: Params) {
   const { id, userId } = await params;
   if (!isUuid(userId)) return NextResponse.json({ error: "No such member." }, { status: 404 });
+  // The org's outrunner-connector isn't one of its people to change.
+  if (await isConnector(userId)) return NextResponse.json({ error: "No such member." }, { status: 404 });
   const caller = await orgCaller(request, id, { admin: false });
   if (caller instanceof Response) return caller;
   const leaving = userId === caller.owner.id;
