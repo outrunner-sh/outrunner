@@ -69,10 +69,10 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
         // Paused: what was read live stays on screen.
         if (body.mode !== "live") return;
         source = new EventSource(`${base}/stream${cursor.current ? `?lastEventId=${cursor.current}` : ""}`);
-        source.onopen = () => {
-          attempt.current = 0;
-        };
         source.onmessage = (message) => {
+          // Reset on what's read, not on opening: a stream that opens and
+          // closes straight away keeps backing off.
+          attempt.current = 0;
           let parsed;
           try {
             parsed = AgentEvent.safeParse(JSON.parse(message.data));

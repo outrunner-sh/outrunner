@@ -19,7 +19,10 @@ export const reviewViewDeps: ReviewViewDeps = {
   connectorRunSession,
   asConnector: actAsUser,
   async boxUp(workspaceId) {
-    return (await upBox(workspaceId)) !== null;
+    // Up, and with what the stream needs (a read, no token made): live only
+    // when the stream can be opened, else the archive is read instead.
+    const box = await upBox(workspaceId);
+    return box !== null && (await readRuntimeComputerSecret(box.computer.id)) !== null;
   },
   async liveEventsUrl(workspaceId, lastEventId) {
     const box = await upBox(workspaceId);

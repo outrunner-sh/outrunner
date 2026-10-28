@@ -45,9 +45,8 @@ test("a review session is read live while its box is up, as the connector, and n
   const { d, actedAs } = deps({ live: true, archive: true });
   // The view says it's live; its URL (and token) stays on the server, and
   // isn't even made for it.
-  const { d: viewOnly, asked } = deps({ live: true, liveEventsUrl: async () => assert.fail("made a URL") });
+  const { d: viewOnly } = deps({ live: true, liveEventsUrl: async () => assert.fail("made a URL") });
   assert.deepEqual(await reviewView("o1", "r1", viewOnly), { mode: "live" });
-  assert.deepEqual(asked, []);
   assert.deepEqual(await reviewView("o1", "r1", d), { mode: "live" });
   assert.deepEqual(actedAs, ["c1"]);
 });
