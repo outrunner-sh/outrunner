@@ -15,6 +15,7 @@ import { after } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { saveBrief } from "@/lib/missions/store";
 import type { RunnerStart } from "@/lib/missions/tools";
+import { firstPrompt } from "@/lib/api/create-request";
 import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
 import { createCloudSession, type SessionRequest } from "@/lib/session/create-cloud-session";
@@ -63,7 +64,8 @@ export async function startRunner(mission: Workspace, start: RunnerStart): Promi
         let runnerId: string | null = null;
         const response = await createCloudSession(owner, mission.projectId, runnerRequest(mission, start), {
           title: start.name ?? start.brief.replace(/\s+/g, " ").slice(0, 80),
-          firstMessage: start.brief,
+          // Plan mode as the API asks it of a session (lib/api/create-request.ts).
+          firstMessage: firstPrompt({ prompt: start.brief, planMode: start.planMode }),
           // Set up before this returns: the owner is signed in only as long.
           inline: true,
           parentMissionId: mission.id,

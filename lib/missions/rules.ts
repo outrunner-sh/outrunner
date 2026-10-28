@@ -65,7 +65,3 @@ export function boolArg(args: Record<string, unknown>, name: string): boolean {
   return args[name] === true;
 }
 
-/** What a Runner is told when it starts in plan mode, before its brief: the
- *  Mission reads the plan, then says go (message_runner). */
-export const PLAN_MODE_PREFIX =
-  "Plan mode: read what you need, then reply with your plan and end your turn. Don't change any files until you're told to go ahead.\n\n";

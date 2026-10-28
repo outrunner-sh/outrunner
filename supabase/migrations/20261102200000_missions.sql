@@ -228,18 +228,30 @@ as $$
   update mission_deliveries
     set lease_until = null,
         last_error = left(failure, 2000),
-        next_attempt_at = now() + least(interval '10 minutes', make_interval(secs => 15 * power(2, greatest(attempts - 1, 0))::integer))
+        -- The exponent capped before anything is multiplied: a delivery
+        -- tried for hours mustn't overflow into an error that stops its
+        -- backoff for good.
+        next_attempt_at = now() + make_interval(secs => least(600, 15 * power(2, least(greatest(attempts - 1, 0), 10))))
     where id = target and delivered_at is null;
 $$;
 
--- Missions with events waiting or a delivery open, for the tick.
+-- Missions with events due a delivery, for the tick: oldest waiting first,
+-- and none whose delivery is backing off or held by another, so those can't
+-- crowd out the Missions that can be told now.
 create or replace function missions_with_pending_events(max_missions integer)
   returns table (mission_id uuid)
   language sql
   security definer
   set search_path = public
 as $$
-  select distinct e.mission_id from mission_events e where e.delivered_at is null limit max_missions;
+  select e.mission_id
+    from mission_events e
+    left join mission_deliveries d on d.id = e.delivery_id
+    where e.delivered_at is null
+      and (d.id is null or (d.next_attempt_at <= now() and (d.lease_until is null or d.lease_until <= now())))
+    group by e.mission_id
+    order by min(e.created_at)
+    limit max_missions;
 $$;
 
 -- A message for a Runner held until its turn ends (message_runner's

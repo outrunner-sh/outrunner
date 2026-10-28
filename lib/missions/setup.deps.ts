@@ -9,7 +9,13 @@ import { missionTokens, readNotes, sessionById } from "@/lib/missions/store";
 import { mintMissionToken } from "@/lib/missions/token";
 
 export async function missionBoxSetup(workspaceId: string): Promise<MissionBoxSetup | null> {
-  const session = await sessionById(workspaceId);
+  // On every session's setup path: a hiccup reading whether it's a Mission
+  // mustn't fail an ordinary session's setup. Once it's known to be one, a
+  // failure is the Mission's, and said.
+  const session = await sessionById(workspaceId).catch((error: unknown) => {
+    console.error(`Session ${workspaceId}: couldn't tell whether it's a Mission`, error);
+    return null;
+  });
   if (session?.kind !== "mission") return null;
   const url = missionMcpUrl();
   if (!url) {

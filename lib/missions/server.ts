@@ -7,7 +7,8 @@
  * Mission's Runners.
  */
 
-import { McpServer, rpcResponse, toolResult, type JsonSchema, type McpTool } from "@/lib/mcp/server";
+import { DEFAULT_LIMIT, RateLimiter, rateHeaders } from "@/lib/api/rate-limit";
+import { MAX_BATCH, McpServer, rpcResponse, toolCallCount, toolResult, type JsonSchema, type McpTool } from "@/lib/mcp/server";
 import { readBearer } from "@/lib/http/bearer";
 import { MISSION_SERVER_INSTRUCTIONS } from "@/lib/missions/prompt";
 import { MISSION_MCP_SERVER } from "@/lib/missions/setup";
@@ -40,15 +41,13 @@ export function missionMcpServerWith(deps: () => MissionToolDeps): McpServer<Mis
   );
 }
 
-let server: McpServer<MissionScope> | null = null;
+let server: Promise<McpServer<MissionScope>> | null = null;
 
 /** The Mission's MCP server, its tools wired to the database and the boxes.
- *  Loaded on first use: the wiring pulls the app's routes in. */
-export async function missionMcpServer(): Promise<McpServer<MissionScope>> {
-  if (!server) {
-    const { missionToolDeps } = await import("@/lib/missions/tools.deps");
-    server = missionMcpServerWith(missionToolDeps);
-  }
+ *  Loaded on first use (the wiring pulls the app's routes in), once: two
+ *  calls at once share it. */
+export function missionMcpServer(): Promise<McpServer<MissionScope>> {
+  server ??= import("@/lib/missions/tools.deps").then(({ missionToolDeps }) => missionMcpServerWith(missionToolDeps));
   return server;
 }
 
@@ -65,13 +64,26 @@ export function carriesMissionToken(authorization: string | null): boolean {
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/** Each Mission's calls, held to the API's own rate (per minute, counting
+ *  each tool call of a batch), whichever of its two routes it calls. */
+const limiter = new RateLimiter();
+
 /**
  * Answer an MCP POST signed with a Mission's token: refused unless the token
- * names a Mission, then answered in that Mission's scope alone.
+ * names a Mission (and said as unavailable, not refused, when it couldn't be
+ * looked up), held to its rate, then answered in that Mission's scope alone.
  */
 export async function answerMissionMcp(request: Request): Promise<Response> {
   const { missionTokens } = await import("@/lib/missions/store");
-  const missionId = await missionForToken(readBearer(request.headers.get("authorization")), missionTokens).catch(() => null);
+  let missionId: string | null;
+  try {
+    missionId = await missionForToken(readBearer(request.headers.get("authorization")), missionTokens);
+  } catch (error) {
+    // Not the token's fault: a 401 here could make the agent give the
+    // server up for the rest of its session.
+    console.error("Mission MCP: couldn't look the token up", error);
+    return Response.json({ error: "Outrunner couldn't check that just now. Try again shortly." }, { status: 503 });
+  }
   if (!missionId) {
     return Response.json({ error: "Not a Mission's token." }, { status: 401, headers: { "www-authenticate": "Bearer" } });
   }
@@ -80,7 +92,21 @@ export async function answerMissionMcp(request: Request): Promise<Response> {
   }
   const text = await request.text();
   if (Buffer.byteLength(text) > MAX_BODY_BYTES) return Response.json({ error: "Too large." }, { status: 413 });
-  return rpcResponse(await (await missionMcpServer()).handleText(text, { missionId }));
+  let body: unknown = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // Answered by the server as the protocol's parse error.
+  }
+  const calls = Array.isArray(body) && body.length > MAX_BATCH ? 1 : Math.max(1, toolCallCount(body));
+  const decision = limiter.take(`mission:${missionId}`, DEFAULT_LIMIT, calls);
+  if (!decision.allowed) {
+    return Response.json(
+      { error: `Too many calls. Try again in ${Math.max(1, decision.retryAfter)}s.` },
+      { status: 429, headers: rateHeaders(decision) },
+    );
+  }
+  const response = rpcResponse(await (await missionMcpServer()).handleText(text, { missionId }));
+  for (const [name, value] of Object.entries(rateHeaders(decision))) response.headers.set(name, value);
+  return response;
 }
-
-

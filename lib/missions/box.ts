@@ -64,7 +64,12 @@ export async function boxWorking(workspace: Workspace): Promise<boolean> {
 
 /** Write a file into the session's worktree, if its box is up; false when
  *  it isn't (its next setup lays it out instead). */
-export async function writeBoxFile(workspace: Workspace, relPath: string, content: string): Promise<boolean> {
+export async function writeBoxFile(
+  workspace: Workspace,
+  relPath: string,
+  content: string,
+  options: { ifMissing?: boolean } = {},
+): Promise<boolean> {
   if ((workspace.status !== "ready" && workspace.status !== "idle") || !workspace.worktreePath) return false;
   const resolution = resolveProvider(workspace);
   if (!resolution.ok || !isComputerProvider(resolution.provider)) return false;
@@ -74,6 +79,5 @@ export async function writeBoxFile(workspace: Workspace, relPath: string, conten
     .eq("workspace_id", workspace.id)
     .maybeSingle();
   if (!data?.daytona_sandbox_id || data.status !== "ready") return false;
-  await resolution.provider.writeWorkspaceFile(data.daytona_sandbox_id, workspace.worktreePath, relPath, Buffer.from(content));
-  return true;
+  return resolution.provider.writeWorkspaceFile(data.daytona_sandbox_id, workspace.worktreePath, relPath, Buffer.from(content), options);
 }

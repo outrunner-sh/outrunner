@@ -184,3 +184,36 @@ test("a failed send backs off, doubling, then is tried again; nothing is dropped
   assert.ok(wait(0) > 25 && wait(0) <= 30);
   assert.equal(psql(`select last_error from mission_deliveries where id = '${d.id}'`), "again");
 });
+
+test("a delivery tried for hours still backs off, capped at ten minutes", { skip }, () => {
+  const m = mission();
+  const r = runner(m);
+  event(m, r, `long:${m}`);
+  const d = claim(m);
+  assert.ok(d);
+  psql(`update mission_deliveries set attempts = 40 where id = '${d.id}'`);
+  // Past where 15 × 2^(n−1) would overflow an integer: no error, ten minutes.
+  psql(`select fail_mission_delivery('${d.id}', 'still asleep')`);
+  const wait = Number(psql(`select round(extract(epoch from next_attempt_at - now())) from mission_deliveries where id = '${d.id}'`));
+  assert.ok(wait > 590 && wait <= 600, String(wait));
+});
+
+test("the tick is told Missions whose events are due, oldest first, not those backing off or held", { skip }, () => {
+  const waitingLong = mission();
+  const backingOff = mission();
+  const held = mission();
+  for (const [m, age] of [
+    [waitingLong, "5 minutes"],
+    [backingOff, "10 minutes"],
+    [held, "20 minutes"],
+  ] as const) {
+    event(m, runner(m), `due:${m}`, age);
+  }
+  const off = claim(backingOff);
+  psql(`select fail_mission_delivery('${off!.id}', 'asleep')`);
+  claim(held);
+  const due = psql(`select string_agg(mission_id::text, ',') from missions_with_pending_events(1000)`).split(",");
+  assert.ok(due.includes(waitingLong));
+  assert.ok(!due.includes(backingOff));
+  assert.ok(!due.includes(held));
+});

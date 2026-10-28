@@ -17,7 +17,6 @@ import {
   MAX_RUNNERS,
   NOTES_FILE,
   NOTES_MAX_CHARS,
-  PLAN_MODE_PREFIX,
   runnerPlacesLeft,
   runnerState,
   textArg,
@@ -29,7 +28,10 @@ export type MissionScope = { missionId: string };
 
 /** What spawn_runner asks for. */
 export type RunnerStart = {
+  /** Its brief, as the Mission wrote it: kept, and its name's source. */
   brief: string;
+  /** Plan first: its first message asks for a plan before any change. */
+  planMode: boolean;
   name: string | undefined;
   model: string | undefined;
   agent: string | undefined;
@@ -257,7 +259,8 @@ async function spawnRunner(mission: Workspace, args: Record<string, unknown>, de
     return refuse(`This Mission already has ${MAX_RUNNERS} Runners that aren't archived. Archive a finished one (archive_runner) first.`);
   }
   const started = await deps.startRunner(mission, {
-    brief: boolArg(args, "plan_mode") ? PLAN_MODE_PREFIX + prompt : prompt,
+    brief: prompt,
+    planMode: boolArg(args, "plan_mode"),
     name: textArg(args, "name")?.slice(0, 120),
     model: textArg(args, "model"),
     agent: textArg(args, "agent"),

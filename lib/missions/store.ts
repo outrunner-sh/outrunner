@@ -94,7 +94,8 @@ export async function takeQueuedMessage(runnerId: string): Promise<{ id: string;
 
 /** Give a taken message back, when it couldn't be sent. */
 export async function returnQueuedMessage(id: string): Promise<void> {
-  await db().from("mission_queued_messages").update({ sent_at: null }).eq("id", id);
+  const { error } = await db().from("mission_queued_messages").update({ sent_at: null }).eq("id", id);
+  if (error) throw error;
 }
 
 /** How many messages wait for each of these Runners. */

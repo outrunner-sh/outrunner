@@ -154,7 +154,7 @@ test("spawn_runner stops at the cap, counting only Runners that aren't archived"
   const ok = await callMissionTool({ missionId: "m1" }, "spawn_runner", { prompt: "do it", name: "Fix login" }, archived.deps);
   assert.equal(ok.isError, undefined, ok.text);
   assert.equal(JSON.parse(ok.text).runner_id, "new");
-  assert.deepEqual(archived.started, [{ brief: "do it", name: "Fix login", model: undefined, agent: undefined, effort: undefined }]);
+  assert.deepEqual(archived.started, [{ brief: "do it", planMode: false, name: "Fix login", model: undefined, agent: undefined, effort: undefined }]);
 });
 
 test("the places left count what holds one", () => {
@@ -167,7 +167,9 @@ test("the places left count what holds one", () => {
 test("plan mode asks for a plan before the brief", async () => {
   const { deps, started } = world();
   await callMissionTool({ missionId: "m1" }, "spawn_runner", { prompt: "rewrite auth", plan_mode: true }, deps);
-  assert.ok(started[0].brief.startsWith("Plan mode: ") && started[0].brief.endsWith("\n\nrewrite auth"));
+  // The brief stays the Mission's own (its name, the Runners pane); plan mode
+  // rides with it, and only the first message asks for a plan.
+  assert.deepEqual(started[0], { brief: "rewrite auth", planMode: true, name: undefined, model: undefined, agent: undefined, effort: undefined });
 });
 
 test("message_runner steers a working Runner, or queues when asked", async () => {
