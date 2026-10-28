@@ -69,6 +69,12 @@ interface Env {
    *  join. Without them, an invite's link is shown to the admin to share. */
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  /** The Outrunner Slack app (docs/slack-app.md): its signing secret, and
+   *  the Client ID and Client Secret that connecting an account signs in
+   *  with. Without them, Slack capture to triage is off. */
+  SLACK_SIGNING_SECRET?: string;
+  SLACK_CLIENT_ID?: string;
+  SLACK_CLIENT_SECRET?: string;
   NEEV_API_KEY?: string;
   NEEV_ORG_ID?: string;
   NEEV_PROJECT_ID?: string;
@@ -132,6 +138,9 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.GITHUB_APP_WEBHOOK_SECRET ? { GITHUB_APP_WEBHOOK_SECRET: env.GITHUB_APP_WEBHOOK_SECRET } : {}),
       ...(env.RESEND_API_KEY ? { RESEND_API_KEY: env.RESEND_API_KEY } : {}),
       ...(env.EMAIL_FROM ? { EMAIL_FROM: env.EMAIL_FROM } : {}),
+      ...(env.SLACK_SIGNING_SECRET ? { SLACK_SIGNING_SECRET: env.SLACK_SIGNING_SECRET } : {}),
+      ...(env.SLACK_CLIENT_ID ? { SLACK_CLIENT_ID: env.SLACK_CLIENT_ID } : {}),
+      ...(env.SLACK_CLIENT_SECRET ? { SLACK_CLIENT_SECRET: env.SLACK_CLIENT_SECRET } : {}),
     };
     // No shared GITHUB_PAT / ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: the
     // app stopped reading them when it went multi-user. Each user's own

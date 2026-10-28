@@ -87,6 +87,16 @@ pnpm dlx wrangler secret put OPENROUTER_MANAGEMENT_KEY
 `OPENROUTER_API_KEY` also works (`"shared"`), but every session then shares
 one uncapped key that any session's Claude can read.
 
+**Slack capture to triage** (optional): the Outrunner Slack app's three
+credentials (docs/slack-app.md). Without them, `/triage` and the message
+shortcut answer 404.
+
+```bash
+for s in SLACK_SIGNING_SECRET SLACK_CLIENT_ID SLACK_CLIENT_SECRET; do
+  pnpm dlx wrangler secret put "$s"
+done
+```
+
 **Cloud hours and idle pausing**: a cron in `wrangler.jsonc` runs the
 reconciler every 2 minutes (`worker.ts`, `scheduled`). It records how long
 Outrunner's boxes run and pauses one idle for 15 minutes; the next session
