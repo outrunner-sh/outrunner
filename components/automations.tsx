@@ -44,6 +44,7 @@ export function Automations({
   automations,
   runs,
   runsLimit,
+  runKind,
   templates,
 }: {
   org: Org;
@@ -59,6 +60,8 @@ export function Automations({
   /** How many runs are loaded at most: as many as that means there may be
    *  more. */
   runsLimit: number;
+  /** The kind of trigger the runs are narrowed to (`?trigger=`); null, all. */
+  runKind: TriggerKind | null;
   templates: TemplateCard[];
 }) {
   const admin = org.role === "admin";
@@ -70,7 +73,8 @@ export function Automations({
     ...(admin && templates.length > 0 ? (["templates"] as const) : []),
     ...(automations?.length ? (["runs"] as const) : []),
   ];
-  const [picked, setPicked] = useState<Tab>(tabs[0] ?? "templates");
+  // Narrowed to a trigger's runs: that's what's being looked at.
+  const [picked, setPicked] = useState<Tab>(runKind ? "runs" : (tabs[0] ?? "templates"));
   // The tab picked may be gone after a refresh (the last automation deleted).
   const active = tabs.includes(picked) ? picked : tabs[0];
   const count: Record<Tab, string | null> = {
@@ -135,7 +139,15 @@ export function Automations({
               {active === "templates" ? (
                 <TemplateGrid templates={templates} />
               ) : (
-                <RecentRuns orgId={org.id} runs={runs} now={now} admin={admin} byConnector={!org.personal} />
+                <RecentRuns
+                  orgId={org.id}
+                  runs={runs}
+                  kind={runKind}
+                  kinds={TRIGGER_KINDS.filter((k) => automations?.some((a) => a.triggers.some((t) => triggerKind(t) === k)))}
+                  now={now}
+                  admin={admin}
+                  byConnector={!org.personal}
+                />
               )}
             </div>
           </section>
@@ -460,19 +472,24 @@ type RunFilter = "all" | AutomationRun["status"];
 function RecentRuns({
   orgId,
   runs,
+  kind,
+  kinds,
   now,
   admin,
   byConnector,
 }: {
   orgId: string;
   runs: AutomationRun[] | null;
+  /** The kind of trigger they're narrowed to; null, all. */
+  kind: TriggerKind | null;
+  /** The kinds the org's automations have, to narrow to. */
+  kinds: TriggerKind[];
   now: number;
   admin: boolean;
   byConnector: boolean;
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<RunFilter>("all");
-  const [kind, setKind] = useState<TriggerKind | "all">("all");
   const [rerunning, setRerunning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -494,16 +511,14 @@ function RecentRuns({
     }
   };
 
-  // A filter for each status there is a run in, in the table's order of
-  // concern; "All" always. One left pointing at a status that has since gone
-  // (after a refresh) falls back to all.
-  // The same for each kind of trigger there is a run of; the status pills
-  // count within the kind picked.
-  const kindCounts = new Map<TriggerKind | "all", number>([["all", (runs ?? []).length]]);
-  for (const run of runs ?? []) kindCounts.set(triggerKind(run.trigger), (kindCounts.get(triggerKind(run.trigger)) ?? 0) + 1);
-  const kinds = (["all", ...TRIGGER_KINDS] as const).filter((k) => kindCounts.has(k));
-  const shownKind = kindCounts.has(kind) ? kind : "all";
-  const all = shownKind === "all" ? (runs ?? []) : (runs ?? []).filter((run) => triggerKind(run.trigger) === shownKind);
+  // A filter for each kind of trigger the org's automations have, read from
+  // the database (the page's `?trigger=`), so a rare one's runs aren't lost
+  // behind the latest; and within it, one for each status there is a run in,
+  // in the table's order of concern. "All" always. A status left pointing at
+  // one that has since gone (after a refresh) falls back to all.
+  const narrow = (k: TriggerKind | null) =>
+    router.replace(k ? `/automations?trigger=${k}` : "/automations", { scroll: false });
+  const all = runs ?? [];
   const counts = new Map<RunFilter, number>([["all", all.length]]);
   for (const run of all) counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
   const filters = (["all", "ready", "started", "failed", "refused"] as const).filter((f) => counts.has(f));
@@ -513,38 +528,36 @@ function RecentRuns({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}
+      {/* "All" and at least two kinds: with one, a pill would only repeat
+          what every row says. */}
+      {kinds.length > 1 || kind ? (
+        <div role="group" aria-label="Filter runs by trigger" className="flex flex-wrap gap-1.5">
+          {([null, ...kinds] as (TriggerKind | null)[]).map((k) => (
+            <button
+              key={k ?? "all"}
+              type="button"
+              aria-pressed={kind === k}
+              onClick={() => narrow(k)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+                kind === k ? "border-border bg-accent text-foreground" : "border-border/60 text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {k ? TRIGGER_KIND_LABELS[k] : "All triggers"}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {runs === null ? (
         <p className="text-[13px] text-muted-foreground">Couldn&apos;t load the runs. Reload the page to try again.</p>
       ) : runs.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-[13px] text-muted-foreground">
-          No runs yet. One starts when an automation&apos;s trigger fires: a pull request opened or given new commits, or a
-          schedule come due.
+          {kind
+            ? "No runs of this trigger yet."
+            : "No runs yet. One starts when an automation's trigger fires: a pull request opened or given new commits, or a schedule come due."}
         </p>
       ) : (
         <>
-          {/* "All" and at least two kinds: with one, a pill would only
-              repeat what every row says. */}
-          {kinds.length > 2 ? (
-            <div role="group" aria-label="Filter runs by trigger" className="flex flex-wrap gap-1.5">
-              {kinds.map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  aria-pressed={shownKind === k}
-                  onClick={() => setKind(k)}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
-                    shownKind === k
-                      ? "border-border bg-accent text-foreground"
-                      : "border-border/60 text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {k === "all" ? "All triggers" : TRIGGER_KIND_LABELS[k]}
-                  <span className="tabular-nums text-muted-foreground">{kindCounts.get(k)}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
           {/* "All" and at least two statuses: with one, a pill would only
               repeat what every row says. */}
           {filters.length > 2 ? (

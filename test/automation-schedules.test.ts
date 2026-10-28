@@ -160,6 +160,10 @@ test("an automation's schedules together keep to the floor each keeps alone", ()
   );
   assert.equal(staggered.ok, false);
   if (!staggered.ok) assert.match(staggered.error, /Together, its schedules run at most every 15 minutes/);
+  // A rare one beside a frequent one: hourly, and Mondays at 9:10, saved on
+  // a Wednesday, run ten minutes apart every Monday.
+  assert.equal(parseAutomationInput({ schedules: [every("0 * * * *"), every("10 9 * * 1")] }, { full: false, now: NOW }).ok, false);
+  assert.ok(parseAutomationInput({ schedules: [every("0 * * * *"), every("30 9 * * 1")] }, { full: false, now: NOW }).ok);
   // Two at the same times are one run.
   assert.ok(parseAutomationInput({ schedules: [every("*/15 * * * *"), every("0,15,30,45 * * * *")] }, { full: false, now: NOW }).ok);
 });

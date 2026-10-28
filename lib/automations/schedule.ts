@@ -313,13 +313,25 @@ export function upcomingRuns(schedules: readonly Schedule[], after: number, coun
     .map(([at, schedule]) => ({ at, schedule }));
 }
 
-/** Whether an automation's schedules together run closer than
- *  MIN_INTERVAL_MINUTES apart, over their next runs from `now`: each on its
- *  own may keep to it while three of them, staggered, run every five
- *  minutes. A time two share is one run. */
+/**
+ * Whether an automation's schedules together run closer than
+ * MIN_INTERVAL_MINUTES apart: each on its own may keep to it while three of
+ * them, staggered, run every five minutes. Each keeps the gap alone, so only
+ * the gaps between them are looked at: each one's next runs, against every
+ * other's nearest. Over each schedule's own span, so a rare one (Mondays)
+ * isn't missed beside a frequent one (hourly). A time two share is one run.
+ */
 export function runTooOften(schedules: readonly Schedule[], now: number): boolean {
-  const runs = upcomingRuns(schedules, now, 30);
-  return runs.some((run, i) => i > 0 && run.at - runs[i - 1].at < MIN_INTERVAL_MINUTES * MINUTE);
+  const gap = MIN_INTERVAL_MINUTES * MINUTE;
+  return schedules.some((schedule, i) =>
+    nextRuns(schedule, now, 30).some((at) =>
+      schedules.some((other, j) => {
+        if (j === i) return false;
+        const [near] = nextRuns(other, at - gap, 1);
+        return near !== undefined && near !== at && Math.abs(near - at) < gap;
+      }),
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------

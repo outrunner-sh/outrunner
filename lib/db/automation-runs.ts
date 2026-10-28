@@ -8,7 +8,7 @@
 
 import type { CheckOutcome } from "@/lib/automations/checks";
 import { readRunEvent, type RunEvent } from "@/lib/automations/run-event";
-import type { AutomationTrigger, RunStatus } from "@/lib/automations/rules";
+import type { AutomationTrigger, RunStatus, TriggerKind } from "@/lib/automations/rules";
 import { type Schedule, scheduleFromRow } from "@/lib/automations/schedule";
 import { currentRunners } from "@/lib/db/automations";
 import type { Json } from "@/lib/supabase/database.types";
@@ -364,8 +364,20 @@ export type AutomationRun = {
 /** How many of an org's latest runs the Automations page loads. */
 export const RECENT_RUNS = 50;
 
-/** An org's latest runs, newest first. */
-export async function listRuns(orgId: string, limit = RECENT_RUNS, onlyId?: string): Promise<AutomationRun[]> {
+/** The `trigger` values of a kind: a pull request's include runs from
+ *  before triggers were kept (null). */
+function kindFilter(kind: TriggerKind): string {
+  return kind === "pull_request" ? "trigger.is.null,trigger.like.pull_request.*" : `trigger.like.${kind}*`;
+}
+
+/** An org's latest runs, newest first: only `onlyId`, or only those a kind
+ *  of trigger started, when given. */
+export async function listRuns(
+  orgId: string,
+  limit = RECENT_RUNS,
+  onlyId?: string,
+  kind?: TriggerKind,
+): Promise<AutomationRun[]> {
   const supabase = createSupabaseAdminClient();
   const { data: automations, error } = await supabase.from("automations").select("id, name").eq("org_id", orgId);
   if (error) throw error;
@@ -378,6 +390,7 @@ export async function listRuns(orgId: string, limit = RECENT_RUNS, onlyId?: stri
       automations.map((a) => a.id),
     );
   if (onlyId) query = query.eq("id", onlyId);
+  if (kind) query = query.or(kindFilter(kind));
   const { data: runs, error: runsError } = await query.order("created_at", { ascending: false }).limit(limit);
   if (runsError) throw runsError;
   const projectIds = [...new Set((runs ?? []).map((r) => r.project_id))];

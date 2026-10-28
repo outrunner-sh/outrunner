@@ -41,8 +41,7 @@ export const TRIGGER_KIND_LABELS: Record<TriggerKind, string> = {
 
 /** How a run stands: being set up, set up (its prompt sent), its session
  *  failed, or none made (`reason` says why). */
-export const RUN_STATUSES = ["started", "ready", "failed", "refused"] as const;
-export type RunStatus = (typeof RUN_STATUSES)[number];
+export type RunStatus = "started" | "ready" | "failed" | "refused";
 
 export function triggerKind(trigger: AutomationTrigger | null): TriggerKind {
   return trigger === null ? "pull_request" : (trigger.split(".")[0] as TriggerKind);
