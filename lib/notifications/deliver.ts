@@ -176,7 +176,7 @@ export async function deliverNotifications(now: number = Date.now()): Promise<De
 
 /**
  * The daily digest, for those who chose it: what happened in their sessions
- * since the last one (a day at most) that they haven't looked at since. A day
+ * since the last one (two days at most) that they haven't looked at since. A day
  * with none sends nothing, and the next is a day on.
  */
 export async function deliverDigests(now: number = Date.now()): Promise<number> {
