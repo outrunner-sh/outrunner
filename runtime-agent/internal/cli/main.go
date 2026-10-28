@@ -73,7 +73,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	case "":
 		return start(ctx, url, path, config, *account, in, stdout, stderr)
 	case "login":
-		_, _, code := signIn(ctx, url, path, "/cli-login/done", "", stdout, stderr)
+		_, _, code := signIn(ctx, url, path, "/cli-login/done", *account, stdout, stderr)
 		return code
 	case "logout":
 		return logout(ctx, url, path, config, stdout, stderr)
@@ -130,7 +130,9 @@ func ensureSignedIn(ctx context.Context, url, path string, config Config, accoun
 	if config.Token != "" {
 		user, err := WhoAmI(ctx, nil, url, config.Token)
 		switch {
-		case err == nil && (account == "" || user.ID == account):
+		// An app that doesn't send the id can't be told apart: carry on, as
+		// after signing in.
+		case err == nil && (account == "" || user.ID == "" || user.ID == account):
 			printSignedIn(stdout, user, url)
 			return config, 0
 		case err == nil:
@@ -234,7 +236,7 @@ func signIn(ctx context.Context, url, path, after, account string, stdout, stder
 	}
 	if account != "" && user.ID != "" && user.ID != account {
 		_ = Logout(ctx, nil, url, token)
-		fmt.Fprintf(stderr, "outrunner: signed in as %s, but this command is for another account. Sign in to Outrunner in your browser as the account you're setting up, then run it again.\n", accountName(user))
+		fmt.Fprintf(stderr, "outrunner: signed in as %s, but this command is for another account. Sign in to Outrunner in your browser as that account, then run it again.\n", accountName(user))
 		return "", User{}, 1
 	}
 	if err := SaveConfig(path, Config{URL: url, Token: token, Login: user.Login}); err != nil {

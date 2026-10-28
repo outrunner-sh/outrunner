@@ -240,3 +240,24 @@ func TestATokenIsOnlyForTheAppItCameFrom(t *testing.T) {
 		t.Fatalf("a token for another app was sent: %d", code)
 	}
 }
+
+// login with --account checks it, as claude does: the wrong account's
+// sign-in is signed out again and not saved.
+func TestLoginForAnotherAccountKeepsNoSignIn(t *testing.T) {
+	app := newFakeApp(t)
+	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	path, _ := ConfigPath()
+	openBrowser = app.approve(t, "")
+	t.Cleanup(func() { openBrowser = OpenBrowser })
+
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "--account", "u-someone-else", "login"}, nil, &out, &errOut); code != 1 {
+		t.Fatalf("login: %d %s", code, out.String())
+	}
+	if !strings.Contains(errOut.String(), "this command is for another account") || app.tokenWorks("or_cli_token") {
+		t.Errorf("printed %q; token still works: %v", errOut.String(), app.tokenWorks("or_cli_token"))
+	}
+	if config, _ := LoadConfig(path); config.Token != "" {
+		t.Errorf("saved %q", config.Token)
+	}
+}
