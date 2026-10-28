@@ -74,7 +74,7 @@ test("each lifecycle step a restart can cut off goes back where it can be tried 
   assert.equal(ends.get("archiving"), "ready");
   assert.equal(ends.get("restoring"), "archived");
   assert.equal(ends.get("resuming"), "suspended");
-  assert.equal(ends.get("suspending"), "ready");
+  assert.equal(ends.get("suspending"), "suspended");
   // A delete cut off can be deleted again; before, it could never be.
   assert.equal(canDestroy({ status: "destroying", createdAt: new Date(0).toISOString() }, Date.now()), false);
   assert.equal(canDestroy({ status: ends.get("destroying")!, createdAt: new Date(0).toISOString() }, Date.now()), true);

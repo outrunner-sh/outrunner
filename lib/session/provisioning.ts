@@ -109,7 +109,9 @@ export const INTERRUPTED_TRANSITIONS: { from: WorkspaceStatus; to: WorkspaceStat
   { from: "archiving", to: "ready", message: cutOff("Archiving", "Archive it again when you're ready.") },
   { from: "restoring", to: "archived", message: cutOff("Restoring", "Restore it again to pick up where it left off.") },
   { from: "resuming", to: "suspended", message: cutOff("Resuming", "Resume it again.") },
-  { from: "suspending", to: "ready", message: cutOff("Suspending", "Suspend it again if you meant to.") },
+  // Suspended, whether or not the stop landed: resume relaunches it either
+  // way, while ready would show a session whose agent may have stopped.
+  { from: "suspending", to: "suspended", message: cutOff("Suspending", "Resume it to pick up where it left off.") },
   { from: "destroying", to: "failed", message: cutOff("Deleting", "Delete it again.") },
 ];
 

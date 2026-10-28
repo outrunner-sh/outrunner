@@ -15,6 +15,10 @@ export function wakeSteps(
 ): ("attach" | "resume" | "restore")[] {
   if (workspaceStatus === "archived") return ["restore"];
   const steps: ("attach" | "resume")[] = computerStatus === "ready" ? [] : ["attach"];
+  // A suspended session on a paused box starts twice: the attach brings the
+  // box back and starts its agent, then resume relaunches it. Expected, and
+  // kept: resume is what marks it ready, and only an attach brings the box
+  // back for it to run on.
   if (workspaceStatus === "suspended") steps.push("resume");
   return steps;
 }

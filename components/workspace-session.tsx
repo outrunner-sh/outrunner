@@ -606,6 +606,16 @@ export function WorkspaceSession({
   // keyboard: the one the URL carries, else the one kept for this session
   // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
+  // The first prompt gone or settled: forget the kept copy, and the URL's
+  // params while `path`, the session's page, is still the page. Its settling
+  // can come after a send that waited on the session, by when the user may be
+  // on another session, whose URL may be its own first prompt's only copy.
+  const forgetFirstPromptOn = (path: string | null) => {
+    if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
+    if (path !== null && window.location.pathname === path) dropFirstPromptFromAddressBar();
+  };
+  // The page a cut-off first prompt was offered on.
+  const cutOffPath = useRef<string | null>(null);
   // The first prompt a reload cut off mid-send, while the conversation hasn't
   // shown it. Only once the stream is live: until then the events are the
   // copy kept from before the reload, which seldom has the prompt yet, and a
@@ -618,14 +628,11 @@ export function WorkspaceSession({
   // (the cut-off send got there). Forgotten as soon as it was offered, a
   // second reload before any of those, after a send the server had let go,
   // left it nowhere: never sent, and never offered again.
-  const settleCutOff = () => {
-    if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
-    dropFirstPromptFromAddressBar();
-  };
+  const settleCutOff = () => forgetFirstPromptOn(cutOffPath.current);
   const cutOffLanded = cutOff !== null && conversation.status === "connected" && userPromptCount(conversation.events) > 0;
   useEffect(() => {
     if (cutOffLanded) settleCutOff();
-    // settleCutOff reads only props that don't change for this session.
+    // settleCutOff reads only props that don't change for this session, and a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cutOffLanded]);
   useEffect(() => {
@@ -650,10 +657,7 @@ export function WorkspaceSession({
     // this session is still the page), so a reload can't send it again.
     // Nothing is forgotten until the POST is accepted, so a failed delivery
     // leaves it in place for a retry or a reload.
-    const itWent = () => {
-      if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
-      if (window.location.pathname === sessionPath) dropFirstPromptFromAddressBar();
-    };
+    const itWent = () => forgetFirstPromptOn(sessionPath);
     // A page before a reload had sent it, and the reload cut that send off
     // before it could forget it: it most likely reached Claude, so it isn't
     // sent again (firstPromptCutOff). It is said, with a way to send it, until
@@ -662,6 +666,7 @@ export function WorkspaceSession({
     if (!local && firstPromptCutOff(tabStorage(), workspaceId)) {
       // Once, on ready, behind the same guard as the send: storage is read
       // here and nowhere a render could.
+      cutOffPath.current = sessionPath;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setCutOff(first);
       return;
