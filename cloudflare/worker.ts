@@ -76,6 +76,7 @@ interface Env {
   GITHUB_APP_SLUG?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
   GITHUB_APP_WEBHOOK_SECRET?: string;
+  GITHUB_APP_CLIENT_SECRET?: string;
   /** Email through Resend (lib/email/send.ts): org invites and requests to
    *  join. Without them, an invite's link is shown to the admin to share. */
   RESEND_API_KEY?: string;
@@ -305,6 +306,7 @@ export class OutrunnerControlPlane extends Container<Env> {
       ...(env.GITHUB_APP_SLUG ? { GITHUB_APP_SLUG: env.GITHUB_APP_SLUG } : {}),
       ...(env.GITHUB_APP_PRIVATE_KEY ? { GITHUB_APP_PRIVATE_KEY: env.GITHUB_APP_PRIVATE_KEY } : {}),
       ...(env.GITHUB_APP_WEBHOOK_SECRET ? { GITHUB_APP_WEBHOOK_SECRET: env.GITHUB_APP_WEBHOOK_SECRET } : {}),
+      ...(env.GITHUB_APP_CLIENT_SECRET ? { GITHUB_APP_CLIENT_SECRET: env.GITHUB_APP_CLIENT_SECRET } : {}),
       ...(env.RESEND_API_KEY ? { RESEND_API_KEY: env.RESEND_API_KEY } : {}),
       ...(env.EMAIL_FROM ? { EMAIL_FROM: env.EMAIL_FROM } : {}),
       ...(env.SLACK_SIGNING_SECRET ? { SLACK_SIGNING_SECRET: env.SLACK_SIGNING_SECRET } : {}),

@@ -52,6 +52,9 @@ export type GitHubAccess = {
   personalGithub: boolean;
   /** The App is set up on this server, so an admin can install it. */
   appInstallable: boolean;
+  /** Installing it needs a GitHub account linked first: GitHub can't be
+   *  asked who installed it here (lib/github/installer.ts). */
+  installNeedsGithub: boolean;
 };
 
 export type OnboardingEnv = {

@@ -152,7 +152,12 @@ export function ReposStep({
       )}
 
       {unreachable && active ? (
-        <ConnectGitHub admin={active.admin} installable={access.appInstallable} orgName={active.name} />
+        <ConnectGitHub
+          admin={active.admin}
+          installable={access.appInstallable && !access.installNeedsGithub}
+          linkFirst={access.appInstallable && access.installNeedsGithub}
+          orgName={active.name}
+        />
       ) : (
       <>
       <div className="relative">
@@ -278,11 +283,21 @@ function OrgSource({
   );
 }
 
-/** An org with no way to GitHub: install the App (its admins), or link a
- *  GitHub account for their own repositories. Only shown without a GitHub
- *  sign-in, and the install proves who installed it by the GitHub account
- *  (app/api/github/app/setup), so it says to link one first. */
-function ConnectGitHub({ admin, installable, orgName }: { admin: boolean; installable: boolean; orgName: string }) {
+/** An org with no way to GitHub, for a user with no GitHub account linked:
+ *  install the App (its admins; GitHub is asked who installed it on the way
+ *  back), or link a GitHub account for their own repositories. Where GitHub
+ *  can't be asked (`linkFirst`), installing takes the account linked first. */
+function ConnectGitHub({
+  admin,
+  installable,
+  linkFirst,
+  orgName,
+}: {
+  admin: boolean;
+  installable: boolean;
+  linkFirst: boolean;
+  orgName: string;
+}) {
   return (
     <div className="border-border/60 space-y-3 rounded-xl border px-4 py-5 text-sm">
       <p className="text-foreground font-medium">Connect GitHub</p>
@@ -291,14 +306,31 @@ function ConnectGitHub({ admin, installable, orgName }: { admin: boolean; instal
         Sessions clone, push and open pull requests through it.
       </p>
       <div className="flex flex-wrap items-center gap-4">
-        <Link href="/settings/account" className="bg-foreground text-background rounded-md px-3 py-1.5 text-sm font-medium">
-          Link your GitHub account
-        </Link>
-        <span className="text-muted-foreground">
-          {admin && installable
-            ? "Then come back here to install the App, or pick from your own repositories."
-            : `Or ask an admin of ${orgName} to install the GitHub App.`}
-        </span>
+        {admin && installable ? (
+          <>
+            {/* A plain link: the install route goes to GitHub, then back here. */}
+            <a
+              href="/api/github/app/install?next=/onboarding"
+              className="bg-foreground text-background rounded-md px-3 py-1.5 text-sm font-medium"
+            >
+              Install GitHub App
+            </a>
+            <Link href="/settings/account" className="text-muted-foreground hover:text-foreground underline-offset-4 hover:underline">
+              Or use your own GitHub account
+            </Link>
+          </>
+        ) : (
+          <>
+            <Link href="/settings/account" className="bg-foreground text-background rounded-md px-3 py-1.5 text-sm font-medium">
+              Link your GitHub account
+            </Link>
+            <span className="text-muted-foreground">
+              {admin && linkFirst
+                ? "Then come back here to install the App, or pick from your own repositories."
+                : `Or ask an admin of ${orgName} to install the GitHub App.`}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

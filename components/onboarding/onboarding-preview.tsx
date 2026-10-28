@@ -136,6 +136,7 @@ function mockEnv(scenario: Scenario): OnboardingEnv {
         activeOrgId: "personal",
         personalGithub: scenario.repos !== "github-error",
         appInstallable: true,
+        installNeedsGithub: false,
       };
     },
     useOrg: async () => void (await wait(200)),

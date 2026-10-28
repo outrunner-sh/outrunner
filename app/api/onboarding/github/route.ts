@@ -4,6 +4,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { getGithubToken } from "@/lib/db/credentials";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { githubAppConfig } from "@/lib/github/app";
+import { appClientSecret } from "@/lib/github/installer";
 import type { GitHubAccess } from "@/lib/onboarding/types";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -34,6 +35,7 @@ export async function GET() {
     activeOrgId: context.active.id,
     personalGithub: token !== null,
     appInstallable: githubAppConfig() !== null,
+    installNeedsGithub: appClientSecret() === null,
   };
   return NextResponse.json({ access }, { headers: { "cache-control": "no-store" } });
 }
