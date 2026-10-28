@@ -54,7 +54,7 @@ async function AutomationsSection() {
       console.error("Automations: could not load them", error);
       return null;
     }),
-    listRuns(active.id).catch((error: unknown) => {
+    listRuns(active.id, RECENT_RUNS).catch((error: unknown) => {
       console.error("Automations: could not load their runs", error);
       return null;
     }),
