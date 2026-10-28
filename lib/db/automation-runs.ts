@@ -1,17 +1,20 @@
 /**
  * Automations' runs (supabase/migrations/20261030140000_automation_runs.sql),
- * and the automations a pull request event concerns. The tables are the
+ * and the automations an event or a schedule concerns. The tables are the
  * server's alone, so this reaches them with the service role: the webhook,
- * signed by GitHub, records and settles runs; the Automations page reads an
- * org's for its members.
+ * signed by GitHub, and the cron's tick record and settle runs; the
+ * Automations page reads an org's for its members.
  */
 
 import type { CheckOutcome } from "@/lib/automations/checks";
-import type { AutomationTrigger } from "@/lib/automations/rules";
+import { readRunEvent, type RunEvent } from "@/lib/automations/run-event";
+import type { AutomationTrigger, RunStatus, TriggerKind } from "@/lib/automations/rules";
+import { type Schedule, scheduleFromRow } from "@/lib/automations/schedule";
 import { currentRunners } from "@/lib/db/automations";
+import type { Json } from "@/lib/supabase/database.types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-/** An enabled automation a pull request event may start, on one repository. */
+/** An enabled automation an event may start, on one repository. */
 export type RunCandidate = {
   automationId: string;
   name: string;
@@ -21,8 +24,66 @@ export type RunCandidate = {
    *  A team org's runs are its connector's, not theirs (runnerFor). */
   runsAs: string | null;
   projectId: string;
+  /** The repository, `owner/name`: its session is told. */
+  repoFullName: string;
   orgId: string;
 };
+
+type Admin = ReturnType<typeof createSupabaseAdminClient>;
+
+/**
+ * The enabled automations of `orgId` among `automationIds`, as candidates on
+ * each of their repositories (or those of them in `projectIds`). One whose
+ * runner left the org (their account kept) is a candidate with no runner: it
+ * runs nothing more (their allowance isn't the org's to spend), and its run
+ * says so.
+ */
+async function candidatesOf(
+  supabase: Admin,
+  orgId: string,
+  links: readonly { automation_id: string; project_id: string }[],
+): Promise<RunCandidate[]> {
+  if (links.length === 0) return [];
+  const [automations, projects] = await Promise.all([
+    supabase
+      .from("automations")
+      .select("id, org_id, name, prompt, triggers, runs_as")
+      .in("id", [...new Set(links.map((l) => l.automation_id))])
+      .eq("org_id", orgId)
+      .eq("enabled", true),
+    supabase
+      .from("projects")
+      .select("id, full_name")
+      .in("id", [...new Set(links.map((l) => l.project_id))])
+      .eq("org_id", orgId),
+  ]);
+  if (automations.error) throw automations.error;
+  if (projects.error) throw projects.error;
+  const byId = new Map((automations.data ?? []).map((a) => [a.id, a]));
+  const repoOf = new Map((projects.data ?? []).map((p) => [p.id, p.full_name]));
+  const stillMembers = await currentRunners(
+    orgId,
+    (automations.data ?? []).flatMap((a) => (a.runs_as ? [a.runs_as] : [])),
+  );
+  return links.flatMap((r) => {
+    const a = byId.get(r.automation_id);
+    const repoFullName = repoOf.get(r.project_id);
+    if (!a || !repoFullName) return [];
+    const runsAs = a.runs_as && stillMembers.has(a.runs_as) ? a.runs_as : null;
+    return [
+      {
+        automationId: a.id,
+        name: a.name,
+        prompt: a.prompt,
+        triggers: a.triggers,
+        runsAs,
+        projectId: r.project_id,
+        repoFullName,
+        orgId,
+      },
+    ];
+  });
+}
 
 /**
  * The enabled automations on `repoFullName` in the org that has the
@@ -33,40 +94,12 @@ export async function automationsForPullRequest(installationId: number, repoFull
   const supabase = createSupabaseAdminClient();
   const scope = await installationProjects(supabase, installationId, repoFullName);
   if (!scope) return [];
-  const { orgId, projectIds } = scope;
-
-  const { data: repos, error: reposError } = await supabase
+  const { data: repos, error } = await supabase
     .from("automation_repos")
     .select("automation_id, project_id")
-    .in("project_id", projectIds);
-  if (reposError) throw reposError;
-  if (!repos?.length) return [];
-
-  const { data: automations, error: automationsError } = await supabase
-    .from("automations")
-    .select("id, org_id, name, prompt, triggers, runs_as")
-    .in(
-      "id",
-      repos.map((r) => r.automation_id),
-    )
-    .eq("org_id", orgId)
-    .eq("enabled", true);
-  if (automationsError) throw automationsError;
-  const byId = new Map((automations ?? []).map((a) => [a.id, a]));
-  // A runner who has left the org (their account kept) runs nothing more:
-  // their allowance isn't the org's to spend.
-  const stillMembers = await currentRunners(
-    orgId,
-    (automations ?? []).flatMap((a) => (a.runs_as ? [a.runs_as] : [])),
-  );
-  return repos.flatMap((r) => {
-    const a = byId.get(r.automation_id);
-    if (!a) return [];
-    const runsAs = a.runs_as && stillMembers.has(a.runs_as) ? a.runs_as : null;
-    return [
-      { automationId: a.id, name: a.name, prompt: a.prompt, triggers: a.triggers, runsAs, projectId: r.project_id, orgId },
-    ];
-  });
+    .in("project_id", scope.projectIds);
+  if (error) throw error;
+  return candidatesOf(supabase, scope.orgId, repos ?? []);
 }
 
 /** The org holding the installation (claimed and not suspended), and its
@@ -126,14 +159,28 @@ export async function pullRequestSessions(
   return byOwner;
 }
 
+/** A run to record: which automation, where, what started it, and the key
+ *  that makes it once. */
+export type RunRecord = {
+  automationId: string;
+  projectId: string;
+  trigger: AutomationTrigger;
+  /** The same key again records nothing (a redelivery, a repeated tick). */
+  dedupeKey: string;
+  event: RunEvent;
+  prNumber?: number;
+  prTitle?: string;
+  headSha?: string;
+  scheduledFor?: string;
+};
+
 /**
  * Record runs in one statement, all or none: the new ones' ids, by
- * `${automationId}:${projectId}`. One whose automation already ran for this
- * pull request at this commit (a redelivery, a repeated event) is left out.
+ * `${automationId}:${projectId}`. One whose key its automation already
+ * recorded on the repository (a redelivery, a repeated event or tick) is
+ * left out.
  */
-export async function recordRuns(
-  runs: { automationId: string; projectId: string; prNumber: number; prTitle: string; headSha: string }[],
-): Promise<Map<string, string>> {
+export async function recordRuns(runs: readonly RunRecord[]): Promise<Map<string, string>> {
   if (runs.length === 0) return new Map();
   const { data, error } = await createSupabaseAdminClient()
     .from("automation_runs")
@@ -141,15 +188,113 @@ export async function recordRuns(
       runs.map((run) => ({
         automation_id: run.automationId,
         project_id: run.projectId,
-        pr_number: run.prNumber,
-        pr_title: run.prTitle,
-        head_sha: run.headSha,
+        trigger: run.trigger,
+        dedupe_key: run.dedupeKey,
+        context: run.event as unknown as Json,
+        pr_number: run.prNumber ?? null,
+        pr_title: run.prTitle ?? "",
+        head_sha: run.headSha ?? null,
+        scheduled_for: run.scheduledFor ?? null,
       })),
-      { onConflict: "automation_id,project_id,pr_number,head_sha", ignoreDuplicates: true },
+      { onConflict: "automation_id,project_id,dedupe_key", ignoreDuplicates: true },
     )
     .select("id, automation_id, project_id");
   if (error) throw error;
   return new Map((data ?? []).map((r) => [`${r.automation_id}:${r.project_id}`, r.id]));
+}
+
+/** A schedule that has come due, with its automation. */
+export type DueSchedule = {
+  scheduleId: string;
+  automationId: string;
+  schedule: Schedule;
+  /** The time it came due: the run's, and its key. */
+  dueAt: string;
+};
+
+/**
+ * The schedules due by `now`, earliest first, of enabled automations that
+ * run on a schedule. A due one of an automation that's off (or no longer
+ * scheduled) has its next time cleared on the way: it's worked out again
+ * when it's switched on, and it never crowds out the ones to run. So does
+ * one that can't be read as a schedule any more (a zone this runtime no
+ * longer knows, say), which nothing would ever move on; saving it again
+ * gives it a next time.
+ */
+export async function dueSchedules(now: Date, limit = 100): Promise<DueSchedule[]> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("automation_schedules")
+    .select("id, automation_id, kind, timezone, spec, next_run_at")
+    .lte("next_run_at", now.toISOString())
+    .order("next_run_at", { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  if (!data?.length) return [];
+  const { data: automations, error: automationsError } = await supabase
+    .from("automations")
+    .select("id, enabled, triggers")
+    .in("id", [...new Set(data.map((s) => s.automation_id))]);
+  if (automationsError) throw automationsError;
+  const live = new Set((automations ?? []).filter((a) => a.enabled && a.triggers.includes("schedule")).map((a) => a.id));
+  const idle = data.filter((s) => !live.has(s.automation_id) || !scheduleFromRow(s)).map((s) => s.id);
+  if (idle.length > 0) {
+    const { error: clearError } = await supabase.from("automation_schedules").update({ next_run_at: null }).in("id", idle);
+    if (clearError) throw clearError;
+  }
+  return data.flatMap((row) => {
+    const schedule = scheduleFromRow(row);
+    if (!live.has(row.automation_id) || !schedule || !row.next_run_at) return [];
+    return [{ scheduleId: row.id, automationId: row.automation_id, schedule, dueAt: new Date(row.next_run_at).toISOString() }];
+  });
+}
+
+/** Move a schedule on from `dueAt` to `next` (null: it's done), unless
+ *  another tick has already: false then. */
+export async function advanceSchedule(scheduleId: string, dueAt: string, next: string | null): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_schedules")
+    .update({ next_run_at: next })
+    .eq("id", scheduleId)
+    .eq("next_run_at", dueAt)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/**
+ * The enabled automations among `automationIds`, as candidates on each of
+ * their repositories where the org's GitHub App is live (claimed, not
+ * suspended): a schedule's or a webhook's run works on GitHub as the App, so
+ * on a repository it can't reach it would only make a box that fails, every
+ * time. A pull request's event comes through a live installation already
+ * (installationProjects).
+ */
+export async function automationCandidates(automationIds: readonly string[]): Promise<RunCandidate[]> {
+  if (automationIds.length === 0) return [];
+  const supabase = createSupabaseAdminClient();
+  const [links, orgs] = await Promise.all([
+    supabase.from("automation_repos").select("automation_id, project_id").in("automation_id", [...automationIds]),
+    supabase.from("automations").select("id, org_id").in("id", [...automationIds]),
+  ]);
+  if (links.error) throw links.error;
+  if (orgs.error) throw orgs.error;
+  const byOrg = new Map<string, { automation_id: string; project_id: string }[]>();
+  const orgOf = new Map((orgs.data ?? []).map((a) => [a.id, a.org_id]));
+  for (const link of links.data ?? []) {
+    const orgId = orgOf.get(link.automation_id);
+    if (orgId) byOrg.set(orgId, [...(byOrg.get(orgId) ?? []), link]);
+  }
+  const candidates = (await Promise.all([...byOrg].map(([orgId, l]) => candidatesOf(supabase, orgId, l)))).flat();
+  if (candidates.length === 0) return [];
+  const { data: installations, error } = await supabase
+    .from("github_installations")
+    .select("org_id, account_login")
+    .in("org_id", [...byOrg.keys()])
+    .is("suspended_at", null);
+  if (error) throw error;
+  const live = new Set((installations ?? []).map((i) => `${i.org_id}:${i.account_login.toLowerCase()}`));
+  return candidates.filter((c) => live.has(`${c.orgId}:${c.repoFullName.split("/")[0].toLowerCase()}`));
 }
 
 /** How long a run may stay "started" before it's taken to have been cut off:
@@ -168,7 +313,7 @@ export async function sweepStalledRuns(now = new Date()): Promise<number> {
     .from("automation_runs")
     .update({
       status: "refused",
-      reason: "Its session's setup never finished. Run it again, or push new commits to the pull request.",
+      reason: "Its session's setup never finished. Run it again.",
       updated_at: now.toISOString(),
     })
     .eq("status", "started")
@@ -201,11 +346,17 @@ export type AutomationRun = {
   automationId: string;
   automationName: string;
   repoFullName: string;
-  prNumber: number;
+  /** What started it; null for a run from before triggers were kept (a
+   *  pull request's). */
+  trigger: AutomationTrigger | null;
+  /** A pull request's run's; null for any other. */
+  prNumber: number | null;
   prTitle: string;
-  headSha: string;
+  headSha: string | null;
+  /** A schedule's run's time. */
+  scheduledFor: string | null;
   workspaceId: string | null;
-  status: "started" | "ready" | "failed" | "refused";
+  status: RunStatus;
   reason: string | null;
   createdAt: string;
 };
@@ -213,22 +364,34 @@ export type AutomationRun = {
 /** How many of an org's latest runs the Automations page loads. */
 export const RECENT_RUNS = 50;
 
-/** An org's latest runs, newest first. */
-export async function listRuns(orgId: string, limit = RECENT_RUNS, onlyId?: string): Promise<AutomationRun[]> {
+/** The `trigger` values of a kind: a pull request's include runs from
+ *  before triggers were kept (null). */
+function kindFilter(kind: TriggerKind): string {
+  return kind === "pull_request" ? "trigger.is.null,trigger.like.pull_request.*" : `trigger.like.${kind}*`;
+}
+
+/** An org's latest runs, newest first: only `onlyId`, or only those a kind
+ *  of trigger started, when given. */
+export async function listRuns(
+  orgId: string,
+  limit = RECENT_RUNS,
+  onlyId?: string,
+  kind?: TriggerKind,
+): Promise<AutomationRun[]> {
   const supabase = createSupabaseAdminClient();
   const { data: automations, error } = await supabase.from("automations").select("id, name").eq("org_id", orgId);
   if (error) throw error;
   if (!automations?.length) return [];
-  const { data: runs, error: runsError } = await supabase
+  let query = supabase
     .from("automation_runs")
-    .select("id, automation_id, project_id, pr_number, pr_title, head_sha, workspace_id, status, reason, created_at")
+    .select("id, automation_id, project_id, trigger, pr_number, pr_title, head_sha, scheduled_for, workspace_id, status, reason, created_at")
     .in(
       "automation_id",
       automations.map((a) => a.id),
-    )
-    .match(onlyId ? { id: onlyId } : {})
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    );
+  if (onlyId) query = query.eq("id", onlyId);
+  if (kind) query = query.or(kindFilter(kind));
+  const { data: runs, error: runsError } = await query.order("created_at", { ascending: false }).limit(limit);
   if (runsError) throw runsError;
   const projectIds = [...new Set((runs ?? []).map((r) => r.project_id))];
   const { data: projects, error: projectsError } = projectIds.length
@@ -242,9 +405,11 @@ export async function listRuns(orgId: string, limit = RECENT_RUNS, onlyId?: stri
     automationId: r.automation_id,
     automationName: nameOf.get(r.automation_id) ?? "",
     repoFullName: repoOf.get(r.project_id) ?? "",
+    trigger: r.trigger,
     prNumber: r.pr_number,
     prTitle: r.pr_title,
     headSha: r.head_sha,
+    scheduledFor: r.scheduled_for,
     workspaceId: r.workspace_id,
     status: r.status,
     reason: r.reason,
@@ -300,8 +465,13 @@ export async function runNeighbours(run: {
 export type RerunTarget = {
   runId: string;
   status: AutomationRun["status"];
-  headSha: string;
-  prNumber: number;
+  /** What started it, and the event its session was told (null for a run
+   *  from before they were kept: a pull request's). */
+  trigger: AutomationTrigger | null;
+  event: RunEvent | null;
+  /** A pull request's run's; null for any other. */
+  headSha: string | null;
+  prNumber: number | null;
   enabled: boolean;
   candidate: RunCandidate;
   repoFullName: string;
@@ -322,7 +492,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   const supabase = createSupabaseAdminClient();
   const { data: run, error } = await supabase
     .from("automation_runs")
-    .select("id, automation_id, project_id, pr_number, head_sha, status, workspace_id")
+    .select("id, automation_id, project_id, trigger, context, pr_number, head_sha, status, workspace_id")
     .eq("id", runId)
     .maybeSingle();
   if (error) throw error;
@@ -363,6 +533,8 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   return {
     runId: run.id,
     status: run.status,
+    trigger: run.trigger,
+    event: readRunEvent(run.context),
     headSha: run.head_sha,
     prNumber: run.pr_number,
     enabled: automation.enabled,
@@ -373,6 +545,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
       triggers: automation.triggers,
       runsAs: automation.runs_as && stillMember.has(automation.runs_as) ? automation.runs_as : null,
       projectId: run.project_id,
+      repoFullName: project.full_name,
       orgId,
     },
     repoFullName: project.full_name,
@@ -465,7 +638,8 @@ export async function checkStateOf(runId: string): Promise<CheckState | null> {
     .eq("id", runId)
     .maybeSingle();
   if (error) throw error;
-  if (!run?.check_run_id || !run.check_installation_id) return null;
+  // Only a pull request's run has a check.
+  if (!run?.check_run_id || !run.check_installation_id || run.pr_number === null) return null;
   const { data: project, error: projectError } = await supabase
     .from("projects")
     .select("full_name")

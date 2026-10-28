@@ -553,7 +553,7 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
-export type AutomationTriggerDb = "pull_request.opened" | "pull_request.synchronize";
+export type AutomationTriggerDb = "pull_request.opened" | "pull_request.synchronize" | "schedule";
 
 type AutomationRow = {
   id: string;
@@ -574,9 +574,15 @@ type AutomationRunRow = {
   id: string;
   automation_id: string;
   project_id: string;
-  pr_number: number;
+  /** A pull request's run's; null for any other (supabase/migrations/20261102190000_automation_schedules.sql). */
+  pr_number: number | null;
   pr_title: string;
-  head_sha: string;
+  head_sha: string | null;
+  /** Null for a run from before triggers were kept. */
+  trigger: AutomationTriggerDb | null;
+  dedupe_key: string;
+  scheduled_for: string | null;
+  context: Json | null;
   workspace_id: string | null;
   status: AutomationRunStatusDb;
   reason: string | null;
@@ -618,6 +624,19 @@ type GithubFollowUpRow = {
 type AutomationRepoRow = {
   automation_id: string;
   project_id: string;
+};
+
+export type AutomationScheduleKindDb = "weekly" | "monthly" | "once" | "cron";
+
+type AutomationScheduleRow = {
+  id: string;
+  automation_id: string;
+  position: number;
+  kind: AutomationScheduleKindDb;
+  timezone: string;
+  spec: Json;
+  next_run_at: string | null;
+  created_at: string;
 };
 
 type OrganizationDomainRow = {
@@ -974,7 +993,7 @@ export type Database = {
       };
       automation_runs: {
         Row: AutomationRunRow;
-        Insert: Insert<AutomationRunRow, "automation_id" | "project_id" | "pr_number" | "head_sha">;
+        Insert: Insert<AutomationRunRow, "automation_id" | "project_id" | "dedupe_key">;
         Update: Partial<AutomationRunRow>;
         Relationships: [];
       };
@@ -982,6 +1001,12 @@ export type Database = {
         Row: AutomationRepoRow;
         Insert: AutomationRepoRow;
         Update: Partial<AutomationRepoRow>;
+        Relationships: [];
+      };
+      automation_schedules: {
+        Row: AutomationScheduleRow;
+        Insert: Insert<AutomationScheduleRow, "automation_id" | "kind" | "timezone" | "spec">;
+        Update: Partial<AutomationScheduleRow>;
         Relationships: [];
       };
       organization_invites: {
@@ -1450,7 +1475,8 @@ export type Database = {
         Args: { target_project: string; maker: string; checkout: string };
         Returns: string;
       };
-      // supabase/migrations/20261030130000_automations.sql
+      // supabase/migrations/20261030130000_automations.sql, and its
+      // `settings` from 20261102190000_automation_schedules.sql.
       create_automation: {
         Args: {
           target_org: string;
@@ -1461,6 +1487,7 @@ export type Database = {
           automation_triggers: AutomationTriggerDb[];
           is_enabled: boolean;
           project_ids: string[];
+          settings: Json;
         };
         Returns: string;
       };
@@ -1474,6 +1501,7 @@ export type Database = {
           automation_triggers: AutomationTriggerDb[] | null;
           is_enabled: boolean | null;
           project_ids: string[] | null;
+          settings: Json;
         };
         Returns: boolean;
       };

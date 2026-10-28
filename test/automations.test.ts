@@ -24,6 +24,8 @@ test("a whole automation is trimmed, deduplicated and kept in trigger order", ()
       template: "code-review",
       prompt: "Review it.",
       triggers: ["pull_request.opened", "pull_request.synchronize"],
+      // No schedule trigger: no schedules.
+      schedules: [],
       projectIds: [A, B],
       enabled: false,
     },

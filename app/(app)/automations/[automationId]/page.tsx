@@ -46,6 +46,7 @@ async function AutomationSection({ params }: { params: Params }) {
         template: automation.template,
         prompt: automation.prompt,
         triggers: automation.triggers,
+        schedules: automation.schedules,
         projectIds: automation.repos.map((r) => r.projectId),
         enabled: automation.enabled,
         // Its runner's login, "" when it can't be told (no GitHub login on

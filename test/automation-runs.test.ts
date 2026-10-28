@@ -11,7 +11,8 @@ import {
   startRun,
   type StartDeps,
 } from "@/lib/automations/runs";
-import type { RerunTarget, RunCandidate } from "@/lib/db/automation-runs";
+import type { RerunTarget, RunCandidate, RunRecord } from "@/lib/db/automation-runs";
+import { isPullRequestEvent } from "@/lib/automations/run-event";
 import type { ServerSessionStart } from "@/lib/session/server-session";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -41,6 +42,7 @@ const candidate: RunCandidate = {
   triggers: ["pull_request.opened", "pull_request.synchronize"],
   runsAs: "u1",
   projectId: "p1",
+  repoFullName: "neevai-labs/outrunner",
   orgId: "o1",
 };
 
@@ -111,7 +113,7 @@ test("an event records one run per matching automation, in one write, once per c
         { ...candidate, automationId: "a3" },
       ];
     },
-    recordRuns: async (runs: { automationId: string; projectId: string; headSha: string }[]) => {
+    recordRuns: async (runs: RunRecord[]) => {
       writes.push(runs.length);
       const made = new Map<string, string>();
       for (const run of runs) {
@@ -423,6 +425,8 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
       : {
           runId: "r1",
           status: "failed",
+          trigger: "pull_request.opened",
+          event: null,
           headSha: SHA,
           prNumber: 7,
           enabled: true,
@@ -458,6 +462,7 @@ test("a run that failed runs again at the same commit as itself, once, told it's
   const rerun = await rerunRun("o1", "r1", deps, "outrunner-connector");
   assert.ok(rerun.ok);
   assert.equal(rerun.run.runId, "r1");
+  assert.ok(isPullRequestEvent(rerun.run.event));
   assert.equal(rerun.run.event.headSha, SHA);
   // As newly opened: not told of new commits since a look that may never have been.
   assert.equal(rerun.run.event.trigger, "pull_request.opened");
@@ -481,9 +486,21 @@ test("one whose pull request has moved on runs at its head now, as a new run", a
   // The failed run keeps its session, archived by the new run once it's ready.
   assert.equal(rerun.staleSession, null);
   assert.deepEqual(reopened, []);
-  assert.deepEqual(recorded, [
-    { automationId: "a1", projectId: "p1", prNumber: 7, prTitle: "Add automations", headSha: later },
-  ]);
+  assert.deepEqual(
+    (recorded as RunRecord[]).map((record) => ({ ...record, event: undefined })),
+    [
+      {
+        automationId: "a1",
+        projectId: "p1",
+        trigger: "pull_request.opened",
+        dedupeKey: `pr:7:${later}`,
+        prNumber: 7,
+        prTitle: "Add automations",
+        headSha: later,
+        event: undefined,
+      },
+    ],
+  );
   // Unless that commit has its run already.
   const taken = rerunDeps({
     pr: { head: { sha: later, ref: "feature/x", repo: { full_name: "neevai-labs/outrunner" } } },
@@ -524,7 +541,7 @@ test("a run runs again only when it's the org's, failed or didn't start, and its
     "r1",
     rerunDeps({ pr: { head: { sha: SHA, ref: "feature/x", repo: renamed }, base: { ref: "main", repo: renamed } } }).deps,
   );
-  assert.ok(moved.ok);
+  assert.ok(moved.ok && isPullRequestEvent(moved.run.event));
   assert.equal(moved.run.event.repoFullName, "neevai-labs/renamed");
   // A refused one runs again too.
   assert.ok((await rerunRun("o1", "r1", rerunDeps({ target: { status: "refused" } }).deps)).ok);

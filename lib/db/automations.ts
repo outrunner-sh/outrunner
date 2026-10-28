@@ -8,6 +8,7 @@
  */
 
 import type { Automation, AutomationInput, AutomationRepo, AutomationTrigger } from "@/lib/automations/rules";
+import { nextRun, type Schedule, scheduleFromRow, scheduleSpec } from "@/lib/automations/schedule";
 import { people } from "@/lib/db/org-members";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -67,12 +68,13 @@ async function withDetails(orgId: string, rows: AutomationRowRead[]): Promise<Au
   if (links.error) throw links.error;
   const projectIds = [...new Set((links.data ?? []).map((l) => l.project_id))];
   const runnerIds = rows.flatMap((r) => (r.runs_as ? [r.runs_as] : []));
-  const [projects, runners, members] = await Promise.all([
+  const [projects, runners, members, schedules] = await Promise.all([
     projectIds.length
       ? supabase.from("projects").select("id, full_name").in("id", projectIds)
       : Promise.resolve({ data: [], error: null }),
     people(runnerIds),
     currentRunners(orgId, runnerIds),
+    schedulesOf(rows.map((r) => r.id)),
   ]);
   if (projects.error) throw projects.error;
   const nameOf = new Map((projects.data ?? []).map((p) => [p.id, p.full_name]));
@@ -88,11 +90,42 @@ async function withDetails(orgId: string, rows: AutomationRowRead[]): Promise<Au
     template: r.template,
     prompt: r.prompt,
     triggers: r.triggers,
+    schedules: schedules.get(r.id) ?? [],
     repos: (reposOf.get(r.id) ?? []).sort((a, b) => a.fullName.localeCompare(b.fullName)),
     enabled: r.enabled,
     runsAs: r.runs_as && members.has(r.runs_as) ? { id: r.runs_as, login: runners.get(r.runs_as)?.login ?? "" } : null,
     createdAt: r.created_at,
   }));
+}
+
+/** The automations' schedules, each's in order. */
+export async function schedulesOf(automationIds: readonly string[]): Promise<Map<string, Schedule[]>> {
+  if (automationIds.length === 0) return new Map();
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_schedules")
+    .select("automation_id, kind, timezone, spec")
+    .in("automation_id", [...automationIds])
+    .order("position", { ascending: true });
+  if (error) throw error;
+  const of = new Map<string, Schedule[]>();
+  for (const row of data ?? []) {
+    const schedule = scheduleFromRow(row);
+    if (schedule) of.set(row.automation_id, [...(of.get(row.automation_id) ?? []), schedule]);
+  }
+  return of;
+}
+
+/** Schedules as they're saved: each with when it fires next from `now`. */
+export function scheduleRows(schedules: readonly Schedule[], now = Date.now()) {
+  return schedules.map((schedule) => {
+    const next = nextRun(schedule, now);
+    return {
+      kind: schedule.kind,
+      timezone: schedule.timezone,
+      spec: scheduleSpec(schedule),
+      next_run_at: next === null ? null : new Date(next).toISOString(),
+    };
+  });
 }
 
 /** An org's automations, oldest first. */
@@ -143,6 +176,7 @@ export async function createAutomation(orgId: string, runsAs: string, input: Aut
     automation_triggers: input.triggers,
     is_enabled: input.enabled,
     project_ids: input.projectIds,
+    settings: { schedules: scheduleRows(input.schedules) },
   });
   if (error) throw refusal(error);
   return data;
@@ -150,9 +184,11 @@ export async function createAutomation(orgId: string, runsAs: string, input: Aut
 
 /**
  * Change what's given of an automation of `orgId`; false when it has none by
- * that id. Changing what it does (prompt, triggers, repositories) makes
- * `editor` who it runs as; renaming or switching it doesn't. Its template
- * stays what it was made from.
+ * that id. Changing what it does (prompt, triggers, schedules, repositories)
+ * makes `editor` who it runs as; renaming or switching it doesn't. Its
+ * template stays what it was made from. Switched on, its schedules are
+ * worked out again from now: it doesn't catch up on what it would have run
+ * while off.
  */
 export async function updateAutomation(
   orgId: string,
@@ -160,6 +196,7 @@ export async function updateAutomation(
   editor: string,
   change: Partial<AutomationInput>,
 ): Promise<boolean> {
+  const schedules = change.schedules ?? (change.enabled === true ? (await schedulesOf([automationId])).get(automationId) : undefined);
   const { data, error } = await createSupabaseAdminClient().rpc("update_automation", {
     target_org: orgId,
     automation: automationId,
@@ -169,6 +206,7 @@ export async function updateAutomation(
     automation_triggers: change.triggers ?? null,
     is_enabled: change.enabled ?? null,
     project_ids: change.projectIds ?? null,
+    settings: schedules ? { schedules: scheduleRows(schedules) } : {},
   });
   if (error) throw refusal(error);
   return data === true;

@@ -3,16 +3,49 @@
  * Automations routes run on what the page sends.
  */
 
+import {
+  MIN_INTERVAL_MINUTES,
+  parseSchedule,
+  runTooOften,
+  type Schedule,
+  SCHEDULES_MAX,
+} from "@/lib/automations/schedule";
 import { isUuid } from "@/lib/ids";
 
-export const AUTOMATION_TRIGGERS = ["pull_request.opened", "pull_request.synchronize"] as const;
+export const AUTOMATION_TRIGGERS = ["pull_request.opened", "pull_request.synchronize", "schedule"] as const;
 export type AutomationTrigger = (typeof AUTOMATION_TRIGGERS)[number];
+
+/** A pull request's triggers. */
+export type PullRequestTrigger = Extract<AutomationTrigger, `pull_request.${string}`>;
+
+/** The triggers a GitHub event is, which the Outrunner GitHub App's webhook
+ *  starts; the rest are Outrunner's own. */
+export const GITHUB_TRIGGERS = AUTOMATION_TRIGGERS.filter((t) => t.startsWith("pull_request."));
 
 /** Each trigger as the page names it. */
 export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
   "pull_request.opened": "PR opened",
   "pull_request.synchronize": "New commits on a PR",
+  schedule: "Schedule",
 };
+
+/** What a run list is filtered by: a trigger's kind. A run from before runs
+ *  kept their trigger is a pull request's. */
+export const TRIGGER_KINDS = ["pull_request", "schedule"] as const;
+export type TriggerKind = (typeof TRIGGER_KINDS)[number];
+
+export const TRIGGER_KIND_LABELS: Record<TriggerKind, string> = {
+  pull_request: "Pull request",
+  schedule: "Schedule",
+};
+
+/** How a run stands: being set up, set up (its prompt sent), its session
+ *  failed, or none made (`reason` says why). */
+export type RunStatus = "started" | "ready" | "failed" | "refused";
+
+export function triggerKind(trigger: AutomationTrigger | null): TriggerKind {
+  return trigger === null ? "pull_request" : (trigger.split(".")[0] as TriggerKind);
+}
 
 export const NAME_MAX = 80;
 export const PROMPT_MAX = 20_000;
@@ -28,6 +61,8 @@ export type Automation = {
   template: string | null;
   prompt: string;
   triggers: AutomationTrigger[];
+  /** When it runs on its own: with the "schedule" trigger, one or more. */
+  schedules: Schedule[];
   repos: AutomationRepo[];
   enabled: boolean;
   /** Who it runs as: whoever last set what it does (its prompt, triggers
@@ -42,6 +77,7 @@ export type AutomationInput = {
   template: string | null;
   prompt: string;
   triggers: AutomationTrigger[];
+  schedules: Schedule[];
   projectIds: string[];
   enabled: boolean;
 };
@@ -55,11 +91,16 @@ function isTrigger(value: unknown): value is AutomationTrigger {
 /**
  * The fields of `body` that are present, checked: a PATCH sends some, a POST
  * all (`full`). Names and prompts are trimmed; triggers and repositories
- * deduplicated.
+ * deduplicated. Schedules go with the "schedule" trigger: it needs one, and
+ * triggers sent without it clear them. `now` (ms) is when they're checked
+ * from.
  */
-export function parseAutomationInput(body: unknown, { full }: { full: true }): Parsed<AutomationInput>;
-export function parseAutomationInput(body: unknown, { full }: { full: false }): Parsed<Partial<AutomationInput>>;
-export function parseAutomationInput(body: unknown, { full }: { full: boolean }): Parsed<Partial<AutomationInput>> {
+export function parseAutomationInput(body: unknown, opts: { full: true; now?: number }): Parsed<AutomationInput>;
+export function parseAutomationInput(body: unknown, opts: { full: false; now?: number }): Parsed<Partial<AutomationInput>>;
+export function parseAutomationInput(
+  body: unknown,
+  { full, now = Date.now() }: { full: boolean; now?: number },
+): Parsed<Partial<AutomationInput>> {
   if (typeof body !== "object" || body === null) return { ok: false, error: "Send the automation as JSON." };
   const b = body as Record<string, unknown>;
   const value: Partial<AutomationInput> = {};
@@ -88,6 +129,27 @@ export function parseAutomationInput(body: unknown, { full }: { full: boolean })
       return { ok: false, error: "Pick at least one trigger." };
     }
     value.triggers = AUTOMATION_TRIGGERS.filter((t) => (b.triggers as unknown[]).includes(t));
+  }
+  if (full || b.schedules !== undefined) {
+    const sent = b.schedules ?? [];
+    if (!Array.isArray(sent)) return { ok: false, error: "Those aren't schedules." };
+    if (sent.length > SCHEDULES_MAX) return { ok: false, error: `Add at most ${SCHEDULES_MAX} schedules.` };
+    const schedules: Schedule[] = [];
+    for (const item of sent) {
+      const parsed = parseSchedule(item, now);
+      if (!parsed.ok) return parsed;
+      schedules.push(parsed.value);
+    }
+    if (runTooOften(schedules, now)) {
+      return { ok: false, error: `Together, its schedules run at most every ${MIN_INTERVAL_MINUTES} minutes.` };
+    }
+    value.schedules = schedules;
+  }
+  if (value.triggers) {
+    const scheduled = value.triggers.includes("schedule");
+    if (scheduled && value.schedules?.length === 0) return { ok: false, error: "Add a schedule, or untick Schedule." };
+    // With the trigger off, none are kept that would never fire.
+    if (!scheduled) value.schedules = [];
   }
   if (full || b.projectIds !== undefined) {
     if (!Array.isArray(b.projectIds) || !b.projectIds.every((id) => typeof id === "string" && isUuid(id))) {

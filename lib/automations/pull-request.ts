@@ -5,7 +5,7 @@
  */
 
 import { runMarker } from "@/lib/automations/checks";
-import type { AutomationTrigger } from "@/lib/automations/rules";
+import type { PullRequestTrigger } from "@/lib/automations/rules";
 /** An installation id as GitHub sends it: a positive integer. */
 function installationId(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
@@ -14,7 +14,7 @@ function installationId(value: unknown): number | null {
 /** A pull request event that may start a run. */
 export type PullRequestEvent = {
   installationId: number;
-  trigger: AutomationTrigger;
+  trigger: PullRequestTrigger;
   /** The base repository, `owner/name`, where the pull request is. */
   repoFullName: string;
   number: number;
@@ -38,7 +38,7 @@ export type PullRequestSkip = "action" | "draft" | "fork" | "bot" | "unreadable"
  * (automation_runs' unique key): reopened at a commit it already ran at, it
  * doesn't run again; the code is the same.
  */
-export function triggerFor(action: unknown): AutomationTrigger | null {
+export function triggerFor(action: unknown): PullRequestTrigger | null {
   switch (action) {
     case "opened":
     case "reopened":

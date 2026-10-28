@@ -3,6 +3,7 @@ import { Suspense } from "react";
 
 import { Automations } from "@/components/automations";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { TRIGGER_KINDS, type TriggerKind } from "@/lib/automations/rules";
 import { AUTOMATION_TEMPLATES } from "@/lib/automations/templates";
 import { listRuns, RECENT_RUNS } from "@/lib/db/automation-runs";
 import { listAutomations } from "@/lib/db/automations";
@@ -16,15 +17,17 @@ import { getOrgContext } from "@/lib/orgs/server";
  * GitHub triggers come through the Outrunner GitHub App, which the org's
  * admins install in Settings → Org → GitHub, and which posts as its bot.
  */
-export default function AutomationsPage() {
+type SearchParams = Promise<{ trigger?: string }>;
+
+export default function AutomationsPage({ searchParams }: { searchParams: SearchParams }) {
   return (
     <Suspense fallback={null}>
-      <AutomationsSection />
+      <AutomationsSection searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function AutomationsSection() {
+async function AutomationsSection({ searchParams }: { searchParams: SearchParams }) {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/automations");
   const context = await getOrgContext().catch((error: unknown) => {
@@ -43,6 +46,11 @@ async function AutomationsSection() {
   }
   const { active } = context;
   const config = githubAppConfig();
+  // The runs of one kind of trigger (`?trigger=schedule`), read from the
+  // database: a nightly schedule's aren't lost behind the latest pull
+  // requests'. Anything else is all of them.
+  const { trigger } = await searchParams;
+  const runKind = (TRIGGER_KINDS as readonly string[]).includes(trigger ?? "") ? (trigger as TriggerKind) : undefined;
   const [installations, automations, runs] = await Promise.all([
     config
       ? listOrgInstallations(active.id).catch((error: unknown) => {
@@ -54,7 +62,7 @@ async function AutomationsSection() {
       console.error("Automations: could not load them", error);
       return null;
     }),
-    listRuns(active.id, RECENT_RUNS).catch((error: unknown) => {
+    listRuns(active.id, RECENT_RUNS, undefined, runKind).catch((error: unknown) => {
       console.error("Automations: could not load their runs", error);
       return null;
     }),
@@ -67,6 +75,7 @@ async function AutomationsSection() {
       automations={automations}
       runs={runs}
       runsLimit={RECENT_RUNS}
+      runKind={runKind ?? null}
       templates={AUTOMATION_TEMPLATES.map(({ id, name, description, category, triggers }) => ({
         id,
         name,

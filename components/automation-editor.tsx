@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { AutomationSchedules, type ScheduleForm, scheduleForm, scheduleOf, useLocalZone } from "@/components/automation-schedules";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
@@ -12,13 +13,14 @@ import { InlineMessage } from "@/components/ui/notice";
 import { Textarea } from "@/components/ui/textarea";
 import {
   type AppCoverage,
-  AUTOMATION_TRIGGERS,
   type AutomationRepo,
   type AutomationTrigger,
+  GITHUB_TRIGGERS,
   NAME_MAX,
   PROMPT_MAX,
   TRIGGER_LABELS,
 } from "@/lib/automations/rules";
+import type { Schedule } from "@/lib/automations/schedule";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
 import { requestJson } from "@/lib/http/request-json";
 import { cn } from "@/lib/utils";
@@ -31,6 +33,7 @@ export type AutomationDraft = {
   template: string | null;
   prompt: string;
   triggers: AutomationTrigger[];
+  schedules: Schedule[];
   projectIds: string[];
   enabled: boolean;
   /** Who it runs as, for one that exists: their login, "" when it can't be
@@ -47,8 +50,8 @@ const COVERAGE_NOTES: Record<AppCoverage, string | null> = {
 
 /**
  * Make or change an automation of the org the app is showing: its name,
- * triggers, repositories and prompt, on or off. Only an admin edits; a member
- * sees it read-only. A repository the GitHub App can't act on is flagged,
+ * triggers (GitHub events, schedules), repositories and prompt, on or off.
+ * Only an admin edits; a member sees it read-only. A repository the GitHub App can't act on is flagged,
  * since the automation can't post there.
  */
 export function AutomationEditor({
@@ -72,6 +75,14 @@ export function AutomationEditor({
   const [name, setName] = useState(draft.name);
   const [prompt, setPrompt] = useState(draft.prompt);
   const [triggers, setTriggers] = useState<AutomationTrigger[]>(draft.triggers);
+  const local = useLocalZone();
+  const [schedules, setSchedules] = useState<ScheduleForm[]>(() => draft.schedules.map((s) => scheduleForm(s.timezone, s)));
+  const scheduled = triggers.includes("schedule");
+  // Ticking Schedule with none yet starts one, in the browser's zone.
+  const toggleSchedule = () => {
+    setTriggers(toggle(triggers, "schedule"));
+    if (!scheduled && schedules.length === 0) setSchedules([scheduleForm(local)]);
+  };
   const [projectIds, setProjectIds] = useState<string[]>(draft.projectIds);
   const [enabled, setEnabled] = useState(draft.enabled);
   const [filter, setFilter] = useState("");
@@ -107,15 +118,20 @@ export function AutomationEditor({
     setError(null);
     try {
       // A change sends only what changed: changing what it does (prompt,
-      // triggers, repositories) makes it run as you, renaming doesn't.
+      // triggers, schedules, repositories) makes it run as you, renaming
+      // doesn't.
       const same = (a: string[], b: string[]) => a.length === b.length && a.every((v) => b.includes(v));
+      const sent = scheduled ? schedules.map(scheduleOf) : [];
+      // Schedules go with the triggers: either changed sends both.
+      const before = draft.schedules.map((s) => scheduleOf(scheduleForm(s.timezone, s)));
+      const timing = same(triggers, draft.triggers) && JSON.stringify(sent) === JSON.stringify(before) ? {} : { triggers, schedules: sent };
       const body = creating
-        ? { name, template: draft.template, prompt, triggers, projectIds, enabled }
+        ? { name, template: draft.template, prompt, triggers, schedules: sent, projectIds, enabled }
         : {
             ...(name !== draft.name ? { name } : {}),
             // The server keeps it trimmed.
             ...(prompt.trim() !== draft.prompt ? { prompt } : {}),
-            ...(same(triggers, draft.triggers) ? {} : { triggers }),
+            ...timing,
             // With no runner, Save takes it on: sending its repositories is
             // what does (update_automation), unchanged as they may be.
             ...(same(projectIds, draft.projectIds) && draft.runsAs !== null ? {} : { projectIds }),
@@ -194,7 +210,7 @@ export function AutomationEditor({
 
         <Field label="Trigger">
           <div className="space-y-1.5">
-            {AUTOMATION_TRIGGERS.map((trigger) => (
+            {GITHUB_TRIGGERS.map((trigger) => (
               <Check
                 key={trigger}
                 checked={triggers.includes(trigger)}
@@ -204,7 +220,15 @@ export function AutomationEditor({
                 {TRIGGER_LABELS[trigger]}
               </Check>
             ))}
+            <Check checked={scheduled} disabled={!editable} onChange={toggleSchedule}>
+              On a schedule
+            </Check>
           </div>
+          {scheduled ? (
+            <div className="pt-1">
+              <AutomationSchedules schedules={schedules} onChange={setSchedules} editable={editable} />
+            </div>
+          ) : null}
         </Field>
 
         <Field label="Repositories">
@@ -248,7 +272,8 @@ export function AutomationEditor({
             className="max-h-[28rem] min-h-48 font-mono text-[12px] md:text-[12px]"
           />
           <p className="text-xs text-muted-foreground">
-            The session also gets the pull request it&apos;s for: its repository, number, and base and head branches.
+            The session is also told what started it: the pull request (its repository, number, and base and head
+            branches), or the schedule and the time it was due.
           </p>
         </Field>
 
