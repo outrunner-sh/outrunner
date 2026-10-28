@@ -590,9 +590,12 @@ export function WorkspaceSession({
   // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
   // The first prompt a reload cut off mid-send, while the conversation hasn't
-  // shown it.
+  // shown it. Only once the stream is live: until then the events are the
+  // copy kept from before the reload, which seldom has the prompt yet, and a
+  // Send it again offered then would most often send it twice.
   const [cutOff, setCutOff] = useState<FirstPrompt | null>(null);
-  const cutOffShown = cutOff && userPromptCount(conversation.events) === 0 ? cutOff : null;
+  const cutOffShown =
+    cutOff && conversation.status === "connected" && userPromptCount(conversation.events) === 0 ? cutOff : null;
   useEffect(() => {
     if (sentInitial.current || !attached) return;
     const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
@@ -769,7 +772,10 @@ export function WorkspaceSession({
               label: "Send it again",
               onClick: () => {
                 setCutOff(null);
-                void send(cutOffShown.prompt, cutOffShown.attachmentIds);
+                // Its own Retry, so a resend that fails keeps the prompt.
+                const { prompt, attachmentIds } = cutOffShown;
+                const again = (): void => void send(prompt, attachmentIds, again);
+                again();
               },
             },
             { label: "Dismiss", onClick: () => setCutOff(null) },
