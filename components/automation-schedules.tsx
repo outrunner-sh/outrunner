@@ -149,7 +149,7 @@ export function AutomationSchedules({
                     value={form.time}
                     disabled={!editable}
                     onChange={(event) => set(form.key, { time: event.target.value })}
-                    className="h-7 w-28 text-xs"
+                    className="h-7 w-32 text-xs"
                   />
                 </label>
               ) : null}
