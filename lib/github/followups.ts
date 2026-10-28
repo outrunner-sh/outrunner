@@ -477,8 +477,8 @@ export const WAIT_MAX_MS = CI_WAIT_MAX_MS + 5 * 60_000;
 /**
  * Wait for follow-ups this event made, sending what's due as each comes
  * due: a burst's later events, and checks still running, put them later,
- * so it waits again until they've gone. Past WAIT_MAX_MS, or when they
- * can't be read, the cron's tick has them.
+ * so it waits again until they've gone. Past WAIT_MAX_MS, when they can't
+ * be read, or when one fails to send, the cron's tick has them.
  */
 export async function waitAndFlush(ids: readonly string[], deps: FollowUpDeps): Promise<void> {
   const until = deps.now() + WAIT_MAX_MS;
@@ -487,7 +487,10 @@ export async function waitAndFlush(ids: readonly string[], deps: FollowUpDeps): 
     if (waiting.length === 0) return;
     const next = Math.min(...waiting.map((t) => Date.parse(t.dueAt)));
     await deps.sleep(Math.max(5_000, next - deps.now() + 2_000));
-    await flushFollowUps(deps);
+    const results = await flushFollowUps(deps);
+    // One of ours failed (GitHub down, say): the cron's tick tries it again
+    // every two minutes, rather than this every few seconds.
+    if (ids.some((id) => results.get(id) === "error")) return;
   }
 }
 

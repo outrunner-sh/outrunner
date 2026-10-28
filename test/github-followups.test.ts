@@ -467,3 +467,18 @@ test("the event that made a follow-up waits until it has gone, as often as it's 
   assert.equal(reads, 4);
   assert.deepEqual(recorded.slept, [62_000, 62_000, 62_000]);
 });
+
+test("a follow-up that fails while its event waits is left to the cron, not tried again at once", async () => {
+  let flushes = 0;
+  const { deps, recorded } = fakeDeps({
+    waiting: [due({ id: "row1" })],
+    times: async (ids) => ids.map((id) => ({ id, dueAt: new Date(NOW).toISOString(), done: false })),
+    pull: async () => {
+      flushes++;
+      return null;
+    },
+  });
+  await waitAndFlush(["row1"], deps);
+  assert.equal(flushes, 1);
+  assert.equal(recorded.slept.length, 1);
+});
