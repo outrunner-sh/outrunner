@@ -51,7 +51,11 @@ export async function sweepOrphanedBoxes(now = Date.now()): Promise<{ deleted: n
     if (sweepable(box, now, deployment)) candidates.push(box);
     if (++listed >= LIST_MAX) break;
   }
-  if (candidates.length === 0) return { deleted: 0, held: 0 };
+  if (candidates.length === 0) {
+    // None held now: the same ones coming back are logged again.
+    lastHeld = "";
+    return { deleted: 0, held: 0 };
+  }
 
   const named = await namedBoxes(candidates.map((box) => box.id));
   const unlabelled = optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
