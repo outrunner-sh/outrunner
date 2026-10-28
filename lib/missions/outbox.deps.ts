@@ -6,7 +6,7 @@
  */
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
-import { reachBox } from "@/lib/missions/box";
+import { reachBox, writeBoxFile } from "@/lib/missions/box";
 import type { MissionEvent, MissionEventPayload } from "@/lib/missions/events";
 import {
   DELIVERY_LEASE_SECONDS,
@@ -15,7 +15,8 @@ import {
   drainMissionEvents,
   type OutboxDeps,
 } from "@/lib/missions/outbox";
-import { sessionById } from "@/lib/missions/store";
+import { NOTES_FILE } from "@/lib/missions/rules";
+import { readNotes, sessionById } from "@/lib/missions/store";
 import { AGENT_FEATURE_MESSAGE_KEYS } from "@/lib/runtime/agent-protocol";
 import type { Workspace } from "@/lib/runtime/types";
 import { asBrowser } from "@/lib/slack/research";
@@ -46,6 +47,12 @@ export async function wakeSession(session: Workspace): Promise<Workspace> {
 
 async function sendOnce(mission: Workspace, text: string, key: string): Promise<void> {
   const awake = await wakeSession(mission);
+  // Restored, its worktree is fresh: its saved notes go back on it before it
+  // reads the news.
+  if (mission.status === "archived") {
+    const notes = await readNotes(mission.id).catch(() => null);
+    if (notes?.body) await writeBoxFile(awake, NOTES_FILE, notes.body).catch(() => false);
+  }
   const reached = await reachBox(awake);
   if (!reached) throw new Error("its box didn't answer");
   const features = (await reached.agent.health(reached.identity).catch(() => null))?.features ?? [];
