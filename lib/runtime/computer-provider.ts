@@ -421,6 +421,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     // them shows which repository it was at.
     for (const repo of repos) {
       const began = Date.now();
+      console.log(`Box ${sandboxId}: syncing ${repo.fullName}'s mirror`);
       await syncMirrors(box.gitExec, { root: `${home}/repos`, repos: [repo], token: githubToken });
       console.log(`Box ${sandboxId}: ${repo.fullName}'s mirror synced (${Math.round((Date.now() - began) / 1000)}s)`);
     }

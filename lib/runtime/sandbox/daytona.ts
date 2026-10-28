@@ -130,7 +130,8 @@ export class DaytonaBackend implements SandboxBackend {
 const STOPPED_STATES = new Set(["stopped", "archived"]);
 const STARTING_STATES = new Set(["starting", "restoring", "creating"]);
 
-function box(sandbox: Sandbox): SandboxBox {
+/** A box's commands and files, from its sandbox. Exported for tests. */
+export function box(sandbox: Sandbox): SandboxBox {
   const io: BoxIO = {
     exec: async (command) => {
       const res = await sandbox.process.executeCommand(command, undefined, undefined, EXEC_TIMEOUT_SECONDS);
