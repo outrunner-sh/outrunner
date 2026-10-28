@@ -2,14 +2,13 @@ import { after, NextResponse } from "next/server";
 
 import { isOwner } from "@/lib/auth/allowlist";
 import { slackLinkTarget } from "@/lib/db/slack-links";
-import { captureWorkItem, resolveProject, triageActor, WorkItemChangeError } from "@/lib/db/work-items";
+import { captureWorkItem, triageActor, WorkItemChangeError } from "@/lib/db/work-items";
 import { optionalEnv } from "@/lib/env";
 import {
   captureFromCommand,
   captureFromMessage,
   isSlackResponseUrl,
   type MessageAction,
-  parseTriageCommand,
   type SlackCapture,
   type SlackIdentity,
   signLinkToken,
@@ -89,19 +88,17 @@ function shortcut(payload: string, secret: string): NextResponse {
   return new NextResponse(null, { status: 200 });
 }
 
-/** `/triage [owner/repo] <text>`. */
+/** `/triage <text>`: the text goes to triage as it is. */
 function command(form: URLSearchParams, secret: string): NextResponse {
   const teamId = form.get("team_id");
   const userId = form.get("user_id");
   const responseUrl = form.get("response_url");
   if (!teamId || !userId || !isSlackResponseUrl(responseUrl)) return new NextResponse(null, { status: 400 });
-  const parsed = parseTriageCommand(form.get("text") ?? "");
-  if (!parsed) {
-    return NextResponse.json(
-      ephemeral("Add a work item to your Outrunner triage: `/triage [owner/repo] what needs doing`"),
-    );
+  const text = (form.get("text") ?? "").trim();
+  if (!text) {
+    return NextResponse.json(ephemeral("Add a note to your Outrunner triage: `/triage what needs doing`"));
   }
-  const capture = captureFromCommand(parsed.text, {
+  const capture = captureFromCommand(text, {
     channelName: form.get("channel_name"),
     userName: form.get("user_name"),
   });
@@ -111,9 +108,8 @@ function command(form: URLSearchParams, secret: string): NextResponse {
     userId,
     userName: form.get("user_name"),
   };
-  // A first word that isn't one of the user's workspaces was part of the text.
   after(async () => {
-    const reply = await captureReply(identity, { ...capture, project: parsed.project }, secret, parsed.text);
+    const reply = await captureReply(identity, capture, secret);
     await postReply(responseUrl, reply);
   });
   return NextResponse.json(ephemeral("Adding to Outrunner triage…"));
@@ -133,7 +129,6 @@ async function captureReply(
   identity: SlackIdentity,
   capture: SlackCapture,
   secret: string,
-  commandText?: string,
 ): Promise<Reply> {
   try {
     const actor = await linkedActor(identity);
@@ -145,21 +140,11 @@ async function captureReply(
         `Connect Slack to your Outrunner account first: <${link}|Connect Slack to Outrunner> (link valid for 10 minutes; you'll sign in with Slack). Then try again.`,
       );
     }
-    let projectId: string | null = null;
-    let { title, body } = capture;
-    if (capture.project) {
-      projectId = await resolveProject(actor, capture.project);
-      // Not a workspace of the org they can see: it was part of what they wrote.
-      if (!projectId && commandText !== undefined) {
-        const whole = captureFromCommand(`${capture.project} ${commandText}`, { channelName: null, userName: null });
-        title = whole.title;
-        body = whole.body;
-      }
-    }
+    // Unsorted: the workspace is picked when it's triaged.
     const result = await captureWorkItem(actor, {
-      title,
-      body,
-      projectId,
+      title: capture.title,
+      body: capture.body,
+      projectId: null,
       source: "slack",
       sourceUrl: capture.sourceUrl,
       sourceRef: capture.sourceRef,

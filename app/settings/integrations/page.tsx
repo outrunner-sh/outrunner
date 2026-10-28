@@ -50,7 +50,7 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
         <h2 className="text-sm font-medium text-foreground">Slack</h2>
         <p className="text-sm text-muted-foreground">
           Send a message to your triage with its <span className="text-foreground">⋯ → Send to Outrunner triage</span>{" "}
-          shortcut, or type <code className="font-mono">/triage [owner/repo] what needs doing</code>. Another message
+          shortcut, or type <code className="font-mono">/triage what needs doing</code>. Another message
           from the same thread becomes a note on the same item.
         </p>
         {!enabled ? (

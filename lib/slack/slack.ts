@@ -247,8 +247,6 @@ export function slackPermalink(input: {
 export type SlackCapture = {
   title: string;
   body: string;
-  /** `owner/name` the command named first; resolved by the caller. */
-  project: string | null;
   sourceUrl: string | null;
   sourceRef: string | null;
   author: string | null;
@@ -292,29 +290,14 @@ export function captureFromMessage(action: MessageAction): SlackCapture {
   return {
     title: titleFromText(text) || `Message in ${where}`,
     body: text ? `${text}\n\n${credit}` : credit,
-    project: null,
     sourceUrl: permalink,
     sourceRef: `slack:${action.team.id}/${action.channel.id}/${thread}`,
     author: author ? `${author} (${where})` : where,
   };
 }
 
-/**
- * `/triage [owner/repo] <text>`: the text is the item. A first word shaped
- * like `owner/repo` names its workspace (the caller checks it's one of the
- * user's, and files the item Unsorted, keeping that word, if not). Nothing to
- * capture is null.
- */
-export function parseTriageCommand(text: string): { project: string | null; text: string } | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  const match = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\s+([\s\S]+)$/.exec(trimmed);
-  if (match) return { project: match[1], text: match[2].trim() };
-  return { project: null, text: trimmed };
-}
-
-/** The capture a `/triage` command makes. Commands aren't deduplicated: each
- *  is its own item. */
+/** The capture `/triage <text>` makes: the text is the item, filed in
+ *  Unsorted. Commands aren't deduplicated: each is its own item. */
 export function captureFromCommand(
   text: string,
   meta: { channelName: string | null; userName: string | null },
@@ -327,7 +310,6 @@ export function captureFromCommand(
   return {
     title: title || "Captured from Slack",
     body,
-    project: null,
     sourceUrl: null,
     sourceRef: null,
     author: meta.userName ? `@${meta.userName} (${where})` : where,

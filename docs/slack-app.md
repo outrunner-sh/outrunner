@@ -5,8 +5,8 @@ Outrunner's Slack app adds two ways to send work to triage:
 - **Message shortcut** — a message's **⋯ → Send to Outrunner triage**. The message becomes a work item, with
   its first line as the title, the whole message as the Markdown body, and a link back to it. A second
   message from the **same thread** becomes a note on that thread's item.
-- **Slash command** — `/triage [owner/repo] what needs doing`. If the first word is one of your synced
-  repositories, the item goes in that workspace. Otherwise it goes to **Unsorted**.
+- **Slash command** — `/triage what needs doing`. The text becomes a work item in **Unsorted**; pick its
+  workspace when you triage it.
 
 Both post to `POST /api/integrations/slack`. The endpoint checks every request against the app's signing
 secret. It needs no bot token: replies go back through each request's `response_url`, and links to messages
@@ -34,7 +34,7 @@ are built from the payload.
        - command: /triage
          url: https://outrunner.example.com/api/integrations/slack
          description: Add a work item to your Outrunner triage
-         usage_hint: "[owner/repo] what needs doing"
+         usage_hint: "what needs doing"
          should_escape: false
    oauth_config:
      redirect_urls:
@@ -84,5 +84,4 @@ Captures are filed as the linked Outrunner user, in their org. They follow the o
   or move them.
 - **Unsorted** items (no workspace yet): every member sees them. Triaging them needs write on all workspaces.
 
-`/triage owner/repo …` files the item in that workspace only if the user can see it. Otherwise the whole text is
-the item, and it goes to Unsorted.
+Everything from Slack lands in **Unsorted**, which every member sees.

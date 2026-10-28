@@ -7,7 +7,6 @@ import {
   captureFromMessage,
   isSlackResponseUrl,
   type MessageAction,
-  parseTriageCommand,
   signLinkToken,
   signSignInState,
   slackAuthorizeUrl,
@@ -90,13 +89,9 @@ test("a message becomes an item; messages in one thread share its ref", () => {
   assert.equal(reply.author, "ana (#eng)");
 });
 
-test("/triage takes an owner/repo first word as the workspace", () => {
-  assert.equal(parseTriageCommand("  "), null);
-  assert.deepEqual(parseTriageCommand("acme/web fix the login"), { project: "acme/web", text: "fix the login" });
-  assert.deepEqual(parseTriageCommand("fix the login"), { project: null, text: "fix the login" });
-  assert.deepEqual(parseTriageCommand("acme/web"), { project: null, text: "acme/web" });
-  const capture = captureFromCommand("fix the login", { channelName: "eng", userName: "ana" });
-  assert.deepEqual([capture.title, capture.body, capture.author], ["fix the login", "", "@ana (#eng)"]);
+test("/triage files the text as it is", () => {
+  const capture = captureFromCommand("acme/web fix the login", { channelName: "eng", userName: "ana" });
+  assert.deepEqual([capture.title, capture.body, capture.author], ["acme/web fix the login", "", "@ana (#eng)"]);
 });
 
 test("replies go only to Slack's own hosts", () => {
