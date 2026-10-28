@@ -1,5 +1,5 @@
 /**
- * Keeping the copy of users' subscriptions true to Stripe, from its webhook
+ * Keeping the copy of orgs' subscriptions true to Stripe, from its webhook
  * events. An event is only a cue: the subscription it concerns is fetched
  * from Stripe and stored whole, so events arriving out of order or twice
  * can't leave an older state behind. The I/O is behind {@link SyncDeps}.
@@ -11,7 +11,10 @@ import { recordFromStripe, type SubscriptionRecord } from "@/lib/billing/subscri
 
 export type SyncDeps = {
   retrieveSubscription(id: string): Promise<Stripe.Subscription>;
-  userForCustomer(customerId: string): Promise<string | null>;
+  orgForCustomer(customerId: string): Promise<string | null>;
+  /** A user's personal org: a subscription from before billing was the
+   *  org's names only its buyer. */
+  personalOrgOf(userId: string): Promise<string | null>;
   subscriptionById(id: string): Promise<SubscriptionRecord | null>;
   /** Store it as fetched at `fetchedAt`, unless a later fetch is stored;
    *  true when stored. */
@@ -21,8 +24,8 @@ export type SyncDeps = {
   recordEvent(id: string, type: string): Promise<void>;
   now(): Date;
   log(message: string): void;
-  /** A user's subscriptions changed: their allowances may have moved. */
-  changed?(userId: string): Promise<void>;
+  /** An org's subscriptions changed: its allowances may have moved. */
+  changed?(orgId: string): Promise<void>;
 };
 
 /** The events whose subscription is synced; the rest are acknowledged and
@@ -60,7 +63,7 @@ export function subscriptionIdOf(event: Stripe.Event): string | null {
 
 /**
  * Fetch subscription `id` from Stripe and store it. Null, storing nothing,
- * for one that isn't a known user's; one that no longer sells a plan of
+ * for one that isn't a known org's; one that no longer sells a plan of
  * Outrunner's is forgotten, so it grants nothing.
  */
 export async function syncSubscription(id: string, deps: SyncDeps): Promise<SubscriptionRecord | null> {
@@ -69,31 +72,39 @@ export async function syncSubscription(id: string, deps: SyncDeps): Promise<Subs
   const fetchedAt = deps.now();
   const subscription = await deps.retrieveSubscription(id);
   const customerId = idOf(subscription.customer);
-  // The customer Outrunner made for the user is the authority; the user id
-  // checkout put in the metadata is a fallback, for a customer stored late.
-  const userId = (customerId && (await deps.userForCustomer(customerId))) || subscription.metadata?.user_id || null;
-  if (!userId) {
-    deps.log(`Stripe subscription ${id} is for customer ${customerId}, who is no Outrunner user; not stored`);
+  const previous = await deps.subscriptionById(id);
+  // The customer Outrunner made for the org is the authority; the org id
+  // checkout put in the metadata is a fallback, for a customer stored late,
+  // and one from before orgs names its buyer, whose personal org it is.
+  const metadata = subscription.metadata ?? {};
+  const buyer = metadata.user_id || previous?.userId || null;
+  const orgId =
+    (customerId && (await deps.orgForCustomer(customerId))) ||
+    metadata.org_id ||
+    previous?.orgId ||
+    (buyer ? await deps.personalOrgOf(buyer) : null);
+  if (!orgId) {
+    deps.log(`Stripe subscription ${id} is for customer ${customerId}, who is no Outrunner org; not stored`);
     return null;
   }
-  const record = recordFromStripe(subscription, userId, await deps.subscriptionById(id), fetchedAt);
+  const record = recordFromStripe(subscription, { orgId, userId: buyer }, previous, fetchedAt);
   if (!record) {
     deps.log(`Stripe subscription ${id} sells no plan Outrunner knows (no known lookup key); forgotten`);
     await deps.deleteSubscription(id);
-    await refreshAllowances(userId, id, deps);
+    await refreshAllowances(orgId, id, deps);
     return null;
   }
   if (!(await deps.saveSubscription(record, fetchedAt))) return null;
-  await refreshAllowances(userId, id, deps);
+  await refreshAllowances(orgId, id, deps);
   return record;
 }
 
-/** Bring the user's allowances in line with what changed. A failure isn't a
+/** Bring the org's allowances in line with what changed. A failure isn't a
  *  reason to have Stripe deliver the event again: the allowance is brought in
- *  line again whenever the user next starts a session. */
-async function refreshAllowances(userId: string, subscriptionId: string, deps: SyncDeps): Promise<void> {
-  await deps.changed?.(userId).catch((error: unknown) =>
-    deps.log(`Could not refresh user ${userId}'s allowances after subscription ${subscriptionId}: ${String(error)}`),
+ *  line again whenever a member next starts a session. */
+async function refreshAllowances(orgId: string, subscriptionId: string, deps: SyncDeps): Promise<void> {
+  await deps.changed?.(orgId).catch((error: unknown) =>
+    deps.log(`Could not refresh org ${orgId}'s allowances after subscription ${subscriptionId}: ${String(error)}`),
   );
 }
 

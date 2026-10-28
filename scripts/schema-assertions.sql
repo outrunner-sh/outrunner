@@ -194,6 +194,9 @@ begin
   end if;
   grant usage on schema public to authed;
   grant all on all tables in schema public to authed;
+  -- What's granted to signed-in users only (check_org_box_cap), as Supabase's
+  -- authenticated role has it.
+  grant authenticated to authed;
 end $do$;
 
 set role authed;
@@ -426,26 +429,29 @@ end $$;
 reset role;
 
 do $$
+declare one uuid; two uuid;
 begin
-  insert into billing_customers (user_id, stripe_customer_id) values ('11111111-1111-1111-1111-111111111111', 'cus_1');
+  select id into one from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
+  select id into two from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222';
+  insert into billing_customers (org_id, user_id, stripe_customer_id) values (one, '11111111-1111-1111-1111-111111111111', 'cus_1');
   begin
-    insert into billing_customers (user_id, stripe_customer_id) values ('22222222-2222-2222-2222-222222222222', 'cus_1');
-    raise exception 'FAIL: two users shared a Stripe customer';
+    insert into billing_customers (org_id, user_id, stripe_customer_id) values (two, '22222222-2222-2222-2222-222222222222', 'cus_1');
+    raise exception 'FAIL: two orgs shared a Stripe customer';
   exception when unique_violation then
     null;
   end;
   begin
-    insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
+    insert into subscriptions (stripe_subscription_id, org_id, user_id, stripe_customer_id, status, plan,
                                current_period_start, current_period_end, synced_at)
-    values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'free', now(), now(), now());
+    values ('sub_1', one, '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'free', now(), now(), now());
     raise exception 'FAIL: a subscription was stored for a plan Stripe does not sell';
   exception when check_violation then
     null;
   end;
-  insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
+  insert into subscriptions (stripe_subscription_id, org_id, user_id, stripe_customer_id, status, plan,
                              billing_interval, current_period_start, current_period_end, synced_at)
-  values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
-  raise notice 'ok: one Stripe customer per user, and subscriptions are for a sold plan';
+  values ('sub_1', one, '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
+  raise notice 'ok: one Stripe customer per org, and subscriptions are for a sold plan';
 end $$;
 
 -- 20. The model allowance's state, beside the user's key.
@@ -1681,3 +1687,78 @@ begin
   delete from organization_settings where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   raise notice 'ok: a team org keeps defaults, a personal org none';
 end $$;
+
+-- 44. Billing is the org's: its cap counts every member's boxes, and only
+-- its members check it; a subscription and a customer belong to an org.
+insert into runtime_computers (owner_id, project_id, agent_secret, image_version, status, daytona_sandbox_id)
+values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 's-org-cap', 'v1', 'ready', 'box-org-cap');
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  -- A member's own box count is 0 here, but the org runs one: its cap of 1
+  -- is reached.
+  begin
+    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+    raise exception 'FAIL: the org cap left out another member''s box';
+  exception when others then
+    if SQLSTATE <> 'P4BX1' then raise; end if;
+  end;
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 2);
+  begin
+    perform check_org_box_cap((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), 5);
+    raise exception 'FAIL: a user checked another org''s cap';
+  exception when others then
+    if SQLERRM <> 'org not found' then raise; end if;
+  end;
+  begin
+    perform live_org_computers('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    raise exception 'FAIL: a user counted the org''s boxes directly';
+  exception when insufficient_privilege then
+    null;
+  end;
+  raise notice 'ok: an org''s box cap counts every member''s boxes, for its members';
+end $$;
+reset role;
+
+do $$
+begin
+  if exists (select 1 from subscriptions where org_id is null) or exists (select 1 from billing_customers where org_id is null) then
+    raise exception 'FAIL: billing left without an org';
+  end if;
+  delete from runtime_computers where daytona_sandbox_id = 'box-org-cap';
+  raise notice 'ok: subscriptions and customers are an org''s';
+end $$;
+
+-- 45. An org's connector runs on its own plan: its boxes take no room in the
+-- org's, and its cap counts only its own.
+insert into auth.users (id) values ('44444444-4444-4444-4444-444444444444');
+insert into organization_members (org_id, user_id, role)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444', 'admin');
+insert into org_connectors (org_id, user_id) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444');
+insert into runtime_computers (owner_id, project_id, agent_secret, image_version, status, daytona_sandbox_id)
+values ('44444444-4444-4444-4444-444444444444', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 's-conn', 'v1', 'ready', 'box-conn');
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  -- A member: the connector's running box doesn't count.
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+  raise notice 'ok: a member''s cap leaves out the connector''s boxes';
+end $$;
+set request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
+do $$
+begin
+  begin
+    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+    raise exception 'FAIL: the connector''s cap left out its own box';
+  exception when others then
+    if SQLSTATE <> 'P4BX1' then raise; end if;
+  end;
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 2);
+  raise notice 'ok: the connector''s cap counts its own boxes';
+end $$;
+reset role;
+delete from runtime_computers where daytona_sandbox_id = 'box-conn';

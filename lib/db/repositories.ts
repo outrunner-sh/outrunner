@@ -1,7 +1,7 @@
 import type { AgentId } from "@/lib/agents/registry";
 import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   toJob,
   toProject,
@@ -394,18 +394,30 @@ export async function getWorkspaceComputer(
   return rows.find((row) => row.workspaceId === workspace.id) ?? rows[0] ?? null;
 }
 
-/** The owner's computers, whatever their state: what a plan's box count is
- *  counted over (see lib/billing/limits.ts). */
-export async function runtimeComputersForOwner(ownerId: string): Promise<RuntimeComputer[]> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("runtime_computers")
-    .select("*")
-    .eq("owner_id", ownerId)
-    .order("id");
-
+/** What a plan's box count is counted over (see lib/billing/limits.ts),
+ *  whatever their state: an org's computers, every member's but its
+ *  connector's (which is on its own plan); or one owner's, the connector's.
+ *  As the server: a member sees only their own. */
+export async function runtimeComputersFor(
+  whose: { orgId: string } | { ownerId: string },
+): Promise<RuntimeComputer[]> {
+  const supabase = createSupabaseAdminClient();
+  const query = supabase.from("runtime_computers").select("*");
+  const { data, error } = await ("orgId" in whose
+    ? query.eq("org_id", whose.orgId)
+    : query.eq("owner_id", whose.ownerId)
+  ).order("id");
   if (error) throw error;
-  return (data ?? []).map(toRuntimeComputer);
+  const connectors = "orgId" in whose ? await orgConnectorIds(whose.orgId) : new Set<string>();
+  return (data ?? []).filter((row) => !connectors.has(row.owner_id)).map(toRuntimeComputer);
+}
+
+/** The org's connector, whose boxes and hours are its own plan's. */
+export async function orgConnectorIds(orgId: string): Promise<Set<string>> {
+  const { data, error } = await createSupabaseAdminClient().from("org_connectors").select("user_id").eq("org_id", orgId);
+  if (error && probeStatus(error) === "missing") return new Set();
+  if (error) throw error;
+  return new Set((data ?? []).map((row) => row.user_id));
 }
 
 /**

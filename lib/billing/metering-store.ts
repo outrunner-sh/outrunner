@@ -9,6 +9,7 @@ import type { Interval, Period } from "@/lib/billing/hours";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sandboxOf } from "@/lib/runtime/sandbox-choice";
 import type { ProviderName } from "@/lib/runtime/types";
+import { orgConnectorIds } from "@/lib/db/repositories";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** An interval still open: its box is running, as far as anyone has seen. */
@@ -61,12 +62,14 @@ export async function openInterval(input: {
   const supabase = createSupabaseAdminClient();
   const { data: computer, error: readError } = await supabase
     .from("runtime_computers")
-    .select("owner_id")
+    .select("owner_id, org_id")
     .eq("id", input.computerId)
     .single();
   if (readError) throw readError;
   const { error } = await supabase.from("compute_intervals").insert({
     owner_id: computer.owner_id,
+    // Its hours are the org's it ran for (billing is the org's).
+    org_id: computer.org_id,
     computer_id: input.computerId,
     sandbox_id: input.sandboxId,
     cpu: input.cpu,
@@ -94,19 +97,26 @@ export async function openIntervals(): Promise<OpenInterval[]> {
   }));
 }
 
-/** The owner's intervals overlapping `period`: their cloud hours' raw
+/** The intervals overlapping `period` of an org (every member's but its
+ *  connector's, which is on its own plan) or one owner (the connector): its
+ *  cloud hours' raw
  *  material (only Outrunner's boxes are ever metered into the table). Two
  *  reads rather than one `.or()`: an ISO timestamp's dots sit awkwardly in
  *  `.or()`'s comma-separated grammar. */
-export async function intervalsFor(ownerId: string, period: Period): Promise<Interval[]> {
+export async function intervalsFor(
+  whose: { orgId: string } | { ownerId: string },
+  period: Period,
+): Promise<Interval[]> {
   const supabase = createSupabaseAdminClient();
-  const columns = "sandbox_id, cpu, started_at, last_seen_at, ended_at";
-  const before = () =>
-    supabase
-      .from("compute_intervals")
-      .select(columns)
-      .eq("owner_id", ownerId)
-      .lt("started_at", period.end.toISOString());
+  const columns = "owner_id, sandbox_id, cpu, started_at, last_seen_at, ended_at";
+  const connectors = "orgId" in whose ? await orgConnectorIds(whose.orgId) : new Set<string>();
+  const before = () => {
+    const query = supabase.from("compute_intervals").select(columns);
+    return ("orgId" in whose ? query.eq("org_id", whose.orgId) : query.eq("owner_id", whose.ownerId)).lt(
+      "started_at",
+      period.end.toISOString(),
+    );
+  };
   const open = await allRows((from, to) =>
     before().is("ended_at", null).order("id").range(from, to),
   );
@@ -117,7 +127,7 @@ export async function intervalsFor(ownerId: string, period: Period): Promise<Int
       .order("id")
       .range(from, to),
   );
-  return [...open, ...closed].map((row) => ({
+  return [...open, ...closed].filter((row) => !connectors.has(row.owner_id)).map((row) => ({
     sandboxId: row.sandbox_id,
     cpu: row.cpu,
     startedAt: new Date(row.started_at),

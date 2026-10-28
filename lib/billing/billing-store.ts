@@ -1,9 +1,9 @@
 /**
- * The database side of Stripe billing: users' Stripe customers, the copy of
- * their subscriptions, and the webhook events handled. Service role
- * throughout: the tables are service-role only, and the webhook runs with no
- * one signed in. Callers pass a user id from the session or from Stripe,
- * never from a request.
+ * The database side of Stripe billing: orgs' Stripe customers, the copy of
+ * their subscriptions, and the webhook events handled (billing is the
+ * org's). Service role throughout: the tables are service-role only, and the
+ * webhook runs with no one signed in. Callers pass an org id they checked
+ * the caller is an admin of, or one from Stripe, never from a request.
  */
 
 import type { SubscriptionRecord } from "@/lib/billing/subscriptions";
@@ -13,45 +13,48 @@ import type { Database } from "@/lib/supabase/database.types";
 
 type SubscriptionRow = Database["public"]["Tables"]["subscriptions"]["Row"];
 
-export async function customerIdFor(userId: string): Promise<string | null> {
+export async function customerIdFor(orgId: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("billing_customers")
     .select("stripe_customer_id")
-    .eq("user_id", userId)
+    .eq("org_id", orgId)
     .maybeSingle();
   if (error) throw error;
   return data?.stripe_customer_id ?? null;
 }
 
-/** Store `customerId` as the user's unless one is stored already; the one
- *  stored either way. */
-export async function claimCustomer(userId: string, customerId: string): Promise<string> {
+/** Store `customerId` as the org's (made by `userId`) unless one is stored
+ *  already; the one stored either way. */
+export async function claimCustomer(orgId: string, userId: string, customerId: string): Promise<string> {
   const supabase = createSupabaseAdminClient();
   const { error } = await supabase
     .from("billing_customers")
-    .upsert({ user_id: userId, stripe_customer_id: customerId }, { onConflict: "user_id", ignoreDuplicates: true });
+    .upsert(
+      { org_id: orgId, user_id: userId, stripe_customer_id: customerId },
+      { onConflict: "org_id", ignoreDuplicates: true },
+    );
   if (error) throw error;
-  const stored = await customerIdFor(userId);
+  const stored = await customerIdFor(orgId);
   if (!stored) throw new Error("A Stripe customer was claimed but none is stored.");
   return stored;
 }
 
-export async function userForCustomer(customerId: string): Promise<string | null> {
+export async function orgForCustomer(customerId: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("billing_customers")
-    .select("user_id")
+    .select("org_id")
     .eq("stripe_customer_id", customerId)
     .maybeSingle();
   if (error) throw error;
-  return data?.user_id ?? null;
+  return data?.org_id ?? null;
 }
 
-export async function subscriptionsFor(userId: string): Promise<SubscriptionRecord[]> {
+export async function subscriptionsFor(orgId: string): Promise<SubscriptionRecord[]> {
   // Ordered, so whoever reads them sees the same order every time.
   const { data, error } = await createSupabaseAdminClient()
     .from("subscriptions")
     .select("*")
-    .eq("user_id", userId)
+    .eq("org_id", orgId)
     .order("stripe_subscription_id");
   if (error) throw error;
   return data.map(fromRow);
@@ -76,6 +79,7 @@ export async function saveSubscription(record: SubscriptionRecord, fetchedAt: Da
   const supabase = createSupabaseAdminClient();
   const row = {
     stripe_subscription_id: record.stripeSubscriptionId,
+    org_id: record.orgId,
     user_id: record.userId,
     stripe_customer_id: record.stripeCustomerId,
     status: record.status,
@@ -127,6 +131,7 @@ export async function recordEvent(id: string, type: string): Promise<void> {
 function fromRow(row: SubscriptionRow): SubscriptionRecord {
   return {
     stripeSubscriptionId: row.stripe_subscription_id,
+    orgId: row.org_id,
     userId: row.user_id,
     stripeCustomerId: row.stripe_customer_id,
     status: row.status,

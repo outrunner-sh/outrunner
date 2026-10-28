@@ -9,6 +9,7 @@ const NOW = new Date("2026-03-20T12:00:00Z");
 function yearly(userId: string, overrides: Partial<SubscriptionRecord> = {}): SubscriptionRecord {
   return {
     stripeSubscriptionId: `sub_${userId}`,
+    orgId: `org-${userId}`,
     userId,
     stripeCustomerId: `cus_${userId}`,
     status: "active",
@@ -31,11 +32,11 @@ test("a yearly plan's new month is due; one already renewed, or with no key, isn
     ["u-new", null], // a key, no period stored yet: due
   ]);
   const subs = ["u-feb", "u-mar", "u-new", "u-nokey"].map((u) => yearly(u));
-  assert.deepEqual(dueForRenewal(subs, stored, NOW).sort(), ["u-feb", "u-new"]);
+  assert.deepEqual(dueForRenewal(subs, (s) => s.userId, stored, NOW).sort(), ["u-feb", "u-new"]);
 });
 
 test("a subscription that no longer gives its plan renews nothing", () => {
   const stored = new Map<string, string | null>([["u-1", "2026-02-17T00:00:00.000Z"]]);
   const lapsed = yearly("u-1", { status: "past_due", pastDueSince: new Date("2026-03-01T00:00:00Z") });
-  assert.deepEqual(dueForRenewal([lapsed], stored, NOW), []);
+  assert.deepEqual(dueForRenewal([lapsed], (s) => s.userId, stored, NOW), []);
 });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { billingBuyer } from "@/lib/billing/buyer";
 import { checkoutDestination } from "@/lib/billing/checkout";
 import { billingMode } from "@/lib/billing/mode";
 import { checkoutDeps } from "@/lib/billing/stripe-deps";
@@ -8,9 +9,10 @@ import { requireEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
 
 /**
- * Start a plan: `{ plan: "pro" | "max", interval: "month" | "year" }`. Answers
- * `{ url }`, Stripe Checkout's page to send the user to; for a user who has a
- * paid plan already, the customer portal instead, to change it there.
+ * Start a plan for the org the user is looking at, as its admin:
+ * `{ plan: "pro" | "max", interval: "month" | "year" }`. Answers `{ url }`,
+ * Stripe Checkout's page to send them to; for an org with a paid plan
+ * already, the customer portal instead, to change it there.
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -28,9 +30,11 @@ export async function POST(request: Request) {
   if (!plan || !interval) {
     return NextResponse.json({ error: "Choose Pro or Max, monthly or yearly." }, { status: 400 });
   }
+  const who = await billingBuyer(owner);
+  if ("refusal" in who) return NextResponse.json({ error: who.refusal }, { status: who.status });
   try {
     return NextResponse.json(
-      await checkoutDestination(owner, plan, interval, requireEnv("RUNTIME_BASE_URL"), checkoutDeps),
+      await checkoutDestination(who.buyer, plan, interval, requireEnv("RUNTIME_BASE_URL"), checkoutDeps),
     );
   } catch (error) {
     console.error("Could not start a checkout", error);

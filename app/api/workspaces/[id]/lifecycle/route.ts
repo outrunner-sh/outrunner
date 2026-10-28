@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 
 import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
+import { projectOrgId } from "@/lib/db/work-items";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
@@ -238,7 +239,10 @@ async function restoreDaytonaWorkspace(
   const scope = scopeOf(workspace, currentComputer);
   // A box may be about to start (the box may be gone): the plan's hours and
   // box count get their say before anything changes.
-  const gate = await cloudBoxStartGate(owner, provider.name, scope);
+  // The org's plan (billing is the org's).
+  const orgId = workspace.orgId ?? (await projectOrgId(workspace.projectId));
+  if (!orgId) return NextResponse.json({ error: "This session's project is gone." }, { status: 404 });
+  const gate = await cloudBoxStartGate(owner, orgId, provider.name, scope);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
   const transitioned = await startTransition(workspace, ["archived"], "restoring");
   if (!transitioned) return lifecycleConflict();
