@@ -180,11 +180,12 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 `wait` holds the call until the turn is `idle` or `needs_input`, the session
 fails or stops, or `timeout` seconds (600 at most) pass, and answers with the
 session and its turn either way: `"timed_out": true` says it gave up. Call it
-again to keep waiting. A turn counts as over only once its prompt is in the
-conversation: one after `after_event` when it's given, and for a session the
-API started, its first prompt (sent just after it's ready). So `POST
-/workspaces` then `wait`, or a send then `wait?after_event=`, never reads the
-quiet before the turn began as its end.
+again to keep waiting. A turn counts as over, or as needing input, only once
+its prompt is in the conversation: one after `after_event` when it's given,
+and for a session the API started, its first prompt (sent just after it's
+ready). So `POST /workspaces` then `wait`, or a send then
+`wait?after_event=`, never reads the quiet before the turn began (or a
+question the message answers) as its end.
 
 `after_event` is `null` when the session's box hadn't logged the message yet
 when the send answered (rare: a box just woken that's slow to serve its
@@ -243,6 +244,33 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 A work item lands in triage, in the repository `project_id` names (an id or
 `owner/name`), or Unsorted. A `source_ref` an item of the org already has
 makes it a note on that one instead (`"created": false`).
+
+## CLI
+
+The `outrunner` CLI drives sessions through this API, signed in with
+`outrunner login`, or with `OUTRUNNER_API_KEY` set (a script, CI), which it
+sends instead. Each command takes `--org <name>` and `--json` (the API's
+answer as it came).
+
+```sh
+outrunner create --repo acme/web --model sonnet "Fix the flaky checkout test and open a PR" --wait
+outrunner list --status ready --source api
+outrunner get <id>
+outrunner send <id> "Also add a test for it." --wait
+outrunner read <id> --limit 20
+outrunner wait <id> --after 48213 --timeout 30m
+outrunner delete <id> --yes
+```
+
+`create` takes `--repo` (`owner/name` or an id), `--model`, `--agent`,
+`--effort`, `--size`, `--plan`, `--branch`, `--base` and `--webhook-url`, and
+reads the prompt from stdin when there's none in its arguments, as `send`
+does. `send` prints the `after_event` to `wait` on. `wait` keeps calling the
+API (ten minutes a call) until the turn is over, for at most `--timeout`, and
+exits 0 when it's over, 3 when the session needs input, 4 on timeout, 1
+when the session failed or stopped, and 5 when Outrunner couldn't be reached
+for a while (a dropped call, a deploy or a 5xx is tried again a few times
+first); it prints the command, fence and org included, that carries on.
 
 ## Webhooks
 

@@ -12,6 +12,7 @@ import {
   pendingInput,
   promptSince,
   readUntilQuiet,
+  turnSettled,
   turnState,
 } from "@/lib/api/conversation";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
@@ -166,4 +167,28 @@ test("the same words sent again aren't taken for the last send's", () => {
     { id: 200, event: message("a1", "assistant", [text("ok")], { timestamp: "2026-10-31T23:59:40Z" }) as AgentEvent },
   ];
   assert.equal(fenceBefore(entries, "continue", sentAt), null);
+});
+
+test("a wait ends on its own turn, a question it answers isn't one", () => {
+  const ask = (id: number, toolId: string) => ({
+    id,
+    event: message(`a${id}`, "assistant", [
+      { type: "tool_use", id: toolId, name: "mcp__outrunner__ask_user", input: { questions: [{ question: "Which DB?", options: ["Postgres"] }] } },
+    ]) as AgentEvent,
+  });
+  const prompt = (id: number, words: string) => ({ id, event: message(`u${id}`, "user", [text(words)]) as AgentEvent });
+  const reply = (id: number) => ({ id, event: message(`r${id}`, "assistant", [text("Done.")], { stopReason: "end_turn" }) as AgentEvent });
+  const asked = [prompt(100, "set it up"), ask(200, "q1")];
+  // Answering it from a fence at the question: the answer isn't logged yet.
+  assert.equal(turnSettled(asked, "running", { fenced: true, afterEvent: 200 }), false);
+  // Without a fence, the question is the answer (wait was asked as is).
+  assert.equal(turnSettled(asked, "running", { fenced: false, afterEvent: null }), true);
+  // The answer is logged and worked on: still not over.
+  assert.equal(turnSettled([...asked, prompt(300, "Postgres")], "running", { fenced: true, afterEvent: 200 }), false);
+  // Its reply: over.
+  assert.equal(turnSettled([...asked, prompt(300, "Postgres"), reply(400)], "running", { fenced: true, afterEvent: 200 }), true);
+  // A new question after the answer: that one's for the caller.
+  assert.equal(turnSettled([...asked, prompt(300, "Postgres"), ask(400, "q2")], "running", { fenced: true, afterEvent: 200 }), true);
+  // A session the API started, before its first prompt: not over.
+  assert.equal(turnSettled([], "running", { fenced: true, afterEvent: null }), false);
 });
