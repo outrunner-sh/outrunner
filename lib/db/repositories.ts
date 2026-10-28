@@ -156,6 +156,8 @@ export async function listWorkspaces(
     .from("workspaces")
     .select("*")
     .neq("status", "destroyed")
+    // A Slack thread's research session runs out of sight.
+    .eq("background", false)
     .order("last_active_at", { ascending: false, nullsFirst: false });
 
   if (filter.projectId) query = query.eq("project_id", filter.projectId);

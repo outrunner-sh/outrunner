@@ -51,7 +51,9 @@ import {
   transcript,
   workerPrompt,
 } from "@/lib/slack/agent";
-import { agentTurn } from "@/lib/slack/agent-model";
+import { agentTurn, type Lookups } from "@/lib/slack/agent-model";
+import { findItems, itemStatus, recentWork } from "@/lib/slack/lookups";
+import { askResearch } from "@/lib/slack/research";
 import { signLinkToken, slackPermalink, slackToMarkdown } from "@/lib/slack/slack";
 import { postEphemeral, postMessage, threadReplies, updateMessage, userNames } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -143,26 +145,17 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
     }
 
     if (conversation.state === "filed" || conversation.state === "started") {
+      // Said in the thread: a note on its item. Said to the agent: answered
+      // too (a question about it, or about anything else).
       await noteOnItem(conversation, message);
-      if (message.mention) {
-        const item = conversation.itemId ? await itemOf(conversation) : null;
-        await reply(item ? `This is filed as <${item.url}|${item.key}>; I've added that as a note.` : "This thread's work is filed already.");
-      }
-      return;
+      if (!message.mention) return;
     }
 
-    await runTurn(install, conversation, message.channel, threadTs);
+    await runTurn(install, conversation, message);
   } catch (error) {
     console.error("Slack agent: the turn failed", error);
     await reply("Sorry, something went wrong on my side. Mention me again to retry.").catch(() => undefined);
   }
-}
-
-async function itemOf(conversation: SlackConversation): Promise<{ key: string; url: string } | null> {
-  if (!conversation.itemId || !conversation.startedBy) return null;
-  const actor = await triageActor(conversation.startedBy, conversation.orgId);
-  const item = actor ? await getWorkItem(actor, conversation.itemId) : null;
-  return item ? { key: itemKey(item), url: itemUrl(item) } : null;
 }
 
 /** A message in a filed thread: a note on its item, by whoever said it. */
@@ -188,13 +181,21 @@ async function noteOnItem(conversation: SlackConversation, message: AgentMessage
 }
 
 /** One turn: read the thread, ask the model, ask or propose in the thread. */
-async function runTurn(install: SlackInstallation, conversation: SlackConversation, channel: string, threadTs: string) {
+async function runTurn(install: SlackInstallation, conversation: SlackConversation, message: AgentMessage) {
+  const { channel } = message;
+  const threadTs = conversation.threadTs;
   const reply = (text: string) => postMessage(install.botToken, { channel, threadTs, text });
   const starter = conversation.startedBy ? await triageActor(conversation.startedBy, conversation.orgId) : null;
   if (!starter) {
     await reply("Whoever started this thread is no longer in the Outrunner org, so I can't file from it.");
     return;
   }
+  // Lookups and research run as whoever asked, with what they may read. Someone
+  // who hasn't connected their account can still help with intake, but gets
+  // no lookups.
+  const linked = await actorFor(message.teamId, message.user);
+  const asker = linked && linked.orgId === conversation.orgId ? linked : null;
+  const viewer = asker ?? starter;
 
   let key: string;
   try {
@@ -216,8 +217,8 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
     listOrgProjects(conversation.orgId),
     openItemTitles(conversation.orgId),
   ]);
-  // Only the repositories the thread's starter may see are offered.
-  const repos = projects.filter((p) => starter.levels.has(p.id)).map((p) => ({ fullName: p.fullName, description: null }));
+  const visible = projects.filter((p) => viewer.levels.has(p.id));
+  const repos = visible.map((p) => ({ fullName: p.fullName, description: null }));
   const names = await userNames(
     install.botToken,
     messages.flatMap((m) => (m.user && m.user !== install.botUserId ? [m.user] : [])),
@@ -229,29 +230,60 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
   );
   if (chat.length === 0) return;
 
+  const noAccess = async () => JSON.stringify({ error: "Connect your Slack account to Outrunner to look this up." });
+  const lookups: Lookups = asker
+    ? {
+        recent_work: (args) => recentWork(asker, args),
+        find_items: (args) => findItems(asker, args),
+        item_status: (args) => itemStatus(asker, args),
+      }
+    : { recent_work: noAccess, find_items: noAccess, item_status: noAccess };
   const context = { repos, openItems, rounds: conversation.rounds };
   const repoNames = repos.map((r) => r.fullName);
   const call = [{ role: "system" as const, content: systemPrompt(context) }, ...chat];
-  let answer = parseAgentReply(await agentTurn(key, call), repoNames);
+  let answer = parseAgentReply(await agentTurn(key, call, lookups), repoNames);
   // One more try on an answer that doesn't hold together.
-  if (!answer) answer = parseAgentReply(await agentTurn(key, call), repoNames);
+  if (!answer) answer = parseAgentReply(await agentTurn(key, call, lookups), repoNames);
   if (!answer) {
     await reply("I couldn't make sense of that one. Could you say it another way?");
     return;
   }
+  const filed = conversation.state === "filed" || conversation.state === "started";
 
-  if (answer.action === "ask") {
-    await reply(answer.message);
-    await updateConversation(conversation.id, { state: "gathering", rounds: conversation.rounds + 1 });
-    return;
+  switch (answer.action) {
+    case "answer":
+      await reply(answer.message);
+      return;
+    case "research": {
+      if (!asker) {
+        await askToConnect(install, { channel, user: message.user, threadTs });
+        return;
+      }
+      const project = visible.find((p) => p.fullName === answer.repo);
+      if (!project) return;
+      await reply(answer.message);
+      await askResearch({ install, conversation, asker, projectId: project.id, question: answer.question });
+      return;
+    }
+    case "ask":
+      await reply(answer.message);
+      if (!filed) await updateConversation(conversation.id, { state: "gathering", rounds: conversation.rounds + 1 });
+      return;
+    case "propose": {
+      // A thread's work is filed once; new work starts a new thread.
+      if (filed) {
+        await reply(`${answer.message}\n\nThis thread's work is filed already: start a new thread with me for this one.`);
+        return;
+      }
+      const ts = await postMessage(install.botToken, {
+        channel,
+        threadTs,
+        text: specSummary(answer.spec),
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: answer.message } }, ...specCard(answer.spec, conversation.id)],
+      });
+      await updateConversation(conversation.id, { state: "proposed", proposal: answer.spec, proposalTs: ts });
+    }
   }
-  const ts = await postMessage(install.botToken, {
-    channel,
-    threadTs,
-    text: specSummary(answer.spec),
-    blocks: [{ type: "section", text: { type: "mrkdwn", text: answer.message } }, ...specCard(answer.spec, conversation.id)],
-  });
-  await updateConversation(conversation.id, { state: "proposed", proposal: answer.spec, proposalTs: ts });
 }
 
 /** A click on the spec card. */

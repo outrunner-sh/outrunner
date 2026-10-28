@@ -128,6 +128,8 @@ type WorkspaceRow = {
   last_active_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Run by the server out of sight (a Slack thread's research): not listed. */
+  background: boolean;
 };
 
 type RuntimeComputerRow = {
@@ -687,8 +689,22 @@ type SlackConversationRow = {
   proposal_ts: string | null;
   item_id: string | null;
   workspace_id: string | null;
+  research_workspace_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+// supabase/migrations/20261031110000_slack_research.sql
+type SlackResearchRow = {
+  id: string;
+  conversation_id: string;
+  workspace_id: string | null;
+  asked_by: string | null;
+  question: string;
+  token_hash: string;
+  status: "asked" | "answered" | "failed";
+  created_at: string;
+  answered_at: string | null;
 };
 
 type SlackEventSeenRow = { event_id: string; created_at: string };
@@ -966,6 +982,12 @@ export type Database = {
         Row: SlackConversationRow;
         Insert: Insert<SlackConversationRow, "team_id" | "channel_id" | "thread_ts" | "org_id">;
         Update: Partial<SlackConversationRow>;
+        Relationships: [];
+      };
+      slack_research: {
+        Row: SlackResearchRow;
+        Insert: Insert<SlackResearchRow, "conversation_id" | "question" | "token_hash">;
+        Update: Partial<SlackResearchRow>;
         Relationships: [];
       };
       slack_events_seen: {

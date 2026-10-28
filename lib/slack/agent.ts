@@ -28,7 +28,13 @@ export type AgentSpec = {
   prompt: string;
 };
 
-export type AgentReply = { action: "ask"; message: string } | { action: "propose"; message: string; spec: AgentSpec };
+export type AgentReply =
+  | { action: "ask"; message: string }
+  | { action: "propose"; message: string; spec: AgentSpec }
+  /** A question answered from the lookups. */
+  | { action: "answer"; message: string }
+  /** A question about the code itself, for the thread's research session. */
+  | { action: "research"; message: string; repo: string; question: string };
 
 export type AgentContext = {
   /** The org's repositories the agent may pick from. */
@@ -49,24 +55,24 @@ export function systemPrompt(context: AgentContext): string {
     ? context.openItems.map((i) => `- ${i.key}: ${i.title}`).join("\n")
     : "(none)";
   const mustPropose = context.rounds >= MAX_QUESTION_ROUNDS;
-  return `You are Outrunner, an engineering teammate in a Slack thread. Your job is intake: understand what the people in the thread need built or fixed, ask what you must, then write it up as a precise work item that a coding agent can carry out without asking anything else.
+  return `You are Outrunner, an engineering teammate in a Slack thread. People talk to you here for two things, and you tell which from what they say:
 
-How to work:
-- Read the whole thread. Several people may be talking; messages are prefixed with who wrote them.
-- Ask only what changes the work: which repository, how to reproduce, expected vs actual behaviour, constraints, and what "done" means. Ask at most 3 short, specific questions at a time, numbered, and never ask what the thread already answers.
-- Don't propose a design the people didn't ask for, and never invent facts about the codebase.
-- When you know enough, propose. A proposal has: a short imperative title; the repository (exactly one of the names below, or null if the thread doesn't say and it isn't clear); the problem in a few sentences; acceptance criteria as checkable statements (each one something a reviewer can verify: a test that passes, a behaviour seen in the app, a command's output); what is out of scope; and the session prompt.
-- The session prompt is for an autonomous coding agent working in the repository: state the goal, the context from the thread (quote specifics: error messages, URLs, steps), the acceptance criteria, and constraints. Write it so it stands alone. Don't include instructions about pull requests; they're added for you.
-- If an open item below already covers the request, say so and give its key; still propose if the thread asks for something different.
-- Write for Slack: short, friendly, plain sentences. Use *bold* sparingly, no headings.
-${mustPropose ? "\nYou have asked enough questions: propose now, with what you know. Note any open question in the problem.\n" : ""}
-Repositories of this org:
+1. Questions. Answer them.
+   - About what the team has done or is doing (what shipped, what's open, where an item stands): use the lookup tools (recent_work, find_items, item_status), then reply with action "answer". Give specifics: titles, keys, links, who and when. Never guess what you could look up, and say when a lookup couldn't reach something.
+   - About the code itself (how something works, why it behaves a way, where something is, what a change would touch): reply with action "research", naming one repository below and the question as the research session should get it, standalone, with everything from the thread it needs. The research session reads the repository and answers in the thread itself; your message just says you're looking into it.
+2. Work to be done (build, fix, change something). Do intake: understand it, ask what you must, then write it up as a precise work item that a coding agent can carry out without asking anything else.
+   - Ask only what changes the work: which repository, how to reproduce, expected vs actual behaviour, constraints, and what "done" means. At most 3 short, specific questions at a time, numbered, never what the thread already answers. Reply with action "ask".
+   - When you know enough, reply with action "propose". A proposal has: a short imperative title; the repository (exactly one of the names below, or null if it isn't clear); the problem in a few sentences; acceptance criteria as checkable statements (each something a reviewer can verify: a test that passes, a behaviour seen in the app, a command's output); what is out of scope; and the session prompt.
+   - The session prompt is for an autonomous coding agent in the repository: the goal, the context from the thread (quote specifics: error messages, URLs, steps), the acceptance criteria, and constraints. Standalone. No instructions about pull requests; they're added for you.
+   - If an open item below already covers the request, say so and give its key; still propose if the thread asks for something different.
+
+Always finish by calling the reply tool exactly once. Read the whole thread: several people may be talking, and messages are prefixed with who wrote them. Never invent facts about the codebase or the team's work. Write for Slack: short, friendly, plain sentences, *bold* sparingly, no headings; links as <url|text>.
+${mustPropose ? "\nYou have asked enough questions about this work: propose now, with what you know. Note any open question in the problem.\n" : ""}
+Repositories this person can see:
 ${repos}
 
 Open work items:
-${items}
-
-Answer with JSON only: {"action": "ask", "message": "..."} to ask, or {"action": "propose", "message": "a one-line intro to the proposal", "spec": {...}}.`;
+${items}`;
 }
 
 export type TranscriptMessage = { user?: string; botId?: string; text?: string; subtype?: string };
@@ -109,33 +115,97 @@ export function transcript(
   return kept;
 }
 
-/** The JSON schema the model answers in (OpenRouter structured outputs). */
-export const AGENT_REPLY_SCHEMA = {
-  name: "outrunner_intake_reply",
-  strict: true,
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    required: ["action", "message", "spec"],
-    properties: {
-      action: { type: "string", enum: ["ask", "propose"] },
-      message: { type: "string" },
-      spec: {
-        type: ["object", "null"],
+const REPLY_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  required: ["action", "message", "spec", "research"],
+  properties: {
+    action: { type: "string", enum: ["ask", "propose", "answer", "research"] },
+    message: { type: "string", description: "What to post in the thread, in Slack's markup." },
+    spec: {
+      type: ["object", "null"],
+      description: "The proposal, for action propose; otherwise null.",
+      additionalProperties: false,
+      required: ["title", "repo", "problem", "acceptance_criteria", "out_of_scope", "prompt"],
+      properties: {
+        title: { type: "string" },
+        repo: { type: ["string", "null"] },
+        problem: { type: "string" },
+        acceptance_criteria: { type: "array", items: { type: "string" } },
+        out_of_scope: { type: "array", items: { type: "string" } },
+        prompt: { type: "string" },
+      },
+    },
+    research: {
+      type: ["object", "null"],
+      description: "For action research: the repository and the standalone question; otherwise null.",
+      additionalProperties: false,
+      required: ["repo", "question"],
+      properties: { repo: { type: "string" }, question: { type: "string" } },
+    },
+  },
+} as const;
+
+/** The tools the agent has (OpenRouter function calling). The lookups are
+ *  read-only; `reply` ends the turn with what to post. */
+export const AGENT_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "recent_work",
+      description: "Pull requests merged recently in the org's repositories this person can read: title, author, when, link.",
+      parameters: {
+        type: "object",
         additionalProperties: false,
-        required: ["title", "repo", "problem", "acceptance_criteria", "out_of_scope", "prompt"],
+        required: ["days", "repo"],
         properties: {
-          title: { type: "string" },
-          repo: { type: ["string", "null"] },
-          problem: { type: "string" },
-          acceptance_criteria: { type: "array", items: { type: "string" } },
-          out_of_scope: { type: "array", items: { type: "string" } },
-          prompt: { type: "string" },
+          days: { type: "integer", description: "How many days back, 1 to 30." },
+          repo: { type: ["string", "null"], description: "One repository (owner/name), or null for all." },
         },
       },
     },
   },
-} as const;
+  {
+    type: "function",
+    function: {
+      name: "find_items",
+      description: "Triage work items this person can see, newest first, by words in the title and by status.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query", "status"],
+        properties: {
+          query: { type: ["string", "null"] },
+          status: { type: ["string", "null"], enum: ["triage", "todo", "in_progress", "done", "declined", "duplicate", null] },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "item_status",
+      description: "Where one work item stands: status, its spec, its session, and the session's pull request.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["key"],
+        properties: { key: { type: "string", description: "Like OR-42." } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "reply",
+      description: "End the turn: what to post in the thread, and what kind of reply it is.",
+      parameters: REPLY_PARAMETERS,
+    },
+  },
+] as const;
+
+/** The tool that ends a turn. */
+export const REPLY_TOOL = "reply";
 
 function strings(value: unknown, max: number): string[] {
   return Array.isArray(value)
@@ -144,10 +214,11 @@ function strings(value: unknown, max: number): string[] {
 }
 
 /**
- * The model's answer, checked. A proposal needs a title, a problem, at least
- * one acceptance criterion and a prompt; a repo not among the org's is
- * dropped (null) rather than trusted. Anything else is null: the caller says
- * it couldn't answer.
+ * The model's answer (the reply tool's arguments), checked. A proposal needs
+ * a title, a problem, at least one acceptance criterion and a prompt; a repo
+ * not among the asker's is dropped (null) rather than trusted, and research
+ * in one becomes a question about which. Anything else is null: the caller
+ * says it couldn't answer.
  */
 export function parseAgentReply(raw: string, repos: readonly string[]): AgentReply | null {
   let data: unknown;
@@ -160,6 +231,17 @@ export function parseAgentReply(raw: string, repos: readonly string[]): AgentRep
   const d = data as Record<string, unknown>;
   const message = typeof d.message === "string" ? d.message.trim() : "";
   if (d.action === "ask") return message ? { action: "ask", message } : null;
+  if (d.action === "answer") return message ? { action: "answer", message } : null;
+  if (d.action === "research") {
+    const r = (d.research && typeof d.research === "object" ? d.research : {}) as Record<string, unknown>;
+    const question = typeof r.question === "string" ? r.question.trim() : "";
+    const repo = typeof r.repo === "string" ? repos.find((name) => name.toLowerCase() === String(r.repo).trim().toLowerCase()) : undefined;
+    // Research needs a repository the asker can read; without one, it's a
+    // question the agent must ask.
+    if (!question) return null;
+    if (!repo) return { action: "ask", message: message || "Which repository should I look in?" };
+    return { action: "research", message: message || "Looking into it in the repository; I'll post here.", repo, question };
+  }
   if (d.action !== "propose" || !d.spec || typeof d.spec !== "object") return null;
   const s = d.spec as Record<string, unknown>;
   const title = typeof s.title === "string" ? titleFromText(s.title, 120) : "";

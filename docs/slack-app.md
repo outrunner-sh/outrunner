@@ -15,6 +15,20 @@ thread, where everyone can see it:
    criteria** automation (Automations → templates), if it's on for the repository, checks the PR against them in
    a fresh session and posts PASS, FAIL or PARTIAL on the PR. A person decides what happens next.
 
+**Ask it things, too.** The agent tells a question from work to do:
+
+- *What the team did or is doing* ("what shipped in the last two days?", "where's OR-42?", "what's open in
+  web?"): it looks it up and answers in seconds. Merged pull requests come through the org's GitHub App, and
+  items and sessions from Outrunner. Only what the person asking can read is used.
+- *The code itself* ("how does billing pause idle boxes?"): it hands the question to the thread's **research
+  session**, which runs in the background and stays out of the sidebar. The session reads the repository, changes
+  nothing, and posts its answer in the thread through a one-time link. When the thread goes quiet the session's
+  box pauses like any idle session; the thread's next code question wakes it, with what it already found. Each
+  thread has its own, as the person who asked, so threads never share what they asked. These sessions run on
+  Outrunner's models, charged to that person's allowance.
+
+Lookups and research need the person asking to have connected their Slack account.
+
 The agent thinks with `SLACK_AGENT_MODEL` (default `anthropic/claude-sonnet-5.5`, through OpenRouter) on the
 **org's** own key for Outrunner's models, capped at `SLACK_AGENT_ORG_LIMIT_USD` (default 25). The org pays,
 not whoever is in the thread. Starting a session always needs a click.

@@ -84,6 +84,8 @@ export type SlackConversation = {
   proposalTs: string | null;
   itemId: string | null;
   workspaceId: string | null;
+  /** The thread's research session (lib/slack/research.ts). */
+  researchWorkspaceId: string | null;
 };
 
 type ConversationRow = {
@@ -99,6 +101,7 @@ type ConversationRow = {
   proposal_ts: string | null;
   item_id: string | null;
   workspace_id: string | null;
+  research_workspace_id: string | null;
 };
 
 function toConversation(row: ConversationRow): SlackConversation {
@@ -115,6 +118,7 @@ function toConversation(row: ConversationRow): SlackConversation {
     proposalTs: row.proposal_ts,
     itemId: row.item_id,
     workspaceId: row.workspace_id,
+    researchWorkspaceId: row.research_workspace_id,
   };
 }
 
@@ -170,6 +174,7 @@ export async function updateConversation(
     proposalTs: string | null;
     itemId: string | null;
     workspaceId: string | null;
+    researchWorkspaceId: string | null;
   }>,
 ): Promise<void> {
   const { error } = await db()
@@ -181,6 +186,7 @@ export async function updateConversation(
       ...(patch.proposalTs !== undefined && { proposal_ts: patch.proposalTs }),
       ...(patch.itemId !== undefined && { item_id: patch.itemId }),
       ...(patch.workspaceId !== undefined && { workspace_id: patch.workspaceId }),
+      ...(patch.researchWorkspaceId !== undefined && { research_workspace_id: patch.researchWorkspaceId }),
     })
     .eq("id", id);
   if (error) throw error;
