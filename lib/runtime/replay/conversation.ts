@@ -76,9 +76,12 @@ function decodeLine(line: string): AgentEvent | null {
   }
   if (!isObject(rec)) return null;
   if (rec.type === "attachment") return decodeQueuedPrompt(rec);
+  if (rec.type === "system" && rec.subtype === "compact_boundary") return compaction(rec);
   if (rec.type !== "user" && rec.type !== "assistant") return null; // whitelist
   const message = rec.message;
   if (!isObject(message)) return null;
+  // The summary Claude goes on from after compacting: no prompt of the user's.
+  if (rec.isCompactSummary === true) return null;
 
   const content = contentOf(message.content);
   if (!content) return null;
@@ -87,6 +90,13 @@ function decodeLine(line: string): AgentEvent | null {
   // turns), so replay stays byte-equivalent to the live decoder and the shared
   // fixture (user turns carry no model).
   const model = typeof message.model === "string" && message.model !== "" ? message.model : undefined;
+  // The reply's tokens (the Go UsageFrom: a field that isn't a whole number
+  // reads as 0), and the model's window where the log says it (a Codex
+  // translation's).
+  const usage = message.role === "assistant" && isObject(message.usage) ? usageFrom(message.usage) : undefined;
+  const contextWindow = usage && wholeNumber(message.context_window);
+  const contextTokens = usage && wholeNumber(message.context_tokens);
+  const mode = message.role === "user" && rec.permissionMode === "plan" ? "plan" : undefined;
 
   return {
     t: "message",
@@ -98,6 +108,10 @@ function decodeLine(line: string): AgentEvent | null {
     ...(model ? { model } : {}),
     timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
     content,
+    ...(usage ? { usage } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
+    ...(contextTokens ? { contextTokens } : {}),
+    ...(mode ? { mode } : {}),
   };
 }
 
@@ -144,4 +158,36 @@ function contentOf(rawContent: unknown): ContentBlock[] | null {
     return text === "" ? null : [{ type: "text", text }]; // empty prompt: nothing to render
   }
   return null;
+}
+
+/** A compact_boundary as the Go `compaction` gives it: an assistant record with
+ *  nothing in it but the compaction. */
+function compaction(rec: Record<string, unknown>): AgentEvent {
+  const meta = isObject(rec.compactMetadata) ? rec.compactMetadata : {};
+  const trigger = typeof meta.trigger === "string" && meta.trigger !== "" ? meta.trigger : undefined;
+  const preTokens = wholeNumber(meta.preTokens);
+  const postTokens = wholeNumber(meta.postTokens);
+  return {
+    t: "message",
+    uuid: typeof rec.uuid === "string" ? rec.uuid : "",
+    parentUuid: typeof rec.parentUuid === "string" ? rec.parentUuid : null,
+    role: "assistant",
+    timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
+    content: [],
+    compact: { ...(trigger ? { trigger } : {}), ...(preTokens ? { preTokens } : {}), ...(postTokens ? { postTokens } : {}) },
+  };
+}
+
+function usageFrom(raw: Record<string, unknown>) {
+  return {
+    input_tokens: wholeNumber(raw.input_tokens),
+    output_tokens: wholeNumber(raw.output_tokens),
+    cache_creation_input_tokens: wholeNumber(raw.cache_creation_input_tokens),
+    cache_read_input_tokens: wholeNumber(raw.cache_read_input_tokens),
+  };
+}
+
+/** A count as Go decodes it into an int: a whole number, else 0. */
+function wholeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) ? value : 0;
 }

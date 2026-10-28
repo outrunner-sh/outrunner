@@ -29,6 +29,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     checkouts: null,
     agent: "claude",
     model: null,
+    mode: "build",
     lastActiveAt: null,
     errorMessage: null,
     createdAt: "2026-01-01T00:00:00Z",

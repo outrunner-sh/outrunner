@@ -11,6 +11,13 @@ import (
 	"runtime-agent/internal/claude"
 )
 
+// PlanPreamble starts a prompt sent to a Codex session in plan mode. Codex
+// has no plan step of Claude's kind (ExitPlanMode), so plan mode is Codex
+// launched read-only (permissionArgs) and told, with each prompt, what is
+// wanted of it. The translation takes it off again (Translator), so the
+// timeline shows the prompt as typed, marked as one sent in plan mode.
+const PlanPreamble = "[Plan mode] Don't change any files yet: read what you need, then reply with a plan for the change, as Markdown, for me to approve or revise. My request:\n\n"
+
 // InstallHint is how to get the Codex CLI a session needs: the version this
 // agent's launch flags and transcript reading were checked against.
 const InstallHint = "npm install -g @openai/codex@0.146.0"
@@ -55,7 +62,10 @@ func permissionArgs(mode claude.PermissionMode) []string {
 	case claude.AcceptEdits:
 		return []string{"-s", "workspace-write", "-a", "on-request"}
 	case claude.Plan:
-		return []string{"-s", "read-only", "-a", "on-request"}
+		// Never asks: a plan is read and written without leaving the sandbox,
+		// and a question in the terminal would hold a plan the browser can't
+		// see. What needs more is said in the plan, for the user to approve.
+		return []string{"-s", "read-only", "-a", "never"}
 	default: // claude.Default
 		return []string{"-s", "workspace-write", "-a", "untrusted"}
 	}

@@ -128,6 +128,8 @@ type WorkspaceRow = {
   model_provider: string | null;
   model_id: string | null;
   model_effort: string | null;
+  /** Absent before the migration that adds it; null is build. */
+  session_mode?: "build" | "plan" | null;
   last_active_at: string | null;
   created_at: string;
   updated_at: string;

@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.304
+▝▜██████▀  Sonnet 5.5 · Claude API
+ ▝▝   ▝▝   /tmp/verify-repo
+
+
+● Session was started with bypass permissions, so plan mode won't ask before most edits or commands. Start a new session without bypass permissions for
+  prompts in plan mode.
+
+❯ Plan a small change: add a function double(n: number) to a.ts that returns n*2. Keep the plan to three short steps.
+
+● Listing 1 directory…
+  ⎿  $ ls /tmp/verify-repo; cat /tmp/verify-repo/a.ts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+* Clauding… (3s · ↓ 239 tokens · thought for 1s)
+                                                             tmux detected · scroll with PgUp/PgDn · or add 'set -g mouse on' to ~/.tmux.conf for wheel scroll
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ plan mode on (shift+tab to cycle) · esc to interrupt

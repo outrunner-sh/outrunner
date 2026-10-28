@@ -29,8 +29,14 @@ type fakeSessions struct {
 	onKey func(key string) string
 	// exitAtOnce makes a session's Claude exit as soon as it is launched.
 	exitAtOnce bool
-	// pastes and enters count what a send typed.
+	// pastes and enters count what a send typed, and pasted is its text.
 	pastes, enters int
+	pasted         []string
+	// onEnter, when set, answers an Enter with the pane it leads to ("" leaves
+	// it), as onKey does a key.
+	onEnter func() string
+	// picked is the plan menu option an Enter took (plan_test's menus).
+	picked string
 }
 
 func newFakeSessions() *fakeSessions {
@@ -77,10 +83,11 @@ func (f *fakeSessions) KillSession(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeSessions) Paste(context.Context, string, string) error {
+func (f *fakeSessions) Paste(_ context.Context, _, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.pastes++
+	f.pasted = append(f.pasted, text)
 	return nil
 }
 
@@ -88,6 +95,11 @@ func (f *fakeSessions) SubmitEnter(context.Context, string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.enters++
+	if f.onEnter != nil {
+		if pane := f.onEnter(); pane != "" {
+			f.pane = pane
+		}
+	}
 	return nil
 }
 

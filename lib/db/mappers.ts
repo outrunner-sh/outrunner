@@ -80,6 +80,9 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     agent: isAgentId(row.agent) ? row.agent : "claude",
     // Absent before the migration that adds the columns.
     model: recordedModel(row.model_provider, row.model_id, row.model_effort),
+    // Absent before the migration that adds it: build, as for a session
+    // never planned.
+    mode: row.session_mode === "plan" ? "plan" : "build",
     lastActiveAt: row.last_active_at,
     errorMessage: row.error_message,
     createdAt: row.created_at,

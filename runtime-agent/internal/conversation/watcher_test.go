@@ -265,3 +265,65 @@ func TestDecodeCarriesWhyTheReplyStopped(t *testing.T) {
 		t.Fatalf("frame %s names a stop reason the log didn't", frame)
 	}
 }
+
+func TestDecodeCarriesTheReplysUsageForTheContextRing(t *testing.T) {
+	line := `{"type":"assistant","uuid":"a","timestamp":"t","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":40,"cache_creation_input_tokens":500,"cache_read_input_tokens":18000,"service_tier":"standard"}}}`
+	ev, ok := decode([]byte(line))
+	if !ok || ev.Message.Usage == nil {
+		t.Fatalf("usage = %+v (ok %v), want the reply's", ev.Message, ok)
+	}
+	if u := ev.Message.Usage; u.InputTokens != 3 || u.OutputTokens != 40 || u.CacheCreationInputTokens != 500 || u.CacheReadInputTokens != 18000 {
+		t.Errorf("usage = %+v", u)
+	}
+	if ev.Message.ContextWindow != 0 {
+		t.Errorf("context window = %d from a log that says none", ev.Message.ContextWindow)
+	}
+	// A Codex translation says the window too.
+	line = `{"type":"assistant","uuid":"b","timestamp":"t","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":3,"output_tokens":4},"context_window":258400}}`
+	if ev, _ := decode([]byte(line)); ev.Message.ContextWindow != 258400 {
+		t.Errorf("context window = %d, want 258400", ev.Message.ContextWindow)
+	}
+	// And how much of it the call used, apart from usage that may sum two.
+	line = `{"type":"assistant","uuid":"c","timestamp":"t","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":30,"output_tokens":4},"context_window":258400,"context_tokens":17}}`
+	if ev, _ := decode([]byte(line)); ev.Message.ContextTokens != 17 {
+		t.Errorf("context tokens = %d, want 17", ev.Message.ContextTokens)
+	}
+}
+
+// What Claude 2.1 writes as /compact runs: the boundary, the summary it goes
+// on from (a user record, but no prompt), then the command's own records.
+func TestDecodeShowsACompactionAndNotItsSummary(t *testing.T) {
+	boundary := `{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","uuid":"c1","parentUuid":null,"logicalParentUuid":"a9","timestamp":"t","compactMetadata":{"trigger":"manual","preTokens":45231}}`
+	ev, ok := decode([]byte(boundary))
+	if !ok || ev.Message == nil || ev.Message.Compact == nil {
+		t.Fatalf("boundary = %+v (ok %v), want a compaction", ev.Message, ok)
+	}
+	if c := ev.Message.Compact; c.Trigger != "manual" || c.PreTokens != 45231 || ev.Message.UUID != "c1" {
+		t.Errorf("compaction = %+v", c)
+	}
+	// An assistant record with nothing in it, so an older page skips it and
+	// doesn't read the turn as awaiting a reply.
+	frame, _ := json.Marshal(ev.Message)
+	if ev.Message.Role != "assistant" || !strings.Contains(string(frame), `"content":[]`) {
+		t.Errorf("frame = %s, want an assistant record with empty content", frame)
+	}
+	summary := `{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"uuid":"s1","timestamp":"t","message":{"role":"user","content":"This session is being continued from a previous conversation…"}}`
+	if _, ok := decode([]byte(summary)); ok {
+		t.Error("the compact summary was shown as a prompt")
+	}
+	// Other system records stay out of the stream.
+	if _, ok := decode([]byte(`{"type":"system","subtype":"api_error","uuid":"e","timestamp":"t"}`)); ok {
+		t.Error("an app-internal system record was shown")
+	}
+}
+
+func TestDecodeMarksAPromptSentInPlanMode(t *testing.T) {
+	line := `{"type":"user","uuid":"p","timestamp":"t","permissionMode":"plan","message":{"role":"user","content":"Plan dark mode"}}`
+	if ev, ok := decode([]byte(line)); !ok || ev.Message.Mode != "plan" {
+		t.Fatalf("mode = %q (ok %v), want plan", ev.Message.Mode, ok)
+	}
+	line = `{"type":"user","uuid":"q","timestamp":"t","permissionMode":"bypassPermissions","message":{"role":"user","content":"Build it"}}`
+	if ev, _ := decode([]byte(line)); ev.Message.Mode != "" {
+		t.Errorf("mode = %q for a prompt in build mode, want none", ev.Message.Mode)
+	}
+}

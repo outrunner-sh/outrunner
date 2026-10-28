@@ -5,7 +5,11 @@
  * doesn't lose them; a tab closed before they go does.
  */
 
-export type QueuedPrompt = { id: string; text: string; attachmentIds: string[] };
+import type { SessionMode } from "@/lib/runtime/agent-protocol";
+
+/** `mode` is the one it was queued in (lib/session/session-mode.ts), and goes
+ *  in; absent from a queue kept before modes, which goes in the session's. */
+export type QueuedPrompt = { id: string; text: string; attachmentIds: string[]; mode?: SessionMode };
 
 /** Where the queue is kept: sessionStorage, or a stand-in in tests. */
 export type QueueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -14,9 +18,10 @@ const key = (workspaceId: string) => `outrunner:queue:${workspaceId}`;
 
 function isQueuedPrompt(value: unknown): value is QueuedPrompt {
   if (!value || typeof value !== "object") return false;
-  const { id, text, attachmentIds } = value as Record<string, unknown>;
+  const { id, text, attachmentIds, mode } = value as Record<string, unknown>;
   return (
     typeof id === "string" &&
+    (mode === undefined || mode === "plan" || mode === "build") &&
     typeof text === "string" &&
     Array.isArray(attachmentIds) &&
     attachmentIds.every((a) => typeof a === "string") &&

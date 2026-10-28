@@ -4,7 +4,7 @@ import { RotateCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+import { type AgentEvent, PlanActionResponse } from "@/lib/runtime/agent-protocol";
 import { ConversationTimeline } from "@/components/conversation-timeline";
 import { ImageBoxContext } from "@/components/markdown";
 import { QueuedPrompts } from "@/components/queued-prompts";
@@ -25,6 +25,9 @@ import {
   runnerDidNotStartDetail,
 } from "@/lib/desktop/local-runtime";
 import { claudeIsWorking, firstUserPrompt, userPromptCount, userPrompts } from "@/lib/runtime/conversation-events";
+import { contextUsage } from "@/lib/runtime/context-usage";
+import { pendingPlan } from "@/lib/runtime/pending-plan";
+import { rememberedMode, rememberMode, type SessionMode } from "@/lib/session/session-mode";
 import {
   type AskAnswer,
   isExpiredQuestionError,
@@ -87,6 +90,13 @@ type FailedSend = { message: string; retry?: () => void; code?: string };
  *  last queued prompt sent before sending the next anyway. */
 const QUEUED_ECHO_WAIT_MS = 30_000;
 
+/** How long a compaction under way holds the session as busy, at most, if
+ *  the stream never shows it done (an agent whose log doesn't record it). */
+const COMPACT_WAIT_MS = 5 * 60_000;
+
+/** How a prompt goes: in a mode, and answering the plan the agent waits on. */
+type SendHow = { mode?: SessionMode; dismiss?: boolean };
+
 const MENU_UNTIL_ANSWERED: OutrunnerModels = {
   outrunner: true,
   allowance: false,
@@ -107,6 +117,7 @@ export function WorkspaceSession({
   projectId,
   agent = "claude",
   recorded = null,
+  initialMode = "build",
   local = false,
   untitled = false,
   initialPrompt,
@@ -123,6 +134,9 @@ export function WorkspaceSession({
   /** The model and effort its row records it was last put on (a cloud
    *  session's), shown until a reply or a pick here says otherwise. */
   recorded?: RecordedModel | null;
+  /** The mode its row records its prompts last went in (a cloud session's);
+   *  a local session's is kept in this browser. */
+  initialMode?: SessionMode;
   /** A local session: everything then goes through the Outrunner app to the
    *  agent on this Mac, instead of through the server. */
   local?: boolean;
@@ -207,6 +221,7 @@ export function WorkspaceSession({
     retry?: () => void,
     leaving?: () => void,
     firstPromptKey?: string,
+    how: SendHow = {},
   ) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
@@ -232,7 +247,7 @@ export function WorkspaceSession({
     return whenAttached().then(
       () => {
         leaving?.();
-        return deliver(text, attachmentIds, pendingId, failed, firstPromptKey);
+        return deliver(text, attachmentIds, pendingId, failed, firstPromptKey, how);
       },
       (error: unknown) => failed(error instanceof Error ? error.message : "Could not connect to send that message."),
     );
@@ -246,6 +261,7 @@ export function WorkspaceSession({
     pendingId: string,
     failed: (message: string, code?: string) => boolean,
     firstPromptKey?: string,
+    how: SendHow = {},
   ) => {
     // The stream may record the prompt before the session answers.
     const sentAt = userPromptCount(eventsRef.current);
@@ -254,7 +270,7 @@ export function WorkspaceSession({
         localTarget(workspaceId),
         "POST",
         `/workspaces/${workspaceId}/message`,
-        { content: text },
+        { content: text, ...how },
       ).then(
         () => {
           anchor(pendingId, sentAt);
@@ -266,7 +282,7 @@ export function WorkspaceSession({
     return fetch(`/api/workspaces/${workspaceId}/message`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }) }),
+      body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }), ...how }),
     }).then(
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
@@ -352,6 +368,35 @@ export function WorkspaceSession({
   const waitingOnSecrets = secretRequest !== null && !answeredHere.has(secretRequest.toolUseId);
   const [secretsSaveError, setSecretsSaveError] = useState<string | null>(null);
   const waitingOnUser = (question !== null && !answeredHere.has(question.toolUseId)) || waitingOnSecrets;
+  // The mode the composer's prompts go in: as the session was left (its row,
+  // or this browser for a local session), switched with the toggle.
+  const [mode, setModeState] = useState<SessionMode>(() => (local ? rememberedMode(workspaceId) : null) ?? initialMode);
+  const setMode = (next: SessionMode) => {
+    setModeState(next);
+    rememberMode(workspaceId, next);
+  };
+  // The plan the agent waits on approval for (pending-plan.ts): a card in the
+  // conversation, Approve and Revise on it. The composer stays: what is typed
+  // while it waits revises it. An answer on its way puts the card's buttons
+  // away, as a question's card is, until its result reaches the stream.
+  const plan = useMemo(
+    () => pendingPlan(conversation.events, { plansInProse: agent === "codex", working: claudeIsWorking(conversation.events) }),
+    [conversation.events, agent],
+  );
+  const waitingOnPlan = plan !== null && !answeredHere.has(plan.id);
+  // A compaction asked for, the stream's length then, until the stream shows
+  // one after it: the session is busy meanwhile, and the queue waits.
+  const [compactingFrom, setCompactingFrom] = useState<number | null>(null);
+  // What happened other than what was asked (a compaction without its
+  // instructions, a plan answered elsewhere), said once.
+  const [note, setNote] = useState<string | null>(null);
+  const compacting =
+    compactingFrom !== null && !conversation.events.slice(compactingFrom).some((e) => e.t === "message" && e.compact);
+  useEffect(() => {
+    if (!compacting) return;
+    const giveUp = setTimeout(() => setCompactingFrom(null), COMPACT_WAIT_MS);
+    return () => clearTimeout(giveUp);
+  }, [compacting]);
   const answer = (asked: PendingQuestion, reply: { answers: AskAnswer[] } | { dismissed: true }) => {
     setAnsweredHere((prev) => new Set(prev).add(asked.toolUseId));
     setSendError(null);
@@ -412,8 +457,9 @@ export function WorkspaceSession({
   const delivered = userPromptCount(conversation.events);
   const working =
     !waitingOnUser &&
-    (pending.some((p) => pendingShows(p, delivered)) ||
-      (claudeIsWorking(conversation.events) && stoppedAt !== delivered));
+    (compacting ||
+      pending.some((p) => pendingShows(p, delivered)) ||
+      (!waitingOnPlan && claudeIsWorking(conversation.events) && stoppedAt !== delivered));
   // Prompts sent while the agent is at work wait here (lib/session/prompt-queue.ts)
   // and go one at a time as each turn ends. One whose send failed holds the
   // queue (`queueHeld`) until the user retries it or sends it now, so a box
@@ -430,8 +476,8 @@ export function WorkspaceSession({
   // alone has no bubble to say the session took it, so `working` alone could
   // let the next go into the same turn.
   const [queuedAt, setQueuedAt] = useState<number | null>(null);
-  const enqueue = (text: string, attachmentIds: string[]): Promise<boolean> => {
-    setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds }]);
+  const enqueue = (text: string, attachmentIds: string[], queuedMode?: SessionMode): Promise<boolean> => {
+    setQueue((q) => [...q, { id: crypto.randomUUID(), text, attachmentIds, ...(queuedMode && { mode: queuedMode }) }]);
     setSendError(null);
     return Promise.resolve(true);
   };
@@ -441,7 +487,8 @@ export function WorkspaceSession({
     setQueue((q) => q.filter((p) => p.id !== prompt.id));
     setQueueHeld(false);
     const recorded = userPromptCount(eventsRef.current);
-    return send(prompt.text, prompt.attachmentIds, () => void sendQueued(prompt)).then((landed) => {
+    const how = prompt.mode ? { mode: prompt.mode } : {};
+    return send(prompt.text, prompt.attachmentIds, () => void sendQueued(prompt), undefined, undefined, how).then((landed) => {
       if (landed) setQueuedAt(recorded);
       else {
         setQueue((q) => [prompt, ...q.filter((p) => p.id !== prompt.id)]);
@@ -470,7 +517,8 @@ export function WorkspaceSession({
     queued: queue.length,
     attached,
     working,
-    waitingOnUser,
+    // A plan waiting on approval is answered by the user, not by what's queued.
+    waitingOnUser: waitingOnUser || waitingOnPlan,
     held: queueHeld,
     awaitingLast,
   });
@@ -490,16 +538,117 @@ export function WorkspaceSession({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drains, queue, queueSettled]);
   // While the agent works, or others wait ahead, a prompt joins the queue.
-  const sendOrQueue = (text: string, attachmentIds: string[]) =>
-    working || queue.length > 0 ? enqueue(text, attachmentIds) : send(text, attachmentIds);
+  // One typed while a plan waits on approval answers it: it closes the plan's
+  // menu first, and goes in the mode the composer is in (Plan revises it,
+  // Build approves it with changes).
+  const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
+    if (waitingOnPlan && plan) return answerPlan(plan.id, text, attachmentIds, { mode: sentMode, dismiss: plan.dismiss });
+    return working || queue.length > 0
+      ? enqueue(text, attachmentIds, sentMode)
+      : send(text, attachmentIds, undefined, undefined, undefined, sentMode ? { mode: sentMode } : {});
+  };
+
+  /** Answer the plan waiting on approval with a prompt: its card's buttons
+   *  are put away while it goes, and back if it doesn't. */
+  const answerPlan = (id: string, text: string, attachmentIds: string[], how: SendHow): Promise<boolean> => {
+    setAnsweredHere((prev) => new Set(prev).add(id));
+    const again = (): void => void answerPlan(id, text, attachmentIds, how);
+    return send(text, attachmentIds, again, undefined, undefined, how).then((landed) => {
+      if (!landed)
+        setAnsweredHere((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      return landed;
+    });
+  };
+  /** Approve the plan: the agent picks the session's build mode in Claude's
+   *  own plan menu, so Claude goes on in the same turn (else it sends the
+   *  approval as a prompt in build mode: Codex's). The card's buttons are put
+   *  away while it goes, and back if it doesn't. */
+  const approvePlan = (id: string) => {
+    setAnsweredHere((prev) => new Set(prev).add(id));
+    setSendError(null);
+    (local
+      ? localAgentRequest<unknown>(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/plan`, { action: "approve" }).then(
+          (raw) => PlanActionResponse.parse(raw),
+        )
+      : approveCloudPlan(workspaceId)
+    ).then(
+      (outcome) => {
+        // Building from here, once the agent says so: an approval that didn't
+        // go leaves the composer planning, so what's typed next revises.
+        if (outcome.result === "approved") return setMode("build");
+        // Answered already (another tab, the terminal): the card stays put
+        // away, and the toggle takes the mode the agent read off the screen.
+        const now = outcome.mode ?? "build";
+        setMode(now);
+        setNote(`This plan was answered already, so ${AGENTS[agent].label} is ${now === "build" ? "building" : "still planning"}.`);
+      },
+      (error: unknown) => {
+        setAnsweredHere((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        setSendError({
+          message: local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't approve the plan.",
+        });
+      },
+    );
+  };
+  const [reviseSignal, setReviseSignal] = useState(0);
+  const planActions =
+    plan && waitingOnPlan
+      ? {
+          id: plan.id,
+          onApprove: () => approvePlan(plan.id),
+          onRevise: () => {
+            setMode("plan");
+            setReviseSignal((n) => n + 1);
+          },
+        }
+      : null;
+
+  /** /compact: the agent compacts the conversation; the session is busy
+   *  until the stream shows it done. Resolves whether it started. */
+  const compact = (instructions: string): Promise<boolean> => {
+    setSendError(null);
+    setNote(null);
+    const from = eventsRef.current.length;
+    // Codex's /compact takes no instructions (its agent leaves them off):
+    // compact all the same, and say they weren't used.
+    const dropped = agent === "codex" && instructions !== "";
+    const body = instructions && !dropped ? { instructions } : {};
+    return whenAttached()
+      .then(() =>
+        local
+          ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/compact`, body).then(() => undefined)
+          : compactCloudSession(workspaceId, body),
+      )
+      .then(
+        () => {
+          setCompactingFrom(from);
+          if (dropped) setNote("Codex's /compact doesn't take instructions, so it compacted without them.");
+          return true;
+        },
+        (error: unknown) => {
+          setSendError({
+            message: local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't compact the conversation.",
+          });
+          return false;
+        },
+      );
+  };
   // Comments on the diff (the Changes view's) go with the composer's next
   // message, as quotes after its text. Only the ones it carried are cleared,
   // once it has gone or joined the queue; a failed send keeps them for the next.
   const diffComments = useDiffComments(workspaceId);
-  const sendWithComments = (text: string, attachmentIds: string[]) => {
+  const sendWithComments = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
     const carried = diffComments.items;
-    if (carried.length === 0) return sendOrQueue(text, attachmentIds);
-    return sendOrQueue(withComments(text, carried), attachmentIds).then((landed) => {
+    if (carried.length === 0) return sendOrQueue(text, attachmentIds, sentMode);
+    return sendOrQueue(withComments(text, carried), attachmentIds, sentMode).then((landed) => {
       if (landed) diffComments.clear(carried.map((c) => c.id));
       return landed;
     });
@@ -782,7 +931,10 @@ export function WorkspaceSession({
           <ImageBoxContext value={local ? null : workspaceId}>
             <ConversationTimeline
               events={timelineEvents}
-              working={working}
+              working={working && !compacting}
+              compacting={compacting}
+              plansInProse={agent === "codex"}
+              plan={planActions}
               placeholder={conversationPlaceholder({
                 events: timelineEvents,
                 attachment: attachment.status,
@@ -855,6 +1007,11 @@ export function WorkspaceSession({
           Your first message was on its way when the page reloaded. If it doesn&apos;t show up, send it again.
         </InlineMessage>
       ) : null}
+      {note ? (
+        <InlineMessage tone="info" actions={[{ label: "Dismiss", onClick: () => setNote(null) }]}>
+          {note}
+        </InlineMessage>
+      ) : null}
       {!waitingOnUser && questionGone ? (
         <InlineMessage tone="info" actions={[{ label: "Dismiss", onClick: () => setQuestionGone(null) }]}>
           {questionGone}
@@ -872,7 +1029,19 @@ export function WorkspaceSession({
         <SessionComposer
           onSend={sendWithComments}
           comments={{ items: diffComments.items, onRemove: diffComments.remove }}
-          placeholder={working ? "Queue a message for when this turn ends…" : undefined}
+          modeChoice={{ mode, onChange: setMode }}
+          onCompact={compact}
+          context={contextUsage(conversation.events, shownModel)}
+          focusSignal={reviseSignal}
+          placeholder={
+            waitingOnPlan
+              ? `Tell ${AGENTS[agent].label} what to change in the plan…`
+              : working
+                ? "Queue a message for when this turn ends…"
+                : mode === "plan"
+                  ? `Ask ${AGENTS[agent].label} to plan something…`
+                  : undefined
+          }
           canSend={canSend}
           // Sending waits on the connection alone, so say that, not the
           // composer's default (another viewer holding the keyboard).
@@ -1079,6 +1248,32 @@ async function provideCloudSecrets(workspaceId: string, body: unknown): Promise<
   const data = (await res.json().catch(() => ({}))) as { error?: string; saveError?: string };
   if (!res.ok) throw new Error(data.error ?? "Couldn't send them. Please try again.");
   return data.saveError ?? null;
+}
+
+/** Approve the plan a cloud session's agent waits on. The server reaches the
+ *  session's agent, as for a prompt. */
+async function approveCloudPlan(workspaceId: string): Promise<PlanActionResponse> {
+  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/plan`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "approve" }),
+  });
+  const data = (await res.json().catch(() => ({}))) as unknown;
+  if (res.ok) return PlanActionResponse.parse(data);
+  throw new Error((data as { error?: string }).error ?? "Couldn't approve the plan. Please try again.");
+}
+
+/** Compact a cloud session's conversation. The server reaches the session's
+ *  agent, as for a prompt. */
+async function compactCloudSession(workspaceId: string, body: { instructions?: string }): Promise<void> {
+  const res = await reachOutrunner(`/api/workspaces/${workspaceId}/compact`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) return;
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  throw new Error(data.error ?? "Couldn't compact the conversation. Please try again.");
 }
 
 /** Stop a cloud session's turn. The server reaches the session's agent, as

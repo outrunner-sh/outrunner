@@ -42,6 +42,7 @@ function workspace(id: string, projectId: string, at: string, title: string | nu
     checkouts: null,
     agent: "claude",
     model: null,
+    mode: "build",
     lastActiveAt: at,
     errorMessage: null,
     createdAt: "2026-01-01T00:00:00Z",

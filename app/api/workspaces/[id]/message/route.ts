@@ -2,9 +2,13 @@ import { after, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { resetCiTurnsOfSession } from "@/lib/db/github-loop";
-import { claimFirstPrompt, markFirstPromptSent, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { claimFirstPrompt, markFirstPromptSent, recordWorkspaceMode, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_PLAN_MODE, SessionMode } from "@/lib/runtime/agent-protocol";
+import { requireFeature } from "@/lib/runtime/box-features";
+import { OutdatedComputerError } from "@/lib/runtime/session-auth";
+import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { attachmentsUnavailable } from "@/lib/runtime/worktree-access";
@@ -31,6 +35,12 @@ type RouteContext = { params: Promise<{ id: string }> };
  * sent once per key. A repeat answers as sent without sending again, or, while
  * the first send is still going, asks to be tried again
  * (lib/session/first-prompt-claim.ts).
+ *
+ * A prompt names the mode it goes in (`mode`, lib/session/session-mode.ts):
+ * the agent puts the session in it first. `dismiss` answers the plan the agent
+ * is waiting on approval for, closing its menu first. Plan mode needs an agent
+ * that knows it (AGENT_FEATURE_PLAN_MODE): an older one would build instead, so
+ * the box is upgraded first, and the send refused where it can't be.
  */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
@@ -42,7 +52,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { content?: string; attachmentIds?: unknown; firstPromptKey?: unknown }
+    | { content?: string; attachmentIds?: unknown; firstPromptKey?: unknown; mode?: unknown; dismiss?: unknown }
     | null;
   const content = body?.content?.trim() ?? "";
   const attachmentIds = Array.isArray(body?.attachmentIds)
@@ -53,6 +63,11 @@ export async function POST(request: Request, context: RouteContext) {
   if (!content && attachmentIds.length === 0) {
     return NextResponse.json({ error: "A non-empty content is required." }, { status: 400 });
   }
+  const mode = SessionMode.safeParse(body?.mode);
+  if (body?.mode !== undefined && !mode.success) {
+    return NextResponse.json({ error: "A prompt's mode is build or plan." }, { status: 400 });
+  }
+  const dismiss = body?.dismiss === true;
 
   const { id } = await context.params;
   const reach = await reachWorkspaceAgent(id, owner.id, {
@@ -60,7 +75,7 @@ export async function POST(request: Request, context: RouteContext) {
     needsComputer: "Messaging requires a Runtime Computer provider.",
   });
   if (!reach.ok) return reach.response;
-  const { workspace, provider, sandboxId, agent, identity } = reach.reached;
+  const { workspace, provider, sandboxId, secret, agent, identity } = reach.reached;
 
   const noFiles = attachmentsUnavailable(attachmentIds.length, workspace.worktreePath);
   if (noFiles) return NextResponse.json({ error: noFiles }, { status: 409 });
@@ -110,8 +125,32 @@ export async function POST(request: Request, context: RouteContext) {
   // it instead of this request.
   if (!(await gate.held())) return stillGoing();
 
+  // Building is what every agent does with a prompt, so only plan mode, or
+  // answering a plan, needs one that knows modes. A build prompt names its
+  // mode all the same: it takes a session that was planning out of it.
+  const asked = mode.success ? mode.data : undefined;
+  if (asked === "plan" || dismiss) {
+    try {
+      await requireFeature(
+        {
+          features: async () => (await agent.health(identity)).features ?? [],
+          upgrade: boxUpgrade(provider, sandboxId, secret, owner.id, workspace.id),
+        },
+        AGENT_FEATURE_PLAN_MODE,
+        "plan before it builds",
+      );
+    } catch (error) {
+      await gate.release();
+      if (error instanceof OutdatedComputerError) {
+        return NextResponse.json({ error: error.message }, { status: 409 });
+      }
+      console.error(`Message: couldn't ready plan mode for ${workspace.id}`, error);
+      return NextResponse.json({ error: "Couldn't reach the Runtime Computer. Try again." }, { status: 502 });
+    }
+  }
+
   try {
-    await agent.sendMessage(identity, prompt);
+    await agent.sendMessage(identity, prompt, { ...(asked && { mode: asked }), ...(dismiss && { dismiss }) });
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
     // Released on any failure, an unclear one too (a timeout, a reset after
@@ -124,6 +163,11 @@ export async function POST(request: Request, context: RouteContext) {
     // composer drops Retry and points at a new session instead of offering one.
     // A 404 without the agent's error body (a proxy in front of a box that is
     // restarting, an agent without the route) may pass on retry, so keeps it.
+    // A switch of mode refused mid-turn, or an engine without plan mode: the
+    // agent's own words say what to do.
+    if (error instanceof AgentRequestError && (error.error?.code === "CONFLICT" || error.error?.code === "UNSUPPORTED")) {
+      return NextResponse.json({ error: error.error.message }, { status: 409 });
+    }
     if (error instanceof AgentRequestError && error.status === 404 && error.error?.message === "unknown workspace") {
       return NextResponse.json(
         { error: "This session isn't running on its computer any more.", code: BOX_GONE },
@@ -154,6 +198,7 @@ export async function POST(request: Request, context: RouteContext) {
   // Working, for every client at once, and watched until its turn ends
   // (lib/session/watch.ts): where it stands in the sidebar follows.
   after(() => watchSent(workspace.id, workspace.ownerId));
+  if (asked && asked !== workspace.mode) await recordWorkspaceMode(workspace.id, asked);
   // A session started from Slack, in step with its thread: what's typed here
   // goes there too, and the reply with it. Not what came from the thread, or
   // from GitHub, which no one typed here.

@@ -26,7 +26,13 @@ import (
 //   - response_item function_call_output / custom_tool_call_output: a user
 //     record with the tool_result;
 //   - event_msg token_count: the model call's usage, put on its last assistant
-//     record (see Translator).
+//     record (see Translator), with the model's context window;
+//   - compacted: the conversation compacted (/compact, or Codex's own when
+//     its context fills), as Claude's compact_boundary system record.
+//
+// A prompt sent in plan mode starts with PlanPreamble: its record is the
+// prompt without it, marked as Claude marks one sent in plan mode
+// (permissionMode "plan").
 //
 // Everything else is skipped: session_meta and turn_context (read for the
 // session id and model), world_state, the developer and user response_items
@@ -65,6 +71,9 @@ type Translator struct {
 	// that ran, or waited for approval, longer than the caller waits): it
 	// goes on the next assistant record, so the session's totals keep it.
 	late *Usage
+	// window is the model's context window, as the last token_count said,
+	// and lateContext how much of it the call whose usage came late used.
+	window, lateContext int
 }
 
 type held struct {
@@ -76,10 +85,20 @@ type held struct {
 // lib/runtime/replay/conversation.ts) read.
 type record struct {
 	Type      string  `json:"type"`
+	Subtype   string  `json:"subtype,omitempty"`
 	UUID      string  `json:"uuid"`
 	ParentID  *string `json:"parentUuid"`
 	Timestamp string  `json:"timestamp"`
-	Message   message `json:"message"`
+	// PermissionMode is "plan" on a prompt sent in plan mode.
+	PermissionMode  string           `json:"permissionMode,omitempty"`
+	CompactMetadata *compactMetadata `json:"compactMetadata,omitempty"`
+	Message         message          `json:"message"`
+}
+
+// compactMetadata is a compact_boundary's, as Claude writes it. Codex's log
+// doesn't say whether it was asked for, so Trigger is left out.
+type compactMetadata struct {
+	Trigger string `json:"trigger,omitempty"`
 }
 
 type message struct {
@@ -87,6 +106,13 @@ type message struct {
 	Model   string          `json:"model,omitempty"`
 	Content json.RawMessage `json:"content"`
 	Usage   *Usage          `json:"usage,omitempty"`
+	// ContextWindow is the model's context, which Claude's records never say
+	// and Codex's token_count does: what the context-usage ring is out of.
+	ContextWindow int `json:"context_window,omitempty"`
+	// ContextTokens is how much of it the record's model call used: its own
+	// call's, never summed as Usage is (a record can carry a late call's
+	// usage too, which a session's totals keep and its context doesn't).
+	ContextTokens int `json:"context_tokens,omitempty"`
 }
 
 // Usage is a model call's tokens in Claude's terms: input_tokens counts only
@@ -124,7 +150,8 @@ type (
 	}
 	tokenCount struct {
 		Info *struct {
-			Last *struct {
+			ModelContextWindow int `json:"model_context_window"`
+			Last               *struct {
 				Input      int `json:"input_tokens"`
 				Cached     int `json:"cached_input_tokens"`
 				CacheWrite int `json:"cache_write_input_tokens"`
@@ -182,7 +209,20 @@ func (t *Translator) Line(offset int64, line []byte) []Record {
 		if strings.TrimSpace(p.Message) == "" {
 			return out // an image alone: nothing the timeline renders
 		}
-		return append(out, t.release(offset, t.newRecord(offset, l.Timestamp, "user", jsonString(p.Message)))...)
+		prompt, planned := strings.CutPrefix(p.Message, PlanPreamble)
+		rec := t.newRecord(offset, l.Timestamp, "user", jsonString(prompt))
+		if planned {
+			rec.PermissionMode = "plan"
+		}
+		return append(out, t.release(offset, rec)...)
+	case l.Type == "compacted":
+		// The summary Codex goes on from is its own, not a turn to show:
+		// only that the conversation was compacted here.
+		out := t.Flush()
+		rec := t.newRecord(offset, l.Timestamp, "", json.RawMessage(`null`))
+		rec.Type, rec.Subtype = "system", "compact_boundary"
+		rec.CompactMetadata = &compactMetadata{}
+		return append(out, t.release(offset, rec)...)
 	case l.Type == "event_msg" && kind.Type == "token_count":
 		var p tokenCount
 		if json.Unmarshal(l.Payload, &p) != nil {
@@ -243,6 +283,9 @@ func (t *Translator) responseItem(offset int64, at string, p responseItem) []Rec
 	rec := t.newRecord(offset, at, "assistant", mustJSON(blocks))
 	rec.Message.Model = t.model
 	rec.Message.Usage, t.late = t.late, nil
+	if rec.Message.Usage != nil {
+		rec.Message.ContextTokens, rec.Message.ContextWindow, t.lateContext = t.lateContext, t.window, 0
+	}
 	var out []Record
 	if t.heldTool {
 		out = t.Flush() // a new model call began without the last one's usage
@@ -258,6 +301,9 @@ func (t *Translator) usage(p tokenCount) []Record {
 	if p.Info == nil || p.Info.Last == nil {
 		return t.Flush()
 	}
+	if p.Info.ModelContextWindow > 0 {
+		t.window = p.Info.ModelContextWindow
+	}
 	last := p.Info.Last
 	u := Usage{
 		InputTokens:              max(last.Input-last.Cached-last.CacheWrite, 0),
@@ -265,13 +311,18 @@ func (t *Translator) usage(p tokenCount) []Record {
 		CacheCreationInputTokens: last.CacheWrite,
 		CacheReadInputTokens:     last.Cached,
 	}
+	// Codex's input counts what it read from the cache too: with what it
+	// wrote, the context the call left.
+	context := last.Input + last.Output
 	for i := len(t.held) - 1; i >= 0; i-- {
 		if t.held[i].rec.Message.Role == "assistant" {
 			t.held[i].rec.Message.Usage = u.plus(t.held[i].rec.Message.Usage)
+			t.held[i].rec.Message.ContextTokens, t.held[i].rec.Message.ContextWindow = context, t.window
 			return t.Flush()
 		}
 	}
 	t.late = u.plus(t.late)
+	t.lateContext = context
 	return t.Flush()
 }
 

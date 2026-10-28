@@ -17,7 +17,10 @@ import {
   ArchiveWorkspaceRequest,
   ChangedFileDiffResponse,
   ChangesResponse,
+  CompactRequest,
   CreateWorkspaceRequest,
+  PlanActionRequest,
+  PlanActionResponse,
   EditorResponse,
   ErrorResponse,
   LISTING_WORKSPACE_ID,
@@ -25,6 +28,7 @@ import {
   RestoreWorkspaceRequest,
   RestoreWorkspaceResult,
   type RuntimeTokenClaims,
+  SendMessageRequest,
   SetAgentConfigRequest,
   SetAuthRequest,
   SetEnvironmentRequest,
@@ -137,8 +141,27 @@ export class AgentClient {
    * Deliver a user prompt to the workspace's agent session (jcode engine). The
    * reply streams back on the Conversation SSE; this just starts the turn.
    */
-  sendMessage(identity: WorkspaceIdentity, content: string): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, { content }, AGENT_SEND_TIMEOUT_MS);
+  async sendMessage(
+    identity: WorkspaceIdentity,
+    content: string,
+    options: Omit<SendMessageRequest, "content"> = {},
+  ): Promise<unknown> {
+    // A mode only where one is asked for: a prompt that names none is the
+    // body every agent has always taken.
+    const body = SendMessageRequest.parse({ content, ...options });
+    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, body, AGENT_SEND_TIMEOUT_MS);
+  }
+
+  /** Approve the plan the session's agent waits on (PlanActionRequest). */
+  async approvePlan(identity: WorkspaceIdentity): Promise<PlanActionResponse> {
+    const raw = await this.post(`/workspaces/${identity.workspaceId}/plan`, identity, PlanActionRequest.parse({ action: "approve" }), AGENT_SEND_TIMEOUT_MS);
+    return PlanActionResponse.parse(raw);
+  }
+
+  /** Compact the session's conversation, as /compact does in its terminal.
+   *  Answers once the compaction is under way; the stream shows it done. */
+  async compact(identity: WorkspaceIdentity, req: CompactRequest = {}): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/compact`, identity, CompactRequest.parse(req), AGENT_SEND_TIMEOUT_MS);
   }
 
   /**

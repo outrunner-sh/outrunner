@@ -1,0 +1,50 @@
+     Verification                                                                       │                                                                     ✕
+                                                                                        │2 files changed +4                                   source: Current ▾
+     All three assertions pass.                                                         │
+                                                                                        │a.ts                                                                +4
+  Read 1 file                                                                           │1 test/generated (show)
+                                                                                        │
+● Update(a.ts)                                                                          │──────────────────────────────────────────────────────────────────────
+  ⎿  Added 4 lines                                                                      │a.ts                                                           [ ask ]
+      1  export const x = 1;                                                            │──────────────────────────────────────────────────────────────────────
+      2 +                                                                               │ 1  export const x = 1;
+      3 +export function double(n: number): number {                                    │ 2 +
+      4 +  return n * 2;                                                                │ 3 +export function double(n: number): number {
+      5 +}                                                                              │ 4 +  return n * 2;
+                                                                                        │ 5 +}
+● Write(a.test.ts)                                                                      │
+  ⎿  Wrote 9 lines to a.test.ts                                                         │
+      1 import { test } from "node:test";                                               │
+      2 import assert from "node:assert/strict";                                        │
+      3 import { double } from "./a.ts";                                                │
+      4                                                                                 │
+      5 test("double", () => {                                                          │
+      6   assert.equal(double(3), 6);                                                   │
+      7   assert.equal(double(0), 0);                                                   │
+      8   assert.equal(double(-2), -4);                                                 │
+      9 });                                                                             │
+                                                                                        │
+  Ran 1 shell command                                                                   │
+                                                                                        │
+● I added double(n: number) to a.ts, and it returns n * 2. I also added a.test.ts, which│
+  checks double(3), double(0) and double(-2). node --test a.test.ts passes (1 test).    │
+                                                                                        │
+  The test uses Node's built-in node:test, since the repo has no test framework. I      │
+  haven't committed anything.                                                           │
+                                                                                        │
+✻ Worked for 9s · done 9:39 PM                                                          │
+                                                                                        │
+❯ Run: sleep 60 && echo done                                                            │
+                                                                                        │
+  Waiting 60 seconds then printing done · 2s                                            │
+  ⎿  $ sleep 60 && echo done (3s)                                                       │
+     (ctrl+b ctrl+b (twice) to run in background)                                       │
+                                                                                        │
+✢ Contemplating… (4s · ↓ 94 tokens)                                                     │
+  ⎿  Tip: Use Plan Mode to prepare for a complex request before making changes. Press   │
+     shift+tab twice to enable.                                                         │
+                                                                                        │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── add-double-function-test ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt

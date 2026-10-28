@@ -411,6 +411,9 @@
 .md-body h3 { font-size: 14.5px; }
 .md-body h4 { font-size: 13.5px; }
 .md-body ul, .md-body ol { margin: 0 0 12px; padding-left: 22px; }
+/* Tailwind's reset takes list markers away; a plan's steps are numbered. */
+.md-body ul { list-style: disc; }
+.md-body ol { list-style: decimal; }
 .md-body li { margin: 4px 0; }
 .md-body li::marker { color: #666; }
 .md-body a { color: #7cc7ff; text-decoration: underline; text-underline-offset: 2px; }
@@ -590,3 +593,35 @@
 .timeline-tool-body { display: flex; flex-direction: column; gap: 6px; padding: 8px 9px 10px; border-top: 1px solid var(--studio-border); }
 .timeline-tool-body pre { margin: 0; padding: 8px 10px; overflow-x: auto; border-radius: 3px; color: #b4b4b4; background: #0d0d0d; font: 11.5px/1.6 var(--font-geist-mono); }
 .timeline-tool-heading { display: flex; justify-content: space-between; margin-top: 4px; color: #8a8a8a; font-size: 11px; }
+
+/* A plan the agent proposed: a bordered card in the conversation, its Markdown
+   between a head (copy, download) and, while it waits on the user, its answers. */
+.timeline-plan { min-width: 0; border: 1px solid var(--studio-border); border-radius: 4px; background: var(--studio-bg); }
+.timeline-plan > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 6px 12px; border-bottom: 1px solid var(--studio-border); color: var(--studio-muted); font-size: 12px; }
+.timeline-plan > header > span { display: inline-flex; align-items: center; gap: 6px; }
+.timeline-plan > header svg { width: 14px; height: 14px; }
+.timeline-plan > header button { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 3px; color: var(--studio-muted); background: transparent; cursor: pointer; }
+.timeline-plan > header button:hover { color: var(--studio-text); background: var(--studio-hover); }
+.timeline-plan-body { max-height: 480px; overflow: auto; padding: 4px 14px; }
+.timeline-plan > footer { display: flex; gap: 8px; padding: 8px; border-top: 1px solid var(--studio-border); }
+.timeline-plan > footer button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 13px var(--font-geist-sans); cursor: pointer; transition: background-color .15s; }
+.timeline-plan > footer button:hover { background: var(--studio-hover); }
+.timeline-plan > footer button.is-primary { color: #0a0a0a; border-color: #ededed; background: #ededed; }
+.timeline-plan > footer button.is-primary:hover { background: #fff; }
+.timeline-plan > footer svg { width: 13px; height: 13px; }
+.timeline-plan button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+/* A prompt sent in plan mode says so, quietly, above its text. */
+.timeline-prompt-mode { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; color: var(--studio-amber); font-size: 11.5px; }
+.timeline-prompt-mode svg { width: 12px; height: 12px; }
+/* A compaction: a rule across the conversation, its line in the middle. */
+.timeline-compact { display: flex; align-items: center; gap: 10px; padding: 4px 0; color: #8a8a8a; font-size: 12px; }
+.timeline-compact::before, .timeline-compact::after { content: ""; flex: 1; height: 1px; background: var(--studio-border); }
+.timeline-compact svg { width: 13px; height: 13px; }
+/* The composer's mode: Plan in amber, so a prompt about to be planned looks it. */
+.studio-composer-footer .studio-composer-mode.is-plan { color: var(--studio-amber); border-color: color-mix(in oklab, var(--studio-amber) 45%, transparent); }
+/* How full the context is: a ring, its tokens beside it on hover. */
+.studio-composer-context { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 4px; color: #8a8a8a; font: 12px var(--font-geist-sans); font-variant-numeric: tabular-nums; }
+.studio-composer-context svg { width: 16px; height: 16px; transform: rotate(-90deg); }
+.studio-composer-context .ring-track { stroke: var(--studio-border); }
+.studio-composer-context .ring-fill { stroke: #8a8a8a; transition: stroke-dasharray .3s; }
+.studio-composer-context.is-full .ring-fill { stroke: var(--studio-amber); }

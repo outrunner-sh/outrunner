@@ -12,6 +12,7 @@ function workspace(id: string, over: Partial<Workspace> = {}): Workspace {
     provider: "daytona",
     agent: "claude",
     model: null,
+    mode: "build",
     status: "ready",
     phase: "claude_ready",
     branch: `runtime/${id}`,

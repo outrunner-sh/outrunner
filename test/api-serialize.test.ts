@@ -37,6 +37,7 @@ test("a session as the API shows it", () => {
     checkouts: null,
     agent: "claude",
     model: null,
+    mode: "build",
     lastActiveAt: null,
     errorMessage: null,
     createdAt: "2026-11-01T00:00:00Z",

@@ -13,6 +13,7 @@ import {
 import type { ComputerScope } from "@/lib/runtime/computer-scope";
 import type { FirstPromptClaim } from "@/lib/session/first-prompt-claim";
 import type { RecordedModel } from "@/lib/runtime/session-models";
+import type { SessionMode } from "@/lib/runtime/agent-protocol";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type {
   ArchivePolicy,
@@ -426,6 +427,17 @@ export async function recordWorkspaceModel(id: string, recorded: RecordedModel):
     })
     .eq("id", id);
   if (error) console.warn(`Workspace ${id}: could not record its model ${recorded.model.provider}/${recorded.model.id}`, error);
+}
+
+/**
+ * Record the mode a session's prompt just went in (workspaces.session_mode),
+ * so it opens in it again. Best effort, as recordWorkspaceModel: the box has
+ * it already, and a database from before the column keeps it there alone.
+ */
+export async function recordWorkspaceMode(id: string, mode: SessionMode): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from("workspaces").update({ session_mode: mode }).eq("id", id);
+  if (error) console.warn(`Workspace ${id}: could not record its ${mode} mode`, error);
 }
 
 /**

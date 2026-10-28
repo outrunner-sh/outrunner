@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, MessageSquareText, Paperclip, X } from "lucide-react";
+import { ArrowUp, ListChecks, MessageSquareText, Paperclip, X } from "lucide-react";
 
 import { parseCommentQuotes } from "@/lib/session/diff-comments";
 import type { QueuedPrompt } from "@/lib/session/prompt-queue";
@@ -32,6 +32,12 @@ export function QueuedPrompts({
           const { text, quotes } = parseCommentQuotes(prompt.text);
           return (
             <li key={prompt.id} className="studio-queue-item">
+              {prompt.mode === "plan" && (
+                <span className="studio-queue-files" title="Goes in plan mode">
+                  <ListChecks aria-hidden />
+                  Plan
+                </span>
+              )}
               <span className="studio-queue-text" title={text}>
                 {text || (quotes.length > 0 ? "Comments only" : "Files only")}
               </span>

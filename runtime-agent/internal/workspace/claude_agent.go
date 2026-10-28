@@ -33,13 +33,42 @@ func (claudeAgent) typedLines(styledPane string) int {
 	return claudeTypedLines(styledPane)
 }
 
-// startupKey answers the first-run screens, then the folder-trust dialog.
+// startupKey answers the first-run screens, then the folder-trust dialog,
+// then the warning a session that may bypass its permissions opens on.
 func (claudeAgent) startupKey(pane string) string {
 	key := firstRunKey(pane)
 	if key == "" && isTrustDialog(pane) {
 		key = trustKey(pane)
 	}
+	if key == "" && isBypassWarning(pane) {
+		key = bypassKey(pane)
+	}
 	return key
+}
+
+// isBypassWarning reports whether a pane shows the warning Claude Code opens
+// on when it may bypass its permissions (--permission-mode bypassPermissions,
+// or a plan launched able to: --allow-dangerously-skip-permissions). Claude
+// Code 2.1.304 shows it at every such launch, whatever ~/.claude.json's
+// bypassPermissionsModeAccepted says, with "No, exit" preselected
+// (testdata/claude-2.1.304/bypass-warning.txt).
+//
+// The dialog itself, not its words anywhere: a resumed conversation that
+// quotes them (this repository's own could) shows its prompt box, and keys
+// pressed there would go into it.
+func isBypassWarning(pane string) bool {
+	return strings.Contains(pane, "WARNING: Claude Code running in Bypass Permissions mode") &&
+		strings.Contains(pane, "No, exit") && !isComposer(pane)
+}
+
+// bypassKey takes that warning toward "Yes, I accept". Bypass is Outrunner's
+// choice for a session on its own disposable box (a folder of the user's is
+// never launched so, ErrBypassInFolder): the user made it in choosing where
+// the session runs, as they did the folder it trusts.
+func bypassKey(pane string) string {
+	selected := func(line string) bool { return strings.Contains(line, "❯") }
+	yes := func(line string) bool { return strings.Contains(line, "Yes, I accept") }
+	return keyToward(pane, selected, yes)
 }
 
 func (claudeAgent) exited(folder string) error { return claudeExited(errClaudeExited, folder) }
@@ -161,7 +190,15 @@ func visibleText(row string, withDim bool) string {
 
 func isRule(line string) bool {
 	line = strings.TrimSpace(line)
-	return utf8.RuneCountInString(line) >= 10 && strings.Trim(line, "─") == ""
+	if utf8.RuneCountInString(line) < 10 {
+		return false
+	}
+	if strings.Trim(line, "─") == "" {
+		return true
+	}
+	// Claude Code 2.1.304 names the session in the rule once it has a name
+	// ("──── add-double-function-test ─", testdata/claude-2.1.304/built.txt).
+	return strings.HasPrefix(line, strings.Repeat("─", 10)) && strings.HasSuffix(line, "─")
 }
 
 // awaitsAnswer reports whether Claude is showing a menu instead of its prompt
@@ -246,6 +283,12 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	}
 	// Claude's own flags first: the env files below wrap the command.
 	argv = claude.WithEffort(argv, s.claudeEffort(workspaceID, f.Effort))
+	// Planning in a session that builds without asking: bypass is offered when
+	// the plan is approved (ApprovePlan picks it in Claude's menu), which
+	// Claude does only for a session it may bypass in.
+	if mode == claude.Plan && s.buildMode(workspaceID) == claude.Bypass && s.claudeTakes("--allow-dangerously-skip-permissions") {
+		argv = append(argv, "--allow-dangerously-skip-permissions")
+	}
 	argv = withAgentConfig(argv)
 	if askArgs := s.claudeAskArgs(workspaceID); len(askArgs) > 0 {
 		argv = append(argv, askArgs...)

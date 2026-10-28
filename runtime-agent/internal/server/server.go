@@ -107,6 +107,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /workspaces/{id}/destroy", s.authed(s.destroyWorkspace))
 	mux.HandleFunc("POST /workspaces/{id}/message", s.authed(s.sendMessage))
 	mux.HandleFunc("POST /workspaces/{id}/interrupt", s.authed(s.interrupt))
+	mux.HandleFunc("POST /workspaces/{id}/compact", s.authed(s.compact))
+	mux.HandleFunc("POST /workspaces/{id}/plan", s.authed(s.planAction))
 	mux.HandleFunc("POST /workspaces/{id}/editor", s.authed(s.openEditor))
 	mux.HandleFunc("GET /workspaces/{id}/ports", s.authed(s.listPorts))
 	mux.HandleFunc("POST /workspaces/{id}/answer", s.authed(s.answer))
@@ -147,7 +149,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact},
 	})
 }
 
@@ -492,9 +494,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWorkspace(w, r, r.PathValue("id")) {
 		return
 	}
-	var req struct {
-		Content string `json:"content"`
-	}
+	var req protocol.SendMessageRequest
 	if !decode(w, r, &req) {
 		return
 	}
@@ -502,7 +502,76 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "message requires content")
 		return
 	}
-	respond(w, "sent", s.ws.SendMessage(r.PathValue("id"), req.Content))
+	if req.Mode != "" && req.Mode != workspace.ModePlan && req.Mode != workspace.ModeBuild {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "mode is plan or build")
+		return
+	}
+	err := s.ws.SendPrompt(r.PathValue("id"), workspace.Prompt{Content: req.Content, Mode: req.Mode, Dismiss: req.Dismiss})
+	switch {
+	case errors.Is(err, workspace.ErrModeBusy), errors.Is(err, workspace.ErrSessionUnchecked):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrModeUnsupported):
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+	default:
+		respond(w, "sent", err)
+	}
+}
+
+// planAction answers the plan the workspace's agent waits on: approved, it
+// goes on to build it (Service.ApprovePlan).
+func (s *Server) planAction(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.PlanActionRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Action != "approve" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a plan is approved here; revise it with a prompt in plan mode")
+		return
+	}
+	via, err := s.ws.ApprovePlan(r.PathValue("id"))
+	switch {
+	case errors.Is(err, workspace.ErrNoPlanWaiting):
+		// Answered already (another tab, the terminal): nothing failed. The
+		// answer says the mode the session is in, which only its screen
+		// knows for sure, for the page's toggle.
+		writeJSON(w, http.StatusOK, protocol.PlanActionResponse{Result: "answered", Mode: s.ws.PlanAnsweredMode(r.PathValue("id"))})
+	case errors.Is(err, workspace.ErrModeBusy),
+		errors.Is(err, workspace.ErrSessionUnchecked), errors.Is(err, workspace.ErrNotInterrupted):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrModeUnsupported):
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+	case err != nil:
+		respond(w, "", err)
+	default:
+		writeJSON(w, http.StatusOK, protocol.PlanActionResponse{Result: "approved", Via: via})
+	}
+}
+
+// compact compacts the workspace's conversation, as /compact does in its
+// terminal; the stream shows the compaction once the agent has written it.
+func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	// A body is optional: /compact alone takes none.
+	var req protocol.CompactRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed JSON body")
+		return
+	}
+	err := s.ws.Compact(r.PathValue("id"), req.Instructions)
+	switch {
+	case errors.Is(err, workspace.ErrCompactBusy), errors.Is(err, workspace.ErrSessionUnchecked),
+		errors.Is(err, workspace.ErrPromptStaged):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrCompactUnsupported):
+		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())
+	default:
+		respond(w, "compacting", err)
+	}
 }
 
 // interrupt stops the turn the workspace's session is running, if any.

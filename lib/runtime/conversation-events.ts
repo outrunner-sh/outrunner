@@ -65,6 +65,40 @@ export function isInterruption(event: AgentEvent): boolean {
   return event.t === "message" && event.role === "user" && messageText(event).startsWith(INTERRUPTED);
 }
 
+/** How Claude Code records a slash command (/compact, /model, or a custom
+ *  command or skill like /review): the command's own record and what it
+ *  printed, as user messages. Some are answered; for turn state see
+ *  isLocalCommandOutput. */
+const LOCAL_COMMAND = /^<(command-name|command-message|local-command-stdout|local-command-stderr|local-command-caveat)>/;
+
+/** Whether an event is Claude Code's record of a slash command, or of what
+ *  one printed: a command row in the timeline, not a prompt. Not whether a
+ *  turn is over (isLocalCommandOutput says that). */
+export function isLocalCommand(event: AgentEvent): boolean {
+  return event.t === "message" && event.role === "user" && LOCAL_COMMAND.test(messageText(event));
+}
+
+/** How Claude Code records what a slash command it ran itself printed
+ *  (/compact's "Compacted", /model's): no turn for Claude to answer. The
+ *  command's own record (<command-name>, <command-message>) is not one: a
+ *  custom command or skill (/review) is recorded so too, and answered. */
+const LOCAL_COMMAND_OUTPUT = /^<local-command-(stdout|stderr|caveat)>/;
+
+/** Whether an event is the record of what a slash command Claude ran itself
+ *  printed: the turn is over, nothing more comes. */
+export function isLocalCommandOutput(event: AgentEvent): boolean {
+  return event.t === "message" && event.role === "user" && LOCAL_COMMAND_OUTPUT.test(messageText(event));
+}
+
+/** The command a record of one names ("/compact"), with its arguments; null
+ *  for a record of what it printed, or anything else. */
+export function localCommandLine(text: string): string | null {
+  const name = /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim();
+  if (!name) return null;
+  const args = /<command-args>([^<]*)<\/command-args>/.exec(text)?.[1]?.trim();
+  return args ? `${name} ${args}` : name;
+}
+
 /** The text-bearing user prompts the stream has recorded, in order, each as
  *  typed (without the header naming its attachments). Excludes Claude's
  *  tool-result turns, which are logged as role:"user" but carry no prompt text,
@@ -108,8 +142,10 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
       continue;
     }
     if (event.t !== "message") continue;
-    // A prompt or a tool result awaiting Claude; not the record of a stop.
-    if (event.role === "user") return !isInterruption(event);
+    // A prompt or a tool result awaiting Claude; not the record of a stop, or
+    // of what a command Claude ran itself printed. A command's own record
+    // (a custom command, a skill) is answered, so it awaits Claude.
+    if (event.role === "user") return !isInterruption(event) && !isLocalCommandOutput(event);
     const last = event.content[event.content.length - 1];
     if (!last) return false;
     return last.type !== "text" || event.stopReason === "tool_use";

@@ -201,6 +201,11 @@ type workspaceFacts struct {
 	// Auth is the kind of the session's own credential (SetAuth), kept in its
 	// auth file; empty runs on its agent's own login.
 	Auth string `json:"auth,omitempty"`
+	// Plan puts the session in plan mode (SendPrompt's ModePlan): launched
+	// with --permission-mode plan, Codex read-only, whatever mode it builds
+	// in. Kept across launches, as the model is, until a prompt in build
+	// mode takes it out.
+	Plan bool `json:"plan,omitempty"`
 	// Name and Title label the session in the desktop's list: the folder's name,
 	// and what the user asked for first.
 	Name      string `json:"name,omitempty"`
@@ -448,8 +453,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if prior.Model != "" || facts.Model == "" {
 		facts.Model, facts.Gateway = prior.Model, prior.Gateway
 	}
-	// Its effort is SetModel's alone, so a repeated Create keeps it as well.
-	facts.Effort = prior.Effort
+	// Its effort is SetModel's alone, so a repeated Create keeps it as well,
+	// and plan mode is a prompt's (SendPrompt).
+	facts.Effort, facts.Plan = prior.Effort, prior.Plan
 	facts.Checkouts = in.Checkouts
 	if existed {
 		// A retry keeps what the first Create recorded (before it made
@@ -555,11 +561,20 @@ func setGitUser(ctx context.Context, dir string, user *GitUser) {
 // against their real files, keys and credentials without a prompt.
 var ErrBypassInFolder = errors.New("bypassPermissions is not allowed for a session in a folder on this machine")
 
-// permissionMode is the mode a workspace's Claude launches with: the one its
-// create asked for, else the agent's default (the desktop shell sets one), else
+// permissionMode is the mode a workspace's Claude launches with: plan while
+// the session is in plan mode, else the one its create asked for, else the agent's default (the desktop shell sets one), else
 // bypassPermissions — but only on a Runtime Computer. A session in one of the
 // user's folders falls back to acceptEdits instead.
 func (s *Service) permissionMode(workspaceID string) claude.PermissionMode {
+	if f, _ := s.getFacts(workspaceID); f.Plan {
+		return claude.Plan // plan mode, over whatever mode it builds in
+	}
+	return s.buildMode(workspaceID)
+}
+
+// buildMode is the mode a workspace's agent builds in: what it launches with
+// out of plan mode, and goes to when a plan is approved.
+func (s *Service) buildMode(workspaceID string) claude.PermissionMode {
 	f, _ := s.getFacts(workspaceID)
 	if f.PermissionMode != "" {
 		return f.PermissionMode
@@ -1090,12 +1105,79 @@ func (s *Service) Stop(ctx context.Context, workspaceID string) error {
 // be read as a choice. That send fails with errAwaitsAnswer for the user to
 // answer in the terminal.
 func (s *Service) SendMessage(workspaceID, content string) error {
+	return s.SendPrompt(workspaceID, Prompt{Content: content})
+}
+
+// SendPrompt is SendMessage for a prompt in a mode (plan.go): the session is
+// put in the prompt's mode first, and a prompt that answers the agent's plan
+// closes its menu first.
+func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
+	if s.jcode != nil {
+		if p.Mode == ModePlan {
+			return ErrModeUnsupported
+		}
+		lock := s.sendLock(workspaceID)
+		lock.Lock()
+		defer lock.Unlock()
+		return s.jcode.SendMessage(workspaceID, p.Content)
+	}
+	if p.Mode != "" && p.Mode != ModePlan && p.Mode != ModeBuild {
+		return fmt.Errorf("unknown mode %q", p.Mode)
+	}
+	// A switch relaunches the session, which takes its lifecycle lock, taken
+	// before the send lock as SetModel takes them. Taken for any prompt that
+	// names a mode, not only one that switches as things stand: whether it
+	// switches is known only under the send lock, and a prompt ahead of it
+	// may switch the session the other way meanwhile. Uncontended, it costs
+	// nothing; and it is let go as soon as any switch is done, so the paste
+	// (up to sendTimeout) doesn't hold up an attach's Start behind it.
+	unlockLifecycle := func() {}
+	if p.Mode != "" {
+		unlockLifecycle = s.lockLifecycle(workspaceID)
+	}
+	defer func() { unlockLifecycle() }()
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
 	defer lock.Unlock()
-	if s.jcode != nil {
-		return s.jcode.SendMessage(workspaceID, content)
+	if p.RequirePlan {
+		f, ok := s.getFacts(workspaceID)
+		switch {
+		case !ok:
+			return ErrUnknownWorkspace
+		case !f.Plan:
+			return ErrNoPlanWaiting
+		}
 	}
+	if p.Dismiss {
+		if err := s.dismissHeld(workspaceID); err != nil {
+			return err
+		}
+	}
+	if s.switchesMode(workspaceID, p.Mode) {
+		if err := s.switchModeHeld(workspaceID, p.Mode == ModePlan, lock); err != nil {
+			return err
+		}
+	}
+	// Lifecycle before send, released send-lock-held: nothing waits on the
+	// one while holding the other, so letting it go early can't deadlock.
+	unlockLifecycle()
+	unlockLifecycle = func() {}
+	return s.deliverHeld(workspaceID, s.promptText(workspaceID, p.Content), lock)
+}
+
+// promptText is a prompt as the session's agent is given it: as typed, but
+// for a Codex session in plan mode, which is told with each prompt that a
+// plan is wanted (codex.PlanPreamble).
+func (s *Service) promptText(workspaceID, content string) string {
+	if f, _ := s.getFacts(workspaceID); f.Plan && f.Agent == AgentCodex {
+		return codex.PlanPreamble + content
+	}
+	return content
+}
+
+// deliverHeld pastes a prompt into the agent's prompt box and submits it, for
+// a caller holding the send lock.
+func (s *Service) deliverHeld(workspaceID, content string, lock *sendState) error {
 	// The send lock is held throughout, so a hung tmux must not hold it forever:
 	// past the deadline its commands are killed and the next send can proceed.
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
@@ -1208,13 +1290,17 @@ func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
 	if s.jcode != nil {
 		return s.jcode.Interrupt(ctx, workspaceID)
 	}
-	facts, ok := s.getFacts(workspaceID)
-	if !ok {
+	if _, ok := s.getFacts(workspaceID); !ok {
 		return ErrUnknownWorkspace
 	}
 	lock := s.sendLock(workspaceID)
 	lock.Lock()
 	defer lock.Unlock()
+	return s.interruptHeld(ctx, workspaceID)
+}
+
+// interruptHeld is Interrupt for a caller holding the send lock.
+func (s *Service) interruptHeld(ctx context.Context, workspaceID string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), interruptTimeout)
 	defer cancel()
 	name := sessionName(workspaceID)
@@ -1249,7 +1335,7 @@ func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
 		case <-time.After(interruptPollEvery):
 		}
 		if idle, err := stopped(); err == nil && idle {
-			if facts.Agent == AgentCodex {
+			if f, _ := s.getFacts(workspaceID); f.Agent == AgentCodex {
 				s.codexInterrupted(workspaceID) // Codex records no stop of its own
 			}
 			return nil
