@@ -82,12 +82,13 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
 
 /**
  * Whether the state event at `index` is a "starting" that the stream has
- * since outgrown. The agent sends a session's state once, as the stream is
- * connected, and "starting" only means Claude's log didn't exist yet; it sends
- * no "running" when the log appears. So once a message from the log follows
- * it, the session is running, and the row would only misstate it. The echo of
- * a prompt just sent is not from the log: the session may not have taken it
- * yet (a box still booting), so it is still starting.
+ * since outgrown. "starting" only means Claude's log didn't exist yet. The
+ * agent now sends "running" when the log appears, but agents older than that
+ * sent the state only once, as the stream connected, and boxes keep running
+ * them until upgraded, so this stays. Once a message from the log follows it,
+ * the session is running, and the row would only misstate it. The echo of a
+ * prompt just sent is not from the log: the session may not have taken it yet
+ * (a box still booting), so it is still starting.
  */
 function staleStart(events: AgentEvent[], index: number): boolean {
   const event = events[index];
