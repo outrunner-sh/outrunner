@@ -19,7 +19,8 @@ import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
  * renew for sessions already running, and the warm pool's boxes nothing else
  * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
  * restart cut off (lib/session/provisioning.deps.ts), and the deployment's
- * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), for
+ * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), and
+ * the Slack agent's old keys of its own (lib/db/slack-agent.ts), for
  * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's
  * route: it takes only BILLING_CRON_SECRET, as a bearer token. Answers what
  * the run did.

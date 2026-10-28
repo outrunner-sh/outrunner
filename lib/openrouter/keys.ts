@@ -38,6 +38,17 @@ export class OutrunnerModelsUnavailableError extends Error {
 /** The user's key can't run anything, so it isn't handed out: handed out, it
  *  would only fail inside the session with OpenRouter's raw error. The message
  *  is for the user. */
+/** OpenRouter refused a change to a key, with its HTTP status. */
+export class OpenRouterKeyError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "OpenRouterKeyError";
+    this.status = status;
+  }
+}
+
 export class ModelKeyRefusedError extends Error {
   constructor(message: string) {
     super(message);
@@ -223,7 +234,7 @@ export async function disableUserKey(hash: string): Promise<void> {
     body: JSON.stringify({ disabled: true }),
   });
   if (!response.ok) {
-    throw new Error(`OpenRouter would not disable a key (HTTP ${response.status}).`);
+    throw new OpenRouterKeyError(`OpenRouter would not disable a key (HTTP ${response.status}).`, response.status);
   }
 }
 
