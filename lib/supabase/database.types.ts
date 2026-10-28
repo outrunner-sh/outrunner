@@ -146,12 +146,13 @@ type WorkspaceRow = {
   /** When its status last turned failed (20261102163000); null otherwise. */
   failed_at?: string | null;
   /** A session, or a Mission (20261102170000_missions.sql). */
+  /** A session, or a Mission (20261102200000_missions.sql). */
   kind: "session" | "mission";
   /** The Mission a Runner works for; null for any other session. */
   parent_mission_id: string | null;
 };
 
-// supabase/migrations/20261102170000_missions.sql
+// supabase/migrations/20261102200000_missions.sql
 type MissionTokenRow = { mission_id: string; token_hash: string; minted_at: string };
 type MissionNotesRow = { mission_id: string; body: string; updated_at: string };
 export type MissionEventKind = "finished" | "ready" | "needs_attention" | "merged" | "closed" | "archived";
@@ -1585,7 +1586,7 @@ export type Database = {
     };
     Views: Record<never, never>;
     Functions: {
-      // supabase/migrations/20261102170000_missions.sql
+      // supabase/migrations/20261102200000_missions.sql
       claim_mission_delivery: {
         Args: { target: string; lease_seconds: number; settle_seconds: number; max_wait_seconds: number };
         Returns: { delivery_id: string; attempt: number }[];

@@ -7,7 +7,7 @@
 import type { WorkspaceStatus } from "@/lib/runtime/types";
 
 /** A Mission holds at most this many Runners that aren't archived; the
- *  database's trigger holds it to the same (20261102170000_missions.sql). */
+ *  database's trigger holds it to the same (20261102200000_missions.sql). */
 export const MAX_RUNNERS = 20;
 
 /** A Runner in one of these no longer takes a place under the cap. */

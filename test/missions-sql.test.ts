@@ -40,7 +40,7 @@ before(() => {
   u.pathname = `/${name}`;
   url = u.toString();
   execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", "test/sql/missions-stub.sql"]);
-  for (const file of readdirSync("supabase/migrations").filter((f) => f >= "20261102170000" && f.includes("mission")).sort()) {
+  for (const file of readdirSync("supabase/migrations").filter((f) => f >= "20261102200000" && f.includes("mission")).sort()) {
     execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-q", "-f", `supabase/migrations/${file}`]);
   }
 });

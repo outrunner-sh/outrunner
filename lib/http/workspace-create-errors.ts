@@ -35,7 +35,7 @@ export function branchTakenByTeammateResponse(): Response {
  * it tests without Next.
  */
 export function workspaceCreateErrorResponse(error: unknown, context: string): Response {
-  // A Mission's Runners are capped in the database (20261102170000_missions.sql).
+  // A Mission's Runners are capped in the database (20261102200000_missions.sql).
   if (isRunnerCap(error)) {
     return Response.json(
       { error: "This Mission already has 20 Runners that aren't archived. Archive a finished one first." },
