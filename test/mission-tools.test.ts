@@ -26,6 +26,7 @@ function session(id: string, patch: Partial<Workspace> = {}): Workspace {
     checkouts: null,
     agent: "claude",
     model: null,
+    mode: "build",
     lastActiveAt: null,
     errorMessage: null,
     createdAt: "2026-10-01T00:00:00Z",
