@@ -149,7 +149,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm, protocol.FeaturePlanMode, protocol.FeatureCompact, protocol.FeatureMessageKeys},
 	})
 }
 
@@ -506,8 +506,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "mode is plan or build")
 		return
 	}
-	err := s.ws.SendPrompt(r.PathValue("id"), workspace.Prompt{Content: req.Content, Mode: req.Mode, Dismiss: req.Dismiss})
+	err := s.ws.SendPromptOnce(r.PathValue("id"), workspace.Prompt{Content: req.Content, Mode: req.Mode, Dismiss: req.Dismiss}, req.Key)
 	switch {
+	case errors.Is(err, workspace.ErrInvalidMessageKey):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, workspace.ErrModeBusy), errors.Is(err, workspace.ErrSessionUnchecked):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 	case errors.Is(err, workspace.ErrModeUnsupported):

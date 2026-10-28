@@ -21,7 +21,8 @@ import { conversationForWorkspace, getConversationById, getInstallation, type Sl
 import { optionalEnv } from "@/lib/env";
 import { asBrowser, wakeAndSend } from "@/lib/slack/research";
 import { markdownToSlack, slackChunks } from "@/lib/slack/research-text";
-import { fromThread, replyChunks, turnOver } from "@/lib/slack/relay-text";
+import { fromThread, replyChunks } from "@/lib/slack/relay-text";
+import { turnOver, watchUntil } from "@/lib/session/turn-watch";
 import { addReaction, postMessage } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { actAsUser } from "@/lib/supabase/acting-user";
@@ -166,11 +167,7 @@ export async function relayReply(conversation: SlackConversation): Promise<boole
 /** Watch for the reply to what was just sent, for a while; the tick carries
  *  on after. */
 export async function watchForReply(conversation: SlackConversation): Promise<void> {
-  const until = Date.now() + WATCH_MS;
-  while (Date.now() < until) {
-    await new Promise((resolve) => setTimeout(resolve, WATCH_EVERY_MS));
-    if (await relayReply(conversation).catch(() => false)) return;
-  }
+  await watchUntil(() => relayReply(conversation), { forMs: WATCH_MS, everyMs: WATCH_EVERY_MS });
 }
 
 /**

@@ -81,3 +81,20 @@ export async function writeBoxFile(
   if (!data?.daytona_sandbox_id || data.status !== "ready") return false;
   return resolution.provider.writeWorkspaceFile(data.daytona_sandbox_id, workspace.worktreePath, relPath, Buffer.from(content), options);
 }
+
+/** One look at a session's box for its turn watch (lib/session/turn-watch.ts):
+ *  whether it answered, whether its agent is mid-turn (null for an agent too
+ *  old to say), and its summary. */
+export async function lookAtBox(
+  workspace: Workspace,
+): Promise<{ reachable: boolean; working: boolean | null; summary: WorkspaceSummary | null }> {
+  const reached = await reachBox(workspace).catch(() => null);
+  if (!reached) return { reachable: false, working: null, summary: null };
+  const { workspaceId: _, ...box } = reached.identity;
+  void _;
+  const [summary, activity] = await Promise.all([
+    reached.agent.workspaceSummary(reached.identity).catch(() => null),
+    reached.agent.activity(box).catch(() => null),
+  ]);
+  return { reachable: summary !== null, working: activity ? activity.turnInProgress : null, summary };
+}

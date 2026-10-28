@@ -169,6 +169,39 @@ type MissionEventRow = {
   delivery_id: string | null;
   delivered_at: string | null;
 };
+// supabase/migrations/20261102180000_mission_events.sql
+type TurnWatchRow = {
+  workspace_id: string;
+  purpose: "runner";
+  sent_at: string;
+  baseline_activity: string | null;
+  seen_working: boolean;
+  quiet_since: string | null;
+  quiet_activity: string | null;
+  last_message: string | null;
+  unreachable_since: string | null;
+  checked_at: string | null;
+};
+type RunnerPullRequestRow = {
+  runner_id: string;
+  repo: string;
+  number: number;
+  url: string;
+  title: string;
+  head_ref: string;
+  base_ref: string | null;
+  head_sha: string | null;
+  state: "open" | "merged" | "closed";
+  first_activity_at: string;
+  last_activity_at: string;
+  verdict: "ready" | "needs_attention" | null;
+  verdict_reason: string | null;
+  reported_verdict: string | null;
+  reported_sha: string | null;
+  decision_seq: number;
+  checked_at: string | null;
+  created_at: string;
+};
 type MissionDeliveryRow = {
   id: string;
   mission_id: string;
@@ -1399,6 +1432,18 @@ export type Database = {
         Row: MissionEventRow;
         Insert: Insert<MissionEventRow, "mission_id" | "runner_id" | "kind" | "idempotency_key">;
         Update: Partial<MissionEventRow>;
+        Relationships: [];
+      };
+      turn_watches: {
+        Row: TurnWatchRow;
+        Insert: Insert<TurnWatchRow, "workspace_id" | "purpose" | "sent_at">;
+        Update: Partial<TurnWatchRow>;
+        Relationships: [];
+      };
+      runner_pull_requests: {
+        Row: RunnerPullRequestRow;
+        Insert: Insert<RunnerPullRequestRow, "runner_id" | "repo" | "number" | "url" | "head_ref">;
+        Update: Partial<RunnerPullRequestRow>;
         Relationships: [];
       };
       mission_deliveries: {

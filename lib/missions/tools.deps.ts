@@ -11,7 +11,9 @@ import { boxSummary, boxWorking, writeBoxFile } from "@/lib/missions/box";
 import { NOTES_FILE } from "@/lib/missions/rules";
 import { runnerPullRequests } from "@/lib/missions/pulls";
 import { startRunner } from "@/lib/missions/spawn";
+import { sendToRunner } from "@/lib/missions/watch.deps";
 import {
+  lastRecordedResponse,
   queueMessage,
   queuedCounts,
   readNotes,
@@ -20,7 +22,7 @@ import {
   writeNotes,
 } from "@/lib/missions/store";
 import type { MissionToolDeps } from "@/lib/missions/tools";
-import { asBrowser, wakeAndSend } from "@/lib/slack/research";
+import { asBrowser } from "@/lib/slack/research";
 import { allows } from "@/lib/orgs/access";
 import { actAsUser } from "@/lib/supabase/acting-user";
 
@@ -53,10 +55,11 @@ export function missionToolDeps(): MissionToolDeps {
     session: sessionById,
     runners: runnersOf,
     working: boxWorking,
-    latestResponse: async (session) => (await boxSummary(session))?.lastAssistantMessage ?? null,
+    latestResponse: async (session) => (await boxSummary(session))?.lastAssistantMessage ?? (await lastRecordedResponse(session.id)),
     pullRequests: runnerPullRequests,
     startRunner,
-    send: (runner, content) => wakeAndSend(runner.ownerId, runner.id, content).catch(() => false),
+    // Its turn is watched, so the Mission hears when it ends.
+    send: sendToRunner,
     queue: queueMessage,
     queued: queuedCounts,
     archive: (runner) => archiveAsOwner(runner.ownerId, runner.id, runner.status),

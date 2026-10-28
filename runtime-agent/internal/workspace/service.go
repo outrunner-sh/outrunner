@@ -1739,6 +1739,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.authFiles().remove(workspaceID)
 	s.removeEnvironment(workspaceID)
 	s.removeProvided(workspaceID)
+	s.forgetMessageKeys(workspaceID)
 	s.forgetAsk(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))

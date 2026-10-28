@@ -117,3 +117,21 @@ export async function saveBrief(missionId: string, runnerId: string, brief: stri
   const { error } = await db().from("mission_runner_briefs").upsert({ runner_id: runnerId, mission_id: missionId, brief }, { onConflict: "runner_id" });
   if (error) throw error;
 }
+
+/** The Runner's reply as last read: its last `finished` event's, or its
+ *  watch's, for when its box is asleep. */
+export async function lastRecordedResponse(runnerId: string): Promise<string | null> {
+  const [{ data: watch }, { data: event }] = await Promise.all([
+    db().from("turn_watches").select("last_message").eq("workspace_id", runnerId).maybeSingle(),
+    db()
+      .from("mission_events")
+      .select("payload")
+      .eq("runner_id", runnerId)
+      .eq("kind", "finished")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const recorded = (event?.payload as { response?: unknown } | null)?.response;
+  return watch?.last_message ?? (typeof recorded === "string" ? recorded : null);
+}
