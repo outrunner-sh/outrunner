@@ -58,6 +58,9 @@ type EnvKey =
   | "GITHUB_APP_SLUG"
   | "GITHUB_APP_PRIVATE_KEY"
   | "GITHUB_APP_WEBHOOK_SECRET"
+  // Dollars a month on Outrunner's models for each org's outrunner-connector,
+  // which its automations run as (lib/billing/plans.ts connectorPlan).
+  | "AUTOMATION_MODEL_ALLOWANCE_USD"
   // Stripe (RUNTIME_BILLING=stripe): a restricted or secret key, and the
   // webhook endpoint's signing secret.
   | "STRIPE_SECRET_KEY"

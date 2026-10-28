@@ -54,6 +54,7 @@ async function AutomationSection({ params }: { params: Params }) {
       }}
       repos={repos}
       coverage={coverage}
+      byConnector={!active.personal}
       editable={active.role === "admin"}
     />
   );

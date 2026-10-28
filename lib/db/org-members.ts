@@ -10,6 +10,7 @@ import type { User } from "@supabase/supabase-js";
 
 import { ADMITTED_KEY, githubLogin, isAdmitted, onAllowlist } from "@/lib/auth/allowlist";
 import { hashSecret, randomSecret } from "@/lib/auth/cli-login";
+import { connectorsAmong } from "@/lib/automations/connector";
 import type { OrgRole } from "@/lib/orgs/active";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -105,8 +106,11 @@ export async function listMembers(orgId: string): Promise<Member[]> {
     .select("user_id, role, created_at")
     .eq("org_id", orgId);
   if (error) throw error;
-  const byId = await people((data ?? []).map((m) => m.user_id));
-  return (data ?? [])
+  // Not the org's outrunner-connector, a service user its automations run as.
+  const connectors = await connectorsAmong((data ?? []).map((m) => m.user_id));
+  const humans = (data ?? []).filter((m) => !connectors.has(m.user_id));
+  const byId = await people(humans.map((m) => m.user_id));
+  return humans
     .map((m) => ({ ...byId.get(m.user_id)!, role: m.role as OrgRole, joinedAt: m.created_at }))
     .sort((a, b) => Number(b.role === "admin") - Number(a.role === "admin") || a.name.localeCompare(b.name));
 }

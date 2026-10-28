@@ -19,7 +19,7 @@ import { AGENT_IDS, AGENTS, type AgentId, type AuthCredential, type AuthMethodId
 import type { AgentAuthStore } from "@/lib/agents/resolve";
 import { dueForRenewal } from "@/lib/billing/allowance-renewal";
 import { entitlingSubscriptions } from "@/lib/billing/billing-store";
-import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
+import { connectorPeriod, entitlementsFor, planFor } from "@/lib/billing/entitlements";
 import {
   type AllowanceState,
   type AllowanceStore,
@@ -864,8 +864,26 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
     if (error) throw error;
     for (const row of data) stored.set(row.user_id, row.neev_allowance_period);
   }
+  // And each org's connector (lib/automations/connector.ts), whose allowance
+  // turns over with the calendar month rather than a subscription.
+  const { data: connectors, error: connectorsError } = await createSupabaseAdminClient()
+    .from("org_connectors")
+    .select("user_id");
+  if (connectorsError) throw connectorsError;
+  const connectorDue: string[] = [];
+  const connectorIds = (connectors ?? []).map((c) => c.user_id);
+  if (connectorIds.length) {
+    const month = connectorPeriod(now).start.toISOString();
+    const { data, error } = await createSupabaseAdminClient()
+      .from("user_credentials")
+      .select("user_id, neev_allowance_period")
+      .in("user_id", connectorIds)
+      .not("neev_key_hash", "is", null);
+    if (error) throw error;
+    for (const row of data) if (row.neev_allowance_period !== month) connectorDue.push(row.user_id);
+  }
   let renewed = 0;
-  for (const userId of dueForRenewal(subscriptions, stored, now)) {
+  for (const userId of [...dueForRenewal(subscriptions, stored, now), ...connectorDue]) {
     try {
       await refreshModelAllowance(userId);
       renewed += 1;

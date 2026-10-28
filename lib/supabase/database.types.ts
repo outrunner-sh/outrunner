@@ -740,6 +740,12 @@ export type Database = {
         Update: Partial<AutomationRow>;
         Relationships: [];
       };
+      org_connectors: {
+        Row: { org_id: string; user_id: string; created_at: string };
+        Insert: { org_id: string; user_id: string };
+        Update: Partial<{ org_id: string; user_id: string }>;
+        Relationships: [];
+      };
       review_sessions: {
         Row: { workspace_id: string; created_at: string };
         Insert: { workspace_id: string };

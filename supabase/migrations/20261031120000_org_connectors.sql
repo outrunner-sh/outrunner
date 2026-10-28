@@ -1,0 +1,41 @@
+-- Automations, run by the org: each team org's `outrunner-connector`, a
+-- service user the server makes the first time one of the org's automations
+-- runs (lib/automations/connector.ts). Automation sessions run as it rather
+-- than as a member: they're in no one's list, and they're paid by the
+-- deployment, on the connector's own plan and monthly allowance on
+-- Outrunner's models (lib/billing/entitlements.ts), not a member's.
+--
+-- It's an admin of the org (write on every project, which a review's token
+-- needs), kept off the Members page. The server's alone (RLS on, no policy,
+-- grants revoked).
+-- ---------------------------------------------------------------------------
+
+create table if not exists org_connectors (
+  org_id uuid primary key references organizations (id) on delete cascade,
+  user_id uuid not null unique references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
+alter table org_connectors enable row level security;
+revoke all on table org_connectors from anon, authenticated;
+
+-- An org's connector is an admin, for write on its projects, but no admin
+-- in the sense of keeping it run: the last of its people can't leave, or be
+-- made a member, leaving only the connector.
+create or replace function would_orphan_org(target_org uuid, member uuid)
+returns boolean
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  perform 1 from organizations where id = target_org for update;
+  return exists (
+    select 1 from organization_members where org_id = target_org and user_id = member and role = 'admin'
+  ) and not exists (
+    select 1 from organization_members m
+    where m.org_id = target_org and m.user_id <> member and m.role = 'admin'
+      and not exists (select 1 from org_connectors c where c.user_id = m.user_id)
+  );
+end;
+$$;

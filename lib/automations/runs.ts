@@ -66,6 +66,9 @@ export type StartDeps = {
   }): Promise<{ earlierSessions: string[]; superseded: boolean }>;
   /** Archive them as the runner; how many were. */
   archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
+  /** The org's connector (lib/automations/connector.ts), made if need be;
+   *  null for a personal org, which has none. */
+  orgConnector(orgId: string): Promise<string | null>;
 };
 
 /** Start a run's session and keep how it went. Never throws: the run's
@@ -74,7 +77,18 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
   const { candidate, event } = run;
   const settle = (outcome: Parameters<StartDeps["settleRun"]>[1]) =>
     deps.settleRun(run.runId, outcome).catch((error: unknown) => console.error(`Run ${run.runId} couldn't be kept`, error));
-  if (!candidate.runsAs) {
+  // A team org's runs are its connector's: in no member's list, and paid by
+  // the deployment on its own allowance. A personal org's, its owner's, who
+  // set it up.
+  let runner: string | null;
+  try {
+    runner = (await deps.orgConnector(candidate.orgId)) ?? candidate.runsAs;
+  } catch (error) {
+    console.error(`Run ${run.runId}: couldn't get the org's connector`, error);
+    await settle({ status: "refused", reason: "Outrunner couldn't set up the org's connector to run it. It runs on the next commit." });
+    return;
+  }
+  if (!runner) {
     await settle({
       status: "refused",
       reason: "Whoever last changed this automation is no longer in the org. It runs again once an admin saves it.",
@@ -82,7 +96,7 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     return;
   }
   const result = await deps.startServerSession({
-    userId: candidate.runsAs,
+    userId: runner,
     projectId: candidate.projectId,
     baseBranch: event.headRef,
     title: runTitle(candidate.name, event),
@@ -116,7 +130,7 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
         projectId: candidate.projectId,
         prNumber: event.number,
       });
-      await deps.archiveServerSessions(candidate.runsAs, superseded ? [result.workspaceId] : earlierSessions);
+      await deps.archiveServerSessions(runner, superseded ? [result.workspaceId] : earlierSessions);
     } catch (error) {
       console.error(`Run ${run.runId}: couldn't archive the earlier review sessions`, error);
     }
