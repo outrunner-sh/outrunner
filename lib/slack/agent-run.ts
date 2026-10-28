@@ -21,6 +21,7 @@ import {
   getInstallation,
   openConversation,
   orgModelKey,
+  watchModelKey,
   type SlackConversation,
   type SlackInstallation,
   updateConversation,
@@ -536,10 +537,9 @@ async function offerIfWork(install: SlackInstallation, message: AgentMessage): P
   if (!settings?.watch) return;
   let key: string;
   try {
-    key = await orgModelKey(settings.orgId);
-  } catch (error) {
-    // A spent allowance included: logged, so a channel gone quiet has a trace.
-    console.error(`Slack agent: no model key to watch ${message.channel} with`, error);
+    key = await watchModelKey(settings.orgId);
+  } catch {
+    // A spent allowance included; watchModelKey logs it, once a minute.
     return;
   }
   const classification = parseClassification(await oneShot(key, CLASSIFIER_PROMPT, slackToMarkdown(message.text).slice(0, 4000)));

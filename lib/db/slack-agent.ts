@@ -302,17 +302,38 @@ export async function orgModelKey(orgId: string): Promise<string> {
   const source = keySource();
   if (source === null) throw new OutrunnerModelsUnavailableError();
   if (source === "shared") return sharedApiKey() as string;
-  const now = Date.now();
-  const kept = keptKeys.get(orgId);
-  if (kept && now - kept.at < KEPT_KEY_MS) return kept.key;
   const owner = (await personalOwners([orgId])).get(orgId);
-  const key = await (owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId));
-  keptKeys.set(orgId, { key, at: now });
-  return key;
+  return owner ? outrunnerModelKey(owner) : orgOutrunnerModelKey(orgId);
 }
 
-/** How long a key checked against its allowance is used without asking
- *  OpenRouter again: a watched channel asks for one at every message, and
- *  OpenRouter's own cap still holds in between. */
-const KEPT_KEY_MS = 60_000;
-const keptKeys = new Map<string, { key: string; at: number }>();
+/** How long a watched channel's answer stands (a key, or why there's none):
+ *  it asks at every message, and each full ask reads the key's usage from
+ *  OpenRouter. OpenRouter's own cap still holds in between. */
+const WATCH_ANSWER_MS = 60_000;
+const watchAnswers = new Map<string, { at: number; key?: string; error?: unknown }>();
+
+/**
+ * {@link orgModelKey} for a watched channel's message: the answer from the
+ * last minute, refusals included, so a busy channel neither asks OpenRouter
+ * at every message nor, once the allowance is spent, at every one after.
+ * A reply to someone always asks afresh (orgModelKey).
+ */
+export async function watchModelKey(orgId: string): Promise<string> {
+  const now = Date.now();
+  const kept = watchAnswers.get(orgId);
+  if (kept && now - kept.at < WATCH_ANSWER_MS) {
+    if (kept.key !== undefined) return kept.key;
+    throw kept.error;
+  }
+  try {
+    const key = await orgModelKey(orgId);
+    watchAnswers.set(orgId, { at: now, key });
+    return key;
+  } catch (error) {
+    // Said once a minute, not at every message: a channel gone quiet has a
+    // trace without a flood.
+    console.error(`Slack agent: no model key for org ${orgId}'s watched channels`, error);
+    watchAnswers.set(orgId, { at: now, error });
+    throw error;
+  }
+}
