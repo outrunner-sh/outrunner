@@ -346,7 +346,7 @@ function AutomationList({
                 <th className="px-3 py-2 font-normal">Trigger</th>
                 <th className="px-3 py-2 font-normal">Repositories</th>
                 <th className="px-3 py-2 font-normal">Last run</th>
-                <th className="px-3 py-2 font-normal">Status</th>
+                <th className="px-3 py-2 font-normal">Enabled</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
