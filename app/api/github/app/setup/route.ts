@@ -74,7 +74,7 @@ export async function GET(request: Request) {
 
     // Not the installer as far as we know: ask GitHub who they are.
     const clientSecret = appClientSecret();
-    if (holder.installerId !== owner.githubId && clientSecret) {
+    if (!holder.orgId && holder.installerId !== owner.githubId && clientSecret) {
       const verifyState = signInstallState(config.webhookSecret, { ...state, installationId });
       return NextResponse.redirect(authorizeUrl(config.clientId, appUrl("/api/github/app/verify", origin), verifyState));
     }

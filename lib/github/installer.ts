@@ -27,8 +27,10 @@ export function authorizeUrl(clientId: string, redirectUri: string, state: strin
   return `https://github.com/login/oauth/authorize?${query}`;
 }
 
-/** The GitHub user id the code signs in, or null when GitHub won't say. The
- *  token it's traded for is revoked straight after. */
+/** The GitHub user id the code signs in, or null for a code GitHub won't
+ *  take (expired, used). Throws when GitHub doesn't answer as it should, so
+ *  a hiccup is "try again", not "you aren't the installer". The token it's
+ *  traded for is revoked straight after. */
 export async function githubUserFromCode(
   config: GitHubAppConfig,
   clientSecret: string,
@@ -41,14 +43,17 @@ export async function githubUserFromCode(
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify({ client_id: config.clientId, client_secret: clientSecret, code, redirect_uri: redirectUri }),
   });
-  const { access_token: token } = ((await traded.json().catch(() => null)) ?? {}) as { access_token?: string };
-  if (!traded.ok || !token) return null;
+  const body = ((await traded.json().catch(() => null)) ?? {}) as { access_token?: string; error?: string };
+  if (body.error === "bad_verification_code") return null;
+  const token = body.access_token;
+  if (!traded.ok || !token) throw new Error(`GitHub didn't trade the code (${traded.status} ${body.error ?? ""})`);
   try {
     const user = await doFetch("https://api.github.com/user", {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
     });
+    if (!user.ok) throw new Error(`GitHub didn't say who signed in (${user.status})`);
     const { id } = ((await user.json().catch(() => null)) ?? {}) as { id?: unknown };
-    return user.ok && typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
+    return typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
   } finally {
     await doFetch(`https://api.github.com/applications/${encodeURIComponent(config.clientId)}/token`, {
       method: "DELETE",

@@ -39,9 +39,9 @@ test("a code is traded for the GitHub user's id, and its token revoked straight 
   assert.ok(calls.some((c) => c === "DELETE https://api.github.com/applications/Iv1.app/token"));
 });
 
-test("a code GitHub won't take, or a user it won't name, is no one", async () => {
+test("a code GitHub won't take is no one; GitHub not answering is an error to retry", async () => {
   assert.equal(await githubUserFromCode(config, "secret", "code", "r", fakeGitHub({}).doFetch), null);
-  const unnamed = fakeGitHub({ token: "ghu_x", userOk: false });
-  assert.equal(await githubUserFromCode(config, "secret", "code", "r", unnamed.doFetch), null);
-  assert.ok(unnamed.calls.some((c) => c.startsWith("DELETE")));
+  const down = fakeGitHub({ token: "ghu_x", userOk: false });
+  await assert.rejects(githubUserFromCode(config, "secret", "code", "r", down.doFetch));
+  assert.ok(down.calls.some((c) => c.startsWith("DELETE")));
 });

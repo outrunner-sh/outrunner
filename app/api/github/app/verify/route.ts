@@ -21,7 +21,7 @@ export async function GET(request: Request) {
   const back = (query: string) => NextResponse.redirect(appUrl(`/settings/org/github?${query}`, origin));
 
   const owner = await getOwner();
-  if (!owner) return NextResponse.redirect(appUrl("/signin?next=/settings/org/github", origin));
+  if (!owner) return NextResponse.redirect(appUrl(`/signin?next=${encodeURIComponent(`${url.pathname}${url.search}`)}`, origin));
   const config = githubAppConfig();
   const clientSecret = appClientSecret();
   if (!config || !clientSecret) return back("error=not_configured");
@@ -29,13 +29,13 @@ export async function GET(request: Request) {
   const state = readInstallState(config.webhookSecret, url.searchParams.get("state"));
   const code = url.searchParams.get("code");
   if (!state || state.userId !== owner.id || !state.installationId) return back("error=link_expired");
-  // Declined on GitHub.
-  if (!code) return back("error=not_installer");
+  // Cancelled on GitHub.
+  if (!code) return back("error=verify_declined");
 
   try {
     if ((await memberRole(state.orgId, owner.id)) !== "admin") return back("error=not_admin");
     const githubId = await githubUserFromCode(config, clientSecret, code, appUrl("/api/github/app/verify", origin));
-    if (!githubId) return back("error=not_installer");
+    if (!githubId) return back("error=verify_declined");
     const installation = await getInstallation(config, state.installationId);
     if (!installation) return back("error=no_installation");
     await claimInstallation({ orgId: state.orgId, installation, githubId, userId: owner.id });
