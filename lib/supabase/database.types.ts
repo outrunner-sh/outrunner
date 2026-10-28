@@ -574,7 +574,7 @@ type AutomationRunRow = {
   id: string;
   automation_id: string;
   project_id: string;
-  /** A pull request's run's; null for any other (supabase/migrations/20261102130000_automation_schedules.sql). */
+  /** A pull request's run's; null for any other (supabase/migrations/20261102190000_automation_schedules.sql). */
   pr_number: number | null;
   pr_title: string;
   head_sha: string | null;
@@ -1476,7 +1476,7 @@ export type Database = {
         Returns: string;
       };
       // supabase/migrations/20261030130000_automations.sql, and its
-      // `settings` from 20261102130000_automation_schedules.sql.
+      // `settings` from 20261102190000_automation_schedules.sql.
       create_automation: {
         Args: {
           target_org: string;
