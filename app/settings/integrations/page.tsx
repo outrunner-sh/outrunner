@@ -11,6 +11,7 @@ import { optionalEnv } from "@/lib/env";
 /** How the last Sign in with Slack ended (app/api/integrations/slack/oauth). */
 const SLACK_RESULTS: Record<string, string> = {
   linked: "Slack connected. Try the shortcut again.",
+  installed: "The Slack app is installed. Use /triage or the message shortcut once to connect your account.",
   mismatch: "You signed in to Slack as someone other than the Slack user the link was for. Nothing was connected.",
   expired: "That link expired or was opened elsewhere. Run /triage in Slack for a new one.",
   cancelled: "Slack sign-in was cancelled.",
@@ -84,7 +85,7 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
           </ul>
         )}
         {slack && SLACK_RESULTS[slack] && (
-          <p className={slack === "linked" ? "text-xs text-foreground" : "text-xs text-destructive"}>
+          <p className={slack === "linked" || slack === "installed" ? "text-xs text-foreground" : "text-xs text-destructive"}>
             {SLACK_RESULTS[slack]}
           </p>
         )}

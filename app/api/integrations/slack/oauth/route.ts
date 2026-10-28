@@ -9,6 +9,7 @@ import { SLACK_SIGNIN_COOKIE, SLACK_SIGNIN_PATH, slackSignInConfig } from "@/lib
 
 /**
  * Where Sign in with Slack comes back to, to finish linking a Slack user
+ * (and where the app's install link lands, to finish installing it)
  * (app/slack/link). Linked only when every part holds: the state is ours and
  * fresh, this browser started it (the nonce cookie), the same Outrunner user
  * is signed in and still in the org they picked, and Slack says the person
@@ -27,6 +28,13 @@ export async function GET(request: Request) {
   // Used once, whatever happens next.
   jar.set(SLACK_SIGNIN_COOKIE, "", { path: SLACK_SIGNIN_PATH, maxAge: 0 });
   if (url.searchParams.get("error")) return done("cancelled");
+  // The app's install link comes back here too, with a code and no state
+  // (Slack sends installs to the first redirect URL). The install only takes
+  // once the code is traded; the token it gives isn't kept, as the app makes
+  // no calls of its own.
+  if (!url.searchParams.has("state") && url.searchParams.get("code")) {
+    return done((await finishInstall(config, url.searchParams.get("code") ?? "")) ? "installed" : "failed");
+  }
   const state = verifySignInState(url.searchParams.get("state"), config.secret);
   const code = url.searchParams.get("code");
   if (!state || !code || !nonce || state.nonce !== nonce) return done("expired");
@@ -52,4 +60,23 @@ export async function GET(request: Request) {
 
   await saveSlackLink(identity, owner.id, state.orgId);
   return done("linked");
+}
+
+/** Trade an install's code, which is what completes the app's install. */
+async function finishInstall(
+  config: { clientId: string; clientSecret: string; redirectUri: string },
+  code: string,
+): Promise<boolean> {
+  const response = await fetch("https://slack.com/api/oauth.v2.access", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      code,
+      redirect_uri: config.redirectUri,
+    }),
+  }).catch(() => null);
+  const answer = (await response?.json().catch(() => null)) as { ok?: boolean } | null;
+  return answer?.ok === true;
 }

@@ -53,7 +53,9 @@ are built from the payload.
      token_rotation_enabled: false
    ```
 
-2. **Install to Workspace**.
+2. **Install App → Install to Workspace** on the app's settings page. Slack completes that install itself.
+   The app's shareable install link also works once this code is deployed: it returns to
+   `/api/integrations/slack/oauth`, which completes the install.
 3. Copy these from **Basic Information → App Credentials** into the deployment's environment, then redeploy:
    - `SLACK_SIGNING_SECRET`: the **Signing Secret**. While it is unset, the endpoint answers 404.
    - `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`: the **Client ID** and **Client Secret**. Connecting an account
