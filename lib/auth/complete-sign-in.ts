@@ -1,8 +1,9 @@
 import type { User } from "@supabase/supabase-js";
 
 import { githubUserId } from "@/lib/auth/allowlist";
+import { signInTokenDecision } from "@/lib/auth/identity";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
-import { setGithubToken } from "@/lib/db/credentials";
+import { getGithubToken, setGithubToken } from "@/lib/db/credentials";
 import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
@@ -93,11 +94,10 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
  * it — `getSession()` later in the app returns nothing for it. Miss it here and
  * the user has to re-authenticate to get another one.
  *
- * Not stored when GitHub says the token isn't this user's GitHub account's:
- * the callback picks the token by which identity signed in last, and a wrong
- * pick (a Google token, say) must never replace a working GitHub token. When
- * GitHub can't be asked (an outage), the pick stands: it is right in the
- * common case, and this is the token's only chance to be kept.
+ * Stored only as GitHub vouches for it ({@link signInTokenDecision}): the
+ * callback picks the token by which identity signed in last, and a wrong pick
+ * (a Google token, say) must never replace a working GitHub token. When GitHub
+ * can't be asked (an outage), it's stored only if none is yet.
  *
  * Best-effort by design: a storage failure must not strand a user who has
  * otherwise signed in successfully. They land in the app with no GitHub
@@ -109,14 +109,20 @@ async function captureGithubToken(user: User, token: string | undefined): Promis
   const githubId = githubUserId(user);
   if (!token || !login || githubId === null) return;
   const owner = await tokenOwner(token);
-  if (owner.kind === "refused" || (owner.kind === "user" && owner.id !== githubId)) {
-    // Only a token the callback took for GitHub's gets here: one GitHub
-    // disowns means the pick was wrong, which is worth an alert.
+  // Whether one is stored matters only when GitHub couldn't be asked.
+  const hasStored = owner.kind === "unreachable" && (await getGithubToken(user.id).catch(() => null)) !== null;
+  const decision = signInTokenDecision(owner, githubId, hasStored);
+  // Each of these is worth an alert: a wrong pick, or GitHub out of reach.
+  if (decision === "disowned") {
     console.error(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
     return;
   }
+  if (decision === "keep_stored") {
+    console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; keeping the stored one.`);
+    return;
+  }
   if (owner.kind === "unreachable") {
-    console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; storing it as GitHub's.`);
+    console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; none is stored, so storing it.`);
   }
 
   try {

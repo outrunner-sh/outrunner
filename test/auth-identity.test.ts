@@ -3,7 +3,13 @@ import { test } from "node:test";
 
 import type { User } from "@supabase/supabase-js";
 
-import { hasGithubIdentity, mergeVerifiedEmails, providerVerifiedEmails, signInProvider } from "@/lib/auth/identity";
+import {
+  hasGithubIdentity,
+  mergeVerifiedEmails,
+  providerVerifiedEmails,
+  signInProvider,
+  signInTokenDecision,
+} from "@/lib/auth/identity";
 
 function user(identities: unknown[], extra: Record<string, unknown> = {}): User {
   return { identities, ...extra } as unknown as User;
@@ -76,4 +82,18 @@ test("an email identity's email counts once a code sent to it was used", () => {
     { email: "ada@acme.dev" },
   );
   assert.deepEqual(providerVerifiedEmails(both), [{ email: "ada@acme.dev", primary: true }]);
+});
+
+test("a sign-in's token is stored only as GitHub vouches for it", () => {
+  const ours = { kind: "user", id: 42 } as const;
+  const theirs = { kind: "user", id: 7 } as const;
+  // GitHub says it's this account's: stored, over a stored one too.
+  assert.equal(signInTokenDecision(ours, 42, false), "store");
+  assert.equal(signInTokenDecision(ours, 42, true), "store");
+  // Another account's, or none GitHub takes (a Google token): never stored.
+  assert.equal(signInTokenDecision(theirs, 42, true), "disowned");
+  assert.equal(signInTokenDecision({ kind: "refused" }, 42, false), "disowned");
+  // GitHub out of reach: kept only when it's the only one there is.
+  assert.equal(signInTokenDecision({ kind: "unreachable" }, 42, false), "store");
+  assert.equal(signInTokenDecision({ kind: "unreachable" }, 42, true), "keep_stored");
 });
