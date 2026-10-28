@@ -75,6 +75,18 @@ export function isLocalCommand(event: AgentEvent): boolean {
   return event.t === "message" && event.role === "user" && LOCAL_COMMAND.test(messageText(event));
 }
 
+/** How Claude Code records what a slash command it ran itself printed
+ *  (/compact's "Compacted", /model's): no turn for Claude to answer. The
+ *  command's own record (<command-name>, <command-message>) is not one: a
+ *  custom command or skill (/review) is recorded so too, and answered. */
+const LOCAL_COMMAND_OUTPUT = /^<local-command-(stdout|stderr|caveat)>/;
+
+/** Whether an event is the record of what a slash command Claude ran itself
+ *  printed: the turn is over, nothing more comes. */
+export function isLocalCommandOutput(event: AgentEvent): boolean {
+  return event.t === "message" && event.role === "user" && LOCAL_COMMAND_OUTPUT.test(messageText(event));
+}
+
 /** The command a record of one names ("/compact"), with its arguments; null
  *  for a record of what it printed, or anything else. */
 export function localCommandLine(text: string): string | null {
@@ -128,8 +140,9 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
     }
     if (event.t !== "message") continue;
     // A prompt or a tool result awaiting Claude; not the record of a stop, or
-    // of a command Claude ran itself.
-    if (event.role === "user") return !isInterruption(event) && !isLocalCommand(event);
+    // of what a command Claude ran itself printed. A command's own record
+    // (a custom command, a skill) is answered, so it awaits Claude.
+    if (event.role === "user") return !isInterruption(event) && !isLocalCommandOutput(event);
     const last = event.content[event.content.length - 1];
     if (!last) return false;
     return last.type !== "text" || event.stopReason === "tool_use";

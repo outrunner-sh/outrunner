@@ -137,3 +137,10 @@ test("a plan kept in a file is still a card, saying where the file is", () => {
   assert.equal(planOf({ planFilePath: "/home/runtime/.claude/plans/p.md" }), "The plan is in `/home/runtime/.claude/plans/p.md`.");
   assert.ok(pendingPlan([prompt("Plan it", "plan"), message("assistant", [{ type: "tool_use", id: "t9", name: "ExitPlanMode", input: { planFilePath: "/p.md" } }])]));
 });
+
+test("the page reads a custom command as answered, and a local command's output as the turn over", () => {
+  const review = message("user", [{ type: "text", text: "<command-message>review is running…</command-message>\n<command-name>/review</command-name>" }]);
+  assert.equal(claudeIsWorking([prompt("x"), said("done"), review]), true);
+  const printed = message("user", [{ type: "text", text: "<local-command-stdout>Set model to opus</local-command-stdout>" }]);
+  assert.equal(claudeIsWorking([prompt("x"), said("done"), printed]), false);
+});

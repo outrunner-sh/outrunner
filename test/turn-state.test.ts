@@ -119,3 +119,16 @@ test("a compaction mid-turn doesn't end the turn", () => {
   const compacted = { t: "message", uuid: "c", parentUuid: null, role: "assistant", timestamp: at, content: [], compact: { trigger: "auto" } } as AgentEvent;
   assert.equal(foldEvents(IDLE, [prompt, compacted]).turn, "working");
 });
+
+test("a custom command or skill is answered: its record starts a turn, as a prompt does", () => {
+  const at = "2026-10-28T10:00:00Z";
+  const review = {
+    t: "message",
+    uuid: "r",
+    parentUuid: null,
+    role: "user",
+    timestamp: at,
+    content: [{ type: "text", text: "<command-message>review is running…</command-message>\n<command-name>/review</command-name>" }],
+  } as AgentEvent;
+  assert.equal(foldEvents(IDLE, [review]).turn, "working");
+});
