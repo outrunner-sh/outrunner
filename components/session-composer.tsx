@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, CircleAlert, FileText, Plus, Search, Settings2, Square, X } from "lucide-react";
+import { ArrowUp, Check, CircleAlert, FileText, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -47,6 +47,7 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
+import type { DiffComment } from "@/lib/session/diff-comments";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
@@ -99,6 +100,7 @@ export function SessionComposer({
   stop,
   focusSignal = 0,
   prefill = null,
+  comments,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -141,6 +143,10 @@ export function SessionComposer({
    *  the new-session form), editable before it is sent. Never replaces what
    *  has been typed. */
   prefill?: string | null;
+  /** Comments on the session's diff, waiting to go with the next message:
+   *  shown above the box, each removable. The caller adds them to what is
+   *  sent (onSend gets the typed text alone). */
+  comments?: { items: DiffComment[]; onRemove: (id: string) => void };
 }) {
   const [value, setValue] = useState(prefill ?? "");
   // Arriving after the form mounted (fetched): put in an empty box, once.
@@ -188,8 +194,10 @@ export function SessionComposer({
     : undefined;
   const messageLabel = provider === "claude" || provider === "codex" ? `Message ${AGENTS[provider].label}` : "Message";
 
-  // A prompt of only attachments is legitimate — "here's a screenshot".
-  const hasSomethingToSend = value.trim() !== "" || attachments.readyIds.length > 0;
+  // A prompt of only attachments is legitimate — "here's a screenshot" — and
+  // so is one of only comments on the diff.
+  const hasSomethingToSend =
+    value.trim() !== "" || attachments.readyIds.length > 0 || (comments?.items.length ?? 0) > 0;
 
   /** Stage files, or say why they cannot be (attachNotice). */
   function addFiles(files: File[]) {
@@ -297,6 +305,22 @@ export function SessionComposer({
         >
           Not sent · {sendError}
         </InlineMessage>
+      )}
+      {comments && comments.items.length > 0 && (
+        <ul className="studio-composer-comments" aria-label="Comments on the diff">
+          {comments.items.map((c) => (
+            <li key={c.id} title={c.comment}>
+              <MessageSquareText aria-hidden />
+              <span className="font-mono">
+                {c.path}:{c.startLine === c.endLine ? c.startLine : `${c.startLine}–${c.endLine}`}
+              </span>
+              <span className="studio-composer-comment-text">{c.comment}</span>
+              <button type="button" onClick={() => comments.onRemove(c.id)} aria-label={`Remove comment on ${c.path}`}>
+                <X />
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       {attachments.items.length > 0 && (
         <ul className="flex flex-wrap gap-2 px-1 pb-2">

@@ -6,6 +6,7 @@ import { DiffView } from "@/components/diff-view";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
+import { useDiffComments } from "@/hooks/use-diff-comments";
 import type { WorkspaceChangesState } from "@/hooks/use-workspace-changes";
 import { cn } from "@/lib/utils";
 import type { ChangedFile } from "@/lib/runtime/types";
@@ -23,15 +24,19 @@ const statusVariant: Record<ChangedFile["status"], "default" | "secondary" | "ou
  * Conductor-style changes list: a single scrollable list of changed files, each
  * an inline expandable diff. No separate "select a file" pane. Opened from the
  * Environment panel's Changes row; `onBack` returns to it. The data (and its
- * polling) is the panel's, from useWorkspaceChanges.
+ * polling) is the panel's, from useWorkspaceChanges. Lines in a diff can be
+ * commented on; the comments wait (useDiffComments) for the session's next
+ * message, which carries them to the agent.
  */
 export function WorkspaceChanges({
+  workspaceId,
   changes,
   active,
   baseBranch,
   onBack,
   backRef,
 }: {
+  workspaceId: string;
   changes: WorkspaceChangesState;
   active: boolean;
   baseBranch?: string | null;
@@ -41,6 +46,7 @@ export function WorkspaceChanges({
   const { files, message, diffs, diffErrors, openPaths, toggle } = changes;
   const hasChanges = !!files && files.length > 0;
   const totals = changeTotals(files ?? []);
+  const comments = useDiffComments(workspaceId);
 
   return (
     // Esc steps back out of the list, as the back arrow does.
@@ -117,7 +123,14 @@ export function WorkspaceChanges({
                     {isOpen && (
                       <div className="studio-diff-file-body">
                         {diff !== undefined ? (
-                          <DiffView diff={diff} />
+                          <DiffView
+                            diff={diff}
+                            commenting={{
+                              items: comments.items.filter((c) => c.path === file.path),
+                              onAdd: (selection, comment) => comments.add({ path: file.path, ...selection, comment }),
+                              onRemove: comments.remove,
+                            }}
+                          />
                         ) : diffError !== undefined ? (
                           <p aria-live="polite" className="px-3 py-2 text-destructive text-xs">{diffError}</p>
                         ) : (

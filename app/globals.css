@@ -297,6 +297,29 @@
 .studio-diff-file-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 14px; text-align: left; background: transparent; cursor: pointer; }
 .studio-diff-file-head:hover { background: var(--studio-hover); }
 .studio-diff-file-body { padding: 4px 10px 12px; background: var(--studio-bg); }
+/* Commenting on a diff: the gutter is the handle for picking lines, picked
+   lines are marked on top of their red/green, and the comment box and the
+   comments waiting for the next message sit under the lines they are on. */
+.studio-diff-line > span:nth-child(-n+2) { cursor: pointer; }
+.studio-diff-line > span:nth-child(-n+2):hover { color: var(--studio-text); }
+.studio-diff-line.is-selected { background-image: linear-gradient(rgba(110,160,255,.16), rgba(110,160,255,.16)); box-shadow: inset 2px 0 0 rgba(110,160,255,.8); }
+.studio-diff-comment-form, .studio-diff-note { margin: 4px 8px 6px; border: 1px solid var(--studio-border); border-radius: 4px; background: var(--studio-panel-2); font-family: var(--font-geist-sans); }
+.studio-diff-comment-form { border-color: #3a3a3a; }
+.studio-diff-comment-form textarea { display: block; width: 100%; min-height: 52px; padding: 8px 10px; border: 0; outline: 0; resize: vertical; color: var(--studio-text); background: transparent; font: 13px/1.5 var(--font-geist-sans); }
+.studio-diff-comment-form textarea::placeholder { color: var(--studio-dim); }
+.studio-diff-comment-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--studio-border); }
+.studio-diff-comment-actions > span { flex: 1; color: var(--studio-dim); font-size: 12px; }
+.studio-diff-comment-actions button { height: 26px; padding: 0 10px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: transparent; font: 12px var(--font-geist-sans); cursor: pointer; }
+.studio-diff-comment-actions button:hover:not(:disabled) { background: var(--studio-hover); }
+.studio-diff-comment-actions button.is-primary { color: #0a0a0a; border-color: #ededed; background: #ededed; }
+.studio-diff-comment-actions button.is-primary:hover:not(:disabled) { border-color: #fff; background: #fff; }
+.studio-diff-comment-actions button:disabled { color: rgba(255,255,255,.45); border-color: rgba(255,255,255,.14); background: transparent; cursor: not-allowed; }
+.studio-diff-note { padding: 6px 6px 8px 10px; }
+.studio-diff-note-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--studio-muted); font-size: 11.5px; }
+.studio-diff-note-head button { display: grid; width: 20px; height: 20px; place-items: center; border: 0; border-radius: 3px; color: var(--studio-muted); background: transparent; cursor: pointer; }
+.studio-diff-note-head button:hover { color: var(--studio-text); background: var(--studio-hover); }
+.studio-diff-note-head svg { width: 12px; height: 12px; }
+.studio-diff-note p { margin: 2px 0 0; color: var(--studio-text-2); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .studio-changes-empty { display: flex; height: 100%; align-items: center; justify-content: center; padding: 24px; color: var(--studio-muted); font-size: 12px; text-align: center; }
 
 /* Workspace Session — conversation-first column. */
@@ -352,6 +375,18 @@
 .inline-message-details summary { cursor:pointer; font-size:11px; }
 .inline-message-details pre { margin:4px 0 0; padding:8px 10px; max-height:180px; overflow:auto; border:1px solid rgba(255,255,255,.08); border-radius:6px; background:#111; font:11px/1.5 var(--font-geist-mono); white-space:pre-wrap; }
 .studio-composer-message { padding:10px 16px 0; }
+/* Comments on the diff waiting to go with the next message, as chips above
+   the box: where (file:lines) and the start of what was said. */
+.studio-composer-comments { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 10px 12px 0; list-style: none; }
+.studio-composer-comments li { display: flex; max-width: 100%; min-width: 0; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 8px; border: 1px solid var(--studio-border); border-radius: 3px; color: var(--studio-text); background: var(--studio-panel-2); font-size: 12px; }
+.studio-composer-comments li > svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--studio-muted); }
+.studio-composer-comments li > .font-mono { flex-shrink: 0; font-size: 11.5px; }
+.studio-composer-comment-text { min-width: 0; max-width: 220px; overflow: hidden; color: var(--studio-muted); text-overflow: ellipsis; white-space: nowrap; }
+.studio-composer-comment-text::before { content: "· "; }
+.studio-composer-comments button { display: grid; width: 18px; height: 18px; flex-shrink: 0; place-items: center; padding: 0; border: 0; border-radius: 3px; color: var(--studio-muted); background: transparent; cursor: pointer; }
+.studio-composer-comments button:hover { color: var(--studio-text); background: var(--studio-hover); }
+.studio-composer-comments button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+.studio-composer-comments button svg { width: 12px; height: 12px; }
 /* In the session column, a notice sits where the error strip does. */
 .studio-live-session > .notice { margin:10px auto 0; max-width:736px; width:calc(100% - 32px); }
 
@@ -521,6 +556,12 @@
 .timeline-row { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 60px; }
 /* A prompt scrolls with its turn; the turn rail (.turn-rail) is the way back to it. */
 .timeline-prompt { padding: 10px 16px; border-radius: 4px; color: #d8d4d2; background: #282523; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Comments on the diff a prompt carried, as quotes under its words. */
+.timeline-quotes { display: flex; flex-direction: column; gap: 6px; white-space: normal; }
+.timeline-quote { margin: 0; overflow: hidden; border: 1px solid rgba(255,255,255,.1); border-radius: 3px; background: rgba(0,0,0,.18); }
+.timeline-quote figcaption { display: flex; gap: 8px; padding: 4px 10px; border-bottom: 1px solid rgba(255,255,255,.08); color: #a69996; font-size: 12px; }
+.timeline-quote pre { margin: 0; max-height: 160px; padding: 6px 10px; overflow: auto; color: #b4b4b4; background: #0d0d0d; font: 11.5px/1.6 var(--font-geist-mono); white-space: pre; }
+.timeline-quote p { margin: 0; padding: 6px 10px 8px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 /* The turn rail: a tick per prompt down the chat's left edge, centred on it,
    the turn being read long and bright. Each tick is a taller button than its
    line, so it is easy to hit; they shrink to fit a long session. Its card,

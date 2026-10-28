@@ -38,6 +38,7 @@ import {
   currentTurn,
 } from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { lineRange, parseCommentQuotes } from "@/lib/session/diff-comments";
 import { FOLLOW_SLACK_PX, followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
@@ -334,7 +335,7 @@ function NodeRow({ node }: { node: ConversationNode }) {
         </div>
       );
     case "prompt":
-      return <div className="timeline-prompt">{node.text}</div>;
+      return <Prompt text={node.text} />;
     case "interrupted":
       return <div className="timeline-thought">Interrupted</div>;
     case "prose":
@@ -344,6 +345,32 @@ function NodeRow({ node }: { node: ConversationNode }) {
     case "tool":
       return <ToolRow name={node.name} input={node.input} result={node.result} />;
   }
+}
+
+/** The user's prompt, and the comments on the diff it carried (withComments)
+ *  as quotes under it, rather than the blocks written for the agent. */
+function Prompt({ text }: { text: string }) {
+  const { text: words, quotes } = useMemo(() => parseCommentQuotes(text), [text]);
+  if (quotes.length === 0) return <div className="timeline-prompt">{text}</div>;
+  return (
+    <div className="timeline-prompt">
+      {words}
+      <div className={cn("timeline-quotes", words && "mt-2.5")}>
+        {quotes.map((quote, i) => (
+          <figure key={i} className="timeline-quote">
+            <figcaption>
+              <span className="font-mono">
+                {quote.path}:{lineRange(quote.startLine, quote.endLine).replace("-", "–")}
+              </span>
+              {quote.side === "old" && <span>removed</span>}
+            </figcaption>
+            {quote.code && <pre>{quote.code}</pre>}
+            <p>{quote.comment}</p>
+          </figure>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /** Claude's words, revealed as they arrive (useStreamedText) with a caret at

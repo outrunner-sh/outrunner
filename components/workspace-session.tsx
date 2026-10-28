@@ -72,6 +72,8 @@ import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
+import { useDiffComments } from "@/hooks/use-diff-comments";
+import { withComments } from "@/lib/session/diff-comments";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
 
 /** A send that didn't go: why, and how to try it again. `retry` is set only
@@ -489,6 +491,18 @@ export function WorkspaceSession({
   // While the agent works, or others wait ahead, a prompt joins the queue.
   const sendOrQueue = (text: string, attachmentIds: string[]) =>
     working || queue.length > 0 ? enqueue(text, attachmentIds) : send(text, attachmentIds);
+  // Comments on the diff (the Changes view's) go with the composer's next
+  // message, as quotes after its text. Only the ones it carried are cleared,
+  // once it has gone or joined the queue; a failed send keeps them for the next.
+  const diffComments = useDiffComments(workspaceId);
+  const sendWithComments = (text: string, attachmentIds: string[]) => {
+    const carried = diffComments.items;
+    if (carried.length === 0) return sendOrQueue(text, attachmentIds);
+    return sendOrQueue(withComments(text, carried), attachmentIds).then((landed) => {
+      if (landed) diffComments.clear(carried.map((c) => c.id));
+      return landed;
+    });
+  };
 
   const stop = () => {
     setStopping(true);
@@ -825,7 +839,8 @@ export function WorkspaceSession({
       )}
       {!waitingOnUser && (
         <SessionComposer
-          onSend={sendOrQueue}
+          onSend={sendWithComments}
+          comments={{ items: diffComments.items, onRemove: diffComments.remove }}
           placeholder={working ? "Queue a message for when this turn ends…" : undefined}
           canSend={canSend}
           // Sending waits on the connection alone, so say that, not the
