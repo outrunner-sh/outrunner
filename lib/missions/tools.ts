@@ -122,10 +122,13 @@ export const MISSION_TOOLS: ToolDefinition[] = [
   {
     name: "archive_runner",
     description:
-      "Archive a finished Runner, freeing its place. Refuses one that is working or has an open pull request unless force is set. Messaging it later restores it.",
+      "Archive a finished Runner, freeing its place and its box. Refuses one that is working or has an open pull request unless force is set; a Runner whose pull requests are all merged or closed is archived on its own, so this is rarely needed. Don't force it to free a box: its pull request still needs it for fixes. Messaging it later restores it.",
     inputSchema: {
       type: "object",
-      properties: { runner_id: RUNNER_ID, force: { type: "boolean", description: "Archive it even so." } },
+      properties: {
+        runner_id: RUNNER_ID,
+        force: { type: "boolean", description: "Archive it even so: only when its work is abandoned, or the user asked." },
+      },
       required: ["runner_id"],
       additionalProperties: false,
     },
