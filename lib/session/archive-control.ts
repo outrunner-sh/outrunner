@@ -1,0 +1,70 @@
+import { onRuntimeComputer, type Workspace } from "@/lib/runtime/types";
+
+/**
+ * Archiving a cloud session from the app: the sidebar row's Archive and the
+ * session page's. The server does the work (lib/session/archive-session.ts,
+ * through the lifecycle route); this says when it is offered, what it does,
+ * and asks for it.
+ */
+
+/** Whether Archive can be pressed now, and if not, why, for its tooltip. */
+export type ArchiveOffer = { can: true } | { can: false; why: string };
+
+/**
+ * Archive for `workspace`: offered only on a Runtime Computer, the one kind
+ * with a Snapshot to restore from, and only while there is something to
+ * archive (not one already archived, or gone). Pressable only from the
+ * statuses the lifecycle route archives from, ready or idle; from any other
+ * it shows, disabled, saying why.
+ */
+export function archiveOffer(workspace: Pick<Workspace, "status" | "provider">): ArchiveOffer | null {
+  if (!onRuntimeComputer(workspace.provider)) return null;
+  switch (workspace.status) {
+    case "ready":
+    case "idle":
+      return { can: true };
+    case "archived":
+    case "destroyed":
+      return null;
+    case "creating":
+    case "provisioning":
+      return { can: false, why: "It can be archived once its setup finishes." };
+    case "archiving":
+      return { can: false, why: "It's being archived." };
+    case "restoring":
+      return { can: false, why: "It can be archived once it's restored." };
+    case "destroying":
+      return { can: false, why: "It's being deleted." };
+    case "failed":
+      return { can: false, why: "It didn't start, so there's no work to save." };
+    case "suspended":
+    case "suspending":
+    case "resuming":
+      return { can: false, why: "Only a running session can be archived." };
+  }
+}
+
+/** What the archive confirmation says will happen. */
+export const ARCHIVE_CONSEQUENCE =
+  "Its work is saved, uncommitted changes included, and its space on the cloud computer is freed. " +
+  "Opening the session again restores it where it left off.";
+
+/**
+ * Archive the cloud session `id` (the lifecycle route's archive). Throws with
+ * a sentence to show when it could not.
+ */
+export async function archiveSession(id: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetchImpl(`/api/workspaces/${id}/lifecycle`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "archive" }),
+    });
+  } catch {
+    throw new Error("Could not reach Outrunner. Check your connection and try again.");
+  }
+  if (res.ok) return;
+  const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+  throw new Error(typeof body.error === "string" ? body.error : "Could not archive this session. Please try again.");
+}
