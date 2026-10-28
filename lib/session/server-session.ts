@@ -37,8 +37,9 @@ export type ServerSessionStart = {
   reviewAsApp?: boolean;
   /** Told the session's id once its row is made, before its setup. */
   onCreated?: (workspaceId: string) => Promise<void>;
-  /** Where it was started: an automation's run or a Slack thread. */
-  source: Extract<WorkspaceSource, "automation" | "slack">;
+  /** Where it was started: an automation's run, a Slack thread, or an
+   *  @mention on GitHub. */
+  source: Extract<WorkspaceSource, "automation" | "slack" | "github">;
 };
 
 /** Made and set up: ready (its prompt sent) or failed, with why. Or not made

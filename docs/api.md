@@ -76,7 +76,7 @@ counted apart. The budget refills continuously: every answer carries
 | GET | `/api/v1/me` | Who the key acts as, in which org, with what role |
 | GET | `/api/v1/environments` | The org's projects (one or several repositories each) |
 | GET | `/api/v1/projects` | The org's repositories the key's maker may start sessions on |
-| GET | `/api/v1/workspaces` | Sessions, newest first: `status`, `source`, `user_id`, `project_id` |
+| GET | `/api/v1/workspaces` | Sessions, newest first: `status`, `source` (`app`, `slack`, `automation`, `github`, `api`), `user_id`, `project_id` |
 | POST | `/api/v1/workspaces` | Start a session: `preparing` at once |
 | GET | `/api/v1/workspaces/{id}` | A session, and where its turn is |
 | DELETE | `/api/v1/workspaces/{id}` | Delete a session for good |

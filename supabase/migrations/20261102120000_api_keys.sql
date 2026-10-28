@@ -75,13 +75,13 @@ grant execute on function api_key_call_counts(uuid[], timestamptz) to service_ro
 
 -- ---------------------------------------------------------------------------
 -- Where a session came from, for the API's `source` filter: the app, a Slack
--- thread, an automation, or the API. Sessions from before are read from what
--- they left behind: a thread's link, an automation run.
+-- thread, an automation, a GitHub mention, or the API. Sessions from before
+-- are read from what they left behind: a thread's link, an automation run.
 -- ---------------------------------------------------------------------------
 
 alter table workspaces
   add column if not exists source text not null default 'app'
-  check (source in ('app', 'slack', 'automation', 'api'));
+  check (source in ('app', 'slack', 'automation', 'github', 'api'));
 
 update workspaces set source = 'slack'
 where source = 'app' and slack_thread_url is not null;

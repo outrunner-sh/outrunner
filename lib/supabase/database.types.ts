@@ -18,7 +18,7 @@ export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "dec
 export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
 
 // supabase/migrations/20261102120000_api_keys.sql
-export type WorkspaceSourceDb = "app" | "slack" | "automation" | "api";
+export type WorkspaceSourceDb = "app" | "slack" | "automation" | "github" | "api";
 
 export type WorkspaceStatusDb =
   | "creating"

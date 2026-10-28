@@ -137,7 +137,7 @@ export async function listWorkspaces(context: ApiContext): Promise<Response> {
   const status = params.get("status") || null;
   if (status !== null && !isApiStatus(status)) return apiError(400, "`status` is one of preparing, ready, suspended, archived, failed, deleted and the like.");
   const source = params.get("source") || null;
-  if (source !== null && !isApiSource(source)) return apiError(400, "`source` is app, slack, automation or api.");
+  if (source !== null && !isApiSource(source)) return apiError(400, "`source` is app, slack, automation, github or api.");
   let userId = params.get("user_id");
   if (userId === "me") userId = caller.userId;
   if (userId && !isUuid(userId)) return apiError(400, "`user_id` is a user's id, or `me`.");
