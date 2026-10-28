@@ -129,6 +129,85 @@ func TestAFailedWarmIsNotTaken(t *testing.T) {
 	}
 }
 
+// A Create cut off while it takes the warm checkout (its request ended)
+// still takes back the branch the adoption made, so its retry can make the
+// session's worktree.
+func TestAWarmCheckoutCutOffHalfWayLeavesNoBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	mirrorBox(t, s)
+	if err := s.Warm(context.Background(), WarmRequest{BaseBranch: "main", Hook: "true"}); err != nil {
+		t.Fatal(err)
+	}
+	waitWarm(t, s)
+	// The switch to the session's branch outlasts the request.
+	marker := slowCheckouts(t, s.mirrorPath())
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", BaseBranch: "main"}); err == nil {
+		t.Fatal("a Create whose request ended made its worktree")
+	}
+	if _, err := s.git(context.Background(), s.mirrorPath(), "rev-parse", "--verify", "--quiet", "refs/heads/runtime/x"); err == nil {
+		t.Error("the mirror kept the session's branch")
+	}
+
+	_ = os.Remove(marker)
+	wt, err := s.Create(context.Background(), CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", BaseBranch: "main"})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if branch, _ := s.git(context.Background(), wt, "symbolic-ref", "--short", "HEAD"); branch != "runtime/x" {
+		t.Errorf("branch = %q", branch)
+	}
+}
+
+// A Create whose request has ended leaves the warm checkout for its retry,
+// and a session's branch already in the mirror is neither adopted over nor
+// taken back.
+func TestAWarmCheckoutIsLeftForARetryAndAnotherBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	mirrorBox(t, s)
+	if err := s.Warm(context.Background(), WarmRequest{BaseBranch: "main", Hook: "mkdir -p node_modules"}); err != nil {
+		t.Fatal(err)
+	}
+	waitWarm(t, s)
+
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Create(done, CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", BaseBranch: "main"}); err == nil {
+		t.Fatal("a Create whose request ended made its worktree")
+	}
+	if !fileExists(s.warmDir()) || s.readWarmState().State != "succeeded" {
+		t.Fatal("a Create whose request ended threw the warm away")
+	}
+
+	ctx := context.Background()
+	if _, err := s.git(ctx, s.mirrorPath(), "branch", "runtime/y", "origin/main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws2", Branch: "runtime/y", BaseBranch: "main"}); err == nil {
+		t.Fatal("made a worktree on a branch already there")
+	}
+	if s.branchMissing(ctx, s.mirrorPath(), "runtime/y") {
+		t.Error("a branch the session didn't make was deleted")
+	}
+	if !fileExists(s.warmDir()) {
+		t.Error("the warm was adopted over a branch already there")
+	}
+
+	// The retry takes it.
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", BaseBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := s.getFacts("ws1"); !f.Warmed {
+		t.Error("the retry didn't take the warm")
+	}
+}
+
 // A session's scripts run in order: the warm hook once (not on a warmed
 // worktree), the setup script once, the start hook at every launch.
 func TestSessionScriptsRunInOrder(t *testing.T) {

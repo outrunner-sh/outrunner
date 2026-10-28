@@ -13,6 +13,8 @@
  * names the same key, and the message route sends it to Claude once per
  * session however often it is asked (lib/session/first-prompt-claim.ts).
  */
+import { replaceAddressBar } from "@/lib/client/address-bar";
+
 export type FirstPrompt = { prompt: string; attachmentIds: string[]; key?: string };
 
 type PromptStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -106,15 +108,13 @@ export function withoutFirstPrompt(url: URL): string {
 }
 
 /**
- * Take the first prompt out of the address bar, in place. Through Next's own
- * history handling (no state of ours, so it copies in its own), not around
- * it: a replaceState carrying Next's state is one Next leaves alone, so its
- * router keeps the old URL and writes ?prompt= back on its next render (the
- * router.refresh after the first prompt names the session, say), and a reload
+ * Take the first prompt out of the address bar, in place, and out of Next's
+ * router with it (see replaceAddressBar): otherwise the router.refresh after
+ * the first prompt names the session would put ?prompt= back, and a reload
  * then sends the prompt again.
  */
 export function dropFirstPromptFromAddressBar(): void {
-  window.history.replaceState(null, "", withoutFirstPrompt(new URL(window.location.href)));
+  replaceAddressBar(withoutFirstPrompt(new URL(window.location.href)));
 }
 
 /**

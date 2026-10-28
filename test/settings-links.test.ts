@@ -8,6 +8,7 @@ import {
   parseProviderPlace,
   PROVIDER_TABS,
   providerSettingsHref,
+  withProviderTab,
 } from "@/lib/settings-links";
 
 test("Settings → Providers has the agents first, then every provider whose key is no agent's", () => {
@@ -45,4 +46,11 @@ test("?method= counts only on an agent's tab, and only for a way it has", () => 
   assert.deepEqual(parseProviderPlace("claude", "chatgpt"), { tab: "claude" });
   assert.deepEqual(parseProviderPlace("openrouter", "api-key"), { tab: "openrouter" });
   assert.deepEqual(parseProviderPlace("claude", ["local"]), { tab: "claude" });
+});
+
+test("moving between tabs keeps the rest of the address and drops a link's method", () => {
+  const url = new URL("https://app.test/settings/providers?tab=claude&method=api-key&from=onboarding#keys");
+  assert.equal(withProviderTab(url, "codex"), "/settings/providers?tab=codex&from=onboarding#keys");
+  assert.equal(withProviderTab(new URL("https://app.test/settings/providers"), "claude"), "/settings/providers?tab=claude");
+  assert.equal(url.search, "?tab=claude&method=api-key&from=onboarding");
 });

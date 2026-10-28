@@ -19,7 +19,16 @@ let runtimeUrl = "";
 let agentPort = 0;
 let sshConnections = 0;
 const servers: Server[] = [];
-const ssh = new ssh2.Server({ hostKeys: [ssh2.utils.generateKeyPairSync("ed25519").private] }, (client) => {
+/** A host key ssh2 can read back: about 1 in 200 of the ed25519 keys its own
+ *  generator makes it then refuses ("Malformed OpenSSH private key"), which
+ *  failed this file now and then. */
+function hostKey(): string {
+  for (;;) {
+    const key = ssh2.utils.generateKeyPairSync("ed25519").private;
+    if (!(ssh2.utils.parseKey(key) instanceof Error)) return key;
+  }
+}
+const ssh = new ssh2.Server({ hostKeys: [hostKey()] }, (client) => {
   sshConnections += 1;
   client.on("authentication", (ctx) => (ctx.method === "none" && ctx.username === "neev" ? ctx.accept() : ctx.reject()));
   client.on("tcpip", (accept, reject, info) => {

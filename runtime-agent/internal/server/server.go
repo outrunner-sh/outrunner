@@ -53,6 +53,10 @@ const (
 	eventsWSWriteWait = 10 * time.Second
 )
 
+// How often a Conversation stream rechecks the session state, so a "starting"
+// stream reports "running" once the session log appears.
+const stateCheckInterval = time.Second
+
 type Server struct {
 	secret string
 	ws     *workspace.Service
@@ -1057,6 +1061,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable nginx/proxy buffering
 	w.WriteHeader(http.StatusOK)
+	// Send the headers now: a resume with nothing new writes no frame, and the
+	// client would otherwise wait for the first heartbeat to see the stream open.
+	flusher.Flush()
 
 	// Serialize every write on this response — the ticker, the watcher goroutine,
 	// and the state emitter all write frames concurrently.
@@ -1088,14 +1095,23 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // WebSocket (`/events-ws`) handlers share one implementation.
 //
 //   - `writeEvent(id, payload)` emits one AgentEvent; `id` is the JSONL byte
-//     offset (0 for the non-resumable synthetic state event). Return false to
-//     stop (the transport is gone).
+//     offset (0 for the connect-time state event; a later state event carries
+//     the current cursor, see below). Return false to stop (the transport is
+//     gone).
 //   - `heartbeat()` keeps the connection alive on idle. Return false to stop.
 //
 // A synthetic `state` event is emitted first on fresh connects (fromOffset == 0)
 // so subscribers know whether the workspace is running before any conversation
-// event lands; a resume (fromOffset > 0) skips it. Returns when ctx is cancelled
-// (client gone) or a write fails.
+// event lands; a resume (fromOffset > 0) skips it. A stream that opens
+// "starting" then sends "running" once the session log appears, so no client
+// is left showing a stale start. That is the only change it reports: a log
+// that goes away mid-session is a teardown or a session briefly looking empty,
+// not a session starting again, and a late "starting" would sit under the
+// whole conversation. The "running" carries the resume cursor (the last
+// event's offset, or fromOffset) as its id: state isn't in the JSONL, so
+// resuming there skips and repeats nothing, and an SSE client's Last-Event-ID
+// never moves backwards.
+// Returns when ctx is cancelled (client gone) or a write fails.
 func (s *Server) streamEvents(
 	ctx context.Context,
 	workspaceID string,
@@ -1103,15 +1119,28 @@ func (s *Server) streamEvents(
 	writeEvent func(id int64, payload []byte) bool,
 	heartbeat func() bool,
 ) {
-	if fromOffset == 0 {
-		state := "starting"
-		if s.ws.SessionLog(workspaceID) != "" {
-			state = "running"
-		}
+	cursor := fromOffset
+	running := s.ws.SessionLog(workspaceID) != ""
+	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
 			T: "state", WorkspaceID: workspaceID, State: state,
 		})
-		if !writeEvent(0, payload) {
+		return writeEvent(cursor, payload)
+	}
+	// reportRunning sends "running" the first time the stream sees the log.
+	reportRunning := func() bool {
+		if running {
+			return true
+		}
+		running = true
+		return writeState("running")
+	}
+	if fromOffset == 0 {
+		state := "starting"
+		if running {
+			state = "running"
+		}
+		if !writeState(state) {
 			return
 		}
 	}
@@ -1125,12 +1154,36 @@ func (s *Server) streamEvents(
 
 	ticker := time.NewTicker(sseHeartbeat)
 	defer ticker.Stop()
+	// Watch for the log only while the stream is still "starting"; a nil
+	// channel never fires, so a running stream does no extra lookups.
+	var stateCheck <-chan time.Time
+	stopStateCheck := func() {}
+	if !running {
+		stateTicker := time.NewTicker(stateCheckInterval)
+		defer stateTicker.Stop()
+		stateCheck = stateTicker.C
+		stopStateCheck = func() { stateTicker.Stop(); stateCheck = nil }
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-stateCheck:
+			if s.ws.SessionLog(workspaceID) != "" {
+				stopStateCheck()
+				if !reportRunning() {
+					return
+				}
+			}
 		case ev := <-out:
+			// The log just yielded an event, so it exists: the "running" lands
+			// before the first message it explains. No SessionLog lookup here,
+			// since a fresh connect replays the whole log through this path.
+			stopStateCheck()
+			if !reportRunning() {
+				return
+			}
 			var payload []byte
 			var mErr error
 			switch {
@@ -1147,6 +1200,7 @@ func (s *Server) streamEvents(
 			if !writeEvent(ev.ID, payload) {
 				return
 			}
+			cursor = ev.ID
 		case <-ticker.C:
 			if !heartbeat() {
 				return

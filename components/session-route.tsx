@@ -8,6 +8,7 @@ import { RouteLoading, RouteMessage } from "@/components/route-states";
 import { useServerAnswer } from "@/components/server-answer";
 import { SessionDeleted } from "@/components/session-deleted";
 import { WorkspaceStudio } from "@/components/workspace-studio";
+import { replaceAddressBar } from "@/lib/client/address-bar";
 import { useDeletedSession } from "@/lib/session/delete-session";
 import { keepFirstPromptFromUrl, tabStorage } from "@/lib/session/first-prompt";
 import { newerSessionView, resolveSessionView, type SessionAnswer } from "@/lib/session/session-view";
@@ -41,11 +42,10 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
   const initialAttachmentIds = useMemo(() => (attachments ? attachments.split("\n") : []), [attachments]);
   // Out of the URL as soon as this tab keeps a copy, before it is sent: a
   // reload then sends it from the copy if it hasn't gone yet, and never again
-  // once it has. The page reads it from the copy from here on. (State null:
-  // see dropFirstPromptFromAddressBar.)
+  // once it has. The page reads it from the copy from here on.
   useEffect(() => {
     const next = keepFirstPromptFromUrl(tabStorage(), id, new URL(window.location.href));
-    if (next) window.history.replaceState(null, "", next);
+    if (next) replaceAddressBar(next);
   }, [id, initialPrompt, attachments]);
 
   return (

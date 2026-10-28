@@ -291,10 +291,26 @@ export class InstallationGoneError extends Error {
   }
 }
 
+/** GitHub refuses the installation a token because it's suspended (its
+ *  webhook missed or not yet handled): since when, as GitHub has it. */
+export class InstallationSuspendedError extends Error {
+  readonly installationId: number;
+  readonly suspendedAt: string;
+
+  constructor(installationId: number, suspendedAt: string) {
+    super("The GitHub App's installation is suspended.");
+    this.name = "InstallationSuspendedError";
+    this.installationId = installationId;
+    this.suspendedAt = suspendedAt;
+  }
+}
+
 /**
  * A pull request, read as the installation. A kept token GitHub refuses
  * (401) is dropped and one minted afresh, once: only if that's refused too,
- * or none can be minted (404), is the installation gone.
+ * or none can be minted (404), is the installation gone. A 403, minting a
+ * token or using one, is a suspension if GitHub says so; else it was only
+ * refused for now (a rate limit), and that's thrown as it is.
  */
 export async function installationPullRequest(
   config: GitHubAppConfig,
@@ -303,17 +319,27 @@ export async function installationPullRequest(
   number: number,
   doFetch: Fetch = fetch,
 ): Promise<Record<string, unknown>> {
+  // Suspended, or only rate limited (GitHub answers 403 to both, minting a
+  // token or using one): the installation itself says which.
+  const throwIfSuspended = async (error: unknown) => {
+    if (!(error instanceof GitHubAppError && error.status === 403)) return;
+    const installation = await getInstallation(config, installationId, doFetch).catch(() => null);
+    if (installation?.suspendedAt) throw new InstallationSuspendedError(installationId, installation.suspendedAt);
+  };
   for (let attempt = 0; ; attempt++) {
     let token: string;
     try {
       token = await installationToken(config, installationId, doFetch);
     } catch (error) {
       if (error instanceof GitHubAppError && error.status === 404) throw new InstallationGoneError();
+      await throwIfSuspended(error);
       throw error;
     }
     try {
       return await getPullRequest(token, repoFullName, number, doFetch);
     } catch (error) {
+      // A token kept from before a suspension is refused when it's used.
+      await throwIfSuspended(error);
       if (!(error instanceof GitHubAppError && error.status === 401)) throw error;
       dropInstallationToken(installationId);
       if (attempt > 0) throw new InstallationGoneError();
