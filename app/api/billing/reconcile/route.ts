@@ -6,6 +6,7 @@ import { runUsageSweep } from "@/lib/billing/usage-sweep.deps";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
+import { sweepFollowUps } from "@/lib/github/followups.deps";
 import { bearerMatches } from "@/lib/http/bearer";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
@@ -20,7 +21,8 @@ import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
  * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
  * renew for sessions already running, and the warm pool's boxes nothing else
  * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
- * restart cut off (lib/session/provisioning.deps.ts), and the deployment's
+ * restart cut off (lib/session/provisioning.deps.ts), and the GitHub loop's
+ * follow-ups due (lib/github/followups.deps.ts), and the deployment's
  * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), and
  * the Slack agent's old keys of its own (lib/db/slack-agent.ts), and each
  * busy team org's hours against its admins' controls
@@ -85,6 +87,12 @@ export async function POST(request: Request) {
       console.error("Deleting orphaned Daytona boxes failed", error);
       return null;
     });
+    // And the GitHub loop's follow-ups (CI failing, reviews) that no
+    // webhook's own wait sent: a restart cut it short (lib/github/followups.ts).
+    const githubFollowUps = await sweepFollowUps().catch((error: unknown) => {
+      console.error("Sending GitHub follow-ups failed", error);
+      return null;
+    });
     // And the Slack agent's old keys of its own, unread since it runs on the
     // org's (lib/db/slack-agent.ts): turned off on OpenRouter, a few a run.
     const slackKeysRetired = await retireOldSlackKeys().catch((error: unknown) => {
@@ -104,6 +112,7 @@ export async function POST(request: Request) {
       usage,
       allowancesRenewed,
       slackKeysRetired,
+      githubFollowUps,
       poolsSwept,
       removalsSettled,
       runsSwept,

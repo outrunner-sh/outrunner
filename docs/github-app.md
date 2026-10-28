@@ -39,8 +39,30 @@ are archived. Each gets a snapshot and can be restored. The snapshot is taken on
 that went to sleep is woken to be archived. Team orgs can turn this off under
 **Settings → Org → Defaults**; it is on by default.
 
-Every act is claimed by what it's for: the comment's id, or the close and its time. GitHub's redeliveries
-therefore never act twice.
+**Follow-ups** (`lib/github/followups.ts`). Some things that happen on a pull request a session works on reach
+that session even when no one mentions it:
+
+- **CI failing.** A check suite, check run or workflow run can complete as failed (failure, timed out, startup
+  failure) on the pull request's head commit. The session then gets one turn for that commit. The turn names
+  the failing checks and gives log excerpts cut to where each failed: the end of a GitHub Actions job's log, or
+  what another check says of itself. The session is asked to fix the failure and push. Events for the same
+  commit are batched: the turn goes 90 seconds after the last one, and waits up to 15 minutes for checks still
+  running. A commit that is no longer the head, or a pull request that has closed, sends nothing. If a re-run
+  passes before the turn goes and the commit later fails again, that failure still gets its turn.
+- **At most 3 fixes in a row.** After 3 CI turns with no word from a person between them, the pull request gets
+  a comment saying CI is waiting for one, and later failures stay quiet. A word from a person starts the count
+  again: a mention, a review, or a message in the session (typed in Outrunner or said in its Slack thread).
+- **Reviews.** A review submitted by a person who can steer the session (the same rule as mentions: its owner, or
+  a member who may write to the repository) goes to the session: changes requested, its comments on lines with their diff, or a comment-only review that says
+  something. An approval with nothing on the lines doesn't. Reviews that arrive within 45 seconds of each other
+  go as one turn. A line comment that mentions `@outrunner` has already gone to the session as a mention, so it
+  is left out of the review turn.
+
+Follow-ups wait in `github_followups` until their burst is over. They are sent by the webhook's own wait, and
+by the reconciler's cron for any that a restart cut short.
+
+Every act is claimed by what it's for: the comment's id, the review's id, the commit, or the close and its time.
+GitHub's redeliveries therefore never act twice.
 
 ## Permissions and events
 

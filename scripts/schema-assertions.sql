@@ -1915,3 +1915,84 @@ begin
   end if;
   raise notice 'ok: the audit log is append-only, the server''s, and goes with its org';
 end $$;
+
+-- 49. The GitHub loop's follow-ups: a burst of CI events is one turn per
+-- commit, reviews join one open batch, a turn is taken once, and CI's turns
+-- stop at the limit until a person speaks.
+do $$
+declare
+  p uuid := (select id from projects where full_name = 'immadsahin/runtime' limit 1);
+  f uuid;
+  r record;
+  outcomes text := '';
+begin
+  if not (select fresh from queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'aaa', 0, 60)) then
+    raise exception 'FAIL: a commit''s first CI event didn''t make its follow-up';
+  end if;
+  if (select fresh from queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'aaa', 0, 60)) then
+    raise exception 'FAIL: a second CI event for a commit was taken for a new follow-up';
+  end if;
+  if (select count(*) from github_followups where kind = 'ci' and project_id = p) <> 1 then
+    raise exception 'FAIL: a burst of CI events for one commit made more than one follow-up';
+  end if;
+  perform queue_github_followup('review', 42, p, 'immadsahin/runtime', 7, '', 5, 60);
+  perform queue_github_followup('review', 42, p, 'immadsahin/runtime', 7, '', 3, 60);
+  perform queue_github_followup('review', 42, p, 'immadsahin/runtime', 7, '', 5, 60);
+  if (select review_ids from github_followups where kind = 'review' and project_id = p) <> '{3,5}' then
+    raise exception 'FAIL: reviews didn''t join one batch';
+  end if;
+
+  select id into f from github_followups where kind = 'ci' and project_id = p;
+  if exists (select 1 from claim_github_followup(f, 3)) then
+    raise exception 'FAIL: a follow-up was taken before it was due';
+  end if;
+  update github_followups set due_at = now() - interval '1 second' where id = f;
+  select * into r from claim_github_followup(f, 3);
+  if r.outcome <> 'send' or r.turns <> 1 then
+    raise exception 'FAIL: a due CI follow-up wasn''t sent as the first turn: %', r;
+  end if;
+  if exists (select 1 from claim_github_followup(f, 3)) then
+    raise exception 'FAIL: a follow-up was taken twice';
+  end if;
+  -- Sent stays sent: the commit's CI isn't queued again.
+  perform queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'aaa', 0, 60);
+  if (select sent_at is null from github_followups where id = f) then
+    raise exception 'FAIL: a sent CI follow-up was queued again';
+  end if;
+
+  for i in 2..5 loop
+    perform queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'sha' || i, 0, 0);
+    select id into f from github_followups where kind = 'ci' and project_id = p and head_sha = 'sha' || i;
+    select * into r from claim_github_followup(f, 3);
+    outcomes := outcomes || r.outcome || ' ';
+  end loop;
+  if outcomes <> 'send send capped quiet ' then
+    raise exception 'FAIL: CI''s turns past the limit went as %', outcomes;
+  end if;
+
+  -- Re-run green before it went, then failing again: it opens again.
+  perform queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'flaky', 0, 60);
+  update github_followups set sent_at = now(), outcome = 'passed' where head_sha = 'flaky' and project_id = p;
+  if not (select fresh from queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'flaky', 0, 60)) then
+    raise exception 'FAIL: CI failing again after passing wasn''t queued again';
+  end if;
+  if (select sent_at is not null or outcome is not null from github_followups where head_sha = 'flaky' and project_id = p) then
+    raise exception 'FAIL: a follow-up opened again kept how it went before';
+  end if;
+
+  -- A person spoke to the session working on it: CI counts from none.
+  insert into github_session_links (project_id, kind, number, workspace_id)
+  select p, 'pull', 7, w.id from workspaces w where w.project_id = p limit 1;
+  perform reset_github_ci_turns((select workspace_id from github_session_links where project_id = p and number = 7 limit 1));
+  if (select ci_turns from github_pr_loops where project_id = p and pr_number = 7) <> 0 then
+    raise exception 'FAIL: a person''s word didn''t reset CI''s turns';
+  end if;
+  if has_table_privilege('authenticated', 'github_followups', 'select') or has_table_privilege('authenticated', 'github_loop_claims', 'select') then
+    raise exception 'FAIL: members can read the GitHub loop''s records directly';
+  end if;
+
+  delete from github_session_links where project_id = p;
+  delete from github_followups where project_id = p;
+  delete from github_pr_loops where project_id = p;
+  raise notice 'ok: GitHub follow-ups go once per burst, and CI stops at its limit';
+end $$;
