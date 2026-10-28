@@ -28,6 +28,12 @@ test("each kind of event reads as what happened", () => {
   );
   assert.equal(describeAudit(event("api_key.revoked", "CI", { hint: "x9Zq" })), "revoked the API key CI (…x9Zq)");
   assert.equal(
+    describeAudit(event("webhook.changed", null, { url: "https://hooks.acme.dev/outrunner" })),
+    "set the API's webhook endpoint to https://hooks.acme.dev/outrunner",
+  );
+  assert.equal(describeAudit(event("webhook.changed", null, { url: null })), "removed the API's webhook endpoint");
+  assert.equal(describeAudit(event("webhook.secret_rotated", null, {})), "rotated the API's webhook signing secret");
+  assert.equal(
     describeAudit(event("usage.changed", null, { limitPercent: 80, alertThresholds: [50, 100] })),
     "set the usage limit to 80%, alerts at 50%, 100%",
   );

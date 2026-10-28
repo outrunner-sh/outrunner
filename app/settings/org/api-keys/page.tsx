@@ -3,8 +3,10 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { ApiKeysSettings } from "@/components/api-keys";
+import { ApiWebhooksSettings } from "@/components/api-webhooks";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { webhookView } from "@/lib/api/webhook-routes";
 import { listOrgApiKeys } from "@/lib/db/api-keys";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -47,7 +49,10 @@ async function ApiKeysSection() {
         </p>
       </div>
       {org.role === "admin" ? (
-        <ApiKeysSettings endpoint={`/api/orgs/${org.id}/api-keys`} initial={await listOrgApiKeys(org.id)} showMaker />
+        <>
+          <ApiKeysSettings endpoint={`/api/orgs/${org.id}/api-keys`} initial={await listOrgApiKeys(org.id)} showMaker />
+          <ApiWebhooksSettings endpoint={`/api/orgs/${org.id}/webhooks`} initial={await webhookView({ scope: "org", scopeId: org.id })} />
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">Only the org&apos;s admins make and revoke its API keys.</p>
       )}

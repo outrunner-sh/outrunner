@@ -126,6 +126,7 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 | `plan_mode` | `true` asks the agent to reply with a plan and wait before it changes anything; send a message to go ahead |
 | `size` | The box: `x-small`, `small`, `medium`, `large` (never beyond the plan) |
 | `branch`, `base_branch` | The branch to work on (made for it when left out) and the one it starts from |
+| `webhook_url` | An https URL told of this session's events (see Webhooks) |
 
 It answers `202` straight away with the session, `"status": "preparing"`;
 its box is set up after (`setup_phase` says the step), and its prompt is
@@ -242,3 +243,76 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 A work item lands in triage, in the repository `project_id` names (an id or
 `owner/name`), or Unsorted. A `source_ref` an item of the org already has
 makes it a note on that one instead (`"created": false`).
+
+## Webhooks
+
+A session started through the API (or MCP) tells what it does, as it does
+it, to the `webhook_url` it was started with, and to the endpoint set beside
+the key that started it: Settings → Org → API keys for an org key, Settings
+→ API keys for a personal key or the CLI. Each is a `POST` of JSON:
+
+| Event | When |
+| --- | --- |
+| `workspace.ready` | Its setup ended and its prompt was sent |
+| `turn.completed` | A turn is over: its first prompt's, or a message's (`data.turn.last_message` is what it said) |
+| `needs_input` | It asked a question, or for secrets (`data.turn.pending_input`) |
+| `pr.opened` | A pull request of its showed up as a turn ended (`data.pull_request`) |
+| `error` | Its setup failed, or it did later (`data.message`) |
+
+```json
+{ "id": "5b1e…", "type": "turn.completed", "created_at": "2026-11-02T12:00:00Z", "workspace": { "id": "…", "status": "ready", "url": "…" }, "data": { "turn": { "state": "idle", "last_message": "Fixed, and opened #412.", "last_event_id": "48213" } } }
+```
+
+It carries `Outrunner-Event`, `Outrunner-Delivery` (its `id`, the same on
+every try) and `Outrunner-Signature: t=<unix seconds>,v1=<hex>`, an
+HMAC-SHA256 of `<t>.<body>` with the signing secret shown on that page
+(one per org, one per person; rotate it there). Check it before trusting a
+delivery, and turn away one more than five minutes old:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function fromOutrunner(secret, body, header) {
+  const { t, v1 } = Object.fromEntries(header.split(",").map((p) => p.split("=")));
+  if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false;
+  const mac = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
+  return v1?.length === mac.length && timingSafeEqual(Buffer.from(v1), Buffer.from(mac));
+}
+```
+
+A delivery counts once it's answered `2xx` within 10 seconds. Otherwise it's
+tried again after 30 seconds, 2 minutes, 10 minutes, 30 minutes, 2 hours and
+6 hours, then given up; the settings page shows the latest ones and how they
+went. Redirects aren't followed. A webhook URL must be https on the public
+internet: one whose host is, or comes to point at, a private or loopback
+address is refused. A turn is watched for two hours after its message.
+
+## MCP
+
+The same operations are an MCP server at `/api/mcp` (streamable HTTP, JSON
+answers), signed in with an API key the same way:
+
+```json
+{ "mcpServers": { "outrunner": { "type": "http", "url": "https://app.outrunner.sh/api/mcp", "headers": { "Authorization": "Bearer or_key_…" } } } }
+```
+
+```sh
+claude mcp add --transport http outrunner https://app.outrunner.sh/api/mcp --header "Authorization: Bearer $OUTRUNNER_API_KEY"
+```
+
+| Tool | REST |
+| --- | --- |
+| `list_projects` | `GET /projects` |
+| `create_workspace` | `POST /workspaces` |
+| `send_message` | `POST /workspaces/{id}/messages` |
+| `read_conversation` | `GET /workspaces/{id}/conversation` |
+| `wait_for_workspace` | `GET /workspaces/{id}/wait` |
+| `list_workspaces` | `GET /workspaces` |
+| `get_workspace` | `GET /workspaces/{id}` |
+| `archive_workspace` | `POST /workspaces/{id}/archive` |
+
+Each tool answers with the REST call's JSON (as text, and as structured
+content), or its error, flagged `isError`. The same rights, rate limits and
+webhooks apply. A module of Outrunner's adds a tool to this server with
+`registerApiMcpTool` (lib/mcp/api-tools.ts); one with an endpoint of its own
+makes its own `McpServer` (lib/mcp/server.ts) on the same code.

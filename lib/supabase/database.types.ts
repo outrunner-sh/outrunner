@@ -747,6 +747,53 @@ type ApiRequestRow = {
   created_at: string;
 };
 
+// supabase/migrations/20261102130000_api_webhooks.sql
+export type WebhookScopeDb = "org" | "user";
+export type WebhookEventDb = "workspace.ready" | "turn.completed" | "needs_input" | "pr.opened" | "error";
+
+type ApiWebhookSettingsRow = {
+  scope: WebhookScopeDb;
+  scope_id: string;
+  url: string | null;
+  secret_ciphertext: string;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+type ApiWatchRow = {
+  workspace_id: string;
+  org_id: string;
+  user_id: string;
+  scope: WebhookScopeDb;
+  scope_id: string;
+  webhook_url: string | null;
+  awaiting: boolean;
+  seen_working: boolean;
+  baseline_event: string | null;
+  baseline_fenced: boolean;
+  asked_tool_use: string | null;
+  told_prs: string[];
+  watch_until: string | null;
+  checked_at: string | null;
+  created_at: string;
+};
+
+type ApiWebhookDeliveryRow = {
+  id: string;
+  scope: WebhookScopeDb;
+  scope_id: string;
+  workspace_id: string | null;
+  event: WebhookEventDb;
+  url: string;
+  payload: Json;
+  attempts: number;
+  next_attempt_at: string | null;
+  delivered_at: string | null;
+  last_status: number | null;
+  last_error: string | null;
+  created_at: string;
+};
+
 type WorkItemRow = {
   id: string;
   org_id: string;
@@ -1203,6 +1250,24 @@ export type Database = {
         Row: ApiRequestRow;
         Insert: Insert<ApiRequestRow, "user_id" | "method" | "path" | "status">;
         Update: Partial<ApiRequestRow>;
+        Relationships: [];
+      };
+      api_webhook_settings: {
+        Row: ApiWebhookSettingsRow;
+        Insert: Insert<ApiWebhookSettingsRow, "scope" | "scope_id" | "secret_ciphertext">;
+        Update: Partial<ApiWebhookSettingsRow>;
+        Relationships: [];
+      };
+      api_watches: {
+        Row: ApiWatchRow;
+        Insert: Insert<ApiWatchRow, "workspace_id" | "org_id" | "user_id" | "scope" | "scope_id">;
+        Update: Partial<ApiWatchRow>;
+        Relationships: [];
+      };
+      api_webhook_deliveries: {
+        Row: ApiWebhookDeliveryRow;
+        Insert: Insert<ApiWebhookDeliveryRow, "scope" | "scope_id" | "event" | "url" | "payload">;
+        Update: Partial<ApiWebhookDeliveryRow>;
         Relationships: [];
       };
       cli_tokens: {

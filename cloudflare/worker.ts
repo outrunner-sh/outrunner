@@ -360,8 +360,9 @@ const worker = {
       console.error("BILLING_CRON_SECRET is not set: idle boxes aren't paused, and cloud hours aren't kept.");
       return;
     }
-    // The reconciler, and the Slack agent's clock (digests, nudges,
-    // follow-ups): each on its own, so one failing doesn't stop the other.
+    // The reconciler, the Slack agent's clock (digests, nudges, follow-ups),
+    // and the API webhooks' (long turns, retries): each on its own, so one
+    // failing doesn't stop the others.
     const call = (path: string, label: string) =>
       getContainer(env.CONTROL_PLANE)
         .fetch(
@@ -374,7 +375,13 @@ const worker = {
           if (!response.ok) console.error(`${label} answered ${response.status}: ${await response.text()}`);
         })
         .catch((error: unknown) => console.error(`${label} failed`, error));
-    ctx.waitUntil(Promise.all([call("/api/billing/reconcile", "Reconcile"), call("/api/integrations/slack/tick", "Slack tick")]));
+    ctx.waitUntil(
+      Promise.all([
+        call("/api/billing/reconcile", "Reconcile"),
+        call("/api/integrations/slack/tick", "Slack tick"),
+        call("/api/webhooks/tick", "Webhooks tick"),
+      ]),
+    );
   },
 };
 

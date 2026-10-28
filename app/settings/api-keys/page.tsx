@@ -3,8 +3,10 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { ApiKeysSettings } from "@/components/api-keys";
+import { ApiWebhooksSettings } from "@/components/api-webhooks";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { webhookView } from "@/lib/api/webhook-routes";
 import { listPersonalApiKeys } from "@/lib/db/api-keys";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
@@ -37,6 +39,7 @@ async function ApiKeysSection() {
         </p>
       </div>
       <ApiKeysSettings endpoint="/api/settings/api-keys" initial={await listPersonalApiKeys(owner.id)} showMaker={false} />
+      <ApiWebhooksSettings endpoint="/api/settings/webhooks" initial={await webhookView({ scope: "user", scopeId: owner.id })} />
     </section>
   );
 }

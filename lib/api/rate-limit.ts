@@ -39,20 +39,26 @@ export class RateLimiter {
     this.maxKeys = maxKeys;
   }
 
-  /** Spend one call of `key`'s budget under `rule`, if there's one to spend. */
-  take(key: string, rule: RateLimitRule): RateDecision {
+  /** Spend `count` calls of `key`'s budget under `rule`, all of them or,
+   *  when there aren't that many to spend, none. */
+  take(key: string, rule: RateLimitRule, count = 1): RateDecision {
     const now = this.now();
     const perMs = rule.perMinute / 60_000;
     const held = this.buckets.get(key);
     const tokens = held ? Math.min(rule.perMinute, held.tokens + (now - held.at) * perMs) : rule.perMinute;
-    if (tokens < 1) {
+    if (tokens < count) {
       this.buckets.set(key, { tokens, at: now });
-      return { allowed: false, limit: rule.perMinute, remaining: 0, retryAfter: Math.ceil((1 - tokens) / perMs / 1000) };
+      return {
+        allowed: false,
+        limit: rule.perMinute,
+        remaining: Math.floor(tokens),
+        retryAfter: Math.ceil((Math.min(count, rule.perMinute) - tokens) / perMs / 1000),
+      };
     }
     // A full bucket is forgotten, so keys that stop calling don't stay held.
     if (!held && this.buckets.size >= this.maxKeys) this.forgetFull(now);
-    this.buckets.set(key, { tokens: tokens - 1, at: now });
-    return { allowed: true, limit: rule.perMinute, remaining: Math.floor(tokens - 1), retryAfter: 0 };
+    this.buckets.set(key, { tokens: tokens - count, at: now });
+    return { allowed: true, limit: rule.perMinute, remaining: Math.floor(tokens - count), retryAfter: 0 };
   }
 
   private forgetFull(now: number): void {

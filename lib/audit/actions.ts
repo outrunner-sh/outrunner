@@ -26,6 +26,8 @@ export type AuditAction =
   | "key.removed"
   | "api_key.created"
   | "api_key.revoked"
+  | "webhook.changed"
+  | "webhook.secret_rotated"
   | "defaults.changed"
   | "usage.changed"
   | "github.installed"
@@ -118,6 +120,10 @@ export function describeAudit(event: Pick<AuditEvent, "action" | "resourceLabel"
       return `removed the org's ${what} key`;
     case "api_key.created":
       return `made the API key ${what}${text(d.hint) ? ` (…${text(d.hint)})` : ""}${text(d.expiresAt) ? `, until ${text(d.expiresAt)?.slice(0, 10)}` : ""}`;
+    case "webhook.changed":
+      return text(d.url) ? `set the API's webhook endpoint to ${text(d.url)}` : "removed the API's webhook endpoint";
+    case "webhook.secret_rotated":
+      return "rotated the API's webhook signing secret";
     case "api_key.revoked":
       return `revoked the API key ${what}${text(d.hint) ? ` (…${text(d.hint)})` : ""}`;
     case "defaults.changed":

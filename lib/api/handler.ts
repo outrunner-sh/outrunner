@@ -30,6 +30,13 @@ export type ApiContext = {
 
 const limiter = new RateLimiter();
 
+/** Spend `count` of the caller's calls under `limit`, counted in `bucket`,
+ *  all or none: for a call that does more than one thing (an MCP tool that
+ *  starts a session, a batch of tool calls). */
+export function takeLimit(caller: ApiCaller, limit: RateLimitRule, bucket: string, count = 1) {
+  return limiter.take(`${caller.keyId ?? caller.cliTokenId}:${bucket}`, limit, count);
+}
+
 /** Keys and CLI tokens marked used at most once a minute each: last-used
  *  is a day's detail, and a polling script shouldn't make every call a write. */
 const touched = new Map<string, number>();
@@ -59,7 +66,7 @@ export async function apiRoute(
   if (!auth.ok) return apiError(auth.status, auth.message);
   const { caller } = auth;
 
-  const decision = limiter.take(`${caller.keyId ?? caller.cliTokenId}:${bucket}`, limit);
+  const decision = takeLimit(caller, limit, bucket);
   const limitHeaders = rateHeaders(decision);
   let response: Response;
   if (!decision.allowed) {
