@@ -154,6 +154,9 @@ export type WatchState = {
   awaiting: boolean;
   seenWorking: boolean;
   baselineEvent: string | null;
+  /** The baseline came from the send (its fence, or an empty log for a
+   *  first prompt), so the log is known to stand before the prompt there. */
+  baselineFenced: boolean;
   askedToolUse: string | null;
 };
 
@@ -189,9 +192,16 @@ export function watchStep(watch: WatchState, turn: TurnView | null): { events: W
   // An empty log reads as "0", on both sides, so two looks at nothing are
   // never taken for the log moving on.
   const at = turn.last_event_id ?? EMPTY_LOG;
-  const movedOn = watch.baselineEvent !== null && at !== watch.baselineEvent && turn.prompted !== false;
+  // From the send's own baseline, the log moving on counts only once the
+  // prompt is in it (an entry of another kind isn't a turn). From a first
+  // look's, the prompt may already be behind it, so moving on is enough.
+  const movedOn =
+    watch.baselineEvent !== null && at !== watch.baselineEvent && (!watch.baselineFenced || turn.prompted !== false);
   if (watch.seenWorking || movedOn) {
-    return { events: ["turn.completed"], next: { awaiting: false, seenWorking: false, baselineEvent: null, askedToolUse: null } };
+    return {
+      events: ["turn.completed"],
+      next: { awaiting: false, seenWorking: false, baselineEvent: null, baselineFenced: false, askedToolUse: null },
+    };
   }
   return { events: [], next: { ...watch, baselineEvent: watch.baselineEvent ?? at } };
 }

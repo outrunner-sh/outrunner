@@ -78,7 +78,7 @@ test("a failed delivery is tried again with longer waits, then given up", () => 
   assert.equal(nextAttemptAt(BACKOFF_SECONDS.length + 1, now), null);
 });
 
-const awaiting: WatchState = { awaiting: true, seenWorking: false, baselineEvent: null, askedToolUse: null };
+const awaiting: WatchState = { awaiting: true, seenWorking: false, baselineEvent: null, baselineFenced: false, askedToolUse: null };
 
 test("a turn seen working, then idle, is told as completed once", () => {
   const working = watchStep(awaiting, { state: "working", last_event_id: "10", pending_input: null });
@@ -121,20 +121,28 @@ test("two looks at an empty log aren't the log moving on", () => {
 test("from the send's fence, a turn already over at the first look is told", () => {
   // The fence (where the log stood before the message) is the baseline: a
   // short reply done before anyone looked still moved the log on.
-  const fenced: WatchState = { ...awaiting, baselineEvent: "200" };
+  const fenced: WatchState = { ...awaiting, baselineEvent: "200", baselineFenced: true };
   assert.deepEqual(watchStep(fenced, { state: "idle", last_event_id: "380", pending_input: null, prompted: true }).events, ["turn.completed"]);
   // A session's first prompt: from an empty log.
-  const first: WatchState = { ...awaiting, baselineEvent: "0" };
+  const first: WatchState = { ...awaiting, baselineEvent: "0", baselineFenced: true };
   assert.deepEqual(watchStep(first, { state: "idle", last_event_id: null, pending_input: null, prompted: false }).events, []);
   assert.deepEqual(watchStep(first, { state: "idle", last_event_id: "90", pending_input: null, prompted: true }).events, ["turn.completed"]);
 });
 
 test("an entry that isn't a prompt doesn't move the log on", () => {
   // Right after ready: the log holds something (a usage record), not the prompt.
-  const first: WatchState = { ...awaiting, baselineEvent: "0" };
+  const first: WatchState = { ...awaiting, baselineEvent: "0", baselineFenced: true };
   const early = watchStep(first, { state: "idle", last_event_id: "40", pending_input: null, prompted: false });
   assert.deepEqual(early.events, []);
   assert.equal(early.next.awaiting, true);
+});
+
+test("from a first look's baseline, a quick turn still counts once the log moves on", () => {
+  // No fence from the send: the first look found the log just past the
+  // prompt, so no prompt is past the baseline, and moving on must be enough.
+  const looked = watchStep(awaiting, { state: "idle", last_event_id: "300", pending_input: null, prompted: false });
+  assert.equal(looked.next.baselineFenced, false);
+  assert.deepEqual(watchStep(looked.next, { state: "idle", last_event_id: "420", pending_input: null, prompted: false }).events, ["turn.completed"]);
 });
 
 test("a box that didn't answer changes nothing", () => {

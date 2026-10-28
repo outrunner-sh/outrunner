@@ -81,6 +81,7 @@ type WatchRow = {
   awaiting: boolean;
   seen_working: boolean;
   baseline_event: string | null;
+  baseline_fenced: boolean;
   asked_tool_use: string | null;
   told_prs: string[];
   watch_until: string | null;
@@ -97,6 +98,7 @@ function toWatch(row: WatchRow): Watch {
     awaiting: row.awaiting,
     seenWorking: row.seen_working,
     baselineEvent: row.baseline_event,
+    baselineFenced: row.baseline_fenced,
     askedToolUse: row.asked_tool_use,
     toldPrs: row.told_prs,
     watchUntil: row.watch_until,
@@ -104,7 +106,7 @@ function toWatch(row: WatchRow): Watch {
 }
 
 const WATCH_COLUMNS =
-  "workspace_id, org_id, user_id, scope, scope_id, webhook_url, awaiting, seen_working, baseline_event, asked_tool_use, told_prs, watch_until";
+  "workspace_id, org_id, user_id, scope, scope_id, webhook_url, awaiting, seen_working, baseline_event, baseline_fenced, asked_tool_use, told_prs, watch_until";
 
 /** Watch a session made through the API, from its setup on, for `forMs`:
  *  its setup's end is told once, by whichever look ends the watch. */
@@ -143,6 +145,7 @@ export async function awaitTurn(workspaceId: string, forMs: number, baseline: st
       awaiting: true,
       seen_working: false,
       baseline_event: baseline,
+      baseline_fenced: baseline !== null,
       asked_tool_use: null,
       watch_until: new Date(Date.now() + forMs).toISOString(),
     })
@@ -166,6 +169,7 @@ export async function advanceWatch(
       awaiting: next.awaiting,
       seen_working: next.seenWorking,
       baseline_event: next.baselineEvent,
+      baseline_fenced: next.baselineFenced,
       asked_tool_use: next.askedToolUse,
       checked_at: new Date().toISOString(),
       ...(next.toldPrs && { told_prs: next.toldPrs }),

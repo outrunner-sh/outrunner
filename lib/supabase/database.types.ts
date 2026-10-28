@@ -770,6 +770,7 @@ type ApiWatchRow = {
   awaiting: boolean;
   seen_working: boolean;
   baseline_event: string | null;
+  baseline_fenced: boolean;
   asked_tool_use: string | null;
   told_prs: string[];
   watch_until: string | null;

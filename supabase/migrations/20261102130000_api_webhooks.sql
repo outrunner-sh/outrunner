@@ -42,6 +42,9 @@ create table if not exists api_watches (
   awaiting boolean not null default false,
   seen_working boolean not null default false,
   baseline_event text,
+  -- Whether the baseline came from the send (its fence, or an empty log for
+  -- a first prompt) rather than from where a first look found the log.
+  baseline_fenced boolean not null default false,
   -- The question (its tool call) already told as needs_input.
   asked_tool_use text,
   -- Pull requests already told as opened, as "<project id>#<number>".

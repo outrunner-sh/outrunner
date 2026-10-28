@@ -200,7 +200,8 @@ async function lookOnce(workspaceId: string): Promise<boolean> {
   const turn = live ? turnJson(live.entries, live.state) : null;
   // The log moving on from the baseline counts only once a prompt is in it
   // past there: an entry of another kind isn't a turn.
-  const prompted = live !== null && watch.baselineEvent !== null && promptSince(live.entries, Number(watch.baselineEvent));
+  const prompted =
+    live !== null && watch.baselineFenced && watch.baselineEvent !== null && promptSince(live.entries, Number(watch.baselineEvent));
   const step = watchStep(watch, turn ? ({ ...turn, prompted } as Parameters<typeof watchStep>[1]) : null);
   if (step.events.length === 0) {
     await advanceWatch(workspaceId, watch, step.next);
