@@ -246,6 +246,12 @@ func (a claudeAgent) command(workspaceID, worktree string, resume bool) []string
 	}
 	// Claude's own flags first: the env files below wrap the command.
 	argv = claude.WithEffort(argv, s.claudeEffort(workspaceID, f.Effort))
+	// Planning in a session that builds without asking: bypass is offered when
+	// the plan is approved (ApprovePlan picks it in Claude's menu), which
+	// Claude does only for a session it may bypass in.
+	if mode == claude.Plan && s.buildMode(workspaceID) == claude.Bypass && s.claudeTakes("--allow-dangerously-skip-permissions") {
+		argv = append(argv, "--allow-dangerously-skip-permissions")
+	}
 	argv = withAgentConfig(argv)
 	if askArgs := s.claudeAskArgs(workspaceID); len(askArgs) > 0 {
 		argv = append(argv, askArgs...)

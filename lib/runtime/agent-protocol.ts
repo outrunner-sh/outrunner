@@ -234,6 +234,47 @@ export type ChangesResponse = z.infer<typeof ChangesResponse>;
 /** One changed file's bounded diff (GET /workspaces/{id}/changes?path=). */
 export const ChangedFileDiffResponse = z.object({ diff: z.string() });
 
+/** The agent takes SendMessageRequest's `mode` and `dismiss`: plan mode. An
+ *  older one ignores them, and would run a plan as a build. */
+export const AGENT_FEATURE_PLAN_MODE = "plan-mode";
+
+/** A session's modes: plan (Claude's --permission-mode plan, Codex
+ *  read-only) and build, its own (bypassPermissions on a Runtime Computer). */
+export const SessionMode = z.enum(["build", "plan"]);
+export type SessionMode = z.infer<typeof SessionMode>;
+
+/** POST /workspaces/{id}/message: a prompt for the session. `mode` relaunches
+ *  a session not already in it first, its conversation continued; `dismiss`
+ *  closes the menu the agent shows (a plan waiting on approval) as Escape
+ *  does, so the prompt answers it. */
+export const SendMessageRequest = z
+  .object({
+    content: z.string().min(1),
+    mode: SessionMode.optional(),
+    dismiss: z.boolean().optional(),
+  })
+  .strict();
+export type SendMessageRequest = z.infer<typeof SendMessageRequest>;
+
+/** POST /workspaces/{id}/plan: answer the plan the session's agent waits on.
+ *  "approve" goes on to build it, through Claude's own plan menu where it
+ *  offers the session's build mode, else as a prompt in build mode; the
+ *  answer says which (`via`). Revising is a prompt in plan mode. */
+export const PlanActionRequest = z.object({ action: z.literal("approve") }).strict();
+export type PlanActionRequest = z.infer<typeof PlanActionRequest>;
+export const PlanActionResponse = z.object({ result: z.literal("approved"), via: z.enum(["menu", "prompt"]) });
+export type PlanActionResponse = z.infer<typeof PlanActionResponse>;
+
+/** The agent compacts a session's conversation (POST /workspaces/{id}/compact). */
+export const AGENT_FEATURE_COMPACT = "compact";
+
+/** POST /workspaces/{id}/compact: as /compact does in the session's terminal,
+ *  with what to keep in the summary, if anything. The session and its
+ *  conversation go on; the stream shows the compaction (ConversationMessage's
+ *  `compact`) once the agent has written it. */
+export const CompactRequest = z.object({ instructions: z.string().max(2000).optional() }).strict();
+export type CompactRequest = z.infer<typeof CompactRequest>;
+
 /** The agent restores a session onto its model (RestoreWorkspaceRequest's
  *  `model`); an older one ignores it, and relaunches on Claude's default. */
 export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";
@@ -609,6 +650,14 @@ export const ContentBlock = z.discriminatedUnion("type", [
 ]);
 export type ContentBlock = z.infer<typeof ContentBlock>;
 
+/** A model call's tokens, as a reply carries them (ConversationMessage.usage). */
+const ReplyUsage = z.object({
+  input_tokens: z.number().int().nonnegative(),
+  output_tokens: z.number().int().nonnegative(),
+  cache_creation_input_tokens: z.number().int().nonnegative(),
+  cache_read_input_tokens: z.number().int().nonnegative(),
+});
+
 export const ConversationMessage = z.object({
   t: z.literal("message"),
   uuid: z.string(),
@@ -633,6 +682,29 @@ export const ConversationMessage = z.object({
       return parsed.success ? [parsed.data] : [];
     }),
   ),
+  // The model call's tokens, on an assistant turn whose log has them: how
+  // full the context is (the composer's ring). Absent from agents before it.
+  usage: ReplyUsage.optional(),
+  // The model's context, in tokens, where the log says it (Codex's does,
+  // Claude's doesn't: the page then knows it by the model).
+  contextWindow: z.number().int().positive().optional(),
+  // How much of it the turn's model call used, where the log says it apart
+  // from `usage` (a Codex translation, whose usage can sum two calls').
+  contextTokens: z.number().int().positive().optional(),
+  // "plan" on a prompt sent in plan mode, where the log says so.
+  mode: z.literal("plan").optional(),
+  // The conversation compacted here (/compact, or the agent's own when its
+  // context filled): an assistant record with no content, which a page from
+  // before it shows as nothing. `trigger` is "manual" or "auto" where the log
+  // says; `preTokens` how full it was.
+  compact: z
+    .object({
+      trigger: z.string().optional(),
+      preTokens: z.number().int().nonnegative().optional(),
+      // What the summary left, where the log says (Claude Code 2.1.304's).
+      postTokens: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
 });
 export type ConversationMessage = z.infer<typeof ConversationMessage>;
 
@@ -684,6 +756,10 @@ export const PROTOCOL_SCHEMAS = {
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  SendMessageRequest,
+  CompactRequest,
+  PlanActionRequest,
+  PlanActionResponse,
   WarmRequest,
   WarmStatus,
   ProvideSecretsRequest,

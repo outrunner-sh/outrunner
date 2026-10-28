@@ -459,7 +459,71 @@ type ConversationMessage struct {
 	StopReason string         `json:"stopReason,omitempty"`
 	Timestamp  string         `json:"timestamp"`
 	Content    []ContentBlock `json:"content"`
+	// Usage is the model call's tokens, on an assistant turn whose log has
+	// them: what the call read and wrote is how full the context is.
+	Usage *TokenUsageAmounts `json:"usage,omitempty"`
+	// ContextWindow is the model's context, in tokens, where the log says it
+	// (Codex's does; Claude's doesn't).
+	ContextWindow int `json:"contextWindow,omitempty"`
+	// ContextTokens is how much of it the turn's model call used, where the
+	// log says it apart from Usage (a Codex translation, whose Usage can sum
+	// several calls'); without it, Usage's own sum is.
+	ContextTokens int `json:"contextTokens,omitempty"`
+	// Mode is "plan" on a prompt sent in plan mode, where the log says so.
+	Mode string `json:"mode,omitempty"`
+	// Compact marks the conversation compacted here: an assistant record with
+	// no content, which a page from before it shows as nothing at all.
+	Compact *Compaction `json:"compact,omitempty"`
 }
+
+// Compaction is a conversation summarized to free its context: asked for
+// (Trigger "manual", /compact) or done by the agent itself ("auto"), with the
+// tokens it held before and after, where the log says (Claude Code 2.1.304
+// records both).
+type Compaction struct {
+	Trigger    string `json:"trigger,omitempty"`
+	PreTokens  int    `json:"preTokens,omitempty"`
+	PostTokens int    `json:"postTokens,omitempty"`
+}
+
+// SendMessageRequest is a prompt for a session (POST /workspaces/{id}/message).
+// Mode, when set, is the mode the prompt is for: "plan" relaunches a session
+// that isn't planning into its plan mode first (Claude's --permission-mode
+// plan, Codex read-only), "build" back out of it. Dismiss first closes the
+// menu the agent shows (its plan, waiting on approval), as Escape does, so
+// the prompt answers it. An agent from before FeaturePlanMode ignores both.
+type SendMessageRequest struct {
+	Content string `json:"content"`
+	Mode    string `json:"mode,omitempty"`
+	Dismiss bool   `json:"dismiss,omitempty"`
+}
+
+// PlanActionRequest answers the plan a session's agent waits on (POST
+// /workspaces/{id}/plan). Action "approve" goes on to build it: through
+// Claude's own plan menu where it offers the session's build mode, else as a
+// prompt in build mode. PlanActionResponse says which ("menu", "prompt").
+type PlanActionRequest struct {
+	Action string `json:"action"`
+}
+
+type PlanActionResponse struct {
+	Result string `json:"result"`
+	Via    string `json:"via"`
+}
+
+// FeaturePlanMode is SendMessageRequest's Mode and Dismiss, and POST
+// /workspaces/{id}/plan.
+const FeaturePlanMode = "plan-mode"
+
+// CompactRequest compacts a session's conversation (POST
+// /workspaces/{id}/compact), as /compact does in its terminal, with what to
+// keep in the summary, if anything.
+type CompactRequest struct {
+	Instructions string `json:"instructions,omitempty"`
+}
+
+// FeatureCompact is POST /workspaces/{id}/compact.
+const FeatureCompact = "compact"
 
 // TokenUsage is an assistant usage delta.
 type TokenUsage struct {

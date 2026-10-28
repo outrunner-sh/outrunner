@@ -171,6 +171,76 @@
           "content": "ok"
         }
       ]
+    },
+    {
+      "t": "message",
+      "uuid": "uuid-2",
+      "parentUuid": "uuid-1",
+      "role": "assistant",
+      "model": "claude-opus-5-5",
+      "stopReason": "end_turn",
+      "timestamp": "2026-10-28T00:00:00Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "Done."
+        }
+      ],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 40,
+        "cache_creation_input_tokens": 500,
+        "cache_read_input_tokens": 18000
+      }
+    },
+    {
+      "t": "message",
+      "uuid": "codex-s1-200",
+      "parentUuid": null,
+      "role": "assistant",
+      "model": "gpt-6-luna",
+      "timestamp": "2026-10-28T00:00:01Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "done"
+        }
+      ],
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 6,
+        "cache_creation_input_tokens": 166,
+        "cache_read_input_tokens": 17979
+      },
+      "contextWindow": 258400,
+      "contextTokens": 18148
+    },
+    {
+      "t": "message",
+      "uuid": "uuid-3",
+      "parentUuid": null,
+      "role": "user",
+      "timestamp": "2026-10-28T00:00:02Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "Plan dark mode"
+        }
+      ],
+      "mode": "plan"
+    },
+    {
+      "t": "message",
+      "uuid": "uuid-4",
+      "parentUuid": null,
+      "role": "assistant",
+      "timestamp": "2026-10-28T00:00:03Z",
+      "content": [],
+      "compact": {
+        "trigger": "manual",
+        "preTokens": 45231,
+        "postTokens": 9876
+      }
     }
   ],
   "TokenUsage": [
@@ -188,6 +258,41 @@
       "t": "state",
       "workspaceId": "ws-1",
       "state": "running"
+    }
+  ],
+  "SendMessageRequest": [
+    {
+      "content": "Add dark mode"
+    },
+    {
+      "content": "Approved. Go ahead and implement the plan.",
+      "mode": "build",
+      "dismiss": true
+    },
+    {
+      "content": "Plan it first",
+      "mode": "plan"
+    }
+  ],
+  "CompactRequest": [
+    {},
+    {
+      "instructions": "Keep the failing test names"
+    }
+  ],
+  "PlanActionRequest": [
+    {
+      "action": "approve"
+    }
+  ],
+  "PlanActionResponse": [
+    {
+      "result": "approved",
+      "via": "menu"
+    },
+    {
+      "result": "approved",
+      "via": "prompt"
     }
   ],
   "ArchiveWorkspaceRequest": [
@@ -445,6 +550,38 @@
         "multi-repo-snapshots",
         "git-credential",
         "multi-repo-warm"
+      ]
+    },
+    {
+      "status": "ok",
+      "gateways": [
+        "anthropic",
+        "deepseek",
+        "moonshot",
+        "openrouter",
+        "zai"
+      ],
+      "agents": [
+        "claude",
+        "codex"
+      ],
+      "features": [
+        "restore-imports",
+        "session-environment",
+        "agent-config",
+        "restore-model",
+        "editor",
+        "ports",
+        "codex-gateway",
+        "project-instructions",
+        "request-secrets",
+        "warm-hooks",
+        "multi-repo",
+        "multi-repo-snapshots",
+        "git-credential",
+        "multi-repo-warm",
+        "plan-mode",
+        "compact"
       ]
     }
   ],

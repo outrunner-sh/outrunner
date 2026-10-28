@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -255,5 +256,109 @@ func TestUsageThatComesLateGoesOnTheNextReply(t *testing.T) {
 	want := Usage{InputTokens: 80, OutputTokens: 14, CacheReadInputTokens: 120}
 	if rec.Message.Usage != want {
 		t.Errorf("reply usage = %+v, want both calls' %+v", rec.Message.Usage, want)
+	}
+}
+
+// The context-usage ring is out of the model's window, which only Codex's
+// token_count says: it rides on the record that carries the usage.
+func TestUsageCarriesTheModelsContextWindow(t *testing.T) {
+	tr := NewTranslator()
+	tr.Line(0, []byte(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}}`+"\n"))
+	out := tr.Line(100, []byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":2},"model_context_window":258400}}}`+"\n"))
+	if len(out) != 1 {
+		t.Fatalf("token_count released %d records, want 1", len(out))
+	}
+	var rec struct {
+		Message struct {
+			ContextWindow int `json:"context_window"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(out[0].Line, &rec); err != nil || rec.Message.ContextWindow != 258400 {
+		t.Errorf("record = %s, want context_window 258400", out[0].Line)
+	}
+}
+
+// A compaction is Claude's compact_boundary, and the summary Codex goes on
+// from is not shown as anyone's turn.
+func TestACompactionIsAClaudeCompactBoundary(t *testing.T) {
+	tr := NewTranslator()
+	tr.Line(0, []byte(`{"type":"session_meta","payload":{"id":"s1"}}`+"\n"))
+	out := tr.Line(50, []byte(`{"timestamp":"t","type":"compacted","payload":{"message":"The user asked for…"}}`+"\n"))
+	if len(out) != 1 {
+		t.Fatalf("compacted released %d records, want 1", len(out))
+	}
+	var rec struct {
+		Type            string          `json:"type"`
+		Subtype         string          `json:"subtype"`
+		UUID            string          `json:"uuid"`
+		CompactMetadata json.RawMessage `json:"compactMetadata"`
+	}
+	if err := json.Unmarshal(out[0].Line, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Type != "system" || rec.Subtype != "compact_boundary" || rec.UUID != "codex-s1-50" || rec.CompactMetadata == nil {
+		t.Errorf("record = %s, want a compact_boundary", out[0].Line)
+	}
+	if strings.Contains(string(out[0].Line), "The user asked for") {
+		t.Errorf("the summary was shown: %s", out[0].Line)
+	}
+}
+
+// A prompt sent in plan mode is shown as typed, marked as Claude marks one.
+func TestAPlanModePromptLosesItsPreamble(t *testing.T) {
+	tr := NewTranslator()
+	prompt, _ := json.Marshal(PlanPreamble + "Add dark mode")
+	out := tr.Line(0, []byte(`{"type":"event_msg","payload":{"type":"user_message","message":`+string(prompt)+`}}`+"\n"))
+	var rec struct {
+		PermissionMode string `json:"permissionMode"`
+		Message        struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if len(out) != 1 || json.Unmarshal(out[0].Line, &rec) != nil {
+		t.Fatalf("released %q", out)
+	}
+	if rec.Message.Content != "Add dark mode" || rec.PermissionMode != "plan" {
+		t.Errorf("record = %+v, want the prompt alone, in plan mode", rec)
+	}
+	out = tr.Line(100, []byte(`{"type":"event_msg","payload":{"type":"user_message","message":"Build it"}}`+"\n"))
+	if len(out) != 1 || strings.Contains(string(out[0].Line), "permissionMode") {
+		t.Errorf("a prompt in build mode = %q, want no mode", out)
+	}
+}
+
+// A call's usage that came late rides on the next call's record, for the
+// session's totals; the context that record shows is its own call's alone,
+// not the two summed, and out of Codex's window.
+func TestLateUsageIsntCountedAsContext(t *testing.T) {
+	tr := NewTranslator()
+	count := func(input, output int) []byte {
+		return []byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":` +
+			strconv.Itoa(input) + `,"cached_input_tokens":` + strconv.Itoa(input-10) + `,"output_tokens":` + strconv.Itoa(output) + `},"model_context_window":258400}}}` + "\n")
+	}
+	tr.Line(0, []byte(`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{}","call_id":"c1"}}`+"\n"))
+	tr.Flush() // the tool ran longer than the caller waits
+	tr.Line(100, count(50_000, 100))
+	tr.Line(200, []byte(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}`+"\n"))
+	out := tr.Line(300, count(51_000, 20))
+	if len(out) != 1 {
+		t.Fatalf("released %d records", len(out))
+	}
+	var rec struct {
+		Message struct {
+			Usage         Usage `json:"usage"`
+			ContextTokens int   `json:"context_tokens"`
+			ContextWindow int   `json:"context_window"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(out[0].Line, &rec); err != nil {
+		t.Fatal(err)
+	}
+	m := rec.Message
+	if m.ContextTokens != 51_020 || m.ContextWindow != 258400 {
+		t.Errorf("context = %d of %d, want the last call's 51020 of 258400", m.ContextTokens, m.ContextWindow)
+	}
+	if total := m.Usage.InputTokens + m.Usage.CacheReadInputTokens; total != 101_000 {
+		t.Errorf("usage input = %d, want both calls' kept for the totals", total)
 	}
 }

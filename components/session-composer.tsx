@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, CircleAlert, FileText, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
+import { ArrowUp, Check, CircleAlert, FileText, Hammer, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
@@ -48,6 +48,8 @@ import {
 } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
 import { type DiffComment, lineRange } from "@/lib/session/diff-comments";
+import { compactTokens, type ContextUsage } from "@/lib/runtime/context-usage";
+import { composerCommand, otherMode, type SessionMode } from "@/lib/session/session-mode";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
@@ -84,8 +86,18 @@ export type ModelChoice = {
   connect: AgentId[];
 };
 
+/** The session's mode (lib/session/session-mode.ts), switched from the
+ *  footer's toggle or Shift+Tab. */
+export type ModeChoice = {
+  mode: SessionMode;
+  onChange: (mode: SessionMode) => void;
+};
+
 export function SessionComposer({
   onSend,
+  modeChoice,
+  onCompact,
+  context = null,
   canSend,
   placeholder = "Ask anything, / for commands, @ for context…",
   disabledPlaceholder = "Read-only — another viewer has the keyboard",
@@ -102,9 +114,19 @@ export function SessionComposer({
   prefill = null,
   comments,
 }: {
-  /** Send a prompt. When it returns a promise of whether the send landed, a
-   *  failed send gives the text and files back to the composer. */
-  onSend: (text: string, attachmentIds: string[]) => void | Promise<boolean>;
+  /** Send a prompt, in `mode` where the session has modes. When it returns
+   *  a promise of whether the send landed, a failed send gives the text and
+   *  files back to the composer. */
+  onSend: (text: string, attachmentIds: string[], mode?: SessionMode) => void | Promise<boolean>;
+  /** Plan and build: the toggle, Shift+Tab and /plan. Without it there are
+   *  none, and /plan goes to the agent as typed. */
+  modeChoice?: ModeChoice;
+  /** /compact [instructions]: compact the conversation rather than send it.
+   *  Without it, /compact goes to the agent as typed. Resolves whether it
+   *  went, as onSend does. */
+  onCompact?: (instructions: string) => Promise<boolean>;
+  /** How full the session's context is, for the footer's ring; null hides it. */
+  context?: ContextUsage | null;
   canSend: boolean;
   /** Placeholder shown while the user can type. */
   placeholder?: string;
@@ -212,11 +234,34 @@ export function SessionComposer({
 
   function submit() {
     if (!canSend || sending || !hasSomethingToSend || attachments.busy) return;
-    const text = value.trim();
+    let text = value.trim();
+    let mode = modeChoice?.mode;
+    const command = composerCommand(text);
+    if (command?.kind === "compact" && onCompact) {
+      setValue("");
+      setSending(true);
+      void onCompact(command.instructions)
+        .then((went) => {
+          if (!went) setValue((current) => restoreDraft(text, current));
+        })
+        .finally(() => setSending(false));
+      return;
+    }
+    if (command?.kind === "plan" && modeChoice) {
+      // One prompt in plan mode, and the toggle with it: the session is
+      // planning now. /plan alone just switches.
+      if (modeChoice.mode !== "plan") modeChoice.onChange("plan");
+      mode = "plan";
+      if (!command.prompt && attachments.readyIds.length === 0) {
+        setValue("");
+        return;
+      }
+      text = command.prompt;
+    }
     // What this send carries, kept apart from whatever is typed or attached
     // while it is in flight: only these are settled when it lands.
     const sentIds = attachments.readyIds;
-    const result = onSend(text, sentIds);
+    const result = onSend(text, sentIds, mode);
     setValue("");
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
@@ -402,6 +447,10 @@ export function SessionComposer({
           if (event.key === "Enter" && !event.shiftKey && !isImeKeydown(event.nativeEvent)) {
             event.preventDefault();
             submit();
+          } else if (event.key === "Tab" && event.shiftKey && modeChoice && !isImeKeydown(event.nativeEvent)) {
+            // As in Claude Code's own terminal: Shift+Tab switches the mode.
+            event.preventDefault();
+            modeChoice.onChange(otherMode(modeChoice.mode));
           } else if (event.key === "Escape" && stop && !stop.stopping && !isImeKeydown(event.nativeEvent)) {
             event.preventDefault();
             stop.onStop();
@@ -432,6 +481,7 @@ export function SessionComposer({
               <Plus />
             </button>
           )}
+          {modeChoice && <ModeToggle choice={modeChoice} disabled={!canSend} />}
           {modelChoice ? (
             <ModelPicker model={model} choice={modelChoice} />
           ) : (
@@ -439,6 +489,7 @@ export function SessionComposer({
           )}
         </span>
         <span>
+          {context && <ContextRing usage={context} />}
           {stop && (
             <button
               type="button"
@@ -462,6 +513,58 @@ export function SessionComposer({
         </span>
       </div>
     </form>
+  );
+}
+
+/** Build or Plan, the mode the next prompt goes in: a click (or Shift+Tab in
+ *  the box) switches it. */
+function ModeToggle({ choice, disabled }: { choice: ModeChoice; disabled: boolean }) {
+  const planning = choice.mode === "plan";
+  return (
+    <button
+      type="button"
+      className={cn("studio-composer-mode", planning && "is-plan")}
+      onClick={() => choice.onChange(otherMode(choice.mode))}
+      disabled={disabled}
+      aria-pressed={planning}
+      aria-label={planning ? "Plan mode: plans before changing anything. Switch to build" : "Build mode. Switch to plan"}
+      title={`${planning ? "Plan: reads and proposes a plan, changes nothing" : "Build: makes the changes"} (Shift+Tab to switch)`}
+    >
+      {planning ? <ListChecks /> : <Hammer />}
+      {planning ? "Plan" : "Build"}
+    </button>
+  );
+}
+
+/** How full the session's context is: a ring, filling as its replies use the
+ *  model's window, with the numbers beside it. */
+function ContextRing({ usage }: { usage: ContextUsage }) {
+  const share = Math.min(1, usage.used / usage.window);
+  const r = 6;
+  const length = 2 * Math.PI * r;
+  const percent = Math.round(share * 100);
+  return (
+    <span
+      className={cn("studio-composer-context", share >= 0.8 && "is-full")}
+      title={`Context: ${usage.used.toLocaleString("en-US")} of ${usage.window.toLocaleString("en-US")} tokens (${percent}%). /compact to summarize it.`}
+      aria-label={`Context ${percent}% full`}
+      role="img"
+    >
+      <svg viewBox="0 0 16 16" aria-hidden>
+        <circle className="ring-track" cx="8" cy="8" r={r} fill="none" strokeWidth="2" />
+        <circle
+          className="ring-fill"
+          cx="8"
+          cy="8"
+          r={r}
+          fill="none"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeDasharray={`${share * length} ${length}`}
+        />
+      </svg>
+      {compactTokens(usage.used)} / {compactTokens(usage.window)}
+    </span>
   );
 }
 

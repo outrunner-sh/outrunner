@@ -3,8 +3,10 @@
 import {
   Bot,
   FilePlus,
+  FoldVertical,
   FileText,
   Globe,
+  ListChecks,
   ListTodo,
   type LucideIcon,
   MessageCircleQuestionMark,
@@ -16,6 +18,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
+import { type PlanActions, PlanCard } from "@/components/plan-card";
 import { TickingFact } from "@/components/ui/notice";
 import { DotMatrix } from "@/components/ui/loaders";
 import { useStreamedText } from "@/hooks/use-streamed-text";
@@ -30,6 +33,7 @@ import {
   workingElapsed,
 } from "@/lib/runtime/conversation-format";
 import { claudeIsWorking } from "@/lib/runtime/conversation-events";
+import { compactTokens } from "@/lib/runtime/context-usage";
 import {
   type ConversationNode,
   conversationNodes,
@@ -61,11 +65,22 @@ export function ConversationTimeline({
   events,
   placeholder = null,
   working = claudeIsWorking(events),
+  compacting = false,
+  plansInProse = false,
+  plan = null,
 }: {
   events: AgentEvent[];
   /** Whether Claude is mid-turn, for the working indicator; read from the
    *  events where the caller knows no better (a stopped turn it can't see). */
   working?: boolean;
+  /** A compaction asked for and not yet in the stream: the working
+   *  indicator says so. */
+  compacting?: boolean;
+  /** The agent has no plan step (Codex): a plan-mode turn's last words are
+   *  its plan (conversationNodes). */
+  plansInProse?: boolean;
+  /** The plan waiting on the user (its card's `id`), and its answers. */
+  plan?: (PlanActions & { id: string }) | null;
   /** What an empty conversation says (see conversationPlaceholder); a replay,
    *  which has nothing to connect to, passes none. */
   placeholder?: ConversationPlaceholder;
@@ -101,7 +116,7 @@ export function ConversationTimeline({
   const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const nodes = useMemo(() => conversationNodes(events), [events]);
+  const nodes = useMemo(() => conversationNodes(events, { plansInProse, working }), [events, plansInProse, working]);
   const turns = useMemo(() => conversationTurns(nodes), [nodes]);
   // The turn being read, as the rail marks it.
   const [current, setCurrent] = useState(-1);
@@ -231,10 +246,10 @@ export function ConversationTimeline({
               which the placeholder already speaks for. */}
           {!placeholder && nodes.map((node) => (
             <div key={node.key} className="timeline-row" data-turn={node.kind === "prompt" ? "" : undefined}>
-              <NodeRow node={node} />
+              <NodeRow node={node} plan={node.kind === "plan" && plan?.id === node.id ? plan : undefined} />
             </div>
           ))}
-          {working && <WorkingIndicator />}
+          {(working || compacting) && <WorkingIndicator label={compacting ? "Compacting conversation" : "Working"} />}
         </div>
       </div>
       {/* One turn has nowhere else to go. */}
@@ -289,7 +304,7 @@ function TurnRail({
  *  timer, so activity is visible instead of a still pane. Remounts (resetting
  *  the clock) each time we re-enter the working state. The timer is tabular so
  *  the row never shifts as digits change. */
-function WorkingIndicator() {
+function WorkingIndicator({ label }: { label: string }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const startedAt = Date.now();
@@ -299,7 +314,7 @@ function WorkingIndicator() {
   return (
     <div role="status" className="flex items-center gap-2.5 py-1 text-[13px] text-muted-foreground">
       <DotMatrix rows={3} cols={3} cell={3} gap={1.5} />
-      <span>Working</span>
+      <span>{label}</span>
       {/* The timer ticks ten times a second, so it stays out of the live
           region; "Working" is the announcement, once. */}
       <TickingFact className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
@@ -309,8 +324,19 @@ function WorkingIndicator() {
   );
 }
 
-function NodeRow({ node }: { node: ConversationNode }) {
+function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions }) {
   switch (node.kind) {
+    case "plan":
+      return <PlanCard text={node.text} actions={plan} />;
+    case "compact":
+      return (
+        <div className="timeline-compact" role="note">
+          <FoldVertical aria-hidden />
+          {compactionLabel(node)}
+        </div>
+      );
+    case "command":
+      return <div className="timeline-thought font-mono text-[12.5px]">{node.text}</div>;
     case "state":
       return (
         <div className="flex items-center gap-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -335,7 +361,7 @@ function NodeRow({ node }: { node: ConversationNode }) {
         </div>
       );
     case "prompt":
-      return <Prompt text={node.text} />;
+      return <Prompt text={node.text} mode={node.mode} />;
     case "interrupted":
       return <div className="timeline-thought">Interrupted</div>;
     case "prose":
@@ -349,11 +375,25 @@ function NodeRow({ node }: { node: ConversationNode }) {
 
 /** The user's prompt, and the comments on the diff it carried (withComments)
  *  as quotes under it, rather than the blocks written for the agent. */
-function Prompt({ text }: { text: string }) {
+function Prompt({ text, mode }: { text: string; mode?: "plan" }) {
   const { text: words, quotes } = useMemo(() => parseCommentQuotes(text), [text]);
-  if (quotes.length === 0) return <div className="timeline-prompt">{text}</div>;
+  // Sent in plan mode: said, quietly, above its words.
+  const planned = mode === "plan" && (
+    <span className="timeline-prompt-mode">
+      <ListChecks aria-hidden />
+      Plan mode
+    </span>
+  );
+  if (quotes.length === 0)
+    return (
+      <div className="timeline-prompt">
+        {planned}
+        {text}
+      </div>
+    );
   return (
     <div className="timeline-prompt">
+      {planned}
       {words}
       <div className={cn("timeline-quotes", words && "mt-2.5")}>
         {quotes.map((quote, i) => (
@@ -439,4 +479,11 @@ function ToolOutput({ content }: { content: unknown }) {
       <pre className="max-h-96 overflow-auto whitespace-pre-wrap">{lineCount === 0 ? "(empty result)" : text}</pre>
     </>
   );
+}
+
+/** "Conversation compacted · 45.2k tokens summarized", or as much as the log
+ *  says; "automatically" when the agent did it itself as its context filled. */
+function compactionLabel(node: Extract<ConversationNode, { kind: "compact" }>): string {
+  const how = node.trigger === "auto" ? "Conversation compacted automatically" : "Conversation compacted";
+  return node.preTokens ? `${how} · ${compactTokens(node.preTokens)} tokens summarized` : how;
 }

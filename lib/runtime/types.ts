@@ -8,6 +8,7 @@
 
 import type { AgentId } from "@/lib/agents/registry";
 import type { RecordedModel } from "@/lib/runtime/session-models";
+import type { SessionMode } from "@/lib/runtime/agent-protocol";
 
 // ---------------------------------------------------------------------------
 // Domain model (mirrors the `projects`, `workspaces`, `jobs` tables)
@@ -155,6 +156,9 @@ export type Workspace = {
   /** The model it was last put on; null for a session from before models
    *  were recorded (or on one this release no longer offers). */
   model: RecordedModel | null;
+  /** The mode its prompts go in (lib/session/session-mode.ts): plan, or
+   *  build, its own; build for a session never planned. */
+  mode: SessionMode;
   lastActiveAt: string | null;
   errorMessage: string | null;
   createdAt: string;

@@ -24,15 +24,35 @@ import (
 // rawRecord is the subset of a Claude JSONL line the watcher understands.
 type rawRecord struct {
 	Type      string  `json:"type"`
+	Subtype   string  `json:"subtype"`
 	UUID      string  `json:"uuid"`
 	ParentID  *string `json:"parentUuid"`
 	Timestamp string  `json:"timestamp"`
-	Message   *struct {
+	// PermissionMode is the mode Claude was in when the user sent a prompt
+	// ("plan"), as Claude records it on the prompt; a Codex translation
+	// records it the same way.
+	PermissionMode string `json:"permissionMode"`
+	// IsCompactSummary marks the summary Claude starts again from after
+	// compacting: a user record, but no prompt of the user's.
+	IsCompactSummary bool `json:"isCompactSummary"`
+	// CompactMetadata is a compact_boundary's: why, and how full it was.
+	CompactMetadata *struct {
+		Trigger    string `json:"trigger"`
+		PreTokens  int    `json:"preTokens"`
+		PostTokens int    `json:"postTokens"`
+	} `json:"compactMetadata"`
+	Message *struct {
 		Role       string                      `json:"role"`
 		Model      string                      `json:"model"`
 		StopReason string                      `json:"stop_reason"`
 		Content    json.RawMessage             `json:"content"`
 		Usage      *map[string]json.RawMessage `json:"usage"`
+		// ContextWindow is the model's context, which a Codex translation
+		// records (Codex's log says it); Claude's log never does. And
+		// ContextTokens how much of it the call used, which a translation
+		// records apart from its usage (codex.Translator).
+		ContextWindow int `json:"context_window"`
+		ContextTokens int `json:"context_tokens"`
 	} `json:"message"`
 	// A prompt typed while Claude is mid-turn: queued, then taken into the
 	// running turn at its next tool call, where Claude records it as this
@@ -186,10 +206,15 @@ func decode(line []byte) (Event, bool) {
 	if rec.Type == "attachment" {
 		return decodeQueuedPrompt(rec)
 	}
+	if rec.Type == "system" && rec.Subtype == "compact_boundary" {
+		return compaction(rec), true
+	}
 	if rec.Type != "user" && rec.Type != "assistant" {
 		return Event{}, false // ignore app-internal record types
 	}
-	if rec.Message == nil {
+	if rec.Message == nil || rec.IsCompactSummary {
+		// The summary is Claude's own record of the conversation so far,
+		// shown as the compaction it follows rather than as a prompt.
 		return Event{}, false
 	}
 	content, ok := parseContent(rec.Message.Content)
@@ -211,6 +236,23 @@ func decode(line []byte) (Event, bool) {
 		StopReason: rec.Message.StopReason,
 		Timestamp:  rec.Timestamp,
 		Content:    content,
+	}
+	if rec.Message.Role == "assistant" && rec.Message.Usage != nil {
+		// How full the context is: what this call read, cached or not, and
+		// wrote. Claude logs each block of a reply as its own record, each
+		// with the reply's usage so far, so the latest is the one to read.
+		if u := UsageFrom(*rec.Message.Usage); u != nil {
+			msg.Usage = &protocol.TokenUsageAmounts{
+				InputTokens:              u.InputTokens,
+				OutputTokens:             u.OutputTokens,
+				CacheCreationInputTokens: u.CacheCreationInputTokens,
+				CacheReadInputTokens:     u.CacheReadInputTokens,
+			}
+		}
+		msg.ContextWindow, msg.ContextTokens = rec.Message.ContextWindow, rec.Message.ContextTokens
+	}
+	if rec.Message.Role == "user" && rec.PermissionMode == "plan" {
+		msg.Mode = "plan"
 	}
 	return Event{Message: msg}, true
 }
@@ -240,6 +282,26 @@ func decodeQueuedPrompt(rec rawRecord) (Event, bool) {
 		Timestamp:  rec.Timestamp,
 		Content:    content,
 	}}, true
+}
+
+// compaction is a compact_boundary as the timeline shows it: an assistant
+// record with nothing in it but the compaction, so a page from before
+// compaction was shown skips it, and the turn reads as over, not as one
+// awaiting a reply.
+func compaction(rec rawRecord) Event {
+	c := &protocol.Compaction{}
+	if m := rec.CompactMetadata; m != nil {
+		c.Trigger, c.PreTokens, c.PostTokens = m.Trigger, m.PreTokens, m.PostTokens
+	}
+	return Event{Message: &protocol.ConversationMessage{
+		T:          "message",
+		UUID:       rec.UUID,
+		ParentUUID: rec.ParentID,
+		Role:       "assistant",
+		Timestamp:  rec.Timestamp,
+		Content:    []protocol.ContentBlock{},
+		Compact:    c,
+	}}
 }
 
 // parseContent decodes a Claude message's `content`, which is polymorphic: a
@@ -279,10 +341,9 @@ func parseContent(raw json.RawMessage) ([]protocol.ContentBlock, bool) {
 	}
 }
 
-// UsageFrom parses a raw Claude usage payload into a TokenUsage event. Exposed
-// for tests and future callers that fold usage into the stream once we choose
-// where to emit it (currently the watcher doesn't — usage is per-turn, not
-// per-line, and is derivable from the assistant message; wire in Phase 3).
+// UsageFrom parses a raw Claude usage payload into a TokenUsage. The watcher
+// puts it on its assistant message (ConversationMessage.Usage) rather than
+// emitting a usage event of its own: it is the reply's, not a line's.
 func UsageFrom(raw map[string]json.RawMessage) *protocol.TokenUsage {
 	if raw == nil {
 		return nil

@@ -58,6 +58,11 @@ Grounded in the real schema (Spike 3, Claude Code 2.0.24):
   ```
 - Content blocks: `text`, `thinking`, `tool_use` (`{ "id", "name", "input", "caller" }`),
   `tool_result` (`{ "toolUseId", "content" }`).
+- Optional on a message, each absent from agents before it (a page drops what it doesn't know):
+  `usage` (an assistant turn's tokens, for the context ring), `contextWindow` (where the log says
+  it: Codex's), `mode: "plan"` (a prompt sent in plan mode), and `compact`
+  (`{ "trigger"?, "preTokens"? }`, the conversation compacted here: an assistant record with empty
+  `content`, so an older page shows nothing and doesn't read the turn as awaiting a reply).
 - `TokenUsage`
   ```json
   { "t": "usage", "input_tokens": n, "output_tokens": n,
@@ -65,7 +70,8 @@ Grounded in the real schema (Spike 3, Claude Code 2.0.24):
   ```
 
 **Parser rules (defensive — the JSONL format is internal, undocumented, `version`-tagged):**
-- Whitelist rendered record types (`user`, `assistant`); **ignore** app-internal types
+- Whitelist rendered record types (`user`, `assistant`, and `system` `compact_boundary`, shown as
+  `compact`; the summary after it, `isCompactSummary`, is not a prompt); **ignore** app-internal types
   (`queue-operation`, `attachment`, `ai-title`, `last-prompt`, `mode`, `pr-link`, `system`, …),
   except a `queued_command` attachment of `commandMode` `prompt`: a prompt Claude took in
   mid-turn, recorded only so, which is rendered as the user message it stands for.

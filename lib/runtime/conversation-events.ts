@@ -65,6 +65,25 @@ export function isInterruption(event: AgentEvent): boolean {
   return event.t === "message" && event.role === "user" && messageText(event).startsWith(INTERRUPTED);
 }
 
+/** How Claude Code records a slash command it runs itself (/compact, /model):
+ *  user messages of the command and of what it printed, never answered. */
+const LOCAL_COMMAND = /^<(command-name|command-message|local-command-stdout|local-command-stderr|local-command-caveat)>/;
+
+/** Whether an event is Claude Code's record of a slash command it ran itself:
+ *  no turn for Claude to answer. */
+export function isLocalCommand(event: AgentEvent): boolean {
+  return event.t === "message" && event.role === "user" && LOCAL_COMMAND.test(messageText(event));
+}
+
+/** The command a record of one names ("/compact"), with its arguments; null
+ *  for a record of what it printed, or anything else. */
+export function localCommandLine(text: string): string | null {
+  const name = /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim();
+  if (!name) return null;
+  const args = /<command-args>([^<]*)<\/command-args>/.exec(text)?.[1]?.trim();
+  return args ? `${name} ${args}` : name;
+}
+
 /** The text-bearing user prompts the stream has recorded, in order, each as
  *  typed (without the header naming its attachments). Excludes Claude's
  *  tool-result turns, which are logged as role:"user" but carry no prompt text,
@@ -108,8 +127,9 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
       continue;
     }
     if (event.t !== "message") continue;
-    // A prompt or a tool result awaiting Claude; not the record of a stop.
-    if (event.role === "user") return !isInterruption(event);
+    // A prompt or a tool result awaiting Claude; not the record of a stop, or
+    // of a command Claude ran itself.
+    if (event.role === "user") return !isInterruption(event) && !isLocalCommand(event);
     const last = event.content[event.content.length - 1];
     if (!last) return false;
     return last.type !== "text" || event.stopReason === "tool_use";

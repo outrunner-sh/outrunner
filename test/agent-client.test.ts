@@ -356,3 +356,22 @@ test("a box-wide health check of a ready box mints a token for the listing id", 
   assert.equal(verifyRuntimeToken(seenAuth.replace("Bearer ", ""), target.secret).workspaceId, LISTING_WORKSPACE_ID);
   await assert.rejects(client.health({ ...box, workspaceId: "" }));
 });
+
+test("a prompt names its mode only where it has one, and a compaction posts to its own route", async () => {
+  const seen: { url: string; body: unknown }[] = [];
+  const fakeFetch = (async (url: string, init: RequestInit) => {
+    seen.push({ url, body: JSON.parse(String(init.body)) });
+    return new Response(JSON.stringify({ result: "ok" }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  await client.sendMessage(identity, "fix it");
+  await client.sendMessage(identity, "Approved.", { mode: "build", dismiss: true });
+  await client.compact(identity, { instructions: "keep the test names" });
+  assert.deepEqual(seen, [
+    // The body every agent has always taken.
+    { url: `${target.controlBaseUrl}/workspaces/ws-1/message`, body: { content: "fix it" } },
+    { url: `${target.controlBaseUrl}/workspaces/ws-1/message`, body: { content: "Approved.", mode: "build", dismiss: true } },
+    { url: `${target.controlBaseUrl}/workspaces/ws-1/compact`, body: { instructions: "keep the test names" } },
+  ]);
+  await assert.rejects(() => client.sendMessage(identity, "x", { mode: "yolo" as "plan" }));
+});
