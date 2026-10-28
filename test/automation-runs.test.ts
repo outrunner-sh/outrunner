@@ -142,7 +142,17 @@ test("an event records one run per matching automation, in one write, once per c
 function startDeps(over: Partial<StartDeps> = {}) {
   const settled: unknown[] = [];
   const started: ServerSessionStart[] = [];
+  const archived: { userId: string; ids: readonly string[] }[] = [];
+  const neighbours: unknown[] = [];
   const deps: StartDeps = {
+    runNeighbours: async (run) => {
+      neighbours.push(run);
+      return { earlierSessions: ["w-old"], superseded: false };
+    },
+    archiveServerSessions: async (userId, ids) => {
+      archived.push({ userId, ids });
+      return ids.length;
+    },
     startServerSession: async (start) => {
       started.push(start);
       // As createCloudSession: an onCreated that throws fails the session there.
@@ -158,7 +168,7 @@ function startDeps(over: Partial<StartDeps> = {}) {
     },
     ...over,
   };
-  return { deps, settled, started };
+  return { deps, settled, started, archived, neighbours };
 }
 
 function pending(over: Partial<RunCandidate> = {}): PendingRun {
@@ -182,6 +192,55 @@ test("a run starts its session as the runner, on the pull request's head, as the
     { status: "started", workspaceId: "w1" },
     { status: "ready", workspaceId: "w1", reason: null },
   ]);
+});
+
+test("once a run's session is ready, the earlier review sessions are archived as the runner", async () => {
+  const { deps, archived, neighbours } = startDeps();
+  await startRun(pending(), deps);
+  assert.deepEqual(neighbours, [{ runId: "r1", automationId: "a1", projectId: "p1", prNumber: 7 }]);
+  assert.deepEqual(archived, [{ userId: "u1", ids: ["w-old"] }]);
+});
+
+test("a run ready after a later commit's run began archives its own session, not the newer one", async () => {
+  const { deps, archived } = startDeps({
+    runNeighbours: async () => ({ earlierSessions: ["w-older"], superseded: true }),
+  });
+  await startRun(pending(), deps);
+  assert.deepEqual(archived, [{ userId: "u1", ids: ["w1"] }]);
+});
+
+test("a run that fails keeps the earlier review sessions, and an archive failure fails nothing", async () => {
+  let { deps, archived } = startDeps({
+    startServerSession: async () => ({ workspaceId: "w2", status: "failed", errorMessage: "x" }),
+  });
+  await startRun(pending(), deps);
+  assert.deepEqual(archived, []);
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const settled: unknown[] = [];
+    ({ deps, archived } = startDeps({
+      runNeighbours: async () => {
+        throw new Error("db down");
+      },
+      settleRun: async (_id, outcome) => {
+        settled.push(outcome);
+      },
+    }));
+    await startRun(pending(), deps); // never throws
+    assert.deepEqual(settled, [
+      { status: "started", workspaceId: "w1" },
+      { status: "ready", workspaceId: "w1", reason: null },
+    ]);
+    ({ deps } = startDeps({
+      archiveServerSessions: async () => {
+        throw new Error("box gone");
+      },
+    }));
+    await startRun(pending(), deps); // nor when archiving does
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test("a run says why it didn't start, or failed", async () => {

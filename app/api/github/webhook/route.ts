@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { planRuns, startRun } from "@/lib/automations/runs";
-import { automationsForPullRequest, recordRuns, settleRun } from "@/lib/db/automation-runs";
+import { automationsForPullRequest, recordRuns, runNeighbours, settleRun } from "@/lib/db/automation-runs";
 
 import {
   forgetInstallation,
@@ -16,7 +16,7 @@ import {
   toInstallation,
   webhookSignatureMatches,
 } from "@/lib/github/app";
-import { startServerSession } from "@/lib/session/server-session";
+import { archiveServerSessions, startServerSession } from "@/lib/session/server-session";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -121,5 +121,7 @@ function startDeps() {
   return {
     startServerSession,
     settleRun,
+    runNeighbours,
+    archiveServerSessions,
   };
 }

@@ -56,6 +56,16 @@ export type StartDeps = {
     runId: string,
     outcome: { status: "started" | "ready" | "failed" | "refused"; workspaceId?: string | null; reason?: string | null },
   ): Promise<void>;
+  /** The sessions of this automation's earlier runs on the pull request, and
+   *  whether a later run is ready already (runNeighbours). */
+  runNeighbours(run: {
+    runId: string;
+    automationId: string;
+    projectId: string;
+    prNumber: number;
+  }): Promise<{ earlierSessions: string[]; superseded: boolean }>;
+  /** Archive them as the runner; how many were. */
+  archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
 };
 
 /** Start a run's session and keep how it went. Never throws: the run's
@@ -91,4 +101,24 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     workspaceId: result.workspaceId,
     reason: result.status === "ready" ? null : (result.errorMessage ?? null),
   });
+  // The newest review takes over: the earlier ones' sessions are archived (a
+  // snapshot each, restorable), so the runner's list keeps the latest and
+  // their boxes are freed. Only once it's ready: a failed run keeps them.
+  // Runs set up side by side, so one ready after a later commit's run is
+  // ready already is itself the stale one: it archives its own session
+  // instead. (A later run still setting up archives this one when it's
+  // ready; one that failed leaves this one open.)
+  if (result.status === "ready" && result.workspaceId) {
+    try {
+      const { earlierSessions, superseded } = await deps.runNeighbours({
+        runId: run.runId,
+        automationId: candidate.automationId,
+        projectId: candidate.projectId,
+        prNumber: event.number,
+      });
+      await deps.archiveServerSessions(candidate.runsAs, superseded ? [result.workspaceId] : earlierSessions);
+    } catch (error) {
+      console.error(`Run ${run.runId}: couldn't archive the earlier review sessions`, error);
+    }
+  }
 }

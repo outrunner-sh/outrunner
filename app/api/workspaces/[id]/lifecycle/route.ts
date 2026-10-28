@@ -7,14 +7,12 @@ import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
 import { gitTokensFor, optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import {
-  createWorkspaceSnapshot,
   deleteWorkspaceSnapshots,
   getProject,
   getWorkspaceComputer,
   getWorkspace,
   listWorkspaceSnapshots,
   markRuntimeComputerStoppedIfReady,
-  readRuntimeComputerSecret,
   recordWorkspaceModel,
   transitionWorkspace,
   updateWorkspace,
@@ -34,7 +32,6 @@ import { scopeOf } from "@/lib/runtime/computer-scope";
 import { recordedModelRequest } from "@/lib/runtime/model-switch";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
 import {
-  OutdatedComputerError,
   relaunchNeedsAccount,
   restoreSignedIn,
   sessionAuthClient,
@@ -45,10 +42,11 @@ import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-env
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
-import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
+import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
 import { canDestroy } from "@/lib/session/provisioning";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
@@ -187,77 +185,16 @@ async function daytonaLifecycle(
   return destroyDaytonaWorkspace(workspace, provider, owner);
 }
 
-/**
- * Archive → produce a Workspace Snapshot. Next mints one signed upload URL per
- * artifact, the agent captures + uploads them (manifest last) and returns the
- * manifest, then Next caches it on a `workspace_snapshots` row and marks the
- * workspace `archived`. The worktree is intentionally kept (Restore reclaims it
- * later), so an archived workspace is revivable — not destroyed.
- */
+/** Archive → a Workspace Snapshot (lib/session/archive-session.ts). */
 async function archiveDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
 ) {
-  if (workspace.status !== "ready" && workspace.status !== "idle") {
-    return NextResponse.json(
-      { error: "Only an active workspace can be archived." },
-      { status: 409 },
-    );
-  }
-  const transitioned = await startTransition(workspace, ["ready", "idle"], "archiving");
-  if (!transitioned) return lifecycleConflict();
-
-  try {
-    const archivedAt = new Date().toISOString();
-    const { prefix, urls } = await mintSnapshotUpload(
-      supabaseSnapshotStorage(),
-      owner.id,
-      workspace.id,
-      archivedAt,
-      // A Codex session's raw rollout too, so a restore resumes Codex itself
-      // (only an agent that runs Codex is asked: an older one refuses it).
-      workspace.agent === "codex" ? ["rollout"] : [],
-    );
-    const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
-
-    const { agent, identity, upgrade } = await daytonaAgent(workspace, provider, owner);
-    // A session of several repositories is archived by an agent that can (its
-    // box upgraded in place first where it can be): after the transition, so
-    // two clicks don't both upgrade it.
-    if (workspace.checkouts) {
-      const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
-      await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "archive a session of several repositories");
-    }
-    const manifest = await agent.archiveWorkspace(identity, { archivedAt, uploads });
-
-    await createWorkspaceSnapshot({
-      ownerId: owner.id,
-      workspaceId: workspace.id,
-      archivedAt,
-      storagePath: prefix,
-      manifest,
-    });
-  } catch (error) {
-    console.error(`Workspace ${workspace.id} archive failed`, error);
-    // A box that can't archive it says so; the session runs on.
-    const message = error instanceof OutdatedComputerError ? error.message : lifecycleError("archive");
-    await restoreAfterFailure(workspace, "archiving", message).catch(
-      (updateError: unknown) => console.error("Could not persist archive failure", updateError),
-    );
-    return NextResponse.json({ error: message }, { status: error instanceof OutdatedComputerError ? 409 : 502 });
-  }
-
-  const completed = await completeTransition({
-    id: workspace.id,
-    from: "archiving",
-    patch: { status: "archived", errorMessage: null },
-  });
-  // The last session off its box frees it: paused now, not when idle.
-  if (completed) after(() => releaseWorkspaceBox(provider, workspace, false));
-  return completed
-    ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
-    : lifecycleReconciliationRequired("archive");
+  const archived = await archiveCloudSession(workspace, provider, owner);
+  if (archived.ok) return NextResponse.json({ workspace: { id: workspace.id, status: "archived" } });
+  if (archived.reason === "failed") return NextResponse.json({ error: archived.error }, { status: archived.status });
+  return archived.reason === "reconcile" ? lifecycleReconciliationRequired("archive") : lifecycleConflict();
 }
 
 /**
@@ -497,30 +434,6 @@ async function restoreSignIn(
   // Nothing to run on: this says what to connect.
   if (!fallback) await resolveAgentAuth(store, workspace.agent, "cloud");
   return { auth, restoreOn: fallback && { model: fallback, effort: null } };
-}
-
-async function daytonaAgent(
-  workspace: Workspace,
-  provider: ComputerRuntimeProvider,
-  owner: Owner,
-): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade?: () => Promise<void> }> {
-  const computer = await getWorkspaceComputer(workspace);
-  if (!computer?.daytonaSandboxId || computer.status !== "ready") {
-    throw new Error("Runtime Computer is not available.");
-  }
-  const secret = await readRuntimeComputerSecret(computer.id);
-  if (!secret) throw new Error("Runtime Computer secret is missing.");
-  const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
-  return {
-    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id),
-    agent: new AgentClient(target),
-    identity: {
-      workspaceId: workspace.id,
-      projectId: workspace.projectId,
-      computerId: computer.id,
-      userId: owner.id,
-    },
-  };
 }
 
 async function resumeDaytonaWorkspace(
