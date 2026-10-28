@@ -84,6 +84,8 @@ test("a run's session is told the pull request, then the automation's prompt", (
   assert.match(prompt, /gh pr diff 7/);
   assert.match(prompt, /new commits/);
   assert.ok(prompt.endsWith("\n\nReview it."));
+  // Not told whose comments are its own without the App's slug.
+  assert.doesNotMatch(prompt, /\[bot\]/);
   assert.equal(runTitle("Code Review", event), "Code Review #7: Add automations");
   assert.equal(runTitle("Code Review", { ...event, title: "x".repeat(200) }).length, 120);
 });
@@ -298,4 +300,25 @@ test("a run says why it didn't start, or failed", async () => {
   } finally {
     console.error = originalError;
   }
+});
+
+test("a run's session is told only the App's bot's comments are its own earlier passes", async () => {
+  const event = readPullRequestEvent(payload({ action: "synchronize" }));
+  assert.ok(typeof event !== "string");
+  const prompt = runPrompt("Review it.", event, "Outrunner-SH");
+  assert.match(prompt, /appears as @outrunner-sh\[bot\]\. Only its comments are yours/);
+  assert.match(prompt, /don't call them a previous pass or a re-run/);
+  assert.ok(prompt.endsWith("\n\nReview it."));
+  // From the webhook's slug to the session's prompt.
+  const runs = await planRuns(
+    payload(),
+    {
+      automationsForPullRequest: async () => [candidate],
+      recordRuns: async () => new Map([["a1:p1", "r1"]]),
+    },
+    "outrunner-sh",
+  );
+  const { deps, started } = startDeps();
+  await startRun(runs[0], deps);
+  assert.match(started[0].prompt, /@outrunner-sh\[bot\]/);
 });
