@@ -30,24 +30,9 @@ export type RunCandidate = {
  */
 export async function automationsForPullRequest(installationId: number, repoFullName: string): Promise<RunCandidate[]> {
   const supabase = createSupabaseAdminClient();
-  const { data: holder, error } = await supabase
-    .from("github_installations")
-    .select("org_id")
-    .eq("installation_id", installationId)
-    .is("suspended_at", null)
-    .maybeSingle();
-  if (error) throw error;
-  if (!holder?.org_id) return [];
-  const orgId = holder.org_id;
-
-  const { data: projects, error: projectsError } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("org_id", orgId)
-    .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"));
-  if (projectsError) throw projectsError;
-  const projectIds = (projects ?? []).map((p) => p.id);
-  if (projectIds.length === 0) return [];
+  const scope = await installationProjects(installationId, repoFullName);
+  if (!scope) return [];
+  const { orgId, projectIds } = scope;
 
   const { data: repos, error: reposError } = await supabase
     .from("automation_repos")
@@ -81,6 +66,63 @@ export async function automationsForPullRequest(installationId: number, repoFull
       { automationId: a.id, name: a.name, prompt: a.prompt, triggers: a.triggers, runsAs, projectId: r.project_id, orgId },
     ];
   });
+}
+
+/** The org holding the installation (claimed and not suspended), and its
+ *  projects that are `repoFullName`: no other org's are an event's. */
+async function installationProjects(
+  installationId: number,
+  repoFullName: string,
+): Promise<{ orgId: string; projectIds: string[] } | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data: holder, error } = await supabase
+    .from("github_installations")
+    .select("org_id")
+    .eq("installation_id", installationId)
+    .is("suspended_at", null)
+    .maybeSingle();
+  if (error) throw error;
+  if (!holder?.org_id) return null;
+  const { data: projects, error: projectsError } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("org_id", holder.org_id)
+    .ilike("full_name", repoFullName.replace(/[\\%_]/g, "\\$&"));
+  if (projectsError) throw projectsError;
+  const projectIds = (projects ?? []).map((p) => p.id);
+  return projectIds.length === 0 ? null : { orgId: holder.org_id, projectIds };
+}
+
+/**
+ * The open sessions of the automations' runs on a pull request, by their
+ * owner (the runner each was started as), for it closing to archive them.
+ */
+export async function pullRequestSessions(
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+): Promise<Map<string, string[]>> {
+  const scope = await installationProjects(installationId, repoFullName);
+  if (!scope) return new Map();
+  const supabase = createSupabaseAdminClient();
+  const { data: runs, error } = await supabase
+    .from("automation_runs")
+    .select("workspace_id")
+    .in("project_id", scope.projectIds)
+    .eq("pr_number", prNumber)
+    .not("workspace_id", "is", null);
+  if (error) throw error;
+  const ids = [...new Set((runs ?? []).flatMap((r) => (r.workspace_id ? [r.workspace_id] : [])))];
+  if (ids.length === 0) return new Map();
+  const { data: sessions, error: sessionsError } = await supabase
+    .from("workspaces")
+    .select("id, owner_id")
+    .in("id", ids)
+    .in("status", ["ready", "idle"]);
+  if (sessionsError) throw sessionsError;
+  const byOwner = new Map<string, string[]>();
+  for (const s of sessions ?? []) byOwner.set(s.owner_id, [...(byOwner.get(s.owner_id) ?? []), s.id]);
+  return byOwner;
 }
 
 /**

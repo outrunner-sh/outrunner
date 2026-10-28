@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { readPullRequestEvent, runPrompt, runTitle, triggerFor } from "@/lib/automations/pull-request";
-import { type PendingRun, planRuns, startRun, type StartDeps } from "@/lib/automations/runs";
+import { readClosedPullRequest, readPullRequestEvent, runPrompt, runTitle, triggerFor } from "@/lib/automations/pull-request";
+import { closeRuns, type PendingRun, planRuns, startRun, type StartDeps } from "@/lib/automations/runs";
 import type { RunCandidate } from "@/lib/db/automation-runs";
 import type { ServerSessionStart } from "@/lib/session/server-session";
 
@@ -323,4 +323,62 @@ test("a run's session is told only the App's bot's comments are its own earlier 
   const { deps, started } = startDeps();
   await startRun(runs[0], deps);
   assert.match(started[0].prompt, /outrunner-sh\[bot\]/);
+test("a closed or merged pull request is read as such; nothing else is", () => {
+  assert.deepEqual(readClosedPullRequest(payload({ action: "closed", pr: { merged: true } })), {
+    installationId: 42,
+    repoFullName: "neevai-labs/outrunner",
+    number: 7,
+  });
+  // Closed is closed, whoever's or whatever its head: a draft's or a fork's
+  // has no runs, which finds none.
+  assert.ok(readClosedPullRequest(payload({ action: "closed", pr: { draft: true } })));
+  assert.equal(readClosedPullRequest(payload()), null);
+  assert.equal(readClosedPullRequest(payload({ action: "synchronize" })), null);
+  assert.equal(readClosedPullRequest(payload({ action: "closed", installation: { id: "nope" } })), null);
+  assert.equal(readClosedPullRequest(payload({ action: "closed", pr: { number: 0 } })), null);
+});
+
+test("a pull request closing archives its review sessions, each as its runner", async () => {
+  const asked: unknown[] = [];
+  const archived: { userId: string; ids: readonly string[] }[] = [];
+  const deps = {
+    pullRequestSessions: async (installationId: number, repo: string, number: number) => {
+      asked.push([installationId, repo, number]);
+      return new Map([
+        ["connector-1", ["w1", "w2"]],
+        ["u1", ["w3"]],
+      ]);
+    },
+    archiveServerSessions: async (userId: string, ids: readonly string[]) => {
+      archived.push({ userId, ids });
+      return ids.length;
+    },
+  };
+  assert.equal(await closeRuns(payload({ action: "closed" }), deps), 3);
+  assert.deepEqual(asked, [[42, "neevai-labs/outrunner", 7]]);
+  assert.deepEqual(archived, [
+    { userId: "connector-1", ids: ["w1", "w2"] },
+    { userId: "u1", ids: ["w3"] },
+  ]);
+  // Any other event looks nothing up.
+  assert.equal(
+    await closeRuns(payload(), { ...deps, pullRequestSessions: async () => assert.fail("looked up") }),
+    0,
+  );
+});
+
+test("a pull request closing never throws", async () => {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const failing = {
+      pullRequestSessions: async () => {
+        throw new Error("db down");
+      },
+      archiveServerSessions: async () => 0,
+    };
+    assert.equal(await closeRuns(payload({ action: "closed" }), failing), 0);
+  } finally {
+    console.error = originalError;
+  }
 });
