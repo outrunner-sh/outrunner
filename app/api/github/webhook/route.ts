@@ -92,7 +92,7 @@ export async function POST(request: Request) {
       // restart cuts off is swept by the reconciler (sweepStalledRuns).
       const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, config.slug);
       after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
-      // One closed or merged: its review sessions are done with.
+      // A PR closed or merged: archive its automation runs' review sessions.
       if (payload.action === "closed") after(() => closeRuns(payload, { pullRequestSessions, archiveServerSessions }));
       // A PR from a session working on an item the Slack agent filed: its
       // thread hears of it.
