@@ -1,10 +1,12 @@
 "use client";
 
-import { MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
+import { Archive, MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
+import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { OpenEditorButton } from "@/components/open-editor-button";
 import { SessionComposer } from "@/components/session-composer";
 import { SessionDidntStart } from "@/components/session-didnt-start";
@@ -20,6 +22,7 @@ import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { archiveOffer } from "@/lib/session/archive-control";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -60,6 +63,11 @@ export function WorkspaceStudio({
   const queued = useQueuedFirstPrompt(workspace.id, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] });
   // Beside the title: the repository by its short name, or this Mac's folder.
   const place = local ? local.name : projectName?.split("/").pop();
+  // Archive, for a cloud session that has a Snapshot to restore from. Once it
+  // is archived, leave it: left open, this page would restore it at once.
+  const archive = isLocal ? null : archiveOffer(workspace);
+  const [archiving, setArchiving] = useState(false);
+  const router = useRouter();
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
@@ -78,6 +86,20 @@ export function WorkspaceStudio({
         <div className="studio-header-actions">
           {/* VS Code on the session's own box: cloud sessions only. */}
           {hasLiveSession && !isLocal && opensInBrowser(workspace.provider) && <OpenEditorButton workspaceId={workspace.id} />}
+          {archive && (
+            <button
+              className="studio-icon-button aria-disabled:cursor-not-allowed aria-disabled:opacity-40"
+              // Not `disabled`: a disabled button shows no tooltip saying why.
+              aria-disabled={!archive.can}
+              onClick={() => {
+                if (archive.can) setArchiving(true);
+              }}
+              title={archive.can ? "Archive session" : archive.why}
+              aria-label="Archive session"
+            >
+              <Archive />
+            </button>
+          )}
           <button
             className="studio-icon-button"
             onClick={() => setRightOpen((open) => !open)}
@@ -88,6 +110,14 @@ export function WorkspaceStudio({
           </button>
         </div>
       </header>
+      <ArchiveSessionDialog
+        session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
+        onOpenChange={setArchiving}
+        onArchived={() => {
+          router.push("/");
+          router.refresh();
+        }}
+      />
 
       <section className="studio-chat">
         {hasLiveSession ? (

@@ -14,6 +14,7 @@ import { groupLocalSessions, localSessionLabel } from "@/lib/desktop/local-sessi
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { buildNavGroups, newestFirst, recency, type NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
+import { archiveOffer, type ArchiveOffer } from "@/lib/session/archive-control";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { canDestroy } from "@/lib/session/provisioning";
 
@@ -92,6 +93,11 @@ export type SidebarSession = {
   /** What deleting it would do; null while it cannot be deleted (a cloud
    *  session still starting, or mid-way through another change). */
   deletion: SessionDeletion | null;
+  /** Archive for it: null where it isn't offered (a session on this Mac, or
+   *  on a sandbox with no Snapshot to restore from, or one archived already). */
+  archive: ArchiveOffer | null;
+  /** Archived: opening it restores it. */
+  archived: boolean;
 };
 
 /** What the delete confirmation says will happen. */
@@ -158,6 +164,8 @@ export function buildSidebarGroups(
       at: recency(w),
       // The server's own rule (the lifecycle route's destroy).
       deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
+      archive: archiveOffer(w),
+      archived: w.status === "archived",
     })),
   }));
   const local: SidebarGroup[] = groupLocalSessions(localSessions).map((group) => ({
@@ -175,6 +183,9 @@ export function buildSidebarGroups(
         // Last use, not creation: comparable with a cloud session's activity.
         at: s.lastActiveAt || s.createdAt,
         deletion: s.inPlace ? { kind: "local-in-place" as const } : { kind: "local-worktree" as const },
+        // The Mac's agent has no archive of its own.
+        archive: null,
+        archived: false,
       }))
       .sort((a, b) => newestFirst(a.at, b.at)),
   }));

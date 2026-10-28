@@ -3,6 +3,7 @@
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Archive,
   ChevronRight,
   Ellipsis,
   GitBranchPlus,
@@ -21,6 +22,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AppUpdate } from "@/components/app-update";
+import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
@@ -137,6 +139,15 @@ export function AppSidebar({
     refreshLocal();
   };
 
+  // The session whose archive confirmation is open. Once it is archived, leave
+  // it if it is the one on screen (left open, its page would restore it at
+  // once), and re-read the list, which then marks it archived.
+  const [archiving, setArchiving] = useState<ArchivingSession | null>(null);
+  const onArchived = (id: string) => {
+    if (id === active) router.push("/");
+    router.refresh();
+  };
+
   // ⌘K (AppFrame): open search, which focuses its field as it mounts.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -241,6 +252,7 @@ export function AppSidebar({
                   active={active}
                   now={now}
                   onDelete={setDeleting}
+                  onArchive={setArchiving}
                   folded={folded.includes(group.key)}
                   searching={query.trim() !== ""}
                   onToggle={() => toggleFolded(group.key)}
@@ -258,6 +270,13 @@ export function AppSidebar({
         }}
         onDeleting={onDeleting}
         onDeleted={onDeleted}
+      />
+      <ArchiveSessionDialog
+        session={archiving}
+        onOpenChange={(open) => {
+          if (!open) setArchiving(null);
+        }}
+        onArchived={onArchived}
       />
 
       {/* Counted once both lists are in, so no step reads undone as they land;
@@ -297,6 +316,7 @@ function WorkspaceGroup({
   active,
   now,
   onDelete,
+  onArchive,
   folded,
   searching,
   onToggle,
@@ -306,6 +326,8 @@ function WorkspaceGroup({
   now: number;
   /** Opens the delete confirmation for one of its sessions. */
   onDelete: (session: DeletingSession) => void;
+  /** Opens the archive confirmation for one of its sessions. */
+  onArchive: (session: ArchivingSession) => void;
   folded: boolean;
   searching: boolean;
   onToggle: () => void;
@@ -384,7 +406,7 @@ function WorkspaceGroup({
         )}
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
-          const { deletion } = session;
+          const { deletion, archive } = session;
           // A cloud session warms up as the pointer rests on it, so its click
           // shows the conversation at once. A Mac one is near already, and
           // attaching would start it.
@@ -400,14 +422,40 @@ function WorkspaceGroup({
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-2 rounded-md py-1 pl-[32px] pr-2 text-[13px] transition-colors",
+                  // Room for both of the row's buttons as they show.
+                  deletion && archive && "group-hover/row:pr-10 group-focus-within/row:pr-10",
                   isActive
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
               >
                 <span className="min-w-0 flex-1 truncate">{session.title}</span>
-                <RowTail at={session.at} now={now} hideOnHover={deletion !== null} />
+                {session.archived && (
+                  <span title="Archived. Opening it restores it." className="shrink-0">
+                    <Archive aria-label="Archived" className="size-3 text-muted-foreground" />
+                  </span>
+                )}
+                <RowTail at={session.at} now={now} hideOnHover={deletion !== null || archive !== null} />
               </Link>
+              {archive && (
+                <button
+                  type="button"
+                  // Not `disabled`: a disabled button shows no tooltip saying why.
+                  aria-disabled={!archive.can}
+                  onClick={() => {
+                    if (archive.can) onArchive({ id: session.id, title: session.title });
+                  }}
+                  aria-label={`Archive ${session.title}`}
+                  title={archive.can ? "Archive session" : archive.why}
+                  className={cn(
+                    "absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition focus-visible:opacity-100 group-hover/row:opacity-100",
+                    deletion ? "right-7" : "right-1",
+                    archive.can ? "hover:bg-accent hover:text-foreground" : "cursor-not-allowed group-hover/row:opacity-40 focus-visible:opacity-40",
+                  )}
+                >
+                  <Archive className="size-3.5" />
+                </button>
+              )}
               {deletion && (
                 <button
                   type="button"
@@ -468,6 +516,8 @@ function SidebarSkeleton() {
 const ADD_PROJECT_LABEL = LOCAL_SESSIONS ? "Add a project" : "Add a repository from GitHub";
 
 type DeletingSession = { id: string; title: string; deletion: SessionDeletion };
+
+type ArchivingSession = { id: string; title: string };
 
 function NavLink({
   href,
