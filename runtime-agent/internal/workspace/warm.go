@@ -255,13 +255,20 @@ func (s *Service) discardWarm(ctx context.Context) {
 // one warmed from base whose hook succeeded. Moved into place, switched to a
 // new branch at origin/base (fetched since: the box was taken from the pool),
 // and cleaned of what git tracks or would (what it ignores stays: the warm
-// hook's work). Whether it did; one that fails half way is discarded, and the
-// session's worktree is made as usual.
+// hook's work). Whether it did; one that fails half way is discarded, the
+// branch it made going with it, and the session's worktree is made as usual.
+// A session's branch already in the mirror (or one that can't be told
+// missing) isn't adopted over: its worktree can't be made on it either, and
+// the branch a failed adoption takes back is only ever its own. A Create
+// whose request has ended leaves the warm for its retry.
 func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) bool {
 	warmMu.Lock()
 	defer warmMu.Unlock()
 	state := s.readWarmState()
 	if state.State != "succeeded" || state.BaseBranch != base || len(state.Checkouts) > 0 || !fileExists(s.warmDir()) {
+		return false
+	}
+	if ctx.Err() != nil || !s.branchMissing(ctx, s.mirrorPath(), branch) {
 		return false
 	}
 	steps := [][]string{
@@ -273,10 +280,14 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 		if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "adopting the warm checkout: git %s: %v: %s\n", strings.Join(args, " "), err, out)
 			if i > 0 {
+				// The checkout, then its branch, whether the switch got that
+				// far or not: it wasn't there before (above).
 				cleanup, cancel := cleanupContext(ctx)
-				_ = exec.CommandContext(cleanup, "git", "-C", s.mirrorPath(), "worktree", "remove", "--force", worktree).Run()
-				cancel()
+				_, _ = s.git(cleanup, s.mirrorPath(), "worktree", "remove", "--force", worktree)
 				_ = os.RemoveAll(worktree)
+				_, _ = s.git(cleanup, s.mirrorPath(), "worktree", "prune")
+				_, _ = s.git(cleanup, s.mirrorPath(), "branch", "-D", branch)
+				cancel()
 			}
 			s.discardWarm(ctx)
 			return false
