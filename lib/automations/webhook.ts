@@ -57,12 +57,17 @@ export function webhookDedupeKey(idempotencyKey: string | null, fallback: string
 }
 
 /** A value as the prompt has it: a string, number or boolean as it is; an
- *  object or array as JSON, fenced, so it reads as data where it lands. */
-function rendered(value: unknown): string {
+ *  object or array as JSON, fenced, so it reads as data where it lands.
+ *  Only the value spends the budget (`spend`), never its fence, so a value
+ *  cut short still closes; and the fence is longer than any run of
+ *  backticks in it, so nothing in the payload closes it early. */
+function rendered(value: unknown, spend: (text: string) => string): string {
   if (value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (value === null || typeof value !== "object") return String(value);
-  return `\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
+  if (typeof value === "string") return spend(value);
+  if (value === null || typeof value !== "object") return spend(String(value));
+  const json = spend(JSON.stringify(value, null, 2));
+  const fence = "`".repeat(Math.max(3, ...[...json.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+  return `\n${fence}json\n${json}\n${fence}\n`;
 }
 
 /** What's left of PAYLOAD_PROMPT_MAX, spent by each value put in the prompt:
@@ -114,7 +119,7 @@ export const FILLED_FROM_PAYLOAD =
 export function fillPayload(prompt: string, payload: unknown): string {
   const spend = budget();
   if (hasPayloadPlaceholder(prompt)) {
-    const filled = prompt.replace(PLACEHOLDER, (_match, path: string) => spend(rendered(path ? at(payload, path) : payload)));
+    const filled = prompt.replace(PLACEHOLDER, (_match, path: string) => rendered(path ? at(payload, path) : payload, spend));
     return [FILLED_FROM_PAYLOAD, "", filled].join("\n");
   }
   return [
