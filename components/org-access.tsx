@@ -129,7 +129,7 @@ function LevelSelect({
       value={value ?? "none"}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value === "none" ? null : (event.target.value as AccessLevel))}
-      className="h-8 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground disabled:opacity-50"
+      className={cn("h-8 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground disabled:opacity-50", SELECT_OPTIONS)}
     >
       {LEVELS.map((l) => (
         <option key={l.value} value={l.value}>

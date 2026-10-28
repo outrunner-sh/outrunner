@@ -17,10 +17,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
+import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import type { OrgRoleInfo } from "@/lib/db/org-access";
 import type { JoinRequest, Member, OpenInvite, Person } from "@/lib/db/org-members";
 import { requestJson } from "@/lib/http/request-json";
 import type { Org, OrgRole } from "@/lib/orgs/active";
+import { cn } from "@/lib/utils";
 
 /**
  * Settings → Org → Members. Everyone sees who's in the org and may leave it;
@@ -363,7 +365,7 @@ function Invites({
           value={role}
           onChange={(event) => setRole(event.target.value as OrgRole)}
           aria-label="Role"
-          className="h-9 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground"
+          className={cn("h-9 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground", SELECT_OPTIONS)}
         >
           <option value="member">Member</option>
           <option value="admin">Admin</option>
