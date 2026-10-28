@@ -17,6 +17,9 @@ interface Env {
   /** Which deploy of the Worker this is (wrangler.jsonc version_metadata):
    *  each `wrangler deploy` makes a new one. */
   CF_VERSION_METADATA?: WorkerVersionMetadata;
+  /** The commit deployed (deploy.yml passes it), which the container's image
+   *  is built from too: its /api/health says which it runs. */
+  OUTRUNNER_BUILD?: string;
 
   // Secrets forwarded into the container process. Set each with
   // `wrangler secret put <NAME>` (see docs/deploy-cloudflare.md) — never commit
@@ -116,7 +119,44 @@ export class OutrunnerControlPlane extends Container<Env> {
    */
   override async fetch(request: Request): Promise<Response> {
     await this.runCurrentImage();
-    return super.fetch(request);
+    const response = await super.fetch(request);
+    this.ctx.waitUntil(this.checkBuild());
+    return response;
+  }
+
+  /** The build this instance found its container running, once it was the
+   *  deployed one. */
+  private checkedBuild: string | null = null;
+  private lastBuildCheck = 0;
+  /** Containers replaced for each deployed build: a few, never in a loop. */
+  private replacedFor = new Map<string, number>();
+
+  /**
+   * After a request, at most once a minute until it is: that the container
+   * runs the deployed commit's image. The replacement on a new deploy
+   * (runCurrentImage) can come before Cloudflare has the new image where the
+   * container starts, which then starts the old one again; this replaces it
+   * once more, up to three times a deploy, a minute apart.
+   */
+  private async checkBuild(): Promise<void> {
+    const want = this.env.OUTRUNNER_BUILD;
+    if (!want || this.checkedBuild === want || Date.now() - this.lastBuildCheck < 60_000) return;
+    this.lastBuildCheck = Date.now();
+    try {
+      const health = await this.containerFetch("http://container/api/health");
+      const build = ((await health.json()) as { build?: unknown }).build;
+      if (build === want) {
+        this.checkedBuild = want;
+        return;
+      }
+      const tries = this.replacedFor.get(want) ?? 0;
+      if (tries >= 3) return;
+      this.replacedFor.set(want, tries + 1);
+      console.log(`The container runs build ${String(build)}, not ${want}: replacing it`);
+      await this.destroy();
+    } catch (error) {
+      console.error("Couldn't check which build the container runs", error);
+    }
   }
 
   private runCurrentImage(): Promise<void> {

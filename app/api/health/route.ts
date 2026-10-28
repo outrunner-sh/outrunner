@@ -96,6 +96,9 @@ export async function GET() {
       configured,
       database,
       ...(nextStep ? { nextStep } : {}),
+      // The commit this server was built from (Dockerfile OUTRUNNER_BUILD):
+      // what the Worker and the deploy check is the one just deployed.
+      build: process.env.OUTRUNNER_BUILD || null,
       time: new Date().toISOString(),
     },
     { status: ok ? 200 : 503 },
