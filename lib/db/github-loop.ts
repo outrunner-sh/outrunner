@@ -70,10 +70,10 @@ const LIVE = ["ready", "idle", "suspending", "suspended", "resuming", "archiving
  * mention started on it (github_session_links), and for a pull request, the
  * session that recorded it (pull_requests). Only when there are none, the
  * newest session on its head branch: a branch name can be used again, and an
- * old session on it isn't this pull request's; nor one archived. That one
- * is linked outright once found (this lookup writes), so a session linked
- * later (a mention by someone who may not steer it, starting their own)
- * doesn't hide it. Never an automation's review
+ * old session on it isn't this pull request's, nor is one archived or being
+ * archived. That one is linked outright once found (this lookup writes), so
+ * a session linked later (a mention by someone who may not steer it,
+ * starting their own) doesn't hide it. Never an automation's review
  * sessions, nor background ones (a Slack thread's research), nor any whose
  * owner has left the org.
  */
@@ -108,9 +108,11 @@ export async function linkedSessions(link: LinkTarget, orgId: string): Promise<L
       .in("status", [...LIVE]);
   let sessions = await keep(ids.size ? await sessionsWhere().in("id", [...ids]) : { data: [], error: null }, orgId);
   if (sessions.length === 0 && link.target === "pull" && link.headRef) {
-    // Not an archived one: linked, it would stay picked over a fresh session
-    // on the branch, and be restored for every mention.
-    sessions = (await keep(await sessionsWhere().eq("branch", link.headRef).neq("status", "archived"), orgId)).slice(0, 1);
+    // Not one archived, or being archived: linked, it would stay picked over
+    // a fresh session on the branch, and be restored for every mention.
+    sessions = (
+      await keep(await sessionsWhere().eq("branch", link.headRef).not("status", "in", "(archived,archiving)"), orgId)
+    ).slice(0, 1);
     for (const s of sessions) {
       const { error } = await supabase.from("github_session_links").upsert(
         { project_id: link.projectId, kind: "pull", number: link.number, workspace_id: s.id },
