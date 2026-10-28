@@ -8,6 +8,7 @@ import {
   Ellipsis,
   GitBranchPlus,
   Folder,
+  GitPullRequest,
   Inbox,
   Slack,
   Laptop,
@@ -201,6 +202,13 @@ export function AppSidebar({
           hint="⌘I"
           count={triageCount}
           active={pathname === "/triage"}
+        />
+        {/* The org's open pull requests: ask about one, send it back, merge. */}
+        <NavLink
+          href="/review"
+          icon={<GitPullRequest />}
+          label="Review"
+          active={pathname === "/review" || pathname.startsWith("/review/")}
         />
         {/* The org's automations, which post as the Outrunner GitHub App. */}
         <NavLink

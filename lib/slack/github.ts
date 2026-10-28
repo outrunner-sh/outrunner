@@ -14,15 +14,4 @@ export async function repoToken(orgId: string, fullName: string): Promise<string
   return installation ? installationToken(config, installation.id) : null;
 }
 
-/** GET a GitHub API path with the token; null on any failure. */
-export async function githubGet<T>(token: string, path: string): Promise<T | null> {
-  try {
-    const response = await fetch(`https://api.github.com${path}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    return response.ok ? ((await response.json()) as T) : null;
-  } catch {
-    return null;
-  }
-}
+export { githubGet } from "@/lib/github/rest";
