@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  AGENT_TOOLS,
   type AgentSpec,
   filedCard,
   MAX_QUESTION_ROUNDS,
   parseAgentReply,
+  REPLY_TOOL,
   SPEC_ACTIONS,
   specCard,
   specMarkdown,
@@ -59,7 +61,7 @@ test("at the question limit, the system prompt says to propose", () => {
 });
 
 test("the model's answer is checked: asks need words, proposals need criteria, unknown repos are dropped", () => {
-  assert.deepEqual(parseAgentReply('{"action":"ask","message":"Which repo?","spec":null}', []), {
+  assert.deepEqual(parseAgentReply('{"action":"ask","message":"Which repo?","spec":null,"research":null}', []), {
     action: "ask",
     message: "Which repo?",
   });
@@ -96,4 +98,28 @@ test("the card offers start only with a repository, and loses its buttons once f
   assert.match(JSON.stringify(filed), /Filed as <https:\/\/app\/x\|OR-42> by @ana · starting a session/);
   // Text from the thread can't break out of the card's markup.
   assert.match(JSON.stringify(specCard({ ...spec, problem: "a <!channel> b" }, "c1")), /a &lt;!channel&gt; b/);
+});
+
+test("questions get answers or research; research needs one of the asker's repositories", () => {
+  const raw = (o: Record<string, unknown>) => JSON.stringify({ message: "", spec: null, research: null, ...o });
+  assert.deepEqual(parseAgentReply(raw({ action: "answer", message: "3 PRs merged" }), []), { action: "answer", message: "3 PRs merged" });
+  assert.equal(parseAgentReply(raw({ action: "answer", message: "" }), []), null);
+  assert.deepEqual(
+    parseAgentReply(raw({ action: "research", message: "Looking", research: { repo: "ACME/web", question: "How does billing pause boxes?" } }), ["acme/web"]),
+    { action: "research", message: "Looking", repo: "acme/web", question: "How does billing pause boxes?" },
+  );
+  // A repository the asker can't read: ask which instead of guessing.
+  assert.deepEqual(
+    parseAgentReply(raw({ action: "research", message: "", research: { repo: "secret/repo", question: "Q" } }), ["acme/web"]),
+    { action: "ask", message: "Which repository should I look in?" },
+  );
+  assert.equal(parseAgentReply(raw({ action: "research", research: { repo: "acme/web", question: " " } }), ["acme/web"]), null);
+});
+
+test("the agent ends every turn with the reply tool, and has the read-only lookups", () => {
+  assert.deepEqual(
+    AGENT_TOOLS.map((t) => t.function.name),
+    ["recent_work", "find_items", "item_status", REPLY_TOOL],
+  );
+  assert.match(systemPrompt({ repos: [], openItems: [], rounds: 0 }), /calling the reply tool exactly once/);
 });
