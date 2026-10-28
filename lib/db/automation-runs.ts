@@ -493,11 +493,24 @@ export async function claimCheck(runId: string): Promise<boolean> {
   return (data ?? []).length > 0;
 }
 
-/** Give back a claim whose close on GitHub failed: the sweep tries again. */
+/** Give back a claim whose close on GitHub failed, for the sweep to try
+ *  again: unless the review was posted meanwhile, whose the check is now. */
 export async function releaseCheck(runId: string): Promise<void> {
   const { error } = await createSupabaseAdminClient()
     .from("automation_runs")
     .update({ check_closed_at: null })
+    .eq("id", runId)
+    .is("check_reviewed_at", null);
+  if (error) throw error;
+}
+
+/** The run's review was posted: its check is closed as the review's, and
+ *  nothing else closes it from now on. */
+export async function markCheckReviewed(runId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_reviewed_at: now, check_closed_at: now })
     .eq("id", runId);
   if (error) throw error;
 }

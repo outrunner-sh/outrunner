@@ -561,6 +561,7 @@ type AutomationRunRow = {
   check_run_id: number | null;
   check_installation_id: number | null;
   check_closed_at: string | null;
+  check_reviewed_at: string | null;
   created_at: string;
   updated_at: string;
 };
