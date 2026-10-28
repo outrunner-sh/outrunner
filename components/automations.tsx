@@ -244,6 +244,12 @@ const WHEN = new Intl.DateTimeFormat("en-US", {
   timeZoneName: "short",
 });
 
+/** A table header that stays put while its rows scroll under it: opaque, so
+ *  they don't show through. Its row takes {@link HEAD_ROW}. */
+const PINNED_HEAD =
+  "sticky top-0 z-10 bg-background text-left text-xs text-muted-foreground shadow-[0_1px_0_var(--border)]";
+const HEAD_ROW = "bg-muted/30";
+
 /** How long ago, "5m ago", with the exact time on hover. */
 function Ago({ at, now }: { at: string; now: number }) {
   const age = relativeTime(at, now);
@@ -338,10 +344,12 @@ function AutomationList({
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border/60">
+        // Bounded, so a long list scrolls in place rather than pushing the
+        // runs below it out of the pane.
+        <div className="max-h-[40vh] overflow-auto rounded-lg border border-border/60">
           <table className="w-full text-[13px]">
-            <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
-              <tr>
+            <thead className={PINNED_HEAD}>
+              <tr className={HEAD_ROW}>
                 <th className="px-3 py-2 font-normal">Name</th>
                 <th className="px-3 py-2 font-normal">Trigger</th>
                 <th className="px-3 py-2 font-normal">Repositories</th>
@@ -517,10 +525,8 @@ function RecentRuns({
           ) : null}
           <div className="min-h-0 overflow-auto rounded-lg border border-border/60">
             <table className="w-full text-[13px]">
-              {/* Pinned while the runs scroll under it: opaque, so they don't
-                  show through. */}
-              <thead className="sticky top-0 z-10 bg-background text-left text-xs text-muted-foreground shadow-[0_1px_0_var(--border)]">
-                <tr className="bg-muted/30">
+              <thead className={PINNED_HEAD}>
+                <tr className={HEAD_ROW}>
                   <th className="px-3 py-2 font-normal">Pull request</th>
                   <th className="px-3 py-2 font-normal">Automation</th>
                   <th className="px-3 py-2 font-normal">Status</th>
