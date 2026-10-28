@@ -113,6 +113,9 @@ export async function ensureRuntimeComputer(
   // from the orphaned-box sweep (lib/runtime/orphan-boxes.ts), even if this
   // server stops before the provision is done.
   let provisioned: ProvisionedComputer | null = null;
+  // Whether the row names the box as ready: past that, a failure leaves the
+  // box to the row, never deletes it.
+  let recorded = false;
   try {
     if (input.previousSandboxId) {
       await deps.update(claim.computer.id, { daytonaSandboxId: input.previousSandboxId });
@@ -134,6 +137,7 @@ export async function ensureRuntimeComputer(
       errorMessage: null,
       touchActive: true,
     });
+    recorded = true;
     const computer = await deps.get(input.scope);
     if (!computer || computer.status !== "ready" || !computer.daytonaSandboxId) {
       throw new Error("Runtime Computer was not persisted as ready.");
@@ -144,10 +148,10 @@ export async function ensureRuntimeComputer(
     );
     return { computer, provisioned: true, agentSecret };
   } catch (error) {
-    // A box made but never recorded as ready (the write failed, or the row
-    // moved on meanwhile) was otherwise left running with no row naming it.
-    // One brought back in place is stopped again, as the row says below.
-    if (provisioned) await letGo(provider, provisioned.sandboxId, input.previousSandboxId);
+    // A box made but never recorded as ready (the write failed) was otherwise
+    // left running with no row naming it. One brought back in place is
+    // stopped again, as the row says below.
+    if (provisioned && !recorded) await letGo(provider, provisioned.sandboxId, input.previousSandboxId);
     const errorMessage = "Runtime Computer provisioning failed. Check Runtime setup and try again.";
     await deps.update(
       claim.computer.id,

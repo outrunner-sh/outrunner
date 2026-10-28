@@ -369,17 +369,42 @@ test("an ended box brought back in place but not recorded is paused again, never
   };
   const deps: EnsureRuntimeComputerDependencies = {
     ...harness.deps,
-    // The row went from under it: nothing is ready to read back.
-    get: async () => null,
+    // The write recording it ready fails; the rest go through.
+    update: async (id, patch) => {
+      if (patch.status === "ready") throw new Error("database down");
+      return harness.deps.update(id, patch);
+    },
   };
 
   await assert.rejects(
     () => ensureRuntimeComputer(provider, { ...input, previousSandboxId: "sb-ended" }, deps),
-    /not persisted as ready/,
+    /database down/,
   );
   assert.deepEqual(paused, ["sb-ended"]);
   assert.deepEqual(destroyed, []);
   // Stopped on the box that ended, for the next try to bring back.
   assert.equal(harness.row()?.status, "stopped");
   assert.equal(harness.row()?.daytonaSandboxId, "sb-ended");
+});
+
+test("a box recorded as ready is never let go of, whatever fails after", async () => {
+  const harness = concurrencyHarness();
+  const destroyed: string[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async () => ({
+      sandboxId: "sb-new",
+      agentBaseUrl: "https://agent.example.test",
+      timings: { stages: [{ stage: "sandbox_create", ms: 1 }], totalMs: 1 },
+    }),
+    destroyComputer: async (id) => void destroyed.push(id),
+  };
+  const deps: EnsureRuntimeComputerDependencies = {
+    ...harness.deps,
+    // The read back blips after the ready write landed.
+    get: async () => Promise.reject(new Error("network blip")),
+  };
+
+  await assert.rejects(() => ensureRuntimeComputer(provider, input, deps), /network blip/);
+  assert.deepEqual(destroyed, []);
 });

@@ -9,6 +9,7 @@ import {
   COMPUTER_ROLE,
   deploymentName,
   type ListedBox,
+  ORPHAN_GRACE_MS,
   orphanedBoxes,
   ROLE_LABEL,
   sweepable,
@@ -17,7 +18,8 @@ import { DaytonaBackend } from "@/lib/runtime/sandbox/daytona";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 /** The most boxes one run reads off the account, so a run's work is bounded
- *  however many there are. */
+ *  however many there are. Only quiet ones are listed: the backlog, and the
+ *  paused boxes rows still name. */
 const LIST_MAX = 5_000;
 
 /** Ids asked about per query: a long `in` list makes a long URL. */
@@ -32,23 +34,32 @@ const LOOKUP_CHUNK = 100;
  * many went; each one's id is logged.
  */
 export async function sweepOrphanedBoxes(now = Date.now()): Promise<number> {
-  if (!optionalEnv("DAYTONA_API_KEY")) return 0;
-  const backend = new DaytonaBackend();
+  // Without a name, this deployment's boxes can't be told from another's.
   const deployment = deploymentName(optionalEnv("RUNTIME_BASE_URL"));
+  if (!optionalEnv("DAYTONA_API_KEY") || !deployment) return 0;
+  const backend = new DaytonaBackend();
 
-  // Only the ones that could be swept are asked about, so the lookup is as
-  // small as the backlog.
+  // Daytona lists only the quiet ones; each is checked again here, and only
+  // those that could be swept are asked about, so the lookup is as small as
+  // the backlog.
   const candidates: ListedBox[] = [];
   let listed = 0;
-  for await (const box of backend.list({ [ROLE_LABEL]: COMPUTER_ROLE })) {
+  for await (const box of backend.list({ [ROLE_LABEL]: COMPUTER_ROLE }, new Date(now - ORPHAN_GRACE_MS))) {
     if (sweepable(box, now, deployment)) candidates.push(box);
     if (++listed >= LIST_MAX) break;
   }
   if (candidates.length === 0) return 0;
 
   const named = await namedBoxes(candidates.map((box) => box.id));
+  const unlabelled = optionalEnv("ORPHAN_SWEEP_UNLABELLED") === "1";
+  const { remove, held } = orphanedBoxes(candidates, named, { now, deployment, unlabelled });
+  if (held.length > 0) {
+    console.warn(
+      `Orphaned Daytona boxes from before deployment labels, kept (set ORPHAN_SWEEP_UNLABELLED=1 to delete them): ${held.join(", ")}`,
+    );
+  }
   let swept = 0;
-  for (const id of orphanedBoxes(candidates, named, { now, deployment })) {
+  for (const id of remove) {
     try {
       await backend.delete(id);
       console.warn(`Deleted orphaned Daytona box ${id}: no runtime computer names it`);

@@ -774,11 +774,11 @@ async function provisionWorkspace({
         : refused
           ? refused.message
           : provisionFailureMessage(error, phase, secrets);
-    const failed = await settle({ status: "failed", errorMessage }).catch((updateError: unknown) => {
+    const settled = await settle({ status: "failed", errorMessage }).catch((updateError: unknown) => {
       console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError);
       return true;
     });
-    if (!failed) await releaseIfDeleted();
+    if (!settled) await releaseIfDeleted();
     await tell({ status: "failed", errorMessage });
   }
 }

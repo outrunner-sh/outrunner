@@ -77,11 +77,14 @@ export function boxLabels(engine: string, deployment: string | null): Record<str
   };
 }
 
-/** Whether `box` is one of Outrunner's, made by this deployment (or before
- *  boxes were labelled with one), old enough and quiet long enough to be
- *  swept if no row names it. Anything not known for sure, a date that can't
- *  be read or a state in motion, says no. */
+/** Whether `box` is one of Outrunner's that this deployment may have made
+ *  (its label says so, or it has none: from before the label), old enough
+ *  and quiet long enough to be swept if no row names it. A deployment with
+ *  no name sweeps nothing: its boxes can't be told from another's. Anything
+ *  not known for sure, a date that can't be read or a state in motion, says
+ *  no. */
 export function sweepable(box: ListedBox, now: number, deployment: string | null, graceMs = ORPHAN_GRACE_MS): boolean {
+  if (!deployment) return false;
   if (box.labels[ROLE_LABEL] !== COMPUTER_ROLE) return false;
   const madeBy = box.labels[DEPLOYMENT_LABEL];
   if (madeBy !== undefined && madeBy !== deployment) return false;
@@ -93,19 +96,26 @@ export function sweepable(box: ListedBox, now: number, deployment: string | null
 }
 
 /**
- * The boxes to delete this run: sweepable ones (above) that no
- * runtime_computers row names (`named`, every row's daytona_sandbox_id, in
- * any state), longest quiet first, at most `max`.
+ * This run's orphans: sweepable boxes (above) that no runtime_computers row
+ * names (`named`, every row's daytona_sandbox_id, in any state), longest
+ * quiet first, at most `max`. Those labelled as this deployment's are to
+ * delete. Unlabelled ones may be another deployment's on the same account,
+ * whose rows these aren't: deleted only where the deployment says the
+ * account is its alone (`unlabelled`), else only held, for the log to name.
  */
 export function orphanedBoxes(
   boxes: readonly ListedBox[],
   named: ReadonlySet<string>,
-  options: { now: number; deployment: string | null; graceMs?: number; max?: number },
-): string[] {
-  const max = options.max ?? ORPHAN_SWEEP_MAX;
-  return boxes
+  options: { now: number; deployment: string | null; unlabelled: boolean; graceMs?: number; max?: number },
+): { remove: string[]; held: string[] } {
+  const max = Math.max(0, options.max ?? ORPHAN_SWEEP_MAX);
+  const orphans = boxes
     .filter((box) => !named.has(box.id) && sweepable(box, options.now, options.deployment, options.graceMs))
-    .sort((a, b) => Date.parse(a.lastActivityAt!) - Date.parse(b.lastActivityAt!))
-    .slice(0, Math.max(0, max))
-    .map((box) => box.id);
+    .sort((a, b) => Date.parse(a.lastActivityAt!) - Date.parse(b.lastActivityAt!));
+  const ours = (box: ListedBox) => box.labels[DEPLOYMENT_LABEL] !== undefined || options.unlabelled;
+  // Each capped on its own, so held boxes never crowd out ones to delete.
+  return {
+    remove: orphans.filter(ours).slice(0, max).map((box) => box.id),
+    held: orphans.filter((box) => !ours(box)).slice(0, max).map((box) => box.id),
+  };
 }

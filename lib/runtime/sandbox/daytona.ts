@@ -92,10 +92,11 @@ export class DaytonaBackend implements SandboxBackend {
     await daytona.delete(await daytona.get(id));
   }
 
-  /** Every box of the account carrying `labels`, for the orphaned-box sweep
-   *  (lib/runtime/orphan-boxes.deps.ts). */
-  async *list(labels: Record<string, string>): AsyncIterable<ListedBox> {
-    for await (const sandbox of (await this.daytona()).list({ labels })) {
+  /** The account's boxes carrying `labels`, made and last active before
+   *  `quietSince`: for the orphaned-box sweep (lib/runtime/orphan-boxes.deps.ts). */
+  async *list(labels: Record<string, string>, quietSince: Date): AsyncIterable<ListedBox> {
+    const query = { labels, createdAtBefore: quietSince, lastActivityBefore: quietSince };
+    for await (const sandbox of (await this.daytona()).list(query)) {
       yield {
         id: sandbox.id,
         labels: sandbox.labels ?? {},
