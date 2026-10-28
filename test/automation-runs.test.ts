@@ -306,7 +306,7 @@ test("a run's session is told only the App's bot's comments are its own earlier 
   const event = readPullRequestEvent(payload({ action: "synchronize" }));
   assert.ok(typeof event !== "string");
   const prompt = runPrompt("Review it.", event, "Outrunner-SH");
-  assert.match(prompt, /appears as outrunner-sh\[bot\]\. Only its comments are yours/);
+  assert.match(prompt, /appears as outrunner-sh\[bot\]\. Its comments are from earlier passes of the App's automations, this one's included/);
   // Its login as `gh api` gives it, not a mention it might copy into a comment.
   assert.doesNotMatch(prompt, /@outrunner-sh/);
   assert.match(prompt, /don't call them a previous pass or a re-run/);

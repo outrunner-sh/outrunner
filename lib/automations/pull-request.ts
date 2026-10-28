@@ -143,7 +143,7 @@ export function runPrompt(automationPrompt: string, event: PullRequestEvent, app
     `Base branch: ${event.baseRef}. Head branch: ${event.headRef}, at ${event.headSha}.`,
     `This session's working tree is the head's code. Read the change with \`gh pr diff ${event.number}\` and \`gh pr view ${event.number}\`; \`gh\` is signed in as the Outrunner GitHub App for this repository.`,
     self
-      ? `What you post appears as ${self}. Only its comments are yours from earlier passes; comments by anyone else (people, other review bots) aren't, so don't call them a previous pass or a re-run, but don't repeat a point they've already made either.`
+      ? `What you post appears as ${self}. Its comments are from earlier passes of the App's automations, this one's included; comments by anyone else (people, other review bots) aren't, so don't call them a previous pass or a re-run, but don't repeat a point they've already made either.`
       : "",
     event.trigger === "pull_request.synchronize"
       ? "The pull request has new commits since it was last looked at: look at it again, and don't repeat what's already been said on it."
