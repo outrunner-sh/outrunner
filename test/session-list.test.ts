@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { filterSessions, NO_FILTER, ownerChoices, type SessionListEntry } from "@/lib/session/session-list";
+import { filterSessions, NO_FILTER, othersStanding, ownerChoices, type SessionListEntry } from "@/lib/session/session-list";
 import type { SessionStanding } from "@/lib/session/standing";
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
@@ -64,4 +64,10 @@ test("the owner filter offers the user first, then others by name, once each", (
     ownerChoices(entries).map((o) => o.name),
     ["Ada", "Grace"],
   );
+});
+
+test("another member's session shows where it stands, never what its agent said", () => {
+  const theirs = { ...placed("done"), unread: true, replyPreview: "the secret plan" };
+  assert.deepEqual(othersStanding(theirs), { ...theirs, unread: false, replyPreview: null });
+  assert.equal(othersStanding(undefined), null);
 });

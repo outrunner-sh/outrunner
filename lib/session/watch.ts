@@ -91,7 +91,11 @@ export async function readSession(workspaceId: string): Promise<ActivityChange |
   if (!(LIVE as readonly string[]).includes(workspace.status)) {
     if (!activity || (activity.turn === "idle" && !activity.waiting)) return null;
     const after: TurnState = { ...before!, turn: "idle", waiting: null, waitingToolId: null, waitingSince: null };
-    await db().from("session_activity").update({ ...turnToRow(after), updated_at: new Date().toISOString() }).eq("workspace_id", workspaceId);
+    const { error: idleError } = await db()
+      .from("session_activity")
+      .update({ ...turnToRow(after), updated_at: new Date().toISOString() })
+      .eq("workspace_id", workspaceId);
+    if (idleError) throw idleError;
     return { workspaceId, ownerId: workspace.ownerId, before, after };
   }
 
@@ -164,7 +168,14 @@ export async function watchAfterSend(
   onChange?: (change: ActivityChange) => Promise<void>,
 ): Promise<void> {
   const now = Date.now();
-  const { data: existing } = await db().from("session_activity").select("turn, turn_started_at").eq("workspace_id", workspaceId).maybeSingle();
+  // A failed read mustn't pass for "never read": the insert below would then
+  // collide with the row that's there.
+  const { data: existing, error: readError } = await db()
+    .from("session_activity")
+    .select("turn, turn_started_at")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (readError) throw readError;
   const startedAt = existing?.turn === "working" ? existing.turn_started_at : new Date(now).toISOString();
   const working = {
     turn: "working" as const,
@@ -175,9 +186,11 @@ export async function watchAfterSend(
     watch_until: new Date(now + WATCH_FOR_MS).toISOString(),
     updated_at: new Date(now).toISOString(),
   };
-  const { error } = existing
-    ? await db().from("session_activity").update(working).eq("workspace_id", workspaceId)
-    : await db().from("session_activity").insert({ workspace_id: workspaceId, owner_id: ownerId, ...working });
+  // An upsert, so a row made meanwhile (a tick's first read) is updated
+  // rather than collided with.
+  const { error } = await db()
+    .from("session_activity")
+    .upsert({ workspace_id: workspaceId, owner_id: ownerId, ...working }, { onConflict: "workspace_id" });
   if (error) throw error;
 
   const until = now + CLOSE_WATCH_MS;
@@ -214,13 +227,6 @@ export async function watchedSessions(limit = 150): Promise<string[]> {
   const upShared = new Set((byId.data ?? []).map((c) => c.id));
   const up = (live ?? []).filter((w) => upOwn.has(w.id) || (w.computer_id && upShared.has(w.computer_id))).map((w) => w.id);
   return [...new Set([...up, ...(watched.data ?? []).map((a) => a.workspace_id)])].slice(0, limit);
-}
-
-/** Run `work` over `items`, `width` at a time. */
-export async function inBatches<T>(items: T[], width: number, work: (item: T) => Promise<void>): Promise<void> {
-  for (let i = 0; i < items.length; i += width) {
-    await Promise.all(items.slice(i, i + width).map(work));
-  }
 }
 
 /** watchAfterSend for a route's after(): never fails the send. */

@@ -52,6 +52,13 @@ export type ListFilter = {
 
 export const NO_FILTER: ListFilter = { query: "", owner: "anyone", source: "any", status: "any" };
 
+/** Where another member's session stands, as the list may show it: without
+ *  its reply's words (their conversation, which session_activity keeps to
+ *  its owner) or an unread mark, which is theirs, not the viewer's. */
+export function othersStanding(standing: SessionStanding | undefined): SessionStanding | null {
+  return standing ? { ...standing, replyPreview: null, unread: false } : null;
+}
+
 /** A row's standing: the server's, else worked out from its last activity. */
 export function standingOf(entry: SessionListEntry, now: number): SessionStanding {
   return entry.standing ?? fallbackStanding(entry.at, now);

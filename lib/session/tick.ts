@@ -6,18 +6,25 @@
  */
 
 import { checkOpenPullRequests } from "@/lib/session/pull-request-state";
-import { inBatches, readSession, watchedSessions, type ActivityChange } from "@/lib/session/watch";
+import { inPool } from "@/lib/session/pool";
+import { readSession, watchedSessions, type ActivityChange } from "@/lib/session/watch";
 
 /** Streams read at once: each read waits a moment of quiet to be sure it's
  *  caught up. */
 const READ_WIDTH = 8;
 
-export type TickReport = { read: number; changed: number; pullRequests: number };
+/** No read starts after this much of a tick: the cron calls every two
+ *  minutes, and a tick that ran into the next would double the load on boxes
+ *  just when they're busiest. The sessions left are the least recently
+ *  active, read on a quieter tick. */
+const READ_BUDGET_MS = 90_000;
+
+export type TickReport = { read: number; changed: number; pullRequests: number; skipped: number };
 
 export async function runSessionsTick(onChange?: (change: ActivityChange) => Promise<void>): Promise<TickReport> {
-  const report: TickReport = { read: 0, changed: 0, pullRequests: 0 };
+  const report: TickReport = { read: 0, changed: 0, pullRequests: 0, skipped: 0 };
   const sessions = await watchedSessions();
-  await inBatches(sessions, READ_WIDTH, async (id) => {
+  const { started } = await inPool(sessions, READ_WIDTH, async (id) => {
     const change = await readSession(id).catch((error: unknown) => {
       console.error(`Sessions tick: couldn't read ${id}`, error);
       return null;
@@ -28,7 +35,8 @@ export async function runSessionsTick(onChange?: (change: ActivityChange) => Pro
       report.changed += 1;
       await onChange?.(change).catch((error: unknown) => console.error(`Sessions tick: ${id}'s change`, error));
     }
-  });
+  }, { until: Date.now() + READ_BUDGET_MS });
+  report.skipped = sessions.length - started;
   report.pullRequests = (
     await checkOpenPullRequests().catch((error: unknown) => {
       console.error("Sessions tick: couldn't check pull requests", error);

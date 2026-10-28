@@ -20,20 +20,30 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
   const db = createSupabaseAdminClient();
   const { data: projects, error: projectsError } = await db
     .from("projects")
-    .select("id")
+    .select("id, org_id")
     .ilike("full_name", event.repoFullName.replace(/[\\%_]/g, "\\$&"));
   if (projectsError) throw projectsError;
   if (!projects?.length) return [];
   const projectIds = projects.map((p) => p.id);
-  const { data: sessions, error: sessionsError } = await db
-    .from("workspaces")
-    .select("id, owner_id, project_id, checkouts")
-    .eq("branch", event.headRef)
-    .neq("status", "destroyed");
-  if (sessionsError) throw sessionsError;
+  // The repository's own sessions on the branch, and the sessions of several
+  // repositories in its orgs: never every org's sessions on a branch as
+  // common as `main`.
+  const [own, several] = await Promise.all([
+    db.from("workspaces").select("id, owner_id, project_id, checkouts").eq("branch", event.headRef).neq("status", "destroyed").in("project_id", projectIds),
+    db
+      .from("workspaces")
+      .select("id, owner_id, project_id, checkouts")
+      .eq("branch", event.headRef)
+      .neq("status", "destroyed")
+      .in("org_id", [...new Set(projects.map((p) => p.org_id))])
+      .not("checkouts", "is", null),
+  ]);
+  if (own.error) throw own.error;
+  if (several.error) throw several.error;
+  const sessions = [...new Map([...(own.data ?? []), ...(several.data ?? [])].map((s) => [s.id, s])).values()];
   const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null }> = [];
   const now = new Date().toISOString();
-  for (const session of sessions ?? []) {
+  for (const session of sessions) {
     // The repository it's in: the session's own, or one of a session of several.
     const projectId = projectIds.find((id) => id === session.project_id || checkoutIds(session.checkouts).includes(id));
     if (!projectId) continue;
@@ -63,8 +73,28 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
       if (!error) changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null });
       continue;
     }
-    // Another of the branch's pull requests (an older one, closed): not this.
-    if (existing.github_number !== event.number) continue;
+    if (existing.github_number !== event.number) {
+      // A new pull request from the branch after its last one closed
+      // unmerged: it's the session's now (one a repository, so it replaces
+      // the closed one). Otherwise it's another of the branch's, not this.
+      if (existing.state !== "closed" || event.state !== "open") continue;
+      const { error } = await db
+        .from("pull_requests")
+        .update({
+          github_number: event.number,
+          url: event.url,
+          title: event.title,
+          base_branch: event.baseRef,
+          state: event.state,
+          state_at: now,
+          checked_at: now,
+        })
+        .eq("id", existing.id)
+        .eq("state", "closed");
+      if (error) throw error;
+      changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null });
+      continue;
+    }
     if (existing.state === event.state) continue;
     const { error } = await db
       .from("pull_requests")

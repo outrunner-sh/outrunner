@@ -14,7 +14,7 @@ import { triageActor } from "@/lib/db/work-items";
 import { allows } from "@/lib/orgs/access";
 import type { Workspace } from "@/lib/runtime/types";
 import { sessionPullRequests } from "@/lib/session/session-view";
-import type { SessionListEntry, SessionSource } from "@/lib/session/session-list";
+import { othersStanding, type SessionListEntry, type SessionSource } from "@/lib/session/session-list";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { recency } from "@/lib/nav/workspace-nav-groups";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -101,7 +101,9 @@ export async function listOrgSessions(input: {
       status: w.status,
       provider: w.provider,
       pullRequest: pr ? { url: pr.url, number: pr.number, state: pr.state ?? "open" } : null,
-      standing: (mine ? ownStandings : otherStandings)[w.id] ?? null,
+      // Another member's reply is theirs to read (session_activity is
+      // owner-only): only where it stands is shown, never what it said.
+      standing: mine ? (ownStandings[w.id] ?? null) : othersStanding(otherStandings[w.id]),
     };
   });
 }

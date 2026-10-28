@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       console.error("Sessions tick failed", error);
       return null;
     });
-    if (done && (done.changed || done.pullRequests)) console.log("Sessions tick", done);
+    if (done && (done.changed || done.pullRequests || done.skipped)) console.log("Sessions tick", done);
   });
   return NextResponse.json({ ticking: true });
 }
