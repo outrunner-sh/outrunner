@@ -97,8 +97,9 @@ export async function POST(request: Request) {
     // of the issue or pull request it's said on, and a close archives it.
     // After the answer, alongside whatever else the event does below.
     if (event && LOOP_EVENTS.has(event)) {
-      const slug = await appSlug(config);
-      after(() => runGitHubLoop(event, payload, slug));
+      // The slug too: on a cache miss it's asked of GitHub, which GitHub's
+      // wait for this answer shouldn't include.
+      after(async () => runGitHubLoop(event, payload, await appSlug(config)));
     }
     if (event === "pull_request") {
       // Each run's session is set up after the answer, in after(): minutes on

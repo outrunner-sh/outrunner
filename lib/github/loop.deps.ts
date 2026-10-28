@@ -17,9 +17,8 @@ import { githubAppConfig, installationToken } from "@/lib/github/app";
 import { reactToComment, readPull, replyToComment } from "@/lib/github/conversation";
 import { archiveClosed, handleMention, type LoopDeps } from "@/lib/github/loop";
 import { readPullBranches } from "@/lib/github/mentions";
-import { allows } from "@/lib/orgs/access";
 import { archiveServerSessions, startServerSession } from "@/lib/session/server-session";
-import { wakeAndSend } from "@/lib/slack/research";
+import { wakeAndSend, wakeSession } from "@/lib/slack/research";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 async function token(installationId: number): Promise<string> {
@@ -41,9 +40,7 @@ export function loopDeps(): LoopDeps {
       const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(userId);
       return !error && data.user && isOwner(data.user) ? userId : null;
     },
-    async canRead(userId, projectId) {
-      return allows(await projectLevel(userId, projectId), "read");
-    },
+    level: projectLevel,
     linkedSessions,
     async pullBranches(installationId, repoFullName, number) {
       try {
@@ -67,6 +64,7 @@ export function loopDeps(): LoopDeps {
       return `${base.replace(/\/$/, "")}/workspaces/${workspaceId}`;
     },
     archiveOnClose,
+    wake: wakeSession,
     archiveServerSessions,
   };
 }

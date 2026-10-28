@@ -18,21 +18,25 @@ on its repository. Each run's session reviews it as the App and comments; a clos
 - If a session already works on it, the comment goes to that session as a follow-up turn. A session that
   sleeps is woken first, and an archived one is restored. A line comment carries its file, its lines and the
   diff around them.
-  A pull request's session is one that a mention started, one that recorded the pull request (its PR row), or
-  one working on the pull request's head branch.
+  A pull request's session is one that a mention started, or one that recorded the pull request (its PR row).
+  Only when there is neither is the newest session on the pull request's head branch used: a branch name can be
+  reused, and an older session on it belongs to other work.
 - Otherwise a new session starts, as the person who commented. A pull request's session starts on the pull
   request's head branch and pushes there. An issue's session starts on the default branch and ends in a pull
   request that closes the issue. Either is told the comment and the issue's or pull request's description.
 - The comment gets 👀 when Outrunner picks it up, and a reply linking the session.
 - Only members of the Outrunner org holding the installation can steer, on repositories that **Roles & access**
-  lets them read. The GitHub account has to be the GitHub identity linked to their Outrunner account. Someone
+  lets them read. The GitHub account has to be the GitHub identity linked to their Outrunner account. A session
+  runs as its owner, with their GitHub access, so another member's comment reaches it only if that member may
+  write to the repository. A member who may only read gets a new session of their own instead. Someone
   GitHub knows on the repository (an owner, member or collaborator) is told why when they can't steer. Anyone
   else is ignored quietly, so visitors to a public repository can't make it talk.
 - Comments by bots are never acted on, nor any comment containing `[skip outrunner]`. A mention in quoted text
   or code doesn't count.
 
 **Closing archives.** When an issue or pull request closes, or a pull request merges, the sessions working on it
-are archived. Each gets a snapshot and can be restored. Team orgs can turn this off under
+are archived. Each gets a snapshot and can be restored. The snapshot is taken on the session's box, so a session
+that went to sleep is woken to be archived. Team orgs can turn this off under
 **Settings → Org → Defaults**; it is on by default.
 
 Every act is claimed by what it's for: the comment's id, or the close and its time. GitHub's redeliveries

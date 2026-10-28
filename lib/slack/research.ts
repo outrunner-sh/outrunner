@@ -64,18 +64,32 @@ export function asBrowser(path: string, body: unknown, from?: MessageSource): Re
  */
 export async function wakeAndSend(userId: string, workspaceId: string, prompt: string, from?: MessageSource): Promise<boolean> {
   return actAsUser(userId, async () => {
-    const workspace = await getWorkspace(workspaceId);
-    if (!workspace || workspace.ownerId !== userId || !RESUMABLE.has(workspace.status)) return false;
+    if (!(await wakeAsOwner(userId, workspaceId))) return false;
     const params = { params: Promise.resolve({ id: workspaceId }) };
-    // Paused: resumed. Archived: restored, as opening it in the app does.
-    if (workspace.status === "suspended" || workspace.status === "archived") {
-      const action = workspace.status === "suspended" ? "resume" : "restore";
-      const woken = await lifecyclePOST(asBrowser(`/api/workspaces/${workspaceId}/lifecycle`, { action }), params);
-      if (!woken.ok) return false;
-    }
     const sent = await messagePOST(asBrowser(`/api/workspaces/${workspaceId}/message`, { content: prompt }, from), params);
     return sent.ok;
   });
+}
+
+/** Wake one of `userId`'s sessions as wakeAndSend does, sending nothing:
+ *  whether it's up. */
+export async function wakeSession(userId: string, workspaceId: string): Promise<boolean> {
+  return actAsUser(userId, () => wakeAsOwner(userId, workspaceId));
+}
+
+/** Inside actAsUser: paused, resumed; archived, restored, as opening it in
+ *  the app does. */
+async function wakeAsOwner(userId: string, workspaceId: string): Promise<boolean> {
+  const workspace = await getWorkspace(workspaceId);
+  if (!workspace || workspace.ownerId !== userId || !RESUMABLE.has(workspace.status)) return false;
+  if (workspace.status === "suspended" || workspace.status === "archived") {
+    const action = workspace.status === "suspended" ? "resume" : "restore";
+    const woken = await lifecyclePOST(asBrowser(`/api/workspaces/${workspaceId}/lifecycle`, { action }), {
+      params: Promise.resolve({ id: workspaceId }),
+    });
+    if (!woken.ok) return false;
+  }
+  return true;
 }
 
 /**

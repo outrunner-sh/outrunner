@@ -11,7 +11,8 @@
  *
  * Only members of the org holding the installation steer a session, and only
  * on repositories Roles & access lets them read: a GitHub account counts as
- * the member whose GitHub identity it is. Each act is claimed by what it's
+ * the member whose GitHub identity it is. A session runs as its owner, so
+ * another member's word reaches it only if they may write to the repository. Each act is claimed by what it's
  * for before anything is done (a comment's id, a close's time), so a
  * redelivery does nothing twice. The I/O is passed in (loop.deps.ts).
  */
@@ -28,10 +29,11 @@ import {
   replyText,
   startPrompt,
 } from "@/lib/github/mentions";
+import { type AccessLevel, allows } from "@/lib/orgs/access";
 import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/server-session";
 
 /** A session working on an issue or a pull request. */
-export type LinkedSession = { id: string; ownerId: string };
+export type LinkedSession = { id: string; ownerId: string; status: string };
 
 /** What a session is linked to: an issue, or a pull request (also found by
  *  its head branch, the branch a session that opened it works on). */
@@ -48,10 +50,12 @@ export type LoopDeps = {
   /** The org member whose GitHub identity the account is, if they may still
    *  use Outrunner. */
   member(githubUserId: number, orgId: string): Promise<string | null>;
-  /** Whether a member may read the project (and so start sessions on it). */
-  canRead(userId: string, projectId: string): Promise<boolean>;
+  /** A member's level on the project: read starts sessions on it; write
+   *  also steers a session of someone else's. */
+  level(userId: string, projectId: string): Promise<AccessLevel | null>;
   /** The sessions working on it, newest first, whose owners are still in
-   *  the org: never an automation's review sessions. */
+   *  the org: never an automation's review sessions. One found only by its
+   *  branch is used only when none is linked to it outright. */
   linkedSessions(link: LinkTarget, orgId: string): Promise<LinkedSession[]>;
   /** A pull request's branches, read from GitHub. */
   pullBranches(installationId: number, repoFullName: string, number: number): Promise<PullBranches | null>;
@@ -67,6 +71,9 @@ export type LoopDeps = {
   /** Whether the org archives sessions when their issue or pull request
    *  closes (its default: yes). */
   archiveOnClose(orgId: string): Promise<boolean>;
+  /** Resume a paused session as its owner: archiving takes its snapshot on
+   *  its box. Whether it's up. */
+  wake(ownerId: string, workspaceId: string): Promise<boolean>;
   archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
 };
 
@@ -109,7 +116,8 @@ export async function handleMention(event: string | null, payload: unknown, deps
       if (associated(mention.authorAssociation)) await say({ kind: "not_member" });
       return "not_member";
     }
-    if (!(await deps.canRead(userId, scope.projectId))) {
+    const level = await deps.level(userId, scope.projectId);
+    if (!allows(level, "read")) {
       acted = true;
       if (associated(mention.authorAssociation)) await say({ kind: "no_access", repoFullName: mention.repoFullName });
       return "no_access";
@@ -125,9 +133,14 @@ export async function handleMention(event: string | null, payload: unknown, deps
     const link: LinkTarget = { projectId: scope.projectId, target: mention.target, number: mention.number, headRef: pull?.headRef ?? null };
 
     // The session already on it, woken if it sleeps: the newest that takes
-    // the comment.
+    // the comment. It runs as its owner, with their GitHub access: only they,
+    // or a member who may write to the repository, steer it. Anyone else
+    // gets a session of their own.
     const prompt = followUpPrompt(mention, appSlug);
-    for (const session of (await deps.linkedSessions(link, scope.orgId)).slice(0, 3)) {
+    const steerable = (await deps.linkedSessions(link, scope.orgId)).filter(
+      (s) => s.ownerId === userId || allows(level, "write"),
+    );
+    for (const session of steerable.slice(0, 3)) {
       if (await deps.wakeAndSend(session.ownerId, session.id, prompt).catch(() => false)) {
         acted = true;
         await say({ kind: "sent", url: deps.sessionUrl(session.id) });
@@ -162,7 +175,9 @@ export async function handleMention(event: string | null, payload: unknown, deps
           { ...link, url: mention.url, title: mention.title, baseRef: pull?.baseRef },
           { id: workspaceId, ownerId: userId },
         );
-        await say({ kind: "started", url: deps.sessionUrl(workspaceId) });
+        // Not awaited: the session's setup waits on this, and GitHub can be
+        // slow to answer. `say` logs its own failure.
+        void say({ kind: "started", url: deps.sessionUrl(workspaceId) });
       },
     });
     if (result.status === "ready") return "started";
@@ -218,8 +233,8 @@ export function readClosed(event: string | null, payload: unknown): Closed | nul
 /**
  * An issue or pull request closed: the sessions working on it are archived
  * (a snapshot each, restorable), each as its owner, while the org's default
- * is on. How many were. An automation's review sessions are its own to
- * archive (lib/automations/runs.ts, closeRuns).
+ * is on; one asleep is woken to be. How many were. An automation's review
+ * sessions are its own to archive (lib/automations/runs.ts, closeRuns).
  */
 export async function archiveClosed(event: string | null, payload: unknown, deps: LoopDeps): Promise<number> {
   const closed = readClosed(event, payload);
@@ -233,8 +248,13 @@ export async function archiveClosed(event: string | null, payload: unknown, deps
       { projectId: scope.projectId, target: closed.target, number: closed.number, headRef: closed.headRef },
       scope.orgId,
     );
+    // Its snapshot is taken on its box: a session that went to sleep (as
+    // most have by the time their pull request merges) is woken for it.
     const byOwner = new Map<string, string[]>();
-    for (const s of sessions) byOwner.set(s.ownerId, [...(byOwner.get(s.ownerId) ?? []), s.id]);
+    for (const s of sessions) {
+      if (s.status === "suspended" && !(await deps.wake(s.ownerId, s.id).catch(() => false))) continue;
+      byOwner.set(s.ownerId, [...(byOwner.get(s.ownerId) ?? []), s.id]);
+    }
     let archived = 0;
     for (const [owner, ids] of byOwner) archived += await deps.archiveServerSessions(owner, ids);
     return archived;

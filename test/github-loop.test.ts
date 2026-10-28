@@ -38,10 +38,11 @@ type Calls = {
   started: ServerSessionStart[];
   links: unknown[];
   archived: { userId: string; ids: readonly string[] }[];
+  woken: string[];
 };
 
 function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendable?: string[] } = {}): { deps: LoopDeps; calls: Calls } {
-  const calls: Calls = { claims: [], released: [], replies: [], reactions: [], sent: [], started: [], links: [], archived: [] };
+  const calls: Calls = { claims: [], released: [], replies: [], reactions: [], sent: [], started: [], links: [], archived: [], woken: [] };
   const claimed = new Set<string>();
   const deps: LoopDeps = {
     scope: async () => ({ orgId: "o1", projectId: "p1" }),
@@ -56,7 +57,7 @@ function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendab
       claimed.delete(key);
     },
     member: async (githubId) => (githubId === 7 ? "u1" : null),
-    canRead: async () => true,
+    level: async () => "write",
     linkedSessions: async () => over.sessions ?? [],
     pullBranches: async () => ({ headRef: "feature/login", headSha: SHA, baseRef: "main", fromFork: false }),
     wakeAndSend: async (ownerId, workspaceId, prompt) => {
@@ -80,6 +81,10 @@ function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendab
     },
     sessionUrl: (id) => `https://app.test/workspaces/${id}`,
     archiveOnClose: async () => true,
+    wake: async (_ownerId, workspaceId) => {
+      calls.woken.push(workspaceId);
+      return workspaceId !== "unwakeable";
+    },
     archiveServerSessions: async (userId, ids) => {
       calls.archived.push({ userId, ids });
       return ids.length;
@@ -90,7 +95,7 @@ function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendab
 }
 
 test("a mention on a pull request with a session goes to that session, with 👀 and a link", async () => {
-  const { deps, calls } = fakeDeps({ sessions: [{ id: "w1", ownerId: "u2" }], sendable: ["w1"] });
+  const { deps, calls } = fakeDeps({ sessions: [{ id: "w1", ownerId: "u2", status: "ready" }], sendable: ["w1"] });
   assert.equal(await handleMention("issue_comment", comment({ pull: true }), deps, SLUG), "sent");
   assert.deepEqual(calls.reactions, [900]);
   // As the session's owner, whoever commented.
@@ -102,11 +107,11 @@ test("a mention on a pull request with a session goes to that session, with 👀
 });
 
 test("a session that can't take it is passed over for the next, then a new one", async () => {
-  const { deps, calls } = fakeDeps({ sessions: [{ id: "gone", ownerId: "u2" }, { id: "w2", ownerId: "u3" }], sendable: ["w2"] });
+  const { deps, calls } = fakeDeps({ sessions: [{ id: "gone", ownerId: "u2", status: "ready" }, { id: "w2", ownerId: "u3", status: "ready" }], sendable: ["w2"] });
   assert.equal(await handleMention("issue_comment", comment({ pull: true }), deps, SLUG), "sent");
   assert.equal(calls.sent[0].workspaceId, "w2");
 
-  const none = fakeDeps({ sessions: [{ id: "gone", ownerId: "u2" }] });
+  const none = fakeDeps({ sessions: [{ id: "gone", ownerId: "u2", status: "ready" }] });
   assert.equal(await handleMention("issue_comment", comment({ pull: true }), none.deps, SLUG), "started");
   assert.equal(none.calls.started.length, 1);
 });
@@ -165,8 +170,19 @@ test("someone who isn't a member is told only if GitHub knows them on the reposi
   assert.equal(visitor.calls.started.length, 0);
 });
 
+test("another member's session is steered only by those who may write; anyone else gets their own", async () => {
+  const readOnly = fakeDeps({ level: async () => "read", sessions: [{ id: "w1", ownerId: "u2", status: "ready" }], sendable: ["w1"] });
+  assert.equal(await handleMention("issue_comment", comment({ pull: true }), readOnly.deps, SLUG), "started");
+  assert.equal(readOnly.calls.sent.length, 0);
+  assert.equal(readOnly.calls.started[0].userId, "u1");
+
+  // Their own session, read or not.
+  const own = fakeDeps({ level: async () => "read", sessions: [{ id: "w1", ownerId: "u1", status: "ready" }], sendable: ["w1"] });
+  assert.equal(await handleMention("issue_comment", comment({ pull: true }), own.deps, SLUG), "sent");
+});
+
 test("a member who can't read the repository steers nothing", async () => {
-  const { deps, calls } = fakeDeps({ canRead: async () => false, sessions: [{ id: "w1", ownerId: "u2" }], sendable: ["w1"] });
+  const { deps, calls } = fakeDeps({ level: async () => null, sessions: [{ id: "w1", ownerId: "u2", status: "ready" }], sendable: ["w1"] });
   assert.equal(await handleMention("issue_comment", comment({ pull: true }), deps, SLUG), "no_access");
   assert.equal(calls.sent.length, 0);
   assert.equal(calls.started.length, 0);
@@ -241,9 +257,9 @@ function closedPull(closedAt = "2026-10-28T10:00:00Z") {
 
 test("a closed pull request archives its sessions, each as its owner, once per close", async () => {
   const sessions = [
-    { id: "w1", ownerId: "u1" },
-    { id: "w2", ownerId: "u2" },
-    { id: "w3", ownerId: "u1" },
+    { id: "w1", ownerId: "u1", status: "ready" },
+    { id: "w2", ownerId: "u2", status: "ready" },
+    { id: "w3", ownerId: "u1", status: "ready" },
   ];
   const { deps, calls } = fakeDeps({ sessions });
   assert.equal(await archiveClosed("pull_request", closedPull(), deps), 3);
@@ -256,8 +272,21 @@ test("a closed pull request archives its sessions, each as its owner, once per c
   assert.equal(await archiveClosed("pull_request", closedPull("2026-10-29T10:00:00Z"), deps), 3);
 });
 
+test("a session asleep when its pull request closes is woken to be archived", async () => {
+  const { deps, calls } = fakeDeps({
+    sessions: [
+      { id: "w1", ownerId: "u1", status: "suspended" },
+      { id: "unwakeable", ownerId: "u1", status: "suspended" },
+      { id: "w2", ownerId: "u1", status: "idle" },
+    ],
+  });
+  assert.equal(await archiveClosed("pull_request", closedPull(), deps), 2);
+  assert.deepEqual(calls.woken, ["w1", "unwakeable"]);
+  assert.deepEqual(calls.archived, [{ userId: "u1", ids: ["w1", "w2"] }]);
+});
+
 test("an org that turned archiving on close off keeps its sessions", async () => {
-  const { deps, calls } = fakeDeps({ sessions: [{ id: "w1", ownerId: "u1" }], archiveOnClose: async () => false });
+  const { deps, calls } = fakeDeps({ sessions: [{ id: "w1", ownerId: "u1", status: "ready" }], archiveOnClose: async () => false });
   assert.equal(await archiveClosed("pull_request", closedPull(), deps), 0);
   assert.equal(calls.archived.length, 0);
   assert.equal(calls.claims.length, 0);

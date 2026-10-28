@@ -68,9 +68,11 @@ const LIVE = ["ready", "idle", "suspending", "suspended", "resuming", "archiving
 /**
  * The sessions working on an issue or a pull request, newest first: those a
  * mention started on it (github_session_links), and for a pull request, the
- * session that recorded it (pull_requests) or works on its head branch. Not
- * an automation's review sessions, nor background ones (a Slack thread's
- * research), nor any whose owner has left the org.
+ * session that recorded it (pull_requests). Only when there are none, the
+ * newest session on its head branch: a branch name can be used again, and an
+ * old session on it isn't this pull request's. Never an automation's review
+ * sessions, nor background ones (a Slack thread's research), nor any whose
+ * owner has left the org.
  */
 export async function linkedSessions(link: LinkTarget, orgId: string): Promise<LinkedSession[]> {
   const supabase = db();
@@ -93,23 +95,30 @@ export async function linkedSessions(link: LinkTarget, orgId: string): Promise<L
     for (const r of recorded ?? []) ids.add(r.workspace_id);
   }
 
-  let query = supabase
-    .from("workspaces")
-    .select("id, owner_id, last_active_at, created_at")
-    .eq("project_id", link.projectId)
-    .eq("org_id", orgId)
-    .eq("background", false)
-    .in("status", [...LIVE]);
-  const byId = ids.size ? `id.in.(${[...ids].join(",")})` : null;
-  // The head branch goes into a filter string: quoted, as PostgREST reads it.
-  const byBranch = link.target === "pull" && link.headRef ? `branch.eq."${link.headRef.replace(/["\\]/g, "\\$&")}"` : null;
-  const either = [byId, byBranch].filter((f) => f !== null);
-  if (either.length === 0) return [];
-  query = query.or(either.join(","));
-  const { data: sessions, error } = await query;
-  if (error) throw error;
-  if (!sessions?.length) return [];
+  const sessionsWhere = () =>
+    supabase
+      .from("workspaces")
+      .select("id, owner_id, status, last_active_at, created_at")
+      .eq("project_id", link.projectId)
+      .eq("org_id", orgId)
+      .eq("background", false)
+      .in("status", [...LIVE]);
+  let sessions = await keep(ids.size ? await sessionsWhere().in("id", [...ids]) : { data: [], error: null }, orgId);
+  if (sessions.length === 0 && link.target === "pull" && link.headRef) {
+    sessions = (await keep(await sessionsWhere().eq("branch", link.headRef), orgId)).slice(0, 1);
+  }
+  return sessions.map((s) => ({ id: s.id, ownerId: s.owner_id, status: s.status }));
+}
 
+type SessionRow = { id: string; owner_id: string; status: string; last_active_at: string | null; created_at: string };
+
+/** The sessions of a lookup that may be steered, newest first: not an
+ *  automation's review sessions, nor any whose owner left the org. */
+async function keep(result: { data: SessionRow[] | null; error: unknown }, orgId: string): Promise<SessionRow[]> {
+  if (result.error) throw result.error;
+  const sessions = result.data ?? [];
+  if (sessions.length === 0) return [];
+  const supabase = db();
   const [{ data: reviews, error: reviewsError }, { data: members, error: membersError }] = await Promise.all([
     supabase
       .from("review_sessions")
@@ -130,8 +139,7 @@ export async function linkedSessions(link: LinkTarget, orgId: string): Promise<L
   const inOrg = new Set((members ?? []).map((m) => m.user_id));
   return sessions
     .filter((s) => !isReview.has(s.id) && inOrg.has(s.owner_id))
-    .sort((a, b) => (b.last_active_at ?? b.created_at).localeCompare(a.last_active_at ?? a.created_at))
-    .map((s) => ({ id: s.id, ownerId: s.owner_id }));
+    .sort((a, b) => (b.last_active_at ?? b.created_at).localeCompare(a.last_active_at ?? a.created_at));
 }
 
 /**
