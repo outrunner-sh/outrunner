@@ -28,7 +28,7 @@ alter table automation_runs drop constraint if exists automation_runs_trigger_ch
 alter table automation_runs add constraint automation_runs_trigger_check
   check (trigger is null or trigger in ('pull_request.opened', 'pull_request.synchronize', 'schedule', 'webhook'));
 
--- As in 20261102100000_automation_schedules.sql, and `settings.webhook`
+-- As in 20261102130000_automation_schedules.sql, and `settings.webhook`
 -- ({hash, sealed}): the automation's first webhook token.
 create or replace function create_automation(
   target_org uuid,

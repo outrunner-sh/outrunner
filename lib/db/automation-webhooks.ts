@@ -1,5 +1,5 @@
 /**
- * Automations' webhook tokens (supabase/migrations/20261102110000_automation_webhooks.sql):
+ * Automations' webhook tokens (supabase/migrations/20261102140000_automation_webhooks.sql):
  * found by their hash when a request comes in, read again (unsealed) for the
  * org's admins to copy, and rotated. The table is the server's alone.
  */
