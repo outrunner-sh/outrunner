@@ -1795,14 +1795,17 @@ end $$;
 
 -- 47. A session's first prompt is claimed once per idempotency key
 -- (claimFirstPrompt): a second claim, the same key's or another's, finds it
--- held; released, the key claims it again. The key is kept short.
+-- held; released, the key claims it again; a claim abandoned mid-send is
+-- taken over by its own key, never by another, and never once sent. The key
+-- is kept short.
 do $$
 declare
   ws uuid;
   n int;
 begin
   select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
-  update workspaces set first_prompt_key = 'k1' where id = ws and first_prompt_key is null;
+  update workspaces set first_prompt_key = 'k1', first_prompt_claimed_at = now()
+  where id = ws and first_prompt_key is null;
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'FAIL: a session''s first prompt could not be claimed'; end if;
   update workspaces set first_prompt_key = 'k2' where id = ws and first_prompt_key is null;
@@ -1810,16 +1813,30 @@ begin
   if n <> 0 or (select first_prompt_key from workspaces where id = ws) <> 'k1' then
     raise exception 'FAIL: a session''s first prompt was claimed twice';
   end if;
-  update workspaces set first_prompt_key = null where id = ws and first_prompt_key = 'k1';
-  update workspaces set first_prompt_key = 'k1' where id = ws and first_prompt_key is null;
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null;
+  update workspaces set first_prompt_key = 'k1', first_prompt_claimed_at = now() - interval '10 minutes'
+  where id = ws and first_prompt_key is null;
   get diagnostics n = row_count;
   if n <> 1 then raise exception 'FAIL: a released first prompt could not be claimed again'; end if;
+  update workspaces set first_prompt_claimed_at = now()
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null
+    and first_prompt_claimed_at < now() - interval '2 minutes';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: an abandoned first-prompt claim could not be taken over'; end if;
+  update workspaces set first_prompt_sent_at = now() where id = ws and first_prompt_key = 'k1';
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null;
+  if (select first_prompt_key from workspaces where id = ws) is distinct from 'k1' then
+    raise exception 'FAIL: a sent first prompt was released';
+  end if;
   begin
     update workspaces set first_prompt_key = repeat('x', 101) where id = ws;
     raise exception 'FAIL: an overlong first-prompt key was kept';
   exception when check_violation then
     null;
   end;
-  update workspaces set first_prompt_key = null where id = ws;
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null, first_prompt_sent_at = null
+  where id = ws;
   raise notice 'ok: a session''s first prompt is claimed once per key';
 end $$;

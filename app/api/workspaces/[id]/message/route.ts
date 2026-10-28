@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { claimFirstPrompt, releaseFirstPrompt } from "@/lib/db/repositories";
+import { claimFirstPrompt, markFirstPromptSent, releaseFirstPrompt } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { attachmentsUnavailable } from "@/lib/runtime/worktree-access";
-import { firstPromptKey, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
+import { abandonedBefore, firstPromptKey, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { sendFailureMessage } from "@/lib/session/send-failure";
 import { BOX_GONE } from "@/lib/session/session-codes";
@@ -25,7 +25,8 @@ type RouteContext = { params: Promise<{ id: string }> };
  * the server.
  *
  * A session's first prompt names its idempotency key (firstPromptKey): it is
- * sent once per key, and a repeat answers as sent without sending again
+ * sent once per key. A repeat answers as sent without sending again, or, while
+ * the first send is still going, asks to be tried again
  * (lib/session/first-prompt-claim.ts).
  */
 export async function POST(request: Request, context: RouteContext) {
@@ -65,10 +66,21 @@ export async function POST(request: Request, context: RouteContext) {
   // either; let go on any failure below, so a retry still sends.
   const gate = await gateFirstPrompt(
     firstPromptKey(body?.firstPromptKey),
-    { claim: (key) => claimFirstPrompt(workspace.id, key), release: (key) => releaseFirstPrompt(workspace.id, key) },
+    {
+      claim: (key) => claimFirstPrompt(workspace.id, key, abandonedBefore(new Date())),
+      sent: (key) => markFirstPromptSent(workspace.id, key),
+      release: (key) => releaseFirstPrompt(workspace.id, key),
+    },
     workspace.id,
   );
-  if (gate.repeat) return NextResponse.json({ result: "already", titled: false });
+  if (gate.outcome === "sent") return NextResponse.json({ result: "already", titled: false });
+  if (gate.outcome === "sending") {
+    // Not "sent": that send may yet fail, and this page would think it went.
+    return NextResponse.json(
+      { error: "Your first message is still on its way. Try again in a moment if it doesn't show up." },
+      { status: 409 },
+    );
+  }
 
   let prompt = content;
   try {
@@ -93,6 +105,10 @@ export async function POST(request: Request, context: RouteContext) {
     await agent.sendMessage(identity, prompt);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
+    // Released on any failure, an unclear one too (a timeout, a reset after
+    // the body went): on purpose, as the page then offers Retry, and a
+    // prompt kept from it would be lost if the box never got it. Only that
+    // Retry, pressed by the user, can send it twice: as before the key.
     await gate.release();
     // The agent's own 404 (unknown workspace) means the session's box is gone,
     // so retrying fails the same way every time. Tag it (BOX_GONE) so the
@@ -115,5 +131,6 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 502 },
     );
   }
+  await gate.sent();
   return NextResponse.json({ result: "sent", titled: await nameSessionFromPrompt(workspace, content) });
 }

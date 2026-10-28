@@ -130,9 +130,11 @@ type WorkspaceRow = {
   updated_at: string;
   /** Run by the server out of sight (a Slack thread's research): not listed. */
   background: boolean;
-  /** The idempotency key its first prompt was sent under (20261031190000);
-   *  null until one is. */
+  /** The idempotency key its first prompt was claimed under, when, and when
+   *  it reached the box (20261031190000); null until one is. */
   first_prompt_key: string | null;
+  first_prompt_claimed_at: string | null;
+  first_prompt_sent_at: string | null;
 };
 
 type RuntimeComputerRow = {
