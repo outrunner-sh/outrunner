@@ -8,6 +8,26 @@ import { canShowNotifications, rememberShown, shouldShow, showNotification, type
  *  the browser itself; it still hears within a minute or so. */
 const POLL_MS = 15_000;
 
+/** A notification as the feed reads it. */
+export type FeedNotification = Shown & { kind: string; createdAt: string };
+
+/** Who else hears the feed in this tab: each answers whether it showed the
+ *  notification in the page itself (a Mission's toast), in which case the
+ *  system one isn't shown too while the user is looking. */
+type Listener = (notification: FeedNotification, looking: boolean) => boolean;
+const listeners = new Set<Listener>();
+
+/** Hear each notification the feed reads, while mounted (a toast of the
+ *  page's own: components/missions/mission-toasts.tsx). */
+export function useNotificationListener(listener: Listener): void {
+  useEffect(() => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, [listener]);
+}
+
 /** Ids shown in any tab of this browser, so each is shown once. */
 const SHOWN_KEY = "outrunner-notified";
 
@@ -64,8 +84,8 @@ export function useNotificationsFeed({
     let handled = new Set<string>();
     const read = async () => {
       // Nothing to show with (no Notification, not allowed, the Mac app's
-      // webview): no reason to ask the server.
-      if (!canShowNotifications()) {
+      // webview) and no one in the page listening: no reason to ask.
+      if (!canShowNotifications() && listeners.size === 0) {
         after = null;
         return;
       }
@@ -74,7 +94,7 @@ export function useNotificationsFeed({
         const response = await fetch(`/api/notifications${query}`, { cache: "no-store" });
         if (!response.ok || stopped) return;
         const body = (await response.json()) as {
-          notifications: Array<Shown & { kind: string; createdAt: string }>;
+          notifications: FeedNotification[];
           now: string;
           browser?: boolean;
           kinds?: string[];
@@ -91,6 +111,9 @@ export function useNotificationsFeed({
           if (!body.kinds?.includes(notification.kind)) continue;
           const looking = document.visibilityState === "visible" && document.hasFocus();
           if (!shouldShow(notification, { browserOn: body.browser ?? true, onScreen: here.current.onScreen, looking })) continue;
+          let inPage = false;
+          for (const listener of listeners) inPage = listener(notification, looking) || inPage;
+          if (inPage && looking) continue;
           if (!claim(notification.id)) continue;
           await showNotification(notification, (id) => here.current.open(id));
         }

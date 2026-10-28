@@ -5,6 +5,7 @@
  */
 
 import type { RunnerState } from "@/lib/missions/rules";
+import { REASON_LABEL, type SessionStanding } from "@/lib/session/standing";
 
 export type RunnerCheck = { name: string; status: string; conclusion: string | null; url: string | null };
 
@@ -48,6 +49,9 @@ export type RunnerView = {
   group: RunnerGroup;
   /** Why it needs someone, for Needs you. */
   attention: string | null;
+  /** Where it stands as every session does (lib/session/standing.ts), for
+   *  its mark and its unread reply; null before the server has read it. */
+  standing: SessionStanding | null;
   createdAt: string;
 };
 
@@ -65,6 +69,8 @@ export type MissionView = {
   environment: { id: string; name: string } | null;
   /** Its own session's status (archived, asleep, …). */
   sessionStatus: string;
+  /** Where its own session stands (lib/session/standing.ts). */
+  standing: SessionStanding | null;
   runners: RunnerView[];
   createdAt: string;
 };
@@ -86,10 +92,21 @@ export function briefSummary(brief: string | null): string {
 
 /** Where a Runner goes in the pane, and why it needs someone if it does. */
 export function runnerGroup(
-  runner: { state: RunnerState; pulls: readonly RunnerPullView[]; lostCause: string | null; errorMessage: string | null },
+  runner: {
+    state: RunnerState;
+    pulls: readonly RunnerPullView[];
+    lostCause: string | null;
+    errorMessage: string | null;
+    /** Where it stands as every session does: a question, a plan or
+     *  secrets it waits on, an error, or stuck, is Needs you here too. */
+    standing?: Pick<SessionStanding, "standing" | "reason"> | null;
+  },
   now = Date.now(),
 ): { group: RunnerGroup; attention: string | null } {
   if (runner.state === "failed") return { group: "needs_you", attention: runner.errorMessage ?? "its setup failed" };
+  if (runner.standing?.standing === "needs_you" && runner.standing.reason) {
+    return { group: "needs_you", attention: REASON_LABEL[runner.standing.reason] };
+  }
   const open = runner.pulls.filter((p) => p.state === "open");
   const blocked = open.find((p) => p.verdict === "needs_attention");
   if (blocked) return { group: "needs_you", attention: blocked.reason ?? "its pull request needs attention" };
@@ -108,30 +125,24 @@ export function runnerGroup(
 }
 
 /**
- * The Mission's status in the sidebar: it needs you only when it asks you
- * something itself (a Runner that's stuck is the Mission's to handle);
+ * The Mission's status in the sidebar: it needs you only when its own
+ * session does, as every session's standing says (it asked you through
+ * ask_user, errored, or is stuck; a Runner that's stuck is the Mission's to
+ * handle);
  * working while it or any Runner is at it, or a pull request is settling;
  * ready while a pull request waits on a review or a merge.
  */
 export function missionStatus(input: {
-  asking: boolean;
-  working: boolean;
+  /** Where the Mission's own session stands. */
+  standing: Pick<SessionStanding, "standing"> | null;
   runners: readonly Pick<RunnerView, "group" | "state" | "pulls">[];
 }): MissionStatus {
-  if (input.asking) return "needs_you";
+  if (input.standing?.standing === "needs_you") return "needs_you";
   const settling = input.runners.some((r) => r.pulls.some((p) => p.state === "open" && p.verdict === null));
   const runnerWorking = input.runners.some((r) => r.state === "working" || r.state === "setting_up");
-  if (input.working || runnerWorking || settling) return "working";
+  if (input.standing?.standing === "working" || runnerWorking || settling) return "working";
   if (input.runners.some((r) => r.group === "ready_to_merge" || r.group === "ready_to_review")) return "ready";
   return "idle";
-}
-
-/** Whether the Mission's last reply asks the user something: it ends on a
- *  question, and the Mission isn't still at work. */
-export function asksUser(lastReply: string | null, working: boolean): boolean {
-  if (working || !lastReply) return false;
-  const tail = lastReply.trim().split("\n").filter(Boolean).pop() ?? "";
-  return /\?\s*[*_`)]*$/.test(tail);
 }
 
 export const MISSION_STATUS_LABEL: Record<MissionStatus, string> = {
@@ -141,38 +152,3 @@ export const MISSION_STATUS_LABEL: Record<MissionStatus, string> = {
   idle: "Idle",
 };
 
-/** What changed between two looks that the user should hear about: pull
- *  requests that became ready, and Missions that came to need them. */
-export function newsBetween(
-  before: readonly MissionView[] | null,
-  after: readonly MissionView[],
-): { kind: "ready" | "needs_you"; missionId: string; mission: string; runnerId?: string; runner?: string; pr?: { number: number; title: string; url: string } }[] {
-  if (!before) return [];
-  const news: ReturnType<typeof newsBetween> = [];
-  const was = new Map(before.map((m) => [m.id, m]));
-  for (const mission of after) {
-    const old = was.get(mission.id);
-    if (!old) continue;
-    if (mission.status === "needs_you" && old.status !== "needs_you") {
-      news.push({ kind: "needs_you", missionId: mission.id, mission: mission.title });
-    }
-    const readyBefore = new Set(
-      old.runners.flatMap((r) => r.pulls.filter((p) => p.state === "open" && p.verdict === "ready").map((p) => `${p.repo}#${p.number}`)),
-    );
-    for (const runner of mission.runners) {
-      for (const pr of runner.pulls) {
-        if (pr.state === "open" && pr.verdict === "ready" && !readyBefore.has(`${pr.repo}#${pr.number}`)) {
-          news.push({
-            kind: "ready",
-            missionId: mission.id,
-            mission: mission.title,
-            runnerId: runner.id,
-            runner: runner.name,
-            pr: { number: pr.number, title: pr.title, url: pr.url },
-          });
-        }
-      }
-    }
-  }
-  return news;
-}

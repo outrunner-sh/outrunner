@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/loaders";
 import { refreshMissions } from "@/hooks/use-missions";
+import { askPermission } from "@/lib/notifications/show";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import { firstPromptQuery, newFirstPrompt } from "@/lib/session/first-prompt";
 import { cn } from "@/lib/utils";
@@ -56,9 +57,10 @@ export function NewMissionDialog({
       });
       const body = (await response.json().catch(() => null)) as { workspace?: { id: string }; error?: string } | null;
       if (!response.ok || !body?.workspace) throw new Error(body?.error ?? "The Mission didn't start. Try again.");
-      // So a ready pull request, or a Mission needing them, can reach them in
-      // another tab (lib/missions/notify).
-      if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission();
+      // So a ready pull request, or a Mission needing them, can reach them
+      // while they're elsewhere (lib/notifications): asked from this click,
+      // as browsers want.
+      if (typeof Notification !== "undefined" && Notification.permission === "default") void askPermission();
       void refreshMissions();
       onOpenChange(false);
       setPrompt("");

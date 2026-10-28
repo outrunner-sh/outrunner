@@ -11,7 +11,7 @@ import Link from "next/link";
 import { GitPullRequest, Plus, Rocket } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { MissionGlyph, PullRequestChip, RunnerGlyph } from "@/components/missions/mission-parts";
+import { MissionGlyph, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
 import { MissionToasts } from "@/components/missions/mission-toasts";
 import { NewMissionDialog } from "@/components/missions/new-mission-dialog";
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
@@ -173,8 +173,9 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                                 runner.id === active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                               )}
                             >
-                              <RunnerGlyph group={runner.group} state={runner.state} className="size-3" />
+                              <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} className="size-3" />
                               <span className="min-w-0 flex-1 truncate">{runner.name}</span>
+                              <UnreadDot standing={runner.standing} />
                               {pr && <PullRequestChip pr={pr} link={false} />}
                             </Link>
                           </li>

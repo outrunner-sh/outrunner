@@ -13,7 +13,7 @@ import { ArrowLeft, ArrowUp, ChevronRight, ExternalLink, Users, X } from "lucide
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
-import { DiffSize, PullRequestChip, RunnerGlyph } from "@/components/missions/mission-parts";
+import { DiffSize, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
 import { Spinner } from "@/components/ui/loaders";
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMission } from "@/hooks/use-missions";
@@ -158,8 +158,9 @@ function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void 
       className="group/row flex w-full cursor-pointer flex-col gap-1 rounded-md px-2 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:bg-white/[0.05] focus-visible:outline-none"
     >
       <span className="flex w-full items-center gap-2">
-        <RunnerGlyph group={runner.group} state={runner.state} />
+        <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} />
         <span className="min-w-0 flex-1 truncate text-[13px] text-[#ededed]">{runner.name}</span>
+        <UnreadDot standing={runner.standing} />
         {pr && <DiffSize additions={pr.additions} deletions={pr.deletions} />}
       </span>
       {runner.summary && <span className="block truncate pl-[22px] text-[12px] text-[#7f7f7f]">{runner.summary}</span>}
@@ -243,7 +244,7 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
         >
           <ArrowLeft className="size-4" />
         </button>
-        <RunnerGlyph group={runner.group} state={runner.state} />
+        <RunnerGlyph group={runner.group} state={runner.state} standing={runner.standing} />
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#ededed]">{runner.name}</span>
         <span className="shrink-0 text-[11.5px] text-[#7a7a7a]">{STATE_LABEL[runner.state]}</span>
         <Link

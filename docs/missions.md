@@ -20,20 +20,38 @@ This replaces the earlier Mission Engine design
 - **Start:** `+` next to **Missions** in the sidebar. Pick the project, say
   what the Mission owns and what to start on. Its first message names it;
   rename it, or pick another icon, from its header.
-- **Sidebar:** each Mission shows its status (**needs you** when it asks you
-  something, **working** while it or a Runner is at it or a pull request
-  settles, **ready** when a pull request waits on review, **idle**), how many
-  pull requests are ready, and its Runners with open work underneath, each
-  with its state and pull request. Drag Missions to reorder them.
+- **Sidebar:** Missions have their own section, above the sessions' groups.
+  Each shows its status, how many pull requests are ready, and its Runners
+  with open work underneath, each with its state and pull request. Drag
+  Missions to reorder them. The statuses:
+  - **needs you:** its own session needs you, as any session's standing says:
+    it asked you through its `ask_user` card, errored, or is stuck;
+  - **working:** it or a Runner is at it, or a pull request is settling;
+  - **ready:** a pull request waits on review;
+  - **idle:** none of those.
+
+  A Runner's mark is the one every session has (`lib/session/standing.ts`),
+  with its unread reply, except where the state is the Mission's own (a pull
+  request ready, shipping, or needing attention). Missions and Runners stay
+  out of the sessions' status and project groups.
 - **Runners pane:** a Mission's page shows its Runners on the right, grouped
   as Needs you, Ready to merge, Ready to review, Runners working and
   Shipping (merged in the last day). Hover a pull request for its checks.
   Click a Runner to read its latest response and message it there; your
   replies stay in its session and don't go to the Mission.
 - **In the Mission's chat,** Runner news shows as compact cards.
-- **Notifications:** a toast when a pull request is ready or a Mission needs
-  you, and a system notification when the tab is in the background (if you
-  allowed them).
+- **Notifications** go through the app's notifications (`lib/notifications`),
+  under each person's preferences in Settings → Account (browser, email,
+  Slack). Two kinds of news reach the user:
+  - a Runner's pull request ready to review (`pr_ready`, a kind of its own,
+    told on the Mission);
+  - a Mission that needs them (`needs_input` from its `ask_user` card, or
+    `errored`).
+
+  While the user is looking at the app, these show as a toast; otherwise as
+  a system notification, an email or a Slack DM. A Runner's own news (its
+  turns, questions, pull requests and failures) goes to its Mission, which
+  handles it, and a Mission's routine turn ends aren't told.
 - Missions run on Claude Code. Runners use the Mission's model, agent and
   effort unless it asks for others.
 
@@ -45,13 +63,13 @@ This replaces the earlier Mission Engine design
 | Turn watches and Runners' pull requests | `supabase/migrations/20261102210000_mission_events.sql` |
 | Icons and sidebar order | `supabase/migrations/20261102220000_mission_profiles.sql` |
 | The Mission's tools (plain functions) | `lib/missions/tools.ts` |
-| Their MCP endpoint (Streamable HTTP, stateless JSON) | `app/api/missions/mcp`, `lib/missions/mcp.ts` |
+| Their MCP server: the app's MCP server code, with its own registry. Served at `/api/missions/mcp` and, for a Mission's token, at `/api/mcp` | `lib/missions/server.ts`, `lib/mcp/server.ts` |
 | The Mission's box setup: token, MCP server, notes file, instructions | `lib/missions/setup.ts` |
 | Orchestrator prompt | `lib/missions/prompt.ts` |
 | Turn watching (shared with the Slack relay) | `lib/session/turn-watch.ts`, `lib/missions/watch.ts` |
 | Pull request settler | `lib/missions/settle.ts`, `lib/missions/pull-requests.ts` |
 | Outbox delivery | `lib/missions/outbox.ts` |
-| Tick | `lib/missions/tick.ts`, on the cron's `/api/integrations/slack/tick` |
+| Tick | `lib/missions/tick.ts`, after the sessions tick's reads (`/api/sessions/tick`) |
 | UI | `components/missions/*`, `hooks/use-missions.ts`, `GET /api/missions` |
 
 ### Tools
@@ -112,15 +130,20 @@ A Runner's events for its Mission go through an outbox (`mission_events`):
 
 **Turn ends.** Each send to a Runner (its brief, the Mission's messages, a
 queued one) opens a watch in `turn_watches`. The watch is looked at every 10
-seconds for 10 minutes after the send, then by the tick. A turn has ended
-when all of these hold:
+seconds for 10 minutes after the send, then by the tick. Each look reads the
+Runner's conversation as every session's is read (`readSession`,
+`session_activity`, `lib/session/watch.ts`): the sidebar and notifications
+see the same. A turn has ended when all of these hold:
 
-1. The box's agent says it isn't mid-turn. Its last message is a reply with
-   no tool call open, so a subagent at work keeps the turn open.
+1. The agent isn't mid-turn by that read (`lib/session/turn-state.ts`). Its
+   last message is a reply with no tool call open, so a subagent at work
+   keeps the turn open.
 2. The agent has replied since the send.
 3. Its box's own last-activity stamp hasn't moved on a second look 15
    seconds later. This needs no agreement between our clock and the box's.
 
+A Runner that stops mid-turn to wait on a person (a question, a plan to
+approve, secrets) reaches its Mission as needing attention, once per wait.
 A background task finishing later starts a turn no watch awaits. A box paused
 mid-watch had ended its turn: the reconciler pauses only boxes with no turn
 running. In that case the reply last read is reported.
@@ -166,15 +189,17 @@ twice records it once. Events are delivered in batches:
 
 ## Configuration
 
-- **Cron:** nothing new. The Missions tick rides the existing 2-minute call to
-  `POST /api/integrations/slack/tick` (Cloudflare's `scheduled`), and runs
-  whether or not Slack is set up.
+- **Cron:** nothing new. The Missions tick rides the sessions tick
+  (`POST /api/sessions/tick`, every 2 minutes from Cloudflare's `scheduled`),
+  after its reads.
 - **GitHub App events:** subscribe the App to **Check suite**, **Check run**,
   **Pull request review**, **Pull request review comment** and **Status**, as
   well as **Pull request**. Without them, the tick still finds and settles
   pull requests by polling, minutes later.
 - **`RUNTIME_BASE_URL`** must be reachable from the boxes: the Mission's MCP
-  server is `${RUNTIME_BASE_URL}/api/missions/mcp`.
+  server is `${RUNTIME_BASE_URL}/api/missions/mcp`. `/api/mcp` answers a
+  Mission's token (`Authorization: Bearer orm_…`) with the same tools, in
+  that Mission's scope; an API key there gets the API's tools as before.
 - Boxes need a runtime-agent with `message-keys` for exactly-once delivery
   across a control-plane crash. New boxes get it with the deploy. An older
   box still gets every delivery, but one repeated after a crash could be said
@@ -189,6 +214,10 @@ twice records it once. Events are delivered in batches:
 - `test/mission-outbox.test.ts`: exactly-once across crashes, races, sleep
   and failures.
 - `test/mission-view.test.ts`: sidebar and pane grouping.
+- `test/mission-midturn.test.ts`: a delivery while the Mission works is
+  folded into its turn (one turn, one end); at rest, it starts one.
+- `test/mission-notifications.test.ts`: what's told to the user, and
+  `pr_ready`'s wording.
 - `test/missions-sql.test.ts` runs the migrations' SQL on a real Postgres:
   the cap's trigger under racing inserts, and the outbox's claims, leases and
   backoff. It needs `MISSIONS_PG`; CI provides one.

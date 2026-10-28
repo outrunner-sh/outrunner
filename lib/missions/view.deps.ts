@@ -1,15 +1,14 @@
 /**
  * The owner's Missions read for the sidebar and the Runners pane
  * (lib/missions/view.ts), with the service role and scoped to the owner
- * here: their Missions, their Runners. What a Mission's box says (mid-turn,
- * its last reply) is read live, at most every few seconds a Mission; a
- * Runner's turn is read from its watch, never its box.
+ * here: their Missions, their Runners. Where each stands (working, needing
+ * you, unread) is every session's standing (lib/session/standing.ts), read
+ * as the sidebar reads the user's other sessions; the Missions' own part is
+ * their Runners' pull requests and groups.
  */
 
-import { lookAtBox } from "@/lib/missions/box";
 import { runnerState } from "@/lib/missions/rules";
 import {
-  asksUser,
   briefSummary,
   missionStatus,
   type MissionView,
@@ -18,28 +17,13 @@ import {
   type RunnerPullView,
   type RunnerView,
 } from "@/lib/missions/view";
-import { toWorkspace } from "@/lib/db/mappers";
+import { toWorkspace, toWorkspacePullRequest } from "@/lib/db/mappers";
+import { readStandings } from "@/lib/db/session-standing";
 import type { Workspace } from "@/lib/runtime/types";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 function db() {
   return createSupabaseAdminClient();
-}
-
-const LOOK_MS = 6_000;
-const looks = new Map<string, { at: number; value: Promise<{ working: boolean; reply: string | null }> }>();
-
-/** Whether the Mission is mid-turn, and its last reply: its box asked at
- *  most every few seconds, however many tabs ask. */
-function missionLook(mission: Workspace): Promise<{ working: boolean; reply: string | null }> {
-  if (mission.status !== "ready" && mission.status !== "idle") return Promise.resolve({ working: false, reply: null });
-  const kept = looks.get(mission.id);
-  if (kept && Date.now() - kept.at < LOOK_MS) return kept.value;
-  const value = lookAtBox(mission)
-    .then((l) => ({ working: l.working === true, reply: l.summary?.lastAssistantMessage ?? null }))
-    .catch(() => ({ working: false, reply: null }));
-  looks.set(mission.id, { at: Date.now(), value });
-  return value;
 }
 
 function checksOf(value: unknown): RunnerCheck[] {
@@ -61,6 +45,8 @@ function checksOf(value: unknown): RunnerCheck[] {
 
 /** The owner's Missions in an org (or all of theirs), in their order. */
 export async function missionsFor(ownerId: string, orgId: string | null, only?: string): Promise<MissionView[]> {
+  // Read under the user's own client (their sessions, their marks), from the
+  // routes that call this.
   let query = db().from("workspaces").select("*").eq("owner_id", ownerId).eq("kind", "mission").not("status", "in", "(destroyed,destroying)");
   if (orgId) query = query.eq("org_id", orgId);
   if (only) query = query.eq("id", only);
@@ -102,9 +88,18 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
   }
 
   const now = Date.now();
+  // Where each stands, as the sidebar has every session: the pull request of
+  // each that GitHub last told of (pull_requests), its agent as the server's
+  // watch read it, and the user's own marks.
+  const { data: sharedPulls } = await db().from("pull_requests").select("*").in("workspace_id", [...ids, ...runnerIds]);
+  const pullOf: Record<string, ReturnType<typeof toWorkspacePullRequest>> = {};
+  for (const row of sharedPulls ?? []) pullOf[row.workspace_id] ??= toWorkspacePullRequest(row);
+  const standings = await readStandings(ownerId, [...missions, ...runners], pullOf, now).catch((error: unknown) => {
+    console.error("Missions: couldn't read where sessions stand", error);
+    return {} as Awaited<ReturnType<typeof readStandings>>;
+  });
   const views = await Promise.all(
     missions.map(async (mission): Promise<MissionView & { position: number | null }> => {
-      const look = await missionLook(mission);
       const own = runners.filter((r) => r.parentMissionId === mission.id);
       const runnerViews: RunnerView[] = own.map((runner) => {
         const rows = ((pulls.data ?? []) as Record<string, unknown>[]).filter((p) => p.runner_id === runner.id);
@@ -123,7 +118,8 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
           mergeableState: (p.mergeable_state as string | null) ?? null,
           endedAt: p.state === "open" ? null : ((p.checked_at as string | null) ?? null),
         }));
-        const state = runnerState(runner.status, watched.has(runner.id));
+        const standing = standings[runner.id] ?? null;
+        const state = runnerState(runner.status, standing ? standing.standing === "working" : watched.has(runner.id));
         const latest = latestEvent.get(runner.id);
         const { group, attention } = runnerGroup(
           {
@@ -131,6 +127,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
             pulls: pullViews,
             lostCause: latest?.kind === "needs_attention" ? latest.reason : null,
             errorMessage: runner.errorMessage,
+            standing,
           },
           now,
         );
@@ -143,6 +140,7 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
           pulls: pullViews,
           group,
           attention,
+          standing,
           createdAt: runner.createdAt,
         };
       });
@@ -155,11 +153,12 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
         title: mission.title ?? "New Mission",
         icon: profile?.icon ?? null,
         position: profile?.position ?? null,
-        status: missionStatus({ asking: asksUser(look.reply, look.working), working: look.working, runners: runnerViews }),
+        status: missionStatus({ standing: standings[mission.id] ?? null, runners: runnerViews }),
         readyCount,
         liveRunners: own.filter((r) => !["archived", "archiving", "failed"].includes(r.status)).length,
         environment: mission.environmentId ? { id: mission.environmentId, name: envName.get(mission.environmentId) ?? "Project" } : null,
         sessionStatus: mission.status,
+        standing: standings[mission.id] ?? null,
         runners: runnerViews.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         createdAt: mission.createdAt,
       };

@@ -4,11 +4,8 @@ import { test } from "node:test";
 import { missionIcon } from "@/lib/missions/icons";
 import { missionName } from "@/lib/missions/rules";
 import {
-  asksUser,
   briefSummary,
-  type MissionView,
   missionStatus,
-  newsBetween,
   runnerGroup,
   type RunnerPullView,
   SHIPPING_MS,
@@ -66,24 +63,30 @@ test("an archived Runner: shipping while its merge is fresh, then done; its open
   assert.equal(group("archived", [pr({ verdict: "ready" })]).group, "ready_to_review");
 });
 
-test("a Mission needs you only when it asks; then working, ready, idle", () => {
+const standing = (s: "needs_you" | "working" | "in_review" | "done" | "backlog") => ({ standing: s });
+
+test("a Mission needs you only when its own session does; then working, ready, idle", () => {
   const idle = { group: "working" as const, state: "idle" as const, pulls: [] };
-  assert.equal(missionStatus({ asking: true, working: false, runners: [] }), "needs_you");
-  assert.equal(missionStatus({ asking: false, working: true, runners: [] }), "working");
-  assert.equal(missionStatus({ asking: false, working: false, runners: [{ ...idle, state: "working" }] }), "working");
+  assert.equal(missionStatus({ standing: standing("needs_you"), runners: [] }), "needs_you");
+  assert.equal(missionStatus({ standing: standing("working"), runners: [] }), "working");
+  assert.equal(missionStatus({ standing: standing("done"), runners: [{ ...idle, state: "working" }] }), "working");
   // A pull request settling is work still going.
-  assert.equal(missionStatus({ asking: false, working: false, runners: [{ ...idle, pulls: [pr()] }] }), "working");
-  assert.equal(missionStatus({ asking: false, working: false, runners: [{ ...idle, group: "ready_to_review", pulls: [pr({ verdict: "ready" })] }] }), "ready");
+  assert.equal(missionStatus({ standing: standing("done"), runners: [{ ...idle, pulls: [pr()] }] }), "working");
+  assert.equal(missionStatus({ standing: standing("done"), runners: [{ ...idle, group: "ready_to_review", pulls: [pr({ verdict: "ready" })] }] }), "ready");
   // A stuck Runner is the Mission's to handle, not the user's.
-  assert.equal(missionStatus({ asking: false, working: false, runners: [{ ...idle, group: "needs_you" }] }), "idle");
+  assert.equal(missionStatus({ standing: standing("done"), runners: [{ ...idle, group: "needs_you" }] }), "idle");
+  assert.equal(missionStatus({ standing: null, runners: [] }), "idle");
 });
 
-test("a reply that ends on a question asks the user, once the Mission has stopped", () => {
-  assert.equal(asksUser("Both are ready.\n\nShould I merge them?", false), true);
-  assert.equal(asksUser("Want me to open a PR?**", false), true);
-  assert.equal(asksUser("Should I merge them?", true), false);
-  assert.equal(asksUser("Delegated to Runner A. Done.", false), false);
-  assert.equal(asksUser(null, false), false);
+test("a Runner that needs a person as any session would is in Needs you, saying why", () => {
+  assert.deepEqual(
+    runnerGroup({ state: "working", pulls: [], lostCause: null, errorMessage: null, standing: { standing: "needs_you", reason: "question" } }),
+    { group: "needs_you", attention: "Asked you a question" },
+  );
+  assert.equal(
+    runnerGroup({ state: "working", pulls: [], lostCause: null, errorMessage: null, standing: { standing: "working", reason: null } }).group,
+    "working",
+  );
 });
 
 test("a brief's line: plan mode and markup left off", () => {
@@ -91,38 +94,6 @@ test("a brief's line: plan mode and markup left off", () => {
   assert.equal(briefSummary("1. Add the file"), "Add the file");
   assert.equal(briefSummary(null), "");
   assert.equal(briefSummary("x".repeat(200)).length, 140);
-});
-
-function mission(patch: Partial<MissionView> = {}): MissionView {
-  return {
-    id: "m1",
-    title: "Billing",
-    icon: null,
-    status: "working",
-    readyCount: 0,
-    liveRunners: 1,
-    environment: null,
-    sessionStatus: "ready",
-    runners: [{ id: "r1", name: "Fix login", summary: "", state: "idle", branch: "b", pulls: [pr()], group: "working", attention: null, createdAt: "" }],
-    createdAt: "",
-    ...patch,
-  };
-}
-
-test("news: a pull request that became ready, and a Mission that came to need you, once each", () => {
-  const before = [mission()];
-  const ready = [mission({ status: "ready", runners: [{ ...before[0].runners[0], pulls: [pr({ verdict: "ready" })], group: "ready_to_review" }] })];
-  assert.deepEqual(
-    newsBetween(before, ready).map((n) => [n.kind, n.pr?.number]),
-    [["ready", 7]],
-  );
-  assert.deepEqual(newsBetween(ready, ready), []);
-  assert.deepEqual(
-    newsBetween(ready, [{ ...ready[0], status: "needs_you" }]).map((n) => n.kind),
-    ["needs_you"],
-  );
-  // The first look is no news.
-  assert.deepEqual(newsBetween(null, ready), []);
 });
 
 test("a Mission's icon: the one picked, else one from its id, the same each time", () => {

@@ -8,9 +8,11 @@
 
 import { AlertTriangle, Check, CircleDashed, GitMerge, GitPullRequest, Loader, Rocket, X } from "lucide-react";
 
+import { StandingMark } from "@/components/sidebar-status";
 import { missionIcon } from "@/lib/missions/icons";
 import type { RunnerState } from "@/lib/missions/rules";
 import { MISSION_STATUS_LABEL, type MissionStatus, type RunnerGroup, type RunnerPullView } from "@/lib/missions/view";
+import type { SessionStanding } from "@/lib/session/standing";
 import { cn } from "@/lib/utils";
 
 /** Each status's colour: orange is the user's to act on, green ready,
@@ -74,8 +76,27 @@ const GROUP_GLYPH: Record<RunnerGroup, { Icon: typeof Check; className: string; 
   done: { Icon: Check, className: "text-[#6f6f6f]", label: "Done" },
 };
 
-/** A Runner's state as one small glyph: its group, and at work a turning one. */
-export function RunnerGlyph({ group, state, className }: { group: RunnerGroup; state: RunnerState; className?: string }) {
+/**
+ * A Runner's state as one small glyph. Where it stands as any session does
+ * (at work, or needing a person: a question, a plan, secrets, an error),
+ * the sidebar's own mark (StandingMark), so a Runner reads like every other
+ * session; where it's the Mission's own (a pull request ready to merge or
+ * review, shipping, one needing attention), a glyph of its group's.
+ */
+export function RunnerGlyph({
+  group,
+  state,
+  standing,
+  className,
+}: {
+  group: RunnerGroup;
+  state: RunnerState;
+  standing?: SessionStanding | null;
+  className?: string;
+}) {
+  if (standing && (group === "working" || (group === "needs_you" && standing.standing === "needs_you"))) {
+    return <StandingMark standing={standing} className={className} />;
+  }
   if (group === "working" && state !== "working" && state !== "setting_up") {
     return (
       <span role="img" aria-label={state === "asleep" ? "Asleep" : "Idle"} title={state === "asleep" ? "Asleep" : "Idle"}>
@@ -90,6 +111,12 @@ export function RunnerGlyph({ group, state, className }: { group: RunnerGroup; s
       <Icon className={cn("size-3.5 shrink-0", tone, turning && "animate-[spin_2.4s_linear_infinite]", className)} />
     </span>
   );
+}
+
+/** A reply the user hasn't seen, as the sidebar marks it. */
+export function UnreadDot({ standing }: { standing?: SessionStanding | null }) {
+  if (!standing?.unread) return null;
+  return <span aria-label="New reply" title="A reply you haven't seen" className="size-1.5 shrink-0 rounded-full bg-sky-400" />;
 }
 
 /** A pull request's checks in a word: all passed, some failed, or running. */
