@@ -3,7 +3,9 @@ import { after, NextResponse } from "next/server";
 import { rerunRun, startRun, SUSPENDED } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import { recordRuns, reopenRun, rerunTarget, sessionOwner } from "@/lib/db/automation-runs";
+import { setInstallationSuspended } from "@/lib/db/github-installations";
 import {
+  dropInstallationToken,
   GitHubAppError,
   githubAppConfig,
   InstallationGoneError,
@@ -49,6 +51,12 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ runId: run.runId });
   } catch (error) {
     if (error instanceof InstallationSuspendedError) {
+      // Its suspend webhook was missed: kept as suspended now, so nothing
+      // else takes it for live.
+      dropInstallationToken(error.installationId);
+      await setInstallationSuspended(error.installationId, error.suspendedAt).catch((cause: unknown) =>
+        console.error(`Couldn't keep installation ${error.installationId} as suspended`, cause),
+      );
       return NextResponse.json({ error: SUSPENDED }, { status: 409 });
     }
     if (error instanceof InstallationGoneError) {

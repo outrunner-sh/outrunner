@@ -162,7 +162,31 @@ test("a pull request is read with a kept token; one GitHub refuses is minted aga
   // No token to be had: gone.
   const noToken = (async () => new Response("{}", { status: 404 })) as typeof fetch;
   await assert.rejects(installationPullRequest(config, 104, "o/r", 7, noToken), InstallationGoneError);
-  // GitHub won't mint one: suspended, its webhook missed.
-  const refused = (async () => new Response("{}", { status: 403 })) as typeof fetch;
-  await assert.rejects(installationPullRequest(config, 105, "o/r", 7, refused), InstallationSuspendedError);
+  // GitHub won't mint one: suspended, its webhook missed, as the installation
+  // itself says.
+  const refusedAs = (suspendedAt: string | null) =>
+    (async (url: string | URL) =>
+      String(url).endsWith("/access_tokens")
+        ? new Response("{}", { status: 403 })
+        : new Response(
+            JSON.stringify({
+              id: 105,
+              account: { login: "o", type: "Organization" },
+              repository_selection: "all",
+              suspended_at: suspendedAt,
+            }),
+            { status: 200 },
+          )) as typeof fetch;
+  await assert.rejects(
+    installationPullRequest(config, 105, "o/r", 7, refusedAs("2026-10-28T12:00:00Z")),
+    (error: unknown) =>
+      error instanceof InstallationSuspendedError &&
+      error.installationId === 105 &&
+      error.suspendedAt === "2026-10-28T12:00:00Z",
+  );
+  // A 403 that isn't one (a rate limit) is thrown as it is: worth trying again.
+  await assert.rejects(
+    installationPullRequest(config, 106, "o/r", 7, refusedAs(null)),
+    (error: unknown) => error instanceof GitHubAppError && error.status === 403,
+  );
 });
