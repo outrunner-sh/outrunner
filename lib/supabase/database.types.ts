@@ -464,6 +464,26 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
+export type AutomationTriggerDb = "pull_request.opened" | "pull_request.synchronize";
+
+type AutomationRow = {
+  id: string;
+  org_id: string;
+  runs_as: string | null;
+  name: string;
+  template: string | null;
+  prompt: string;
+  triggers: AutomationTriggerDb[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type AutomationRepoRow = {
+  automation_id: string;
+  project_id: string;
+};
+
 type OrganizationDomainRow = {
   domain: string;
   org_id: string;
@@ -619,6 +639,18 @@ export type Database = {
         Row: OrganizationDomainRow;
         Insert: Insert<OrganizationDomainRow, "domain" | "org_id">;
         Update: Partial<OrganizationDomainRow>;
+        Relationships: [];
+      };
+      automations: {
+        Row: AutomationRow;
+        Insert: Insert<AutomationRow, "org_id" | "name" | "prompt" | "triggers">;
+        Update: Partial<AutomationRow>;
+        Relationships: [];
+      };
+      automation_repos: {
+        Row: AutomationRepoRow;
+        Insert: AutomationRepoRow;
+        Update: Partial<AutomationRepoRow>;
         Relationships: [];
       };
       organization_invites: {
@@ -958,6 +990,33 @@ export type Database = {
       make_default_environment: {
         Args: { target_project: string; maker: string; checkout: string };
         Returns: string;
+      };
+      // supabase/migrations/20261030130000_automations.sql
+      create_automation: {
+        Args: {
+          target_org: string;
+          runner: string;
+          automation_name: string;
+          automation_template: string | null;
+          automation_prompt: string;
+          automation_triggers: AutomationTriggerDb[];
+          is_enabled: boolean;
+          project_ids: string[];
+        };
+        Returns: string;
+      };
+      update_automation: {
+        Args: {
+          target_org: string;
+          automation: string;
+          editor: string;
+          automation_name: string | null;
+          automation_prompt: string | null;
+          automation_triggers: AutomationTriggerDb[] | null;
+          is_enabled: boolean | null;
+          project_ids: string[] | null;
+        };
+        Returns: boolean;
       };
       // supabase/migrations/20261028130000_org_members.sql
       accept_org_invite: {

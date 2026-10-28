@@ -190,7 +190,13 @@ export function AppSidebar({
           count={triageCount}
           active={pathname === "/triage"}
         />
-        <NavSoon icon={<Sparkles />} label="Automations" />
+        {/* The org's automations, which post as the Outrunner GitHub App. */}
+        <NavLink
+          href="/automations"
+          icon={<Sparkles />}
+          label="Automations"
+          active={pathname === "/automations" || pathname.startsWith("/automations/")}
+        />
         {searching ? (
           <SearchField value={query} onChange={setQuery} onClose={closeSearch} />
         ) : (
@@ -555,21 +561,6 @@ function Kbd({ children, hidden = false }: { children: string; hidden?: boolean 
 /** "⌘K" as aria-keyshortcuts spells it. */
 function keyShortcut(hint: string): string {
   return hint.replace("⌘", "Meta+");
-}
-
-/** A destination that does not exist yet: shown dimmed, not clickable; its
- *  tooltip says it is coming. */
-function NavSoon({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <div
-      aria-disabled="true"
-      title={`${label} is coming soon`}
-      className={cn(SIDEBAR_ROW, "cursor-default text-muted-foreground/60")}
-    >
-      {icon}
-      {label}
-    </div>
-  );
 }
 
 /** "Search" turned into its field: filters the workspaces below as you type.
