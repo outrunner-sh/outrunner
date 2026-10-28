@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -224,6 +225,9 @@ const (
 // has written up a plan and is ready to execute. Would you like to proceed?").
 const planMenuQuestion = "Would you like to proceed?"
 
+// planChoice is a numbered option of Claude's menu under its selection.
+var planChoice = regexp.MustCompile(`❯\s*\d+\.\s`)
+
 // ErrNoPlanWaiting is an approval asked of a session that isn't waiting on
 // one: its plan was answered already (in its terminal, or another tab).
 var ErrNoPlanWaiting = errors.New("the agent isn't waiting on a plan any more")
@@ -301,7 +305,9 @@ func (s *Service) pickPlanOptionHeld(workspaceID string) (bool, error) {
 		return false, ErrNoPlanWaiting
 	}
 	want := planOption(s.buildMode(workspaceID))
-	selected := func(line string) bool { return strings.Contains(line, "❯") }
+	// The menu's own selection, "❯ 1. …": a prompt echoed above the menu
+	// starts with ❯ too.
+	selected := planChoice.MatchString
 	// A menu of a few options: never more presses than it has lines.
 	for step := 0; step < 12 && ctx.Err() == nil; step++ {
 		key := keyToward(pane, selected, want)

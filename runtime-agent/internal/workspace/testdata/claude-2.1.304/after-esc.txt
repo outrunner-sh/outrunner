@@ -1,0 +1,50 @@
+        node:test and node:assert/strict, assert double(3) === 6, double(0) === 0, and  │                                                                     ✕
+        double(-2) === -4.                                                              │2 files changed +4                                   source: Current ▾
+     3. Run the test with node --test a.test.ts (Node's TypeScript type stripping; fall │
+        back to npx tsx --test a.test.ts if unsupported), then commit if requested.     │a.ts                                                                +4
+                                                                                        │1 test/generated (show)
+     Verification                                                                       │
+                                                                                        │──────────────────────────────────────────────────────────────────────
+     All three assertions pass.                                                         │a.ts                                                           [ ask ]
+                                                                                        │──────────────────────────────────────────────────────────────────────
+  Read 1 file                                                                           │ 1  export const x = 1;
+                                                                                        │ 2 +
+● Update(a.ts)                                                                          │ 3 +export function double(n: number): number {
+  ⎿  Added 4 lines                                                                      │ 4 +  return n * 2;
+      1  export const x = 1;                                                            │ 5 +}
+      2 +                                                                               │
+      3 +export function double(n: number): number {                                    │
+      4 +  return n * 2;                                                                │
+      5 +}                                                                              │
+                                                                                        │
+● Write(a.test.ts)                                                                      │
+  ⎿  Wrote 9 lines to a.test.ts                                                         │
+      1 import { test } from "node:test";                                               │
+      2 import assert from "node:assert/strict";                                        │
+      3 import { double } from "./a.ts";                                                │
+      4                                                                                 │
+      5 test("double", () => {                                                          │
+      6   assert.equal(double(3), 6);                                                   │
+      7   assert.equal(double(0), 0);                                                   │
+      8   assert.equal(double(-2), -4);                                                 │
+      9 });                                                                             │
+                                                                                        │
+  Ran 1 shell command                                                                   │
+                                                                                        │
+● I added double(n: number) to a.ts, and it returns n * 2. I also added a.test.ts, which│
+  checks double(3), double(0) and double(-2). node --test a.test.ts passes (1 test).    │
+                                                                                        │
+  The test uses Node's built-in node:test, since the repo has no test framework. I      │
+  haven't committed anything.                                                           │
+                                                                                        │
+✻ Worked for 9s · done 9:39 PM                                                          │
+                                                                                        │
+❯ Run: sleep 60 && echo done                                                            │
+                                                                                        │
+  Ran 1 shell command                                                                   │
+  ⎿  Interrupted · What should Claude do instead?                                       │
+                                                                                        │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── add-double-function-test ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

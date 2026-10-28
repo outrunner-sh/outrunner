@@ -17,7 +17,7 @@ export type ConversationNode =
   /** A slash command Claude ran itself ("/model opus"), as typed. */
   | { kind: "command"; key: string; text: string }
   /** The conversation compacted here. */
-  | { kind: "compact"; key: string; trigger?: string; preTokens?: number }
+  | { kind: "compact"; key: string; trigger?: string; preTokens?: number; postTokens?: number }
   /** A plan the agent proposed: Claude's ExitPlanMode call (`id` its id), or
    *  Codex's last words in a turn sent in plan mode (`id` their uuid). */
   | { kind: "plan"; key: string; id: string; text: string }
@@ -102,6 +102,9 @@ export function conversationNodes(
         case "text":
           if (event.role === "user") {
             endTurn();
+            // Claude Code 2.1.304 records a typed /compact first as a prompt of
+            // its own: the compaction's row says it.
+            if (/^\/compact(\s|$)/.test(block.text)) return;
             planTurn = event.mode === "plan";
             nodes.push({ kind: "prompt", key, text: block.text, ...(event.mode && { mode: event.mode }) });
           } else {
