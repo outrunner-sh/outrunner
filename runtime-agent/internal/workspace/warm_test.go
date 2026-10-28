@@ -208,6 +208,52 @@ func TestAWarmCheckoutIsLeftForARetryAndAnotherBranch(t *testing.T) {
 	}
 }
 
+// A worktree cut off half way (its request ended after git made its branch,
+// with no warm checkout to take) leaves neither branch nor worktree: its
+// retry makes them again with -b. A branch the session didn't make stays.
+func TestAWorktreeCutOffHalfWayLeavesNoBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	mirrorBox(t, s)
+	marker := slowCheckouts(t, s.mirrorPath())
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", BaseBranch: "main"}); err == nil {
+		t.Fatal("a Create whose request ended made its worktree")
+	}
+	if !s.branchMissing(context.Background(), s.mirrorPath(), "runtime/x") {
+		t.Error("the mirror kept the session's branch")
+	}
+	if out, _ := s.git(context.Background(), s.mirrorPath(), "worktree", "list"); strings.Contains(out, "workspaces") {
+		t.Errorf("the mirror still lists the worktree: %s", out)
+	}
+	if fileExists(s.worktreePath("ws1")) {
+		t.Error("the half-made worktree is still there")
+	}
+
+	_ = os.Remove(marker)
+	wt, err := s.Create(context.Background(), CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", BaseBranch: "main"})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if branch, _ := s.git(context.Background(), wt, "symbolic-ref", "--short", "HEAD"); branch != "runtime/x" {
+		t.Errorf("branch = %q", branch)
+	}
+
+	ctx2 := context.Background()
+	if _, err := s.git(ctx2, s.mirrorPath(), "branch", "runtime/y", "origin/main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx2, CreateInput{WorkspaceID: "ws2", Branch: "runtime/y", BaseBranch: "main"}); err == nil {
+		t.Fatal("made a worktree on a branch already there")
+	}
+	if s.branchMissing(ctx2, s.mirrorPath(), "runtime/y") {
+		t.Error("a branch the session didn't make was deleted")
+	}
+}
+
 // A session's scripts run in order: the warm hook once (not on a warmed
 // worktree), the setup script once, the start hook at every launch.
 func TestSessionScriptsRunInOrder(t *testing.T) {

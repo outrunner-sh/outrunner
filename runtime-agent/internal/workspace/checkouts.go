@@ -89,6 +89,21 @@ func (s *Service) undoCheckouts(ctx context.Context, folder, branch string, chec
 	_ = os.RemoveAll(folder)
 }
 
+// undoWorktree takes back a session's worktree of the box's one repository,
+// as undoCheckouts does a folder of them: it leaves the mirror, then the
+// folder goes, then its branch, when it is the session's own (ours) to take
+// back.
+func (s *Service) undoWorktree(ctx context.Context, worktree, branch string, ours bool) {
+	ctx, cancel := cleanupContext(ctx)
+	defer cancel()
+	_, _ = s.git(ctx, s.mirrorPath(), "worktree", "remove", "--force", worktree)
+	_ = os.RemoveAll(worktree)
+	_, _ = s.git(ctx, s.mirrorPath(), "worktree", "prune")
+	if ours {
+		_, _ = s.git(ctx, s.mirrorPath(), "branch", "-D", branch)
+	}
+}
+
 // branchMissing reports whether mirror surely has no branch: git looked and
 // found none (rev-parse's exit 1), not merely failed to say (a request that
 // ended, a mirror that isn't there).

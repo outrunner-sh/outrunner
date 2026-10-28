@@ -523,9 +523,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 		facts.Warmed = true
 		s.setFacts(in.WorkspaceID, facts)
 	} else {
+		// A branch that wasn't there before is this add's to take back; one
+		// that was (the add fails on it) isn't. The worktree is: it wasn't
+		// there (above), and one cut off half way would pass for made.
+		ours := s.branchMissing(ctx, s.mirrorPath(), in.Branch)
 		out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
 			"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
 		if err != nil {
+			s.undoWorktree(ctx, worktree, in.Branch, ours)
 			return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
