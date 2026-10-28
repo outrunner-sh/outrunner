@@ -164,7 +164,7 @@ export function runPrompt(automationPrompt: string, event: PullRequestEvent, app
       ? `What you post appears as ${self}. Its comments are from earlier passes of the App's automations, this one's included; comments by anyone else (people, other review bots) aren't, so don't call them a previous pass or a re-run, but don't repeat a point they've already made either.`
       : "",
     runId
-      ? `End your top-level summary comment on the pull request with this line, exactly as it is: ${runMarker(runId)} (it's hidden on GitHub, and tells Outrunner your review is in).`
+      ? `Post your top-level summary as a comment on the pull request's conversation (\`gh pr comment\`), not as a review's body, and end it with this line, exactly as it is: ${runMarker(runId)} (it's hidden on GitHub, and tells Outrunner your review is in).`
       : "",
     event.trigger === "pull_request.synchronize"
       ? "The pull request has new commits since it was last looked at: look at it again, and don't repeat what's already been said on it."

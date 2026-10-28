@@ -3,7 +3,7 @@
 
 import { CHECK_HOURS, closedWithout, type CheckOutcome, IN_PROGRESS } from "@/lib/automations/checks";
 import type { PendingRun } from "@/lib/automations/runs";
-import { claimCheck, openCheckOf, recordCheck, staleOpenChecks } from "@/lib/db/automation-runs";
+import { claimCheck, openCheckOf, recordCheck, releaseCheck, staleOpenChecks } from "@/lib/db/automation-runs";
 import { completeCheckRun, createCheckRun, GitHubAppError, githubAppConfig, installationToken } from "@/lib/github/app";
 import { optionalEnv } from "@/lib/env";
 
@@ -28,7 +28,16 @@ export async function openRunCheck(run: PendingRun): Promise<void> {
       externalId: run.runId,
       output: IN_PROGRESS,
     });
-    await recordCheck(run.runId, id, event.installationId);
+    try {
+      await recordCheck(run.runId, id, event.installationId);
+    } catch (error) {
+      // Not kept, nothing would ever close it: closed now, rather than left
+      // in progress for good.
+      await completeCheckRun(token, event.repoFullName, id, closedWithout("Outrunner couldn't keep track of this check.")).catch(
+        () => {},
+      );
+      throw error;
+    }
   } catch (error) {
     // The App without Checks: Read & write (or the installation not yet
     // accepting it): no check, and nothing else changes.
@@ -40,18 +49,35 @@ export async function openRunCheck(run: PendingRun): Promise<void> {
   }
 }
 
-/** Close a run's check, once, however it ends. */
-export async function closeRunCheck(runId: string, outcome: CheckOutcome): Promise<void> {
+/**
+ * Close a run's check, once, however it ends. A review completes it even if
+ * it was closed already (it came after the hour's sweep): it says what
+ * happened, and a completed check can be completed again. A close GitHub
+ * didn't take is given back, for the sweep to try again.
+ */
+export async function closeRunCheck(runId: string, outcome: CheckOutcome, { review = false } = {}): Promise<void> {
   const config = githubAppConfig();
   if (!config) return;
   try {
-    const check = await openCheckOf(runId);
-    if (!check || !(await claimCheck(runId))) return;
-    const token = await installationToken(config, check.installationId);
-    await completeCheckRun(token, check.repoFullName, check.checkRunId, outcome);
+    const check = await openCheckOf(runId, { evenClosed: review });
+    if (!check) return;
+    const claimed = await claimCheck(runId);
+    if (!claimed && !review) return;
+    try {
+      const token = await installationToken(config, check.installationId);
+      await completeCheckRun(token, check.repoFullName, check.checkRunId, outcome);
+    } catch (error) {
+      if (claimed) await releaseCheck(runId).catch(() => {});
+      throw error;
+    }
   } catch (error) {
     console.error(`Run ${runId}: couldn't close its check`, error);
   }
+}
+
+/** Close a run's check with its review, however late. */
+export function closeRunCheckWithReview(runId: string, outcome: CheckOutcome): Promise<void> {
+  return closeRunCheck(runId, outcome, { review: true });
 }
 
 /** Close a run's check without a review, saying why. */

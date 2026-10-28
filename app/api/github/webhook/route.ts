@@ -3,7 +3,7 @@ import { after, NextResponse } from "next/server";
 import { closeRuns, planRuns, startRun } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import { finishCheckFromComment } from "@/lib/automations/checks";
-import { closeRunCheck, closeRunCheckWithout } from "@/lib/automations/checks.deps";
+import { closeRunCheckWithout, closeRunCheckWithReview } from "@/lib/automations/checks.deps";
 import {
   automationsForPullRequest,
   openCheckOf,
@@ -129,13 +129,15 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({ received: true, runs: runs.length });
     }
-    if (event === "issue_comment") {
-      // The App's own review, posted: its run's check closes with it.
-      // Its bot's login as GitHub has it now (the App can be renamed).
+    if (event === "issue_comment" || event === "pull_request_review") {
+      // The App's own review, posted: its run's check closes with it, even
+      // after the hour's sweep closed it without one. Its bot's login as
+      // GitHub has it now (the App can be renamed).
       after(async () =>
-        finishCheckFromComment(payload, await appSlug(config), { openCheckOf, closeCheck: closeRunCheck }).catch(
-          (error: unknown) => console.error("Couldn't close a run's check from its review", error),
-        ),
+        finishCheckFromComment(payload, await appSlug(config), {
+          openCheckOf: (runId) => openCheckOf(runId, { evenClosed: true }),
+          closeCheck: closeRunCheckWithReview,
+        }).catch((error: unknown) => console.error("Couldn't close a run's check from its review", error)),
       );
       return new NextResponse(null, { status: 204 });
     }

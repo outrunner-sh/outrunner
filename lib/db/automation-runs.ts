@@ -452,8 +452,9 @@ export type OpenCheck = {
   prNumber: number;
 };
 
-/** A run's open check, or null (none opened, or closed already). */
-export async function openCheckOf(runId: string): Promise<OpenCheck | null> {
+/** A run's open check, or null (none opened, or closed already; with
+ *  `evenClosed`, one closed already too: a review completes it however late). */
+export async function openCheckOf(runId: string, { evenClosed = false } = {}): Promise<OpenCheck | null> {
   const supabase = createSupabaseAdminClient();
   const { data: run, error } = await supabase
     .from("automation_runs")
@@ -461,7 +462,7 @@ export async function openCheckOf(runId: string): Promise<OpenCheck | null> {
     .eq("id", runId)
     .maybeSingle();
   if (error) throw error;
-  if (!run?.check_run_id || !run.check_installation_id || run.check_closed_at) return null;
+  if (!run?.check_run_id || !run.check_installation_id || (run.check_closed_at && !evenClosed)) return null;
   const { data: project, error: projectError } = await supabase
     .from("projects")
     .select("full_name")
@@ -490,6 +491,15 @@ export async function claimCheck(runId: string): Promise<boolean> {
     .select("id");
   if (error) throw error;
   return (data ?? []).length > 0;
+}
+
+/** Give back a claim whose close on GitHub failed: the sweep tries again. */
+export async function releaseCheck(runId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ check_closed_at: null })
+    .eq("id", runId);
+  if (error) throw error;
 }
 
 /** The runs with an open check on a pull request (it closed). */

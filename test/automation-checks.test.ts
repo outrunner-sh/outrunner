@@ -27,6 +27,8 @@ test("a review's score is read however it's written, and passes the check at 4/5
   assert.equal(reviewScore("## Review\n\nscore 3 / 5"), 3);
   assert.equal(reviewScore("4/5 tests pass"), null);
   assert.equal(reviewScore("Score: 7/5"), null);
+  // The last: a summary that mentions the earlier pass's first.
+  assert.equal(reviewScore("Last pass scored score: 3/5; this one fixes it.\n\nScore: 5/5"), 5);
   const url = "https://github.com/o/r/pull/7#issuecomment-1";
   assert.equal(reviewOutcome("Score: 4/5", url).conclusion, "success");
   assert.equal(reviewOutcome("Score: 5/5", url).output.title, "Score: 5/5");
@@ -69,6 +71,29 @@ test("the App's own comment with a run's marker closes that run's check with its
   const { d, closed } = deps();
   assert.equal(await finishCheckFromComment(comment(), "outrunner-sh", d), true);
   assert.deepEqual(closed, [[RUN, "success"]]);
+});
+
+test("a review's body with the marker closes it too, should the summary be one", async () => {
+  const { d, closed } = deps();
+  const review = {
+    action: "submitted",
+    installation: { id: 42 },
+    repository: { full_name: "neevai-labs/outrunner" },
+    pull_request: { number: 7 },
+    review: {
+      user: { login: "outrunner-sh[bot]" },
+      body: `Score: 3/5\n${runMarker(RUN)}`,
+      html_url: "https://github.com/neevai-labs/outrunner/pull/7#pullrequestreview-1",
+    },
+  };
+  assert.equal(await finishCheckFromComment(review, "outrunner-sh", d), true);
+  assert.deepEqual(closed, [[RUN, "neutral"]]);
+  const other = deps();
+  assert.equal(
+    await finishCheckFromComment({ ...review, review: { ...review.review, user: { login: "someone" } } }, "outrunner-sh", other.d),
+    false,
+  );
+  assert.equal(await finishCheckFromComment({ ...review, pull_request: { number: 8 } }, "outrunner-sh", other.d), false);
 });
 
 test("no one else's comment closes a check, nor the App's on another pull request, repository or installation", async () => {

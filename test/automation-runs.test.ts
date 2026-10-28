@@ -536,6 +536,8 @@ test("a run's check opens before anything else, closes saying why when it doesn'
   assert.deepEqual(ready.checks, ["open r1"]);
   // Its session is told how to say its review is in.
   assert.match(ready.started[0].prompt, /<!-- outrunner-run:r1 -->/);
+  // As a conversation comment, which the check's webhook hears.
+  assert.match(ready.started[0].prompt, /gh pr comment/);
 
   const failed = startDeps({
     startServerSession: async () => ({ workspaceId: "w2", status: "failed", errorMessage: "No allowance left." }),

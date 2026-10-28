@@ -34,7 +34,8 @@ export const IN_PROGRESS: CheckOutput = {
 
 /** A review's score out of 5 ("Score: 4/5", "**Score: 4.5/5**"), or null. */
 export function reviewScore(body: string): number | null {
-  const match = /score\W{0,6}(\d(?:\.\d)?)\s*\/\s*5\b/i.exec(body);
+  // The last one: a summary may mention an earlier pass's score first.
+  const match = [...body.matchAll(/score\W{0,6}(\d(?:\.\d)?)\s*\/\s*5\b/gi)].at(-1);
   if (!match) return null;
   const score = Number(match[1]);
   return score >= 0 && score <= 5 ? score : null;
@@ -64,28 +65,41 @@ export type CommentDeps = {
   closeCheck(runId: string, outcome: CheckOutcome): Promise<void>;
 };
 
+type Posted = { body?: unknown; html_url?: unknown; user?: { login?: unknown } | null } | null;
+
 type CommentPayload = {
   action?: unknown;
   installation?: { id?: unknown } | null;
   repository?: { full_name?: unknown } | null;
+  /** issue_comment: a comment on a pull request's conversation. */
   issue?: { number?: unknown; pull_request?: unknown } | null;
-  comment?: { body?: unknown; html_url?: unknown; user?: { login?: unknown } | null } | null;
+  comment?: Posted;
+  /** pull_request_review: a review's body, should the summary be one. */
+  pull_request?: { number?: unknown } | null;
+  review?: Posted;
 };
 
 /**
- * A comment posted on a pull request: when it's the App's own and carries a
- * run's marker, that run's review is in, and its check closes with it. Only
- * the App's comments count (anyone can write a marker), and only on the pull
- * request the run's check is on, through the same installation. Whether one
- * closed.
+ * A comment posted on a pull request's conversation (`issue_comment`), or a
+ * review submitted on it (`pull_request_review`): when it's the App's own and
+ * carries a run's marker, that run's review is in, and its check closes with
+ * it. Only the App's comments count (anyone can write a marker), and only on
+ * the pull request the run's check is on, through the same installation.
+ * Whether one closed.
  */
 export async function finishCheckFromComment(payload: unknown, appSlug: string, deps: CommentDeps): Promise<boolean> {
   const p = (payload ?? {}) as CommentPayload;
-  if (p.action !== "created" || !p.issue?.pull_request) return false;
-  const login = p.comment?.user?.login;
+  const posted =
+    p.action === "created" && p.issue?.pull_request
+      ? { item: p.comment, number: p.issue.number }
+      : p.action === "submitted" && p.pull_request
+        ? { item: p.review, number: p.pull_request.number }
+        : null;
+  if (!posted) return false;
+  const login = posted.item?.user?.login;
   if (typeof login !== "string" || login.toLowerCase() !== `${appSlug.toLowerCase()}[bot]`) return false;
-  const body = p.comment?.body;
-  const url = p.comment?.html_url;
+  const body = posted.item?.body;
+  const url = posted.item?.html_url;
   if (typeof body !== "string" || typeof url !== "string") return false;
   const runId = readRunMarker(body);
   if (!runId) return false;
@@ -93,7 +107,7 @@ export async function finishCheckFromComment(payload: unknown, appSlug: string, 
   if (
     !check ||
     check.installationId !== p.installation?.id ||
-    check.prNumber !== p.issue.number ||
+    check.prNumber !== posted.number ||
     typeof p.repository?.full_name !== "string" ||
     check.repoFullName.toLowerCase() !== p.repository.full_name.toLowerCase()
   ) {
