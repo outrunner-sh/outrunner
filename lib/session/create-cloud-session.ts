@@ -165,6 +165,12 @@ export type ServerSessionOptions = {
   /** The size of its box, asked by the API, instead of the one the user (or
    *  their org) chose. Never beyond what their plan allows (boxSizeOn). */
   boxSize?: BoxSizeId;
+  /** A Mission, or a Runner of `parentMissionId` (docs/missions.md). */
+  kind?: "mission";
+  parentMissionId?: string;
+  /** The project (an `environments` row) it starts from, one the user may
+   *  read; the repository's default project when not given. */
+  environmentId?: string;
 };
 
 /**
@@ -326,7 +332,7 @@ export async function createCloudSession(
   // The project the session starts from: the repository's own, made on its
   // first session. A failure here doesn't stop the session: with none
   // recorded, its setup looks the project up again (setUpSession).
-  const environmentId = await defaultEnvironmentId(owner.id, project.id).catch((error: unknown) => {
+  const environmentId = options.environmentId ?? await defaultEnvironmentId(owner.id, project.id).catch((error: unknown) => {
     console.error(`Project for ${project.fullName} couldn't be found or made`, error);
     return null;
   });
@@ -366,6 +372,8 @@ export async function createCloudSession(
       provider: provider.name,
       agent: agentId,
       source: options.source,
+      kind: options.kind,
+      parentMissionId: options.parentMissionId,
     });
   } catch (error) {
     // A requested branch can be one a live session already works on: name that

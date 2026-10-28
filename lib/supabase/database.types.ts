@@ -145,6 +145,45 @@ type WorkspaceRow = {
   source: WorkspaceSourceDb;
   /** When its status last turned failed (20261102163000); null otherwise. */
   failed_at?: string | null;
+  /** A session, or a Mission (20261102200000_missions.sql). */
+  kind: "session" | "mission";
+  /** The Mission a Runner works for; null for any other session. */
+  parent_mission_id: string | null;
+};
+
+// supabase/migrations/20261102200000_missions.sql
+type MissionTokenRow = { mission_id: string; token_hash: string; minted_at: string };
+type MissionRunnerBriefRow = { runner_id: string; mission_id: string; brief: string; created_at: string };
+type MissionNotesRow = { mission_id: string; body: string; updated_at: string };
+export type MissionEventKind = "finished" | "ready" | "needs_attention" | "merged" | "closed" | "archived";
+type MissionEventRow = {
+  id: string;
+  mission_id: string;
+  runner_id: string;
+  kind: MissionEventKind;
+  payload: Json;
+  idempotency_key: string;
+  created_at: string;
+  delivery_id: string | null;
+  delivered_at: string | null;
+};
+type MissionDeliveryRow = {
+  id: string;
+  mission_id: string;
+  attempts: number;
+  lease_until: string | null;
+  next_attempt_at: string;
+  last_error: string | null;
+  created_at: string;
+  delivered_at: string | null;
+};
+type MissionQueuedMessageRow = {
+  id: string;
+  mission_id: string;
+  runner_id: string;
+  content: string;
+  created_at: string;
+  sent_at: string | null;
 };
 
 type RuntimeComputerRow = {
@@ -1336,6 +1375,42 @@ export type Database = {
         Update: Partial<SlackChannelRow>;
         Relationships: [];
       };
+      mission_tokens: {
+        Row: MissionTokenRow;
+        Insert: Insert<MissionTokenRow, "mission_id" | "token_hash">;
+        Update: Partial<MissionTokenRow>;
+        Relationships: [];
+      };
+      mission_runner_briefs: {
+        Row: MissionRunnerBriefRow;
+        Insert: Insert<MissionRunnerBriefRow, "runner_id" | "mission_id" | "brief">;
+        Update: Partial<MissionRunnerBriefRow>;
+        Relationships: [];
+      };
+      mission_notes: {
+        Row: MissionNotesRow;
+        Insert: Insert<MissionNotesRow, "mission_id">;
+        Update: Partial<MissionNotesRow>;
+        Relationships: [];
+      };
+      mission_events: {
+        Row: MissionEventRow;
+        Insert: Insert<MissionEventRow, "mission_id" | "runner_id" | "kind" | "idempotency_key">;
+        Update: Partial<MissionEventRow>;
+        Relationships: [];
+      };
+      mission_deliveries: {
+        Row: MissionDeliveryRow;
+        Insert: Insert<MissionDeliveryRow, "mission_id">;
+        Update: Partial<MissionDeliveryRow>;
+        Relationships: [];
+      };
+      mission_queued_messages: {
+        Row: MissionQueuedMessageRow;
+        Insert: Insert<MissionQueuedMessageRow, "mission_id" | "runner_id" | "content">;
+        Update: Partial<MissionQueuedMessageRow>;
+        Relationships: [];
+      };
       slack_research: {
         Row: SlackResearchRow;
         Insert: Insert<SlackResearchRow, "conversation_id" | "question" | "token_hash">;
@@ -1517,6 +1592,23 @@ export type Database = {
     };
     Views: Record<never, never>;
     Functions: {
+      // supabase/migrations/20261102200000_missions.sql
+      claim_mission_delivery: {
+        Args: { target: string; lease_seconds: number; settle_seconds: number; max_wait_seconds: number };
+        Returns: { delivery_id: string; attempt: number }[];
+      };
+      complete_mission_delivery: {
+        Args: { target: string };
+        Returns: undefined;
+      };
+      fail_mission_delivery: {
+        Args: { target: string; failure: string };
+        Returns: undefined;
+      };
+      missions_with_pending_events: {
+        Args: { max_missions: number };
+        Returns: { mission_id: string }[];
+      };
       // supabase/migrations/20261027120000_organizations.sql
       is_org_member: {
         Args: { org: string };

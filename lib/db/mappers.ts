@@ -54,6 +54,9 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     slackSync: row.slack_sync ?? true,
     // Absent before the migration that adds it.
     source: row.source ?? "app",
+    // Absent before the migration that adds them.
+    kind: row.kind === "mission" ? "mission" : "session",
+    parentMissionId: row.parent_mission_id ?? null,
     orgId: row.org_id,
     ownerId: row.owner_id,
     provider: toProviderName(row.provider),

@@ -35,6 +35,13 @@ export function branchTakenByTeammateResponse(): Response {
  * it tests without Next.
  */
 export function workspaceCreateErrorResponse(error: unknown, context: string): Response {
+  // A Mission's Runners are capped in the database (20261102200000_missions.sql).
+  if (isRunnerCap(error)) {
+    return Response.json(
+      { error: "This Mission already has 20 Runners that aren't archived. Archive a finished one first." },
+      { status: 409 },
+    );
+  }
   if (isUniqueViolation(error)) {
     return Response.json(
       {
@@ -46,4 +53,15 @@ export function workspaceCreateErrorResponse(error: unknown, context: string): R
   }
   console.error(context, error);
   return Response.json({ error: "Couldn't create the session. Try again in a moment." }, { status: 500 });
+}
+
+/** The cap on a Mission's live Runners, raised by its trigger. */
+export function isRunnerCap(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "message" in error &&
+      typeof error.message === "string" &&
+      error.message.startsWith("mission_runner_cap"),
+  );
 }
