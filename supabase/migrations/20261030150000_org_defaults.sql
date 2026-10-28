@@ -4,7 +4,7 @@
 -- (Settings → Default models, Settings → Sandbox); the org's is for members
 -- who haven't made one, and Outrunner's own for the rest.
 --
--- A team org's only, like its keys (20261030110000_org_provider_keys.sql).
+-- A team org's only, like its keys (20261030115000_org_provider_keys.sql).
 -- Not secret, but the server's alone all the same: lib/db/org-defaults.ts.
 -- ---------------------------------------------------------------------------
 

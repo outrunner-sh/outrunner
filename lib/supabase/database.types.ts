@@ -389,7 +389,7 @@ type UserCredentialsRow = {
 // Service-role-only (RLS on, no policies); see
 // supabase/migrations/20261019120000_user_provider_keys.sql.
 // An org's keys for model providers (Settings → Org → Keys). Service-role-only;
-// see supabase/migrations/20261030110000_org_provider_keys.sql.
+// see supabase/migrations/20261030115000_org_provider_keys.sql.
 // An org's defaults for its members' new sessions (Settings → Org →
 // Defaults); see supabase/migrations/20261030150000_org_defaults.sql.
 type OrganizationSettingsRow = {

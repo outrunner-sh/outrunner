@@ -1,5 +1,5 @@
 /**
- * An org's keys for model providers (20261030110000_org_provider_keys.sql),
+ * An org's keys for model providers (20261030115000_org_provider_keys.sql),
  * set by its admins for its members' cloud sessions. A member's own key for a
  * provider always wins (lib/db/credentials.ts reads these after theirs).
  *
