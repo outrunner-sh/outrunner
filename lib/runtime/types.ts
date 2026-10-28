@@ -267,6 +267,10 @@ export type WorkspacePullRequest = {
   baseBranch: string;
   headBranch: string;
   createdAt: string;
+  /** As GitHub last said (the webhook, or the sessions tick's check), and
+   *  since when; absent on one made in code rather than read. */
+  state?: "open" | "closed" | "merged";
+  stateAt?: string | null;
 };
 
 export type ChangedFile = {

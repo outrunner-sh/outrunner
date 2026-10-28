@@ -362,8 +362,9 @@ const worker = {
       return;
     }
     // The reconciler, the Slack agent's clock (digests, nudges, follow-ups),
-    // the API webhooks' (long turns, retries), and automations' (their
-    // schedules): each on its own, so one failing doesn't stop the others.
+    // the API webhooks' (long turns, retries), automations' (their schedules)
+    // and the sessions' (where each stands): each on its own, so one failing
+    // doesn't stop the others.
     const call = (path: string, label: string) =>
       getContainer(env.CONTROL_PLANE)
         .fetch(
@@ -382,6 +383,7 @@ const worker = {
         call("/api/integrations/slack/tick", "Slack tick"),
         call("/api/webhooks/tick", "Webhooks tick"),
         call("/api/automations/tick", "Automations tick"),
+        call("/api/sessions/tick", "Sessions tick"),
       ]),
     );
   },

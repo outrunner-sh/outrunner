@@ -13,6 +13,7 @@ import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { sendFailureMessage } from "@/lib/session/send-failure";
 import { BOX_GONE } from "@/lib/session/session-codes";
 import { FROM_HEADER } from "@/lib/slack/from";
+import { watchSent } from "@/lib/session/watch";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -150,6 +151,9 @@ export async function POST(request: Request, context: RouteContext) {
       ),
     );
   }
+  // Working, for every client at once, and watched until its turn ends
+  // (lib/session/watch.ts): where it stands in the sidebar follows.
+  after(() => watchSent(workspace.id, workspace.ownerId));
   // A session started from Slack, in step with its thread: what's typed here
   // goes there too, and the reply with it. Not what came from the thread, or
   // from GitHub, which no one typed here.

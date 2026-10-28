@@ -9,8 +9,11 @@ import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
 import { countTriage, triageActor } from "@/lib/db/work-items";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import { GROUPING_COOKIE, readGrouping } from "@/lib/nav/status-groups";
 import { getOrgContext } from "@/lib/orgs/server";
+import { readStandings } from "@/lib/db/session-standing";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import { sessionPullRequests } from "@/lib/session/session-view";
 
 /**
  * Every app page (home, new session, a cloud or local session) under one
@@ -59,6 +62,7 @@ async function ChromeData() {
         collapsed: jar.get(SIDEBAR_COOKIE)?.value === "1",
         folded: readFoldedProjects(jar.get(FOLDED_PROJECTS_COOKIE)?.value),
         getStartedSkipped: jar.get(GET_STARTED_COOKIE)?.value === "1",
+        grouping: readGrouping(jar.get(GROUPING_COOKIE)?.value),
       }}
     />
   );
@@ -99,6 +103,14 @@ async function SidebarData() {
     }),
   ]);
 
+  const picked = sessionPullRequests(workspaces, pullRequests);
+  // Where each stands, for the sidebar's groups; placed by the page's own
+  // poll (hooks/use-standings.ts) if it can't be read now.
+  const standings = await readStandings(owner.id, workspaces, picked).catch((error: unknown) => {
+    console.error("Sidebar: could not read where sessions stand", error);
+    return undefined;
+  });
+
   return (
     <ServerAnswer<FrameData>
       value={{
@@ -106,7 +118,8 @@ async function SidebarData() {
           projects: listed,
           hiddenProjects: hidden,
           workspaces,
-          pullRequests: sessionPullRequests(workspaces, pullRequests),
+          pullRequests: picked,
+          standings,
         },
         ownerLogin: owner.githubLogin || owner.name,
         ownerAvatarUrl: owner.avatarUrl,
@@ -130,22 +143,4 @@ async function hiddenSessionProjects(listed: Project[], workspaces: Workspace[])
     console.error("Sidebar: could not load hidden repositories", error);
     return [];
   });
-}
-
-/** One pull request a session for the sidebar: its own repository's, else
- *  (a session of several that opened one elsewhere first) its oldest. The
- *  session's page reads each repository's itself. */
-function sessionPullRequests(
-  workspaces: Workspace[],
-  pullRequests: WorkspacePullRequest[],
-): Record<string, WorkspacePullRequest> {
-  const own = new Map(workspaces.map((w) => [w.id, w.projectId]));
-  const picked: Record<string, WorkspacePullRequest> = {};
-  for (const pr of pullRequests) {
-    const current = picked[pr.workspaceId];
-    if (!current || (current.projectId !== own.get(pr.workspaceId) && pr.projectId === own.get(pr.workspaceId))) {
-      picked[pr.workspaceId] = pr;
-    }
-  }
-  return picked;
 }

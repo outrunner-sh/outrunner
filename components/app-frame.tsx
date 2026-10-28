@@ -3,12 +3,15 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { PanelLeftOpen, Plus } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useServerAnswer } from "@/components/server-answer";
-import { isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import { standingsNow, useStandingsFeed } from "@/hooks/use-standings";
+import { activeSessionId, isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import type { Grouping } from "@/lib/nav/status-groups";
+import { nextNeedingYou } from "@/lib/session/standing";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import type { Org } from "@/lib/orgs/active";
 import type { AppData } from "@/lib/session/session-view";
@@ -39,6 +42,8 @@ export type FrameChrome = {
   folded: string[];
   /** The "Get started" checklist skipped, from its cookie. */
   getStartedSkipped: boolean;
+  /** How the sidebar lists sessions, by status or by project, from its cookie. */
+  grouping: Grouping;
 };
 
 /** Where the choice was kept before the cookie, read once to carry it over. */
@@ -96,14 +101,33 @@ export function AppFrame({
   // Bumped by ⌘K: the sidebar opens its search field on each change.
   const [searchSignal, setSearchSignal] = useState(0);
 
+  // Where each session stands, kept live for the sidebar and the sessions
+  // list; the cloud session on screen is marked seen as its replies come.
+  const onScreen = pathname.startsWith("/workspaces/") ? activeSessionId(pathname) : undefined;
+  const cloudIds = useMemo(() => (appData?.workspaces ?? NO_WORKSPACES).map((w) => w.id), [appData]);
+  useStandingsFeed({
+    initial: appData?.standings,
+    // Not before the layout's list is in: an empty page isn't a list to compare.
+    ids: cloudIds,
+    onScreen,
+    onListChanged: () => {
+      if (appData) router.refresh();
+    },
+  });
+  const here = useRef(onScreen);
+  useEffect(() => {
+    here.current = onScreen;
+  });
+
   const setAndRemember = (next: boolean) => {
     setCollapsed(next);
     document.cookie = `${SIDEBAR_COOKIE}=${next ? "1" : "0"}; path=/; max-age=31536000; samesite=lax`;
   };
 
   // App-wide shortcuts: ⌘N a new session, ⌘K search the sidebar (opening it
-  // if collapsed), ⌘I capture a triage item. With a modifier they are safe even while typing. (A browser
-  // keeps ⌘N for itself; the Mac app passes it through.)
+  // if collapsed), ⌘I capture a triage item, ⌘J the next session that needs
+  // you. With a modifier they are safe even while typing. (A browser keeps ⌘N
+  // for itself; the Mac app passes it through.)
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
@@ -119,6 +143,14 @@ export function AppFrame({
       } else if (key === "i") {
         event.preventDefault();
         router.push("/triage?new=1");
+      } else if (key === "j") {
+        event.preventDefault();
+        const standings = standingsNow();
+        const next = nextNeedingYou(
+          Object.entries(standings).map(([id, standing]) => ({ id, ...standing })),
+          here.current,
+        );
+        if (next) router.push(`/workspaces/${next}`);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -172,6 +204,7 @@ export function AppFrame({
                 // Null until the cookies land: the checklist waits rather than
                 // show itself to someone who skipped it.
                 getStartedSkipped={look ? look.getStartedSkipped : null}
+                initialGrouping={look?.grouping ?? "status"}
               />
             )}
           </div>

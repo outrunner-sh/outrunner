@@ -86,6 +86,22 @@ starts send signed webhooks (`workspace.ready`, `turn.completed`,
 `needs_input`, `pr.opened`, `error`), and the same operations are an MCP
 server at `/api/mcp`.
 
+## Where sessions stand
+
+The sidebar lists sessions by where each stands (or by project, its other
+view): **Needs you** (the agent asked a question, waits for a plan's approval
+or for secrets, errored, or is stuck), **Working**, **In review** (an open pull
+request), **Done** (merged, or idle with nothing pending) and **Backlog**
+(quiet for three days, with no pull request). The server works it out
+(`lib/session/standing.ts`) from what it reads of each live session's
+conversation stream (`lib/session/watch.ts`: closely after a send, and every
+two minutes from `POST /api/sessions/tick`, which the Cloudflare cron calls
+with `BILLING_CRON_SECRET`) and from the GitHub App's pull request events, so
+every tab and the Mac app agree. A session can be pinned or moved by hand, a
+reply you haven't seen is marked, and ⌘J opens the next session that needs
+you. `/workspaces` lists every session in the org you may see, to search,
+filter and archive or delete several at once.
+
 ## Docs
 
 - API — [`docs/api.md`](docs/api.md)

@@ -1,4 +1,5 @@
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
+import type { SessionStanding } from "@/lib/session/standing";
 
 /** What the app layout loaded for the sidebar, shared with the pages under it
  *  (components/app-data.tsx). */
@@ -10,6 +11,9 @@ export type AppData = {
   workspaces: Workspace[];
   /** By workspace id. */
   pullRequests: Record<string, WorkspacePullRequest>;
+  /** Where each session stands, by workspace id (lib/session/standing.ts);
+   *  absent where it wasn't read. */
+  standings?: Record<string, SessionStanding>;
 };
 
 /** What a cloud session's page needs to show it. */
@@ -55,4 +59,22 @@ export function newerSessionView(
   const server = fromServer?.workspace.id === id ? fromServer : null;
   if (!fromSidebar || !server) return fromSidebar ?? server;
   return Date.parse(server.workspace.updatedAt) > Date.parse(fromSidebar.workspace.updatedAt) ? server : fromSidebar;
+}
+
+/** One pull request a session for the sidebar: its own repository's, else
+ *  (a session of several that opened one elsewhere first) its oldest. The
+ *  session's page reads each repository's itself. */
+export function sessionPullRequests(
+  workspaces: Workspace[],
+  pullRequests: WorkspacePullRequest[],
+): Record<string, WorkspacePullRequest> {
+  const own = new Map(workspaces.map((w) => [w.id, w.projectId]));
+  const picked: Record<string, WorkspacePullRequest> = {};
+  for (const pr of pullRequests) {
+    const current = picked[pr.workspaceId];
+    if (!current || (current.projectId !== own.get(pr.workspaceId) && pr.projectId === own.get(pr.workspaceId))) {
+      picked[pr.workspaceId] = pr;
+    }
+  }
+  return picked;
 }
