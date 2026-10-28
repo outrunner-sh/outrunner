@@ -1099,12 +1099,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 //
 // A synthetic `state` event is emitted first on fresh connects (fromOffset == 0)
 // so subscribers know whether the workspace is running before any conversation
-// event lands; a resume (fromOffset > 0) skips it. After that, a `state` event
-// is sent whenever the state changes mid-stream — "starting" becomes "running"
-// once the session log appears — so no client is left showing a stale start.
-// A mid-stream state carries the resume cursor (the last event's offset, or
-// fromOffset) as its id: state isn't in the JSONL, so resuming there skips and
-// repeats nothing, and an SSE client's Last-Event-ID never moves backwards.
+// event lands; a resume (fromOffset > 0) skips it. A stream that opens
+// "starting" then sends "running" once the session log appears, so no client
+// is left showing a stale start. That is the only change it reports: a log
+// that goes away mid-session is a teardown or a session briefly looking empty,
+// not a session starting again, and a late "starting" would sit under the
+// whole conversation. The "running" carries the resume cursor (the last
+// event's offset, or fromOffset) as its id: state isn't in the JSONL, so
+// resuming there skips and repeats nothing, and an SSE client's Last-Event-ID
+// never moves backwards.
 // Returns when ctx is cancelled (client gone) or a write fails.
 func (s *Server) streamEvents(
 	ctx context.Context,
@@ -1113,32 +1116,30 @@ func (s *Server) streamEvents(
 	writeEvent func(id int64, payload []byte) bool,
 	heartbeat func() bool,
 ) {
-	sessionState := func() string {
-		if s.ws.SessionLog(workspaceID) != "" {
-			return "running"
-		}
-		return "starting"
-	}
 	cursor := fromOffset
-	sent := sessionState()
+	running := s.ws.SessionLog(workspaceID) != ""
 	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
 			T: "state", WorkspaceID: workspaceID, State: state,
 		})
 		return writeEvent(cursor, payload)
 	}
-	// stateChanged rereads the state and sends it when it differs from the last
-	// one sent (or, on a resume, from the one the stream opened with).
-	stateChanged := func() bool {
-		state := sessionState()
-		if state == sent {
+	// reportRunning sends "running" the first time the stream sees the log.
+	reportRunning := func() bool {
+		if running {
 			return true
 		}
-		sent = state
-		return writeState(state)
+		running = true
+		return writeState("running")
 	}
-	if fromOffset == 0 && !writeState(sent) {
-		return
+	if fromOffset == 0 {
+		state := "starting"
+		if running {
+			state = "running"
+		}
+		if !writeState(state) {
+			return
+		}
 	}
 
 	// Watcher tails the JSONL and delivers events on `out`. Its lifetime is tied
@@ -1150,26 +1151,36 @@ func (s *Server) streamEvents(
 
 	ticker := time.NewTicker(sseHeartbeat)
 	defer ticker.Stop()
-	stateTicker := time.NewTicker(stateCheckInterval)
-	defer stateTicker.Stop()
+	// Watch for the log only while the stream is still "starting"; a nil
+	// channel never fires, so a running stream does no extra lookups.
+	var stateCheck <-chan time.Time
+	if !running {
+		stateTicker := time.NewTicker(stateCheckInterval)
+		defer stateTicker.Stop()
+		stateCheck = stateTicker.C
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-stateTicker.C:
-			if !stateChanged() {
-				return
+		case <-stateCheck:
+			if running {
+				stateCheck = nil // an event already reported it
+				continue
+			}
+			if s.ws.SessionLog(workspaceID) != "" {
+				stateCheck = nil
+				if !reportRunning() {
+					return
+				}
 			}
 		case ev := <-out:
 			// The log just yielded an event, so it exists: the "running" lands
 			// before the first message it explains. No SessionLog lookup here,
 			// since a fresh connect replays the whole log through this path.
-			if sent != "running" {
-				sent = "running"
-				if !writeState(sent) {
-					return
-				}
+			if !reportRunning() {
+				return
 			}
 			var payload []byte
 			var mErr error
