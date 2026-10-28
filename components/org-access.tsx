@@ -8,10 +8,12 @@ import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
+import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import type { OrgRoleInfo } from "@/lib/db/org-access";
 import { requestJson } from "@/lib/http/request-json";
 import type { AccessLevel, Grant } from "@/lib/orgs/access";
 import type { Org } from "@/lib/orgs/active";
+import { cn } from "@/lib/utils";
 
 type Project = { id: string; fullName: string };
 
@@ -127,7 +129,7 @@ function LevelSelect({
       value={value ?? "none"}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value === "none" ? null : (event.target.value as AccessLevel))}
-      className="h-8 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground disabled:opacity-50"
+      className={cn("h-8 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground disabled:opacity-50", SELECT_OPTIONS)}
     >
       {LEVELS.map((l) => (
         <option key={l.value} value={l.value}>
@@ -283,7 +285,7 @@ function PrincipalCard({
                 if (projectId) await setLevel(roleId, projectId, all === "read" ? "write" : "read");
                 setAdding("");
               }}
-              className="h-8 flex-1 rounded-md border border-dashed border-input bg-transparent px-2 text-[13px] text-muted-foreground"
+              className={cn("h-8 flex-1 rounded-md border border-dashed border-input bg-transparent px-2 text-[13px] text-muted-foreground", SELECT_OPTIONS)}
             >
               <option value="">Add one project…</option>
               {addable.map((p) => (

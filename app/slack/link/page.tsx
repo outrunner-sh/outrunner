@@ -1,10 +1,12 @@
 import { startSlackLink } from "@/app/slack/link/actions";
 import { ContinueButton } from "@/app/slack/link/continue-button";
+import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { optionalEnv } from "@/lib/env";
 import { getOrgContext } from "@/lib/orgs/server";
 import { verifyLinkToken } from "@/lib/slack/slack";
 import { slackSignInConfig } from "@/lib/slack/sign-in";
+import { cn } from "@/lib/utils";
 
 /**
  * Where the Slack app's "Connect Slack to Outrunner" reply sends a user who
@@ -72,7 +74,7 @@ export default async function SlackLinkPage({
                 <select
                   name="org"
                   defaultValue={orgs.active.id}
-                  className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30"
+                  className={cn("h-8 w-full rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30", SELECT_OPTIONS)}
                 >
                   {orgs.orgs.map((org) => (
                     <option key={org.id} value={org.id}>

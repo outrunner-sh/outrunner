@@ -12,6 +12,7 @@ import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
+import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { Textarea } from "@/components/ui/textarea";
 import type { Environment } from "@/lib/db/environments";
 import { MAX_REPOS, parseDotenv, type SecretsEdit } from "@/lib/environments/rules";
@@ -220,7 +221,7 @@ function RepositoriesEditor({ environment, onSaved }: { environment: Environment
             aria-label="Repository to add"
             value={picked}
             onChange={(e) => setPicked(e.target.value)}
-            className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30"
+            className={cn("h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground dark:bg-input/30", SELECT_OPTIONS)}
           >
             <option value="">{addable === null ? "Loading repositories…" : addable.length ? "Pick a repository" : "No other connected repositories"}</option>
             {addable?.map((r) => (

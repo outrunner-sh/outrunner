@@ -8,6 +8,7 @@ import { Markdown } from "@/components/markdown";
 import { WorkspaceSelect } from "@/components/triage/workspace-select";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loaders";
+import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { Textarea } from "@/components/ui/textarea";
 import { useNow } from "@/hooks/use-now";
 import { relativeTime } from "@/lib/nav/sidebar";
@@ -21,6 +22,7 @@ import {
   type WorkItemNote,
   type WorkItemPatch,
 } from "@/lib/triage/work-items";
+import { cn } from "@/lib/utils";
 
 type Loaded = { item: TriageItem; notes: WorkItemNote[] };
 
@@ -258,7 +260,7 @@ function Actions({
             if (!event.target.value) return;
             if (await update({ status: "duplicate", duplicateOf: event.target.value })) setPickingDuplicate(false);
           }}
-          className="h-8 max-w-64 rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30"
+          className={cn("h-8 max-w-64 rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30", SELECT_OPTIONS)}
         >
           <option value="">Duplicate of…</option>
           {candidates.map((other) => (
