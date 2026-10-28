@@ -12,7 +12,7 @@ import {
   gitCredentialSignature,
 } from "@/lib/runtime/git-credential";
 
-const config = { clientId: "Iv23test", slug: "outrunner-sh", privateKey: "pem", webhookSecret: "w" };
+const config = { clientId: "Iv23test", slug: "outrunner-connector", privateKey: "pem", webhookSecret: "w" };
 
 function installation(id: number, login: string, extra: Partial<OrgInstallation> = {}): OrgInstallation {
   return {

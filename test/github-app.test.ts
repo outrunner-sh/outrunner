@@ -70,8 +70,8 @@ test("an install link's state names the org and admin, and only while it's ours,
 
 test("the install link is the App's new-installation page with the state", () => {
   assert.equal(
-    installUrl("outrunner-sh", "a.b"),
-    "https://github.com/apps/outrunner-sh/installations/new?state=a.b",
+    installUrl("outrunner-connector", "a.b"),
+    "https://github.com/apps/outrunner-connector/installations/new?state=a.b",
   );
 });
 
@@ -212,7 +212,8 @@ test("a pull request is read with a kept token; one GitHub refuses is minted aga
 });
 
 test("the App's slug is GitHub's, renamed or not, kept an hour; the configured one when GitHub can't say", async () => {
-  const config = { clientId: "Iv23slug", slug: "outrunner-sh", privateKey: pem, webhookSecret: "w" };
+  // Configured under its old name; renamed on GitHub since.
+  const config = { clientId: "Iv23slug", slug: "outrunner-old", privateKey: pem, webhookSecret: "w" };
   let asked = 0;
   const renamed = (async (url: string | URL) => {
     asked += 1;
@@ -238,7 +239,7 @@ test("the App's slug is GitHub's, renamed or not, kept an hour; the configured o
   try {
     const down = (async () => new Response("{}", { status: 503 })) as typeof fetch;
     assert.equal(await appSlug(config, down, 1_000 + 61 * 60_000), "outrunner-connector");
-    assert.equal(await appSlug({ ...config, clientId: "Iv23other" }, down, 1_000), "outrunner-sh");
+    assert.equal(await appSlug({ ...config, clientId: "Iv23other" }, down, 1_000), "outrunner-old");
     // Not asked again for 5 minutes after a failed read.
     let downAsked = 0;
     const counted = (async () => {
