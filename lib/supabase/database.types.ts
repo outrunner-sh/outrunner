@@ -446,6 +446,8 @@ type OrganizationSettingsRow = {
   // supabase/migrations/20261101100000_org_usage_controls.sql.
   usage_limit_percent: number | null;
   alert_thresholds: number[];
+  // supabase/migrations/20261102100000_github_agent_loop.sql.
+  archive_on_close: boolean;
   updated_by: string | null;
   updated_at: string;
 };
@@ -575,6 +577,14 @@ type AutomationRunRow = {
   reason: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type GithubSessionLinkRow = {
+  project_id: string;
+  kind: "issue" | "pull";
+  number: number;
+  workspace_id: string;
+  created_at: string;
 };
 
 type AutomationRepoRow = {
@@ -830,6 +840,19 @@ export type Database = {
         Row: { workspace_id: string; created_at: string };
         Insert: { workspace_id: string };
         Update: Partial<{ workspace_id: string }>;
+        Relationships: [];
+      };
+      // supabase/migrations/20261102100000_github_agent_loop.sql
+      github_loop_claims: {
+        Row: { key: string; created_at: string };
+        Insert: { key: string };
+        Update: Partial<{ key: string }>;
+        Relationships: [];
+      };
+      github_session_links: {
+        Row: GithubSessionLinkRow;
+        Insert: Insert<GithubSessionLinkRow, "project_id" | "kind" | "number" | "workspace_id">;
+        Update: Partial<GithubSessionLinkRow>;
         Relationships: [];
       };
       automation_runs: {
@@ -1221,6 +1244,11 @@ export type Database = {
       project_level: {
         Args: { member: string; target_project: string };
         Returns: AccessLevelDb | null;
+      };
+      // supabase/migrations/20261102100000_github_agent_loop.sql
+      github_member: {
+        Args: { github_user_id: number; target_org: string };
+        Returns: string | null;
       };
       // supabase/migrations/20261030120000_work_items.sql
       triage_project_levels: {

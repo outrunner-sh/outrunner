@@ -25,7 +25,7 @@ import {
 } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { startServerSession } from "@/lib/session/server-session";
-import { FROM_HEADER } from "@/lib/slack/from";
+import { FROM_HEADER, type MessageSource } from "@/lib/slack/from";
 import { hashToken, markdownToSlack, researchPrompt, slackChunks } from "@/lib/slack/research-text";
 import { postMessage } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -40,13 +40,14 @@ function base(): string {
 
 /** A route of the app's, called as the user (inside actAsUser), as the
  *  browser would: same origin, JSON. */
-export function asBrowser(path: string, body: unknown, from?: "slack"): Request {
+export function asBrowser(path: string, body: unknown, from?: MessageSource): Request {
   return new Request(new URL(path, base()), {
     method: "POST",
     headers: {
       origin: new URL(base()).origin,
       "content-type": "application/json",
-      // Said in Slack already: not posted back there (lib/slack/relay.ts).
+      // Said in Slack or on GitHub already: not echoed to Slack as the
+      // owner's (lib/slack/relay.ts).
       ...(from && { [FROM_HEADER]: from }),
     },
     body: JSON.stringify(body),
@@ -61,7 +62,7 @@ export function asBrowser(path: string, body: unknown, from?: "slack"): Request 
  * when it can't be (gone, or not answering): the caller starts a
  * new one.
  */
-export async function wakeAndSend(userId: string, workspaceId: string, prompt: string, from?: "slack"): Promise<boolean> {
+export async function wakeAndSend(userId: string, workspaceId: string, prompt: string, from?: MessageSource): Promise<boolean> {
   return actAsUser(userId, async () => {
     const workspace = await getWorkspace(workspaceId);
     if (!workspace || workspace.ownerId !== userId || !RESUMABLE.has(workspace.status)) return false;

@@ -140,8 +140,9 @@ export async function POST(request: Request, context: RouteContext) {
   }
   await gate.sent();
   // A session started from Slack, in step with its thread: what's typed here
-  // goes there too, and the reply with it. Not what came from the thread.
-  if (workspace.slackThreadUrl && workspace.slackSync !== false && content && request.headers.get(FROM_HEADER) !== "slack") {
+  // goes there too, and the reply with it. Not what came from the thread, or
+  // from GitHub, which no one typed here.
+  if (workspace.slackThreadUrl && workspace.slackSync !== false && content && !request.headers.get(FROM_HEADER)) {
     const author = owner.name || owner.githubLogin;
     after(async () => {
       const { echoToThread } = await import("@/lib/slack/relay");

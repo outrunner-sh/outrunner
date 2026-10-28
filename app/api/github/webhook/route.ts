@@ -20,6 +20,7 @@ import {
   toInstallation,
   webhookSignatureMatches,
 } from "@/lib/github/app";
+import { LOOP_EVENTS, runGitHubLoop } from "@/lib/github/loop.deps";
 import { announcePullRequest } from "@/lib/slack/agent-run";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
@@ -53,6 +54,10 @@ type Payload = {
  * answer, their sessions set up after. A redelivery starts nothing twice.
  * An opened one is also posted in the Slack thread of the item its session
  * works on, if the Slack agent filed it.
+ *
+ * Comments, and issues and pull requests closing, are the agent loop's
+ * (lib/github/loop.ts): a mention of Outrunner steers a session, and a close
+ * archives the sessions working on what closed.
  */
 export async function POST(request: Request) {
   const config = githubAppConfig();
@@ -88,6 +93,13 @@ export async function POST(request: Request) {
       return new NextResponse(null, { status: 204 });
     }
     if (!(await installationHolder(installationId))) return new NextResponse(null, { status: 204 });
+    // The agent loop (lib/github/loop.ts): `@outrunner` steers the session
+    // of the issue or pull request it's said on, and a close archives it.
+    // After the answer, alongside whatever else the event does below.
+    if (event && LOOP_EVENTS.has(event)) {
+      const slug = await appSlug(config);
+      after(() => runGitHubLoop(event, payload, slug));
+    }
     if (event === "pull_request") {
       // Each run's session is set up after the answer, in after(): minutes on
       // a cold box, on Outrunner's long-running server (server.ts). One a
