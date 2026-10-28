@@ -1,19 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Check, CircleSlash, Copy, Pencil, Play, RotateCcw } from "lucide-react";
+import { ArrowUp, ArrowUpRight, Check, CircleSlash, Copy, Pencil, Play, RotateCcw, SquarePen } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
+import { SourceIcon, StatusIcon } from "@/components/triage/item-icons";
+import { PropertyChip } from "@/components/triage/property-chip";
 import { WorkspaceSelect } from "@/components/triage/workspace-select";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
-import { SELECT_OPTIONS } from "@/components/ui/select-options";
-import { Textarea } from "@/components/ui/textarea";
 import { useNow } from "@/hooks/use-now";
 import { relativeTime } from "@/lib/nav/sidebar";
 import {
   isOpen,
+  itemHref,
   itemKey,
   SOURCE_LABELS,
   STATUS_LABELS,
@@ -21,15 +32,15 @@ import {
   type WorkItem,
   type WorkItemNote,
   type WorkItemPatch,
+  type WorkItemStatus,
 } from "@/lib/triage/work-items";
-import { cn } from "@/lib/utils";
 
 type Loaded = { item: TriageItem; notes: WorkItemNote[] };
 
 /**
- * One work item: its title and Markdown body (both editable), the workspace
- * it is in, what can be done with it from where it stands, and its notes,
- * with a box to add one.
+ * One work item: its title and Markdown body (both editable), what can be
+ * done with it from where it stands (a banner while it waits in triage), its
+ * activity with a box to add a note, and beside them its properties.
  */
 export function WorkItemDetail({
   id,
@@ -113,85 +124,127 @@ export function WorkItemDetail({
 
   const { item, notes } = loaded;
   const duplicateOf = item.duplicateOf ? items.find((other) => other.id === item.duplicateOf) : null;
+  const duplicateCandidates = items.filter((other) => other.id !== item.id && isOpen(other.status));
+  const workspaceSelect = (
+    <WorkspaceSelect
+      // Its own workspace is named even where the user can't move items to it.
+      projects={item.can.triage ? withCurrent(moveTargets, projects, item.projectId) : projects}
+      value={item.projectId}
+      disabled={busy || !item.can.triage}
+      allowUnsorted={canUnsort}
+      onChange={(projectId) => void update({ projectId })}
+    />
+  );
+  const statusMenu = (
+    <StatusMenu item={item} candidates={duplicateCandidates} disabled={busy || !item.can.triage} update={update} />
+  );
+  const source = item.sourceUrl ? (
+    <a
+      href={item.sourceUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 hover:text-foreground hover:underline"
+    >
+      {SOURCE_LABELS[item.source]}
+      <ArrowUpRight className="size-3" />
+    </a>
+  ) : (
+    SOURCE_LABELS[item.source]
+  );
 
   return (
-    <article className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6 md:px-8">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span className="font-mono">{itemKey(item)}</span>
-        <span className="rounded-full border border-border px-2 py-0.5 text-foreground">{STATUS_LABELS[item.status]}</span>
-        <span>
-          {item.sourceUrl ? (
-            <a
-              href={item.sourceUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-0.5 hover:text-foreground"
-            >
-              From {SOURCE_LABELS[item.source]}
-              <ArrowUpRight className="size-3" />
-            </a>
-          ) : (
-            `From ${SOURCE_LABELS[item.source]}`
-          )}{" "}
-          · {relativeTime(item.createdAt, now)} ago
-        </span>
-      </div>
+    <div className="flex min-h-full">
+      <article className="mx-auto flex w-full max-w-3xl min-w-0 flex-col gap-5 px-5 py-6 md:px-10 md:py-8">
+        <div className="flex min-h-7 items-center justify-between gap-3">
+          <span className="font-mono text-xs text-muted-foreground">{itemKey(item)}</span>
+          <SessionActions item={item} busy={busy} update={update} />
+        </div>
 
-      <TitleField
-        key={item.title}
-        title={item.title}
-        disabled={busy || !item.can.triage}
-        onSave={(title) => update({ title })}
-      />
+        {item.status === "triage" && item.can.triage && (
+          <TriageBanner item={item} candidates={duplicateCandidates} busy={busy} update={update} />
+        )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <WorkspaceSelect
-          // Its own workspace is named even where the user can't move items to it.
-          projects={item.can.triage ? withCurrent(moveTargets, projects, item.projectId) : projects}
-          value={item.projectId}
-          disabled={busy || !item.can.triage}
-          allowUnsorted={canUnsort}
-          onChange={(projectId) => void update({ projectId })}
+        <div className="flex flex-col gap-2">
+          <TitleField
+            key={item.title}
+            title={item.title}
+            disabled={busy || !item.can.triage}
+            onSave={(title) => update({ title })}
+          />
+          <BodyField
+            key={item.body}
+            body={item.body}
+            disabled={busy}
+            editable={item.can.triage}
+            onSave={(body) => update({ body })}
+          />
+        </div>
+
+        {/* Narrower than lg the properties sit here, as chips. */}
+        <div className="flex flex-wrap items-center gap-1.5 lg:hidden">
+          {statusMenu}
+          {workspaceSelect}
+        </div>
+
+        {error && <p className="text-xs text-destructive">{error}</p>}
+
+        {!item.can.triage && (
+          <p className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            You can see this item, add notes and start a session from it. Triaging it needs write on{" "}
+            {item.projectId ? "its workspace" : "all of the org's workspaces"} (Settings → Roles &amp; access).
+          </p>
+        )}
+
+        <Activity
+          item={item}
+          notes={notes}
+          now={now}
+          onAdded={(note) => {
+            setLoaded((current) => (current ? { ...current, notes: [...current.notes, note] } : current));
+            onChanged();
+          }}
         />
-        <Actions item={item} items={items} busy={busy} update={update} />
-      </div>
+      </article>
 
-      {duplicateOf && (
-        <p className="text-xs text-muted-foreground">
-          Duplicate of{" "}
-          <Link href={`/triage?item=${duplicateOf.id}`} className="underline underline-offset-4">
-            {itemKey(duplicateOf)} {duplicateOf.title}
-          </Link>
-        </p>
-      )}
-      {error && <p className="text-xs text-destructive">{error}</p>}
-
-      {!item.can.triage && (
-        <p className="text-xs text-muted-foreground">
-          You can see this item, add notes and start a session from it. Triaging it needs write on{" "}
-          {item.projectId ? "its workspace" : "all of the org's workspaces"} (Settings → Roles &amp; access).
-        </p>
-      )}
-
-      <BodyField
-        key={item.body}
-        body={item.body}
-        disabled={busy}
-        editable={item.can.triage}
-        onSave={(body) => update({ body })}
-      />
-
-      <Notes
-        itemId={item.id}
-        notes={notes}
-        now={now}
-        onAdded={(note) => {
-          setLoaded((current) => (current ? { ...current, notes: [...current.notes, note] } : current));
-          onChanged();
-        }}
-      />
-    </article>
+      <aside
+        aria-label="Properties"
+        className="hidden w-72 shrink-0 border-l border-border/60 lg:block"
+      >
+        <div className="sticky top-0 flex flex-col gap-5 px-4 py-6">
+          <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-2 gap-y-2.5 text-xs">
+            <dt className="text-muted-foreground">Status</dt>
+            <dd className="min-w-0">{statusMenu}</dd>
+            <dt className="text-muted-foreground">Workspace</dt>
+            <dd className="min-w-0">{workspaceSelect}</dd>
+            {duplicateOf && (
+              <>
+                <dt className="text-muted-foreground">Duplicate of</dt>
+                <dd className="min-w-0 truncate">
+                  <Link href={itemHref(duplicateOf)} className="hover:underline">
+                    <span className="font-mono text-muted-foreground">{itemKey(duplicateOf)}</span> {duplicateOf.title}
+                  </Link>
+                </dd>
+              </>
+            )}
+          </dl>
+          <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-2 gap-y-2.5 border-t border-border/60 pt-5 text-xs">
+            <dt className="text-muted-foreground">Source</dt>
+            <dd className="text-foreground/90">{source}</dd>
+            <dt className="text-muted-foreground">Created</dt>
+            <dd className="text-foreground/90">{ago(item.createdAt, now)}</dd>
+            <dt className="text-muted-foreground">Updated</dt>
+            <dd className="text-foreground/90">{ago(item.updatedAt, now)}</dd>
+          </dl>
+        </div>
+      </aside>
+    </div>
   );
+}
+
+/** "5m ago", or "just now". */
+function ago(iso: string, now: number): string {
+  const age = relativeTime(iso, now);
+  return age === "now" ? "just now" : `${age} ago`;
 }
 
 /** `targets`, with the workspace the item is in added when it isn't one. */
@@ -204,31 +257,157 @@ function withCurrent(
   return [...all.filter((p) => p.id === current), ...targets];
 }
 
-/** What can be done with the item from where it stands. */
-function Actions({
+const STATUS_ORDER: WorkItemStatus[] = ["triage", "todo", "in_progress", "done", "declined"];
+
+/** The item's status as a chip; its menu sets another, or marks it a
+ *  duplicate of an open item. */
+function StatusMenu({
   item,
-  items,
+  candidates,
+  disabled,
+  update,
+}: {
+  item: TriageItem;
+  candidates: WorkItem[];
+  disabled: boolean;
+  update: (patch: WorkItemPatch) => Promise<boolean>;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild disabled={disabled}>
+        <PropertyChip aria-label="Status" className="disabled:opacity-100">
+          <StatusIcon status={item.status} />
+          {STATUS_LABELS[item.status]}
+        </PropertyChip>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" collisionPadding={8} className="w-52">
+        {STATUS_ORDER.map((status) => (
+          <DropdownMenuItem
+            key={status}
+            onSelect={() => {
+              if (status !== item.status) void update({ status });
+            }}
+          >
+            <StatusIcon status={status} />
+            <span className="flex-1 text-[13px]">{STATUS_LABELS[status]}</span>
+            {status === item.status && <Check className="text-foreground" />}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger disabled={candidates.length === 0}>
+            <StatusIcon status="duplicate" />
+            <span className="flex-1 text-[13px]">Duplicate of…</span>
+          </DropdownMenuSubTrigger>
+          <DuplicateCandidates candidates={candidates} update={update} sub />
+        </DropdownMenuSub>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The open items one may be marked a duplicate of, as menu items. */
+function DuplicateCandidates({
+  candidates,
+  update,
+  sub = false,
+}: {
+  candidates: WorkItem[];
+  update: (patch: WorkItemPatch) => Promise<boolean>;
+  /** In a submenu rather than a menu of its own. */
+  sub?: boolean;
+}) {
+  const Content = sub ? DropdownMenuSubContent : DropdownMenuContent;
+  return (
+    <Content collisionPadding={8} className="max-h-80 w-72 overflow-y-auto">
+      {candidates.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">No open items.</p>}
+      {candidates.map((other) => (
+        <DropdownMenuItem
+          key={other.id}
+          onSelect={() => void update({ status: "duplicate", duplicateOf: other.id })}
+        >
+          <StatusIcon status={other.status} />
+          <span className="w-11 shrink-0 font-mono text-[11px] text-muted-foreground">{itemKey(other)}</span>
+          <span className="truncate text-[13px]">{other.title}</span>
+        </DropdownMenuItem>
+      ))}
+    </Content>
+  );
+}
+
+/** Over an item waiting in triage: where it came from, and accept, mark a
+ *  duplicate, or decline. */
+function TriageBanner({
+  item,
+  candidates,
   busy,
   update,
 }: {
   item: TriageItem;
-  items: WorkItem[];
+  candidates: WorkItem[];
   busy: boolean;
   update: (patch: WorkItemPatch) => Promise<boolean>;
 }) {
-  const [pickingDuplicate, setPickingDuplicate] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-orange-500/25 bg-orange-500/[0.06] py-2 pr-2 pl-3">
+      <div className="flex flex-1 items-center gap-2 text-xs whitespace-nowrap">
+        <StatusIcon status="triage" />
+        <span className="text-foreground/90">
+          In triage <span className="text-muted-foreground">· {SOURCE_LABELS[item.source]}</span>
+        </span>
+      </div>
+      <div className="flex max-w-full flex-wrap items-center gap-1.5">
+        <Button size="sm" className="h-7 px-2.5 text-xs" disabled={busy} onClick={() => void update({ status: "todo" })}>
+          <Check className="size-3.5" />
+          Accept
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild disabled={busy}>
+            <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">
+              <Copy className="size-3.5" />
+              Duplicate
+            </Button>
+          </DropdownMenuTrigger>
+          <DuplicateCandidates candidates={candidates} update={update} />
+        </DropdownMenu>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2.5 text-xs"
+          disabled={busy}
+          onClick={() => void update({ status: "declined" })}
+        >
+          <CircleSlash className="size-3.5" />
+          Decline
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Starting a session on the item, opening the one started, or reopening a
+ *  closed one: what fits where it stands. */
+function SessionActions({
+  item,
+  busy,
+  update,
+}: {
+  item: TriageItem;
+  busy: boolean;
+  update: (patch: WorkItemPatch) => Promise<boolean>;
+}) {
   // A session needs a repository: an Unsorted item is given one first.
   const startHref = item.projectId ? `/new?project=${item.projectId}&triage=${item.id}` : null;
   const start = startHref ? (
-    <Button asChild size="sm">
+    <Button asChild size="sm" className="h-7 px-2.5 text-xs">
       <Link href={startHref}>
-        <Play />
+        <Play className="size-3.5" />
         Start session
       </Link>
     </Button>
   ) : (
-    <Button size="sm" disabled title="Pick a workspace first">
-      <Play />
+    <Button size="sm" className="h-7 px-2.5 text-xs" disabled title="Pick a workspace first">
+      <Play className="size-3.5" />
       Start session
     </Button>
   );
@@ -236,99 +415,33 @@ function Actions({
   // A session's page is its starter's alone: others start their own.
   const openOwn =
     item.workspaceId && item.ownSession ? (
-      <Button asChild size="sm" variant="outline">
+      <Button asChild size="sm" variant="outline" className="h-7 px-2.5 text-xs">
         <Link href={`/workspaces/${item.workspaceId}`}>
-          <ArrowUpRight />
+          <ArrowUpRight className="size-3.5" />
           Open session
         </Link>
       </Button>
     ) : null;
 
-  // Seen but not triaged by this user: they may still start a session on an
-  // accepted one.
-  if (!item.can.triage) return isOpen(item.status) && item.status !== "triage" ? (openOwn ?? start) : null;
-
-  if (pickingDuplicate) {
-    const candidates = items.filter((other) => other.id !== item.id && isOpen(other.status));
-    return (
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          aria-label="Duplicate of"
-          defaultValue=""
-          disabled={busy}
-          onChange={async (event) => {
-            if (!event.target.value) return;
-            if (await update({ status: "duplicate", duplicateOf: event.target.value })) setPickingDuplicate(false);
-          }}
-          className={cn("h-8 max-w-64 rounded-md border border-input bg-transparent px-2 text-[13px] dark:bg-input/30", SELECT_OPTIONS)}
-        >
-          <option value="">Duplicate of…</option>
-          {candidates.map((other) => (
-            <option key={other.id} value={other.id}>
-              {itemKey(other)} {other.title}
-            </option>
-          ))}
-        </select>
-        <Button size="sm" variant="ghost" onClick={() => setPickingDuplicate(false)}>
-          Cancel
-        </Button>
-      </div>
-    );
-  }
-
-  switch (item.status) {
-    case "triage":
-      return (
-        <>
-          <Button size="sm" disabled={busy} onClick={() => void update({ status: "todo" })}>
-            <Check />
-            Accept
-          </Button>
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void update({ status: "declined" })}>
-            <CircleSlash />
-            Decline
-          </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setPickingDuplicate(true)}>
-            <Copy />
-            Duplicate…
-          </Button>
-        </>
-      );
-    case "todo":
-      return (
-        <>
-          {start}
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void update({ status: "done" })}>
-            <Check />
-            Done
-          </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void update({ status: "triage" })}>
-            <RotateCcw />
-            Back to triage
-          </Button>
-        </>
-      );
-    case "in_progress":
-      return (
-        <>
-          {openOwn ?? start}
-          <Button size="sm" disabled={busy} onClick={() => void update({ status: "done" })}>
-            <Check />
-            Done
-          </Button>
-        </>
-      );
-    default:
-      return (
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void update({ status: "triage" })}>
-          <RotateCcw />
-          Reopen
-        </Button>
-      );
-  }
+  if (item.status === "todo") return start;
+  if (item.status === "in_progress") return openOwn ?? start;
+  if (item.status === "triage" || !item.can.triage) return null;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-7 px-2.5 text-xs"
+      disabled={busy}
+      onClick={() => void update({ status: "triage" })}
+    >
+      <RotateCcw className="size-3.5" />
+      Reopen
+    </Button>
+  );
 }
 
-/** The title, edited in place: saved as it loses focus, or on Enter. */
+/** The title, edited in place (wrapping as it grows): saved as it loses
+ *  focus, or on Enter. */
 function TitleField({
   title,
   disabled,
@@ -345,21 +458,26 @@ function TitleField({
     else if (next !== title) void onSave(next);
   };
   return (
-    <input
+    <textarea
       aria-label="Title"
+      rows={1}
       value={value}
       maxLength={200}
       disabled={disabled}
-      onChange={(event) => setValue(event.target.value)}
+      // A title is one line: a pasted line break becomes a space.
+      onChange={(event) => setValue(event.target.value.replace(/\s*\n\s*/g, " "))}
       onBlur={save}
       onKeyDown={(event) => {
-        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
         if (event.key === "Escape") {
           setValue(title);
           event.currentTarget.blur();
         }
       }}
-      className="w-full rounded-md bg-transparent text-lg font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className="field-sizing-content -mx-1.5 w-[calc(100%+0.75rem)] resize-none rounded-md bg-transparent px-1.5 py-0.5 text-xl font-semibold tracking-tight outline-none hover:bg-accent/40 focus-visible:bg-transparent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:hover:bg-transparent"
     />
   );
 }
@@ -384,9 +502,13 @@ function BodyField({
     const save = async () => {
       if (value === body || (await onSave(value))) setEditing(false);
     };
+    const cancel = () => {
+      setValue(body);
+      setEditing(false);
+    };
     return (
-      <div className="flex flex-col gap-2">
-        <Textarea
+      <div className="flex flex-col overflow-hidden rounded-lg border border-border focus-within:ring-[3px] focus-within:ring-ring/30">
+        <textarea
           autoFocus
           aria-label="Description"
           value={value}
@@ -397,26 +519,19 @@ function BodyField({
               event.preventDefault();
               void save();
             } else if (event.key === "Escape") {
-              setValue(body);
-              setEditing(false);
+              cancel();
             }
           }}
-          className="min-h-40 font-mono text-[13px]"
-          placeholder="Markdown works."
+          className="field-sizing-content min-h-40 w-full resize-none bg-transparent px-3 py-2.5 font-mono text-[13px] outline-none placeholder:text-muted-foreground"
+          placeholder="Add description… Markdown works."
         />
-        <div className="flex justify-end gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setValue(body);
-              setEditing(false);
-            }}
-          >
+        <div className="flex items-center justify-end gap-1.5 border-t border-border/60 bg-muted/30 px-2 py-1.5">
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={cancel}>
             Cancel
           </Button>
-          <Button size="sm" disabled={disabled} onClick={() => void save()}>
+          <Button size="sm" className="h-7 text-xs" disabled={disabled} onClick={() => void save()}>
             Save
+            <kbd className="font-sans text-[11px] opacity-70">⌘↵</kbd>
           </Button>
         </div>
       </div>
@@ -426,36 +541,46 @@ function BodyField({
   return (
     <div className="group relative">
       {body.trim() ? (
-        <div className="text-sm">
+        <div className="text-sm leading-relaxed">
           <Markdown>{body}</Markdown>
         </div>
+      ) : editable ? (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="text-sm text-muted-foreground/70 hover:text-muted-foreground"
+        >
+          Add description…
+        </button>
       ) : (
         <p className="text-sm text-muted-foreground">No description.</p>
       )}
-      {editable && (
+      {editable && body.trim() && (
         <Button
-          size="xs"
+          size="icon-xs"
           variant="ghost"
           onClick={() => setEditing(true)}
-          className="mt-2 text-muted-foreground"
+          className="absolute top-0 right-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
           aria-label="Edit description"
         >
           <Pencil />
-          Edit
         </Button>
       )}
     </div>
   );
 }
 
-/** The item's notes, oldest first, and a box to add one (⌘Enter). */
-function Notes({
-  itemId,
+/**
+ * The item's history: when and where it was captured, then its notes, oldest
+ * first, and a box to add one (⌘Enter).
+ */
+function Activity({
+  item,
   notes,
   now,
   onAdded,
 }: {
-  itemId: string;
+  item: TriageItem;
   notes: WorkItemNote[];
   now: number;
   onAdded: (note: WorkItemNote) => void;
@@ -469,7 +594,7 @@ function Notes({
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch(`/api/triage/items/${encodeURIComponent(itemId)}/notes`, {
+      const response = await fetch(`/api/triage/items/${encodeURIComponent(item.id)}/notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: value }),
@@ -486,47 +611,83 @@ function Notes({
   }
 
   return (
-    <section aria-label="Notes" className="flex flex-col gap-3 border-t border-border/60 pt-5">
-      <h2 className="text-xs font-medium text-muted-foreground">Notes{notes.length > 0 && ` · ${notes.length}`}</h2>
-      {notes.map((note) => (
-        <div key={note.id} className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            <span>{note.author ?? "You"}</span>
-            {note.source !== "app" &&
-              (note.sourceUrl ? (
-                <a href={note.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center hover:text-foreground">
-                  {SOURCE_LABELS[note.source]}
-                  <ArrowUpRight className="size-3" />
-                </a>
-              ) : (
-                <span>{SOURCE_LABELS[note.source]}</span>
-              ))}
-            <span>{relativeTime(note.createdAt, now)}</span>
-          </div>
-          <div className="text-sm">
-            <Markdown>{note.body}</Markdown>
-          </div>
+    <section aria-label="Activity" className="mt-2 flex flex-col gap-4 border-t border-border/60 pt-6">
+      <h2 className="text-[13px] font-medium">Activity</h2>
+      <ol className="flex flex-col gap-3">
+        <li className="flex items-center gap-2.5 pl-1 text-xs text-muted-foreground">
+          <span className="flex size-5 items-center justify-center">
+            {item.source === "app" ? <SquarePen className="size-3.5" /> : <SourceIcon source={item.source} />}
+          </span>
+          <span>
+            Captured from{" "}
+            {item.sourceUrl ? (
+              <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="text-foreground/90 hover:underline">
+                {SOURCE_LABELS[item.source]}
+              </a>
+            ) : (
+              <span className="text-foreground/90">{SOURCE_LABELS[item.source]}</span>
+            )}{" "}
+            · {ago(item.createdAt, now)}
+          </span>
+        </li>
+        {notes.map((note) => (
+          <li key={note.id} className="rounded-lg border border-border/60 bg-card px-3.5 py-2.5">
+            <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs whitespace-nowrap">
+              <span className="flex size-5 items-center justify-center rounded-full bg-muted text-[10px] font-medium uppercase text-muted-foreground">
+                {(note.author ?? "You").slice(0, 1)}
+              </span>
+              <span className="font-medium">{note.author ?? "You"}</span>
+              {note.source !== "app" &&
+                (note.sourceUrl ? (
+                  <a
+                    href={note.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
+                  >
+                    via {SOURCE_LABELS[note.source]}
+                    <ArrowUpRight className="size-3" />
+                  </a>
+                ) : (
+                  <span className="text-muted-foreground">via {SOURCE_LABELS[note.source]}</span>
+                ))}
+              <span className="text-muted-foreground">· {ago(note.createdAt, now)}</span>
+            </div>
+            <div className="pl-7 text-sm">
+              <Markdown>{note.body}</Markdown>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="relative rounded-lg border border-border/70 bg-card transition-shadow focus-within:border-ring/60 focus-within:ring-[3px] focus-within:ring-ring/20">
+        <textarea
+          aria-label="Add a note"
+          placeholder="Leave a note…"
+          value={value}
+          disabled={saving}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              void add();
+            }
+          }}
+          className="field-sizing-content block min-h-20 w-full resize-none bg-transparent px-3.5 pt-3 pb-11 text-sm outline-none placeholder:text-muted-foreground/70 disabled:opacity-60"
+        />
+        <div className="absolute right-2 bottom-2 left-3.5 flex items-center justify-between gap-2">
+          <span className="truncate text-xs text-destructive">{error}</span>
+          <Button
+            size="icon-sm"
+            variant={value.trim() ? "default" : "outline"}
+            className="size-7 rounded-full"
+            disabled={!value.trim() || saving}
+            onClick={() => void add()}
+            aria-label="Add note (⌘↵)"
+            title="Add note (⌘↵)"
+          >
+            <ArrowUp className="size-3.5" />
+          </Button>
         </div>
-      ))}
-      <Textarea
-        aria-label="Add a note"
-        placeholder="Add a note… Markdown works. ⌘↵ to add."
-        value={value}
-        disabled={saving}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault();
-            void add();
-          }
-        }}
-        className="text-[13px]"
-      />
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-destructive">{error}</span>
-        <Button size="sm" variant="outline" disabled={!value.trim() || saving} onClick={() => void add()}>
-          Add note
-        </Button>
       </div>
     </section>
   );
