@@ -34,7 +34,9 @@ import type { ProviderName, RuntimeComputer } from "@/lib/runtime/types";
 /** How a refused start points at a way past the limit. */
 export const UPGRADE_HREF = "/upgrade" as const;
 
-export type CloudLimitDenial = { error: string; settingsHref: typeof UPGRADE_HREF };
+/** Where the refusal sends the user: a bigger plan, or (an admin's limit) the
+ *  org's usage controls. */
+export type CloudLimitDenial = { error: string; settingsHref: typeof UPGRADE_HREF | "/settings/org/usage" };
 
 /** A gate's answer: the refusal, or the box cap the claim is to enforce. */
 export type CloudBoxStartGate = { denial: CloudLimitDenial } | { cap: number | null };
@@ -168,6 +170,16 @@ export async function cloudBoxStartGate(
   const used = hoursUsed(await intervalsFor(whose, period), period, now);
   const hours = hoursDenial(plan, used);
   if (hours) return { denial: hours };
+  // Within the plan, the limit its admins set (Settings → Org → Usage); not
+  // the connector's, on its own plan.
+  if ("orgId" in whose) {
+    const [{ usageControlsFor }, { limitDenial }] = await Promise.all([
+      import("@/lib/db/org-usage"),
+      import("@/lib/billing/usage-controls"),
+    ]);
+    const limited = limitDenial(plan, await usageControlsFor(orgId), used);
+    if (limited) return { denial: limited };
+  }
   const computers = await runtimeComputersFor(whose);
   if (!boxLive(computers, scope, now)) {
     const boxes = boxesDenial(plan, liveMeteredComputers(computers, now));

@@ -1846,3 +1846,34 @@ begin
   where id = ws;
   raise notice 'ok: a session''s first prompt is claimed once per key';
 end $$;
+
+-- 47. An org's usage controls: a limit between 10% and all of the plan's hours,
+-- alerts at 50, 80 or 100%, and each alert once per period.
+do $$
+begin
+  insert into organization_settings (org_id, usage_limit_percent, alert_thresholds)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 80, '{50,100}')
+  on conflict (org_id) do update set usage_limit_percent = 80, alert_thresholds = '{50,100}';
+  begin
+    update organization_settings set usage_limit_percent = 150 where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL: a limit beyond the plan was kept';
+  exception when check_violation then null;
+  end;
+  begin
+    update organization_settings set alert_thresholds = '{70}' where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL: an alert at an unknown share was kept';
+  exception when check_violation then null;
+  end;
+  insert into org_usage_alerts (org_id, period_start, threshold) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '2026-11-01', 80);
+  begin
+    insert into org_usage_alerts (org_id, period_start, threshold) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '2026-11-01', 80);
+    raise exception 'FAIL: an alert was recorded twice';
+  exception when unique_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'org_usage_alerts', 'select') then
+    raise exception 'FAIL: members can read the org''s alerts directly';
+  end if;
+  delete from org_usage_alerts where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  delete from organization_settings where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  raise notice 'ok: an org''s usage controls stay within its plan, and alert once';
+end $$;

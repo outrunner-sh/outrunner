@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { retireOldSlackKeys } from "@/lib/db/slack-agent";
 import { billingMode } from "@/lib/billing/mode";
+import { runUsageSweep } from "@/lib/billing/usage-sweep.deps";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
@@ -20,7 +21,9 @@ import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
  * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
  * restart cut off (lib/session/provisioning.deps.ts), and the deployment's
  * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), and
- * the Slack agent's old keys of its own (lib/db/slack-agent.ts), for
+ * the Slack agent's old keys of its own (lib/db/slack-agent.ts), and each
+ * busy team org's hours against its admins' controls
+ * (lib/billing/usage-sweep.ts), for
  * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's
  * route: it takes only BILLING_CRON_SECRET, as a bearer token. Answers what
  * the run did.
@@ -82,8 +85,17 @@ export async function POST(request: Request) {
       console.error("Retiring the Slack agent's old keys failed", error);
       return null;
     });
+    // And each busy team org's hours against its admins' controls: alerts
+    // emailed, and its boxes paused at its limit (lib/billing/usage-sweep.ts).
+    const usage = isComputerProvider(provider)
+      ? await runUsageSweep(provider).catch((error: unknown) => {
+          console.error("Sweeping org usage failed", error);
+          return null;
+        })
+      : null;
     return NextResponse.json({
       ...report,
+      usage,
       allowancesRenewed,
       slackKeysRetired,
       poolsSwept,

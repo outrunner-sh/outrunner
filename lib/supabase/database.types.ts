@@ -412,12 +412,24 @@ type OrgModelAllowanceRow = {
   created_at: string;
 };
 
+// Each usage alert sent to an org's admins, once per period and threshold;
+// see supabase/migrations/20261101100000_org_usage_controls.sql.
+type OrgUsageAlertRow = {
+  org_id: string;
+  period_start: string;
+  threshold: number;
+  sent_at: string;
+};
+
 // An org's defaults for its members' new sessions (Settings → Org →
 // Defaults); see supabase/migrations/20261030150000_org_defaults.sql.
 type OrganizationSettingsRow = {
   org_id: string;
   default_model: Json | null;
   box_size: "x-small" | "small" | "medium" | "large" | null;
+  // supabase/migrations/20261101100000_org_usage_controls.sql.
+  usage_limit_percent: number | null;
+  alert_thresholds: number[];
   updated_by: string | null;
   updated_at: string;
 };
@@ -1088,6 +1100,12 @@ export type Database = {
         Row: OrgModelAllowanceRow;
         Insert: Insert<OrgModelAllowanceRow, "org_id">;
         Update: Partial<OrgModelAllowanceRow>;
+        Relationships: [];
+      };
+      org_usage_alerts: {
+        Row: OrgUsageAlertRow;
+        Insert: Insert<OrgUsageAlertRow, "org_id" | "period_start" | "threshold">;
+        Update: Partial<OrgUsageAlertRow>;
         Relationships: [];
       };
       organization_settings: {
