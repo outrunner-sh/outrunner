@@ -119,7 +119,7 @@ async function OutrunnerFigures({ userId }: { userId: string }) {
     <>
       <OutrunnerAllowanceUsage view={allowanceView(allowance)} />
       {org && !org.personal ? (
-        <p className="text-xs text-muted-foreground">{`${org.name}'s, shared by its members' cloud sessions.`}</p>
+        <p className="text-xs text-muted-foreground">{`This is ${org.name}'s allowance, shared by its members' cloud sessions.`}</p>
       ) : null}
     </>
   );

@@ -1009,6 +1009,9 @@ export async function outrunnerModelKey(userId: string): Promise<string> {
  */
 async function orgPaysModels(userId: string, orgId: string | undefined): Promise<boolean> {
   if (!orgId) return false;
-  const [org, role, connector] = await Promise.all([getOrg(orgId), memberRole(orgId, userId), isConnector(userId)]);
-  return Boolean(org && !org.personal && role && !connector);
+  // The org first: most are personal, where the rest needn't be asked.
+  const org = await getOrg(orgId);
+  if (!org || org.personal) return false;
+  const [role, connector] = await Promise.all([memberRole(orgId, userId), isConnector(userId)]);
+  return Boolean(role && !connector);
 }
