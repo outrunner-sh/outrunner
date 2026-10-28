@@ -71,7 +71,10 @@ export function AutomationEditor({
   const [projectIds, setProjectIds] = useState<string[]>(draft.projectIds);
   const [enabled, setEnabled] = useState(draft.enabled);
   const [filter, setFilter] = useState("");
-  const canPost = (repo: AutomationRepo) => !COVERAGE_NOTES[coverage[repo.fullName] ?? "installed"];
+  // Listed unless the App definitely can't post on it: "unknown" (its
+  // installation's list couldn't be read, or was cut short) stays, flagged.
+  const coverageOf = (repo: AutomationRepo) => coverage[repo.fullName] ?? "installed";
+  const canPost = (repo: AutomationRepo) => coverageOf(repo) === "installed" || coverageOf(repo) === "unknown";
   const shown = repos.filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()));
   // Only those the app can post on, and any already picked that it can't any
   // more (so it can be unticked).
@@ -218,11 +221,11 @@ export function AutomationEditor({
                   on nothing else. */}
               {reviewable.length === 0 ? (
                 <p className="text-[13px] text-muted-foreground">
-                  {filter ? "No repositories the GitHub App can post on match." : "The GitHub App can't post on any of this org's repositories yet. Install it in Settings → Org → GitHub."}
+                  {filter.trim() ? "No repositories the GitHub App can post on match." : "The GitHub App can't post on any of this org's repositories yet. Install it in Settings → Org → GitHub."}
                 </p>
               ) : (
-                <div className="space-y-1.5">
-                  {reviewable.map((repo) => repoCheck(repo, canPost(repo) ? null : COVERAGE_NOTES[coverage[repo.fullName] ?? "installed"]))}
+                <div className="max-h-80 space-y-1.5 overflow-y-auto">
+                  {reviewable.map((repo) => repoCheck(repo, COVERAGE_NOTES[coverageOf(repo)]))}
                 </div>
               )}
             </div>

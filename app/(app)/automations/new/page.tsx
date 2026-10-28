@@ -44,7 +44,9 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
         prompt: template?.prompt ?? "",
         triggers: template?.triggers ?? ["pull_request.opened"],
         // From a template: every repository the GitHub App can post on, ticked
-        // already, so turning it on is one Save.
+        // already, so turning it on is one Save. Only those known to be
+        // ("installed"): with no coverage at all (no App, or it couldn't be
+        // read) none is ticked, though the editor still lists them all.
         projectIds: template ? repos.filter((r) => coverage[r.fullName] === "installed").map((r) => r.projectId) : [],
         enabled: true,
         runsAs: null,
