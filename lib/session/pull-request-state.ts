@@ -78,7 +78,7 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
       // unmerged: it's the session's now (one a repository, so it replaces
       // the closed one). Otherwise it's another of the branch's, not this.
       if (existing.state !== "closed" || event.state !== "open") continue;
-      const { error } = await db
+      const { data: replaced, error } = await db
         .from("pull_requests")
         .update({
           github_number: event.number,
@@ -90,9 +90,11 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
           checked_at: now,
         })
         .eq("id", existing.id)
-        .eq("state", "closed");
+        .eq("state", "closed")
+        .select("id");
       if (error) throw error;
-      changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null });
+      // Reopened meanwhile (a page's read, another delivery): nothing changed here.
+      if (replaced?.length) changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: "closed" });
       continue;
     }
     if (existing.state === event.state) continue;

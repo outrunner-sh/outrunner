@@ -41,3 +41,16 @@ test("nothing starts once the budget has passed; what started finishes", async (
 test("an empty list does nothing", async () => {
   assert.deepEqual(await inPool([], 4, async () => assert.fail("ran")), { started: 0 });
 });
+
+test("a failing item doesn't stop the rest; the first failure is thrown once all have run", async () => {
+  const done: number[] = [];
+  await assert.rejects(
+    inPool([1, 2, 3, 4], 2, async (n) => {
+      await wait(n === 1 ? 1 : 5);
+      if (n === 1 || n === 3) throw new Error(`item ${n}`);
+      done.push(n);
+    }),
+    /item 1/,
+  );
+  assert.deepEqual(done.sort(), [2, 4]);
+});
