@@ -1,10 +1,12 @@
 import type { User } from "@supabase/supabase-js";
 
+import { githubUserId } from "@/lib/auth/allowlist";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
 import { setGithubToken } from "@/lib/db/credentials";
 import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
+import { tokenUserId } from "@/lib/github/client";
 import { admitOnSignIn, type Admission, isInvitePath } from "@/lib/orgs/admission";
 import { emailJoinRequest } from "@/lib/orgs/notify";
 import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
@@ -91,6 +93,10 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
  * it — `getSession()` later in the app returns nothing for it. Miss it here and
  * the user has to re-authenticate to get another one.
  *
+ * Stored only once GitHub says the token is this user's GitHub account's: the
+ * callback picks the token by which identity signed in last, and a wrong pick
+ * (a Google token, say) must never replace a working GitHub token.
+ *
  * Best-effort by design: a storage failure must not strand a user who has
  * otherwise signed in successfully. They land in the app with no GitHub
  * connection, which the UI already has to handle anyway (a first sign-in before
@@ -98,7 +104,12 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
  */
 async function captureGithubToken(user: User, token: string | undefined): Promise<void> {
   const login = githubLogin(user);
-  if (!token || !login) return;
+  const githubId = githubUserId(user);
+  if (!token || !login || githubId === null) return;
+  if ((await tokenUserId(token)) !== githubId) {
+    console.warn(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
+    return;
+  }
 
   try {
     await setGithubToken(user.id, token, login);

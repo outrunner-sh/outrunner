@@ -15,21 +15,39 @@ import { githubAppConfig } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
-export const unstable_instant = { prefetch: "static" };
+export const unstable_instant = {
+  prefetch: "static",
+  // Set only on the way back from a failed Connect GitHub.
+  samples: [{ searchParams: { link_error: null } }],
+};
 
 /** Account: the signed-in identity; who sessions work on GitHub as
  *  (lib/github/identity.ts), or connecting GitHub to an account that signed
  *  in with Google or an emailed code; and sign-out — which is also how a
  *  revoked GitHub token is replaced (see components/github-reconnect-link). */
-export default function AccountSettings() {
+/** Why connecting GitHub failed, by the error code Supabase sent back
+ *  (app/auth/callback). Codes only: the URL's own text is never shown. */
+const LINK_ERRORS: Record<string, string> = {
+  identity_already_exists:
+    "That GitHub account is already linked to another Outrunner account. Sign in with GitHub to use that account, or connect a different GitHub account.",
+  manual_linking_disabled: "Connecting GitHub isn't turned on for this deployment yet.",
+};
+
+export default function AccountSettings({ searchParams }: { searchParams: Promise<{ link_error?: string }> }) {
   return (
     <Suspense fallback={<SettingsLoading title="Account" />}>
-      <AccountSection />
+      <AccountSection searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function AccountSection() {
+async function AccountSection({ searchParams }: { searchParams: Promise<{ link_error?: string }> }) {
+  const { link_error: linkError } = await searchParams;
+  const linkMessage = linkError
+    ? Object.hasOwn(LINK_ERRORS, linkError)
+      ? LINK_ERRORS[linkError]
+      : "Couldn't connect GitHub. Please try again."
+    : null;
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin");
   const appConfigured = githubAppConfig() !== null;
@@ -97,6 +115,11 @@ async function AccountSection() {
               Connect GitHub to work on your repositories: sessions clone, push
               and open pull requests as your GitHub account.
             </p>
+            {linkMessage && (
+              <p role="alert" className="text-xs text-destructive">
+                {linkMessage}
+              </p>
+            )}
             <div className="max-w-xs">
               <SignInButton provider="github" link next="/settings/account" />
             </div>

@@ -22,6 +22,8 @@ test("the sign-in's provider is the identity signed in most recently", () => {
   ]);
   assert.equal(signInProvider(linked), "github");
   assert.equal(signInProvider(user([])), null);
+  // A provider Outrunner doesn't sign in with is none of its own.
+  assert.equal(signInProvider(user([{ provider: "azure", last_sign_in_at: "2026-10-27T00:00:00Z" }])), null);
   assert.equal(signInProvider({} as User), null);
 });
 

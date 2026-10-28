@@ -34,6 +34,15 @@ export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.auth.verifyOtp({ email, token, type: "email" });
   if (error || !data.user) {
+    // Supabase's limits are tight on its own mail sender: say so, rather than
+    // send them back to retry a code that may be right.
+    if (error?.status === 429 || error?.code === "over_request_rate_limit") {
+      return NextResponse.json({ error: "Too many attempts. Wait a minute and try again." }, { status: 429 });
+    }
+    // Anything but the code's own fault is worth seeing in the log.
+    if (error && (error.status === undefined || error.status >= 500)) {
+      console.error("Couldn't check an emailed sign-in code", error);
+    }
     return NextResponse.json(
       { error: "That code is wrong or has expired. Check it, or send a new one." },
       { status: 400 },

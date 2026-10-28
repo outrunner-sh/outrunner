@@ -12,14 +12,15 @@ export type SignInProvider = "github" | "google";
  * stored as their GitHub token. `identities[]` is server-maintained, unlike
  * anything the redirect URL could say.
  */
-export function signInProvider(user: User): string | null {
+export function signInProvider(user: User): SignInProvider | "email" | null {
   let latest: { provider: string; at: number } | null = null;
   for (const identity of user.identities ?? []) {
     const at = Date.parse(identity.last_sign_in_at ?? identity.created_at ?? "");
     if (Number.isNaN(at)) continue;
     if (!latest || at > latest.at) latest = { provider: identity.provider, at };
   }
-  return latest?.provider ?? null;
+  const provider = latest?.provider;
+  return provider === "github" || provider === "google" || provider === "email" ? provider : null;
 }
 
 /** Whether the user has a GitHub identity linked (signed in with it, or

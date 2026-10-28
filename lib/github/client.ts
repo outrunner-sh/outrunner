@@ -422,6 +422,22 @@ export async function listVerifiedEmails(token: string): Promise<VerifiedEmail[]
     .sort((a, b) => Number(b.primary) - Number(a.primary));
 }
 
+/**
+ * The numeric id of the GitHub user a token belongs to, or null when GitHub
+ * won't say (refused, failed, unreadable). Never throws: it vouches for a
+ * token before it is stored, and no answer just means not storing it.
+ */
+export async function tokenUserId(token: string): Promise<number | null> {
+  try {
+    const response = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
+    if (!response.ok) return null;
+    const body = (await readJson(response)) as { id?: unknown } | null;
+    return typeof body?.id === "number" && Number.isSafeInteger(body.id) ? body.id : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The pull request a session's agent opened for its branch.
 // ---------------------------------------------------------------------------

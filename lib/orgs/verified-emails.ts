@@ -9,8 +9,9 @@ import type { VerifiedEmail } from "@/lib/orgs/domains";
  * they have one), by Google, and by an emailed sign-in code.
  * Invites, join requests and a team org's domain all go by these.
  *
- * Throws {@link MissingGithubTokenError} when none can vouch for an email:
- * a GitHub-only user whose token is gone has to reconnect, as before.
+ * Throws {@link MissingGithubTokenError} (or GitHub's refusal) when none can
+ * vouch for an email: a GitHub-only user whose token is gone or revoked has to
+ * reconnect, as before.
  */
 export async function verifiedEmailsFor(user: User, githubToken: string | undefined): Promise<VerifiedEmail[]> {
   const others = providerVerifiedEmails(user);
@@ -18,5 +19,12 @@ export async function verifiedEmailsFor(user: User, githubToken: string | undefi
     if (others.length === 0) throw new MissingGithubTokenError();
     return others;
   }
-  return mergeVerifiedEmails(await listVerifiedEmails(githubToken), others);
+  // A stored token may since have been revoked: the other providers' emails
+  // still vouch for the user, so only with none of them does that stop them.
+  try {
+    return mergeVerifiedEmails(await listVerifiedEmails(githubToken), others);
+  } catch (error) {
+    if (others.length === 0) throw error;
+    return others;
+  }
 }

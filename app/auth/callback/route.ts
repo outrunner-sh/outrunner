@@ -28,7 +28,20 @@ export async function GET(request: Request) {
   const providerError =
     requestUrl.searchParams.get("error_description") ??
     requestUrl.searchParams.get("error");
-  if (providerError) return NextResponse.redirect(signInError(base, providerError));
+  if (providerError) {
+    // Signed in already: this was connecting GitHub (`linkIdentity`) that
+    // failed — most often, that GitHub account already belongs to another
+    // Outrunner account. /signin would bounce them home and lose why, so go
+    // back where they started, saying so (Settings → Account reads it).
+    const supabase = await createSupabaseServerClient();
+    const { data } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+    if (data.user) {
+      const back = new URL(`${base}${next}`);
+      back.searchParams.set("link_error", requestUrl.searchParams.get("error_code") ?? "link_failed");
+      return NextResponse.redirect(back);
+    }
+    return NextResponse.redirect(signInError(base, providerError));
+  }
 
   const code = requestUrl.searchParams.get("code");
   if (!code) return NextResponse.redirect(signInError(base, "missing_code"));
