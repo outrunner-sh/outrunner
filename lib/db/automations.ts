@@ -212,10 +212,21 @@ export class ForeignRepoError extends Error {
   }
 }
 
-/** The database's refusal (`foreign_repo`, SQLSTATE OR001) as its error;
- *  else the error. */
-function refusal(error: { code?: string }): Error {
-  return error.code === "OR001" ? new ForeignRepoError() : (error as Error);
+/** Thrown when an automation would have the review requested trigger but
+ *  no one's review requests to start on (automations_reviewers_check). */
+export class NoReviewersError extends Error {
+  constructor() {
+    super("Name whose review requests start it, or untick Review requested.");
+    this.name = "NoReviewersError";
+  }
+}
+
+/** The database's refusal (`foreign_repo`, SQLSTATE OR001; or its reviewers
+ *  check) as its error; else the error. */
+function refusal(error: { code?: string; message?: string }): Error {
+  if (error.code === "OR001") return new ForeignRepoError();
+  if (error.code === "23514" && error.message?.includes("automations_reviewers_check")) return new NoReviewersError();
+  return error as Error;
 }
 
 /** Make an automation of `orgId`, run as `runsAs`; answers its id. */

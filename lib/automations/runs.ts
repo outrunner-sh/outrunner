@@ -519,11 +519,17 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
   // the head's commit is the one to look at now (one that triggers only on
   // opened still runs here).
   const recorded = await deps.recordRuns([recordOf(target.candidate, event, eventDedupeKey(event, null))]);
-  const newId = recorded.get(`${target.candidate.automationId}:${target.candidate.projectId}`)?.runId;
-  if (!newId) {
+  const made = recorded.get(`${target.candidate.automationId}:${target.candidate.projectId}`);
+  if (!made) {
     return { ok: false, status: 409, error: "The pull request has newer commits, with their own run: run that one again instead." };
   }
   // The failed run keeps its session, if it made one: the new run archives
-  // it as an earlier one once it's ready (runNeighbours).
-  return { ok: true, run: { runId: newId, candidate: target.candidate, event, appSlug }, staleSession: null };
+  // it as an earlier one once it's ready (runNeighbours). Recorded to wait
+  // out a debounce window, it waits it out, and is taken once, as any
+  // other.
+  return {
+    ok: true,
+    run: { runId: made.runId, candidate: target.candidate, event, appSlug, ...(made.queued ? { queued: true } : {}) },
+    staleSession: null,
+  };
 }

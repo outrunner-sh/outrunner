@@ -46,6 +46,13 @@ alter table automations add constraint automations_limits_check check (
   and (archived_at is null or not enabled)
 );
 
+-- Review requests start it only of the people or teams it names: with the
+-- trigger and none named, it would never run. Held here, on what's saved,
+-- since a change may tick the trigger without sending its reviewers.
+alter table automations drop constraint if exists automations_reviewers_check;
+alter table automations add constraint automations_reviewers_check
+  check (not ('pull_request.review_requested' = any (triggers)) or cardinality(reviewers) > 0);
+
 alter table automations drop constraint if exists automations_triggers_check;
 alter table automations add constraint automations_triggers_check
   check (cardinality(triggers) > 0 and triggers <@ array[

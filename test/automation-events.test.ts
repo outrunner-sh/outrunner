@@ -89,6 +89,14 @@ test("a review requested names whom: a person, or a team as org/slug; a fork's i
   assert.ok(typeof team !== "string");
   assert.equal(team.reviewer, "neevai-labs/reviewers");
   assert.equal(readPullRequestEvent(prPayload("review_requested")), "unreadable");
+  // Nor a review a run's session requested, as the App.
+  assert.equal(
+    readPullRequestEvent(
+      prPayload("review_requested", { requested_reviewer: { login: "octocat" }, sender: { login: "Outrunner-Connector[bot]" } }),
+      "outrunner-connector",
+    ),
+    "bot",
+  );
   assert.equal(
     readPullRequestEvent(
       prPayload("review_requested", { requested_reviewer: { login: "octocat" } }, { head: { sha: SHA, ref: "x", repo: { full_name: "fork/outrunner" } } }),
@@ -115,6 +123,12 @@ test("an issue opened or labeled is read; a bot's, a pull request's, and other a
   assert.equal(readIssueEvent(issuePayload("opened", {}, { pull_request: {} })), "unreadable");
   assert.equal(readIssueEvent(issuePayload("opened", {}, { user: { login: "Outrunner-Connector[bot]" } }), "outrunner-connector"), "bot");
   assert.equal(readIssueEvent(issuePayload("opened", {}, { user: { login: "dependabot[bot]" } })), "bot");
+  // A run's session labeling a person's issue, as the App, doesn't start it again.
+  assert.equal(
+    readIssueEvent(issuePayload("labeled", { label: { name: "bug" }, sender: { login: "outrunner-connector[bot]" } }), "outrunner-connector"),
+    "bot",
+  );
+  assert.notEqual(readIssueEvent(issuePayload("labeled", { label: { name: "bug" }, sender: { login: "someone" } }), "outrunner-connector"), "bot");
   const event = labeled as IssueEvent;
   assert.equal(eventBaseBranch(event), undefined);
   assert.equal(eventSubject(event), "issue:12");
@@ -368,6 +382,17 @@ test("a failed run of a merge starts again as itself; one of an automation done 
     reopenRun: async () => true,
     recordRuns: async () => assert.fail("no new run"),
   });
+  // A review's run again, at a newer head, of a debounced automation: its
+  // new run waits out the window, and is taken once.
+  const later = "f".repeat(40);
+  const queuedRerun = await rerunRun("o1", "r1", {
+    rerunTarget: async () => target({ trigger: "pull_request.synchronize", event: null }),
+    pullRequest: async () => ({ state: "open", ...prPayload("synchronize", {}, { head: { sha: later, ref: "feature/x", repo: { full_name: REPO } } }).pull_request }),
+    reopenRun: async () => assert.fail("a new run, not this one"),
+    recordRuns: async () => new Map([["a1:p1", { runId: "r9", queued: true }]]),
+  });
+  assert.ok(queuedRerun.ok);
+  assert.equal(queuedRerun.run.queued, true);
   const merged = await rerunRun("o1", "r1", deps(target({})));
   assert.ok(merged.ok);
   assert.equal(merged.run.event.trigger, "pull_request.merged");

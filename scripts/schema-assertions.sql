@@ -2187,6 +2187,13 @@ begin
   select count(*) into n from record_automation_runs(jsonb_build_array(
     jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:5', 'subject', 'webhook')));
   if n <> 0 then raise exception 'FAIL: a key a debounce window took in was recorded again'; end if;
+  -- Review requests of no one: never, however it's saved.
+  begin
+    perform update_automation(p.org_id, a, '11111111-1111-1111-1111-111111111111', null, null,
+      '{pull_request.review_requested}', null, null, '{}');
+    raise exception 'FAIL: the review requested trigger was kept with no reviewers';
+  exception when check_violation then null;
+  end;
   delete from automations where id = a;
   raise notice 'ok: an automation''s limits and debounce window hold as its runs are recorded';
 end $$;

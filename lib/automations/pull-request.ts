@@ -70,6 +70,7 @@ type Payload = {
   installation?: { id?: unknown } | null;
   repository?: { full_name?: unknown } | null;
   requested_reviewer?: { login?: unknown } | null;
+  sender?: { login?: unknown } | null;
   requested_team?: { slug?: unknown } | null;
   pull_request?: {
     number?: unknown;
@@ -128,6 +129,9 @@ export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRe
   const author = text(pr.user?.login)?.toLowerCase();
   const skipped: readonly string[] = appSlug ? [...SKIPPED_BOTS, `${appSlug.toLowerCase()}[bot]`] : SKIPPED_BOTS;
   if (author && skipped.includes(author)) return "bot";
+  // A review a run's session requested, as the App, would start it again.
+  const sender = text(p.sender?.login)?.toLowerCase();
+  if (trigger === "pull_request.review_requested" && sender && skipped.includes(sender)) return "bot";
   // A team's as `org/slug`: the repository's owner is the team's org.
   const team = text(p.requested_team?.slug);
   const reviewer = text(p.requested_reviewer?.login) ?? (team ? `${repoFullName.split("/")[0]}/${team}` : null);

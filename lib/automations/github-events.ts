@@ -28,6 +28,7 @@ type IssuePayload = {
   installation?: { id?: unknown } | null;
   repository?: { full_name?: unknown } | null;
   label?: { name?: unknown } | null;
+  sender?: { login?: unknown } | null;
   issue?: {
     number?: unknown;
     title?: unknown;
@@ -44,7 +45,8 @@ function text(value: unknown): string | null {
 /**
  * An `issues` event, or why it starts nothing: only opened and labeled do;
  * dependency bots' issues, and the Outrunner App's own (`appSlug`'s bot,
- * which an automation's run may have opened: it would start itself), don't.
+ * which an automation's run may have opened: it would start itself), don't,
+ * nor does what they did to anyone's (a run labeling an issue).
  */
 export function readIssueEvent(payload: unknown, appSlug?: string): IssueEvent | IssueSkip {
   const p = (payload ?? {}) as IssuePayload;
@@ -68,9 +70,12 @@ export function readIssueEvent(payload: unknown, appSlug?: string): IssueEvent |
   ) {
     return "unreadable";
   }
+  // Who opened it, and who did this to it (a label is added by whoever adds
+  // it, which may be a run's session, as the App, on someone's issue).
   const author = text(p.issue?.user?.login)?.toLowerCase();
+  const sender = text(p.sender?.login)?.toLowerCase();
   const skipped: readonly string[] = appSlug ? [...SKIPPED_BOTS, `${appSlug.toLowerCase()}[bot]`] : SKIPPED_BOTS;
-  if (author && skipped.includes(author)) return "bot";
+  if ((author && skipped.includes(author)) || (sender && skipped.includes(sender))) return "bot";
   return {
     installationId: id,
     trigger,
