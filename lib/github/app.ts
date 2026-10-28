@@ -234,7 +234,24 @@ export function dropInstallationToken(installationId: number): void {
 
 /** What a token may do, narrower than the App's own permissions; all of
  *  them when absent. */
-export type TokenPermissions = Partial<Record<"contents" | "pull_requests" | "metadata" | "checks", "read" | "write">>;
+export type TokenPermissions = Partial<
+  Record<"contents" | "pull_requests" | "metadata" | "checks" | "statuses" | "workflows", "read" | "write">
+>;
+
+/** What an installation was granted, by permission ("read", "write"); its
+ *  owner may have accepted fewer than the App asks for. */
+export async function installationPermissions(
+  config: GitHubAppConfig,
+  installationId: number,
+  doFetch: Fetch = fetch,
+): Promise<Record<string, string>> {
+  const installation = await call<{ permissions?: Record<string, string> }>(
+    doFetch,
+    `${API}/app/installations/${installationId}`,
+    appJwt(config.clientId, config.privateKey),
+  );
+  return installation.permissions ?? {};
+}
 
 export async function mintInstallationToken(
   config: GitHubAppConfig,

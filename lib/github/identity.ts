@@ -50,6 +50,11 @@ export type IdentityDeps = {
   personalToken(userId: string): Promise<string | null>;
   config(): GitHubAppConfig | null;
   installations(orgId: string): Promise<OrgInstallation[]>;
+  /** The member's level on `repo` as a project of the org; null when it isn't
+   *  one, or isn't theirs to work on. */
+  repoLevel(userId: string, orgId: string, repo: string): Promise<AccessLevel | null>;
+  /** What an installation was granted (installationPermissions). */
+  granted(config: GitHubAppConfig, installationId: number): Promise<Record<string, string>>;
   mint(config: GitHubAppConfig, installationId: number, repo: string, permissions?: TokenPermissions): Promise<InstallationToken>;
   /** Tokens made, kept until shortly before they expire. */
   cache: Map<string, InstallationToken>;
@@ -60,15 +65,43 @@ export type IdentityDeps = {
  *  box may hold it a while. */
 const TOKEN_MARGIN_MS = 10 * 60 * 1000;
 
-/** What a member with only read access to a project may do with it. */
-const READ_ONLY: TokenPermissions = { contents: "read", pull_requests: "read", metadata: "read" };
+/** What a token is for, by the member's level: a session's git and gh, and
+ *  the server reading a pull request's checks. Never more than this, whatever
+ *  else the App may be given later; and never more than its installation was
+ *  granted ({@link narrowPermissions}). */
+const WANTED: Record<AccessLevel, TokenPermissions> = {
+  read: { contents: "read", pull_requests: "read", checks: "read", statuses: "read", metadata: "read" },
+  write: {
+    contents: "write",
+    pull_requests: "write",
+    // Pushing a change to .github/workflows; installations may not grant it.
+    workflows: "write",
+    checks: "read",
+    statuses: "read",
+    metadata: "read",
+  },
+};
+
+/** `wanted`, as far as `granted` allows: GitHub refuses a token asking for
+ *  more than its installation has. */
+export function narrowPermissions(wanted: TokenPermissions, granted: Record<string, string>): TokenPermissions {
+  const narrowed: TokenPermissions = {};
+  for (const [name, level] of Object.entries(wanted) as Array<[keyof TokenPermissions, "read" | "write"]>) {
+    const has = granted[name];
+    if (has !== "read" && has !== "write" && has !== "admin") continue;
+    narrowed[name] = level === "write" && has === "read" ? "read" : level;
+  }
+  return narrowed;
+}
 
 const SWITCH = "or choose your own GitHub account in Settings → Account";
 
 /**
- * A credential for `repo` (owner/name) as `userId` chose, in `orgId`, for a
- * member whose access to it is `level`. Throws MissingGithubTokenError (their
- * own, with none stored) or GitIdentityError (the App's, with no way to it).
+ * A credential for `repo` (owner/name) as `userId` chose, in `orgId`. Their
+ * own reaches what their GitHub account does. The App's only a project of the
+ * org they have access to, at their level on it, or read at most with `level`
+ * "read". Throws MissingGithubTokenError (their own, with none stored) or
+ * GitIdentityError (the App's, with no way to it).
  */
 export async function resolveGitCredential(
   input: { userId: string; orgId: string; repo: string; level?: AccessLevel; identity?: GitHubIdentity },
@@ -81,6 +114,16 @@ export async function resolveGitCredential(
     return { identity, token, expiresAt: null };
   }
 
+  // The App reaches the org's repositories, not the member: what they may do
+  // with one is Outrunner's to say.
+  const access = await deps.repoLevel(input.userId, input.orgId, input.repo);
+  if (!access) {
+    throw new GitIdentityError(
+      "no_access",
+      `${input.repo} isn't a project you have access to in this org, so Outrunner's GitHub App won't reach it for you. Ask an admin, ${SWITCH}.`,
+      null,
+    );
+  }
   const config = deps.config();
   if (!config) {
     throw new GitIdentityError(
@@ -113,7 +156,7 @@ export async function resolveGitCredential(
     );
   }
 
-  const level = input.level ?? "write";
+  const level: AccessLevel = input.level === "read" ? "read" : access;
   const key = `${installation.id}/${name.toLowerCase()}/${level}`;
   const kept = deps.cache.get(key);
   if (kept && kept.expiresAt.getTime() - TOKEN_MARGIN_MS > deps.now()) {
@@ -121,7 +164,8 @@ export async function resolveGitCredential(
   }
   let minted: InstallationToken;
   try {
-    minted = await deps.mint(config, installation.id, name, level === "read" ? READ_ONLY : undefined);
+    const permissions = narrowPermissions(WANTED[level], await deps.granted(config, installation.id));
+    minted = await deps.mint(config, installation.id, name, permissions);
   } catch (error) {
     if (!(error instanceof GitHubAppError)) throw error;
     // 422: the installation doesn't reach that repository (its owner picked

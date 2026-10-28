@@ -5,13 +5,14 @@
  */
 
 /** Why the App's token couldn't be had, and where that's put right. */
-export type GitIdentityRefusal = "app_unconfigured" | "no_installation" | "suspended" | "unreachable";
+export type GitIdentityRefusal = "app_unconfigured" | "no_access" | "no_installation" | "suspended" | "unreachable";
 
 export class GitIdentityError extends Error {
   readonly reason: GitIdentityRefusal;
-  readonly href: string;
+  /** Where it's put right; null where the member can't (an admin can). */
+  readonly href: string | null;
 
-  constructor(reason: GitIdentityRefusal, message: string, href: string) {
+  constructor(reason: GitIdentityRefusal, message: string, href: string | null) {
     super(message);
     this.name = "GitIdentityError";
     this.reason = reason;

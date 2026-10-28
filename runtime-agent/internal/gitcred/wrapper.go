@@ -7,12 +7,18 @@ import (
 )
 
 // GhWrapper is the script that stands in for gh on the sessions' PATH: it
-// runs the real gh with a fresh token for the repository the command works
-// on as $GH_TOKEN (GitHubToken), or, when there is none to be had, as it was
-// launched (with the box's $GH_TOKEN, if any).
+// runs the real gh with the token GitHubToken prints for the repository the
+// command works on as $GH_TOKEN. That is the box's own $GH_TOKEN only where
+// GitHubToken falls back to it; when it prints none (Outrunner refused, or
+// there's no token at all), gh runs with no token from the environment, its
+// reason on stderr, rather than on one the box was launched with.
 func GhWrapper(executable, root, realGh string) string {
 	return "#!/bin/sh\n" +
-		"token=$(" + ShellQuote(executable) + " github-token --root " + ShellQuote(root) + ` -- "$@" 2>/dev/null) && [ -n "$token" ] && GH_TOKEN=$token && export GH_TOKEN` + "\n" +
+		"if token=$(" + ShellQuote(executable) + " github-token --root " + ShellQuote(root) + ` -- "$@") && [ -n "$token" ]; then` + "\n" +
+		"\tGH_TOKEN=$token; export GH_TOKEN\n" +
+		"else\n" +
+		"\tunset GH_TOKEN GITHUB_TOKEN\n" +
+		"fi\n" +
 		"exec " + ShellQuote(realGh) + ` "$@"` + "\n"
 }
 

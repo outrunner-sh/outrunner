@@ -5,7 +5,7 @@ import { test } from "node:test";
 import type { OrgInstallation } from "@/lib/db/github-installations";
 import { GitHubAppError, type InstallationToken, type TokenPermissions } from "@/lib/github/app";
 import { MissingGithubTokenError } from "@/lib/github/client";
-import { GitIdentityError, resolveGitCredential, type IdentityDeps } from "@/lib/github/identity";
+import { GitIdentityError, narrowPermissions, resolveGitCredential, type IdentityDeps } from "@/lib/github/identity";
 import {
   gitCredentialEnvironment,
   gitCredentialRequestValid,
@@ -37,6 +37,16 @@ function deps(over: Partial<IdentityDeps> = {}) {
     personalToken: async () => "gho_mine",
     config: () => config,
     installations: async () => [installation(7, "ZeroTrail")],
+    repoLevel: async () => "write",
+    granted: async () => ({
+      contents: "write",
+      pull_requests: "write",
+      workflows: "write",
+      checks: "read",
+      statuses: "read",
+      metadata: "read",
+      issues: "write",
+    }),
     mint: async (_config, installationId, repo, permissions) => {
       minted.push({ installationId, repo, permissions });
       return { token: `ghs_${minted.length}`, expiresAt: new Date(NOW + 60 * 60 * 1000) };
@@ -65,20 +75,62 @@ test("working as the App, a member gets its installation's token for that one re
   const first = await resolveGitCredential(ask, d);
   assert.equal(first.identity, "app");
   assert.equal(first.token, "ghs_1");
-  // The account's login is matched whatever its case.
-  assert.deepEqual(minted, [{ installationId: 7, repo: "api", permissions: undefined }]);
+  // The account's login is matched whatever its case; only what a session
+  // needs, not everything the App has (issues).
+  assert.deepEqual(minted, [
+    {
+      installationId: 7,
+      repo: "api",
+      permissions: {
+        contents: "write",
+        pull_requests: "write",
+        workflows: "write",
+        checks: "read",
+        statuses: "read",
+        metadata: "read",
+      },
+    },
+  ]);
   assert.equal((await resolveGitCredential(ask, d)).token, "ghs_1");
   // Within 10 minutes of its end, a new one.
   d.now = () => NOW + 51 * 60 * 1000;
   assert.equal((await resolveGitCredential(ask, d)).token, "ghs_2");
 });
 
-test("read access gets a token that can only read", async () => {
+test("read access gets a token that can only read, asked for or the member's level", async () => {
   const { d, minted } = deps();
   await resolveGitCredential({ ...ask, level: "read" }, d);
-  assert.deepEqual(minted[0].permissions, { contents: "read", pull_requests: "read", metadata: "read" });
+  const readOnly = { contents: "read", pull_requests: "read", checks: "read", statuses: "read", metadata: "read" };
+  assert.deepEqual(minted[0].permissions, readOnly);
   // A writer's is another token, not the reader's.
   assert.equal((await resolveGitCredential(ask, d)).token, "ghs_2");
+
+  const reader = deps({ repoLevel: async () => "read" });
+  await resolveGitCredential(ask, reader.d);
+  assert.deepEqual(reader.minted[0].permissions, readOnly);
+});
+
+test("the App reaches only a project the member has access to", async () => {
+  const { d, minted } = deps({ repoLevel: async () => null });
+  await assert.rejects(resolveGitCredential(ask, d), (error: unknown) => {
+    assert.ok(error instanceof GitIdentityError);
+    assert.equal(error.reason, "no_access");
+    return true;
+  });
+  assert.equal(minted.length, 0);
+  // Their own account reaches what it reaches, as before.
+  const own = deps({ identity: async () => "personal", repoLevel: async () => null });
+  assert.equal((await resolveGitCredential(ask, own.d)).token, "gho_mine");
+});
+
+test("a token asks for no more than its installation was granted", () => {
+  assert.deepEqual(
+    narrowPermissions(
+      { contents: "write", workflows: "write", checks: "read", metadata: "read" },
+      { contents: "read", metadata: "read", checks: "write" },
+    ),
+    { contents: "read", checks: "read", metadata: "read" },
+  );
 });
 
 test("working as the App never falls back to the member's own token", async () => {

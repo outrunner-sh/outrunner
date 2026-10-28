@@ -21,7 +21,11 @@ func writeScript(t *testing.T, path, body string) {
 func TestGhWrapperQuotesItsPaths(t *testing.T) {
 	got := GhWrapper("/opt/it's here/runtime-agent", "/home/runtime", "/usr/bin/gh")
 	want := "#!/bin/sh\n" +
-		`token=$('/opt/it'\''s here/runtime-agent' github-token --root '/home/runtime' -- "$@" 2>/dev/null) && [ -n "$token" ] && GH_TOKEN=$token && export GH_TOKEN` + "\n" +
+		`if token=$('/opt/it'\''s here/runtime-agent' github-token --root '/home/runtime' -- "$@") && [ -n "$token" ]; then` + "\n" +
+		"\tGH_TOKEN=$token; export GH_TOKEN\n" +
+		"else\n" +
+		"\tunset GH_TOKEN GITHUB_TOKEN\n" +
+		"fi\n" +
 		`exec '/usr/bin/gh' "$@"` + "\n"
 	if got != want {
 		t.Fatalf("wrapper =\n%s\nwant\n%s", got, want)
@@ -29,17 +33,19 @@ func TestGhWrapperQuotesItsPaths(t *testing.T) {
 }
 
 // Run through sh, with paths that need quoting: the real gh gets the
-// arguments as given, with the token as $GH_TOKEN, or the launch's own
-// $GH_TOKEN when there's no token to be had.
+// arguments as given, with the token github-token prints as $GH_TOKEN (the
+// launch's own where it falls back to it), and none from the environment
+// when it prints none.
 func TestGhWrapperRunsTheRealGhWithTheToken(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "it's a dir")
 	exe, realGh, wrapper := filepath.Join(dir, "agent"), filepath.Join(dir, "real gh"), filepath.Join(dir, "bin", "gh")
 	writeScript(t, exe, `[ "$1 $2 $3 $4" = "github-token --root /r --" ] || exit 9
 shift 4
 [ -n "$FAIL" ] && exit 1
+[ -n "$FALLBACK" ] && { echo "$GH_TOKEN"; exit 0; }
 echo "fresh-for-$*"
 `)
-	writeScript(t, realGh, `printf '%s|' "$GH_TOKEN" "$@"`)
+	writeScript(t, realGh, `printf '%s|' "$GH_TOKEN$GITHUB_TOKEN" "$@"`)
 	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +64,12 @@ echo "fresh-for-$*"
 	if got := run("GH_TOKEN=gho_launch"); got != "fresh-for-pr create --title a b|pr|create|--title|a b|" {
 		t.Fatalf("with a token: %q", got)
 	}
-	if got := run("GH_TOKEN=gho_launch", "FAIL=1"); got != "gho_launch|pr|create|--title|a b|" {
-		t.Fatalf("without one: %q", got)
+	if got := run("GH_TOKEN=gho_launch", "FALLBACK=1"); got != "gho_launch|pr|create|--title|a b|" {
+		t.Fatalf("falling back: %q", got)
+	}
+	// Refused: not the launch's token, nor one gh would find on its own.
+	if got := run("GH_TOKEN=gho_launch", "GITHUB_TOKEN=gho_other", "FAIL=1"); got != "|pr|create|--title|a b|" {
+		t.Fatalf("refused: %q", got)
 	}
 }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { projectLevel, listOrgProjects } from "@/lib/db/org-access";
+import { listOrgProjects } from "@/lib/db/org-access";
 import { memberRole } from "@/lib/db/orgs";
 import { MissingGithubTokenError } from "@/lib/github/client";
 import { GitIdentityError } from "@/lib/github/identity";
@@ -23,9 +23,9 @@ const MAX_BODY_BYTES = 4096;
  * with none:
  *
  * - their own GitHub sign-in, whatever the repository, as the box had before;
- * - the App's, for a project of the box's org at the member's level on it
- *   (read access reads), or read-only for a repository of the App's that
- *   isn't a project.
+ * - the App's, only for a project of the box's org the member has access
+ *   to, at their level on it (read access reads); any other repository is
+ *   refused (409), and the agent doesn't fall back to a token of the box's.
  */
 export async function POST(request: Request) {
   const sandboxId = request.headers.get("x-outrunner-sandbox");
@@ -67,16 +67,13 @@ export async function POST(request: Request) {
     if (!(await memberRole(computer.org_id, computer.owner_id))) {
       return NextResponse.json({ error: "You're no longer a member of this org." }, { status: 403 });
     }
-    const projects = await listOrgProjects(computer.org_id);
-    const repo = typeof asked === "string" && asked ? asked : projects.find((p) => p.id === computer.project_id)?.fullName;
+    const repo =
+      typeof asked === "string" && asked
+        ? asked
+        : (await listOrgProjects(computer.org_id)).find((p) => p.id === computer.project_id)?.fullName;
     if (!repo) return NextResponse.json({ error: "This box's project is gone." }, { status: 404 });
-    const project = projects.find((p) => p.fullName.toLowerCase() === repo.toLowerCase());
-    const level = project ? await projectLevel(computer.owner_id, project.id) : "read";
-    if (!level) {
-      return NextResponse.json({ error: `You no longer have access to ${repo} in this org.` }, { status: 403 });
-    }
 
-    const credential = await gitCredentialFor({ userId: computer.owner_id, orgId: computer.org_id, repo, level });
+    const credential = await gitCredentialFor({ userId: computer.owner_id, orgId: computer.org_id, repo });
     return NextResponse.json(
       { token: credential.token, expiresAt: credential.expiresAt?.toISOString() ?? null, identity: credential.identity },
       { headers: { "cache-control": "no-store" } },

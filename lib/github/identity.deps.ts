@@ -6,7 +6,14 @@
 
 import { getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
 import { listOrgInstallations } from "@/lib/db/github-installations";
-import { githubAppConfig, mintInstallationToken, type InstallationToken } from "@/lib/github/app";
+import { listOrgProjects, projectLevel } from "@/lib/db/org-access";
+import {
+  githubAppConfig,
+  installationPermissions,
+  mintInstallationToken,
+  type GitHubAppConfig,
+  type InstallationToken,
+} from "@/lib/github/app";
 import { MissingGithubTokenError } from "@/lib/github/client";
 import {
   resolveGitCredential,
@@ -18,11 +25,31 @@ import type { AccessLevel } from "@/lib/orgs/access";
 
 const tokens = new Map<string, InstallationToken>();
 
+/** Installations' grants, asked again after this long: an owner accepting
+ *  the App's new permissions is followed within it. */
+const GRANTS_TTL_MS = 10 * 60 * 1000;
+const grants = new Map<number, { permissions: Record<string, string>; at: number }>();
+
+async function granted(config: GitHubAppConfig, installationId: number): Promise<Record<string, string>> {
+  const kept = grants.get(installationId);
+  if (kept && Date.now() - kept.at < GRANTS_TTL_MS) return kept.permissions;
+  const permissions = await installationPermissions(config, installationId);
+  grants.set(installationId, { permissions, at: Date.now() });
+  return permissions;
+}
+
+async function repoLevel(userId: string, orgId: string, repo: string): Promise<AccessLevel | null> {
+  const project = (await listOrgProjects(orgId)).find((p) => p.fullName.toLowerCase() === repo.toLowerCase());
+  return project ? projectLevel(userId, project.id) : null;
+}
+
 const deps: IdentityDeps = {
   identity: getGithubIdentity,
   personalToken: getGithubToken,
   config: githubAppConfig,
   installations: listOrgInstallations,
+  repoLevel,
+  granted,
   mint: (config, installationId, repo, permissions) =>
     mintInstallationToken(config, installationId, [repo], fetch, permissions),
   cache: tokens,

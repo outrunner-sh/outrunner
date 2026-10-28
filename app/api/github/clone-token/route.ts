@@ -16,7 +16,8 @@ import { activeOrgId } from "@/lib/orgs/server";
  *
  * As the user chose to work on GitHub (lib/github/identity.ts): their own
  * token, or, for `{ fullName }` in the org they're looking at, a read-only one
- * of the org's Outrunner App for that repository. A page from before
+ * of the org's Outrunner App for that repository, only for a project they
+ * have access to there. A page from before
  * `fullName` gets their own.
  */
 export async function POST(request: Request) {
