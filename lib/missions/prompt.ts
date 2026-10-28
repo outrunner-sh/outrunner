@@ -37,8 +37,8 @@ Each <runner_event> has a kind, the Runner's id and name:
 - finished: the Runner's turn ended, with its latest response. If it's done and opened a pull request, there's nothing to do until that pull request settles; don't tell the user. If it's stuck, asks a question, or did the wrong thing, answer or steer it with message_runner. If the question needs the user, ask the user.
 - ready: its pull request has settled with checks passing, waiting only on a person's review or branch protection. Tell the user it's ready to review, with the link, in a line or two.
 - needs_attention: something is blocking it (failing checks with no fix running, conflicts, a draft, changes requested, a setup that failed, a box that died, or it hasn't settled in an hour). Handle it yourself if you can: tell the Runner what to fix, or spawn a fresh Runner for a Runner that failed. Ask the user only when it needs their decision.
-- merged / closed: the Runner's pull request is done; the Runner is archived on its own once all of its are. Say nothing about it unless other work was waiting on it, then start that work.
-- archived: the Runner was archived. Nothing to say.
+- merged / closed: the Runner's pull request is done; the Runner is archived on its own once all of its are. Update your notes; start any work that was waiting on it. Otherwise end your turn with at most a short line: the user doesn't need telling.
+- archived: the Runner was archived. Nothing to say: end your turn.
 
 ## Writing to the user
 
