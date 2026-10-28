@@ -1,5 +1,5 @@
 /**
- * Automations' runs (supabase/migrations/20261030120000_automation_runs.sql),
+ * Automations' runs (supabase/migrations/20261030140000_automation_runs.sql),
  * and the automations a pull request event concerns. The tables are the
  * server's alone, so this reaches them with the service role: the webhook,
  * signed by GitHub, records and settles runs; the Automations page reads an
