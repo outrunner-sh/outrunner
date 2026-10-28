@@ -1314,7 +1314,9 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
 
 /// The agent routes the page may call, each bound to the workspace its token is
 /// for. Archive/restore are absent: local workspaces have no snapshots. Only the
-/// change set takes a query (`?path=` for one file's diff). `auth` sets which
+/// change set takes a query (`?path=` for one file's diff). `plan` approves the
+/// plan a session waits on and `compact` compacts its conversation, as the
+/// composer's Approve and /compact do. `auth` sets which
 /// credential the session's agent CLI runs on, like `model` sets its model.
 fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest::Method, String> {
     let (route, query) = match path.split_once('?') {
@@ -1324,7 +1326,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
     let segments: Vec<&str> = route.trim_start_matches('/').split('/').collect();
     match (method, segments.as_slice(), query) {
         ("POST", ["workspaces"], None) => Ok(reqwest::Method::POST),
-        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "interrupt" | "answer" | "secrets" | "model" | "auth"], None)
+        ("POST", ["workspaces", id, "start" | "stop" | "resume" | "destroy" | "message" | "interrupt" | "answer" | "secrets" | "model" | "auth" | "plan" | "compact"], None)
             if *id == workspace_id =>
         {
             Ok(reqwest::Method::POST)
@@ -2131,6 +2133,10 @@ echo 'Logged in using ChatGPT' >&2"#,
         assert!(allowed_route("POST", "/workspaces/ws-1/answer", "ws-1").is_ok());
         assert!(allowed_route("POST", "/workspaces/ws-2/answer", "ws-1").is_err());
         assert!(allowed_route("POST", "/workspaces/ws-1/secrets", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-1/plan", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-1/compact", "ws-1").is_ok());
+        assert!(allowed_route("POST", "/workspaces/ws-2/plan", "ws-1").is_err());
+        assert!(allowed_route("GET", "/workspaces/ws-1/compact", "ws-1").is_err());
         assert!(allowed_route("POST", "/workspaces/ws-2/secrets", "ws-1").is_err());
         assert!(allowed_route("POST", "/workspaces/ws-1/ask-secrets", "ws-1").is_err());
         // The relay's own route is never the page's to call.
