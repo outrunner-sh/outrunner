@@ -1601,7 +1601,7 @@ end $$;
 
 -- 41. A claim answers once: a session that takes a ready box (stopped, now
 -- its own) gets one row to provision it, as does a stopped project box
--- (20261029130000; the rewrites lost 20260805150000's `return`).
+-- (20261030110000; the rewrites lost 20260805150000's `return`).
 do $$
 declare someone constant uuid := '11111111-1111-1111-1111-111111111111';
 declare project uuid; session uuid; rows integer;
@@ -1618,6 +1618,17 @@ begin
   select count(*) into rows from claim_workspace_computer(session, 'secret', 'v1', null);
   if rows <> 1 then
     raise exception 'FAIL: claiming a session''s stopped box answered % rows, want 1', rows;
+  end if;
+  -- The project's shared box from before (one a project), stopped.
+  if not exists (select 1 from runtime_computers where project_id = project and workspace_id is null and not pooled) then
+    insert into runtime_computers (owner_id, project_id, agent_secret, status, daytona_sandbox_id)
+      values (someone, project, 's', 'stopped', 'box-project-once');
+  end if;
+  update runtime_computers set status = 'stopped'
+    where project_id = project and workspace_id is null and not pooled;
+  select count(*) into rows from claim_runtime_computer(project, 'secret', 'v1', null);
+  if rows <> 1 then
+    raise exception 'FAIL: claiming a project''s stopped box answered % rows, want 1', rows;
   end if;
   raise notice 'ok: a claim of a stopped box answers once';
 end $$;

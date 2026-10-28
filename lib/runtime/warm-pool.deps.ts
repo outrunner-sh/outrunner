@@ -19,7 +19,7 @@ import {
   markPooledReady,
   updateRuntimeComputer,
 } from "@/lib/db/repositories";
-import { AgentClient } from "@/lib/runtime/agent-client";
+import { AgentClient, AgentRequestError } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_WARM_HOOKS, LISTING_WORKSPACE_ID } from "@/lib/runtime/agent-protocol";
 import { type ComputerRuntimeProvider, isComputerProvider } from "@/lib/runtime/computer-provider";
 import { providerForNewSessions, providerNamed } from "@/lib/runtime/sandbox-choice";
@@ -56,8 +56,8 @@ export async function takePooledBox(
 const WARM_POLL_MS = 5_000;
 const WARM_WAIT_MS = 65 * 60_000;
 
-/** Health checks of a box just made before it's taken for one that can't
- *  warm, and the pause between them. */
+/** How many times a just-made box's health is checked before it's pooled
+ *  unwarmed, and the pause between tries. */
 const HEALTH_TRIES = 5;
 const HEALTH_RETRY_MS = 3_000;
 
@@ -162,6 +162,9 @@ async function warmBox(
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, HEALTH_RETRY_MS));
     health = await agent.health({ ...box, workspaceId: LISTING_WORKSPACE_ID }).catch((error: unknown) => {
       healthError = error;
+      // Only what a box still booting answers is tried again (no answer, or
+      // the proxy's 5xx): a refusal or a bug fails at once, with its error.
+      if (error instanceof AgentRequestError && error.status < 500) attempt = HEALTH_TRIES;
       return null;
     });
   }

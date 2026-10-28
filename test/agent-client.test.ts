@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { AgentClient, AgentRequestError, type AgentTarget } from "@/lib/runtime/agent-client";
-import { LISTING_WORKSPACE_ID } from "@/lib/runtime/agent-protocol";
+import { AGENT_FEATURE_WARM_HOOKS, LISTING_WORKSPACE_ID } from "@/lib/runtime/agent-protocol";
 import { verifyRuntimeToken } from "@/lib/runtime/runtime-token";
 
 const target: AgentTarget = {
@@ -344,11 +344,15 @@ test("the change set and a file's diff are read from the box's agent", async () 
 // A box no session has yet (a ready box being warmed) is asked box-wide: the
 // listing id makes a token; an empty one doesn't, and every warm used to fail.
 test("a box-wide health check of a ready box mints a token for the listing id", async () => {
-  const fakeFetch = (async () =>
-    new Response(JSON.stringify({ status: "ok", features: ["warm-hooks"] }), { status: 200 })) as unknown as typeof fetch;
+  let seenAuth = "";
+  const fakeFetch = (async (_url: string, init: RequestInit) => {
+    seenAuth = (init.headers as Record<string, string>)["authorization"] ?? "";
+    return new Response(JSON.stringify({ status: "ok", features: [AGENT_FEATURE_WARM_HOOKS] }), { status: 200 });
+  }) as unknown as typeof fetch;
   const client = new AgentClient(target, fakeFetch);
   const box = { projectId: "p-1", computerId: "c-1", userId: "u-1" };
   const health = await client.health({ ...box, workspaceId: LISTING_WORKSPACE_ID });
-  assert.deepEqual(health.features, ["warm-hooks"]);
+  assert.deepEqual(health.features, [AGENT_FEATURE_WARM_HOOKS]);
+  assert.equal(verifyRuntimeToken(seenAuth.replace("Bearer ", ""), target.secret).workspaceId, LISTING_WORKSPACE_ID);
   await assert.rejects(client.health({ ...box, workspaceId: "" }));
 });
