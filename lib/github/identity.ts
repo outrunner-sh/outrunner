@@ -53,8 +53,9 @@ export type IdentityDeps = {
   /** The member's level on `repo` as a project of the org; null when it isn't
    *  one, or isn't theirs to work on. */
   repoLevel(userId: string, orgId: string, repo: string): Promise<AccessLevel | null>;
-  /** What an installation was granted (installationPermissions). */
-  granted(config: GitHubAppConfig, installationId: number): Promise<Record<string, string>>;
+  /** What an installation was granted (installationPermissions); `fresh`
+   *  asks GitHub rather than a copy kept. */
+  granted(config: GitHubAppConfig, installationId: number, fresh: boolean): Promise<Record<string, string>>;
   mint(config: GitHubAppConfig, installationId: number, repo: string, permissions?: TokenPermissions): Promise<InstallationToken>;
   /** Tokens made, kept until shortly before they expire. */
   cache: Map<string, InstallationToken>;
@@ -162,10 +163,23 @@ export async function resolveGitCredential(
   if (kept && kept.expiresAt.getTime() - TOKEN_MARGIN_MS > deps.now()) {
     return { identity, token: kept.token, expiresAt: kept.expiresAt };
   }
+  const mint = async (fresh: boolean) =>
+    deps.mint(
+      config,
+      installation.id,
+      name,
+      narrowPermissions(WANTED[level], await deps.granted(config, installation.id, fresh)),
+    );
   let minted: InstallationToken;
   try {
-    const permissions = narrowPermissions(WANTED[level], await deps.granted(config, installation.id));
-    minted = await deps.mint(config, installation.id, name, permissions);
+    try {
+      minted = await mint(false);
+    } catch (error) {
+      // A 422 may be grants since narrowed (the owner took one back): asked
+      // again with them as they are now, before saying it can't be reached.
+      if (!(error instanceof GitHubAppError) || error.status !== 422) throw error;
+      minted = await mint(true);
+    }
   } catch (error) {
     if (!(error instanceof GitHubAppError)) throw error;
     // 422: the installation doesn't reach that repository (its owner picked

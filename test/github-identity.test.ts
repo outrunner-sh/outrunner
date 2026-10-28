@@ -123,6 +123,26 @@ test("the App reaches only a project the member has access to", async () => {
   assert.equal((await resolveGitCredential(ask, own.d)).token, "gho_mine");
 });
 
+test("a token refused for grants since narrowed is asked again with them as they are now", async () => {
+  let workflows = true;
+  const asked: boolean[] = [];
+  const { d, minted } = deps({
+    granted: async (_config, _id, fresh) => {
+      asked.push(fresh);
+      if (fresh) workflows = false;
+      return { contents: "write", pull_requests: "write", metadata: "read", ...(workflows && { workflows: "write" }) };
+    },
+  });
+  const mint = d.mint;
+  d.mint = async (config, id, repo, permissions) => {
+    if (permissions?.workflows) throw new GitHubAppError("GitHub answered 422", 422);
+    return mint(config, id, repo, permissions);
+  };
+  assert.equal((await resolveGitCredential(ask, d)).token, "ghs_1");
+  assert.deepEqual(asked, [false, true]);
+  assert.equal(minted[0].permissions?.workflows, undefined);
+});
+
 test("a token asks for no more than its installation was granted", () => {
   assert.deepEqual(
     narrowPermissions(

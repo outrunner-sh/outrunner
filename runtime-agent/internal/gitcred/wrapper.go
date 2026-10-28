@@ -10,16 +10,24 @@ import (
 // runs the real gh with the token GitHubToken prints for the repository the
 // command works on as $GH_TOKEN. That is the box's own $GH_TOKEN only where
 // GitHubToken falls back to it; when it prints none (Outrunner refused, or
-// there's no token at all), gh runs with no token from the environment, its
-// reason on stderr, rather than on one the box was launched with.
+// there's no token at all), gh runs signed out, its reason on stderr: no
+// token from the environment, and its config in an empty folder under the
+// root (NoLoginDir), so a login the box's own gh config keeps doesn't answer
+// either.
 func GhWrapper(executable, root, realGh string) string {
 	return "#!/bin/sh\n" +
 		"if token=$(" + ShellQuote(executable) + " github-token --root " + ShellQuote(root) + ` -- "$@") && [ -n "$token" ]; then` + "\n" +
 		"\tGH_TOKEN=$token; export GH_TOKEN\n" +
 		"else\n" +
 		"\tunset GH_TOKEN GITHUB_TOKEN\n" +
+		"\tGH_CONFIG_DIR=" + ShellQuote(NoLoginDir(root)) + "; export GH_CONFIG_DIR\n" +
 		"fi\n" +
 		"exec " + ShellQuote(realGh) + ` "$@"` + "\n"
+}
+
+// NoLoginDir is the gh config folder a refused gh runs with: never logged in.
+func NoLoginDir(root string) string {
+	return filepath.Join(root, ".outrunner", "gh-signed-out")
 }
 
 // HelperCommand is git's credential.helper value that runs this binary's

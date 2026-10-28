@@ -30,9 +30,9 @@ const tokens = new Map<string, InstallationToken>();
 const GRANTS_TTL_MS = 10 * 60 * 1000;
 const grants = new Map<number, { permissions: Record<string, string>; at: number }>();
 
-async function granted(config: GitHubAppConfig, installationId: number): Promise<Record<string, string>> {
+async function granted(config: GitHubAppConfig, installationId: number, fresh: boolean): Promise<Record<string, string>> {
   const kept = grants.get(installationId);
-  if (kept && Date.now() - kept.at < GRANTS_TTL_MS) return kept.permissions;
+  if (!fresh && kept && Date.now() - kept.at < GRANTS_TTL_MS) return kept.permissions;
   const permissions = await installationPermissions(config, installationId);
   grants.set(installationId, { permissions, at: Date.now() });
   return permissions;

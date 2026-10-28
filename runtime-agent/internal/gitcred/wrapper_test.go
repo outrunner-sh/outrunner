@@ -25,6 +25,7 @@ func TestGhWrapperQuotesItsPaths(t *testing.T) {
 		"\tGH_TOKEN=$token; export GH_TOKEN\n" +
 		"else\n" +
 		"\tunset GH_TOKEN GITHUB_TOKEN\n" +
+		"\tGH_CONFIG_DIR='/home/runtime/.outrunner/gh-signed-out'; export GH_CONFIG_DIR\n" +
 		"fi\n" +
 		`exec '/usr/bin/gh' "$@"` + "\n"
 	if got != want {
@@ -45,7 +46,7 @@ shift 4
 [ -n "$FALLBACK" ] && { echo "$GH_TOKEN"; exit 0; }
 echo "fresh-for-$*"
 `)
-	writeScript(t, realGh, `printf '%s|' "$GH_TOKEN$GITHUB_TOKEN" "$@"`)
+	writeScript(t, realGh, `printf '%s|' "$GH_TOKEN$GITHUB_TOKEN" "$GH_CONFIG_DIR" "$@"`)
 	if err := os.MkdirAll(filepath.Dir(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -61,14 +62,14 @@ echo "fresh-for-$*"
 		}
 		return string(out)
 	}
-	if got := run("GH_TOKEN=gho_launch"); got != "fresh-for-pr create --title a b|pr|create|--title|a b|" {
+	if got := run("GH_TOKEN=gho_launch"); got != "fresh-for-pr create --title a b||pr|create|--title|a b|" {
 		t.Fatalf("with a token: %q", got)
 	}
-	if got := run("GH_TOKEN=gho_launch", "FALLBACK=1"); got != "gho_launch|pr|create|--title|a b|" {
+	if got := run("GH_TOKEN=gho_launch", "FALLBACK=1"); got != "gho_launch||pr|create|--title|a b|" {
 		t.Fatalf("falling back: %q", got)
 	}
-	// Refused: not the launch's token, nor one gh would find on its own.
-	if got := run("GH_TOKEN=gho_launch", "GITHUB_TOKEN=gho_other", "FAIL=1"); got != "|pr|create|--title|a b|" {
+	// Refused: not the launch's token, nor a login gh's own config keeps.
+	if got := run("GH_TOKEN=gho_launch", "GITHUB_TOKEN=gho_other", "GH_CONFIG_DIR=/home/me/.config/gh", "FAIL=1"); got != "|/r/.outrunner/gh-signed-out|pr|create|--title|a b|" {
 		t.Fatalf("refused: %q", got)
 	}
 }
