@@ -32,6 +32,7 @@ import {
   pushBranch,
   readFileDiff,
 } from "@/lib/runtime/git";
+import { boxLabels, deploymentName } from "@/lib/runtime/orphan-boxes";
 import type { BoxResources, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
   ChangedFile,
@@ -252,7 +253,9 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       onStage: (t) => input.onStage?.(t.stage, t.ms),
     });
 
-    const labels = { "runtime.role": "computer", "runtime.engine": "claude" };
+    // Its role and deployment are what the orphaned-box sweep goes by
+    // (lib/runtime/orphan-boxes.ts).
+    const labels = boxLabels("claude", deploymentName(optionalEnv("RUNTIME_BASE_URL")));
     let sandbox: SandboxBox | null = null;
     try {
       sandbox = await this.restoreBox(timer, labels, input);
@@ -357,7 +360,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       // (worktrees, jcode sessions, conversation logs) stay live, so
       // reconnect/resume just works with no wake path.
       sandbox = await timer.stage("sandbox_create", () =>
-        this.backend.create({ "runtime.role": "computer", "runtime.engine": "jcode" }, input.size),
+        this.backend.create(boxLabels("jcode", deploymentName(optionalEnv("RUNTIME_BASE_URL"))), input.size),
       );
       const box = sandbox;
       const home = await box.home();

@@ -7,6 +7,7 @@ import { optionalEnv } from "@/lib/env";
 import { bearerMatches } from "@/lib/http/bearer";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
+import { sweepOrphanedBoxes } from "@/lib/runtime/orphan-boxes.deps";
 import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
 import { sweepStalledRuns } from "@/lib/db/automation-runs";
@@ -16,8 +17,9 @@ import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
  * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
  * renew for sessions already running, and the warm pool's boxes nothing else
  * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
- * restart cut off (lib/session/provisioning.deps.ts), for the Cloudflare cron
- * (cloudflare/worker.ts, every 2 minutes). Not a user's route: it takes only
+ * restart cut off (lib/session/provisioning.deps.ts), and the deployment's
+ * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), for
+ * the Cloudflare cron (cloudflare/worker.ts, every 2 minutes). Not a user's route: it takes only
  * BILLING_CRON_SECRET, as a bearer token. Answers what the run did.
  */
 export async function POST(request: Request) {
@@ -65,7 +67,21 @@ export async function POST(request: Request) {
       console.error("Failing interrupted session setups failed", error);
       return null;
     });
-    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept, removalsSettled, runsSwept, setupsFailed });
+    // And the deployment's boxes something dropped without deleting: no row
+    // names them, so nothing above would ever stop them.
+    const orphansDeleted = await sweepOrphanedBoxes().catch((error: unknown) => {
+      console.error("Deleting orphaned Daytona boxes failed", error);
+      return null;
+    });
+    return NextResponse.json({
+      ...report,
+      allowancesRenewed,
+      poolsSwept,
+      removalsSettled,
+      runsSwept,
+      setupsFailed,
+      orphansDeleted,
+    });
   } catch (error) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });

@@ -3,6 +3,7 @@ import { Daytona, DaytonaNotFoundError, type Sandbox } from "@daytonaio/sdk";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
+import type { ListedBox } from "@/lib/runtime/orphan-boxes";
 import {
   homeOf,
   type AgentEndpoint,
@@ -89,6 +90,20 @@ export class DaytonaBackend implements SandboxBackend {
   async delete(id: string): Promise<void> {
     const daytona = await this.daytona();
     await daytona.delete(await daytona.get(id));
+  }
+
+  /** Every box of the account carrying `labels`, for the orphaned-box sweep
+   *  (lib/runtime/orphan-boxes.deps.ts). */
+  async *list(labels: Record<string, string>): AsyncIterable<ListedBox> {
+    for await (const sandbox of (await this.daytona()).list({ labels })) {
+      yield {
+        id: sandbox.id,
+        labels: sandbox.labels ?? {},
+        state: sandbox.state,
+        createdAt: sandbox.createdAt,
+        lastActivityAt: sandbox.lastActivityAt,
+      };
+    }
   }
 
   async pause(id: string): Promise<void> {

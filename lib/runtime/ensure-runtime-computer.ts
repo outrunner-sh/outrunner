@@ -15,6 +15,10 @@ export type RuntimeComputerProvisioner = {
   /** Recorded on the computer, so a later session knows which provider has it. */
   readonly name: ProviderName;
   provisionComputer(input: ProvisionComputerInput): Promise<ProvisionedComputer>;
+  /** Delete a box, and pause one, for a box provisioned here that couldn't
+   *  be recorded: nothing else knows of it. Best effort (never throws). */
+  destroyComputer?(sandboxId: string): Promise<void>;
+  pauseComputer?(sandboxId: string): Promise<void>;
 };
 
 type Claim = (input: {
@@ -104,8 +108,16 @@ export async function ensureRuntimeComputer(
     return { computer, provisioned: false, agentSecret: persistedSecret };
   }
 
+  // The claim cleared the row's box. The one that ended goes back on it while
+  // it's brought back: it holds the sessions, and a row that names it keeps it
+  // from the orphaned-box sweep (lib/runtime/orphan-boxes.ts), even if this
+  // server stops before the provision is done.
+  let provisioned: ProvisionedComputer | null = null;
   try {
-    const provisioned = await provider.provisionComputer({
+    if (input.previousSandboxId) {
+      await deps.update(claim.computer.id, { daytonaSandboxId: input.previousSandboxId });
+    }
+    provisioned = await provider.provisionComputer({
       secret: agentSecret,
       repoFullName: input.repoFullName,
       githubToken: input.githubToken,
@@ -132,6 +144,10 @@ export async function ensureRuntimeComputer(
     );
     return { computer, provisioned: true, agentSecret };
   } catch (error) {
+    // A box made but never recorded as ready (the write failed, or the row
+    // moved on meanwhile) was otherwise left running with no row naming it.
+    // One brought back in place is stopped again, as the row says below.
+    if (provisioned) await letGo(provider, provisioned.sandboxId, input.previousSandboxId);
     const errorMessage = "Runtime Computer provisioning failed. Check Runtime setup and try again.";
     await deps.update(
       claim.computer.id,
@@ -144,6 +160,23 @@ export async function ensureRuntimeComputer(
       console.error("Could not save Runtime Computer failure state", updateError),
     );
     throw error;
+  }
+}
+
+/** Let go of a box this request provisioned but couldn't record: deleted, or
+ *  paused when it is the ended box brought back in place (its sessions are
+ *  on it). Logged, never thrown: the provision's own failure is the one to
+ *  report. */
+async function letGo(
+  provider: RuntimeComputerProvisioner,
+  sandboxId: string,
+  previousSandboxId: string | undefined,
+): Promise<void> {
+  try {
+    if (sandboxId === previousSandboxId) await provider.pauseComputer?.(sandboxId);
+    else await provider.destroyComputer?.(sandboxId);
+  } catch (error) {
+    console.error(`Could not let go of box ${sandboxId}, provisioned but not recorded`, error);
   }
 }
 
