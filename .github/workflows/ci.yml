@@ -1,7 +1,7 @@
 name: CI
 
-# Typecheck, lint and test the Outrunner app, its Go agent, and the Cloudflare
-# worker. The worker is deliberately outside the app's pnpm workspace and
+# Typecheck, lint, test and build the Outrunner app, its Go agent, and the
+# Cloudflare worker. The worker is deliberately outside the app's pnpm workspace and
 # excluded from the app's tsconfig, so this job is the only thing that checks it.
 
 on:
@@ -29,6 +29,30 @@ jobs:
       - run: pnpm exec tsc --noEmit
       - run: pnpm lint
       - run: pnpm test
+
+  build:
+    # The production build, as the deploy runs it (Dockerfile): it refuses
+    # what typecheck, lint and tests don't, such as a page whose prerender
+    # samples miss a search param it reads. Caught here, not as a failed
+    # deploy that leaves production on an older build.
+    name: App build (next build)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      # The public values the image is built with (cloudflare/wrangler.jsonc
+      # image_vars): shipped to every visitor, not secrets.
+      NEXT_PUBLIC_SUPABASE_URL: https://butbnitdpiehgwqggowr.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_PzZINFybWQAKwQlBqs2qsg_4SNlVTMj
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
 
   agent:
     name: Go agent
