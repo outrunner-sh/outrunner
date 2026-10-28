@@ -42,7 +42,7 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
   let previousAt: string | null = null;
   events.forEach((event, ei) => {
     if (event.t === "state") {
-      nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
+      if (!staleStart(events, ei)) nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
       return;
     }
     if (event.t === "usage") {
@@ -77,6 +77,19 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
     previousAt = event.timestamp;
   });
   return nodes;
+}
+
+/**
+ * Whether the state event at `index` is a "starting" that the stream has
+ * since outgrown. The agent sends a session's state once, as the stream is
+ * connected, and "starting" only means Claude's log didn't exist yet; it sends
+ * no "running" when the log appears. So once any message follows it, the
+ * session is running, and the row would only misstate it.
+ */
+function staleStart(events: AgentEvent[], index: number): boolean {
+  const event = events[index];
+  if (event.t !== "state" || event.state !== "starting") return false;
+  return events.slice(index + 1).some((later) => later.t === "message");
 }
 
 function toolNode(key: string, block: ToolUse, results: Map<string, unknown>): ConversationNode {

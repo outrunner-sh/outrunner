@@ -63,6 +63,34 @@ test("a stopped turn shows as one row, not as the user's prompt", () => {
   );
 });
 
+test("a session's start shows until its first message, not after", () => {
+  const starting = { t: "state", workspaceId: "w", state: "starting" } as AgentEvent;
+  assert.deepEqual(
+    conversationNodes([starting]).map((n) => n.kind),
+    ["state"],
+  );
+  // The prompt went in and Claude answered: the session is running, though
+  // the agent sent no state to say so.
+  const nodes = conversationNodes([
+    starting,
+    message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "fix it" }]),
+    message("assistant", "2026-10-21T10:00:05Z", [{ type: "text", text: "Done." }]),
+  ]);
+  assert.deepEqual(
+    nodes.map((n) => n.kind),
+    ["prompt", "prose"],
+  );
+  // Any other state still shows where it is.
+  const exited = conversationNodes([
+    message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "fix it" }]),
+    { t: "state", workspaceId: "w", state: "exited" },
+  ]);
+  assert.deepEqual(
+    exited.map((n) => n.kind),
+    ["prompt", "state"],
+  );
+});
+
 test("a turn is a prompt and Claude's last words in it, as plain text", () => {
   const turns = conversationTurns(
     conversationNodes([
