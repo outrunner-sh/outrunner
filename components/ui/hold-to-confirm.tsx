@@ -7,6 +7,12 @@ import { cn } from "@/lib/utils";
 /** How long to hold. Long enough to be deliberate, short enough not to nag. */
 export const HOLD_MS = 900;
 
+/** "Delete session" as "delete session", but "Replace URL" as "replace
+ *  URL": only its first letter, so a name in it keeps its case. */
+function lowerFirst(label: string): string {
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
 /**
  * A destructive action you hold rather than click, after interior.dev's Hold to
  * Confirm: a fill crosses the button while it is held, and letting go before
@@ -51,7 +57,7 @@ export function HoldToConfirm({
     <button
       type="button"
       disabled={disabled}
-      aria-label={`Hold to ${label.toLowerCase()}`}
+      aria-label={`Hold to ${lowerFirst(label)}`}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -76,7 +82,7 @@ export function HoldToConfirm({
       style={{ "--hold-ms": `${HOLD_MS}ms` } as React.CSSProperties}
     >
       <span aria-hidden className="hold-to-confirm-fill" />
-      <span className="relative">Hold to {label.toLowerCase()}</span>
+      <span className="relative">Hold to {lowerFirst(label)}</span>
     </button>
   );
 }

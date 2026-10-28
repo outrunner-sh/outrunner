@@ -12,7 +12,7 @@ import {
 } from "@/lib/automations/schedule";
 import { isUuid } from "@/lib/ids";
 
-export const AUTOMATION_TRIGGERS = ["pull_request.opened", "pull_request.synchronize", "schedule"] as const;
+export const AUTOMATION_TRIGGERS = ["pull_request.opened", "pull_request.synchronize", "schedule", "webhook"] as const;
 export type AutomationTrigger = (typeof AUTOMATION_TRIGGERS)[number];
 
 /** A pull request's triggers. */
@@ -27,16 +27,18 @@ export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
   "pull_request.opened": "PR opened",
   "pull_request.synchronize": "New commits on a PR",
   schedule: "Schedule",
+  webhook: "Webhook",
 };
 
 /** What a run list is filtered by: a trigger's kind. A run from before runs
  *  kept their trigger is a pull request's. */
-export const TRIGGER_KINDS = ["pull_request", "schedule"] as const;
+export const TRIGGER_KINDS = ["pull_request", "schedule", "webhook"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
 export const TRIGGER_KIND_LABELS: Record<TriggerKind, string> = {
   pull_request: "Pull request",
   schedule: "Schedule",
+  webhook: "Webhook",
 };
 
 /** How a run stands: being set up, set up (its prompt sent), its session

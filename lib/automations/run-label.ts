@@ -1,7 +1,7 @@
 /**
  * What a run is about, as the run list and its session's page name it: a
- * pull request's run, its pull request and commit; a schedule's, its
- * repository and time. No I/O, for the page's client components.
+ * pull request's run, its pull request and commit; a schedule's or a
+ * webhook's, its repository and when. No I/O, for the page's client components.
  */
 
 import type { AutomationRun } from "@/lib/db/automation-runs";
@@ -27,7 +27,7 @@ export type RunSubject = {
 };
 
 export function runSubject(
-  run: Pick<AutomationRun, "repoFullName" | "trigger" | "prNumber" | "prTitle" | "headSha" | "scheduledFor">,
+  run: Pick<AutomationRun, "repoFullName" | "trigger" | "prNumber" | "prTitle" | "headSha" | "scheduledFor" | "createdAt">,
 ): RunSubject {
   if (run.prNumber !== null) {
     return {
@@ -40,7 +40,11 @@ export function runSubject(
   return {
     title: run.repoFullName,
     href: `https://github.com/${run.repoFullName}`,
-    detail: run.scheduledFor ? `Scheduled for ${DUE.format(new Date(run.scheduledFor))}` : null,
+    detail: run.scheduledFor
+      ? `Scheduled for ${DUE.format(new Date(run.scheduledFor))}`
+      : run.trigger === "webhook"
+        ? `Webhook, ${DUE.format(new Date(run.createdAt))}`
+        : null,
     commit: null,
   };
 }

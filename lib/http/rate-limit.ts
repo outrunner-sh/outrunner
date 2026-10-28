@@ -1,0 +1,63 @@
+/**
+ * Requests counted per key in fixed windows, in this process: the control
+ * plane is one instance (cloudflare/worker.ts routes everything to it), so
+ * its memory sees every request. A restart forgets the counts, which only
+ * ever lets a few more through.
+ */
+
+export type Window = { ms: number; max: number };
+
+export type Taken = { ok: true } | { ok: false; retryAfterSeconds: number };
+
+export class RateLimiter {
+  /** By key, each window's start and count. A Map keeps insertion order, so
+   *  the oldest keys are the first dropped when it's full. */
+  private readonly counts = new Map<string, { start: number; count: number }[]>();
+  private readonly windows: readonly Window[];
+  /** Keys kept at most: past it, the least recently used are dropped. */
+  private readonly maxKeys: number;
+
+  constructor(windows: readonly Window[], maxKeys = 10_000) {
+    this.windows = windows;
+    this.maxKeys = maxKeys;
+  }
+
+  /** Count a request for `key`: refused, saying when to try again, once any
+   *  window is full. A refused request counts too, so hammering doesn't
+   *  reopen it. */
+  take(key: string, now = Date.now()): Taken {
+    let counts = this.counts.get(key);
+    if (counts) this.counts.delete(key);
+    counts ??= this.windows.map(() => ({ start: now, count: 0 }));
+    let retryAfter = 0;
+    this.windows.forEach((window, i) => {
+      const c = counts[i];
+      if (now - c.start >= window.ms) {
+        c.start = now;
+        c.count = 0;
+      }
+      c.count += 1;
+      if (c.count > window.max) retryAfter = Math.max(retryAfter, c.start + window.ms - now);
+    });
+    this.counts.set(key, counts);
+    while (this.counts.size > this.maxKeys) this.counts.delete(this.counts.keys().next().value as string);
+    return retryAfter > 0 ? { ok: false, retryAfterSeconds: Math.max(1, Math.ceil(retryAfter / 1000)) } : { ok: true };
+  }
+}
+
+/**
+ * Who sent a request, for a limit per address. Cloudflare's client address
+ * first: the edge sets `cf-connecting-ip` itself, over anything a client
+ * sent, and the worker (cloudflare/worker.ts) is the only way to the
+ * container. Behind another proxy (Railway), the last forwarded address, the
+ * one the proxy added: earlier ones are the client's to write, and a client
+ * that could choose its own would get a new count each request. "unknown"
+ * with neither, which is only a server reached directly (`pnpm dev`).
+ */
+export function clientAddress(headers: Headers): string {
+  return (
+    headers.get("cf-connecting-ip")?.trim() ||
+    headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() ||
+    "unknown"
+  );
+}

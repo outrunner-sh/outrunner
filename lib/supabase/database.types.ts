@@ -553,7 +553,7 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
-export type AutomationTriggerDb = "pull_request.opened" | "pull_request.synchronize" | "schedule";
+export type AutomationTriggerDb = "pull_request.opened" | "pull_request.synchronize" | "schedule" | "webhook";
 
 type AutomationRow = {
   id: string;
@@ -564,6 +564,10 @@ type AutomationRow = {
   prompt: string;
   triggers: AutomationTriggerDb[];
   enabled: boolean;
+  /** Its webhook's token: hashed, to find it by, and sealed, to show it
+   *  again (supabase/migrations/20261102195000_automation_webhooks.sql). */
+  webhook_token_hash: string | null;
+  webhook_token_sealed: string | null;
   created_at: string;
   updated_at: string;
 };

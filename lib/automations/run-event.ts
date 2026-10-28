@@ -1,6 +1,7 @@
 /**
  * What started a run, as its session is told: a pull request event
- * (lib/automations/pull-request.ts), or a schedule coming due. Kept with the
+ * (lib/automations/pull-request.ts), a schedule coming due, or a POST to the
+ * automation's webhook (lib/automations/webhook.ts). Kept with the
  * run (automation_runs.context), so a run that failed starts again as it
  * first would have. No I/O.
  */
@@ -8,6 +9,7 @@
 import { type PullRequestEvent, runPrompt, runTitle } from "@/lib/automations/pull-request";
 import type { AutomationTrigger } from "@/lib/automations/rules";
 import { isTimeZone, wallTime } from "@/lib/automations/schedule";
+import { fillPayload, type WebhookEvent } from "@/lib/automations/webhook";
 
 /** A schedule came due at `scheduledFor` (an ISO instant). */
 export type ScheduleEvent = {
@@ -18,7 +20,7 @@ export type ScheduleEvent = {
   description: string;
 };
 
-export type RunEvent = PullRequestEvent | ScheduleEvent;
+export type RunEvent = PullRequestEvent | ScheduleEvent | WebhookEvent;
 
 export function isPullRequestEvent(event: RunEvent): event is PullRequestEvent {
   return event.trigger.startsWith("pull_request.");
@@ -39,7 +41,10 @@ export function onClock(instant: string, timezone: string): string {
 /** A run's session title. */
 export function eventTitle(automationName: string, event: RunEvent): string {
   if (isPullRequestEvent(event)) return runTitle(automationName, event);
-  const title = `${automationName}, ${onClock(event.scheduledFor, event.timezone)}`;
+  const title =
+    event.trigger === "webhook"
+      ? `${automationName}, webhook ${onClock(event.receivedAt, "UTC")} UTC`
+      : `${automationName}, ${onClock(event.scheduledFor, event.timezone)}`;
   return title.length > 120 ? `${title.slice(0, 119)}…` : title;
 }
 
@@ -53,11 +58,13 @@ export function eventBaseBranch(event: RunEvent): string | undefined {
 export function eventPrompt(automationPrompt: string, event: RunEvent, place: RunPlace): string {
   if (isPullRequestEvent(event)) return runPrompt(automationPrompt, event, place.appSlug, place.runId);
   return [
-    `Scheduled run: ${event.description} (${event.timezone}), due ${onClock(event.scheduledFor, event.timezone)}.`,
+    event.trigger === "webhook"
+      ? `Webhook run: a POST to this automation's URL, ${onClock(event.receivedAt, "UTC")} UTC.`
+      : `Scheduled run: ${event.description} (${event.timezone}), due ${onClock(event.scheduledFor, event.timezone)}.`,
     `Repository: ${place.repoFullName}. This session's working tree is its default branch.`,
     "`gh` is signed in as the Outrunner GitHub App for this repository: it reads code, issues and pull requests, and comments on them; it can't push.",
     "",
-    automationPrompt,
+    event.trigger === "webhook" ? fillPayload(automationPrompt, event.payload) : automationPrompt,
   ].join("\n");
 }
 
@@ -73,6 +80,11 @@ export function readRunEvent(value: unknown): RunEvent | null {
   if (typeof value !== "object" || value === null) return null;
   const v = value as Record<string, unknown>;
   const text = (key: string) => (typeof v[key] === "string" ? (v[key] as string) : null);
+  if (v.trigger === "webhook") {
+    const receivedAt = text("receivedAt");
+    if (!receivedAt || Number.isNaN(Date.parse(receivedAt))) return null;
+    return { trigger: "webhook", receivedAt, payload: v.payload ?? null };
+  }
   if (v.trigger === "schedule") {
     const scheduledFor = text("scheduledFor");
     const timezone = text("timezone");

@@ -559,7 +559,7 @@ function RecentRuns({
         <p className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-[13px] text-muted-foreground">
           {kind
             ? "No runs of this trigger yet."
-            : "No runs yet. One starts when an automation's trigger fires: a pull request opened or given new commits, or a schedule come due."}
+            : "No runs yet. One starts when an automation's trigger fires: a pull request opened or given new commits, a schedule come due, or a POST to its webhook."}
         </p>
       ) : (
         <>
