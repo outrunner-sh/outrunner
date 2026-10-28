@@ -48,8 +48,9 @@ interface Env {
    * key alone is one shared, uncapped key. Set the management key.
    */
   OPENROUTER_MANAGEMENT_KEY?: string;
-  /** Bearer token the cron below sends to /api/billing/reconcile. Without
-   *  it, idle boxes aren't paused and cloud hours aren't kept. */
+  /** Bearer token the cron below sends to /api/billing/reconcile (and the
+   *  Slack and automations ticks). Without it, idle boxes aren't paused,
+   *  cloud hours aren't kept, and scheduled automations don't run. */
   BILLING_CRON_SECRET?: string;
   /** "stripe" to sell plans (lib/billing/mode.ts), with the two Stripe keys
    *  below; unset, everyone is on Free. */
@@ -361,8 +362,8 @@ const worker = {
       return;
     }
     // The reconciler, the Slack agent's clock (digests, nudges, follow-ups),
-    // and the API webhooks' (long turns, retries): each on its own, so one
-    // failing doesn't stop the others.
+    // the API webhooks' (long turns, retries), and automations' (their
+    // schedules): each on its own, so one failing doesn't stop the others.
     const call = (path: string, label: string) =>
       getContainer(env.CONTROL_PLANE)
         .fetch(
@@ -380,6 +381,7 @@ const worker = {
         call("/api/billing/reconcile", "Reconcile"),
         call("/api/integrations/slack/tick", "Slack tick"),
         call("/api/webhooks/tick", "Webhooks tick"),
+        call("/api/automations/tick", "Automations tick"),
       ]),
     );
   },

@@ -11,6 +11,7 @@ import {
   IN_PROGRESS,
   resendReview,
 } from "@/lib/automations/checks";
+import type { PullRequestEvent } from "@/lib/automations/pull-request";
 import type { PendingRun } from "@/lib/automations/runs";
 import {
   abandonOldChecks,
@@ -33,8 +34,8 @@ function detailsUrl(runId: string): string | undefined {
   return base && /^https:\/\//.test(base) ? `${base.replace(/\/+$/, "")}/automations/runs/${runId}` : undefined;
 }
 
-/** Open a run's check on its pull request's head, in progress. */
-export async function openRunCheck(run: PendingRun): Promise<void> {
+/** Open a pull request's run's check on its head, in progress. */
+export async function openRunCheck(run: PendingRun & { event: PullRequestEvent }): Promise<void> {
   const config = githubAppConfig();
   if (!config) return;
   const { event } = run;

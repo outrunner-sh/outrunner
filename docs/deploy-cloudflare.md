@@ -107,7 +107,10 @@ openssl rand -base64 32 | pnpm dlx wrangler secret put BILLING_CRON_SECRET
 ```
 
 Without it, boxes run until deleted and no hours are recorded. `/api/health`
-reports `billingCron: true` once it is in.
+reports `billingCron: true` once it is in. The same cron, with the same
+secret, also calls `POST /api/automations/tick`, which starts the runs of
+automations' schedules that have come due: without the secret, scheduled
+automations don't run.
 
 **Neev sandboxes** (optional; cloud sessions run on Daytona otherwise): set
 the provider and Neev's three keys, then deploy.

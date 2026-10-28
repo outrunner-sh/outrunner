@@ -8,6 +8,7 @@ import { ConversationTimeline } from "@/components/conversation-timeline";
 import { InlineMessage } from "@/components/ui/notice";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
+import { runSubject } from "@/lib/automations/run-label";
 import type { ReviewView } from "@/lib/automations/review-view";
 import type { AutomationRun } from "@/lib/db/automation-runs";
 import { AgentEvent } from "@/lib/runtime/agent-protocol";
@@ -113,7 +114,7 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
     setGeneration((g) => g + 1);
   };
 
-  const pr = `${run.repoFullName}#${run.prNumber}`;
+  const subject = runSubject(run);
   const state =
     view === null
       ? null
@@ -135,19 +136,19 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
         <div className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
           <span className="font-medium text-foreground">{run.automationName}</span>
           <a
-            href={`https://github.com/${run.repoFullName}/pull/${run.prNumber}`}
+            href={subject.href ?? undefined}
             target="_blank"
             rel="noreferrer"
             className="text-foreground/80 hover:underline"
           >
-            {pr}
-            {run.prTitle ? `: ${run.prTitle}` : ""}
+            {subject.title}
+            {subject.detail ? `: ${subject.detail}` : ""}
           </a>
-          <span className="font-mono text-xs text-muted-foreground">{run.headSha.slice(0, 7)}</span>
+          {subject.commit ? <span className="font-mono text-xs text-muted-foreground">{subject.commit}</span> : null}
           {state ? <span className={view?.mode === "live" ? "text-xs text-positive" : "text-xs text-muted-foreground"}>{state}</span> : null}
         </div>
         <p className="text-xs text-muted-foreground">
-          {CONNECTOR_NAME}&apos;s review session, read-only. What it posted is on the pull request.
+          {CONNECTOR_NAME}&apos;s session, read-only. What it posted is on GitHub.
         </p>
       </div>
       {error ? (

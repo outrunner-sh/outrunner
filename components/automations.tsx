@@ -9,8 +9,18 @@ import { SettingsTabs } from "@/components/settings-tabs";
 import { buttonVariants } from "@/components/ui/button";
 import { InlineMessage } from "@/components/ui/notice";
 import { useNow } from "@/hooks/use-now";
-import { type Automation, type AutomationTrigger, TRIGGER_LABELS } from "@/lib/automations/rules";
+import {
+  type Automation,
+  type AutomationTrigger,
+  TRIGGER_KIND_LABELS,
+  TRIGGER_KINDS,
+  TRIGGER_LABELS,
+  triggerKind,
+  type TriggerKind,
+} from "@/lib/automations/rules";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
+import { runSubject } from "@/lib/automations/run-label";
+import { describeSchedule, type Schedule } from "@/lib/automations/schedule";
 import type { AutomationTemplate } from "@/lib/automations/templates";
 import type { AutomationRun } from "@/lib/db/automation-runs";
 import { requestJson } from "@/lib/http/request-json";
@@ -139,13 +149,16 @@ type Tab = "templates" | "runs";
 
 const TAB_LABELS: Record<Tab, string> = { templates: "Templates", runs: "Recent runs" };
 
-/** A trigger as a chip, the same in the automations' rows and on templates. */
-function TriggerChips({ triggers }: { triggers: AutomationTrigger[] }) {
+/** A trigger as a chip, the same in the automations' rows and on templates;
+ *  a schedule's says when (its first, and how many more). */
+function TriggerChips({ triggers, schedules = [] }: { triggers: AutomationTrigger[]; schedules?: Schedule[] }) {
   return (
     <div className="flex flex-wrap gap-1">
       {triggers.map((trigger) => (
         <span key={trigger} className="rounded bg-muted px-1.5 py-0.5 text-xs text-foreground/80">
-          {TRIGGER_LABELS[trigger]}
+          {trigger === "schedule" && schedules.length > 0
+            ? `${describeSchedule(schedules[0])}${schedules.length > 1 ? ` +${schedules.length - 1}` : ""}`
+            : TRIGGER_LABELS[trigger]}
         </span>
       ))}
     </div>
@@ -379,7 +392,7 @@ function AutomationList({
                       </div>
                     </td>
                     <td className="px-3 py-2.5">
-                      <TriggerChips triggers={automation.triggers} />
+                      <TriggerChips triggers={automation.triggers} schedules={automation.schedules} />
                     </td>
                     <td className="px-3 py-2.5 text-foreground/75">
                       {automation.repos.length === 0
@@ -441,8 +454,9 @@ function AutomationList({
 
 type RunFilter = "all" | AutomationRun["status"];
 
-/** The org's latest runs: which automation, on which pull request and
- *  commit, how it went, and the session it started; narrowed by status. */
+/** The org's latest runs: which automation, what started it (a pull request
+ *  and its commit, a schedule's time), how it went, and the session it
+ *  started; narrowed by trigger and by status. */
 function RecentRuns({
   orgId,
   runs,
@@ -458,6 +472,7 @@ function RecentRuns({
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<RunFilter>("all");
+  const [kind, setKind] = useState<TriggerKind | "all">("all");
   const [rerunning, setRerunning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -482,7 +497,13 @@ function RecentRuns({
   // A filter for each status there is a run in, in the table's order of
   // concern; "All" always. One left pointing at a status that has since gone
   // (after a refresh) falls back to all.
-  const all = runs ?? [];
+  // The same for each kind of trigger there is a run of; the status pills
+  // count within the kind picked.
+  const kindCounts = new Map<TriggerKind | "all", number>([["all", (runs ?? []).length]]);
+  for (const run of runs ?? []) kindCounts.set(triggerKind(run.trigger), (kindCounts.get(triggerKind(run.trigger)) ?? 0) + 1);
+  const kinds = (["all", ...TRIGGER_KINDS] as const).filter((k) => kindCounts.has(k));
+  const shownKind = kindCounts.has(kind) ? kind : "all";
+  const all = shownKind === "all" ? (runs ?? []) : (runs ?? []).filter((run) => triggerKind(run.trigger) === shownKind);
   const counts = new Map<RunFilter, number>([["all", all.length]]);
   for (const run of all) counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
   const filters = (["all", "ready", "started", "failed", "refused"] as const).filter((f) => counts.has(f));
@@ -496,10 +517,34 @@ function RecentRuns({
         <p className="text-[13px] text-muted-foreground">Couldn&apos;t load the runs. Reload the page to try again.</p>
       ) : runs.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-[13px] text-muted-foreground">
-          No runs yet. One starts when a pull request on an automation&apos;s repository is opened or gets new commits.
+          No runs yet. One starts when an automation&apos;s trigger fires: a pull request opened or given new commits, or a
+          schedule come due.
         </p>
       ) : (
         <>
+          {/* "All" and at least two kinds: with one, a pill would only
+              repeat what every row says. */}
+          {kinds.length > 2 ? (
+            <div role="group" aria-label="Filter runs by trigger" className="flex flex-wrap gap-1.5">
+              {kinds.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={shownKind === k}
+                  onClick={() => setKind(k)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    shownKind === k
+                      ? "border-border bg-accent text-foreground"
+                      : "border-border/60 text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {k === "all" ? "All triggers" : TRIGGER_KIND_LABELS[k]}
+                  <span className="tabular-nums text-muted-foreground">{kindCounts.get(k)}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           {/* "All" and at least two statuses: with one, a pill would only
               repeat what every row says. */}
           {filters.length > 2 ? (
@@ -527,7 +572,7 @@ function RecentRuns({
             <table className="w-full text-[13px]">
               <thead className={PINNED_HEAD}>
                 <tr className={HEAD_ROW}>
-                  <th className="px-3 py-2 font-normal">Pull request</th>
+                  <th className="px-3 py-2 font-normal">Run on</th>
                   <th className="px-3 py-2 font-normal">Automation</th>
                   <th className="px-3 py-2 font-normal">Status</th>
                   <th className="px-3 py-2 font-normal">When</th>
@@ -537,63 +582,70 @@ function RecentRuns({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
-                {visible.map((run) => (
-                  <tr key={run.id} className="align-top transition-colors hover:bg-muted/20">
-                    <td className="px-3 py-2.5">
-                      <a
-                        href={`https://github.com/${run.repoFullName}/pull/${run.prNumber}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-foreground hover:underline"
-                      >
-                        {run.repoFullName}#{run.prNumber}
-                      </a>
-                      <div className="max-w-sm truncate text-xs text-muted-foreground">
-                        {run.prTitle ? `${run.prTitle} · ` : ""}
-                        <span className="font-mono">{run.headSha.slice(0, 7)}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5 text-foreground/75">{run.automationName}</td>
-                    <td className="px-3 py-2.5">
-                      <RunStatus status={run.status} />
-                      {run.reason ? <div className="max-w-xs text-xs text-muted-foreground">{run.reason}</div> : null}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">
-                      <Ago at={run.createdAt} now={now} />
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-xs">
-                      <div className="flex justify-end gap-3">
-                        {/* A connector's session is its own, not a member's to open:
-                            its admins read it, read-only. */}
-                        {run.workspaceId && !byConnector ? (
-                          <Link
-                            href={`/workspaces/${run.workspaceId}`}
-                            className="text-muted-foreground hover:text-foreground hover:underline"
-                          >
-                            Open session
-                          </Link>
-                        ) : run.workspaceId && admin ? (
-                          <Link
-                            href={`/automations/runs/${run.id}`}
-                            className="text-muted-foreground hover:text-foreground hover:underline"
-                          >
-                            View session
-                          </Link>
-                        ) : null}
-                        {admin && (run.status === "failed" || run.status === "refused") ? (
-                          <button
-                            type="button"
-                            onClick={() => void rerun(run)}
-                            disabled={rerunning !== null}
-                            className="text-muted-foreground hover:text-foreground hover:underline disabled:opacity-60"
-                          >
-                            {rerunning === run.id ? "Starting…" : "Run again"}
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {visible.map((run) => {
+                  const subject = runSubject(run);
+                  return (
+                    <tr key={run.id} className="align-top transition-colors hover:bg-muted/20">
+                      <td className="px-3 py-2.5">
+                        <a
+                          href={subject.href ?? undefined}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-foreground hover:underline"
+                        >
+                          {subject.title}
+                        </a>
+                        <div className="max-w-sm truncate text-xs text-muted-foreground">
+                          {subject.detail}
+                          {subject.detail && subject.commit ? " · " : ""}
+                          {subject.commit ? <span className="font-mono">{subject.commit}</span> : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-foreground/75">
+                        {run.automationName}
+                        {run.trigger ? <div className="text-xs text-muted-foreground">{TRIGGER_LABELS[run.trigger]}</div> : null}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <RunStatus status={run.status} />
+                        {run.reason ? <div className="max-w-xs text-xs text-muted-foreground">{run.reason}</div> : null}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">
+                        <Ago at={run.createdAt} now={now} />
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-xs">
+                        <div className="flex justify-end gap-3">
+                          {/* A connector's session is its own, not a member's to open:
+                              its admins read it, read-only. */}
+                          {run.workspaceId && !byConnector ? (
+                            <Link
+                              href={`/workspaces/${run.workspaceId}`}
+                              className="text-muted-foreground hover:text-foreground hover:underline"
+                            >
+                              Open session
+                            </Link>
+                          ) : run.workspaceId && admin ? (
+                            <Link
+                              href={`/automations/runs/${run.id}`}
+                              className="text-muted-foreground hover:text-foreground hover:underline"
+                            >
+                              View session
+                            </Link>
+                          ) : null}
+                          {admin && (run.status === "failed" || run.status === "refused") ? (
+                            <button
+                              type="button"
+                              onClick={() => void rerun(run)}
+                              disabled={rerunning !== null}
+                              className="text-muted-foreground hover:text-foreground hover:underline disabled:opacity-60"
+                            >
+                              {rerunning === run.id ? "Starting…" : "Run again"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
