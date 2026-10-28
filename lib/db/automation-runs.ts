@@ -938,6 +938,9 @@ export async function recentlyRanOn(
     .in("automation_id", [...new Set(runs.map((r) => r.automationId))])
     .in("project_id", [...new Set(runs.map((r) => r.projectId))])
     .eq("subject", subject)
+    // Only runs that got going: one refused, or still waiting out its
+    // window, has done nothing there.
+    .not("status", "in", "(refused,queued)")
     .gte("updated_at", since.toISOString());
   if (error) throw error;
   return new Set((data ?? []).map((r) => `${r.automation_id}:${r.project_id}`));
