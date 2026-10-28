@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Blocks, Box, Building2, CreditCard, Gauge, Info, KeyRound, Layers, Plug, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Blocks, Box, Building2, CreditCard, Gauge, Info, KeyRound, Layers, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -41,6 +41,8 @@ const groups = [
       { href: "/settings/org/defaults", label: "Defaults", icon: SlidersHorizontal },
       // The org's cloud hours, and its admins' limit and alerts on them.
       { href: "/settings/org/usage", label: "Usage", icon: Gauge },
+      // Every change to the org, by whom and when; admins'.
+      { href: "/settings/org/audit", label: "Audit log", icon: ScrollText },
     ],
   },
   {

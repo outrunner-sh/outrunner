@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { getOwner } from "@/lib/auth/owner";
 import { billingBuyer } from "@/lib/billing/buyer";
 import { portalDestination } from "@/lib/billing/checkout";
@@ -25,6 +26,7 @@ export async function POST(request: Request) {
   try {
     const url = await portalDestination(who.buyer.orgId, requireEnv("RUNTIME_BASE_URL"), checkoutDeps);
     if (!url) return NextResponse.json({ error: "This org has no plan to manage yet." }, { status: 409 });
+    await recordAudit({ orgId: who.buyer.orgId, actor: owner, action: "billing.portal_opened" });
     return NextResponse.json({ url });
   } catch (error) {
     console.error("Could not open the billing portal", error);

@@ -1,5 +1,7 @@
 import { after, NextResponse } from "next/server";
 
+import { personLabel } from "@/lib/audit/labels";
+import { recordAudit } from "@/lib/audit/record";
 import { isConnector } from "@/lib/automations/connector";
 import { closeAdmissionIfAlone, removeMember, setMemberRole } from "@/lib/db/org-members";
 import { isUuid } from "@/lib/ids";
@@ -28,6 +30,13 @@ export async function PATCH(request: Request, { params }: Params) {
     // Made an admin, they hold no roles any more: set_org_member_role takes
     // them away in the same step.
     await setMemberRole(id, userId, role);
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "member.role_changed",
+      resource: { type: "member", id: userId, label: await personLabel(userId) },
+      details: { role },
+    });
     return NextResponse.json({ member: { userId, role } });
   });
 }
@@ -51,7 +60,14 @@ export async function DELETE(request: Request, { params }: Params) {
   }
 
   return changingMembers("the org's members", async () => {
+    // Named before they go: their membership is how they're looked up.
+    const label = leaving ? null : await personLabel(userId);
     await removeMember(id, userId, caller.owner.id);
+    await recordAudit(
+      leaving
+        ? { orgId: id, actor: caller.owner, action: "member.left", resource: { type: "member", id: userId } }
+        : { orgId: id, actor: caller.owner, action: "member.removed", resource: { type: "member", id: userId, label } },
+    );
     after(async () => {
       const provider = getRuntimeProvider();
       if (isComputerProvider(provider)) await settleNewRemoval(provider, id, userId);

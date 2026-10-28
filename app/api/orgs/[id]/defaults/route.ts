@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { getOrg } from "@/lib/db/orgs";
 import { getOrgDefaults, setOrgDefaults } from "@/lib/db/org-defaults";
 import { savingSettings } from "@/lib/http/settings-save";
@@ -46,6 +47,16 @@ export async function PUT(request: Request, context: RouteContext) {
   const defaults = { defaultModel, boxSize: isBoxSizeId(body?.boxSize) ? body.boxSize : null };
   return savingSettings("org defaults", async () => {
     await setOrgDefaults(id, defaults, caller.owner.id);
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "defaults.changed",
+      resource: { type: "settings", id: "defaults" },
+      details: {
+        defaultModel: defaults.defaultModel ? `${defaults.defaultModel.provider}/${defaults.defaultModel.id}` : null,
+        boxSize: defaults.boxSize,
+      },
+    });
     return NextResponse.json(defaults);
   });
 }

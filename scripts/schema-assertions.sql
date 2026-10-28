@@ -1877,3 +1877,33 @@ begin
   delete from organization_settings where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   raise notice 'ok: an org''s usage controls stay within its plan, and alert once';
 end $$;
+
+-- 48. The audit log is append-only and the server's alone; its events go only
+-- with their org.
+do $$
+declare event bigint;
+begin
+  insert into audit_events (org_id, actor_type, actor_id, actor_label, action, resource_type, resource_label)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'user', '11111111-1111-1111-1111-111111111111', 'owner', 'member.invited', 'invite', 'new@example.com')
+  returning id into event;
+  begin
+    update audit_events set action = 'member.removed' where id = event;
+    raise exception 'FAIL: an audit event was changed';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into audit_events (org_id, actor_type, actor_label, action) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'user', 'x', 'Not An Action');
+    raise exception 'FAIL: an action outside the naming was kept';
+  exception when check_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'audit_events', 'select') or has_table_privilege('authenticated', 'audit_events', 'insert') then
+    raise exception 'FAIL: members can reach the audit log directly';
+  end if;
+  insert into organizations (id, name, created_by) values ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'Short-lived', null);
+  insert into audit_events (org_id, actor_type, actor_label, action) values ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'system', 'Outrunner', 'org.renamed');
+  delete from organizations where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+  if exists (select 1 from audit_events where org_id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee') then
+    raise exception 'FAIL: an org''s events outlived it';
+  end if;
+  raise notice 'ok: the audit log is append-only, the server''s, and goes with its org';
+end $$;

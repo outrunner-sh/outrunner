@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { getOwner } from "@/lib/auth/owner";
-import { renameOrg } from "@/lib/db/orgs";
+import { getOrg, renameOrg } from "@/lib/db/orgs";
 import { isUuid } from "@/lib/ids";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
@@ -22,9 +23,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!name) return NextResponse.json({ error: "Give the org a name, up to 80 characters." }, { status: 400 });
 
   return savingSettings("the org's name", async () => {
+    const before = await getOrg(id);
     if (!(await renameOrg(id, owner.id, name))) {
       return NextResponse.json({ error: "Only a team org's admins can rename it." }, { status: 403 });
     }
+    await recordAudit({
+      orgId: id,
+      actor: owner,
+      action: "org.renamed",
+      resource: { type: "org", id, label: name },
+      details: { from: before?.name ?? null, to: name },
+    });
     return NextResponse.json({ org: { id, name } });
   });
 }

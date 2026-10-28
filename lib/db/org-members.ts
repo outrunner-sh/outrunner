@@ -186,7 +186,7 @@ export async function createInvite(input: {
 }
 
 /** Withdraw an org's open invite; false when there's none by that id. */
-export async function revokeInvite(orgId: string, inviteId: string): Promise<boolean> {
+export async function revokeInvite(orgId: string, inviteId: string): Promise<{ email: string } | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("organization_invites")
     .update({ revoked_at: new Date().toISOString() })
@@ -194,9 +194,21 @@ export async function revokeInvite(orgId: string, inviteId: string): Promise<boo
     .eq("id", inviteId)
     .is("accepted_at", null)
     .is("revoked_at", null)
-    .select("id");
+    .select("id, email");
   if (error) throw error;
-  return (data?.length ?? 0) > 0;
+  return data?.[0] ? { email: data[0].email } : null;
+}
+
+/** The email a request to join was made with; null for no such request. */
+export async function joinRequestEmail(orgId: string, requestId: string): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("organization_join_requests")
+    .select("email")
+    .eq("org_id", orgId)
+    .eq("id", requestId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.email ?? null;
 }
 
 /** An invite, by its link's token, as its page shows it; null for a token

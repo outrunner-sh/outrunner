@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { getOwner } from "@/lib/auth/owner";
 import { billingBuyer } from "@/lib/billing/buyer";
 import { checkoutDestination } from "@/lib/billing/checkout";
 import { billingMode } from "@/lib/billing/mode";
+import { PLANS } from "@/lib/billing/plans";
 import { checkoutDeps } from "@/lib/billing/stripe-deps";
 import { requireEnv } from "@/lib/env";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -33,9 +35,15 @@ export async function POST(request: Request) {
   const who = await billingBuyer(owner);
   if ("refusal" in who) return NextResponse.json({ error: who.refusal }, { status: who.status });
   try {
-    return NextResponse.json(
-      await checkoutDestination(who.buyer, plan, interval, requireEnv("RUNTIME_BASE_URL"), checkoutDeps),
-    );
+    const destination = await checkoutDestination(who.buyer, plan, interval, requireEnv("RUNTIME_BASE_URL"), checkoutDeps);
+    await recordAudit({
+      orgId: who.buyer.orgId,
+      actor: owner,
+      action: destination.kind === "portal" ? "billing.portal_opened" : "billing.checkout_opened",
+      resource: { type: "plan", id: plan, label: PLANS[plan].label },
+      details: { interval },
+    });
+    return NextResponse.json(destination);
   } catch (error) {
     console.error("Could not start a checkout", error);
     return NextResponse.json({ error: "Couldn't reach Stripe. Try again in a moment." }, { status: 502 });

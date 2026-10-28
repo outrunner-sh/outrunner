@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { orgHours } from "@/lib/billing/org-hours";
 import { postedLimit, postedThreshold, type AlertThreshold } from "@/lib/billing/usage-controls";
 import { getOrg } from "@/lib/db/orgs";
@@ -43,6 +44,13 @@ export async function PUT(request: Request, context: RouteContext) {
   const controls = { limitPercent, alertThresholds: [...new Set(thresholds as AlertThreshold[])].sort((a, b) => a - b) };
   return savingSettings("usage controls", async () => {
     await setUsageControls(id, controls, caller.owner.id);
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "usage.changed",
+      resource: { type: "settings", id: "usage" },
+      details: { limitPercent: controls.limitPercent, alertThresholds: controls.alertThresholds },
+    });
     return NextResponse.json({ controls, hours: await orgHours(id, controls) });
   });
 }

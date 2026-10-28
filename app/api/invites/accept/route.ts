@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { personLabel } from "@/lib/audit/labels";
+import { recordAudit } from "@/lib/audit/record";
 import { getAuthUser } from "@/lib/auth/owner";
 import { acceptInvite, inviteByToken, MemberChangeError, setAdmitted } from "@/lib/db/org-members";
 import { githubErrorResponse } from "@/lib/github/http";
@@ -48,6 +50,13 @@ export async function POST(request: Request) {
       );
     }
     const orgId = await acceptInvite(token, user.id);
+    await recordAudit({
+      orgId,
+      actor: { id: user.id, githubLogin: "", name: await personLabel(user.id), email: user.email ?? null },
+      action: "member.joined",
+      resource: { type: "member", id: user.id, label: invite.email },
+      details: { role: invite.role },
+    });
     // The invite is accepted either way. Failing these only delays: they're
     // admitted at their next sign-in, as a team org's member, and can pick
     // the org in the switcher.

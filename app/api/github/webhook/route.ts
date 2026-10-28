@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { closeRuns, planRuns, startRun } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import { automationsForPullRequest, pullRequestSessions, recordRuns } from "@/lib/db/automation-runs";
@@ -113,6 +114,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ received: true, runs: runs.length });
     }
     if (event === "installation") {
+      // Said in the org's log as Outrunner's own: GitHub told it.
+      const action = { deleted: "github.uninstalled", suspend: "github.suspended", unsuspend: "github.unsuspended" }[
+        String(payload.action)
+      ] as "github.uninstalled" | "github.suspended" | "github.unsuspended" | undefined;
+      const holder = action ? await installationHolder(installationId).catch(() => null) : null;
+      if (action && holder?.orgId) {
+        await recordAudit({
+          orgId: holder.orgId,
+          actor: "system",
+          action,
+          resource: {
+            type: "installation",
+            id: String(installationId),
+            label: payload.installation?.account?.login ?? null,
+          },
+        });
+      }
       if (payload.action === "deleted") {
         dropInstallationToken(installationId);
         await forgetInstallation(installationId);
