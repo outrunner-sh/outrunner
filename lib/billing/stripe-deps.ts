@@ -1,6 +1,7 @@
 /** Production wiring of the Stripe billing logic: Stripe's API and the
  *  billing tables. */
 
+import { recordAudit } from "@/lib/audit/record";
 import {
   claimCustomer,
   customerIdFor,
@@ -15,7 +16,7 @@ import type { CheckoutDeps } from "@/lib/billing/checkout";
 import { refreshModelAllowance } from "@/lib/db/credentials";
 import { refreshOrgModelAllowance } from "@/lib/db/org-model-allowance";
 import { getOrg, personalOrgId, personalOwners } from "@/lib/db/orgs";
-import { LOOKUP_KEYS } from "@/lib/billing/plans";
+import { LOOKUP_KEYS, PLANS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
 import type { SyncDeps } from "@/lib/billing/sync";
 
@@ -24,7 +25,22 @@ export const syncDeps: SyncDeps = {
   orgForCustomer,
   personalOrgOf: personalOrgId,
   subscriptionById,
-  saveSubscription,
+  // Stored, and said in the org's audit log when its plan or status moved.
+  async saveSubscription(record, fetchedAt) {
+    // Only for the log: a failed read counts as a change, never fails the save.
+    const previous = await subscriptionById(record.stripeSubscriptionId).catch(() => undefined);
+    const stored = await saveSubscription(record, fetchedAt);
+    if (stored && (previous?.plan !== record.plan || previous?.status !== record.status)) {
+      await recordAudit({
+        orgId: record.orgId,
+        actor: "system",
+        action: "billing.plan_changed",
+        resource: { type: "subscription", id: record.stripeSubscriptionId, label: PLANS[record.plan].label },
+        details: { status: record.status, interval: record.billingInterval },
+      });
+    }
+    return stored;
+  },
   deleteSubscription,
   eventHandled,
   recordEvent,

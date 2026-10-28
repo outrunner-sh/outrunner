@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { getOwner } from "@/lib/auth/owner";
 import { ClaimError, claimInstallation, installationHolder, refreshInstallation } from "@/lib/db/github-installations";
 import { memberRole } from "@/lib/db/orgs";
@@ -69,6 +70,12 @@ export async function GET(request: Request) {
     if (!holder) return back("pending=1");
 
     await claimInstallation({ orgId, installation, githubId: owner.githubId, userId: owner.id });
+    await recordAudit({
+      orgId,
+      actor: owner,
+      action: "github.installed",
+      resource: { type: "installation", id: String(installation.id), label: installation.accountLogin },
+    });
     await setActiveOrg(orgId).catch(() => {});
     // Onboarding lists the App's repositories as it comes back.
     if (state.next) return NextResponse.redirect(appUrl(state.next, origin));

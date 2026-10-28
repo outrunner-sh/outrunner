@@ -412,6 +412,22 @@ type OrgModelAllowanceRow = {
   created_at: string;
 };
 
+// An org's audit log, append-only; see
+// supabase/migrations/20261101115000_audit_events.sql.
+type AuditEventRow = {
+  id: number;
+  org_id: string;
+  actor_type: string;
+  actor_id: string | null;
+  actor_label: string;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  resource_label: string | null;
+  details: Json;
+  created_at: string;
+};
+
 // Each usage alert sent to an org's admins, once per period and threshold;
 // see supabase/migrations/20261101100000_org_usage_controls.sql.
 type OrgUsageAlertRow = {
@@ -1100,6 +1116,12 @@ export type Database = {
         Row: OrgModelAllowanceRow;
         Insert: Insert<OrgModelAllowanceRow, "org_id">;
         Update: Partial<OrgModelAllowanceRow>;
+        Relationships: [];
+      };
+      audit_events: {
+        Row: AuditEventRow;
+        Insert: Insert<AuditEventRow, "org_id" | "actor_type" | "actor_label" | "action">;
+        Update: Partial<AuditEventRow>;
         Relationships: [];
       };
       org_usage_alerts: {

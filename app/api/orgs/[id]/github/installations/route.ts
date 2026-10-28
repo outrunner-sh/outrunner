@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { ClaimError, claimInstallation } from "@/lib/db/github-installations";
 import { getInstallation, githubAppConfig } from "@/lib/github/app";
 import { orgCaller } from "@/lib/orgs/routes";
@@ -24,6 +25,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const installation = await getInstallation(config, installationId);
     if (!installation) return NextResponse.json({ error: "GitHub has no such installation." }, { status: 404 });
     await claimInstallation({ orgId: id, installation, githubId: caller.owner.githubId, userId: caller.owner.id });
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "github.installed",
+      resource: { type: "installation", id: String(installation.id), label: installation.accountLogin },
+    });
     return NextResponse.json({ claimed: installationId });
   } catch (error) {
     if (error instanceof ClaimError) {

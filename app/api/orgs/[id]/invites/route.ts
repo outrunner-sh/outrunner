@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { createInvite } from "@/lib/db/org-members";
 import { getOrg } from "@/lib/db/orgs";
 import { emailInvite, inviteLink } from "@/lib/orgs/notify";
@@ -28,6 +29,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Only a team org has members to invite." }, { status: 409 });
     }
     const { token, invite } = await createInvite({ orgId: id, email, role, invitedBy: caller.owner.id });
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "member.invited",
+      resource: { type: "invite", id: invite.id, label: email },
+      details: { role },
+    });
     const link = inviteLink(token, new URL(request.url).origin);
     const emailed = await emailInvite({ to: email, orgName: org.name, inviter: caller.owner.name, link });
     return NextResponse.json({ invite, link, emailed }, { status: 201 });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { setGrant } from "@/lib/db/org-access";
+import { recordAudit } from "@/lib/audit/record";
+import { listOrgProjects, listRoles, setGrant } from "@/lib/db/org-access";
 import { isUuid } from "@/lib/ids";
 import { postedLevel } from "@/lib/orgs/access";
 import { changingAccess } from "@/lib/orgs/access-routes";
@@ -29,6 +30,21 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   }
   return changingAccess("the org's access", async () => {
     await setGrant(id, { roleId, projectId, level });
+    const [roles, projects] = await Promise.all([
+      roleId ? listRoles(id).catch(() => []) : [],
+      projectId ? listOrgProjects(id).catch(() => []) : [],
+    ]);
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "access.changed",
+      resource: { type: "grant", id: `${roleId ?? "everyone"}/${projectId ?? "all"}` },
+      details: {
+        role: roleId ? (roles.find((r) => r.id === roleId)?.name ?? roleId) : null,
+        project: projectId ? (projects.find((p) => p.id === projectId)?.fullName ?? projectId) : null,
+        level,
+      },
+    });
     return NextResponse.json({ grant: { roleId, projectId, level } });
   });
 }

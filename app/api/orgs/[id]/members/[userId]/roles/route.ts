@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
+import { personLabel } from "@/lib/audit/labels";
+import { recordAudit } from "@/lib/audit/record";
 import { isConnector } from "@/lib/automations/connector";
-import { setMemberRoles } from "@/lib/db/org-access";
+import { listRoles, setMemberRoles } from "@/lib/db/org-access";
 import { isUuid } from "@/lib/ids";
 import { changingAccess } from "@/lib/orgs/access-routes";
 import { orgCaller } from "@/lib/orgs/routes";
@@ -22,6 +24,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   }
   return changingAccess("a member's roles", async () => {
     await setMemberRoles(id, userId, roleIds as string[]);
+    const names = new Map((await listRoles(id).catch(() => [])).map((r) => [r.id, r.name]));
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "member.roles_set",
+      resource: { type: "member", id: userId, label: await personLabel(userId) },
+      details: { roles: (roleIds as string[]).map((r) => names.get(r) ?? r) },
+    });
     return NextResponse.json({ member: { userId, roleIds } });
   });
 }

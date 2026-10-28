@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { recordAudit } from "@/lib/audit/record";
 import { getOrg } from "@/lib/db/orgs";
 import { clearOrgProviderKey, getOrgKeyStatuses, setOrgProviderKey } from "@/lib/db/org-credentials";
 import { savingSettings } from "@/lib/http/settings-save";
 import { orgCaller } from "@/lib/orgs/routes";
 import { acceptedKey } from "@/lib/providers/accept-key";
-import { isKeyProviderId } from "@/lib/providers/registry";
+import { isKeyProviderId, PROVIDERS } from "@/lib/providers/registry";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -38,6 +39,14 @@ export async function PUT(request: Request, context: RouteContext) {
   if (accepted instanceof Response) return accepted;
   return savingSettings("org keys", async () => {
     await setOrgProviderKey(id, provider, accepted.key, caller.owner.id);
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "key.saved",
+      resource: { type: "key", id: provider, label: PROVIDERS[provider].label },
+      // Its last 4, as the page shows it: never the key.
+      details: { hint: accepted.key.slice(-4) },
+    });
     return NextResponse.json({ keys: await getOrgKeyStatuses(id), warning: accepted.warning });
   });
 }
@@ -52,6 +61,12 @@ export async function DELETE(request: Request, context: RouteContext) {
   }
   return savingSettings("org keys", async () => {
     await clearOrgProviderKey(id, provider);
+    await recordAudit({
+      orgId: id,
+      actor: caller.owner,
+      action: "key.removed",
+      resource: { type: "key", id: provider, label: PROVIDERS[provider].label },
+    });
     return NextResponse.json({ keys: await getOrgKeyStatuses(id) });
   });
 }
