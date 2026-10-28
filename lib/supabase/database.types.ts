@@ -413,7 +413,7 @@ type OrgModelAllowanceRow = {
 };
 
 // An org's audit log, append-only; see
-// supabase/migrations/20261101110000_audit_events.sql.
+// supabase/migrations/20261101115000_audit_events.sql.
 type AuditEventRow = {
   id: number;
   org_id: string;

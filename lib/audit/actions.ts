@@ -1,5 +1,5 @@
 /**
- * What the audit log records (20261101110000_audit_events.sql), and how each
+ * What the audit log records (20261101115000_audit_events.sql), and how each
  * reads on Settings → Org → Audit log. Pure, for the page and the tests;
  * lib/audit/record.ts writes them.
  *

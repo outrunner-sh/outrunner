@@ -1,5 +1,5 @@
 /**
- * Reading an org's audit log (20261101110000_audit_events.sql), newest
+ * Reading an org's audit log (20261101115000_audit_events.sql), newest
  * first, a page at a time. The server's alone: the route has checked the
  * caller is the org's admin.
  */
