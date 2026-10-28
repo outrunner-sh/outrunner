@@ -17,7 +17,7 @@ import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
 import {
   conversationPage,
   fenceBefore,
-  promptSince,
+  turnSettled,
   eventJson,
   lastAssistantText,
   pendingInput,
@@ -385,9 +385,10 @@ export async function waitApi(context: ApiContext, id: string): Promise<Response
 
 /**
  * Whether there's nothing more to wait for, and the turn as it is then. A
- * turn that's idle counts only once its prompt is in the log: one after
- * `afterEvent` when it's given (what a send answered with), else any, for a
- * session the API started (whose first prompt follows its ready).
+ * turn that's idle or needs input counts only once its prompt is in the
+ * log: one after `afterEvent` when it's given (what a send answered with),
+ * else any, for a session the API started (whose first prompt follows its
+ * ready). turnSettled decides.
  */
 async function waitOutcome(
   workspace: Workspace,
@@ -407,13 +408,9 @@ async function waitOutcome(
       const live = await readLiveConversation(workspace);
       // A box that didn't answer this time may on the next.
       if (!live) return null;
-      const turn = turnJson(live.entries, live.state);
-      if (turn.state === "working") return null;
-      // A question too: one asked before the fence still shows until the
-      // answer sent after it is logged.
-      const prompted = afterEvent !== null || workspace.source === "api";
-      if (prompted && !promptSince(live.entries, afterEvent)) return null;
-      return { turn };
+      const fenced = afterEvent !== null || workspace.source === "api";
+      if (!turnSettled(live.entries, live.state, { fenced, afterEvent })) return null;
+      return { turn: turnJson(live.entries, live.state) };
     }
     default:
       // Failed, paused, archived or deleted: no turn will end by waiting.

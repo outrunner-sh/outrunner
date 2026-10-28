@@ -272,6 +272,23 @@ export function fenceBefore(entries: readonly ConversationEntry[], content: stri
   return null;
 }
 
+/**
+ * Whether a wait is over, from the live conversation: the turn isn't
+ * working, and, when the wait is fenced (`after_event` given, or a session
+ * the API started, whose first prompt follows its ready), the prompt it
+ * waits on is in the log past the fence. That holds for a question too: one
+ * asked before the fence still shows until the answer sent after it is
+ * logged, and handing it back would answer the wait with the old question.
+ */
+export function turnSettled(
+  entries: readonly ConversationEntry[],
+  state: string | null,
+  { fenced, afterEvent }: { fenced: boolean; afterEvent: number | null },
+): boolean {
+  if (turnState(entries.map((e) => e.event), state) === "working") return false;
+  return !fenced || promptSince(entries, afterEvent);
+}
+
 /** What the agent is waiting on, for a turn that needs input. */
 export function pendingInput(events: readonly AgentEvent[]): Record<string, unknown> | null {
   const all = [...events];
