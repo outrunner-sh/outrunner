@@ -112,6 +112,11 @@ export type Workspace = {
   /** Where it was started: the app, a Slack thread, an automation, a
    *  GitHub mention, or the API (20261102120000_api_keys.sql). */
   source?: WorkspaceSource;
+  /** A Mission (docs/missions.md), or any other session; absent on one made
+   *  in code rather than read. */
+  kind?: "session" | "mission";
+  /** The Mission a Runner works for; null for any other session. */
+  parentMissionId?: string | null;
   /** Its project's org; absent on one made in code rather than read. */
   orgId?: string;
   /** Who made it: on `user-daytona` or `user-modal`, whose key reaches it. */

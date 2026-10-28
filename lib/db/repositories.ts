@@ -197,6 +197,9 @@ export async function createWorkspaceRow(input: {
   checkouts?: SessionCheckout[] | null;
   /** Where it was started; the app when not named. */
   source?: WorkspaceSource;
+  /** A Mission, or a Runner of one (docs/missions.md); named only when so. */
+  kind?: "mission";
+  parentMissionId?: string;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -214,6 +217,8 @@ export async function createWorkspaceRow(input: {
       ...(input.environmentId && { environment_id: input.environmentId }),
       ...(input.checkouts && { checkouts: input.checkouts }),
       ...(input.source && input.source !== "app" && { source: input.source }),
+      ...(input.kind && { kind: input.kind }),
+      ...(input.parentMissionId && { parent_mission_id: input.parentMissionId }),
       status: "creating",
     })
     .select("*")

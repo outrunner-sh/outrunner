@@ -7,3 +7,9 @@ export function bearerMatches(header: string | null, secret: string): boolean {
   const expected = Buffer.from(secret);
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+
+/** The token in `Authorization: Bearer <token>`, or null. */
+export function readBearer(header: string | null): string | null {
+  const match = /^Bearer\s+(\S+)$/i.exec(header?.trim() ?? "");
+  return match ? match[1] : null;
+}

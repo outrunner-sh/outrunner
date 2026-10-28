@@ -8,6 +8,8 @@ import { getAgentConfig } from "@/lib/db/agent-config";
 import { getGithubIdentity } from "@/lib/db/credentials";
 import { defaultEnvironmentId, environmentSetup, type EnvironmentSetup } from "@/lib/db/environments";
 import { getProjectEnvironment } from "@/lib/db/project-environment";
+import { withMissionEnvironment, withMissionServer } from "@/lib/missions/setup";
+import { missionBoxSetup } from "@/lib/missions/setup.deps";
 import type { AgentClient, WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { deliverSessionSetup } from "@/lib/runtime/session-setup";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
@@ -27,10 +29,12 @@ export async function setUpSession(
    *  (an automation's review). */
   override?: { appIdentity?: boolean },
 ): Promise<void> {
-  const [environment, agentConfig, githubIdentity] = await Promise.all([
+  const [environment, agentConfig, githubIdentity, mission] = await Promise.all([
     sessionEnvironment(ownerId, projectId, environmentId),
     getAgentConfig(ownerId),
     getGithubIdentity(ownerId),
+    // A Mission's box also gets its tools, notes and instructions.
+    missionBoxSetup(identity.workspaceId),
   ]);
   await deliverSessionSetup(
     {
@@ -40,8 +44,8 @@ export async function setUpSession(
       setAgentConfig: (req) => agent.setAgentConfig(identity, req),
     },
     {
-      environment,
-      agentConfig,
+      environment: mission ? withMissionEnvironment(environment, mission) : environment,
+      agentConfig: mission ? withMissionServer(agentConfig, mission) : agentConfig,
       appIdentity: override?.appIdentity || githubIdentity === "app",
       downloadUrl: (path) => mintSnapshotDownloadUrl(supabaseSnapshotStorage(), path, ownerId),
     },
