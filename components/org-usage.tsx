@@ -15,7 +15,8 @@ const LIMITS = [null, 90, 80, 50, 25] as const;
 /**
  * Settings → Org → Usage: the org's cloud hours this period against its
  * plan's, and its admins' controls: a limit at a share of them (no box
- * starts past it, and running ones pause), and email alerts as they're used.
+ * starts past it, and running ones pause where the backend can), and email
+ * alerts as they're used.
  */
 export function OrgUsageSettings({
   org,
