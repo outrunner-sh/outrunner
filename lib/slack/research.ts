@@ -146,6 +146,7 @@ export async function askResearch(input: {
     projectId,
     title: `Slack research: ${question.slice(0, 80)}`,
     prompt,
+    source: "slack",
     onCreated: async (workspaceId) => {
       // Out of sight from the start: it isn't one of the asker's sessions.
       await db.from("workspaces").update({ background: true }).eq("id", workspaceId);

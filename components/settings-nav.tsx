@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Blocks, Box, Building2, CreditCard, Gauge, Info, KeyRound, Layers, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Blocks, Box, Building2, Code, CreditCard, Gauge, Info, KeyRound, Layers, Plug, ScrollText, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -22,6 +22,8 @@ const groups = [
       // Where triage captures come from: Slack, and the CLI.
       // Your own Slack account, connected to an org.
       { href: "/settings/integrations", label: "Connections", icon: Plug },
+      // Keys for the public API that act as the user (docs/api.md).
+      { href: "/settings/api-keys", label: "API keys", icon: Code },
     ],
   },
   {
@@ -37,6 +39,9 @@ const groups = [
       { href: "/settings/org/integrations", label: "Integrations", icon: Blocks },
       // Keys the org's members' cloud sessions run on; admins save them.
       { href: "/settings/org/keys", label: "Keys", icon: KeyRound },
+      // Keys for the public API, for the org; admins make them. Apart from
+      // Keys above, which are model providers'.
+      { href: "/settings/org/api-keys", label: "API keys", icon: Code },
       // Model and box size for members who haven't chosen; admins set them.
       { href: "/settings/org/defaults", label: "Defaults", icon: SlidersHorizontal },
       // The org's cloud hours, and its admins' limit and alerts on them.

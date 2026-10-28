@@ -17,6 +17,9 @@ export type Json =
 export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
 export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
 
+// supabase/migrations/20261102100000_api_keys.sql
+export type WorkspaceSourceDb = "app" | "slack" | "automation" | "api";
+
 export type WorkspaceStatusDb =
   | "creating"
   | "provisioning"
@@ -138,6 +141,8 @@ type WorkspaceRow = {
   /** The Slack thread it was started from (20261031200000). */
   slack_thread_url: string | null;
   slack_sync: boolean;
+  /** Where it came from (20261102100000_api_keys.sql). */
+  source: WorkspaceSourceDb;
 };
 
 type RuntimeComputerRow = {
@@ -713,6 +718,35 @@ type CliTokenRow = {
   created_at: string;
 };
 
+// supabase/migrations/20261102100000_api_keys.sql
+type ApiKeyRow = {
+  id: string;
+  /** An org key's org; null for a personal key. */
+  org_id: string | null;
+  /** Who made it, and so who it acts as. */
+  user_id: string;
+  name: string;
+  key_hash: string;
+  hint: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  created_at: string;
+};
+
+type ApiRequestRow = {
+  id: number;
+  key_id: string | null;
+  cli_token_id: string | null;
+  user_id: string;
+  org_id: string | null;
+  method: string;
+  path: string;
+  status: number;
+  created_at: string;
+};
+
 type WorkItemRow = {
   id: string;
   org_id: string;
@@ -1157,6 +1191,18 @@ export type Database = {
         Row: SlackLinkRow;
         Insert: Insert<SlackLinkRow, "team_id" | "slack_user_id" | "owner_id" | "org_id">;
         Update: Partial<SlackLinkRow>;
+        Relationships: [];
+      };
+      api_keys: {
+        Row: ApiKeyRow;
+        Insert: Insert<ApiKeyRow, "user_id" | "name" | "key_hash" | "hint">;
+        Update: Partial<ApiKeyRow>;
+        Relationships: [];
+      };
+      api_requests: {
+        Row: ApiRequestRow;
+        Insert: Insert<ApiRequestRow, "user_id" | "method" | "path" | "status">;
+        Update: Partial<ApiRequestRow>;
         Relationships: [];
       };
       cli_tokens: {

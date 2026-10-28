@@ -1,0 +1,123 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  conversationFrom,
+  conversationPage,
+  entriesFromEvents,
+  eventJson,
+  lastAssistantText,
+  parseFrame,
+  pendingInput,
+  readUntilQuiet,
+  turnState,
+} from "@/lib/api/conversation";
+import type { AgentEvent } from "@/lib/runtime/agent-protocol";
+
+function message(uuid: string, role: "user" | "assistant", content: unknown[], extra: Record<string, unknown> = {}) {
+  return { t: "message", uuid, parentUuid: null, role, timestamp: "2026-11-01T00:00:00Z", content, ...extra };
+}
+const text = (t: string) => ({ type: "text", text: t });
+const frame = (id: number, data: unknown) => `id: ${id}\ndata: ${JSON.stringify(data)}\n\n`;
+
+/** A stream that sends `chunks`, then stays open saying nothing. */
+function openStream(chunks: string[]): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+    },
+  });
+}
+
+test("SSE frames: id and data, comments skipped", () => {
+  assert.deepEqual(parseFrame("id: 42\ndata: {\"a\":1}"), { id: "42", data: "{\"a\":1}" });
+  assert.equal(parseFrame(": keepalive"), null);
+  assert.deepEqual(parseFrame("data: a\ndata: b"), { id: null, data: "a\nb" });
+});
+
+test("a read ends once the stream goes quiet, though it never closes", async () => {
+  const started = Date.now();
+  const frames = await readUntilQuiet(
+    openStream([frame(0, { t: "state", workspaceId: "w", state: "running" }), frame(120, message("m1", "user", [text("hi")]))]),
+    { quietMs: 50, firstMs: 1_000 },
+  );
+  assert.equal(frames.length, 2);
+  assert.ok(Date.now() - started < 1_000);
+});
+
+test("a frame split across chunks is read whole", async () => {
+  const whole = frame(9, message("m1", "user", [text("hello")]));
+  const frames = await readUntilQuiet(openStream([whole.slice(0, 10), whole.slice(10)]), { quietMs: 50 });
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].id, "9");
+});
+
+test("a streamed message is kept once, where it started, as it is now", () => {
+  const { entries, state } = conversationFrom([
+    { id: "0", data: JSON.stringify({ t: "state", workspaceId: "w", state: "running" }) },
+    { id: "100", data: JSON.stringify(message("u1", "user", [text("do it")])) },
+    { id: "200", data: JSON.stringify(message("a1", "assistant", [text("Work")])) },
+    { id: "260", data: JSON.stringify({ t: "usage", input_tokens: 1, output_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }) },
+    { id: "300", data: JSON.stringify(message("a1", "assistant", [text("Working on it")])) },
+    { id: "nope", data: "{}" },
+  ]);
+  assert.equal(state, "running");
+  assert.deepEqual(entries.map((e) => e.id), [100, 200, 260]);
+  assert.equal(lastAssistantText(entries.map((e) => e.event)), "Working on it");
+});
+
+test("pages go back from before_event, newest last", () => {
+  const entries = [1, 2, 3, 4, 5].map((id) => ({ id, event: message(`m${id}`, "user", [text(String(id))]) as AgentEvent }));
+  const latest = conversationPage(entries, { limit: 2 });
+  assert.deepEqual(latest.events.map((e) => e.id), [4, 5]);
+  assert.equal(latest.hasMore, true);
+  assert.equal(latest.nextBefore, 4);
+  const older = conversationPage(entries, { before: 4, limit: 2 });
+  assert.deepEqual(older.events.map((e) => e.id), [2, 3]);
+  const first = conversationPage(entries, { before: 2, limit: 2 });
+  assert.deepEqual(first.events.map((e) => e.id), [1]);
+  assert.equal(first.hasMore, false);
+  assert.equal(first.nextBefore, null);
+});
+
+test("an archived conversation counts its events from 1", () => {
+  const { entries } = entriesFromEvents([
+    message("u1", "user", [text("a")]) as AgentEvent,
+    message("a1", "assistant", [text("b")]) as AgentEvent,
+    message("a1", "assistant", [text("bc")]) as AgentEvent,
+  ]);
+  assert.deepEqual(entries.map((e) => e.id), [1, 2]);
+});
+
+test("the turn: working, needing input, or idle, as the session page reads it", () => {
+  const prompt = message("u1", "user", [text("fix it")]) as AgentEvent;
+  assert.equal(turnState([prompt]), "working");
+  const toolCall = message("a1", "assistant", [{ type: "tool_use", id: "t1", name: "Bash", input: {} }]) as AgentEvent;
+  assert.equal(turnState([prompt, toolCall]), "working");
+  const done = message("a2", "assistant", [text("Done.")], { stopReason: "end_turn" }) as AgentEvent;
+  assert.equal(turnState([prompt, done]), "idle");
+  assert.equal(turnState([prompt], "exited"), "idle");
+  const ask = message("a3", "assistant", [
+    { type: "tool_use", id: "q1", name: "mcp__outrunner__ask_user", input: { questions: [{ question: "Which?", options: ["A", "B"] }] } },
+  ]) as AgentEvent;
+  assert.equal(turnState([prompt, ask]), "needs_input");
+  assert.deepEqual(pendingInput([prompt, ask]), {
+    type: "question",
+    tool_use_id: "q1",
+    questions: [{ question: "Which?", options: [{ label: "A", description: undefined }, { label: "B", description: undefined }] }],
+  });
+});
+
+test("events are snake_case, tool results with their call's id", () => {
+  const event = message("u2", "user", [{ type: "tool_result", toolUseId: "t1", content: "ok" }]) as AgentEvent;
+  assert.deepEqual(eventJson({ id: 7, event }), {
+    id: "7",
+    type: "message",
+    uuid: "u2",
+    parent_uuid: null,
+    role: "user",
+    timestamp: "2026-11-01T00:00:00Z",
+    content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+  });
+});

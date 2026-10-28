@@ -89,7 +89,8 @@ import { boxUpgrade, runtimeSessionEnvironment, withoutGitHubToken } from "@/lib
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { projectCheckouts } from "@/lib/runtime/warm-pool";
 import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
-import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
+import type { BoxSizeId } from "@/lib/runtime/box-sizes";
+import type { Project, ProvisionPhase, RuntimeProvider, Workspace, WorkspaceSource } from "@/lib/runtime/types";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
@@ -158,6 +159,12 @@ export type ServerSessionOptions = {
   onCreated?: (workspaceId: string) => Promise<void>;
   /** Told how its setup ended. */
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
+  /** Where it was started, for the API's `source` filter; the app when not
+   *  given. */
+  source?: WorkspaceSource;
+  /** The size of its box, asked by the API, instead of the one the user (or
+   *  their org) chose. Never beyond what their plan allows (boxSizeOn). */
+  boxSize?: BoxSizeId;
 };
 
 /**
@@ -297,7 +304,7 @@ export async function createCloudSession(
   // A first message is delivered to a Runtime Computer's agent; no other
   // sandbox takes one from the server.
   if (options.firstMessage && !isComputerProvider(provider)) {
-    return needsSandbox("Automations run on Outrunner's or your Daytona sandboxes. Choose one under Settings → Sandbox.");
+    return needsSandbox("Sessions the server starts (automations, the API) run on Outrunner's or your Daytona sandboxes. Choose one under Settings → Sandbox.");
   }
   // Only a Runtime Computer switches models: on any other sandbox, a session
   // runs on the user's Claude or not at all, whatever the menu offers.
@@ -358,6 +365,7 @@ export async function createCloudSession(
       baseBranch,
       provider: provider.name,
       agent: agentId,
+      source: options.source,
     });
   } catch (error) {
     // A requested branch can be one a live session already works on: name that
@@ -441,6 +449,7 @@ export async function createCloudSession(
       onSettled: options.onSettled,
       inline: options.inline ?? false,
       as,
+      boxSize: options.boxSize,
     });
   if (options.inline) await provision();
   else after(provision);
@@ -474,6 +483,7 @@ async function provisionWorkspace({
   onSettled,
   inline,
   as,
+  boxSize,
 }: {
   workspace: Workspace;
   project: Project;
@@ -500,6 +510,8 @@ async function provisionWorkspace({
   inline: boolean;
   /** An automation's review, as the App (ServerSessionOptions.reviewAsApp). */
   as?: typeof REVIEW_AS_APP;
+  /** The box's size, where its caller asked for one (ServerSessionOptions.boxSize). */
+  boxSize?: BoxSizeId;
 }): Promise<void> {
   const tell = async (outcome: Omit<SessionOutcome, "workspaceId">) => {
     await onSettled?.({ workspaceId: workspace.id, ...outcome }).catch((error: unknown) =>
@@ -593,7 +605,7 @@ async function provisionWorkspace({
         // Theirs once they chose one, else their org's (lib/orgs/defaults.ts).
         size: boxSizeOn(
           sandboxSettings.sandbox,
-          newBoxSize(sandboxSettings, (await orgDefaultsFor(project.orgId)).boxSize),
+          boxSize ?? newBoxSize(sandboxSettings, (await orgDefaultsFor(project.orgId)).boxSize),
           await sessionPlan(owner.id, project.orgId),
         ),
         maxLiveComputers,

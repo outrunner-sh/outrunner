@@ -70,8 +70,19 @@ declined or marked a duplicate. **Start session** opens a session on the
 item's workspace with the item as its first prompt, and marks the item in
 progress.
 
+## API
+
+Outrunner has a public API at `/api/v1` ([`docs/api.md`](docs/api.md)):
+start a session on a repository, send it messages, wait for its turn to
+end, read its conversation, and pause, archive or delete it, from a script,
+CI or another agent. Calls carry an API key (`Authorization: Bearer
+or_key_…`): an org's, made by its admins under Settings → Org → API keys,
+or your own, under Settings → API keys. A key acts as whoever made it, with
+their Roles & access, and every call is recorded with it.
+
 ## Docs
 
+- API — [`docs/api.md`](docs/api.md)
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
 - Validation report — [`spike4-runtime-report.md`](docs/architecture/spike4-runtime-report.md)

@@ -15,6 +15,7 @@ import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import { archiveCloudSession } from "@/lib/session/archive-session";
 import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
+import type { WorkspaceSource } from "@/lib/runtime/types";
 import { createCloudSession, type SessionOutcome } from "@/lib/session/create-cloud-session";
 import { ActAsUserError, actAsUser } from "@/lib/supabase/acting-user";
 
@@ -36,6 +37,8 @@ export type ServerSessionStart = {
   reviewAsApp?: boolean;
   /** Told the session's id once its row is made, before its setup. */
   onCreated?: (workspaceId: string) => Promise<void>;
+  /** Where it was started: an automation's run or a Slack thread. */
+  source: Extract<WorkspaceSource, "automation" | "slack">;
 };
 
 /** Made and set up: ready (its prompt sent) or failed, with why. Or not made
@@ -71,6 +74,7 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
           meteredOnly: true,
           reviewAsApp: start.reviewAsApp,
           onCreated: start.onCreated,
+          source: start.source,
           onSettled: async (settled) => {
             outcome = settled;
           },
