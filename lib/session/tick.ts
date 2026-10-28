@@ -23,7 +23,12 @@ export type TickReport = { read: number; changed: number; pullRequests: number; 
 
 export async function runSessionsTick(onChange?: (change: ActivityChange) => Promise<void>): Promise<TickReport> {
   const report: TickReport = { read: 0, changed: 0, pullRequests: 0, skipped: 0 };
-  const sessions = await watchedSessions();
+  // A listing that fails skips the reads this round, not the pull requests'
+  // check below, which doesn't depend on it.
+  const sessions = await watchedSessions().catch((error: unknown) => {
+    console.error("Sessions tick: couldn't list sessions", error);
+    return [] as string[];
+  });
   const { started } = await inPool(sessions, READ_WIDTH, async (id) => {
     const change = await readSession(id).catch((error: unknown) => {
       console.error(`Sessions tick: couldn't read ${id}`, error);
