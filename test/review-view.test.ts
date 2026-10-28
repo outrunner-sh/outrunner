@@ -71,6 +71,8 @@ test("the stream resumes from a byte offset, and nothing else is passed to the b
   ]);
   assert.equal(lastEventIdFrom(null), null);
   assert.equal(lastEventIdFrom("-1"), null);
+  // A state event's id: no point to resume from.
+  assert.equal(lastEventIdFrom("0"), null);
   assert.equal(lastEventIdFrom("9".repeat(16)), null);
   // Down: nothing to pass on.
   assert.equal(await reviewEventsUrl("o1", "r1", null, deps().d), null);

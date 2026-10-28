@@ -121,3 +121,12 @@ function safeJson(text: string): unknown {
     return null;
   }
 }
+
+/** An artifact's bytes from its signed download URL. */
+export async function fetchSnapshotBytes(url: string): Promise<Uint8Array> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`fetch artifact failed (${response.status})`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}

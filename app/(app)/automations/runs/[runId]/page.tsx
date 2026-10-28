@@ -30,5 +30,7 @@ async function RunSessionSection({ params }: { params: Params }) {
   if (active.role !== "admin") notFound();
   const run = await getRun(active.id, runId);
   if (!run?.workspaceId) notFound();
+  // A personal org's runs are its owner's own: no connector's to read.
+  if (active.personal) redirect(`/workspaces/${run.workspaceId}`);
   return <ReviewSessionView orgId={active.id} run={run} />;
 }

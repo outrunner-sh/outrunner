@@ -39,9 +39,10 @@ export async function reviewView(orgId: string, runId: string, deps: ReviewViewD
   });
 }
 
-/** A resume point as the stream gives it (a byte offset), or none. */
+/** A resume point as the stream gives it (a byte offset), or none: a state
+ *  event's "0" is no point to resume from (it would read it all again). */
 export function lastEventIdFrom(value: string | null): string | null {
-  return value && /^\d{1,15}$/.test(value) ? value : null;
+  return value && value !== "0" && /^\d{1,15}$/.test(value) ? value : null;
 }
 
 /** The box's stream to pass on, for the org's admins; null when it isn't

@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/repositories";
 import { AgentClient } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
-import { assembleReplay } from "@/lib/runtime/replay/load";
+import { assembleReplay, fetchSnapshotBytes } from "@/lib/runtime/replay/load";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import { actAsUser } from "@/lib/supabase/acting-user";
@@ -49,11 +49,7 @@ export const reviewViewDeps: ReviewViewDeps = {
       snapshot,
       ownerId: connectorId,
       storage: supabaseSnapshotStorage(),
-      fetchBytes: async (url) => {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`fetch artifact failed (${response.status})`);
-        return new Uint8Array(await response.arrayBuffer());
-      },
+      fetchBytes: fetchSnapshotBytes,
     });
     return { events: payload.events, archivedAt: snapshot.archivedAt };
   },

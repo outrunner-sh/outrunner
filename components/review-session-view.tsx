@@ -12,6 +12,7 @@ import type { ReviewView } from "@/lib/automations/review-view";
 import type { AutomationRun } from "@/lib/db/automation-runs";
 import { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { appendEvent } from "@/lib/runtime/conversation-events";
+import { reconnectPlan } from "@/lib/runtime/reconnect";
 
 const WHEN = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
@@ -26,13 +27,31 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
   const [view, setView] = useState<ReviewView | null>(null);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
-  // Asked again when a live stream ends: its box paused, or it was archived.
+  // Asked again when a live stream ends: its box paused, it was archived, or
+  // the stream dropped (after a backoff).
   const [generation, setGeneration] = useState(0);
   const seen = useRef(new Set<string>());
+  // Where the live stream is up to: its last resumable event's id (a byte
+  // offset; a state event's "0" is none), kept here rather than by
+  // EventSource, which would resume from "0" and read it all again.
+  const cursor = useRef<string | null>(null);
+  const attempt = useRef(0);
 
   useEffect(() => {
     let active = true;
     let source: EventSource | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const again = () => {
+      attempt.current += 1;
+      const plan = reconnectPlan(attempt.current);
+      if (!plan.retry) {
+        setError("Lost the review session's conversation.");
+        return;
+      }
+      retry = setTimeout(() => {
+        if (active) setGeneration((g) => g + 1);
+      }, plan.delayMs);
+    };
     void (async () => {
       try {
         const res = await fetch(base, { cache: "no-store" });
@@ -42,13 +61,17 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
         setView(body);
         setError(null);
         if (body.mode === "archived") {
+          cursor.current = null;
+          seen.current = new Set();
           setEvents(body.events);
           return;
         }
+        // Paused: what was read live stays on screen.
         if (body.mode !== "live") return;
-        seen.current = new Set();
-        setEvents([]);
-        source = new EventSource(`${base}/stream`);
+        source = new EventSource(`${base}/stream${cursor.current ? `?lastEventId=${cursor.current}` : ""}`);
+        source.onopen = () => {
+          attempt.current = 0;
+        };
         source.onmessage = (message) => {
           let parsed;
           try {
@@ -58,12 +81,14 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
           }
           if (!parsed.success) return;
           const event = parsed.data;
+          if (message.lastEventId && message.lastEventId !== "0") cursor.current = message.lastEventId;
           setEvents((prev) => appendEvent(prev, event, message.lastEventId, seen.current));
         };
-        // EventSource retries a dropped stream on its own; one it gave up on
-        // (its box went down: 204) is looked at again.
+        // Reconnected here, not by EventSource: from the kept cursor, after a
+        // backoff, and looking again at whether it's still live.
         source.onerror = () => {
-          if (source?.readyState === EventSource.CLOSED && active) setGeneration((g) => g + 1);
+          source?.close();
+          if (active) again();
         };
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : "Couldn't read the review session.");
@@ -71,9 +96,16 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
     })();
     return () => {
       active = false;
+      clearTimeout(retry);
       source?.close();
     };
   }, [base, generation]);
+
+  const tryAgain = () => {
+    attempt.current = 0;
+    setError(null);
+    setGeneration((g) => g + 1);
+  };
 
   const pr = `${run.repoFullName}#${run.prNumber}`;
   const state =
@@ -114,14 +146,16 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
       </div>
       {error ? (
         <div className="p-4">
-          <InlineMessage actions={[{ label: "Try again", onClick: () => setGeneration((g) => g + 1) }]}>{error}</InlineMessage>
+          <InlineMessage actions={[{ label: "Try again", onClick: tryAgain }]}>{error}</InlineMessage>
         </div>
-      ) : view?.mode === "none" ? (
-        <p className="p-6 text-[13px] text-muted-foreground">
-          Its box is paused and it hasn&apos;t been archived, so there&apos;s nothing to read here yet. It&apos;s archived when the
-          pull request gets new commits or closes.
+      ) : null}
+      {view?.mode === "none" ? (
+        <p className="px-4 pt-3 text-[13px] text-muted-foreground">
+          {events.length > 0 ? "Its box has paused: this is the conversation as far as it was read. " : "Its box is paused and it hasn't been archived, so there's nothing to read here yet. "}
+          It&apos;s archived when the pull request gets new commits or closes.
         </p>
-      ) : (
+      ) : null}
+      {view?.mode === "none" && events.length === 0 ? null : (
         <SkeletonSwap
           ready={view !== null}
           skeleton={<SkeletonRows rows={6} rowHeight={28} indent={16} className="px-4 pt-4" />}
