@@ -26,6 +26,7 @@ import {
   transitionWorkspace,
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
+import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
@@ -141,6 +142,8 @@ export async function POST(request: Request, context: RouteContext) {
     agent?: unknown;
     /** The first prompt, only to name the session by. */
     prompt?: unknown;
+    /** The triage item the session was started from (Start session). */
+    workItemId?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -326,6 +329,18 @@ export async function POST(request: Request, context: RouteContext) {
   // delivered: until then the sidebar showed its branch. That later naming
   // then leaves it be (a title is never replaced).
   await nameSessionFromPrompt(workspace, typeof body.prompt === "string" ? body.prompt : "");
+  // Started from a triage item: the item is in progress, on this session. The
+  // session starts either way; the item is only bookkeeping.
+  if (typeof body.workItemId === "string" && body.workItemId) {
+    const workItemId = body.workItemId;
+    // As a triager in the project's org: an item of another org is no item.
+    await projectOrgId(project.id)
+      .then((orgId) => (orgId ? triageActor(owner.id, orgId) : null))
+      .then((actor) =>
+        actor ? linkWorkItemToSession(actor, workItemId, { workspaceId: workspace.id, projectId: project.id }) : undefined,
+      )
+      .catch((error: unknown) => console.error("Couldn't link the triage item to its session", error));
+  }
 
   // The session opens now, on its setup progress, and its box is set up after
   // this response. A request held open for the whole setup tied the session to

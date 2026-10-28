@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Github, Info, KeyRound, Layers, ShieldCheck, Terminal, User, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Github, Info, KeyRound, Layers, Plug, ShieldCheck, Terminal, User, Users } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -19,6 +19,8 @@ const groups = [
       // What Outrunner's models and the user's own keys have used; the sidebar's
       // allowance bar points here.
       { href: USAGE_SETTINGS_HREF, label: "Usage", icon: BarChart3 },
+      // Where triage captures come from: Slack, and the CLI.
+      { href: "/settings/integrations", label: "Integrations", icon: Plug },
     ],
   },
   {

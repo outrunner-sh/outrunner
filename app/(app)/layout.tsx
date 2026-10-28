@@ -6,6 +6,7 @@ import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { countTriage, triageActor } from "@/lib/db/work-items";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import { getOrgContext } from "@/lib/orgs/server";
@@ -85,11 +86,16 @@ async function SidebarData() {
       return [];
     }),
   ]);
-  const [hidden, pullRequests] = await Promise.all([
+  const [hidden, pullRequests, triageCount] = await Promise.all([
     hiddenSessionProjects(listed, workspaces),
     listWorkspacePullRequests(workspaces.map((w) => w.id)).catch((error: unknown): WorkspacePullRequest[] => {
       console.error("Sidebar: could not load pull requests", error);
       return [];
+    }),
+    // What waits in the active org's triage that the user may see.
+    (orgId ? triageActor(owner.id, orgId).then((actor) => (actor ? countTriage(actor) : 0)) : Promise.resolve(0)).catch((error: unknown): number => {
+      console.error("Sidebar: could not count triage", error);
+      return 0;
     }),
   ]);
 
@@ -106,6 +112,7 @@ async function SidebarData() {
         ownerAvatarUrl: owner.avatarUrl,
         orgs: orgs?.orgs ?? [],
         activeOrgId: orgId ?? null,
+        triageCount,
       }}
     />
   );

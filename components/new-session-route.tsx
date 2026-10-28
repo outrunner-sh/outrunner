@@ -44,6 +44,8 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
   const folder = search.get("folder") ?? "";
   const pick = search.get("pick") === "repo";
   const focus = search.get("focus") === "composer";
+  // Started from a triage item (its "Start session").
+  const workItemId = search.get("triage") ?? undefined;
   const asked = useNewSessionCount();
   const [answered, slot] = useServerAnswer<Project>(server);
   const router = useRouter();
@@ -68,7 +70,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         // A new form per "New Session" and per target: arriving while already
         // on /new must not keep the repository, folder or cloud/Mac choice the
         // open form was switched to.
-        key={`${project ?? ""}\n${folder}\n${asked}`}
+        key={`${project ?? ""}\n${folder}\n${workItemId ?? ""}\n${asked}`}
         projects={projects}
         // A hidden repository asked for may still be on its way from the
         // server: the form picks it up as it lands, until one is picked.
@@ -76,6 +78,7 @@ export function NewSessionRoute({ server }: { server: React.ReactNode }) {
         initialProjectId={project}
         openPicker={pick}
         focusComposer={focus}
+        workItemId={workItemId}
         showBack
       />
       {slot}

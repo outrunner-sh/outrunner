@@ -98,6 +98,7 @@ export function SessionComposer({
   onRetrySendError,
   stop,
   focusSignal = 0,
+  prefill = null,
 }: {
   /** Send a prompt. When it returns a promise of whether the send landed, a
    *  failed send gives the text and files back to the composer. */
@@ -136,8 +137,18 @@ export function SessionComposer({
   /** Changes each time the composer should take focus (Get started's "Start
    *  your first session"); it does once it can be typed in. */
   focusSignal?: number;
+  /** Text to start the box with once it arrives (a triage item's prompt on
+   *  the new-session form), editable before it is sent. Never replaces what
+   *  has been typed. */
+  prefill?: string | null;
 }) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(prefill ?? "");
+  // Arriving after the form mounted (fetched): put in an empty box, once.
+  const [prefillSeen, setPrefillSeen] = useState(prefill);
+  if (prefill !== prefillSeen) {
+    setPrefillSeen(prefill);
+    if (prefill && !value) setValue(prefill);
+  }
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -147,6 +158,14 @@ export function SessionComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachments = useAttachments();
+
+  // A prefilled box is as tall as its text, as if it had been typed.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!prefillSeen || !el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [prefillSeen]);
 
   const focusedFor = useRef(0);
   useEffect(() => {

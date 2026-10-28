@@ -43,7 +43,8 @@ terminal. It signs the terminal in through the browser (`/cli-login`, PKCE, a
 token kept in `~/.outrunner/cli.json`), offers to connect their Claude
 subscription when Claude Code is on the computer (it runs `claude setup-token`
 under a PTY and saves the token), then continues onboarding in the browser.
-`outrunner login | claude | whoami | logout` do one step each; `claude` signs
+`outrunner login | claude | whoami | logout` do one step each, and
+`outrunner triage "…"` adds a work item to triage; `claude` signs
 in first if needed and opens no tab after, so it's what onboarding's
 subscription page shows (always with `--url`, the page's own app).
 `--url` or `OUTRUNNER_URL` points it at another app.
@@ -55,6 +56,19 @@ package per platform. `scripts/build-cli.sh <version>` stages them all.
 ```sh
 cd runtime-agent && go run ./cmd/outrunner --url http://localhost:3000
 ```
+
+## Triage
+
+Work items live in Outrunner (`/triage`, ⌘I), not in another tracker. They
+are the org's, numbered per org, and follow its Roles & access: read on a
+repository sees its items and starts sessions from them; write triages them.
+Each item has a Markdown body, a feed of notes, and a workspace (a
+repository), or none yet: Unsorted. Items come from the app, from Slack (a message shortcut
+and `/triage`, see [`docs/slack-app.md`](docs/slack-app.md)), and from the CLI
+or a script (`POST /api/triage/items?org=<name>` with a CLI token). An item is accepted,
+declined or marked a duplicate. **Start session** opens a session on the
+item's workspace with the item as its first prompt, and marks the item in
+progress.
 
 ## Docs
 

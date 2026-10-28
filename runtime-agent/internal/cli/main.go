@@ -25,6 +25,7 @@ Commands:
            signing in first if needed
   logout   Sign this terminal out
   whoami   Show who this terminal is signed in as
+  triage   Add a work item to your triage: outrunner triage "fix the flaky test"
 `
 
 // Main runs the command and returns its exit status. stdin is where the
@@ -86,6 +87,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		fmt.Fprintln(stdout, "\nGo back to your browser to carry on.")
 		return 0
+	case "triage":
+		return triage(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
 	case "help":
 		fmt.Fprint(stdout, usage)
 		return 0

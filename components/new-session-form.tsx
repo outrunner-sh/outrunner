@@ -1,6 +1,6 @@
 "use client";
 
-import { GitBranch, GitFork } from "lucide-react";
+import { GitBranch, GitFork, Inbox } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
@@ -10,6 +10,7 @@ import { SessionComposer } from "@/components/session-composer";
 import { Notice } from "@/components/ui/notice";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { useCreateSession } from "@/hooks/use-create-session";
+import { useWorkItemPrompt } from "@/hooks/use-work-item-prompt";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
@@ -47,6 +48,7 @@ export function NewSessionForm({
   initialProjectId,
   openPicker = false,
   focusComposer = false,
+  workItemId,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start): it is not yet "none". */
@@ -57,6 +59,9 @@ export function NewSessionForm({
   openPicker?: boolean;
   /** Focuses the composer: as the form mounts, or as it turns true. */
   focusComposer?: boolean;
+  /** The triage item to start from (Start session): its prompt fills the
+   *  composer, and the session is linked to it. */
+  workItemId?: string;
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal } =
     useCreateSession(listed, initialProjectId);
@@ -89,6 +94,7 @@ export function NewSessionForm({
     setFocusComposerSeen(focusComposer);
     if (focusComposer) setFocusAsks(focusAsks + 1);
   }
+  const workItem = useWorkItemPrompt(workItemId);
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
@@ -192,6 +198,12 @@ export function NewSessionForm({
                 {details.worktree.label}
               </span>
             )}
+            {workItem && (
+              <span className={CHIP} title={`Started from triage: ${workItem.title}`}>
+                <Inbox className="shrink-0" />
+                {workItem.key}
+              </span>
+            )}
           </div>
         )}
 
@@ -226,7 +238,9 @@ export function NewSessionForm({
                 )
               : // Kept first, so the session's box starts with it; one that
                 // fails keeps the prompt, and the session isn't started.
-                environment.keep().then((kept) => kept && create(text, attachmentIds, startModel, effort))
+                environment
+                  .keep()
+                  .then((kept) => kept && create(text, attachmentIds, startModel, effort, workItem?.id))
           }
           model={startsOn?.id}
           modelChoice={
@@ -266,6 +280,7 @@ export function NewSessionForm({
           }
           allowAttachments={!local}
           focusSignal={focusAsks}
+          prefill={workItem?.prompt ?? null}
         />
       </div>
     </div>

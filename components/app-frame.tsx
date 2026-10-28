@@ -23,6 +23,8 @@ export type FrameData = {
   orgs: Org[];
   /** The org the sidebar lists (lib/orgs/active.ts). */
   activeOrgId: string | null;
+  /** Work items waiting in triage: the sidebar's count. */
+  triageCount: number;
 };
 
 /**
@@ -100,7 +102,7 @@ export function AppFrame({
   };
 
   // App-wide shortcuts: ⌘N a new session, ⌘K search the sidebar (opening it
-  // if collapsed). With a modifier they are safe even while typing. (A browser
+  // if collapsed), ⌘I capture a triage item. With a modifier they are safe even while typing. (A browser
   // keeps ⌘N for itself; the Mac app passes it through.)
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -114,6 +116,9 @@ export function AppFrame({
         event.preventDefault();
         setAndRemember(false);
         setSearchSignal((n) => n + 1);
+      } else if (key === "i") {
+        event.preventDefault();
+        router.push("/triage?new=1");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -160,6 +165,7 @@ export function AppFrame({
                 ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
                 orgs={frame?.orgs ?? NO_ORGS}
                 activeOrgId={frame?.activeOrgId ?? null}
+                triageCount={frame?.triageCount ?? 0}
                 onCollapse={() => setAndRemember(true)}
                 searchSignal={searchSignal}
                 initialFolded={look?.folded ?? NO_FOLDED}

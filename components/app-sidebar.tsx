@@ -5,9 +5,9 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   ChevronRight,
   Ellipsis,
-  Flag,
   GitBranchPlus,
   Folder,
+  Inbox,
   Laptop,
   PanelLeft,
   Plus,
@@ -65,6 +65,7 @@ export function AppSidebar({
   ownerAvatarUrl,
   orgs = [],
   activeOrgId = null,
+  triageCount = 0,
   onCollapse,
   searchSignal = 0,
   initialFolded = [],
@@ -80,6 +81,8 @@ export function AppSidebar({
   orgs?: Org[];
   /** The org the sidebar lists. */
   activeOrgId?: string | null;
+  /** Work items waiting in triage, shown beside its link. */
+  triageCount?: number;
   onCollapse: () => void;
   /** Changes each time ⌘K is pressed: open the search field. */
   searchSignal?: number;
@@ -179,7 +182,14 @@ export function AppSidebar({
           active={pathname === "/" || pathname === "/new"}
         />
         {/* Import (/import) is hidden from the nav for now; the page still works. */}
-        <NavSoon icon={<Flag />} label="Runner" />
+        <NavLink
+          href="/triage"
+          icon={<Inbox />}
+          label="Triage"
+          hint="⌘I"
+          count={triageCount}
+          active={pathname === "/triage"}
+        />
         <NavSoon icon={<Sparkles />} label="Automations" />
         {searching ? (
           <SearchField value={query} onChange={setQuery} onClose={closeSearch} />
@@ -459,6 +469,7 @@ function NavLink({
   icon,
   label,
   hint,
+  count = 0,
   active,
 }: {
   href: string;
@@ -467,6 +478,8 @@ function NavLink({
   label: string;
   /** Its keyboard shortcut, shown at the row's end on hover. */
   hint?: string;
+  /** How many wait there; shown at the row's end, giving way to the hint on hover. */
+  count?: number;
   active: boolean;
 }) {
   return (
@@ -483,7 +496,18 @@ function NavLink({
     >
       {icon}
       <span className="flex-1">{label}</span>
-      {hint && <Kbd>{hint}</Kbd>}
+      {count > 0 && (
+        <span
+          aria-label={`${count} waiting`}
+          className={cn(
+            "text-[11px] tabular-nums text-muted-foreground",
+            hint && "group-hover/nav:hidden group-focus-visible/nav:hidden",
+          )}
+        >
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
+      {hint && <Kbd hidden={count > 0}>{hint}</Kbd>}
     </Link>
   );
 }
@@ -514,9 +538,15 @@ function NavButton({
 }
 
 /** A shortcut, shown only while its row is hovered or focused. */
-function Kbd({ children }: { children: string }) {
+function Kbd({ children, hidden = false }: { children: string; hidden?: boolean }) {
   return (
-    <kbd className="font-sans text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover/nav:opacity-100 group-focus-visible/nav:opacity-100">
+    <kbd
+      className={cn(
+        "font-sans text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover/nav:opacity-100 group-focus-visible/nav:opacity-100",
+        // Out of the row until hovered, where a count holds its place.
+        hidden && "hidden group-hover/nav:inline group-focus-visible/nav:inline",
+      )}
+    >
       {children}
     </kbd>
   );

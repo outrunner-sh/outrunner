@@ -62,6 +62,13 @@ type EnvKey =
   // webhook endpoint's signing secret.
   | "STRIPE_SECRET_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  // Slack app (triage capture): its signing secret, from the app's Basic
+  // Information page. Unset turns /api/integrations/slack off.
+  | "SLACK_SIGNING_SECRET"
+  // The same app's Client ID and Client Secret (Basic Information): linking a
+  // Slack user signs in with Slack. Unset, no one can link.
+  | "SLACK_CLIENT_ID"
+  | "SLACK_CLIENT_SECRET"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).
