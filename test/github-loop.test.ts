@@ -293,6 +293,28 @@ test("a session asleep when its pull request closes is woken to be archived", as
   assert.deepEqual(calls.suspended, []);
 });
 
+test("one owner's sleeping sessions are woken one at a time, as they count against one plan", async () => {
+  let awake = 0;
+  let most = 0;
+  const { deps } = fakeDeps({
+    sessions: [
+      { id: "a1", ownerId: "u1", status: "suspended" },
+      { id: "a2", ownerId: "u1", status: "suspended" },
+      { id: "b1", ownerId: "u2", status: "suspended" },
+    ],
+    wake: async () => {
+      awake++;
+      most = Math.max(most, awake);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      awake--;
+      return true;
+    },
+  });
+  assert.equal(await archiveClosed("pull_request", closedPull(), deps), 3);
+  // u1's two one after the other, alongside u2's.
+  assert.equal(most, 2);
+});
+
 test("a session woken to archive that then isn't is put back to sleep; one mid another step is left", async () => {
   const { deps, calls } = fakeDeps({
     sessions: [

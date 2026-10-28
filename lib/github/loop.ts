@@ -252,28 +252,36 @@ export async function archiveClosed(event: string | null, payload: unknown, deps
       scope.orgId,
     );
     const what = `${closed.repoFullName}#${closed.number}`;
-    // Side by side: waking one is a box's start.
+    const archiveOne = async (s: LinkedSession): Promise<number> => {
+      if (s.status === "archived") return 0;
+      if (s.status !== "ready" && s.status !== "idle" && s.status !== "suspended") {
+        // Mid another step (suspending, resuming, restoring): left as it is.
+        console.warn(`GitHub: session ${s.id} was ${s.status} as ${what} closed, so it wasn't archived`);
+        return 0;
+      }
+      // Its snapshot is taken on its box: a session that went to sleep (as
+      // most have by the time their pull request merges) is woken for it.
+      const woken = s.status === "suspended";
+      if (woken && !(await deps.wake(s.ownerId, s.id).catch(() => false))) {
+        console.warn(`GitHub: session ${s.id} couldn't be woken to archive it as ${what} closed`);
+        return 0;
+      }
+      const done = await deps.archiveServerSessions(s.ownerId, [s.id]);
+      if (done === 0 && woken) {
+        // Woken for nothing: back to sleep, rather than up until it idles.
+        console.warn(`GitHub: session ${s.id} was woken but not archived as ${what} closed; putting it back to sleep`);
+        await deps.suspend(s.ownerId, s.id).catch((error: unknown) => console.error(`GitHub: couldn't suspend ${s.id} again`, error));
+      }
+      return done;
+    };
+    // Owners side by side, as waking one is a box's start; each owner's one
+    // at a time, as their wakes count against one plan's boxes.
+    const byOwner = new Map<string, LinkedSession[]>();
+    for (const s of sessions) byOwner.set(s.ownerId, [...(byOwner.get(s.ownerId) ?? []), s]);
     const archived = await Promise.all(
-      sessions.map(async (s) => {
-        if (s.status === "archived") return 0;
-        if (s.status !== "ready" && s.status !== "idle" && s.status !== "suspended") {
-          // Mid another step (suspending, resuming, restoring): left as it is.
-          console.warn(`GitHub: session ${s.id} was ${s.status} as ${what} closed, so it wasn't archived`);
-          return 0;
-        }
-        // Its snapshot is taken on its box: a session that went to sleep (as
-        // most have by the time their pull request merges) is woken for it.
-        const woken = s.status === "suspended";
-        if (woken && !(await deps.wake(s.ownerId, s.id).catch(() => false))) {
-          console.warn(`GitHub: session ${s.id} couldn't be woken to archive it as ${what} closed`);
-          return 0;
-        }
-        const done = await deps.archiveServerSessions(s.ownerId, [s.id]);
-        if (done === 0 && woken) {
-          // Woken for nothing: back to sleep, rather than up until it idles.
-          console.warn(`GitHub: session ${s.id} was woken but not archived as ${what} closed; putting it back to sleep`);
-          await deps.suspend(s.ownerId, s.id).catch((error: unknown) => console.error(`GitHub: couldn't suspend ${s.id} again`, error));
-        }
+      [...byOwner.values()].map(async (own) => {
+        let done = 0;
+        for (const s of own) done += await archiveOne(s);
         return done;
       }),
     );
