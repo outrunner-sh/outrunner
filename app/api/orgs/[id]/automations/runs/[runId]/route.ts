@@ -3,7 +3,13 @@ import { after, NextResponse } from "next/server";
 import { rerunRun, startRun } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import { recordRuns, reopenRun, rerunTarget, sessionOwner } from "@/lib/db/automation-runs";
-import { getPullRequest, GitHubAppError, githubAppConfig, installationToken } from "@/lib/github/app";
+import {
+  dropInstallationToken,
+  getPullRequest,
+  GitHubAppError,
+  githubAppConfig,
+  installationToken,
+} from "@/lib/github/app";
 import { isUuid } from "@/lib/ids";
 import { orgCaller } from "@/lib/orgs/routes";
 import { archiveServerSessions } from "@/lib/session/server-session";
@@ -36,7 +42,16 @@ export async function POST(request: Request, { params }: Params) {
             if (error instanceof GitHubAppError && error.status === 404) throw new InstallationGone();
             throw error;
           }
-          return getPullRequest(token, repoFullName, number);
+          try {
+            return await getPullRequest(token, repoFullName, number);
+          } catch (error) {
+            // A token kept from before the installation went: GitHub revoked it.
+            if (error instanceof GitHubAppError && error.status === 401) {
+              dropInstallationToken(installationId);
+              throw new InstallationGone();
+            }
+            throw error;
+          }
         },
         reopenRun,
         recordRuns,

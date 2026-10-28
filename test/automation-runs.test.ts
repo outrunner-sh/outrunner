@@ -493,6 +493,16 @@ test("a run runs again only when it's the org's, failed or didn't start, and its
     }
     assert.deepEqual(reopened, [], what);
   }
+  // A repository renamed since: the pull request names it as it is now (GitHub
+  // redirects), and that's no fork.
+  const renamed = { full_name: "neevai-labs/renamed" };
+  const moved = await rerunRun(
+    "o1",
+    "r1",
+    rerunDeps({ pr: { head: { sha: SHA, ref: "feature/x", repo: renamed }, base: { ref: "main", repo: renamed } } }).deps,
+  );
+  assert.ok(moved.ok);
+  assert.equal(moved.run.event.repoFullName, "neevai-labs/renamed");
   // A refused one runs again too.
   assert.ok((await rerunRun("o1", "r1", rerunDeps({ target: { status: "refused" } }).deps)).ok);
 });

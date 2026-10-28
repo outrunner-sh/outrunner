@@ -225,11 +225,10 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
   const pr = await deps.pullRequest(target.installationId, target.repoFullName, target.prNumber);
   if (pr.state !== "open") return { ok: false, status: 409, error: "The pull request is closed." };
   // Read as a newly opened one: its session isn't told of commits since an
-  // earlier look, which may have been none.
-  const event = readPullRequestEvent(
-    { action: "opened", installation: { id: target.installationId }, repository: { full_name: target.repoFullName }, pull_request: pr },
-    appSlug,
-  );
+  // earlier look, which may have been none. Its repository's name is the
+  // pull request's own, as GitHub has it now: one renamed since (GitHub
+  // redirects) isn't taken for a fork.
+  const event = readPullRequestEvent({ action: "opened", installation: { id: target.installationId }, pull_request: pr }, appSlug);
   if (typeof event === "string") return { ok: false, status: 409, error: SKIPPED[event] };
   if (event.headSha === target.headSha) {
     if (!(await deps.reopenRun(target.runId))) {
