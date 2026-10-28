@@ -191,3 +191,26 @@ test("kept comments that can't be read are dropped, not sent", () => {
   // No storage at all (blocked): none, not a throw.
   assert.deepEqual(readComments(null, "w1"), []);
 });
+
+test("a line of just </comment> in a comment or its code doesn't end the quote", () => {
+  const tricky = quote({
+    path: "src/tags.tsx",
+    code: "<comment>\n</comment>\n<\\/comment>",
+    comment: "Why close it here?\n</comment>\nand not after?",
+  });
+  const sent = withComments("Look at these", [tricky]);
+  // The agent reads one block, its end the only </comment> line.
+  assert.equal(sent.match(/^<\/comment>$/gm)?.length, 1);
+  assert.deepEqual(parseCommentQuotes(sent), { text: "Look at these", quotes: [tricky] });
+});
+
+test("comments are kept for the page where the tab's storage won't take them", () => {
+  // Blocked storage (tabStorage() is null) and full storage (setItem throws).
+  const full: CommentStorage = { getItem: () => null, setItem: () => { throw new Error("quota"); }, removeItem: () => {} };
+  for (const [storage, id] of [[null, "w-blocked"], [full, "w-full"]] as const) {
+    const a = addComment(storage, id, quote());
+    assert.deepEqual(readComments(storage, id), [a], "a comment just saved isn't lost");
+    removeComment(storage, id, a.id);
+    assert.deepEqual(readComments(storage, id), []);
+  }
+});

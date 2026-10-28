@@ -146,6 +146,10 @@ export function DiffView({ diff, commenting }: { diff: string; commenting?: Diff
                   ? (event) => {
                       // A drag across the code is copying it, not picking lines.
                       if (window.getSelection()?.toString()) return;
+                      // A comment half written stays on its lines: a click
+                      // elsewhere mustn't move it to others unseen. Shift
+                      // extends its range, and the gutter picks afresh.
+                      if (draft.trim() && !event.shiftKey) return;
                       pick(i, event.shiftKey);
                     }
                   : undefined

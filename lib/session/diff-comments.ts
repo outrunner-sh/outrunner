@@ -56,9 +56,16 @@ function isDiffComment(value: unknown): value is DiffComment {
 const lastRead = new Map<string, { raw: string | null; comments: DiffComment[] }>();
 const NONE: DiffComment[] = [];
 
+// Where a list is kept when the tab's storage won't take it (blocked, or
+// full): for this page, so a comment just written isn't lost the moment it
+// is saved. Read ahead of storage, which then holds an older list or none.
+const memory = new Map<string, DiffComment[]>();
+
 /** The session's comments as this tab kept them; empty where there are none,
  *  or none that can be read (what can't be is dropped, not sent). */
 export function readComments(storage: CommentStorage | null, workspaceId: string): DiffComment[] {
+  const kept = memory.get(key(workspaceId));
+  if (kept) return kept;
   let raw: string | null = null;
   try {
     raw = storage?.getItem(key(workspaceId)) ?? null;
@@ -97,10 +104,14 @@ export function subscribeComments(workspaceId: string, listener: () => void): ()
  *  listening. */
 function writeComments(storage: CommentStorage | null, workspaceId: string, comments: DiffComment[]): void {
   try {
-    if (comments.length > 0) storage?.setItem(key(workspaceId), JSON.stringify(comments));
-    else storage?.removeItem(key(workspaceId));
+    if (!storage) throw new Error("no storage");
+    if (comments.length > 0) storage.setItem(key(workspaceId), JSON.stringify(comments));
+    else storage.removeItem(key(workspaceId));
+    memory.delete(key(workspaceId));
   } catch {
-    // Storage full or blocked: nothing is kept, and the listeners read that.
+    // Storage blocked or full: kept for the page instead (a reload loses
+    // them, as it would a draft), and read from there.
+    memory.set(key(workspaceId), comments);
   }
   for (const listener of listeners.get(workspaceId) ?? []) listener();
 }
@@ -185,6 +196,13 @@ function fenceLanguage(path: string): string {
 const escapeAttr = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 const unescapeAttr = (value: string) => value.replace(/&quot;/g, '"').replace(/&amp;/g, "&");
 
+// A line of just </comment> in the code or the comment would end the block
+// early, for the agent and for parseCommentQuotes alike: such a line gains a
+// backslash (<\/comment>, and one more for each it already had), and loses it
+// as the block is read back.
+const escapeEnd = (text: string) => text.replace(/^<(\\*)\/comment>$/gm, "<\\$1/comment>");
+const unescapeEnd = (text: string) => text.replace(/^<\\(\\*)\/comment>$/gm, "<$1/comment>");
+
 function quoteBlock(c: CommentQuote): string {
   // A fence longer than any run of backticks in the code, so code that has a
   // fence of its own (a markdown file) can't close the quote early.
@@ -194,9 +212,9 @@ function quoteBlock(c: CommentQuote): string {
   return [
     `<comment file="${escapeAttr(c.path)}" lines="${lineRange(c.startLine, c.endLine)}"${side}>`,
     `${fence}${fenceLanguage(c.path)}`,
-    c.code,
+    escapeEnd(c.code),
     fence,
-    c.comment.trim(),
+    escapeEnd(c.comment.trim()),
     "</comment>",
   ].join("\n");
 }
@@ -246,8 +264,8 @@ function readQuotes(after: string): CommentQuote[] | null {
       side: match[4] ? "old" : "new",
       startLine,
       endLine: match[3] ? Number(match[3]) : startLine,
-      code: match[6],
-      comment: match[7],
+      code: unescapeEnd(match[6]),
+      comment: unescapeEnd(match[7]),
     });
     rest = rest.slice(match[0].length);
   }

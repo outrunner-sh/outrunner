@@ -47,7 +47,7 @@ import {
   takesEffort,
 } from "@/lib/runtime/session-models";
 import { isImeKeydown } from "@/lib/session/composing";
-import type { DiffComment } from "@/lib/session/diff-comments";
+import { type DiffComment, lineRange } from "@/lib/session/diff-comments";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
@@ -312,7 +312,7 @@ export function SessionComposer({
             <li key={c.id} title={c.comment}>
               <MessageSquareText aria-hidden />
               <span className="font-mono">
-                {c.path}:{c.startLine === c.endLine ? c.startLine : `${c.startLine}–${c.endLine}`}
+                {c.path}:{lineRange(c.startLine, c.endLine).replace("-", "–")}
               </span>
               <span className="studio-composer-comment-text">{c.comment}</span>
               <button type="button" onClick={() => comments.onRemove(c.id)} aria-label={`Remove comment on ${c.path}`}>
