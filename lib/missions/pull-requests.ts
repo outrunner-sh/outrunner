@@ -217,8 +217,18 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
   if (error) throw error;
   if (!rows?.length) return;
   const name = runner.title ?? runner.branch;
-  const fixRunning = await boxWorking(runner).catch(() => false);
+  // A fix running: the Runner mid-turn (GitHub's follow-ups run in its own
+  // session), or one the GitHub agent loop has queued for it and not yet
+  // sent (github_followups, lib/github/followups.ts).
+  const working = await boxWorking(runner).catch(() => false);
   for (const row of rows.filter((r) => r.state === "open")) {
+    const { count: queuedFixes } = await db()
+      .from("github_followups")
+      .select("id", { count: "exact", head: true })
+      .ilike("repo_full_name", row.repo.replace(/[\\%_]/g, "\\$&"))
+      .eq("pr_number", row.number)
+      .is("sent_at", null);
+    const fixRunning = working || (queuedFixes ?? 0) > 0;
     const token = await tokenFor(runner, row.repo);
     if (!token) continue;
     const status = await getPullRequestStatus({ token, repoFullName: row.repo, number: row.number }).catch(() => null);
