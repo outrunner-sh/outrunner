@@ -1723,10 +1723,24 @@ end $$;
 reset role;
 
 do $$
+declare buyer constant uuid := '33333333-3333-3333-3333-333333333399';
 begin
   if exists (select 1 from subscriptions where org_id is null) or exists (select 1 from billing_customers where org_id is null) then
     raise exception 'FAIL: billing left without an org';
   end if;
+  -- The admin who bought a team org's plan leaving keeps the org's plan.
+  insert into auth.users (id) values (buyer);
+  insert into billing_customers (org_id, user_id, stripe_customer_id) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', buyer, 'cus_team');
+  insert into subscriptions (stripe_subscription_id, org_id, user_id, stripe_customer_id, status, plan,
+                             billing_interval, current_period_start, current_period_end, synced_at)
+  values ('sub_team', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', buyer, 'cus_team', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
+  delete from auth.users where id = buyer;
+  if not exists (select 1 from subscriptions where stripe_subscription_id = 'sub_team' and user_id is null)
+     or not exists (select 1 from billing_customers where stripe_customer_id = 'cus_team' and user_id is null) then
+    raise exception 'FAIL: the buyer leaving took the org''s plan with them';
+  end if;
+  delete from subscriptions where stripe_subscription_id = 'sub_team';
+  delete from billing_customers where stripe_customer_id = 'cus_team';
   delete from runtime_computers where daytona_sandbox_id = 'box-org-cap';
   raise notice 'ok: subscriptions and customers are an org''s';
 end $$;

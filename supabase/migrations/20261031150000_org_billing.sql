@@ -14,7 +14,8 @@
 -- ---------------------------------------------------------------------------
 
 -- Customers: one per org. The user who made it stays, for Stripe's metadata.
-alter table billing_customers add column if not exists org_id uuid references organizations (id) on delete restrict;
+-- Gone with its org: a personal org's with its user, as before.
+alter table billing_customers add column if not exists org_id uuid references organizations (id) on delete cascade;
 update billing_customers c set org_id = o.id
 from organizations o
 where o.personal_owner_id = c.user_id and c.org_id is null;
@@ -22,15 +23,23 @@ alter table billing_customers alter column org_id set not null;
 alter table billing_customers drop constraint if exists billing_customers_pkey;
 alter table billing_customers add primary key (org_id);
 alter table billing_customers alter column user_id drop not null;
+-- Who made it is a note: their account going leaves the org's customer.
+alter table billing_customers drop constraint if exists billing_customers_user_id_fkey;
+alter table billing_customers
+  add constraint billing_customers_user_id_fkey foreign key (user_id) references auth.users (id) on delete set null;
 create index if not exists billing_customers_user_idx on billing_customers (user_id);
 
 -- Subscriptions: the org's.
-alter table subscriptions add column if not exists org_id uuid references organizations (id) on delete restrict;
+alter table subscriptions add column if not exists org_id uuid references organizations (id) on delete cascade;
 update subscriptions s set org_id = o.id
 from organizations o
 where o.personal_owner_id = s.user_id and s.org_id is null;
 alter table subscriptions alter column org_id set not null;
 alter table subscriptions alter column user_id drop not null;
+-- Who bought it is a note: their account going leaves the org's plan.
+alter table subscriptions drop constraint if exists subscriptions_user_id_fkey;
+alter table subscriptions
+  add constraint subscriptions_user_id_fkey foreign key (user_id) references auth.users (id) on delete set null;
 create index if not exists subscriptions_org_idx on subscriptions (org_id);
 
 -- Hours: the org a box ran for.
