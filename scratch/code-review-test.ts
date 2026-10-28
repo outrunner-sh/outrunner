@@ -13,3 +13,10 @@ export function average(values: number[]): number {
 export function isUserId(value: any) {
   return value.length == 36;
 }
+
+/** The largest of some numbers. */
+export function largest(values: number[]) {
+  let best = 0;
+  for (const value of values) if (value > best) best = value;
+  return best;
+}
