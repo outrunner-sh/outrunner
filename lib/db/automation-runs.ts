@@ -16,9 +16,11 @@ export type RunCandidate = {
   name: string;
   prompt: string;
   triggers: AutomationTrigger[];
-  /** Who it runs as; null once they've left the org or lost their account. */
+  /** Who set it up; null once they've left the org or lost their account.
+   *  A team org's runs are its connector's, not theirs (runnerFor). */
   runsAs: string | null;
   projectId: string;
+  orgId: string;
 };
 
 /**
@@ -75,7 +77,9 @@ export async function automationsForPullRequest(installationId: number, repoFull
     const a = byId.get(r.automation_id);
     if (!a) return [];
     const runsAs = a.runs_as && stillMembers.has(a.runs_as) ? a.runs_as : null;
-    return [{ automationId: a.id, name: a.name, prompt: a.prompt, triggers: a.triggers, runsAs, projectId: r.project_id }];
+    return [
+      { automationId: a.id, name: a.name, prompt: a.prompt, triggers: a.triggers, runsAs, projectId: r.project_id, orgId },
+    ];
   });
 }
 

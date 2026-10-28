@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 
+import { orgConnector } from "@/lib/automations/connector";
 import { planRuns, startRun } from "@/lib/automations/runs";
 import { automationsForPullRequest, recordRuns, runNeighbours, settleRun } from "@/lib/db/automation-runs";
 
@@ -143,5 +144,6 @@ function startDeps() {
     settleRun,
     runNeighbours,
     archiveServerSessions,
+    orgConnector,
   };
 }

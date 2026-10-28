@@ -33,6 +33,7 @@ const candidate: RunCandidate = {
   triggers: ["pull_request.opened", "pull_request.synchronize"],
   runsAs: "u1",
   projectId: "p1",
+  orgId: "o1",
 };
 
 test("opened, reopened and ready for review are reviewed as new; new commits as synchronize", () => {
@@ -145,6 +146,7 @@ function startDeps(over: Partial<StartDeps> = {}) {
   const archived: { userId: string; ids: readonly string[] }[] = [];
   const neighbours: unknown[] = [];
   const deps: StartDeps = {
+    orgConnector: async () => null,
     runNeighbours: async (run) => {
       neighbours.push(run);
       return { earlierSessions: ["w-old"], superseded: false };
@@ -238,6 +240,33 @@ test("a run that fails keeps the earlier review sessions, and an archive failure
       },
     }));
     await startRun(pending(), deps); // nor when archiving does
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test("a team org's run is its connector's, whoever set the automation up", async () => {
+  const { deps, started } = startDeps({ orgConnector: async (orgId) => (orgId === "o1" ? "connector-1" : null) });
+  await startRun(pending(), deps);
+  assert.equal(started[0].userId, "connector-1");
+  // Even once whoever set it up has left.
+  const again = startDeps({ orgConnector: async () => "connector-1" });
+  await startRun(pending({ runsAs: null }), again.deps);
+  assert.equal(again.started[0].userId, "connector-1");
+});
+
+test("a run whose org's connector can't be made doesn't start, saying why", async () => {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const { deps, started, settled } = startDeps({
+      orgConnector: async () => {
+        throw new Error("auth down");
+      },
+    });
+    await startRun(pending(), deps);
+    assert.equal(started.length, 0);
+    assert.match((settled[0] as { reason: string }).reason, /connector/);
   } finally {
     console.error = originalError;
   }

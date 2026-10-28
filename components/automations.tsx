@@ -8,6 +8,7 @@ import { useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { InlineMessage } from "@/components/ui/notice";
 import { type Automation, TRIGGER_LABELS } from "@/lib/automations/rules";
+import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
 import type { AutomationTemplate } from "@/lib/automations/templates";
 import type { AutomationRun } from "@/lib/db/automation-runs";
 import { requestJson } from "@/lib/http/request-json";
@@ -63,9 +64,9 @@ export function Automations({
 
         <GitHubAppStatus appSlug={appSlug} installations={installations} admin={admin} />
 
-        <AutomationList orgId={org.id} automations={automations} admin={admin} />
+        <AutomationList orgId={org.id} automations={automations} admin={admin} byConnector={!org.personal} />
 
-        {automations?.length ? <RecentRuns runs={runs} /> : null}
+        {automations?.length ? <RecentRuns runs={runs} byConnector={!org.personal} /> : null}
 
         {admin && templates.length > 0 ? (
           <section className="space-y-2">
@@ -137,10 +138,13 @@ function AutomationList({
   orgId,
   automations,
   admin,
+  byConnector,
 }: {
   orgId: string;
   automations: Automation[] | null;
   admin: boolean;
+  /** A team org's: they run as its connector, not a member. */
+  byConnector: boolean;
 }) {
   const router = useRouter();
   const [switching, setSwitching] = useState<string | null>(null);
@@ -192,11 +196,9 @@ function AutomationList({
                     <Link href={`/automations/${automation.id}`} className="text-foreground hover:underline">
                       {automation.name}
                     </Link>
-                    {automation.runsAs === null ? (
-                      <div className="text-xs text-warning">
-                        Runs as no one{admin ? ": open it and save to run it as you" : " until an admin saves it"}
-                      </div>
-                    ) : automation.runsAs.login ? (
+                    {byConnector ? (
+                      <div className="text-xs text-muted-foreground">Runs as {CONNECTOR_NAME}</div>
+                    ) : automation.runsAs?.login ? (
                       <div className="text-xs text-muted-foreground">Runs as @{automation.runsAs.login}</div>
                     ) : null}
                   </td>
@@ -271,7 +273,7 @@ const WHEN = new Intl.DateTimeFormat("en-US", {
 
 /** The org's latest runs: which automation, on which pull request and
  *  commit, how it went, and the session it started. */
-function RecentRuns({ runs }: { runs: AutomationRun[] | null }) {
+function RecentRuns({ runs, byConnector }: { runs: AutomationRun[] | null; byConnector: boolean }) {
   return (
     <section className="space-y-2">
       <h2 className="text-[13px] font-medium text-foreground">Recent runs</h2>
@@ -315,7 +317,8 @@ function RecentRuns({ runs }: { runs: AutomationRun[] | null }) {
                     <td className="px-3 py-2.5">
                       <div className={status.tone}>{status.label}</div>
                       {run.reason ? <div className="max-w-xs text-xs text-muted-foreground">{run.reason}</div> : null}
-                      {run.workspaceId ? (
+                      {/* A connector's session is its own, not a member's to open. */}
+                      {run.workspaceId && !byConnector ? (
                         <Link href={`/workspaces/${run.workspaceId}`} className="text-xs text-muted-foreground hover:underline">
                           Open session
                         </Link>
