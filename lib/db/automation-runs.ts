@@ -209,8 +209,11 @@ export type AutomationRun = {
   createdAt: string;
 };
 
+/** How many of an org's latest runs the Automations page loads. */
+export const RECENT_RUNS = 50;
+
 /** An org's latest runs, newest first. */
-export async function listRuns(orgId: string, limit = 50, onlyId?: string): Promise<AutomationRun[]> {
+export async function listRuns(orgId: string, limit = RECENT_RUNS, onlyId?: string): Promise<AutomationRun[]> {
   const supabase = createSupabaseAdminClient();
   const { data: automations, error } = await supabase.from("automations").select("id, name").eq("org_id", orgId);
   if (error) throw error;

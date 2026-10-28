@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { Automations } from "@/components/automations";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { AUTOMATION_TEMPLATES } from "@/lib/automations/templates";
-import { listRuns } from "@/lib/db/automation-runs";
+import { listRuns, RECENT_RUNS } from "@/lib/db/automation-runs";
 import { listAutomations } from "@/lib/db/automations";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
@@ -66,6 +66,7 @@ async function AutomationsSection() {
       installations={installations?.map((i) => ({ login: i.accountLogin, suspended: i.suspended })) ?? null}
       automations={automations}
       runs={runs}
+      runsLimit={RECENT_RUNS}
       templates={AUTOMATION_TEMPLATES.map(({ id, name, description, category, triggers }) => ({
         id,
         name,

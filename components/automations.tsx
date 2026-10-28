@@ -33,6 +33,7 @@ export function Automations({
   installations,
   automations,
   runs,
+  runsLimit,
   templates,
 }: {
   org: Org;
@@ -45,6 +46,9 @@ export function Automations({
   automations: Automation[] | null;
   /** Their latest runs, newest first; null when they couldn't be read. */
   runs: AutomationRun[] | null;
+  /** How many runs are loaded at most: as many as that means there may be
+   *  more. */
+  runsLimit: number;
   templates: TemplateCard[];
 }) {
   const admin = org.role === "admin";
@@ -59,7 +63,11 @@ export function Automations({
   const [picked, setPicked] = useState<Tab>(tabs[0] ?? "templates");
   // The tab picked may be gone after a refresh (the last automation deleted).
   const active = tabs.includes(picked) ? picked : tabs[0];
-  const count: Record<Tab, number | null> = { templates: templates.length, runs: runs?.length ?? null };
+  const count: Record<Tab, string | null> = {
+    templates: templates.length ? String(templates.length) : null,
+    // A full page of runs isn't all of them: "50+", not a total.
+    runs: runs?.length ? `${runs.length}${runs.length >= runsLimit ? "+" : ""}` : null,
+  };
 
   // The page fills the pane and the tab under the automations takes what's
   // left, scrolling on its own, so a long list of runs doesn't scroll the
