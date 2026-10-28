@@ -319,23 +319,27 @@ export async function installationPullRequest(
   number: number,
   doFetch: Fetch = fetch,
 ): Promise<Record<string, unknown>> {
+  // Suspended, or only rate limited (GitHub answers 403 to both, minting a
+  // token or using one): the installation itself says which.
+  const throwIfSuspended = async (error: unknown) => {
+    if (!(error instanceof GitHubAppError && error.status === 403)) return;
+    const installation = await getInstallation(config, installationId, doFetch).catch(() => null);
+    if (installation?.suspendedAt) throw new InstallationSuspendedError(installationId, installation.suspendedAt);
+  };
   for (let attempt = 0; ; attempt++) {
     let token: string;
     try {
       token = await installationToken(config, installationId, doFetch);
     } catch (error) {
       if (error instanceof GitHubAppError && error.status === 404) throw new InstallationGoneError();
-      // Suspended, or only rate limited (GitHub answers 403 to both): the
-      // installation itself says which.
-      if (error instanceof GitHubAppError && error.status === 403) {
-        const installation = await getInstallation(config, installationId, doFetch).catch(() => null);
-        if (installation?.suspendedAt) throw new InstallationSuspendedError(installationId, installation.suspendedAt);
-      }
+      await throwIfSuspended(error);
       throw error;
     }
     try {
       return await getPullRequest(token, repoFullName, number, doFetch);
     } catch (error) {
+      // A token kept from before a suspension is refused when it's used.
+      await throwIfSuspended(error);
       if (!(error instanceof GitHubAppError && error.status === 401)) throw error;
       dropInstallationToken(installationId);
       if (attempt > 0) throw new InstallationGoneError();

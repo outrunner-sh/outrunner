@@ -184,6 +184,24 @@ test("a pull request is read with a kept token; one GitHub refuses is minted aga
       error.installationId === 105 &&
       error.suspendedAt === "2026-10-28T12:00:00Z",
   );
+  // A token kept from before the suspension: refused when it's used.
+  const later2 = new Date(Date.now() + 3_600_000).toISOString();
+  const keptThenSuspended = (async (url: string | URL) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith("/access_tokens")) return new Response(JSON.stringify({ token: "t", expires_at: later2 }), { status: 201 });
+    if (path === "/app/installations/107") {
+      return new Response(
+        JSON.stringify({ id: 107, account: { login: "o", type: "Organization" }, repository_selection: "all", suspended_at: "2026-10-28T12:00:00Z" }),
+        { status: 200 },
+      );
+    }
+    return new Response("{}", { status: 403 });
+  }) as typeof fetch;
+  try {
+    await assert.rejects(installationPullRequest(config, 107, "o/r", 7, keptThenSuspended), InstallationSuspendedError);
+  } finally {
+    dropInstallationToken(107);
+  }
   // A 403 that isn't one (a rate limit) is thrown as it is: worth trying again.
   await assert.rejects(
     installationPullRequest(config, 106, "o/r", 7, refusedAs(null)),
