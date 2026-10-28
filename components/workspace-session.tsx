@@ -190,7 +190,8 @@ export function WorkspaceSession({
   const anchor = (pendingId: string, sentAt: number) =>
     setPending((prev) => settlePending(prev, pendingId, userPrompts(eventsRef.current), sentAt));
 
-  const send = (text: string, attachmentIds: string[] = [], retry?: () => void) => {
+  /** `leaving` is called as the request itself goes, once attached. */
+  const send = (text: string, attachmentIds: string[] = [], retry?: () => void, leaving?: () => void) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
     if (trimmed) {
@@ -213,7 +214,10 @@ export function WorkspaceSession({
       return false;
     };
     return whenAttached().then(
-      () => deliver(text, attachmentIds, pendingId, failed),
+      () => {
+        leaving?.();
+        return deliver(text, attachmentIds, pendingId, failed);
+      },
       (error: unknown) => failed(error instanceof Error ? error.message : "Could not connect to send that message."),
     );
   };
@@ -585,6 +589,10 @@ export function WorkspaceSession({
   // keyboard: the one the URL carries, else the one kept for this session
   // while its box was set up (lib/session/first-prompt.ts).
   const sentInitial = useRef(false);
+  // The first prompt a reload cut off mid-send, while the conversation hasn't
+  // shown it.
+  const [cutOff, setCutOff] = useState<FirstPrompt | null>(null);
+  const cutOffShown = cutOff && userPromptCount(conversation.events) === 0 ? cutOff : null;
   useEffect(() => {
     if (sentInitial.current || !attached) return;
     const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
@@ -609,22 +617,29 @@ export function WorkspaceSession({
     };
     // A page before a reload had sent it, and the reload cut that send off
     // before it could forget it: it most likely reached Claude, so it isn't
-    // sent again (firstPromptCutOff).
+    // sent again (firstPromptCutOff). It is said, with a way to send it, until
+    // the conversation shows a prompt, so a send that never got there costs
+    // a click rather than the prompt.
     if (!local && firstPromptCutOff(tabStorage(), workspaceId)) {
+      // Once, on ready, behind the same guard as the send: storage is read
+      // here and nowhere a render could.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCutOff(first);
       itWent();
       return;
     }
     // Send it, cleaning up only once it lands. A failed send keeps its Retry.
-    // The kept copy is marked going as the send leaves, so a reload mid-send
-    // finds it marked; a failure puts it back to waiting, for a reload to send.
-    const attempt = (): Promise<boolean> => {
-      if (!local) markFirstPromptGoing(tabStorage(), workspaceId, true);
-      return send(first.prompt, first.attachmentIds, retry).then((landed) => {
+    // The kept copy is marked going as the request itself leaves, not while
+    // it waits on the session, so a reload mid-request finds it marked; any
+    // failure, the route's own included, puts it back to waiting.
+    const attempt = (): Promise<boolean> =>
+      send(first.prompt, first.attachmentIds, retry, () => {
+        if (!local) markFirstPromptGoing(tabStorage(), workspaceId, true);
+      }).then((landed) => {
         if (landed) itWent();
         else if (!local) markFirstPromptGoing(tabStorage(), workspaceId, false);
         return landed;
       });
-    };
     // The composer's Retry re-enters through the same once-per-tab gate as
     // the first try, so a retry racing a remounted page still sends it once.
     const retry = (): void => void sendFirstPromptOnce(workspaceId, attempt);
@@ -745,6 +760,23 @@ export function WorkspaceSession({
         // An answer that didn't go is the card's failure to say, not the
         // composer's: the composer is away while the card is up.
         <InlineMessage>{answerError}</InlineMessage>
+      ) : null}
+      {!waitingOnUser && cutOffShown ? (
+        <InlineMessage
+          tone="info"
+          actions={[
+            {
+              label: "Send it again",
+              onClick: () => {
+                setCutOff(null);
+                void send(cutOffShown.prompt, cutOffShown.attachmentIds);
+              },
+            },
+            { label: "Dismiss", onClick: () => setCutOff(null) },
+          ]}
+        >
+          Your first message was on its way when the page reloaded. If it doesn&apos;t show up, send it again.
+        </InlineMessage>
       ) : null}
       {!waitingOnUser && questionGone ? (
         <InlineMessage tone="info" actions={[{ label: "Dismiss", onClick: () => setQuestionGone(null) }]}>

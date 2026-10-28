@@ -181,8 +181,8 @@ export function markFirstPromptGoing(storage: PromptStorage | null, workspaceId:
  * closed tab, restored) does that, and the prompt most likely reached Claude
  * anyway: the server carries on with a request whose page has gone. Sending it
  * again would have Claude do it twice, so the page lets it go instead. At most
- * once, rather than at least: the rare send a reload stopped before it left is
- * lost, and the user types it again.
+ * once, rather than at least: for the rare send that never got there (a reload
+ * before it left, the route failing after), the page offers it again instead.
  */
 export function firstPromptCutOff(storage: PromptStorage | null, workspaceId: string): boolean {
   if (sending.has(workspaceId) || sent.has(workspaceId)) return false;
