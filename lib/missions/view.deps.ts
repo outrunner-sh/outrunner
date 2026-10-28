@@ -73,9 +73,8 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
     runnerIds.length ? db().from("mission_runner_briefs").select("runner_id, brief").in("runner_id", runnerIds) : Promise.resolve({ data: [] }),
     runnerIds.length ? db().from("runner_pull_requests").select("*").in("runner_id", runnerIds) : Promise.resolve({ data: [] }),
     runnerIds.length ? db().from("turn_watches").select("workspace_id").in("workspace_id", runnerIds) : Promise.resolve({ data: [] }),
-    runnerIds.length
-      ? db().from("mission_events").select("runner_id, kind, payload, created_at").in("runner_id", runnerIds).order("created_at", { ascending: false }).limit(500)
-      : Promise.resolve({ data: [] }),
+    // Each Runner's latest event, however many the others have.
+    runnerIds.length ? db().rpc("latest_mission_events", { runner_ids: runnerIds }) : Promise.resolve({ data: [] }),
   ]);
   const profileOf = new Map((profiles.data ?? []).map((p) => [p.mission_id, p]));
   const envName = new Map((environments.data ?? []).map((e: { id: string; name: string }) => [e.id, e.name]));
@@ -183,4 +182,16 @@ export async function ownsMission(ownerId: string, missionId: string): Promise<W
 export async function setMissionProfile(missionId: string, patch: { icon?: string; position?: number }): Promise<void> {
   const { error } = await db().from("mission_profiles").upsert({ mission_id: missionId, ...patch }, { onConflict: "mission_id" });
   if (error) throw error;
+}
+
+/** Put the owner's Missions in `ids`' order: theirs only, in one write. */
+export async function setMissionOrder(ownerId: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const { data, error } = await db().from("workspaces").select("id").eq("owner_id", ownerId).eq("kind", "mission").in("id", ids);
+  if (error) throw error;
+  const owned = new Set((data ?? []).map((r) => r.id));
+  const rows = ids.flatMap((id, position) => (owned.has(id) ? [{ mission_id: id, position }] : []));
+  if (rows.length === 0) return;
+  const { error: writeError } = await db().from("mission_profiles").upsert(rows, { onConflict: "mission_id" });
+  if (writeError) throw writeError;
 }

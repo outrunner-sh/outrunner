@@ -65,17 +65,15 @@ export function boolArg(args: Record<string, unknown>, name: string): boolean {
   return args[name] === true;
 }
 
-/** What a Runner is told when it starts in plan mode, before its brief: the
- *  Mission reads the plan, then says go (message_runner). */
-export const PLAN_MODE_PREFIX =
-  "Plan mode: read what you need, then reply with your plan and end your turn. Don't change any files until you're told to go ahead.\n\n";
-
 /** A Mission's name from its first message: its first sentence, short, cut
  *  at a word. A session's title can be its whole first line; a Mission sits
  *  in the sidebar for weeks, so it gets a name. */
 export function missionName(prompt: string): string {
-  const plain = prompt.replace(/[`*_#>]/g, "").replace(/\s+/g, " ").trim();
-  const sentence = plain.split(/(?<=[.!?:;])\s|\n/)[0]?.replace(/[.!?:;,]+$/, "") ?? "";
+  // Its first line that says something, then that line's first sentence: a
+  // heading-style first line is the name it was given.
+  const firstLine = prompt.split("\n").find((line) => line.replace(/[`*_#>\s]/g, "")) ?? "";
+  const plain = firstLine.replace(/[`*_#>]/g, "").replace(/\s+/g, " ").trim();
+  const sentence = plain.split(/(?<=[.!?:;])\s/)[0]?.replace(/[.!?:;,]+$/, "") ?? "";
   if (sentence.length <= 48) return sentence || "New Mission";
   const cut = sentence.slice(0, 48);
   return `${cut.slice(0, cut.lastIndexOf(" ") > 20 ? cut.lastIndexOf(" ") : 48).trim()}…`;

@@ -16,9 +16,20 @@ import { MAX_RUNNERS } from "@/lib/missions/rules";
 import { MISSION_STATUS_LABEL } from "@/lib/missions/view";
 import { cn } from "@/lib/utils";
 
-async function patch(id: string, body: { title?: string; icon?: string }): Promise<void> {
-  await fetch(`/api/missions/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  await refreshMissions();
+/** Save a change to the Mission; the reason it wasn't saved, or null. */
+async function patch(id: string, body: { title?: string; icon?: string }): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/missions/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (!response.ok) {
+      const answer = (await response.json().catch(() => null)) as { error?: string } | null;
+      return answer?.error ?? "That wasn't saved. Try again.";
+    }
+    return null;
+  } catch {
+    return "Couldn't reach Outrunner. Try again.";
+  } finally {
+    await refreshMissions();
+  }
 }
 
 export function MissionHeader({ missionId, fallbackTitle }: { missionId: string; fallbackTitle: string }) {
@@ -27,6 +38,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const [icon, setIcon] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const shownIcon = icon ?? mission?.icon ?? null;
   const current = missionIcon(missionId, shownIcon);
@@ -40,7 +52,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
   const save = () => {
     setEditing(false);
     const next = draft.trim();
-    if (next && next !== title) void patch(missionId, { title: next });
+    if (next && next !== title) void patch(missionId, { title: next }).then(setFailed);
   };
 
   return (
@@ -64,7 +76,11 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
                 title={label}
                 onClick={() => {
                   setIcon(key);
-                  void patch(missionId, { icon: key });
+                  // Not saved: back to the one it has, and why.
+                  void patch(missionId, { icon: key }).then((why) => {
+                    setFailed(why);
+                    if (why) setIcon(null);
+                  });
                 }}
                 className={cn(
                   "grid size-8 place-items-center rounded-md text-[#bdbdbd] transition-colors hover:bg-white/[0.07] hover:text-white",
@@ -106,6 +122,11 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
         >
           {title}
         </button>
+      )}
+      {failed && (
+        <span role="alert" className="shrink-0 truncate text-[12px] text-[#ffa198]" title={failed}>
+          {failed}
+        </span>
       )}
       {mission && (
         <span className="hidden shrink-0 items-center gap-1.5 text-[12px] text-[#8f8f8f] sm:inline-flex" title={MISSION_STATUS_LABEL[mission.status]}>

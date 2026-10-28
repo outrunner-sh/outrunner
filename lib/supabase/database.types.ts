@@ -1667,6 +1667,11 @@ export type Database = {
         Args: { target: string; failure: string };
         Returns: undefined;
       };
+      // supabase/migrations/20261102220000_mission_profiles.sql
+      latest_mission_events: {
+        Args: { runner_ids: string[] };
+        Returns: { runner_id: string; kind: string; payload: Json; created_at: string }[];
+      };
       missions_with_pending_events: {
         Args: { max_missions: number };
         Returns: { mission_id: string }[];

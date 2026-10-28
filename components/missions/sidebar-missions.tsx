@@ -12,7 +12,6 @@ import { GitPullRequest, Plus, Rocket } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { MissionGlyph, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
-import { MissionToasts } from "@/components/missions/mission-toasts";
 import { NewMissionDialog } from "@/components/missions/new-mission-dialog";
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMissions } from "@/hooks/use-missions";
@@ -51,11 +50,17 @@ export function SidebarMissions({ active, projects }: { active?: string; project
 
   const drop = (target: string) => {
     if (!dragging || dragging === target) return;
+    // Dragged down, it goes after the row it's dropped on; up, before: so
+    // the last place can be reached.
+    const from = shown.findIndex((m) => m.id === dragging);
     const ids = shown.map((m) => m.id).filter((id) => id !== dragging);
-    ids.splice(ids.indexOf(target), 0, dragging);
+    const to = ids.indexOf(target);
+    ids.splice(from <= to ? to + 1 : to, 0, dragging);
     setOrder(ids);
+    // Not saved: back to the server's order, which the next look shows.
     void fetch("/api/missions/order", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) }).then(
-      () => refreshMissions(),
+      (response) => (response.ok ? refreshMissions() : setOrder(null)),
+      () => setOrder(null),
     );
   };
 
@@ -200,7 +205,6 @@ export function SidebarMissions({ active, projects }: { active?: string; project
         )}
       </div>
       <NewMissionDialog open={creating} onOpenChange={setCreating} projects={projects} />
-      <MissionToasts />
     </section>
   );
 }

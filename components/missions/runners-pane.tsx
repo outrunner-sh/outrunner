@@ -39,6 +39,9 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
   const runners = useMemo(() => mission?.runners ?? [], [mission]);
   const open = runners.find((r) => r.id === openId) ?? null;
   const done = runners.filter((r) => r.group === "done");
+  // The same function each render: the detail's effects mustn't restart on
+  // every poll.
+  const back = useCallback(() => setOpenId(null), []);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -49,7 +52,7 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
     rows[Math.min(rows.length - 1, Math.max(0, at + (event.key === "ArrowDown" ? 1 : -1)))]?.focus();
   };
 
-  if (open) return <RunnerDetail missionId={missionId} runner={open} onBack={() => setOpenId(null)} />;
+  if (open) return <RunnerDetail missionId={missionId} runner={open} onBack={back} />;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -192,13 +195,21 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
     if (response?.ok) setDetail((await response.json()) as Detail);
   }, [missionId, runner.id]);
 
+  // Focus goes to Back once, as it opens; never again while it's open.
+  useEffect(() => {
+    back.current?.focus();
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- the first look, then every 10s
     void load();
-    back.current?.focus();
     const timer = setInterval(() => void load(), 10_000);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onBack();
+      if (e.key !== "Escape") return;
+      // Not while a message is being written: Escape mustn't throw it away.
+      const target = e.target as HTMLElement | null;
+      if (target instanceof HTMLTextAreaElement && target.value.trim()) return;
+      onBack();
     };
     window.addEventListener("keydown", onKey);
     return () => {
