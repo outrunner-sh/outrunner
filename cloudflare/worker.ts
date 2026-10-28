@@ -112,8 +112,8 @@ export class OutrunnerControlPlane extends Container<Env> {
    *  failed check. */
   private current: Promise<void> | null = null;
 
-  /** The one start under way (startWhenStopped), which every request that
-   *  needs the container started waits on; null when there's none. */
+  /** The one start under way (startWhenStopped); null when there's none.
+   *  Every request waits on it before it's sent to the container. */
   private starting: Promise<void> | null = null;
 
   /**
@@ -135,6 +135,10 @@ export class OutrunnerControlPlane extends Container<Env> {
   override async fetch(request: Request): Promise<Response> {
     await this.runCurrentImage();
     await this.checkBuild();
+    // A start a retry set off: sent now, this request would have the Container
+    // class start the container too, alongside it. Its failure is that
+    // retry's to report; this request then goes on as if there'd been none.
+    if (this.starting) await this.starting.catch(() => {});
     const response = await super.fetch(request);
     // A body already sent can't be sent again.
     if (!mayBeContainerError(response) || request.bodyUsed) return response;
@@ -234,7 +238,8 @@ export class OutrunnerControlPlane extends Container<Env> {
    * `defaultPort`. destroy() can resolve while the runtime still says the old
    * one is running, and the start does nothing for a container that reads as
    * running: it only waits for the port, which the old one may still answer.
-   * Concurrent callers share one start.
+   * Its callers (the two replacements and fetch's retry) share one start,
+   * and fetch waits on it before sending any request.
    */
   private startWhenStopped(): Promise<void> {
     this.starting ??= (async () => {
