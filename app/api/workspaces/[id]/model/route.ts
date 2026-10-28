@@ -97,7 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
   // OpenRouter, so only for a switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder), effort);
+    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder, workspace.orgId), effort);
   } catch (error) {
     return modelKeyErrorResponse(error, `Model: could not get the ${model.provider} key of ${owner.id}`);
   }
@@ -133,7 +133,7 @@ export async function POST(request: Request, context: RouteContext) {
     await signInSession(
       sessionAuthClient(agent, identity, upgrade),
       workspace.agent,
-      agentAuthStore(owner.id),
+      agentAuthStore(owner.id, workspace.orgId),
       runsOnOwnAccount(model),
     );
   } catch (error) {

@@ -190,7 +190,8 @@ export async function createCloudSession(
     return NextResponse.json({ error: "Choose a model the agent runs." }, { status: 400 });
   }
   const agentId = agentOf(chosenModel?.provider ?? "claude", askedAgent);
-  const menu = await modelMenu(owner.id);
+  // With the org's keys: a member with none of their own runs on them.
+  const menu = await modelMenu(owner.id, project.orgId);
   // First: it turns on the server's setup alone, and no credential of the
   // user's would change it.
   if (options.meteredOnly && !menu.allowance) {
@@ -208,7 +209,7 @@ export async function createCloudSession(
   // How it signs in, said before a box is set up for it, not after.
   let auth: ResolvedAuth;
   try {
-    auth = await resolveAgentAuth(agentAuthStore(owner.id), agentId, "cloud", { ownAccount });
+    auth = await resolveAgentAuth(agentAuthStore(owner.id, project.orgId), agentId, "cloud", { ownAccount });
   } catch (error) {
     if (!(error instanceof AgentAuthError)) throw error;
     return NextResponse.json({ error: error.message, settingsHref: error.settingsHref }, { status: 409 });
@@ -649,7 +650,7 @@ async function provisionWorkspace({
       // Before the first launch, so Claude starts on it rather than switching.
       const startsOn = await startingModel({
         setModel: (req) => agent.setModel(identity, req),
-        keyFor: (holder) => modelKey(owner.id, holder),
+        keyFor: (holder) => modelKey(owner.id, holder, project.orgId),
         hasClaude,
         model: chosenModel,
         effort: chosenEffort,

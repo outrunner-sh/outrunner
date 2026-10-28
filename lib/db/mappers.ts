@@ -50,6 +50,7 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
   return {
     id: row.id,
     projectId: row.project_id,
+    orgId: row.org_id,
     ownerId: row.owner_id,
     provider: toProviderName(row.provider),
     status: row.status,
