@@ -1,7 +1,7 @@
 import type { AgentId } from "@/lib/agents/registry";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import { isDesktopApp } from "@/lib/is-desktop";
-import type { AgentPick, AgentStatus, OnboardingEnv, OnboardingUser, RepositoryList } from "@/lib/onboarding/types";
+import type { AgentPick, AgentStatus, GitHubAccess, OnboardingEnv, OnboardingUser, RepositoryList } from "@/lib/onboarding/types";
 import {
   CLAUDE_DEFAULT_MODEL,
   CODEX_MODELS,
@@ -100,6 +100,8 @@ export function liveEnv(user: OnboardingUser, server: { outrunnerModels: boolean
       forgetOutrunnerModels();
     },
 
+    githubAccess: () => call<{ access: GitHubAccess | null }>("GET", "/api/onboarding/github").then((r) => r.access),
+    useOrg: (orgId) => call("POST", "/api/orgs/active", { orgId }).then(() => undefined),
     repositories: () => call<RepositoryList>("GET", "/api/github/repositories"),
     async connect(githubRepoIds) {
       const { projects } = await call<{ projects: Project[] }>("POST", "/api/projects/sync", { repoIds: githubRepoIds });

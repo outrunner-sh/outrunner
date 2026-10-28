@@ -68,13 +68,17 @@ const INSTALL_STATE_SECONDS = 30 * 60;
 
 /** What an install link carries back to the setup route: which org the admin
  *  installed for, and who they were. */
-export type InstallState = { orgId: string; userId: string };
+export type InstallState = { orgId: string; userId: string; next?: InstallReturn };
+
+/** Where an install may come back to, besides the org's GitHub settings. */
+export type InstallReturn = "/onboarding";
+export const isInstallReturn = (value: unknown): value is InstallReturn => value === "/onboarding";
 
 /** The `state` an install link carries, signed so the setup route knows the
  *  org and the admin are the ones it sent. */
 export function signInstallState(secret: string, state: InstallState, nowSeconds = Math.floor(Date.now() / 1000)): string {
   const payload = Buffer.from(
-    JSON.stringify({ o: state.orgId, u: state.userId, e: nowSeconds + INSTALL_STATE_SECONDS }),
+    JSON.stringify({ o: state.orgId, u: state.userId, e: nowSeconds + INSTALL_STATE_SECONDS, ...(state.next && { n: state.next }) }),
   ).toString("base64url");
   return `${payload}.${installStateMac(secret, payload)}`;
 }
@@ -92,13 +96,14 @@ export function readInstallState(
   const given = Buffer.from(mac);
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   try {
-    const { o, u, e } = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+    const { o, u, e, n } = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
       o?: unknown;
       u?: unknown;
       e?: unknown;
+      n?: unknown;
     };
     if (typeof o !== "string" || typeof u !== "string" || typeof e !== "number" || e < nowSeconds) return null;
-    return { orgId: o, userId: u };
+    return { orgId: o, userId: u, ...(isInstallReturn(n) && { next: n }) };
   } catch {
     return null;
   }
