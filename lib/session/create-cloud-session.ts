@@ -81,7 +81,7 @@ import {
   retireComputer,
 } from "@/lib/runtime/sandbox-choice";
 import { NoModalTokenError } from "@/lib/runtime/user-modal-provider";
-import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
+import { boxUpgrade, runtimeSessionEnvironment, withoutGitHubToken } from "@/lib/runtime/session-environment";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { refillProjectPool, takePooledBox } from "@/lib/runtime/warm-pool.deps";
 import type { Project, ProvisionPhase, RuntimeProvider, Workspace } from "@/lib/runtime/types";
@@ -222,9 +222,7 @@ export async function createCloudSession(
   if ("refusal" in githubToken) return githubToken.refusal;
   const userEnv = await runtimeSessionEnvironment(owner.id);
   // A review's box asks for the App's tokens; the user's own isn't on it.
-  const sessionEnv = options.reviewAsApp
-    ? Object.fromEntries(Object.entries(userEnv).filter(([name]) => name !== "GH_TOKEN"))
-    : userEnv;
+  const sessionEnv = options.reviewAsApp ? withoutGitHubToken(userEnv) : userEnv;
   // Whether it can run on the user's Claude: only as they picked it (or, with
   // no pick, on what they saved), which `auth` holds. Never on the box's own
   // environment instead, which may hold a key the user didn't pick, or one
@@ -357,6 +355,9 @@ export async function createCloudSession(
       baseBranch,
       provider: provider.name,
       agent: agentId,
+      // Marked on the session itself: its box's token requests are the App's
+      // however its run goes (app/api/runtime/git-credential).
+      ...(options.reviewAsApp && { githubAs: "app_review" as const }),
     });
   } catch (error) {
     // A requested branch can be one a live session already works on: name that

@@ -67,7 +67,12 @@ export function boxUpgrade(
   if (!provider.upgradesAgents) return undefined;
   return async () => {
     const env = await runtimeSessionEnvironment(userId);
-    if (withoutGitHub) delete env.GH_TOKEN;
-    await provider.upgradeAgent(sandboxId, secret, env);
+    await provider.upgradeAgent(sandboxId, secret, withoutGitHub ? withoutGitHubToken(env) : env);
   };
+}
+
+/** A box's environment without its user's GitHub token: an automation's
+ *  review box, which asks for the App's as it goes. */
+export function withoutGitHubToken(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => name !== "GH_TOKEN"));
 }

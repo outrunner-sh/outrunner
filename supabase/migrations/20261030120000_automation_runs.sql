@@ -34,3 +34,9 @@ create index if not exists automation_runs_started_idx on automation_runs (updat
 
 alter table automation_runs enable row level security;
 revoke all on table automation_runs from anon, authenticated;
+
+-- A session that works on GitHub as the App to review (an automation run's):
+-- its box's token requests are answered with the App's at the `review` level
+-- (app/api/runtime/git-credential). Kept on the session itself, set when it's
+-- made, so it holds however its run or automation goes (deleted, say).
+alter table workspaces add column if not exists github_as text check (github_as in ('app_review'));

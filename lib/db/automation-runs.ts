@@ -199,14 +199,3 @@ export async function listRuns(orgId: string, limit = 50): Promise<AutomationRun
   }));
 }
 
-/** Whether a session is an automation run's: its box works on GitHub as the
- *  App (app/api/runtime/git-credential). */
-export async function isAutomationSession(workspaceId: string): Promise<boolean> {
-  const { data, error } = await createSupabaseAdminClient()
-    .from("automation_runs")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .limit(1);
-  if (error) throw error;
-  return (data ?? []).length > 0;
-}

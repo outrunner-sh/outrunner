@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { isAutomationSession } from "@/lib/db/automation-runs";
 import { listOrgProjects } from "@/lib/db/org-access";
 import { memberRole } from "@/lib/db/orgs";
 import { MissingGithubTokenError } from "@/lib/github/client";
@@ -77,7 +76,7 @@ export async function POST(request: Request) {
         : (await listOrgProjects(computer.org_id)).find((p) => p.id === computer.project_id)?.fullName;
     if (!repo) return NextResponse.json({ error: "This box's project is gone." }, { status: 404 });
 
-    const review = computer.workspace_id ? await isAutomationSession(computer.workspace_id) : false;
+    const review = computer.workspace_id ? await worksAsAppReview(computer.workspace_id) : false;
     const credential = await gitCredentialFor({
       userId: computer.owner_id,
       orgId: computer.org_id,
@@ -98,4 +97,16 @@ export async function POST(request: Request) {
     console.error(`Git credential: no token for box ${sandboxId}`, cause);
     return NextResponse.json({ error: "Outrunner couldn't get a GitHub token. Try again." }, { status: 502 });
   }
+}
+
+/** Whether a box's session works on GitHub as the App, to review (an
+ *  automation run's): marked on the session when it was made. */
+async function worksAsAppReview(workspaceId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("workspaces")
+    .select("github_as")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.github_as === "app_review";
 }

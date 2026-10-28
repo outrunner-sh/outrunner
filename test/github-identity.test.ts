@@ -129,6 +129,11 @@ test("an automation's review works as the App whatever the member chose, reading
     resolveGitCredential({ ...ask, identity: "app", level: "review" }, { ...d, repoLevel: async () => null }),
     GitIdentityError,
   );
+  // And with write access to it: the token writes to pull requests.
+  await assert.rejects(
+    resolveGitCredential({ ...ask, identity: "app", level: "review" }, { ...d, repoLevel: async () => "read" }),
+    GitIdentityError,
+  );
 });
 
 test("the App reaches only a project the member has access to", async () => {

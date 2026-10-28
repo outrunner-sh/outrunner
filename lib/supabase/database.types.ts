@@ -93,6 +93,8 @@ type ProjectRow = {
 
 type WorkspaceRow = {
   id: string;
+  /** 'app_review': it works on GitHub as the App, to review (20261030120000). */
+  github_as?: "app_review" | null;
   /** Its project's org, set from the project. */
   org_id: string;
   owner_id: string;
