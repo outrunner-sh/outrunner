@@ -333,12 +333,10 @@ export function watchModelKey(orgId: string): Promise<string> {
   const answer = orgModelKey(orgId);
   watchAnswers.set(orgId, { at: now, answer });
   answer.catch((error: unknown) => {
-    if (lasting(error)) {
-      // Said once a minute, not at every message.
-      console.error(`Slack agent: no model key for org ${orgId}'s watched channels`, error);
-    } else if (watchAnswers.get(orgId)?.answer === answer) {
-      watchAnswers.delete(orgId);
-    }
+    // Said once per ask: a lasting refusal once a minute, a blip each time
+    // it happens (it isn't kept, so the next message asks again).
+    console.error(`Slack agent: no model key for org ${orgId}'s watched channels`, error);
+    if (!lasting(error) && watchAnswers.get(orgId)?.answer === answer) watchAnswers.delete(orgId);
   });
   return answer;
 }
