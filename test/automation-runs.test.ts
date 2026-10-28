@@ -11,7 +11,7 @@ import {
   startRun,
   type StartDeps,
 } from "@/lib/automations/runs";
-import type { RerunTarget, RunCandidate, RunRecord } from "@/lib/db/automation-runs";
+import type { Recorded, RerunTarget, RunCandidate, RunRecord } from "@/lib/db/automation-runs";
 import { isPullRequestEvent } from "@/lib/automations/run-event";
 import type { ServerSessionStart } from "@/lib/session/server-session";
 
@@ -44,6 +44,9 @@ const candidate: RunCandidate = {
   projectId: "p1",
   repoFullName: "neevai-labs/outrunner",
   orgId: "o1",
+  reviewers: [],
+  labels: [],
+  sessionMode: "new",
 };
 
 test("opened, reopened and ready for review are reviewed as new; new commits as synchronize", () => {
@@ -51,7 +54,11 @@ test("opened, reopened and ready for review are reviewed as new; new commits as 
   assert.equal(triggerFor("reopened"), "pull_request.opened");
   assert.equal(triggerFor("ready_for_review"), "pull_request.opened");
   assert.equal(triggerFor("synchronize"), "pull_request.synchronize");
-  for (const other of ["closed", "edited", "labeled", undefined]) assert.equal(triggerFor(other), null);
+  // Closed is merged or not; a review requested is its own.
+  assert.equal(triggerFor("closed", true), "pull_request.merged");
+  assert.equal(triggerFor("closed", false), "pull_request.closed");
+  assert.equal(triggerFor("review_requested"), "pull_request.review_requested");
+  for (const other of ["edited", "labeled", "review_request_removed", undefined]) assert.equal(triggerFor(other), null);
 });
 
 test("a pull request event is read with what a run needs", () => {
@@ -69,7 +76,7 @@ test("a pull request event is read with what a run needs", () => {
 });
 
 test("drafts, forks, bots and other actions start nothing", () => {
-  assert.equal(readPullRequestEvent(payload({ action: "closed" })), "action");
+  assert.equal(readPullRequestEvent(payload({ action: "edited" })), "action");
   assert.equal(readPullRequestEvent(payload({ pr: { draft: true } })), "draft");
   assert.equal(
     readPullRequestEvent(payload({ pr: { head: { sha: SHA, ref: "x", repo: { full_name: "someone/outrunner" } } } })),
@@ -115,12 +122,12 @@ test("an event records one run per matching automation, in one write, once per c
     },
     recordRuns: async (runs: RunRecord[]) => {
       writes.push(runs.length);
-      const made = new Map<string, string>();
+      const made = new Map<string, Recorded>();
       for (const run of runs) {
         const key = `${run.automationId}:${run.projectId}`;
         if (recorded.has(`${key}@${run.headSha}`)) continue;
         recorded.add(`${key}@${run.headSha}`);
-        made.set(key, `run-${run.automationId}`);
+        made.set(key, { runId: `run-${run.automationId}`, queued: false });
       }
       return made;
     },
@@ -187,6 +194,9 @@ function startDeps(over: Partial<StartDeps> = {}) {
     settleRun: async (_id, outcome) => {
       settled.push(outcome);
     },
+    waitOutWindow: async () => assert.fail("not queued"),
+    reusableSession: async () => assert.fail("a new session each run"),
+    continueSession: async () => assert.fail("a new session each run"),
     ...over,
   };
   return { deps, settled, started, archived, neighbours, checks };
@@ -333,7 +343,7 @@ test("a run's session is told only the App's bot's comments are its own earlier 
     payload(),
     {
       automationsForPullRequest: async () => [candidate],
-      recordRuns: async () => new Map([["a1:p1", "r1"]]),
+      recordRuns: async () => new Map([["a1:p1", { runId: "r1", queued: false }]]),
     },
     "outrunner-connector",
   );
@@ -430,6 +440,7 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
           headSha: SHA,
           prNumber: 7,
           enabled: true,
+          atLimit: false,
           candidate,
           repoFullName: "neevai-labs/outrunner",
           installationId: 42,
@@ -450,7 +461,7 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
     },
     recordRuns: async (runs) => {
       recorded.push(...runs);
-      return new Map([["a1:p1", "r2"]]);
+      return new Map([["a1:p1", { runId: "r2", queued: false }]]);
     },
     ...over,
   };
@@ -494,6 +505,7 @@ test("one whose pull request has moved on runs at its head now, as a new run", a
         projectId: "p1",
         trigger: "pull_request.opened",
         dedupeKey: `pr:7:${later}`,
+        subject: "pr:7",
         prNumber: 7,
         prTitle: "Add automations",
         headSha: later,

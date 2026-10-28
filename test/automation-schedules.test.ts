@@ -14,7 +14,7 @@ import {
   upcomingRuns,
   zonedInstant,
 } from "@/lib/automations/schedule";
-import type { DueSchedule, RerunTarget, RunCandidate, RunRecord } from "@/lib/db/automation-runs";
+import type { DueSchedule, Recorded, RerunTarget, RunCandidate, RunRecord } from "@/lib/db/automation-runs";
 import type { ServerSessionStart } from "@/lib/session/server-session";
 
 const at = (iso: string) => Date.parse(iso);
@@ -180,6 +180,9 @@ const candidate: RunCandidate = {
   projectId: "p1",
   repoFullName: "acme/web",
   orgId: "o1",
+  reviewers: [],
+  labels: [],
+  sessionMode: "new",
 };
 
 const weekday: Schedule = { kind: "cron", timezone: "Europe/Berlin", expression: "0 9 * * 1-5" };
@@ -196,12 +199,12 @@ function scheduleWorld(due: DueSchedule[]) {
       [candidate, { ...candidate, projectId: "p2", repoFullName: "acme/api" }].filter((c) => ids.includes(c.automationId)),
     recordRuns: async (runs) => {
       writes.push(runs);
-      const made = new Map<string, string>();
+      const made = new Map<string, Recorded>();
       for (const run of runs) {
         const key = `${run.automationId}:${run.projectId}:${run.dedupeKey}`;
         if (keys.has(key)) continue;
         keys.add(key);
-        made.set(`${run.automationId}:${run.projectId}`, `run-${run.projectId}-${run.dedupeKey}`);
+        made.set(`${run.automationId}:${run.projectId}`, { runId: `run-${run.projectId}-${run.dedupeKey}`, queued: false });
       }
       return made;
     },
@@ -313,6 +316,9 @@ test("a scheduled run's session starts on the default branch, told when and wher
     // A pull request's review has a check; a schedule's run none.
     openCheck: async () => assert.fail("no check"),
     closeCheck: async () => assert.fail("no check"),
+    waitOutWindow: async () => assert.fail("not queued"),
+    reusableSession: async () => assert.fail("a new session each run"),
+    continueSession: async () => assert.fail("a new session each run"),
   };
   await startRun({ runId: "r1", candidate, event: scheduleEvent }, deps);
   assert.equal(started[0].baseBranch, undefined);
@@ -344,6 +350,7 @@ test("a scheduled run that failed starts again as itself, told the same time", a
     headSha: null,
     prNumber: null,
     enabled: true,
+    atLimit: false,
     candidate,
     repoFullName: "acme/web",
     installationId: 42,

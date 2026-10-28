@@ -4,7 +4,7 @@
  * org's admins to copy, and rotated. The table is the server's alone.
  */
 
-import { newWebhookToken, webhookPath, webhookTokenHash } from "@/lib/automations/webhook";
+import { arrayLiteral, newWebhookToken, webhookPath, webhookTokenHash } from "@/lib/automations/webhook";
 import { open, seal } from "@/lib/crypto/secret-box";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -78,19 +78,30 @@ export async function rotateWebhookToken(orgId: string, automationId: string): P
   return (data ?? []).length > 0 ? webhookPath(token) : null;
 }
 
-/** The runs a key recorded for an automation: a retried request's, to
- *  answer as the first was answered. */
+/** The runs a key recorded for an automation, as their own key or one a
+ *  debounce window took in: a retried request's, to answer as the first
+ *  was answered. */
 export async function runsByKey(
   automationId: string,
   dedupeKey: string,
 ): Promise<{ runId: string; projectId: string; workspaceId: string | null; status: string; reason: string | null }[]> {
-  const { data, error } = await createSupabaseAdminClient()
-    .from("automation_runs")
-    .select("id, project_id, workspace_id, status, reason")
-    .eq("automation_id", automationId)
-    .eq("dedupe_key", dedupeKey);
-  if (error) throw error;
-  return (data ?? []).map((r) => ({
+  const supabase = createSupabaseAdminClient();
+  const columns = "id, project_id, workspace_id, status, reason";
+  // Two reads, not one `or`, and the key quoted as an array element: a
+  // caller's Idempotency-Key may hold the characters a filter would need
+  // escaped (`.contains` passes them on as they are).
+  const [own, absorbed] = await Promise.all([
+    supabase.from("automation_runs").select(columns).eq("automation_id", automationId).eq("dedupe_key", dedupeKey),
+    supabase
+      .from("automation_runs")
+      .select(columns)
+      .eq("automation_id", automationId)
+      .filter("absorbed_keys", "cs", arrayLiteral(dedupeKey)),
+  ]);
+  if (own.error) throw own.error;
+  if (absorbed.error) throw absorbed.error;
+  const rows = new Map([...(own.data ?? []), ...(absorbed.data ?? [])].map((r) => [r.id, r]));
+  return [...rows.values()].map((r) => ({
     runId: r.id,
     projectId: r.project_id,
     workspaceId: r.workspace_id,

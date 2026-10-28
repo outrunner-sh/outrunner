@@ -12,44 +12,73 @@ import {
 } from "@/lib/automations/schedule";
 import { isUuid } from "@/lib/ids";
 
-export const AUTOMATION_TRIGGERS = ["pull_request.opened", "pull_request.synchronize", "schedule", "webhook"] as const;
+export const AUTOMATION_TRIGGERS = [
+  "pull_request.opened",
+  "pull_request.synchronize",
+  "pull_request.closed",
+  "pull_request.merged",
+  "pull_request.review_requested",
+  "issues.opened",
+  "issues.labeled",
+  "schedule",
+  "webhook",
+] as const;
 export type AutomationTrigger = (typeof AUTOMATION_TRIGGERS)[number];
 
 /** A pull request's triggers. */
 export type PullRequestTrigger = Extract<AutomationTrigger, `pull_request.${string}`>;
 
+/** An issue's triggers. */
+export type IssueTrigger = Extract<AutomationTrigger, `issues.${string}`>;
+
 /** The triggers a GitHub event is, which the Outrunner GitHub App's webhook
  *  starts; the rest are Outrunner's own. */
-export const GITHUB_TRIGGERS = AUTOMATION_TRIGGERS.filter((t) => t.startsWith("pull_request."));
+export const GITHUB_TRIGGERS = AUTOMATION_TRIGGERS.filter((t) => t.startsWith("pull_request.") || t.startsWith("issues."));
 
 /** Each trigger as the page names it. */
 export const TRIGGER_LABELS: Record<AutomationTrigger, string> = {
   "pull_request.opened": "PR opened",
   "pull_request.synchronize": "New commits on a PR",
+  "pull_request.closed": "PR closed without merging",
+  "pull_request.merged": "PR merged",
+  "pull_request.review_requested": "Review requested on a PR",
+  "issues.opened": "Issue opened",
+  "issues.labeled": "Issue labeled",
   schedule: "Schedule",
   webhook: "Webhook",
 };
 
 /** What a run list is filtered by: a trigger's kind. A run from before runs
  *  kept their trigger is a pull request's. */
-export const TRIGGER_KINDS = ["pull_request", "schedule", "webhook"] as const;
+export const TRIGGER_KINDS = ["pull_request", "issues", "schedule", "webhook"] as const;
 export type TriggerKind = (typeof TRIGGER_KINDS)[number];
 
 export const TRIGGER_KIND_LABELS: Record<TriggerKind, string> = {
   pull_request: "Pull request",
+  issues: "Issue",
   schedule: "Schedule",
   webhook: "Webhook",
 };
 
-/** How a run stands: being set up, set up (its prompt sent), its session
- *  failed, or none made (`reason` says why). */
-export type RunStatus = "started" | "ready" | "failed" | "refused";
+/** How a run stands: waiting out its debounce window, being set up, set up
+ *  (its prompt sent), its session failed, or none made (`reason` says why). */
+export type RunStatus = "queued" | "started" | "ready" | "failed" | "refused";
 
 export function triggerKind(trigger: AutomationTrigger | null): TriggerKind {
   return trigger === null ? "pull_request" : (trigger.split(".")[0] as TriggerKind);
 }
 
 export const NAME_MAX = 80;
+/** Reviewers or labels an automation names: enough for any one team. */
+export const FILTERS_MAX = 20;
+export const MAX_RUNS_MAX = 10_000;
+/** The longest debounce window: an hour. */
+export const DEBOUNCE_MAX_SECONDS = 3600;
+
+/** A run's session: a new one each time, or the automation's last on the
+ *  repository, given the next run's prompt. */
+export const SESSION_MODES = ["new", "reuse"] as const;
+export type SessionMode = (typeof SESSION_MODES)[number];
 export const PROMPT_MAX = 20_000;
 /** Enough for any one workflow; a list past it is a mistake. */
 export const REPOS_MAX = 50;
@@ -67,6 +96,22 @@ export type Automation = {
   schedules: Schedule[];
   repos: AutomationRepo[];
   enabled: boolean;
+  /** Whose review requests start it: logins, or `org/team` teams. */
+  reviewers: string[];
+  /** Which labels on an issue start it; none is any. */
+  labels: string[];
+  /** How many times it runs before it switches itself off; null, every time. */
+  maxRuns: number | null;
+  /** Archived too, once it has run its count. */
+  archiveWhenDone: boolean;
+  /** How long it waits for another trigger on the same thing, to run once
+   *  for them all; 0, no wait. */
+  debounceSeconds: number;
+  sessionMode: SessionMode;
+  /** Done: archived, and off. */
+  archived: boolean;
+  /** The times it has run against its limit; null with none. */
+  runsUsed: number | null;
   /** Who it runs as: whoever last set what it does (its prompt, triggers
    *  or repositories). Null once they've left. */
   runsAs: { id: string; login: string } | null;
@@ -82,6 +127,14 @@ export type AutomationInput = {
   schedules: Schedule[];
   projectIds: string[];
   enabled: boolean;
+  reviewers: string[];
+  labels: string[];
+  maxRuns: number | null;
+  archiveWhenDone: boolean;
+  debounceSeconds: number;
+  sessionMode: SessionMode;
+  /** A change only: archive it (done), or bring it back. */
+  archived?: boolean;
 };
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -147,6 +200,48 @@ export function parseAutomationInput(
     }
     value.schedules = schedules;
   }
+  if (full || b.reviewers !== undefined) {
+    const reviewers = names(b.reviewers, /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\/[A-Za-z0-9._-]{1,100})?$/);
+    if (!reviewers) return { ok: false, error: `Name reviewers as GitHub logins or org/team, at most ${FILTERS_MAX}.` };
+    value.reviewers = reviewers;
+  }
+  if (full || b.labels !== undefined) {
+    const labels = names(b.labels, /^[^\u0000-\u001f]{1,50}$/);
+    if (!labels) return { ok: false, error: `Name at most ${FILTERS_MAX} labels, each up to 50 characters.` };
+    value.labels = labels;
+  }
+  if (full || b.maxRuns !== undefined) {
+    const max = b.maxRuns ?? null;
+    if (max !== null && (typeof max !== "number" || !Number.isInteger(max) || max < 1 || max > MAX_RUNS_MAX)) {
+      return { ok: false, error: `Run it from 1 to ${MAX_RUNS_MAX} times, or every time.` };
+    }
+    value.maxRuns = max as number | null;
+  }
+  if (full || b.archiveWhenDone !== undefined) {
+    if (b.archiveWhenDone !== undefined && typeof b.archiveWhenDone !== "boolean") {
+      return { ok: false, error: "Archive when done is on or off." };
+    }
+    value.archiveWhenDone = b.archiveWhenDone ?? false;
+  }
+  if (full || b.debounceSeconds !== undefined) {
+    const wait = b.debounceSeconds ?? 0;
+    if (typeof wait !== "number" || !Number.isInteger(wait) || wait < 0 || wait > DEBOUNCE_MAX_SECONDS) {
+      return { ok: false, error: "Combine triggers within an hour at most." };
+    }
+    value.debounceSeconds = wait;
+  }
+  if (full || b.sessionMode !== undefined) {
+    const mode = b.sessionMode ?? "new";
+    if (!(SESSION_MODES as readonly unknown[]).includes(mode)) return { ok: false, error: "A run's session is a new one, or reused." };
+    value.sessionMode = mode as SessionMode;
+  }
+  if (!full && b.archived !== undefined) {
+    if (typeof b.archived !== "boolean") return { ok: false, error: "Archived is on or off." };
+    value.archived = b.archived;
+  }
+  if (value.triggers?.includes("pull_request.review_requested") && value.reviewers?.length === 0) {
+    return { ok: false, error: "Name whose review requests start it, or untick Review requested." };
+  }
   if (value.triggers) {
     const scheduled = value.triggers.includes("schedule");
     if (scheduled && value.schedules?.length === 0) return { ok: false, error: "Add a schedule, or untick Schedule." };
@@ -167,6 +262,21 @@ export function parseAutomationInput(
     value.enabled = b.enabled ?? true;
   }
   return { ok: true, value };
+}
+
+/** A list of names, each matching `pattern`, trimmed and deduplicated (case
+ *  aside); null when it isn't one, or is too long. */
+function names(value: unknown, pattern: RegExp): string[] | null {
+  const list = value ?? [];
+  if (!Array.isArray(list) || list.length > FILTERS_MAX) return null;
+  const seen = new Map<string, string>();
+  for (const item of list) {
+    if (typeof item !== "string") return null;
+    const name = item.trim().replace(/^@/, "");
+    if (!pattern.test(name)) return null;
+    if (!seen.has(name.toLowerCase())) seen.set(name.toLowerCase(), name);
+  }
+  return [...seen.values()];
 }
 
 /** Whether the Outrunner GitHub App can act on a repository, so an

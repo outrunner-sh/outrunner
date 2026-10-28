@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { after, NextResponse } from "next/server";
 
-import { type PendingRun, startRun, type StartDeps } from "@/lib/automations/runs";
+import { type PendingRun, recordOf, startRun, type StartDeps } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import {
   isWebhookToken,
@@ -104,15 +104,7 @@ export async function POST(request: Request, { params }: Params) {
       );
     }
     const event: WebhookEvent = { trigger: "webhook", receivedAt: new Date().toISOString(), payload };
-    const recorded = await recordRuns(
-      candidates.map((c) => ({
-        automationId: c.automationId,
-        projectId: c.projectId,
-        trigger: "webhook",
-        dedupeKey,
-        event,
-      })),
-    );
+    const recorded = await recordRuns(candidates.map((c) => recordOf(c, event, dedupeKey)));
     const base = optionalEnv("RUNTIME_BASE_URL") ?? url.origin;
     // A team org's run sessions are its connector's: its admins read them on
     // the run's page. A personal org's are its owner's own.
@@ -123,8 +115,14 @@ export async function POST(request: Request, { params }: Params) {
     const repoOf = new Map(candidates.map((c) => [c.projectId, c.repoFullName]));
 
     if (recorded.size === 0) {
-      // A retry of a request already taken: answered with its runs.
-      const runs = (await runsByKey(automation.automationId, dedupeKey)).map((r) => ({
+      // A retry of a request already taken: answered with its runs. Else
+      // none was taken: it has run as many times as it's set to (and
+      // switched itself off), or was switched off just now.
+      const taken = await runsByKey(automation.automationId, dedupeKey);
+      if (taken.length === 0) {
+        return NextResponse.json({ error: "This automation has run as many times as it's set to, or is off." }, { status: 409 });
+      }
+      const runs = taken.map((r) => ({
         runId: r.runId,
         repository: repoOf.get(r.projectId) ?? null,
         status: r.status,
@@ -136,12 +134,19 @@ export async function POST(request: Request, { params }: Params) {
     }
 
     const pending: PendingRun[] = candidates.flatMap((candidate) => {
-      const runId = recorded.get(`${candidate.automationId}:${candidate.projectId}`);
-      return runId ? [{ runId, candidate, event }] : [];
+      const run = recorded.get(`${candidate.automationId}:${candidate.projectId}`);
+      return run ? [{ runId: run.runId, candidate, event, ...(run.queued ? { queued: true } : {}) }] : [];
     });
     // Each started now and kept going after the answer; told when its
-    // session is made (or it isn't), for a caller that waits.
+    // session is made (or it isn't), for a caller that waits. One waiting
+    // out its automation's debounce window is answered as such at once: its
+    // session comes once the window passes, maybe for a later request.
     const made = pending.map((run) => {
+      if (run.queued) {
+        const waiting = startRun(run, startDeps());
+        after(() => waiting);
+        return Promise.resolve<Made>({ status: "queued" });
+      }
       let tell: (outcome: Made) => void = () => {};
       const told = new Promise<Made>((resolve) => (tell = resolve));
       const deps = startDeps();
@@ -157,7 +162,11 @@ export async function POST(request: Request, { params }: Params) {
       return told;
     });
     if (!wait) {
-      const runs = pending.map((run) => ({ runId: run.runId, repository: run.candidate.repoFullName, status: "starting" }));
+      const runs = pending.map((run) => ({
+        runId: run.runId,
+        repository: run.candidate.repoFullName,
+        status: run.queued ? "queued" : "starting",
+      }));
       return NextResponse.json({ ...single(runs), runs }, { status: 202 });
     }
     let timer: ReturnType<typeof setTimeout> | undefined;

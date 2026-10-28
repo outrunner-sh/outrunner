@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { ForeignRepoError } from "@/lib/db/automations";
+import { ForeignRepoError, NoReviewersError } from "@/lib/db/automations";
 import { databaseNotUpdated } from "@/lib/http/database-not-updated";
 
 /** Run a change to an automation, answering a repository that isn't the
- *  org's as 400, a database without the migration as 503, and anything else
- *  as 500. */
+ *  org's, or review requests of no one, as 400; a database without the
+ *  migration as 503; and anything else as 500. */
 export async function savingAutomation(
   save: () => Promise<Response>,
   what: "save" | "delete" = "save",
@@ -13,7 +13,9 @@ export async function savingAutomation(
   try {
     return await save();
   } catch (error) {
-    if (error instanceof ForeignRepoError) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error instanceof ForeignRepoError || error instanceof NoReviewersError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     const notUpdated = databaseNotUpdated(error, "the automation");
     if (notUpdated) return notUpdated;
     console.error(`Could not ${what} an automation`, error);

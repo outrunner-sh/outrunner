@@ -2110,3 +2110,90 @@ begin
   delete from automations where id = a;
   raise notice 'ok: a webhook''s token is made with it, kept, and its own';
 end $$;
+
+-- 52. An automation's limits, kept as runs are recorded: a time it runs is
+-- one key, on however many repositories; past its count nothing is
+-- recorded, and reaching it switches it off (archived too, if it's to be);
+-- switched on again, it counts afresh. In a debounce window, a trigger on
+-- the same thing is taken into the run that waits, which is now its.
+do $$
+declare
+  p projects%rowtype;
+  a uuid;
+  n int;
+  waiting uuid;
+begin
+  select * into p from projects where full_name = 'immadsahin/runtime' and owner_id = '11111111-1111-1111-1111-111111111111';
+  a := create_automation(p.org_id, '11111111-1111-1111-1111-111111111111', 'Twice', null, 'Look.', '{webhook}', true,
+    array[p.id], '{"max_runs": 2, "archive_when_done": true}');
+  select count(*) into n from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:1', 'subject', 'webhook')));
+  if n <> 1 then raise exception 'FAIL: a first run under a limit wasn''t recorded'; end if;
+  -- The same key again: nothing, and not counted twice.
+  select count(*) into n from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:1', 'subject', 'webhook')));
+  if n <> 0 then raise exception 'FAIL: a key was recorded twice'; end if;
+  select count(*) into n from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:2', 'subject', 'webhook')));
+  if n <> 1 then raise exception 'FAIL: a second run under a limit of two wasn''t recorded'; end if;
+  if (select enabled or archived_at is null from automations where id = a) then
+    raise exception 'FAIL: an automation that ran its count wasn''t switched off and archived';
+  end if;
+  select count(*) into n from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:3', 'subject', 'webhook')));
+  if n <> 0 then raise exception 'FAIL: an automation past its count recorded a run'; end if;
+  -- Switched on: unarchived, and counted afresh. (Its runs so far are from
+  -- earlier transactions in life; in this one block, now() is one instant.)
+  update automation_runs set created_at = created_at - interval '1 minute' where automation_id = a;
+  perform update_automation(p.org_id, a, '11111111-1111-1111-1111-111111111111', null, null, null, true, null, '{}');
+  if (select not enabled or archived_at is not null from automations where id = a) then
+    raise exception 'FAIL: switching a done automation on didn''t bring it back';
+  end if;
+  select count(*) into n from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:4', 'subject', 'webhook')));
+  if n <> 1 then raise exception 'FAIL: an automation switched on again didn''t count afresh'; end if;
+  if automation_times_run(a) <> 1 then
+    raise exception 'FAIL: automation_times_run counted % since it was switched on, not 1', automation_times_run(a);
+  end if;
+  begin
+    update automations set archived_at = now(), enabled = true where id = a;
+    raise exception 'FAIL: an archived automation was kept on';
+  exception when check_violation then null;
+  end;
+
+  -- A debounce window: the second trigger joins the first's waiting run.
+  perform update_automation(p.org_id, a, '11111111-1111-1111-1111-111111111111', null, null, null, null, null,
+    '{"max_runs": null, "debounce_seconds": 300}');
+  select run_id into waiting from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:5', 'subject', 'webhook',
+      'context', '{"n": 5}'::jsonb)))
+  where queued;
+  if waiting is null then raise exception 'FAIL: a run in a debounce window didn''t wait'; end if;
+  if (select run_id from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:6', 'subject', 'webhook',
+      'context', '{"n": 6}'::jsonb)))) is distinct from waiting then
+    raise exception 'FAIL: a trigger in the window wasn''t taken into the waiting run';
+  end if;
+  if (select combined <> 2 or context <> '{"n": 6}' or dedupe_key <> 'webhook:6' or not_before < now() + interval '4 minutes'
+      from automation_runs where id = waiting) then
+    raise exception 'FAIL: the waiting run isn''t the last trigger''s, its window started again';
+  end if;
+  if (select count(*) from automation_runs where automation_id = a and status = 'queued') <> 1 then
+    raise exception 'FAIL: a debounce window kept two waiting runs';
+  end if;
+  -- The first trigger's key, taken in, still records nothing: started and
+  -- all, a redelivery of it isn't a run of its own.
+  update automation_runs set status = 'started' where id = waiting;
+  select count(*) into n from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:5', 'subject', 'webhook')));
+  if n <> 0 then raise exception 'FAIL: a key a debounce window took in was recorded again'; end if;
+  -- Review requests of no one: never, however it's saved.
+  begin
+    perform update_automation(p.org_id, a, '11111111-1111-1111-1111-111111111111', null, null,
+      '{pull_request.review_requested}', null, null, '{}');
+    raise exception 'FAIL: the review requested trigger was kept with no reviewers';
+  exception when check_violation then null;
+  end;
+  delete from automations where id = a;
+  raise notice 'ok: an automation''s limits and debounce window hold as its runs are recorded';
+end $$;
