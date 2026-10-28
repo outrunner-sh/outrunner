@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 
 test("every migration has its own version, as the database records only one per version", () => {
-  const files = readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql"));
+  const files = readdirSync(join(import.meta.dirname, "../supabase/migrations")).filter((f) => f.endsWith(".sql"));
   const seen = new Map<string, string>();
   for (const file of files) {
     const version = file.split("_")[0];
