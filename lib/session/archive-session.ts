@@ -42,7 +42,7 @@ export async function daytonaAgent(
   if (!secret) throw new Error("Runtime Computer secret is missing.");
   const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
   return {
-    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id, workspace.orgId),
+    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id),
     agent: new AgentClient(target),
     identity: {
       workspaceId: workspace.id,

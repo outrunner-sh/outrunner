@@ -56,7 +56,7 @@ export async function POST(request: Request, context: RouteContext) {
       await requireFeature(
         {
           features: async () => (await agent.health(identity)).features ?? [],
-          upgrade: boxUpgrade(provider, sandboxId, secret, owner.id, workspace.id, workspace.orgId),
+          upgrade: boxUpgrade(provider, sandboxId, secret, owner.id, workspace.id),
         },
         AGENT_FEATURE_EDITOR,
         "open the editor",

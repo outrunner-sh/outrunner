@@ -30,7 +30,7 @@ export async function GET() {
   // Mac's, so its agents' connections are cloud ones only.
   const orgId = await activeOrgId().catch(() => undefined);
   const own = agentAuthStore(owner.id);
-  const withOrg = agentAuthStore(owner.id, orgId);
+  const withOrg = orgId ? agentAuthStore(owner.id, orgId) : own;
   const [menu, loadout, claude, codex] = await Promise.all([
     modelMenu(owner.id, orgId),
     getModelLoadout(owner.id),

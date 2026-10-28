@@ -31,7 +31,6 @@ import {
 import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
 import { openOrgKey, orgProviderKey, sealedOrgKeys, usableOrgProviders } from "@/lib/db/org-credentials";
-import { fillFromOrg } from "@/lib/orgs/keys";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
   createUserKey,
@@ -615,16 +614,13 @@ export async function settleClaudeSlot(userId: string): Promise<void> {
 /**
  * The credential a session runs the user's own Claude on: their subscription
  * token from the Claude slot, else (as before the Anthropic key had a place of
- * its own) their Anthropic API key, else, for a cloud session in a team org
- * (`orgId`), the org's Anthropic key. Null with none.
+ * its own) their Anthropic API key. Null with neither. Never an org's: that
+ * reaches a session only as its sign-in (agentAuthStore), not the box's
+ * environment, where a session on another model would have it too.
  */
-export async function getClaudeCredential(userId: string, orgId?: string): Promise<string | null> {
+export async function getClaudeCredential(userId: string): Promise<string | null> {
   await settleClaudeSlot(userId);
-  return (
-    (await getAnthropicKey(userId)) ??
-    (await getProviderKey(userId, "anthropic")) ??
-    (await orgProviderKey(userId, orgId, "anthropic"))
-  );
+  return (await getAnthropicKey(userId)) ?? (await getProviderKey(userId, "anthropic"));
 }
 
 // ---------------------------------------------------------------------------
@@ -696,8 +692,6 @@ export function agentAuthStore(userId: string, orgId?: string): AgentAuthStore {
       const sealed = new Map<string, string | null>();
       if (slot) sealed.set("claude-slot", slot.data?.anthropic_key_ciphertext ?? null);
       for (const row of keys?.data ?? []) sealed.set(row.provider, row.key_ciphertext);
-      // The org's, for a provider the user has no key of their own for.
-      const fromOrg = fillFromOrg(sealed, orgKeys);
 
       const opened = new Map<string, string | null>();
       return {
@@ -708,12 +702,11 @@ export function agentAuthStore(userId: string, orgId?: string): AgentAuthStore {
           if (!opened.has(which)) {
             // The slot is logged as "anthropic", as getAnthropicKey does.
             const label = credential.kind === "claude-slot" ? "anthropic" : credential.provider;
-            opened.set(
-              which,
-              fromOrg.has(which) && orgId
-                ? openOrgKey(sealed.get(which) ?? undefined, orgId, label)
-                : openOrNull(sealed.get(which), userId, label),
-            );
+            // Their own, else (one they don't have, or that won't open) the
+            // org's, as modelKey reads them.
+            const own = openOrNull(sealed.get(which), userId, label);
+            const org = credential.kind === "provider-key" && orgId ? orgKeys.get(credential.provider) : undefined;
+            opened.set(which, own ?? (org && orgId ? openOrgKey(org, orgId, label) : null));
           }
           return opened.get(which) ?? null;
         },
