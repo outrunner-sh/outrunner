@@ -60,7 +60,14 @@ export function boxUpgrade(
   sandboxId: string,
   secret: string,
   userId: string,
+  /** Booted without the user's GitHub token: an automation's review box,
+   *  which asks for the App's. */
+  withoutGitHub = false,
 ): (() => Promise<void>) | undefined {
   if (!provider.upgradesAgents) return undefined;
-  return async () => provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId));
+  return async () => {
+    const env = await runtimeSessionEnvironment(userId);
+    if (withoutGitHub) delete env.GH_TOKEN;
+    await provider.upgradeAgent(sandboxId, secret, env);
+  };
 }

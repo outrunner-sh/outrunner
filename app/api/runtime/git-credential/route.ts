@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { isAutomationSession } from "@/lib/db/automation-runs";
 import { listOrgProjects } from "@/lib/db/org-access";
 import { memberRole } from "@/lib/db/orgs";
 import { MissingGithubTokenError } from "@/lib/github/client";
 import { GitIdentityError } from "@/lib/github/identity";
-import { gitCredentialFor } from "@/lib/github/identity.deps";
+import { gitCredentialFor, REVIEW_AS_APP } from "@/lib/github/identity.deps";
 import { isGitHubFullName } from "@/lib/github/listing";
 import { gitCredentialRequestValid } from "@/lib/runtime/git-credential";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -26,6 +27,9 @@ const MAX_BODY_BYTES = 4096;
  * - the App's, only for a project of the box's org the member has access
  *   to, at their level on it (read access reads); any other repository is
  *   refused (409), and the agent doesn't fall back to a token of the box's.
+ *
+ * An automation's review session's box always gets the App's, to read code
+ * and comment on pull requests (REVIEW_AS_APP), whatever its user chose.
  */
 export async function POST(request: Request) {
   const sandboxId = request.headers.get("x-outrunner-sandbox");
@@ -36,7 +40,7 @@ export async function POST(request: Request) {
 
   const { data: computers, error } = await createSupabaseAdminClient()
     .from("runtime_computers")
-    .select("id, owner_id, org_id, project_id, agent_secret")
+    .select("id, owner_id, org_id, project_id, workspace_id, agent_secret")
     .eq("daytona_sandbox_id", sandboxId)
     .limit(5);
   if (error) {
@@ -73,7 +77,13 @@ export async function POST(request: Request) {
         : (await listOrgProjects(computer.org_id)).find((p) => p.id === computer.project_id)?.fullName;
     if (!repo) return NextResponse.json({ error: "This box's project is gone." }, { status: 404 });
 
-    const credential = await gitCredentialFor({ userId: computer.owner_id, orgId: computer.org_id, repo });
+    const review = computer.workspace_id ? await isAutomationSession(computer.workspace_id) : false;
+    const credential = await gitCredentialFor({
+      userId: computer.owner_id,
+      orgId: computer.org_id,
+      repo,
+      ...(review ? REVIEW_AS_APP : {}),
+    });
     return NextResponse.json(
       { token: credential.token, expiresAt: credential.expiresAt?.toISOString() ?? null, identity: credential.identity },
       { headers: { "cache-control": "no-store" } },

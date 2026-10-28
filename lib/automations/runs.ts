@@ -3,9 +3,9 @@
  * event. It records one run for each enabled automation on the repository
  * whose trigger the event is (once per commit: the record's unique key), and
  * answers; then each run's session starts as the automation's runner
- * (startServerSession): on Outrunner's models, on the user's allowance, with
- * a token of the app's for the one repository, so what it posts is the
- * app's and it can't push.
+ * (startServerSession): on Outrunner's models, on the user's allowance,
+ * working on GitHub as the App (reading code, commenting on pull requests),
+ * so what it posts is the App's and it can't push.
  */
 
 import { type PullRequestEvent, readPullRequestEvent, runPrompt, runTitle } from "@/lib/automations/pull-request";
@@ -51,8 +51,6 @@ export async function planRuns(payload: unknown, deps: PlanDeps, appSlug?: strin
 }
 
 export type StartDeps = {
-  /** A token of the app's for the one repository: it comments, it can't push. */
-  repositoryToken(installationId: number, repoFullName: string): Promise<string>;
   startServerSession(start: ServerSessionStart): Promise<ServerSessionResult>;
   settleRun(
     runId: string,
@@ -73,21 +71,20 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     });
     return;
   }
-  let token: string;
-  try {
-    token = await deps.repositoryToken(event.installationId, event.repoFullName);
-  } catch (error) {
-    console.error(`Run ${run.runId}: no token for ${event.repoFullName}`, error);
-    await settle({ status: "refused", reason: "The Outrunner GitHub App couldn't get a token for this repository." });
-    return;
-  }
   const result = await deps.startServerSession({
     userId: candidate.runsAs,
     projectId: candidate.projectId,
     baseBranch: event.headRef,
     title: runTitle(candidate.name, event),
     prompt: runPrompt(candidate.prompt, event),
-    githubToken: token,
+    // As the App, reading code and commenting, with tokens its box asks for
+    // as it goes (#187's git-credential), so none expires on it mid-review.
+    reviewAsApp: true,
+    // Linked to the run as soon as it's made: its box's token requests are
+    // answered as the App's from the first.
+    onCreated: async (workspaceId) => {
+      await deps.settleRun(run.runId, { status: "started", workspaceId });
+    },
   });
   await settle({
     status: result.status,

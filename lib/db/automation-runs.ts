@@ -1,5 +1,5 @@
 /**
- * Automations' runs (supabase/migrations/20261029130000_automation_runs.sql),
+ * Automations' runs (supabase/migrations/20261030120000_automation_runs.sql),
  * and the automations a pull request event concerns. The tables are the
  * server's alone, so this reaches them with the service role: the webhook,
  * signed by GitHub, records and settles runs; the Automations page reads an
@@ -197,4 +197,16 @@ export async function listRuns(orgId: string, limit = 50): Promise<AutomationRun
     reason: r.reason,
     createdAt: r.created_at,
   }));
+}
+
+/** Whether a session is an automation run's: its box works on GitHub as the
+ *  App (app/api/runtime/git-credential). */
+export async function isAutomationSession(workspaceId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .limit(1);
+  if (error) throw error;
+  return (data ?? []).length > 0;
 }

@@ -13,8 +13,6 @@ import {
 import {
   dropInstallationToken,
   githubAppConfig,
-  type GitHubAppConfig,
-  mintInstallationToken,
   toInstallation,
   webhookSignatureMatches,
 } from "@/lib/github/app";
@@ -87,7 +85,7 @@ export async function POST(request: Request) {
       // a cold box, on Outrunner's long-running server (server.ts). One a
       // restart cuts off is swept by the reconciler (sweepStalledRuns).
       const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, config.slug);
-      after(() => Promise.all(runs.map((run) => startRun(run, startDeps(config)))));
+      after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
       return NextResponse.json({ received: true, runs: runs.length });
     }
     if (event === "installation") {
@@ -117,18 +115,10 @@ export async function POST(request: Request) {
   }
 }
 
-/** How a run starts: a token of the App's for its one repository (it can
- *  comment, not push), and its session as the automation's runner. */
-function startDeps(config: GitHubAppConfig) {
+/** How a run starts: its session as the automation's runner, working on
+ *  GitHub as the App (its box asks for the App's tokens as it goes). */
+function startDeps() {
   return {
-    repositoryToken: async (installationId: number, repoFullName: string) =>
-      (
-        await mintInstallationToken(config, installationId, [repoFullName.split("/")[1] ?? repoFullName], fetch, {
-          pull_requests: "write",
-          contents: "read",
-          metadata: "read",
-        })
-      ).token,
     startServerSession,
     settleRun,
   };

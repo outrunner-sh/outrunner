@@ -143,9 +143,14 @@ function startDeps(over: Partial<StartDeps> = {}) {
   const settled: unknown[] = [];
   const started: ServerSessionStart[] = [];
   const deps: StartDeps = {
-    repositoryToken: async () => "ghs_app-token",
     startServerSession: async (start) => {
       started.push(start);
+      // As createCloudSession: an onCreated that throws fails the session there.
+      try {
+        await start.onCreated?.("w1");
+      } catch {
+        return { workspaceId: null, status: "refused", errorMessage: "not recorded" };
+      }
       return { workspaceId: "w1", status: "ready" };
     },
     settleRun: async (_id, outcome) => {
@@ -162,36 +167,33 @@ function pending(over: Partial<RunCandidate> = {}): PendingRun {
   return { runId: "r1", candidate: { ...candidate, ...over }, event };
 }
 
-test("a run starts its session as the runner, on the pull request's head, with the app's token", async () => {
+test("a run starts its session as the runner, on the pull request's head, as the App, linked from the first", async () => {
   const { deps, settled, started } = startDeps();
   await startRun(pending(), deps);
   assert.equal(started.length, 1);
   assert.equal(started[0].userId, "u1");
   assert.equal(started[0].projectId, "p1");
   assert.equal(started[0].baseBranch, "feature/x");
-  assert.equal(started[0].githubToken, "ghs_app-token");
+  assert.equal(started[0].reviewAsApp, true);
   assert.equal(started[0].title, "Code Review #7: Add automations");
   assert.ok(started[0].prompt.endsWith("Review it."));
-  assert.deepEqual(settled, [{ status: "ready", workspaceId: "w1", reason: null }]);
+  // Linked as soon as its row is made, so its box's token requests are the App's.
+  assert.deepEqual(settled, [
+    { status: "started", workspaceId: "w1" },
+    { status: "ready", workspaceId: "w1", reason: null },
+  ]);
 });
 
 test("a run says why it didn't start, or failed", async () => {
   const originalError = console.error;
   console.error = () => {};
   try {
-    let { deps, settled, started } = startDeps();
+    const first = startDeps();
+    let { deps, settled } = first;
+    const { started } = first;
     await startRun(pending({ runsAs: null }), deps);
     assert.equal(started.length, 0);
     assert.equal((settled[0] as { status: string }).status, "refused");
-
-    ({ deps, settled, started } = startDeps({
-      repositoryToken: async () => {
-        throw new Error("422");
-      },
-    }));
-    await startRun(pending(), deps);
-    assert.equal(started.length, 0);
-    assert.match((settled[0] as { reason: string }).reason, /token/);
 
     ({ deps, settled } = startDeps({
       startServerSession: async () => ({ workspaceId: "w2", status: "failed", errorMessage: "No allowance left." }),

@@ -20,6 +20,7 @@ import {
   type GitCredential,
   type GitHubIdentity,
   type IdentityDeps,
+  type TokenLevel,
 } from "@/lib/github/identity";
 import type { AccessLevel } from "@/lib/orgs/access";
 
@@ -61,15 +62,24 @@ export function gitCredentialFor(input: {
   userId: string;
   orgId: string;
   repo: string;
-  level?: AccessLevel;
+  level?: TokenLevel;
   identity?: GitHubIdentity;
 }): Promise<GitCredential> {
   return resolveGitCredential(input, deps);
 }
 
-/** The token alone, for a server call that must have one. */
-export async function requireGitToken(userId: string, project: { orgId: string; fullName: string }): Promise<string> {
-  return (await gitCredentialFor({ userId, orgId: project.orgId, repo: project.fullName })).token;
+/** How an automation's review session works on GitHub, whatever its runner
+ *  chose for their own: as the App, reading code and commenting. */
+export const REVIEW_AS_APP = { identity: "app", level: "review" } as const;
+
+/** The token alone, for a server call that must have one; as the user chose,
+ *  or as `as` says (REVIEW_AS_APP). */
+export async function requireGitToken(
+  userId: string,
+  project: { orgId: string; fullName: string },
+  as?: { identity: GitHubIdentity; level: TokenLevel },
+): Promise<string> {
+  return (await gitCredentialFor({ userId, orgId: project.orgId, repo: project.fullName, ...as })).token;
 }
 
 /**
@@ -80,9 +90,10 @@ export async function requireGitToken(userId: string, project: { orgId: string; 
 export async function optionalGitToken(
   userId: string,
   project: { orgId: string; fullName: string },
+  as?: { identity: GitHubIdentity; level: TokenLevel },
 ): Promise<string | undefined> {
   try {
-    return await requireGitToken(userId, project);
+    return await requireGitToken(userId, project, as);
   } catch (error) {
     if (!(error instanceof MissingGithubTokenError)) {
       console.warn(`No GitHub token for ${project.fullName}`, error instanceof Error ? error.message : error);
@@ -92,6 +103,10 @@ export async function optionalGitToken(
 }
 
 /** A token for each repository of a session of several, as asked. */
-export function gitTokensFor(userId: string, orgId: string): (fullName: string) => Promise<string | undefined> {
-  return (fullName) => optionalGitToken(userId, { orgId, fullName });
+export function gitTokensFor(
+  userId: string,
+  orgId: string,
+  as?: { identity: GitHubIdentity; level: TokenLevel },
+): (fullName: string) => Promise<string | undefined> {
+  return (fullName) => optionalGitToken(userId, { orgId, fullName }, as);
 }

@@ -27,6 +27,11 @@ export type ServerSessionStart = {
   /** Which of Outrunner's models it runs (OUTRUNNER_MODELS); their first
    *  when not given. */
   model?: string;
+  /** It works on GitHub as the Outrunner App, reading code and commenting
+   *  (an automation's review), whatever its user chose for their own. */
+  reviewAsApp?: boolean;
+  /** Told the session's id once its row is made, before its setup. */
+  onCreated?: (workspaceId: string) => Promise<void>;
 };
 
 /** Made and set up: ready (its prompt sent) or failed, with why. Or not made
@@ -60,6 +65,8 @@ export async function startServerSession(start: ServerSessionStart): Promise<Ser
           firstMessage: start.prompt,
           inline: true,
           meteredOnly: true,
+          reviewAsApp: start.reviewAsApp,
+          onCreated: start.onCreated,
           onSettled: async (settled) => {
             outcome = settled;
           },

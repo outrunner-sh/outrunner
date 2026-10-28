@@ -90,7 +90,7 @@ import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
-import { gitTokensFor, requireGitToken } from "@/lib/github/identity.deps";
+import { gitTokensFor, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
@@ -140,6 +140,17 @@ export type ServerSessionOptions = {
    *  server whose models run on one shared key meters no one, and what the
    *  server starts on its own mustn't spend it unwatched. */
   meteredOnly?: boolean;
+  /**
+   * An automation's review: it works on GitHub as the Outrunner App, reading
+   * code and commenting on pull requests (REVIEW_AS_APP), whatever its user
+   * chose for their own sessions. Its box is its own, never a pooled one
+   * booted with the user's GitHub token, and holds none of theirs: it asks
+   * for the App's as it goes (app/api/runtime/git-credential).
+   */
+  reviewAsApp?: boolean;
+  /** Told the session's id as soon as its row is made, before its setup; if
+   *  it throws, the session fails there and goes no further. */
+  onCreated?: (workspaceId: string) => Promise<void>;
   /** Told how its setup ended. */
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
 };
@@ -205,10 +216,15 @@ export async function createCloudSession(
 
   // Who the session's git acts as on GitHub (lib/github/identity.ts): the
   // repository's token now, for the box's mirror; the box asks for its own.
-  const tokenFor = gitTokenFor(owner.id, project.orgId);
+  const as = options.reviewAsApp ? REVIEW_AS_APP : undefined;
+  const tokenFor = gitTokenFor(owner.id, project.orgId, as);
   const githubToken = await tokenFor(project.fullName);
   if ("refusal" in githubToken) return githubToken.refusal;
-  const sessionEnv = await runtimeSessionEnvironment(owner.id);
+  const userEnv = await runtimeSessionEnvironment(owner.id);
+  // A review's box asks for the App's tokens; the user's own isn't on it.
+  const sessionEnv = options.reviewAsApp
+    ? Object.fromEntries(Object.entries(userEnv).filter(([name]) => name !== "GH_TOKEN"))
+    : userEnv;
   // Whether it can run on the user's Claude: only as they picked it (or, with
   // no pick, on what they saved), which `auth` holds. Never on the box's own
   // environment instead, which may hold a key the user didn't pick, or one
@@ -363,6 +379,20 @@ export async function createCloudSession(
   // Named now, from its first prompt, as the message route would once that is
   // delivered: until then the sidebar showed its branch. That later naming
   // then leaves it be (a title is never replaced).
+  // Its caller must hear it (a review's run links its box to the App by it):
+  // one that can't, the session goes no further than its row, failed.
+  if (options.onCreated) {
+    try {
+      await options.onCreated(workspace.id);
+    } catch (error) {
+      console.error(`Workspace ${workspace.id}: its caller couldn't hear it was made`, error);
+      const errorMessage = "Outrunner couldn't record what this session is for, so it didn't start.";
+      await transitionWorkspace({ id: workspace.id, from: SETTING_UP, patch: { status: "failed", errorMessage } }).catch(
+        (updateError: unknown) => console.error(`Workspace ${workspace.id} failure state could not be saved`, updateError),
+      );
+      return NextResponse.json({ error: errorMessage }, { status: 500 });
+    }
+  }
   if (options.title) {
     await setWorkspaceTitleIfUnset(workspace.id, options.title).catch((error: unknown) =>
       console.error(`Could not title session ${workspace.id}`, error),
@@ -407,6 +437,7 @@ export async function createCloudSession(
       firstMessage: options.firstMessage,
       onSettled: options.onSettled,
       inline: options.inline ?? false,
+      as,
     });
   if (options.inline) await provision();
   else after(provision);
@@ -439,6 +470,7 @@ async function provisionWorkspace({
   firstMessage,
   onSettled,
   inline,
+  as,
 }: {
   workspace: Workspace;
   project: Project;
@@ -463,6 +495,8 @@ async function provisionWorkspace({
   onSettled?: (outcome: SessionOutcome) => Promise<void>;
   /** Set up before the create answered (ServerSessionOptions.inline). */
   inline: boolean;
+  /** An automation's review, as the App (ServerSessionOptions.reviewAsApp). */
+  as?: typeof REVIEW_AS_APP;
 }): Promise<void> {
   const tell = async (outcome: Omit<SessionOutcome, "workspaceId">) => {
     await onSettled?.({ workspaceId: workspace.id, ...outcome }).catch((error: unknown) =>
@@ -496,8 +530,12 @@ async function provisionWorkspace({
       // becomes this session's, stopped: it starts again below on its disk,
       // as a box that ended does, in seconds.
       // Only one warmed from the project's setup as it is now.
-      const generation = await setupGeneration(owner.id, workspace.environmentId).catch(() => null);
-      await takePooledBox(provider, workspace.id, generation);
+      // Not for a review as the App: a pooled box was booted with its user's
+      // GitHub token.
+      if (!as) {
+        const generation = await setupGeneration(owner.id, workspace.environmentId).catch(() => null);
+        await takePooledBox(provider, workspace.id, generation);
+      }
       const currentComputer = await getRuntimeComputer(scope);
       // The box that ended, for a provider that brings it back on the disk it
       // left (Modal), so the project's sessions carry on in the new one.
@@ -561,7 +599,7 @@ async function provisionWorkspace({
         userId: owner.id,
       };
       const agent = new AgentClient(target);
-      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id);
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id, as !== undefined);
       const signIn = sessionAuthClient(agent, identity, upgrade);
       // Before the session is made: an agent too old for Codex would make a
       // Claude Code session of it. One that is, is upgraded in place.
@@ -581,7 +619,7 @@ async function provisionWorkspace({
         await provider.syncRepoMirrors(
           computer.daytonaSandboxId,
           checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
-          gitTokensFor(owner.id, project.orgId),
+          gitTokensFor(owner.id, project.orgId, as),
         );
       }
       const created = await agent.createWorkspace(
@@ -604,7 +642,9 @@ async function provisionWorkspace({
       await setPhase("secrets");
       await deliverSessionAuth(signIn, agentId, auth);
       // And with the user's own setup and its project's environment.
-      await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
+      await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId, {
+        appIdentity: as !== undefined,
+      });
       // Before the first launch, so Claude starts on it rather than switching.
       const startsOn = await startingModel({
         setModel: (req) => agent.setModel(identity, req),
@@ -659,6 +699,8 @@ async function provisionWorkspace({
       // outcome already (onSettled, above), so only the wait for it is longer;
       // left running after the sign-out, the refill's writes would be on a
       // session that has ended.
+      // A review took no pooled box, so has none to make again.
+      if (as) return;
       const refill = () =>
         refillProjectPool({ provider, ownerId: owner.id, project, environmentId: workspace.environmentId, githubToken, sessionEnv });
       if (inline) await refill();
@@ -717,10 +759,10 @@ async function provisionWorkspace({
  * only a private repository can't do without), or the App's, whose absence
  * is said now, with where to put it right, rather than on the box later.
  */
-function gitTokenFor(userId: string, orgId: string) {
+function gitTokenFor(userId: string, orgId: string, as?: typeof REVIEW_AS_APP) {
   return async (fullName: string): Promise<{ token: string | undefined } | { refusal: NextResponse }> => {
     try {
-      return { token: await requireGitToken(userId, { orgId, fullName }) };
+      return { token: await requireGitToken(userId, { orgId, fullName }, as) };
     } catch (error) {
       if (error instanceof GitIdentityError) {
         return { refusal: NextResponse.json({ error: error.message, settingsHref: error.href }, { status: 409 }) };
