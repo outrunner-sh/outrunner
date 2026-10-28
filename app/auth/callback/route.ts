@@ -37,6 +37,7 @@ export async function GET(request: Request) {
     const { data } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
     if (data.user) {
       const back = new URL(`${base}${next}`);
+      console.warn(`Connecting a provider failed for ${data.user.id}: ${providerError}`);
       back.searchParams.set("link_error", requestUrl.searchParams.get("error_code") ?? "link_failed");
       return NextResponse.redirect(back);
     }

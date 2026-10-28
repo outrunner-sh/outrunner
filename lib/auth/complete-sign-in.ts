@@ -6,7 +6,7 @@ import { setGithubToken } from "@/lib/db/credentials";
 import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
-import { tokenUserId } from "@/lib/github/client";
+import { tokenOwner } from "@/lib/github/client";
 import { admitOnSignIn, type Admission, isInvitePath } from "@/lib/orgs/admission";
 import { emailJoinRequest } from "@/lib/orgs/notify";
 import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
@@ -93,9 +93,11 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
  * it — `getSession()` later in the app returns nothing for it. Miss it here and
  * the user has to re-authenticate to get another one.
  *
- * Stored only once GitHub says the token is this user's GitHub account's: the
- * callback picks the token by which identity signed in last, and a wrong pick
- * (a Google token, say) must never replace a working GitHub token.
+ * Not stored when GitHub says the token isn't this user's GitHub account's:
+ * the callback picks the token by which identity signed in last, and a wrong
+ * pick (a Google token, say) must never replace a working GitHub token. When
+ * GitHub can't be asked (an outage), the pick stands: it is right in the
+ * common case, and this is the token's only chance to be kept.
  *
  * Best-effort by design: a storage failure must not strand a user who has
  * otherwise signed in successfully. They land in the app with no GitHub
@@ -106,9 +108,15 @@ async function captureGithubToken(user: User, token: string | undefined): Promis
   const login = githubLogin(user);
   const githubId = githubUserId(user);
   if (!token || !login || githubId === null) return;
-  if ((await tokenUserId(token)) !== githubId) {
-    console.warn(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
+  const owner = await tokenOwner(token);
+  if (owner.kind === "refused" || (owner.kind === "user" && owner.id !== githubId)) {
+    // Only a token the callback took for GitHub's gets here: one GitHub
+    // disowns means the pick was wrong, which is worth an alert.
+    console.error(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
     return;
+  }
+  if (owner.kind === "unreachable") {
+    console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; storing it as GitHub's.`);
   }
 
   try {
