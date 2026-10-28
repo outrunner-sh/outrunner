@@ -83,3 +83,65 @@ const DESTROYABLE: WorkspaceStatus[] = ["ready", "idle", "suspended", "archived"
 export function canDestroy(workspace: Pick<Workspace, "status" | "createdAt">, now: number): boolean {
   return DESTROYABLE.includes(workspace.status) || setupState(workspace, now) === "stalled";
 }
+
+/**
+ * Past this since its row last changed, a session still archiving, restoring,
+ * resuming, suspending or being deleted was cut off: each runs in one request
+ * (app/api/workspaces/[id]/lifecycle), and only that request's own catch ever
+ * moved it on. A deploy or a crash mid-step left it there for good, a status
+ * no other action starts from, and not one it can be deleted from. Well past
+ * the longest of them, an archive's or a restore's transfer of a large
+ * repository's Snapshot.
+ */
+export const TRANSITION_INTERRUPTED_AFTER_MS = 30 * 60_000;
+
+const cutOff = (what: string, next: string) =>
+  `${what} stopped before it finished (Outrunner may have restarted while it ran). ${next}`;
+
+/**
+ * Each status a lifecycle step holds, what a step cut off goes back to, and
+ * what its page says. Back where the step started, so it can be tried again;
+ * a delete cut off becomes failed, which can be deleted. An archive whose
+ * Snapshot was kept before it was cut off is archived instead
+ * (provisioning.deps.ts), as the step itself would have ended.
+ */
+export const INTERRUPTED_TRANSITIONS: { from: WorkspaceStatus; to: WorkspaceStatus; message: string }[] = [
+  { from: "archiving", to: "ready", message: cutOff("Archiving", "Archive it again when you're ready.") },
+  { from: "restoring", to: "archived", message: cutOff("Restoring", "Restore it again to pick up where it left off.") },
+  { from: "resuming", to: "suspended", message: cutOff("Resuming", "Resume it again.") },
+  // Suspended, whether or not the stop landed: resume relaunches it either
+  // way, while ready would show a session whose agent may have stopped.
+  { from: "suspending", to: "suspended", message: cutOff("Suspending", "Resume it to pick up where it left off.") },
+  { from: "destroying", to: "failed", message: cutOff("Deleting", "Delete it again.") },
+];
+
+/** The time before which a lifecycle step's row, unchanged since, was cut off. */
+export function transitionsInterruptedBefore(now: Date): string {
+  return new Date(now.getTime() - TRANSITION_INTERRUPTED_AFTER_MS).toISOString();
+}
+
+/**
+ * Past this since its row last changed, a box claimed for provisioning was
+ * cut off: the claim (claim_workspace_computer, claim_runtime_computer) takes
+ * over only a box in error or stopped, and its holder, the request that
+ * provisions it, is the only one that moves it on. One a deploy cut off
+ * mid-provision (a paused box being brought back, say) kept every later open
+ * of its session waiting on it, then failing, for good. Well past the
+ * longest provision: 3 minutes on another request's, then Neev's 10-minute
+ * prepare; and past STALE_PROVISION_MS, after which the plan no longer counts
+ * it.
+ */
+export const BOX_CLAIM_ABANDONED_AFTER_MS = 30 * 60_000;
+
+export const BOX_CLAIM_ABANDONED_MESSAGE =
+  "Starting this box stopped before it finished (Outrunner may have restarted while it ran).";
+
+/**
+ * What an abandoned claim on a box becomes, as its provision's own failure
+ * would leave it (lib/runtime/ensure-runtime-computer.ts): stopped, still
+ * naming the box it was bringing back, so the next open restores from that
+ * box and its sessions; in error when it names none, so the next starts anew.
+ */
+export function abandonedBoxClaim(sandboxId: string | null): { status: "stopped" | "error"; errorMessage: string } {
+  return { status: sandboxId ? "stopped" : "error", errorMessage: BOX_CLAIM_ABANDONED_MESSAGE };
+}

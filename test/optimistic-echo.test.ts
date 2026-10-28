@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { anchorPending, livePrompts, pendingShows, settlePending, type PendingPrompt } from "@/lib/session/optimistic-echo";
+import { anchorPending, livePrompts, pendingAfterStop, pendingShows, settlePending, type PendingPrompt } from "@/lib/session/optimistic-echo";
 
 const typed = (id: string): PendingPrompt => ({ id, text: id, expect: null });
 
@@ -57,4 +57,20 @@ test("the same text earlier in the history isn't taken for the prompt", () => {
 test("settling one bubble keeps the others queued behind it", () => {
   const pending = [typed("a"), typed("b")];
   assert.deepEqual(settlePending(pending, "a", ["a"], 0), [typed("b")]);
+});
+
+test("a confirmed stop lets go of bubbles the session took but never recorded", () => {
+  // A prompt sent mid-turn, taken (anchored), then handed back to Claude's
+  // input by the stop: the stream never records it.
+  const pending: PendingPrompt[] = [
+    { id: "taken", text: "and the docs", expect: 3 },
+    { id: "going", text: "one more thing", expect: null },
+  ];
+  const delivered = 2;
+  const working = (p: PendingPrompt[]) => p.some((x) => pendingShows(x, delivered));
+  assert.equal(working(pending.slice(0, 1)), true, "before the stop, the bubble keeps the page working");
+  const after = pendingAfterStop(pending);
+  // One still on its way to the session keeps its bubble.
+  assert.deepEqual(after.map((p) => p.id), ["going"]);
+  assert.equal(working(pendingAfterStop(pending.slice(0, 1))), false);
 });

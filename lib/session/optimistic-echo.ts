@@ -74,3 +74,16 @@ export function settlePending(
   }
   return anchorPending(pending, id, recorded.length);
 }
+
+/**
+ * `pending` once a stop is confirmed: without the bubbles the session took
+ * but the stream hasn't recorded. A prompt sent while the agent worked waits
+ * in Claude's queue, and a stop either runs it next (the stream then records
+ * it, as its own message) or hands it back to Claude's input, never recorded:
+ * its bubble then waited for good, the page stayed "working" past the stop,
+ * and every prompt after it was held in the page's queue. One not handed over
+ * yet still goes, so it keeps its bubble.
+ */
+export function pendingAfterStop(pending: PendingPrompt[]): PendingPrompt[] {
+  return pending.filter((p) => p.expect === null);
+}
