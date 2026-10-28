@@ -13,3 +13,8 @@ export const BOX_GONE = "box-gone";
 /** Restoring the box failed, which is usually brief: retrying can help.
  *  app/api/workspaces/[id]/session/route.ts */
 export const BOX_RESTORE_FAILED = "box-restore-failed";
+
+/** The session's agent didn't start on its box (it exited at launch, or its
+ *  relaunch failed), so nothing would answer it: the page says why, with
+ *  Try again. app/api/workspaces/[id]/session/route.ts */
+export const SESSION_NOT_STARTED = "session-not-started";

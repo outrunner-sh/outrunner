@@ -171,6 +171,28 @@ func (m *Manager) SendKey(ctx context.Context, name, key string) error {
 	return nil
 }
 
+// SendKeys presses named keys in order, in one tmux command.
+func (m *Manager) SendKeys(ctx context.Context, name string, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if out, err := Command(ctx, append([]string{"send-keys", "-t", name}, keys...)...).CombinedOutput(); err != nil {
+		return fmt.Errorf("tmux send-keys %s: %v: %s", name, err, out)
+	}
+	return nil
+}
+
+// CapturePaneStyled is CapturePane with the text's styling kept as escape
+// sequences (-e): what tells a dim placeholder in an input box from text
+// typed there.
+func (m *Manager) CapturePaneStyled(ctx context.Context, name string) (string, error) {
+	out, err := Command(ctx, "capture-pane", "-t", name, "-p", "-e").Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux capture-pane -e %s: %w", name, err)
+	}
+	return string(out), nil
+}
+
 // CapturePane returns the current visible contents of the session's active
 // pane. Used to detect when Claude's TUI has finished mounting and is ready to
 // accept a submitted prompt.

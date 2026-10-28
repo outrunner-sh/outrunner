@@ -29,6 +29,9 @@ func (a claudeAgent) env(anthropicToken string) []string {
 func (claudeAgent) isComposer(pane string) bool   { return isComposer(pane) }
 func (claudeAgent) isBusy(pane string) bool       { return claudeIsBusy(pane) }
 func (claudeAgent) awaitsAnswer(pane string) bool { return awaitsAnswer(pane) }
+func (claudeAgent) typedLines(styledPane string) int {
+	return claudeTypedLines(styledPane)
+}
 
 // startupKey answers the first-run screens, then the folder-trust dialog.
 func (claudeAgent) startupKey(pane string) string {
@@ -69,6 +72,86 @@ func isComposer(pane string) bool {
 		previous = line
 	}
 	return false
+}
+
+// claudeTypedLines reads Claude's prompt box off a styled capture: the rows
+// from its prompt (❯, or > in 2.0) down to the rule under it, and how many
+// they are when any holds text. Claude draws its placeholders dim ("Try …",
+// "Press up to edit queued messages"), so dim text isn't counted: only what
+// was typed and left there, such as a queued prompt a stop handed back.
+func claudeTypedLines(styledPane string) int {
+	rows := strings.Split(styledPane, "\n")
+	previous := ""
+	for i, row := range rows {
+		plain := visibleText(row, true)
+		if strings.TrimSpace(plain) == "" {
+			continue
+		}
+		if (strings.HasPrefix(plain, "❯") || strings.HasPrefix(plain, ">")) && isRule(previous) {
+			lines, typed := 0, false
+			for j, box := range rows[i:] {
+				text := visibleText(box, false)
+				if j > 0 && isRule(visibleText(box, true)) {
+					break
+				}
+				if j == 0 {
+					text = strings.TrimLeft(text, "❯>")
+				}
+				lines++
+				typed = typed || strings.TrimSpace(text) != ""
+			}
+			if !typed {
+				return 0
+			}
+			return lines
+		}
+		previous = plain
+	}
+	return 0
+}
+
+// visibleText is a styled row's text without its escape sequences; without
+// what's drawn dim (SGR 2, until 22 or a reset) too, unless withDim.
+func visibleText(row string, withDim bool) string {
+	var out strings.Builder
+	dim := false
+	for i := 0; i < len(row); i++ {
+		if row[i] != '\x1b' {
+			if withDim || !dim {
+				out.WriteByte(row[i])
+			}
+			continue
+		}
+		// CSI: ESC [ parameters, then a final byte in @..~.
+		if i+1 >= len(row) || row[i+1] != '[' {
+			i++ // a two-byte escape
+			continue
+		}
+		j := i + 2
+		for j < len(row) && (row[j] < '@' || row[j] > '~') {
+			j++
+		}
+		if j < len(row) && row[j] == 'm' {
+			params := strings.Split(row[i+2:j], ";")
+			for k := 0; k < len(params); k++ {
+				switch params[k] {
+				case "", "0", "22":
+					dim = false
+				case "2":
+					dim = true
+				case "38", "48", "58":
+					// A colour's own numbers ("38;5;2") aren't attributes.
+					if k+1 < len(params) && params[k+1] == "5" {
+						k += 2
+					} else if k+1 < len(params) && params[k+1] == "2" {
+						k += 4
+					}
+				}
+			}
+		}
+		i = j
+	}
+	return out.String()
 }
 
 func isRule(line string) bool {

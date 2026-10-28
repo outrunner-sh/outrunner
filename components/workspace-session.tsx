@@ -69,7 +69,7 @@ import {
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
-import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
+import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
 import type { OutrunnerModels } from "@/lib/desktop/local-runtime";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
 import { useConversationStream } from "@/hooks/use-conversation-stream";
@@ -939,6 +939,16 @@ function ConnectionNotice({
         actions={[
           { label: "Continue in a new session", primary: true, href: projectId ? `/new?project=${projectId}` : "/new" },
         ]}
+      />
+    );
+  }
+  if (code === SESSION_NOT_STARTED) {
+    return (
+      <Notice
+        tone="error"
+        title="This session's agent didn't start"
+        detail={message ?? "Its box is up, but the agent on it didn't start."}
+        actions={[retry("Try again")]}
       />
     );
   }

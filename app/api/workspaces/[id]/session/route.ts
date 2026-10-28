@@ -15,7 +15,7 @@ import {
 import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { newBoxSize } from "@/lib/orgs/defaults";
-import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { scopeOf } from "@/lib/runtime/computer-scope";
@@ -23,10 +23,10 @@ import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { boxSizeOn, computerMadeBy, endedBoxOf, sandboxOf } from "@/lib/runtime/sandbox-choice";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
-import { signInFailure } from "@/lib/runtime/session-auth";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import type { RuntimeComputer, Workspace } from "@/lib/runtime/types";
-import { BOX_GONE, BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
+import { relaunchFailure } from "@/lib/session/relaunch-failure";
+import { BOX_RESTORE_FAILED } from "@/lib/session/session-codes";
 
 // May ensure/boot a Runtime Computer before minting session tokens; give it the
 // same 60s cap as provisioning (serverless hosts only; a no-op on Railway).
@@ -173,19 +173,15 @@ export async function POST(request: Request, context: RouteContext) {
       await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
       await agent.startWorkspace(identity);
     } catch (error) {
-      const failure = signInFailure(error);
-      if (failure) return NextResponse.json(failure, { status: 409 });
-      if (error instanceof AgentRequestError && error.status === 404) {
-        return NextResponse.json(
-          {
-            error:
-              "This session's box ended and couldn't be restored, so its uncommitted files are gone. Start a new session.",
-            code: BOX_GONE,
-          },
-          { status: 410 },
-        );
+      const failed = await relaunchFailure(error, async () => {
+        summary = await agent.workspaceSummary(identity).catch(() => undefined);
+        return summary?.state === "running";
+      });
+      if (failed) {
+        if (failed.status === 502) console.error(`Session attach: ${workspace.id}'s agent didn't start`, error);
+        return NextResponse.json(failed.body, { status: failed.status });
       }
-      console.warn(`Session attach: start failed for ${workspace.id}`, error);
+      console.warn(`Session attach: start failed for ${workspace.id}, running anyway`, error);
     }
   }
 

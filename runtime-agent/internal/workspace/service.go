@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +42,9 @@ type sessions interface {
 	Paste(ctx context.Context, name, text string) error
 	SubmitEnter(ctx context.Context, name string) error
 	SendKey(ctx context.Context, name, key string) error
+	SendKeys(ctx context.Context, name string, keys ...string) error
 	CapturePane(ctx context.Context, name string) (string, error)
+	CapturePaneStyled(ctx context.Context, name string) (string, error)
 }
 
 // Service holds the on-box layout and the tmux manager. One instance per agent.
@@ -1107,6 +1110,7 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 		if s.awaitingAnswer(ctx, workspaceID, name) {
 			return errAwaitsAnswer
 		}
+		s.clearPromptBox(ctx, workspaceID, name)
 		if err := s.tmux.Paste(ctx, name, content); err != nil {
 			return err
 		}
@@ -1134,6 +1138,49 @@ func (s *Service) SendMessage(workspaceID, content string) error {
 	// Report the failure so the caller sees a non-2xx and can retry, rather than
 	// a 200 for an undelivered prompt.
 	return fmt.Errorf("prompt not confirmed delivered after %d attempts", submitAttempts)
+}
+
+const (
+	// clearPasses bounds the reads and clears of a prompt box that won't empty.
+	clearPasses = 3
+	// clearSettle is how long the box gets to be drawn again after a clear.
+	clearSettle = 150 * time.Millisecond
+)
+
+// clearPromptBox empties the agent's prompt box of text a send would
+// otherwise be typed onto. A stop hands the prompts Claude had queued back to
+// its box, unsent: the next prompt was pasted after them and went as one
+// ("QUEUED while busySLEEPY"). So was a prompt a failed send left staged
+// there, once a different one followed. The box is read off the screen and
+// cleared only when it holds text, line by line from wherever the cursor is:
+// Ctrl+A, Ctrl+K to empty a line and again to take up the next, Backspace to
+// join the one above. None of those does anything on an empty box, unlike
+// Escape, which twice opens Claude's rewind menu. A box that can't be read is
+// left alone, and one that won't empty is logged and sent to as before.
+func (s *Service) clearPromptBox(ctx context.Context, workspaceID, name string) {
+	a := s.agentFor(workspaceID)
+	for pass := 0; ; pass++ {
+		pane, err := s.tmux.CapturePaneStyled(ctx, name)
+		if err != nil {
+			return
+		}
+		lines := a.typedLines(pane)
+		if lines == 0 {
+			return
+		}
+		if pass == clearPasses {
+			log.Printf("workspace %s: its prompt box still holds text after clearing it", workspaceID)
+			return
+		}
+		keys := make([]string, 0, 4*(lines+1))
+		for i := 0; i <= lines; i++ {
+			keys = append(keys, "C-a", "C-k", "C-k", "BSpace")
+		}
+		if err := s.tmux.SendKeys(ctx, name, keys...); err != nil {
+			return
+		}
+		time.Sleep(clearSettle)
+	}
 }
 
 // ErrNotInterrupted is a stop that couldn't be confirmed: the session's screen
