@@ -14,6 +14,7 @@ import { requireGitToken } from "@/lib/github/identity.deps";
 import { supersedingPullRequest } from "@/lib/session/pull-request-status";
 import { sessionRepo } from "@/lib/session/session-repos";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
+import { notePullRequestState } from "@/lib/session/pull-request-state";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -113,5 +114,7 @@ export async function GET(request: Request, context: RouteContext) {
       }
     }
   }
+  // What GitHub says now, for the sidebar's groups (lib/session/standing.ts).
+  if (status) await notePullRequestState(pullRequest, status.state);
   return NextResponse.json({ pullRequest, status });
 }

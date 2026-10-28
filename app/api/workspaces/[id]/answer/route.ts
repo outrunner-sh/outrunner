@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { AnswerRequest } from "@/lib/runtime/agent-protocol";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { watchSent } from "@/lib/session/watch";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -48,5 +49,7 @@ export async function POST(request: Request, context: RouteContext) {
     console.error(`Answer: failed for ${workspace.id}`, error);
     return NextResponse.json({ error: "Couldn't send your answer. Please try again." }, { status: 502 });
   }
+  // No longer waiting on the user: working again, and watched.
+  after(() => watchSent(workspace.id, workspace.ownerId));
   return NextResponse.json({ result: "answered" });
 }

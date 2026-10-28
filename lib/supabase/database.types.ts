@@ -260,6 +260,40 @@ type PullRequestRow = {
   base_branch: string;
   head_branch: string;
   created_at: string;
+  /** As GitHub last said (20261102100000), and since when. */
+  state: "open" | "closed" | "merged";
+  state_at: string | null;
+  checked_at: string | null;
+};
+
+// supabase/migrations/20261102100000_session_standing.sql
+type SessionActivityRow = {
+  workspace_id: string;
+  owner_id: string;
+  turn: "working" | "idle";
+  turn_started_at: string | null;
+  waiting: "question" | "plan" | "secrets" | null;
+  waiting_tool_id: string | null;
+  waiting_since: string | null;
+  replied_at: string | null;
+  reply_preview: string | null;
+  event_at: string | null;
+  stream_cursor: number;
+  stream_box: string | null;
+  watch_until: string | null;
+  read_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type SessionMarkRow = {
+  user_id: string;
+  workspace_id: string;
+  pinned_at: string | null;
+  moved_to: "needs_you" | "working" | "in_review" | "done" | "backlog" | null;
+  moved_at: string | null;
+  seen_at: string | null;
+  updated_at: string;
 };
 
 // M4 — the DERIVED, owner-scoped index over Snapshot storage objects. `manifest`
@@ -1289,6 +1323,18 @@ export type Database = {
         Row: OrgModelKeyRow;
         Insert: Insert<OrgModelKeyRow, "org_id">;
         Update: Partial<OrgModelKeyRow>;
+        Relationships: [];
+      };
+      session_activity: {
+        Row: SessionActivityRow;
+        Insert: Insert<SessionActivityRow, "workspace_id" | "owner_id"> & Partial<Pick<SessionActivityRow, "updated_at">>;
+        Update: Partial<SessionActivityRow>;
+        Relationships: [];
+      };
+      session_marks: {
+        Row: SessionMarkRow;
+        Insert: Insert<SessionMarkRow, "user_id" | "workspace_id"> & Partial<Pick<SessionMarkRow, "updated_at">>;
+        Update: Partial<SessionMarkRow>;
         Relationships: [];
       };
       slack_links: {

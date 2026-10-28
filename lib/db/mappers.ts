@@ -167,6 +167,9 @@ export function toWorkspacePullRequest(
     baseBranch: row.base_branch,
     headBranch: row.head_branch,
     createdAt: row.created_at,
+    // Open, before the migration that records it.
+    state: row.state ?? "open",
+    stateAt: row.state_at ?? null,
   };
 }
 

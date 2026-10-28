@@ -1,0 +1,231 @@
+/**
+ * The server's watch on its sessions: what each agent is doing, read from its
+ * box's conversation stream and kept in session_activity, which is what the
+ * sidebar's groups are worked out from (lib/session/standing.ts). Read
+ *
+ *   - closely after something is sent to a session (watchAfterSend, in
+ *     after()): every few seconds, until its turn ends or it waits on you;
+ *   - by the sessions tick (app/api/sessions/tick), every two minutes, for
+ *     every session whose box is up, which catches turns started anywhere
+ *     else (the terminal, Slack, an automation).
+ *
+ * Reading the stream is a GET, which the agent doesn't count as activity: the
+ * watch never keeps an idle box up.
+ */
+
+import { AgentClient } from "@/lib/runtime/agent-client";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { resolveProvider } from "@/lib/runtime/resolve";
+import { toRuntimeComputer, toWorkspace } from "@/lib/db/mappers";
+import { readStream } from "@/lib/session/event-stream";
+import { foldEvents, IDLE, type TurnState } from "@/lib/session/turn-state";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/database.types";
+
+type ActivityRow = Database["public"]["Tables"]["session_activity"]["Row"];
+
+/** What a read changed: the activity before it (null for a session not read
+ *  before) and after. */
+export type ActivityChange = { workspaceId: string; ownerId: string; before: TurnState | null; after: TurnState };
+
+/** How long a session is read closely after a send, and how often. */
+const CLOSE_WATCH_MS = 10 * 60_000;
+const CLOSE_WATCH_EVERY_MS = 8_000;
+/** How long the tick keeps reading a session after a send, for turns that
+ *  outlast the close watch even if its box looks idle meanwhile. */
+const WATCH_FOR_MS = 2 * 60 * 60_000;
+
+function db() {
+  return createSupabaseAdminClient();
+}
+
+export function rowToTurn(row: ActivityRow): TurnState {
+  return {
+    turn: row.turn,
+    turnStartedAt: row.turn_started_at,
+    waiting: row.waiting,
+    waitingToolId: row.waiting_tool_id,
+    waitingSince: row.waiting_since,
+    repliedAt: row.replied_at,
+    replyPreview: row.reply_preview,
+    eventAt: row.event_at,
+  };
+}
+
+function turnToRow(state: TurnState) {
+  return {
+    turn: state.turn,
+    turn_started_at: state.turnStartedAt,
+    waiting: state.waiting,
+    waiting_tool_id: state.waitingToolId,
+    waiting_since: state.waitingSince,
+    replied_at: state.repliedAt,
+    reply_preview: state.replyPreview,
+    event_at: state.eventAt,
+  };
+}
+
+/** The statuses whose box runs the agent: the only ones read. */
+const LIVE = ["ready", "idle"] as const;
+
+/**
+ * Read what's new on a session's stream and record it. Null when nothing was
+ * read: its box is down, the session gone, or another read got there first
+ * (each read claims the cursor it started from, so two at once fold the same
+ * events once).
+ */
+export async function readSession(workspaceId: string): Promise<ActivityChange | null> {
+  const { data: row, error } = await db().from("workspaces").select("*").eq("id", workspaceId).maybeSingle();
+  if (error) throw error;
+  if (!row) return null;
+  const workspace = toWorkspace(row);
+  const { data: activity, error: activityError } = await db()
+    .from("session_activity")
+    .select("*")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (activityError) throw activityError;
+  const before = activity ? rowToTurn(activity) : null;
+
+  // Paused, archived or gone: it's doing nothing, whatever it last did.
+  if (!(LIVE as readonly string[]).includes(workspace.status)) {
+    if (!activity || (activity.turn === "idle" && !activity.waiting)) return null;
+    const after: TurnState = { ...before!, turn: "idle", waiting: null, waitingToolId: null, waitingSince: null };
+    await db().from("session_activity").update({ ...turnToRow(after), updated_at: new Date().toISOString() }).eq("workspace_id", workspaceId);
+    return { workspaceId, ownerId: workspace.ownerId, before, after };
+  }
+
+  const box = await upBox(workspace);
+  if (!box) return null;
+  // A session restored onto another box has a log of its own there.
+  const sameBox = activity?.stream_box === box.sandboxId;
+  const cursor = sameBox ? Number(activity?.stream_cursor ?? 0) : 0;
+  const url = new URL(
+    new AgentClient(box.target).eventsSseUrl({
+      workspaceId: workspace.id,
+      projectId: workspace.projectId,
+      computerId: box.computerId,
+      userId: workspace.ownerId,
+    }),
+  );
+  if (cursor > 0) url.searchParams.set("lastEventId", String(cursor));
+  const read = await readStream(url.toString(), cursor);
+  // From the start of a log, the state starts over, but a reply already
+  // known stays known (its unread mark mustn't come back on a new box).
+  const from = sameBox && before ? before : { ...IDLE, repliedAt: before?.repliedAt ?? null, replyPreview: before?.replyPreview ?? null };
+  const after = foldEvents(from, read.events);
+  const now = new Date().toISOString();
+  const patch = { ...turnToRow(after), stream_cursor: read.cursor, stream_box: box.sandboxId, read_at: now, updated_at: now };
+
+  if (!activity) {
+    const { error: insertError, data: inserted } = await db()
+      .from("session_activity")
+      .upsert({ workspace_id: workspaceId, owner_id: workspace.ownerId, ...patch }, { onConflict: "workspace_id", ignoreDuplicates: true })
+      .select("workspace_id");
+    if (insertError) throw insertError;
+    if (!inserted?.length) return null;
+  } else {
+    let claim = db().from("session_activity").update(patch).eq("workspace_id", workspaceId).eq("stream_cursor", activity.stream_cursor);
+    claim = activity.stream_box === null ? claim.is("stream_box", null) : claim.eq("stream_box", activity.stream_box);
+    const { data: claimed, error: updateError } = await claim.select("workspace_id");
+    if (updateError) throw updateError;
+    if (!claimed?.length) return null;
+  }
+  return { workspaceId, ownerId: workspace.ownerId, before, after };
+}
+
+/** The session's box, when it's up, and how to reach its agent; null when
+ *  it isn't (reading never starts one). */
+async function upBox(workspace: ReturnType<typeof toWorkspace>) {
+  const filter = workspace.computerId
+    ? `workspace_id.eq.${workspace.id},id.eq.${workspace.computerId}`
+    : `workspace_id.eq.${workspace.id}`;
+  const { data, error } = await db().from("runtime_computers").select("*").or(filter);
+  if (error) throw error;
+  const rows = data ?? [];
+  const row = rows.find((r) => r.workspace_id === workspace.id) ?? rows[0];
+  if (!row || row.status !== "ready" || !row.daytona_sandbox_id || !row.agent_secret) return null;
+  const computer = toRuntimeComputer(row);
+  const resolution = resolveProvider(workspace);
+  if (!resolution.ok || !isComputerProvider(resolution.provider)) return null;
+  const target = await resolution.provider.agentTarget(computer.daytonaSandboxId!, row.agent_secret);
+  return { target, sandboxId: computer.daytonaSandboxId!, computerId: computer.id };
+}
+
+/**
+ * Something was just sent to the session (a prompt, an answer, secrets): it's
+ * working, at once, for every client; then read closely until its turn ends
+ * or it waits on you, and by the tick for a while after. `onChange` hears each
+ * read that changed something.
+ */
+export async function watchAfterSend(
+  workspaceId: string,
+  ownerId: string,
+  onChange?: (change: ActivityChange) => Promise<void>,
+): Promise<void> {
+  const now = Date.now();
+  const { data: existing } = await db().from("session_activity").select("turn, turn_started_at").eq("workspace_id", workspaceId).maybeSingle();
+  const startedAt = existing?.turn === "working" ? existing.turn_started_at : new Date(now).toISOString();
+  const working = {
+    turn: "working" as const,
+    turn_started_at: startedAt,
+    waiting: null,
+    waiting_tool_id: null,
+    waiting_since: null,
+    watch_until: new Date(now + WATCH_FOR_MS).toISOString(),
+    updated_at: new Date(now).toISOString(),
+  };
+  const { error } = existing
+    ? await db().from("session_activity").update(working).eq("workspace_id", workspaceId)
+    : await db().from("session_activity").insert({ workspace_id: workspaceId, owner_id: ownerId, ...working });
+  if (error) throw error;
+
+  const until = now + CLOSE_WATCH_MS;
+  while (Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, CLOSE_WATCH_EVERY_MS));
+    const change = await readSession(workspaceId).catch((readError: unknown) => {
+      console.error(`Watch: couldn't read ${workspaceId}`, readError);
+      return null;
+    });
+    if (change && onChange) await onChange(change).catch((hookError: unknown) => console.error(`Watch: ${workspaceId}'s change`, hookError));
+    if (change && (change.after.turn === "idle" || change.after.waiting)) return;
+  }
+}
+
+/** The sessions the tick reads: every one whose box is up, and those sent
+ *  something lately, most recently active first. */
+export async function watchedSessions(limit = 150): Promise<string[]> {
+  const { data: live, error } = await db()
+    .from("workspaces")
+    .select("id, computer_id, last_active_at")
+    .in("status", LIVE)
+    .eq("background", false)
+    .order("last_active_at", { ascending: false, nullsFirst: false })
+    .limit(limit * 2);
+  if (error) throw error;
+  const ids = (live ?? []).map((w) => w.id);
+  const computerIds = [...new Set((live ?? []).map((w) => w.computer_id).filter((id): id is string => Boolean(id)))];
+  const [byWorkspace, byId, watched] = await Promise.all([
+    ids.length ? db().from("runtime_computers").select("workspace_id").eq("status", "ready").in("workspace_id", ids) : { data: [] },
+    computerIds.length ? db().from("runtime_computers").select("id").eq("status", "ready").in("id", computerIds) : { data: [] },
+    db().from("session_activity").select("workspace_id").gt("watch_until", new Date().toISOString()),
+  ]);
+  const upOwn = new Set((byWorkspace.data ?? []).map((c) => c.workspace_id));
+  const upShared = new Set((byId.data ?? []).map((c) => c.id));
+  const up = (live ?? []).filter((w) => upOwn.has(w.id) || (w.computer_id && upShared.has(w.computer_id))).map((w) => w.id);
+  return [...new Set([...up, ...(watched.data ?? []).map((a) => a.workspace_id)])].slice(0, limit);
+}
+
+/** Run `work` over `items`, `width` at a time. */
+export async function inBatches<T>(items: T[], width: number, work: (item: T) => Promise<void>): Promise<void> {
+  for (let i = 0; i < items.length; i += width) {
+    await Promise.all(items.slice(i, i + width).map(work));
+  }
+}
+
+/** watchAfterSend for a route's after(): never fails the send. */
+export async function watchSent(workspaceId: string, ownerId: string): Promise<void> {
+  await watchAfterSend(workspaceId, ownerId).catch((error: unknown) =>
+    console.error(`Watch: couldn't watch ${workspaceId} after a send`, error),
+  );
+}

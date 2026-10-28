@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
@@ -14,6 +14,7 @@ import { settableEnv } from "@/lib/imports/settable-env";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { ProvideSecretsRequest } from "@/lib/runtime/agent-protocol";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { watchSent } from "@/lib/session/watch";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -67,6 +68,8 @@ export async function POST(request: Request, context: RouteContext) {
     console.error(`Secrets: couldn't reach the session of ${workspace.id}`);
     return NextResponse.json({ error: "Couldn't send them to the session. Please try again." }, { status: 502 });
   }
+  // No longer waiting on the user: working again, and watched.
+  after(() => watchSent(workspace.id, workspace.ownerId));
 
   if (!save || answer.skipped || Object.keys(values).length === 0) {
     return NextResponse.json({ result: "provided" });

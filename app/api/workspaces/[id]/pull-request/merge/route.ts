@@ -9,6 +9,7 @@ import { requireGitToken } from "@/lib/github/identity.deps";
 import { allows } from "@/lib/orgs/access";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { sessionRepo } from "@/lib/session/session-repos";
+import { notePullRequestState } from "@/lib/session/pull-request-state";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -71,5 +72,7 @@ export async function POST(request: Request, context: RouteContext) {
     repoFullName,
     number: pullRequest.number,
   }).catch(() => null);
+  // Done, for the sidebar at once, before the webhook says so.
+  await notePullRequestState(pullRequest, "merged");
   return NextResponse.json({ merged: true, status });
 }

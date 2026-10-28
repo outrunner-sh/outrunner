@@ -1,15 +1,15 @@
 "use client";
 
-import Link, { useLinkStatus } from "next/link";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Archive,
   ChevronRight,
-  Ellipsis,
   GitBranchPlus,
   Folder,
   GitPullRequest,
   Inbox,
+  LayoutList,
   Slack,
   Laptop,
   PanelLeft,
@@ -29,23 +29,25 @@ import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
 import { OutrunnerAllowance } from "@/components/outrunner-allowance";
-import { Spinner } from "@/components/ui/loaders";
+import { RowTail, SessionMenu, StatusSections } from "@/components/sidebar-status";
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { SkeletonRows, SkeletonSwap } from "@/components/ui/skeleton-swap";
 import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
+import { useStandings } from "@/hooks/use-standings";
 import { startNextSessionIn, startNextSessionInCloud } from "@/hooks/use-session-location";
 import {
   activeSessionId,
   buildSidebarGroups,
   filterSidebarGroups,
   newSessionHref,
-  relativeTime,
   rememberFoldedProjects,
   type SessionDeletion,
   shownSessions,
   type SidebarGroup,
 } from "@/lib/nav/sidebar";
+import { buildStatusSections, type Grouping, groupingCookie } from "@/lib/nav/status-groups";
+import type { SessionStanding } from "@/lib/session/standing";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
@@ -74,6 +76,7 @@ export function AppSidebar({
   searchSignal = 0,
   initialFolded = [],
   getStartedSkipped = null,
+  initialGrouping = "status",
 }: {
   /** What it lists hasn't arrived yet (a cold start): rows held by a skeleton. */
   loading?: boolean;
@@ -94,6 +97,8 @@ export function AppSidebar({
   initialFolded?: string[];
   /** The "Get started" checklist skipped (from its cookie); null until read. */
   getStartedSkipped?: boolean | null;
+  /** By status or by project (from its cookie). */
+  initialGrouping?: Grouping;
 }) {
   const pathname = usePathname();
   const active = activeSessionId(pathname);
@@ -116,6 +121,18 @@ export function AppSidebar({
     [projects, workspaces, local.sessions, now],
   );
   const shown = filterSidebarGroups(groups, query);
+
+  // By status (where each session stands, lib/session/standing.ts) or by
+  // project; switched here, else as the cookie had it.
+  const [groupingChoice, setGrouping] = useState<Grouping | null>(null);
+  const grouping = groupingChoice ?? initialGrouping;
+  const chooseGrouping = (next: Grouping) => {
+    setGrouping(next);
+    document.cookie = groupingCookie(next);
+  };
+  const standings = useStandings();
+  const sections = useMemo(() => buildStatusSections(shown, standings, now), [shown, standings, now]);
+  const needingYou = Object.values(standings).filter((s) => s.standing === "needs_you").length;
 
   // Projects folded shut with their chevron, remembered across visits.
   // Toggled here; else as the cookie had them, once read.
@@ -210,6 +227,16 @@ export function AppSidebar({
           label="Review"
           active={pathname === "/review" || pathname.startsWith("/review/")}
         />
+        {/* Every session, to search, filter and tidy up; the count is those
+            that need you (⌘J jumps to the next). */}
+        <NavLink
+          href="/workspaces"
+          icon={<LayoutList />}
+          label="Sessions"
+          count={needingYou}
+          countLabel={`${needingYou} need you`}
+          active={pathname === "/workspaces"}
+        />
         {/* The org's automations, which post as the Outrunner GitHub App. */}
         <NavLink
           href="/automations"
@@ -226,7 +253,7 @@ export function AppSidebar({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-2">
-          <h2 className="text-[13px] text-muted-foreground">Projects</h2>
+          <GroupingSwitch value={grouping} onChange={chooseGrouping} />
           {/* Opens the new-session screen with its GitHub repository picker
               open (`?pick=repo`): the way to add a repository not listed yet. */}
           <Link
@@ -249,7 +276,18 @@ export function AppSidebar({
           className="mt-2"
         >
           <div className="space-y-3">
-            {shown.length === 0 ? (
+            {grouping === "status" && sections.length > 0 ? (
+              <StatusSections
+                sections={sections}
+                active={active}
+                now={now}
+                folded={folded}
+                searching={query.trim() !== ""}
+                onToggle={toggleFolded}
+                onDelete={setDeleting}
+                onArchive={setArchiving}
+              />
+            ) : grouping === "status" || shown.length === 0 ? (
               <p className="px-2 py-1 text-[13px] text-muted-foreground">
                 {query ? "No matching sessions" : "No sessions yet"}
               </p>
@@ -260,6 +298,7 @@ export function AppSidebar({
                   group={group}
                   active={active}
                   now={now}
+                  standings={standings}
                   onDelete={setDeleting}
                   onArchive={setArchiving}
                   folded={folded.includes(group.key)}
@@ -324,6 +363,7 @@ function WorkspaceGroup({
   group,
   active,
   now,
+  standings,
   onDelete,
   onArchive,
   folded,
@@ -333,6 +373,8 @@ function WorkspaceGroup({
   group: SidebarGroup;
   active?: string;
   now: number;
+  /** Where each cloud session stands: its unread mark and its menu's marks. */
+  standings: Record<string, SessionStanding>;
   /** Opens the delete confirmation for one of its sessions. */
   onDelete: (session: DeletingSession) => void;
   /** Opens the archive confirmation for one of its sessions. */
@@ -416,6 +458,8 @@ function WorkspaceGroup({
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
           const { deletion, archive } = session;
+          const standing = group.local ? undefined : standings[session.id];
+          const hasMenu = !group.local || deletion !== null || archive !== null;
           // A cloud session warms up as the pointer rests on it, so its click
           // shows the conversation at once. A Mac one is near already, and
           // attaching would start it.
@@ -431,14 +475,19 @@ function WorkspaceGroup({
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-2 rounded-md py-1 pl-[32px] pr-2 text-[13px] transition-colors",
-                  // Room for both of the row's buttons as they show.
-                  deletion && archive && "group-hover/row:pr-10 group-focus-within/row:pr-10",
+                  // Room for the row's menu as it shows.
+                  hasMenu && "group-hover/row:pr-8 group-focus-within/row:pr-8",
                   isActive
                     ? "bg-accent text-foreground"
-                    : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                    : standing?.unread
+                      ? "text-foreground hover:bg-accent/60"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
               >
-                <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                <span className={cn("min-w-0 flex-1 truncate", standing?.unread && "font-medium")}>{session.title}</span>
+                {standing?.unread && (
+                  <span aria-label="New reply" title="A reply you haven't seen" className="size-1.5 shrink-0 rounded-full bg-sky-400" />
+                )}
                 {session.slackThreadUrl && (
                   <span title="Started from Slack: it and its thread stay in step" className="shrink-0">
                     <Slack aria-label="From Slack" className="size-3 text-muted-foreground" />
@@ -449,64 +498,21 @@ function WorkspaceGroup({
                     <Archive aria-label="Archived" className="size-3 text-muted-foreground" />
                   </span>
                 )}
-                <RowTail at={session.at} now={now} hideOnHover={deletion !== null || archive !== null} />
+                <RowTail at={session.at} now={now} hideOnHover={hasMenu} />
               </Link>
-              {archive && (
-                <button
-                  type="button"
-                  // Not `disabled`: a disabled button shows no tooltip saying why.
-                  aria-disabled={!archive.can}
-                  onClick={() => {
-                    if (archive.can) onArchive({ id: session.id, title: session.title });
-                  }}
-                  aria-label={`Archive ${session.title}`}
-                  title={archive.can ? "Archive session" : archive.why}
-                  className={cn(
-                    "absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition focus-visible:opacity-100 group-hover/row:opacity-100",
-                    deletion ? "right-7" : "right-1",
-                    archive.can ? "hover:bg-accent hover:text-foreground" : "cursor-not-allowed group-hover/row:opacity-40 focus-visible:opacity-40",
-                  )}
-                >
-                  <Archive className="size-3.5" />
-                </button>
-              )}
-              {deletion && (
-                <button
-                  type="button"
-                  onClick={() => onDelete({ id: session.id, title: session.title, deletion })}
-                  aria-label={`Delete ${session.title}`}
-                  title="Delete session"
-                  className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100"
-                >
-                  <Ellipsis className="size-3.5" />
-                </button>
-              )}
+              <SessionMenu
+                session={session}
+                markable={!group.local}
+                standing={standing}
+                onDelete={onDelete}
+                onArchive={onArchive}
+                className="absolute right-1 top-1/2 -translate-y-1/2"
+              />
             </div>
           );
         })}
       </div>
     </div>
-  );
-}
-
-/** A session row's right end: when it was last active, or, from the click until
- *  its page arrives, a spinner in the same box (useLinkStatus), so a click in
- *  the sidebar always answers. Steps aside on hover for the row's menu. */
-function RowTail({ at, now, hideOnHover }: { at: string; now: number; hideOnHover: boolean }) {
-  const { pending } = useLinkStatus();
-  return (
-    <span className={cn("grid shrink-0 place-items-center", hideOnHover && "group-hover/row:invisible")}>
-      {/* The server's clock and the browser's differ by the render delay,
-          which can tip "59m" into "1h": not a real mismatch. */}
-      <time
-        dateTime={at}
-        suppressHydrationWarning
-        className={cn("col-start-1 row-start-1 text-xs text-muted-foreground", pending && "invisible")}
-      >
-        {relativeTime(at, now)}
-      </time>
-      {pending && <Spinner label="Opening" className="col-start-1 row-start-1 size-3 text-muted-foreground" />}
-    </span>
   );
 }
 
@@ -540,6 +546,7 @@ function NavLink({
   label,
   hint,
   count = 0,
+  countLabel,
   active,
 }: {
   href: string;
@@ -550,6 +557,8 @@ function NavLink({
   hint?: string;
   /** How many wait there; shown at the row's end, giving way to the hint on hover. */
   count?: number;
+  /** What the count says to a screen reader; "N waiting" when not given. */
+  countLabel?: string;
   active: boolean;
 }) {
   return (
@@ -568,7 +577,7 @@ function NavLink({
       <span className="flex-1">{label}</span>
       {count > 0 && (
         <span
-          aria-label={`${count} waiting`}
+          aria-label={countLabel ?? `${count} waiting`}
           className={cn(
             "text-[11px] tabular-nums text-muted-foreground",
             hint && "group-hover/nav:hidden group-focus-visible/nav:hidden",
@@ -667,6 +676,31 @@ function SearchField({
       >
         <X className="size-3.5" />
       </button>
+    </div>
+  );
+}
+
+/** The list's heading, as a choice: sessions by where they stand, or by
+ *  project. */
+function GroupingSwitch({ value, onChange }: { value: Grouping; onChange: (value: Grouping) => void }) {
+  const option = (choice: Grouping, label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange(choice)}
+      aria-pressed={value === choice}
+      className={cn(
+        "rounded px-1 text-[13px] transition-colors",
+        value === choice ? "text-foreground" : "text-muted-foreground/70 hover:text-foreground",
+      )}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div role="group" aria-label="List sessions by" className="-ml-1 flex items-center gap-0.5">
+      {option("status", "Status")}
+      <span aria-hidden className="text-[13px] text-muted-foreground/40">/</span>
+      {option("projects", "Projects")}
     </div>
   );
 }

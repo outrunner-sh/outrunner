@@ -1,6 +1,16 @@
-import { redirect } from "next/navigation";
+import { Suspense } from "react";
 
-// Workspaces are the home surface now; keep the old path working.
+import { RequireOwner } from "@/components/require-owner";
+import { SessionsList } from "@/components/sessions-list";
+
+/** Every session in the org the user may see: search, filter, tidy up. */
 export default function WorkspacesPage() {
-  redirect("/");
+  return (
+    <>
+      <SessionsList />
+      <Suspense fallback={null}>
+        <RequireOwner />
+      </Suspense>
+    </>
+  );
 }

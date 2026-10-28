@@ -29,6 +29,8 @@ import {
   webhookSignatureMatches,
 } from "@/lib/github/app";
 import { LOOP_EVENTS, runGitHubLoop } from "@/lib/github/loop.deps";
+import { pullRequestEventOf } from "@/lib/session/pull-request-event";
+import { recordPullRequestEvent } from "@/lib/session/pull-request-state";
 import { announcePullRequest } from "@/lib/slack/agent-run";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
@@ -46,7 +48,16 @@ type Payload = {
   repository_selection?: string;
   sender?: { id?: number; login?: string };
   repository?: { full_name?: string };
-  pull_request?: { number?: number; html_url?: string; title?: string; head?: { ref?: string } };
+  pull_request?: {
+    number?: number;
+    html_url?: string;
+    title?: string;
+    state?: string;
+    merged?: boolean | null;
+    merged_at?: string | null;
+    head?: { ref?: string };
+    base?: { ref?: string };
+  };
 };
 
 /**
@@ -61,7 +72,8 @@ type Payload = {
  * the installation (lib/automations/runs.ts): their runs are recorded before
  * the answer, their sessions set up after. A redelivery starts nothing twice.
  * An opened one is also posted in the Slack thread of the item its session
- * works on, if the Slack agent filed it.
+ * works on, if the Slack agent filed it; and one a session opened, closed or
+ * merged is recorded on the session.
  *
  * Comments, and issues and pull requests closing, are the agent loop's
  * (lib/github/loop.ts): a mention of Outrunner steers a session, and a close
@@ -144,6 +156,14 @@ export async function POST(request: Request) {
         };
         after(() =>
           announcePullRequest(opened).catch((error: unknown) => console.error("Slack agent: couldn't announce the PR", error)),
+        );
+      }
+      // Its session's pull request opened, closed or merged: recorded, for
+      // the sidebar's In review and Done (lib/session/standing.ts).
+      const tracked = pullRequestEventOf(payload);
+      if (tracked) {
+        after(() =>
+          recordPullRequestEvent(tracked).catch((error: unknown) => console.error("Couldn't record a session's pull request", error)),
         );
       }
       return NextResponse.json({ received: true, runs: runs.length });
