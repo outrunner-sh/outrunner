@@ -112,7 +112,11 @@ export async function sweepOpenChecks(now = new Date()): Promise<number> {
   const retryBefore = new Date(now.getTime() - 2 * 60_000);
   const { stale, unsent } = await checksToSweep(before, retryBefore);
   // Those GitHub hasn't taken in a day won't be: let go of, said so.
-  const abandoned = await abandonOldChecks(before, retryBefore);
+  // Only cleanup: its failure never keeps the closes and resends from running.
+  const abandoned = await abandonOldChecks(before, retryBefore).catch((error: unknown) => {
+    console.error("Letting go of automation run checks past their day failed", error);
+    return 0;
+  });
   if (abandoned > 0) console.warn(`Gave up on ${abandoned} automation run check(s) GitHub wouldn't take for a day`);
   const reason = `No review was posted within ${CHECK_HOURS === 1 ? "an hour" : `${CHECK_HOURS} hours`}.`;
   await Promise.all([

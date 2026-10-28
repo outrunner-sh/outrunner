@@ -589,8 +589,8 @@ export async function checksToSweep(before: Date, retryBefore: Date): Promise<{ 
 }
 
 /** Give up on the checks past checksToSweep's day: kept as closed, so the
- *  open-check index holds only the open, and the row says it was let go.
- *  How many. */
+ *  open-check index holds only the open (the sweep's warning is the record
+ *  of it). How many. */
 export async function abandonOldChecks(before: Date, retryBefore: Date): Promise<number> {
   const supabase = createSupabaseAdminClient();
   const now = new Date().toISOString();
