@@ -15,11 +15,17 @@ begin
 end;
 $$;
 
+-- An enum, as workspaces.status is: comparisons with text must cast.
+create type workspace_status as enum (
+  'creating', 'provisioning', 'ready', 'idle', 'suspending', 'resuming', 'suspended',
+  'destroying', 'destroyed', 'archiving', 'archived', 'restoring', 'failed'
+);
+
 create table workspaces (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null,
   project_id uuid,
-  status text not null default 'creating',
+  status workspace_status not null default 'creating',
   branch text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

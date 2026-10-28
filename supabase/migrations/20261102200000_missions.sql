@@ -39,7 +39,7 @@ begin
   -- Unchanged parent, and not coming back from an end: nothing to count.
   if tg_op = 'UPDATE'
     and new.parent_mission_id is not distinct from old.parent_mission_id
-    and not (old.status = any (ended) and not (new.status = any (ended))) then
+    and not (old.status::text = any (ended) and not (new.status::text = any (ended))) then
     return new;
   end if;
   select * into mission from workspaces where id = new.parent_mission_id for update;
@@ -49,14 +49,14 @@ begin
   if mission.owner_id <> new.owner_id then
     raise exception 'A Runner runs as its Mission''s owner.' using errcode = '23514';
   end if;
-  if new.status = any (ended) then
+  if new.status::text = any (ended) then
     return new;
   end if;
   select count(*) into live
     from workspaces
     where parent_mission_id = new.parent_mission_id
       and id <> new.id
-      and not (status = any (ended));
+      and not (status::text = any (ended));
   if live >= 20 then
     raise exception 'mission_runner_cap: a Mission holds at most 20 Runners that aren''t archived.'
       using errcode = 'P0001', hint = 'Archive a finished Runner first.';
