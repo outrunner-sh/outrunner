@@ -421,9 +421,9 @@ func sendCommand(ctx context.Context, base string, config Config, args []string,
 		}
 		fmt.Fprintln(stdout, "✓ Sent")
 		if after != "" {
-			fmt.Fprintf(stdout, "  outrunner wait %s --after %s\n", id, after)
+			fmt.Fprintf(stdout, "  %s\n", waitHint(api, id, after))
 		} else {
-			fmt.Fprintf(stdout, "  Its turn hasn't shown yet: once `outrunner get %s` says working, run `outrunner wait %s`.\n", id, id)
+			fmt.Fprintf(stdout, "  Its turn hasn't shown yet: once `outrunner get %s%s` says working, run `%s`.\n", id, orgArg(api), waitHint(api, id, ""))
 		}
 		return 0
 	}
@@ -468,7 +468,9 @@ Waits until the session's turn is over or it needs input, then prints what it
 said. --after is the event id ` + "`outrunner send`" + ` printed: the turn that message
 starts. With no --timeout, it waits for as long as the turn takes.
 Exits 0 when the turn is over, 3 when the session needs input, 4 on timeout,
-and 1 when the session failed or stopped.
+1 when the session failed or stopped, and 5 when Outrunner couldn't be
+reached for a while (calls that fail are tried again first): run the command
+it prints to carry on waiting.
 `
 
 func waitCommand(ctx context.Context, base string, config Config, args []string, stdout, stderr io.Writer) int {
@@ -516,12 +518,15 @@ func waitAndPrint(ctx context.Context, api API, id, after string, timeout time.D
 		if after != "" {
 			query.Set("after_event", after)
 		}
-		call, cancel := context.WithTimeout(ctx, hold+60*time.Second)
 		var w Workspace
-		raw, err := api.Call(call, "GET", "/workspaces/"+url.PathEscape(id)+"/wait", query, nil, &w)
-		cancel()
+		raw, err := waitCall(ctx, api, id, query, hold, &w)
 		if err != nil {
-			return failed(stderr, err)
+			if !retryable(err) {
+				return failed(stderr, err)
+			}
+			fmt.Fprintln(stderr, "outrunner:", err)
+			fmt.Fprintf(stderr, "Couldn't reach Outrunner for a while. To carry on waiting: %s\n", waitHint(api, id, after))
+			return 5
 		}
 		// Again only after a full hold with time left to cover: the API
 		// answers a few seconds before its hold is up, and a short call
@@ -532,10 +537,64 @@ func waitAndPrint(ctx context.Context, api API, id, after string, timeout time.D
 		if asJSON {
 			printJSON(stdout, raw)
 		} else {
-			printWaited(stdout, w, after)
+			printWaited(stdout, w, waitHint(api, id, after))
 		}
 		return waitStatus(w)
 	}
+}
+
+// waitRetries are the pauses before each try again of a wait call that
+// failed on the way (a dropped long-poll, a deploy, a 502): a wait can run
+// for hours, and one such failure mustn't end it. The fence keeps a retry
+// on the same turn.
+var waitRetries = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
+
+// waitCall makes one wait call, tried again on a failure on the way.
+func waitCall(ctx context.Context, api API, id string, query url.Values, hold time.Duration, out *Workspace) (json.RawMessage, error) {
+	for attempt := 0; ; attempt++ {
+		call, cancel := context.WithTimeout(ctx, hold+60*time.Second)
+		raw, err := api.Call(call, "GET", "/workspaces/"+url.PathEscape(id)+"/wait", query, nil, out)
+		cancel()
+		if err == nil || !retryable(err) || attempt >= len(waitRetries) || ctx.Err() != nil {
+			return raw, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(waitRetries[attempt]):
+		}
+	}
+}
+
+// retryable is a failure on the way, not a refusal: no answer at all, a
+// rate limit, or the server's own trouble. 401, 403 and 404 end a wait.
+func retryable(err error) bool {
+	var api *APIError
+	if errors.As(err, &api) {
+		return api.Status == 429 || api.Status >= 500
+	}
+	return !errors.Is(err, context.Canceled)
+}
+
+// orgArg is " --org <name>" when the command was given one, for the
+// commands it prints: a session is found only in its own org.
+func orgArg(api API) string {
+	if api.Org == "" {
+		return ""
+	}
+	if strings.ContainsAny(api.Org, " \t'\"") {
+		return " --org " + strconv.Quote(api.Org)
+	}
+	return " --org " + api.Org
+}
+
+// waitHint is the command that carries on waiting for the same turn.
+func waitHint(api API, id, after string) string {
+	hint := "outrunner wait " + id
+	if after != "" {
+		hint += " --after " + after
+	}
+	return hint + orgArg(api)
 }
 
 // waitStatus is how a wait ended, as an exit status scripts can tell apart.
@@ -553,15 +612,12 @@ func waitStatus(w Workspace) int {
 	}
 }
 
-func printWaited(out io.Writer, w Workspace, after string) {
+// printWaited says how a wait ended; `hint` is the command to keep waiting,
+// with its fence and org: without the fence, the next wait could take an
+// earlier turn's end for this one's.
+func printWaited(out io.Writer, w Workspace, hint string) {
 	switch {
 	case w.TimedOut:
-		// With the same fence: without it, the next wait could take an
-		// earlier turn's end for this one's.
-		hint := "outrunner wait " + w.ID
-		if after != "" {
-			hint += " --after " + after
-		}
 		fmt.Fprintf(out, "Still working (%s). Run `%s` to keep waiting.\n", w.Status, hint)
 	case w.Turn == nil:
 		fmt.Fprintf(out, "The session is %s.\n", w.Status)
@@ -661,7 +717,7 @@ func readCommand(ctx context.Context, base string, config Config, args []string,
 		return 0
 	}
 	if answer.HasMore && answer.NextBeforeEvent != nil {
-		fmt.Fprintf(stdout, "(earlier: outrunner read %s --before %s)\n\n", rest[0], *answer.NextBeforeEvent)
+		fmt.Fprintf(stdout, "(earlier: outrunner read %s --before %s%s)\n\n", rest[0], *answer.NextBeforeEvent, orgArg(api))
 	}
 	for _, event := range answer.Data {
 		printEvent(stdout, event)

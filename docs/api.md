@@ -267,8 +267,10 @@ outrunner delete <id> --yes
 reads the prompt from stdin when there's none in its arguments, as `send`
 does. `send` prints the `after_event` to `wait` on. `wait` keeps calling the
 API (ten minutes a call) until the turn is over, for at most `--timeout`, and
-exits 0 when it's over, 3 when the session needs input, 4 on timeout, and 1
-when the session failed or stopped.
+exits 0 when it's over, 3 when the session needs input, 4 on timeout, 1
+when the session failed or stopped, and 5 when Outrunner couldn't be reached
+for a while (a dropped call, a deploy or a 5xx is tried again a few times
+first); it prints the command, fence and org included, that carries on.
 
 ## Webhooks
 

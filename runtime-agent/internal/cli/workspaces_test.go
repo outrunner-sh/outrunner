@@ -359,11 +359,82 @@ func TestDeleteTakesOnlyAYes(t *testing.T) {
 	}
 }
 
-func TestAWaitThatTimesOutSaysToKeepItsFence(t *testing.T) {
+func TestAWaitThatTimesOutSaysToKeepItsFenceAndOrg(t *testing.T) {
 	var out bytes.Buffer
-	printWaited(&out, Workspace{ID: "w1", Status: "ready", TimedOut: true}, "480")
-	if !strings.Contains(out.String(), "outrunner wait w1 --after 480") {
+	printWaited(&out, Workspace{ID: "w1", Status: "ready", TimedOut: true}, waitHint(API{Org: "Acme Inc"}, "w1", "480"))
+	if !strings.Contains(out.String(), `outrunner wait w1 --after 480 --org "Acme Inc"`) {
 		t.Fatalf("printed %q", out.String())
+	}
+}
+
+func TestSendsHintKeepsTheOrg(t *testing.T) {
+	server := (&fakeAPI{}).server(t)
+	var out, errs bytes.Buffer
+	if code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--org", "acme", "go"}, terminal{interactive: true}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if !strings.Contains(out.String(), "outrunner wait w1 --after 480 --org acme") {
+		t.Fatalf("printed %q", out.String())
+	}
+}
+
+// flakyWait fails its first `failures` wait calls with `status` (0: the
+// connection dropped), then answers that the turn is over.
+func flakyWait(t *testing.T, failures, status int) (*httptest.Server, *int) {
+	t.Helper()
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls <= failures {
+			if status == 0 {
+				hijacker, _ := w.(http.Hijacker)
+				conn, _, _ := hijacker.Hijack()
+				_ = conn.Close()
+				return
+			}
+			w.WriteHeader(status)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"w1","status":"ready","turn":{"state":"idle","last_message":"Fixed."}}`))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("OUTRUNNER_API_KEY", "")
+	waitRetries = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() {
+		waitRetries = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
+	})
+	return server, &calls
+}
+
+func TestAWaitOutlastsADroppedCallOrA502(t *testing.T) {
+	for _, status := range []int{0, 502, 429} {
+		server, calls := flakyWait(t, 2, status)
+		var out, errs bytes.Buffer
+		if code := waitCommand(context.Background(), server.URL, signedIn, []string{"w1", "--after", "480"}, &out, &errs); code != 0 {
+			t.Fatalf("status %d: exit %d: %s", status, code, errs.String())
+		}
+		if *calls != 3 || !strings.Contains(out.String(), "Fixed.") {
+			t.Fatalf("status %d: %d calls, printed %q", status, *calls, out.String())
+		}
+	}
+}
+
+func TestAWaitThatCantReachOutrunnerSaysHowToCarryOn(t *testing.T) {
+	server, _ := flakyWait(t, 10, 503)
+	var out, errs bytes.Buffer
+	if code := waitCommand(context.Background(), server.URL, signedIn, []string{"w1", "--after", "480"}, &out, &errs); code != 5 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if !strings.Contains(errs.String(), "outrunner wait w1 --after 480") {
+		t.Fatalf("said %q", errs.String())
+	}
+}
+
+func TestARefusedWaitEndsAtOnce(t *testing.T) {
+	server, calls := flakyWait(t, 10, 404)
+	var out, errs bytes.Buffer
+	if code := waitCommand(context.Background(), server.URL, signedIn, []string{"w1"}, &out, &errs); code != 1 || *calls != 1 {
+		t.Fatalf("exit %d after %d calls", code, *calls)
 	}
 }
 
