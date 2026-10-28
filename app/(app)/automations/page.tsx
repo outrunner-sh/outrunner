@@ -66,7 +66,13 @@ async function AutomationsSection() {
       installations={installations?.map((i) => ({ login: i.accountLogin, suspended: i.suspended })) ?? null}
       automations={automations}
       runs={runs}
-      templates={AUTOMATION_TEMPLATES.map(({ id, name, description, category }) => ({ id, name, description, category }))}
+      templates={AUTOMATION_TEMPLATES.map(({ id, name, description, category, triggers }) => ({
+        id,
+        name,
+        description,
+        category,
+        triggers,
+      }))}
     />
   );
 }
