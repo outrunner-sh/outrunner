@@ -540,7 +540,8 @@ async function offerIfWork(install: SlackInstallation, message: AgentMessage): P
   try {
     key = await watchModelKey(settings.orgId);
   } catch {
-    // A spent allowance included; watchModelKey logs it, once a minute.
+    // A spent allowance included; watchModelKey logs it (a lasting refusal
+    // once a minute, a blip each time).
     return;
   }
   let reply: string;
