@@ -119,24 +119,26 @@ export class OutrunnerControlPlane extends Container<Env> {
    */
   override async fetch(request: Request): Promise<Response> {
     await this.runCurrentImage();
-    const response = await super.fetch(request);
-    this.ctx.waitUntil(this.checkBuild());
-    return response;
+    await this.checkBuild();
+    return super.fetch(request);
   }
 
   /** The build this instance found its container running, once it was the
    *  deployed one. */
   private checkedBuild: string | null = null;
   private lastBuildCheck = 0;
-  /** Containers replaced for each deployed build: a few, never in a loop. */
-  private replacedFor = new Map<string, number>();
+  /** Containers replaced for this deploy (a deploy restarts the Durable
+   *  Object): a few, never in a loop. */
+  private replacements = 0;
 
   /**
-   * After a request, at most once a minute until it is: that the container
+   * Before a request, at most once a minute until it is: that the container
    * runs the deployed commit's image. The replacement on a new deploy
    * (runCurrentImage) can come before Cloudflare has the new image where the
    * container starts, which then starts the old one again; this replaces it
-   * once more, up to three times a deploy, a minute apart.
+   * once more, up to three times a deploy, a minute apart. Before the
+   * request rather than after it, as runCurrentImage does: replaced in the
+   * background, a container would take requests under way down with it.
    */
   private async checkBuild(): Promise<void> {
     const want = this.env.OUTRUNNER_BUILD;
@@ -149,9 +151,8 @@ export class OutrunnerControlPlane extends Container<Env> {
         this.checkedBuild = want;
         return;
       }
-      const tries = this.replacedFor.get(want) ?? 0;
-      if (tries >= 3) return;
-      this.replacedFor.set(want, tries + 1);
+      if (this.replacements >= 3) return;
+      this.replacements++;
       console.log(`The container runs build ${String(build)}, not ${want}: replacing it`);
       await this.destroy();
     } catch (error) {

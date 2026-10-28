@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 40); do
-            build=$(curl -fsS https://app.outrunner.sh/api/health | python3 -c "import json,sys; print(json.load(sys.stdin).get('build') or '')" || true)
+            build=$(curl -fsS --max-time 20 https://app.outrunner.sh/api/health | python3 -c "import json,sys; print(json.load(sys.stdin).get('build') or '')" || true)
             if [ "$build" = "$GITHUB_SHA" ]; then echo "Serving $GITHUB_SHA"; exit 0; fi
             echo "Still serving ${build:-a build from before builds were reported}"
             sleep 15
