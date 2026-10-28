@@ -173,8 +173,9 @@ export function subscribeEventsWs(
       return;
     }
     const id = typeof frame.id === "string" ? frame.id : "";
-    // State events carry the synthetic id "0"; only real events advance the
-    // resume cursor (mirrors subscribeEvents / the SSE `id:` semantics).
+    // The connect-time state event carries the synthetic id "0" and a later
+    // one the current cursor; only real events advance the resume cursor
+    // (mirrors subscribeEvents / the SSE `id:` semantics).
     if (id && id !== "0") lastId = id;
     onEvent(parsed.data, id);
   });

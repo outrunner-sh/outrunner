@@ -53,6 +53,10 @@ const (
 	eventsWSWriteWait = 10 * time.Second
 )
 
+// How often a Conversation stream rechecks the session state, so a "starting"
+// stream reports "running" once the session log appears.
+const stateCheckInterval = time.Second
+
 type Server struct {
 	secret string
 	ws     *workspace.Service
@@ -1094,8 +1098,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 //
 // A synthetic `state` event is emitted first on fresh connects (fromOffset == 0)
 // so subscribers know whether the workspace is running before any conversation
-// event lands; a resume (fromOffset > 0) skips it. Returns when ctx is cancelled
-// (client gone) or a write fails.
+// event lands; a resume (fromOffset > 0) skips it. After that, a `state` event
+// is sent whenever the state changes mid-stream — "starting" becomes "running"
+// once the session log appears — so no client is left showing a stale start.
+// A mid-stream state carries the resume cursor (the last event's offset, or
+// fromOffset) as its id: state isn't in the JSONL, so resuming there skips and
+// repeats nothing, and an SSE client's Last-Event-ID never moves backwards.
+// Returns when ctx is cancelled (client gone) or a write fails.
 func (s *Server) streamEvents(
 	ctx context.Context,
 	workspaceID string,
@@ -1103,17 +1112,32 @@ func (s *Server) streamEvents(
 	writeEvent func(id int64, payload []byte) bool,
 	heartbeat func() bool,
 ) {
-	if fromOffset == 0 {
-		state := "starting"
+	sessionState := func() string {
 		if s.ws.SessionLog(workspaceID) != "" {
-			state = "running"
+			return "running"
 		}
+		return "starting"
+	}
+	cursor := fromOffset
+	sent := sessionState()
+	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
 			T: "state", WorkspaceID: workspaceID, State: state,
 		})
-		if !writeEvent(0, payload) {
-			return
+		return writeEvent(cursor, payload)
+	}
+	// stateChanged sends the state when it differs from the last one sent (or,
+	// on a resume, from the one the stream opened with).
+	stateChanged := func() bool {
+		state := sessionState()
+		if state == sent {
+			return true
 		}
+		sent = state
+		return writeState(state)
+	}
+	if fromOffset == 0 && !writeState(sent) {
+		return
 	}
 
 	// Watcher tails the JSONL and delivers events on `out`. Its lifetime is tied
@@ -1125,12 +1149,23 @@ func (s *Server) streamEvents(
 
 	ticker := time.NewTicker(sseHeartbeat)
 	defer ticker.Stop()
+	stateTicker := time.NewTicker(stateCheckInterval)
+	defer stateTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-stateTicker.C:
+			if !stateChanged() {
+				return
+			}
 		case ev := <-out:
+			// The log just yielded an event, so check the state first: the
+			// "running" lands before the first message it explains.
+			if !stateChanged() {
+				return
+			}
 			var payload []byte
 			var mErr error
 			switch {
@@ -1147,6 +1182,7 @@ func (s *Server) streamEvents(
 			if !writeEvent(ev.ID, payload) {
 				return
 			}
+			cursor = ev.ID
 		case <-ticker.C:
 			if !heartbeat() {
 				return

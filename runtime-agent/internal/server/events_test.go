@@ -229,6 +229,78 @@ func TestEventsEmitsInitialStateFrame(t *testing.T) {
 	}
 }
 
+// stateOf parses a frame as a state event and returns its state, failing the
+// test when it is anything else.
+func stateOf(t *testing.T, frame sseFrame) string {
+	t.Helper()
+	var ev protocol.WorkspaceStateChanged
+	if err := json.Unmarshal([]byte(frame.Data), &ev); err != nil || ev.T != "state" {
+		t.Fatalf("expected state frame, got %+v", frame)
+	}
+	return ev.State
+}
+
+func TestEventsReportsRunningOnceLogAppears(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+	if err := os.Remove(f.jsonlPath); err != nil {
+		t.Fatalf("remove jsonl: %v", err)
+	}
+
+	resp, cancel := f.dial(t, "")
+	defer cancel()
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+
+	frames := readSSE(t, r, 1, 2*time.Second)
+	if got := stateOf(t, frames[0]); got != "starting" {
+		t.Fatalf("initial state = %q, want starting", got)
+	}
+
+	// Claude writes its log: the stream says "running" before the first
+	// message, still at the cursor (0) so a resume replays nothing.
+	if err := os.WriteFile(f.jsonlPath, []byte(msg1+"\n"), 0o600); err != nil {
+		t.Fatalf("write jsonl: %v", err)
+	}
+	frames = readSSE(t, r, 2, 3*time.Second)
+	if got := stateOf(t, frames[0]); got != "running" {
+		t.Fatalf("state after log appears = %q, want running", got)
+	}
+	if frames[0].ID != "0" {
+		t.Fatalf("state frame ID should be the cursor 0, got %q", frames[0].ID)
+	}
+	assertMessageWithText(t, frames[1], "first")
+}
+
+func TestEventsResumeReportsStateChangeAtCursor(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+	f.appendJSONL(t, msg1)
+
+	resp1, cancel1 := f.dial(t, "")
+	frames := readSSE(t, bufio.NewReader(resp1.Body), 2, 2*time.Second)
+	lastID := frames[1].ID
+	cancel1()
+	resp1.Body.Close()
+
+	resp2, cancel2 := f.dial(t, lastID)
+	defer cancel2()
+	defer resp2.Body.Close()
+
+	// The log goes away mid-stream: the resumed stream reports it, carrying
+	// the resume cursor so the client's Last-Event-ID doesn't move.
+	if err := os.Remove(f.jsonlPath); err != nil {
+		t.Fatalf("remove jsonl: %v", err)
+	}
+	frames2 := readSSE(t, bufio.NewReader(resp2.Body), 1, 3*time.Second)
+	if got := stateOf(t, frames2[0]); got != "starting" {
+		t.Fatalf("state = %q, want starting", got)
+	}
+	if frames2[0].ID != lastID {
+		t.Fatalf("state frame ID = %q, want the cursor %q", frames2[0].ID, lastID)
+	}
+}
+
 func TestEventsResumeIsGapFreeAndDupeFree(t *testing.T) {
 	f := newServerFixture(t)
 	defer f.stop()
