@@ -201,7 +201,9 @@ export async function archiveOnClose(orgId: string): Promise<boolean> {
 // Follow-ups (20261102110000_github_followups.sql; lib/github/followups.ts).
 // ---------------------------------------------------------------------------
 
-/** Queue a follow-up, or add to the one waiting (queue_github_followup). */
+/** Queue a follow-up, or add to the one waiting (queue_github_followup):
+ *  it, and whether this made it (new, or opened again); null for a commit
+ *  whose CI went already. */
 export async function queueFollowUp(followUp: {
   kind: "ci" | "review";
   installationId: number;
@@ -211,8 +213,8 @@ export async function queueFollowUp(followUp: {
   headSha?: string;
   reviewId?: number;
   delaySeconds: number;
-}): Promise<void> {
-  const { error } = await db().rpc("queue_github_followup", {
+}): Promise<{ id: string; fresh: boolean } | null> {
+  const { data, error } = await db().rpc("queue_github_followup", {
     followup_kind: followUp.kind,
     target_installation: followUp.installationId,
     target_project: followUp.projectId,
@@ -223,6 +225,16 @@ export async function queueFollowUp(followUp: {
     delay_seconds: followUp.delaySeconds,
   });
   if (error) throw error;
+  const row = (data ?? [])[0];
+  return row ? { id: row.followup_id, fresh: row.fresh } : null;
+}
+
+/** When follow-ups are due, and whether each has gone. */
+export async function followUpTimes(ids: readonly string[]): Promise<{ id: string; dueAt: string; done: boolean }[]> {
+  if (ids.length === 0) return [];
+  const { data, error } = await db().from("github_followups").select("id, due_at, sent_at").in("id", [...ids]);
+  if (error) throw error;
+  return (data ?? []).map((f) => ({ id: f.id, dueAt: f.due_at, done: f.sent_at !== null }));
 }
 
 /** Follow-ups due and not yet taken, oldest first. */

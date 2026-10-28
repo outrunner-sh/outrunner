@@ -3,20 +3,22 @@
 import {
   claimLoopAct,
   dueFollowUps,
+  followUpTimes,
   installationProject,
   linkedSessions,
   postponeFollowUp,
   pruneLoopRecords,
   pullForBranch,
   queueFollowUp,
+  releaseLoopAct,
   resetCiTurns,
   settleFollowUp,
   takeFollowUp,
 } from "@/lib/db/github-loop";
 import { appSlug, githubAppConfig, installationToken } from "@/lib/github/app";
 import { commitCheckRuns, jobLogTail } from "@/lib/github/ci";
-import { postIssueComment, readPull, readReview } from "@/lib/github/conversation";
-import { CI_SETTLE_SECONDS, flushFollowUps, type FollowUpDeps, MAX_CI_TURNS, REVIEW_SETTLE_SECONDS } from "@/lib/github/followups";
+import { GitHubConversationError, postIssueComment, readPull, readReview } from "@/lib/github/conversation";
+import { flushFollowUps, type FollowUpDeps, MAX_CI_TURNS, waitAndFlush } from "@/lib/github/followups";
 import { loopDeps } from "@/lib/github/loop.deps";
 import { readPullBranches } from "@/lib/github/mentions";
 import { wakeAndSend } from "@/lib/slack/research";
@@ -35,6 +37,8 @@ export function followUpDeps(): FollowUpDeps {
     linkedSessions,
     pullForBranch,
     queue: queueFollowUp,
+    release: releaseLoopAct,
+    times: followUpTimes,
     due: dueFollowUps,
     postpone: postponeFollowUp,
     take: (id) => takeFollowUp(id, MAX_CI_TURNS),
@@ -46,10 +50,17 @@ export function followUpDeps(): FollowUpDeps {
     },
     checkRuns: async (installationId, repoFullName, sha) => commitCheckRuns(await token(installationId), repoFullName, sha),
     jobLog: async (installationId, repoFullName, jobId) => jobLogTail(await token(installationId), repoFullName, jobId),
-    review: async (installationId, repoFullName, number, reviewId) =>
-      readReview(await token(installationId), repoFullName, number, reviewId),
+    async review(installationId, repoFullName, number, reviewId) {
+      try {
+        return await readReview(await token(installationId), repoFullName, number, reviewId);
+      } catch (error) {
+        // Deleted since. Anything else (a 5xx, a rate limit) is tried again.
+        if (error instanceof GitHubConversationError && error.status === 404) return null;
+        throw error;
+      }
+    },
     member: loop.member,
-    canRead: loop.canRead,
+    level: loop.level,
     wakeAndSend: (ownerId, workspaceId, prompt, from) => wakeAndSend(ownerId, workspaceId, prompt, from),
     humanSpoke: resetCiTurns,
     comment: async (installationId, repoFullName, number, body) =>
@@ -59,17 +70,17 @@ export function followUpDeps(): FollowUpDeps {
       return config ? appSlug(config) : undefined;
     },
     now: () => Date.now(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
 }
 
 /**
- * Wait out a burst, then send what's due: the webhook's own wait, after its
- * answer. A restart that cuts it short leaves the follow-up for the cron's
- * tick (sweepFollowUps).
+ * The webhook's own wait, after its answer, for the follow-ups its event
+ * made (lib/github/followups.ts, waitAndFlush). A restart that cuts it short
+ * leaves them for the cron's tick (sweepFollowUps).
  */
-export async function flushAfter(seconds: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, (seconds + 5) * 1000));
-  await flushFollowUps(followUpDeps()).catch((error: unknown) => console.error("GitHub follow-ups: flush failed", error));
+export async function flushWhenDue(ids: readonly string[]): Promise<void> {
+  await waitAndFlush(ids, followUpDeps()).catch((error: unknown) => console.error("GitHub follow-ups: flush failed", error));
 }
 
 /** The cron's part (app/api/billing/reconcile): follow-ups due that no
@@ -80,4 +91,3 @@ export async function sweepFollowUps(): Promise<number> {
   return [...results.values()].filter((outcome) => outcome === "sent").length;
 }
 
-export { CI_SETTLE_SECONDS, REVIEW_SETTLE_SECONDS };

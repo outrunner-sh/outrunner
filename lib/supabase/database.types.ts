@@ -1298,7 +1298,7 @@ export type Database = {
           review_id: number;
           delay_seconds: number;
         };
-        Returns: undefined;
+        Returns: { followup_id: string; fresh: boolean }[];
       };
       claim_github_followup: {
         Args: { target: string; max_turns: number };

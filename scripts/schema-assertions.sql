@@ -1925,8 +1925,12 @@ declare
   r record;
   outcomes text := '';
 begin
-  perform queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'aaa', 0, 60);
-  perform queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'aaa', 0, 60);
+  if not (select fresh from queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'aaa', 0, 60)) then
+    raise exception 'FAIL: a commit''s first CI event didn''t make its follow-up';
+  end if;
+  if (select fresh from queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'aaa', 0, 60)) then
+    raise exception 'FAIL: a second CI event for a commit was taken for a new follow-up';
+  end if;
   if (select count(*) from github_followups where kind = 'ci' and project_id = p) <> 1 then
     raise exception 'FAIL: a burst of CI events for one commit made more than one follow-up';
   end if;
@@ -1963,6 +1967,16 @@ begin
   end loop;
   if outcomes <> 'send send capped quiet ' then
     raise exception 'FAIL: CI''s turns past the limit went as %', outcomes;
+  end if;
+
+  -- Re-run green before it went, then failing again: it opens again.
+  perform queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'flaky', 0, 60);
+  update github_followups set sent_at = now(), outcome = 'passed' where head_sha = 'flaky' and project_id = p;
+  if not (select fresh from queue_github_followup('ci', 42, p, 'immadsahin/runtime', 7, 'flaky', 0, 60)) then
+    raise exception 'FAIL: CI failing again after passing wasn''t queued again';
+  end if;
+  if (select sent_at is not null or outcome is not null from github_followups where head_sha = 'flaky' and project_id = p) then
+    raise exception 'FAIL: a follow-up opened again kept how it went before';
   end if;
 
   -- A person spoke to the session working on it: CI counts from none.

@@ -22,6 +22,7 @@ import type { CheckRun } from "@/lib/github/ci";
 import type { ApiReview, ApiReviewComment } from "@/lib/github/conversation";
 import type { LinkedSession, LinkTarget } from "@/lib/github/loop";
 import { isBot, lineLabel, mentionsOutrunner, skipsOutrunner } from "@/lib/github/mentions";
+import { type AccessLevel, allows } from "@/lib/orgs/access";
 
 /** CI turns in a row, with no person's word between, before CI waits for one. */
 export const MAX_CI_TURNS = 3;
@@ -242,7 +243,7 @@ export function ciPrompt(input: {
 
 /** What the pull request is told when CI has failed past MAX_CI_TURNS. */
 export function cappedText(headSha: string): string {
-  return `CI is still failing at ${headSha.slice(0, 7)} after ${MAX_CI_TURNS} fixes in a row from the session, so I've left this one for a person. Comment \`@outrunner\` with what to do, or push a fix, and CI failures go back to the session.`;
+  return `CI is still failing at ${headSha.slice(0, 7)} after ${MAX_CI_TURNS} fixes in a row from the session, so I've left this one for a person. Comment \`@outrunner\` with what to do, or leave a review, and CI failures go back to the session.`;
 }
 
 /** A review as the session is told of it. */
@@ -358,7 +359,11 @@ export type FollowUpDeps = {
     headSha?: string;
     reviewId?: number;
     delaySeconds: number;
-  }): Promise<void>;
+  }): Promise<{ id: string; fresh: boolean } | null>;
+  /** Give a claim back: what it was for wasn't queued. */
+  release(key: string): Promise<void>;
+  /** When each follow-up is due, and whether it has gone (taken or settled). */
+  times(ids: readonly string[]): Promise<{ id: string; dueAt: string; done: boolean }[]>;
   /** Follow-ups due, oldest first. */
   due(limit: number): Promise<DueFollowUp[]>;
   postpone(id: string, seconds: number): Promise<void>;
@@ -374,9 +379,11 @@ export type FollowUpDeps = {
     repoFullName: string,
     number: number,
     reviewId: number,
-  ): Promise<{ review: ApiReview; comments: ApiReviewComment[] }>;
+  ): Promise<{ review: ApiReview; comments: ApiReviewComment[] } | null>;
   member(githubUserId: number, orgId: string): Promise<string | null>;
-  canRead(userId: string, projectId: string): Promise<boolean>;
+  /** A member's level on the project: read is heard by their own session;
+   *  write, by anyone's. */
+  level(userId: string, projectId: string): Promise<AccessLevel | null>;
   /** Send to a session as its owner, woken first; "github-ci" isn't a
    *  person's word, so CI's turns aren't counted again by it. */
   wakeAndSend(ownerId: string, workspaceId: string, prompt: string, from: "github" | "github-ci"): Promise<boolean>;
@@ -387,31 +394,34 @@ export type FollowUpDeps = {
    *  session as mentions already. */
   appSlug(): Promise<string | undefined>;
   now(): number;
+  sleep(ms: number): Promise<void>;
 };
 
 /**
  * Queue CI that failed for each linked pull request it's for, to go once the
- * burst is over. How many were queued. One already sent for the commit
+ * burst is over. The follow-ups this event made (new, or opened again after
+ * a re-run passed): only it waits for them to go (waitAndFlush); the
+ * burst's other events only put them later. One already sent for the commit
  * stays sent (one turn per commit).
  */
-export async function queueCiFailure(event: string | null, payload: unknown, deps: FollowUpDeps, appSlug?: string): Promise<number> {
+export async function queueCiFailure(event: string | null, payload: unknown, deps: FollowUpDeps, appSlug?: string): Promise<string[]> {
   const failure = readCiFailure(event, payload, appSlug);
-  if (!failure) return 0;
+  if (!failure) return [];
   const scope = await deps.scope(failure.installationId, failure.repoFullName);
-  if (!scope) return 0;
+  if (!scope) return [];
   let numbers = failure.prNumbers;
   if (numbers.length === 0 && failure.headBranch) {
     const found = await deps.pullForBranch(scope.projectId, failure.headBranch);
     numbers = found ? [found] : [];
   }
-  let queued = 0;
+  const fresh: string[] = [];
   for (const number of numbers) {
     const sessions = await deps.linkedSessions(
       { projectId: scope.projectId, target: "pull", number, headRef: failure.headBranch },
       scope.orgId,
     );
     if (sessions.length === 0) continue;
-    await deps.queue({
+    const queued = await deps.queue({
       kind: "ci",
       installationId: failure.installationId,
       projectId: scope.projectId,
@@ -420,34 +430,65 @@ export async function queueCiFailure(event: string | null, payload: unknown, dep
       headSha: failure.headSha,
       delaySeconds: CI_SETTLE_SECONDS,
     });
-    queued++;
+    if (queued?.fresh) fresh.push(queued.id);
   }
-  return queued;
+  return fresh;
 }
 
 /** Queue a submitted review into its linked pull request's batch; once per
- *  review, whatever GitHub redelivers. Whether it was. */
-export async function queueReview(event: string | null, payload: unknown, deps: FollowUpDeps): Promise<boolean> {
+ *  review, whatever GitHub redelivers. The batch, if this review began it
+ *  (only then does this event wait for it to go). */
+export async function queueReview(event: string | null, payload: unknown, deps: FollowUpDeps): Promise<string | null> {
   const review = readReviewSubmitted(event, payload);
-  if (!review) return false;
+  if (!review) return null;
   const scope = await deps.scope(review.installationId, review.repoFullName);
-  if (!scope) return false;
+  if (!scope) return null;
   const sessions = await deps.linkedSessions(
     { projectId: scope.projectId, target: "pull", number: review.number, headRef: review.headRef },
     scope.orgId,
   );
-  if (sessions.length === 0) return false;
-  if (!(await deps.claim(`review:${review.reviewId}`))) return false;
-  await deps.queue({
-    kind: "review",
-    installationId: review.installationId,
-    projectId: scope.projectId,
-    repoFullName: review.repoFullName,
-    prNumber: review.number,
-    reviewId: review.reviewId,
-    delaySeconds: REVIEW_SETTLE_SECONDS,
-  });
-  return true;
+  if (sessions.length === 0) return null;
+  const key = `review:${review.reviewId}`;
+  if (!(await deps.claim(key))) return null;
+  let queued: Awaited<ReturnType<FollowUpDeps["queue"]>>;
+  try {
+    queued = await deps.queue({
+      kind: "review",
+      installationId: review.installationId,
+      projectId: scope.projectId,
+      repoFullName: review.repoFullName,
+      prNumber: review.number,
+      reviewId: review.reviewId,
+      delaySeconds: REVIEW_SETTLE_SECONDS,
+    });
+  } catch (error) {
+    // Not queued: GitHub's redelivery may try again. (Into a batch that's
+    // open, a review twice is once: its ids are a set.)
+    await deps.release(key).catch(() => undefined);
+    throw error;
+  }
+  return queued?.fresh ? queued.id : null;
+}
+
+/** How long the event that made a follow-up waits for it to go before the
+ *  cron's tick has it: past CI's wait for checks still running. */
+export const WAIT_MAX_MS = CI_WAIT_MAX_MS + 5 * 60_000;
+
+/**
+ * Wait for follow-ups this event made, sending what's due as each comes
+ * due: a burst's later events, and checks still running, put them later,
+ * so it waits again until they've gone. Past WAIT_MAX_MS, or when they
+ * can't be read, the cron's tick has them.
+ */
+export async function waitAndFlush(ids: readonly string[], deps: FollowUpDeps): Promise<void> {
+  const until = deps.now() + WAIT_MAX_MS;
+  while (ids.length && deps.now() < until) {
+    const waiting = (await deps.times(ids)).filter((t) => !t.done);
+    if (waiting.length === 0) return;
+    const next = Math.min(...waiting.map((t) => Date.parse(t.dueAt)));
+    await deps.sleep(Math.max(5_000, next - deps.now() + 2_000));
+    await flushFollowUps(deps);
+  }
 }
 
 /** At most this many failing checks get their logs read. */
@@ -556,26 +597,40 @@ async function sendReviews(f: DueFollowUp, deps: FollowUpDeps): Promise<string> 
   if (sessions.length === 0) return settle("no_session");
 
   // Only a reviewer who may steer the session is heard: a member, by their
-  // GitHub identity, who may read the repository.
-  const reviews: ReviewForSession[] = [];
+  // GitHub identity, who may read the repository; and, as the session runs
+  // as its owner, its owner or a member who may write to it.
+  const reviews: { userId: string; write: boolean; review: ReviewForSession }[] = [];
   for (const id of f.reviewIds) {
-    const { review, comments } = await deps.review(f.installationId, f.repoFullName, f.prNumber, id);
+    // Deleted since: the rest of the batch goes without it.
+    const read = await deps.review(f.installationId, f.repoFullName, f.prNumber, id);
+    if (!read) continue;
+    const { review, comments } = read;
     const githubId = review.user?.id;
     if (typeof githubId !== "number") continue;
     const userId = await deps.member(githubId, scope.orgId);
-    if (!userId || !(await deps.canRead(userId, f.projectId))) continue;
+    if (!userId) continue;
+    const level = await deps.level(userId, f.projectId);
+    if (!allows(level, "read")) continue;
     // Their other comments in it are theirs too; anyone else's aren't
     // theirs to send.
     const own = comments.filter((c) => c.user?.id === githubId);
     const kept = reviewForSession(review, own, await deps.appSlug());
-    if (kept) reviews.push(kept);
+    if (kept) reviews.push({ userId, write: allows(level, "write"), review: kept });
   }
-  if (reviews.length === 0) return settle("nothing");
+  const heardBy = (session: LinkedSession) => reviews.filter((r) => r.write || r.userId === session.ownerId).map((r) => r.review);
+  const targets = sessions.slice(0, 3).filter((s) => heardBy(s).length > 0);
+  if (targets.length === 0) return settle("nothing");
 
   const taken = await deps.take(f.id);
   if (!taken) return "taken";
-  const prompt = reviewPrompt({ repoFullName: f.repoFullName, number: f.prNumber, headRef: pull.headRef, reviews });
-  const sent = await sendTo(sessions, prompt, "github", deps);
+  let sent = false;
+  for (const session of targets) {
+    const prompt = reviewPrompt({ repoFullName: f.repoFullName, number: f.prNumber, headRef: pull.headRef, reviews: heardBy(session) });
+    if (await deps.wakeAndSend(session.ownerId, session.id, prompt, "github").catch(() => false)) {
+      sent = true;
+      break;
+    }
+  }
   if (sent) await deps.humanSpoke(f.projectId, f.prNumber).catch(() => undefined);
   return settle(sent ? "sent" : "unsent");
 }

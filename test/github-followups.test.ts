@@ -19,6 +19,7 @@ import {
   readReviewSubmitted,
   reviewForSession,
   reviewPrompt,
+  waitAndFlush,
 } from "@/lib/github/followups";
 import type { LinkedSession } from "@/lib/github/loop";
 
@@ -205,14 +206,19 @@ type Recorded = {
   comments: string[];
   spoke: string[];
   logs: number[];
+  released: string[];
+  slept: number[];
 };
 
 function fakeDeps(
   options: Partial<FollowUpDeps> & { sessions?: LinkedSession[]; waiting?: DueFollowUp[]; runs?: CheckRun[]; turns?: number } = {},
 ) {
   const { sessions, waiting, runs, turns: startTurns, ...over } = options;
-  const recorded: Recorded = { queued: [], postponed: [], settled: [], sent: [], comments: [], spoke: [], logs: [] };
+  const recorded: Recorded = { queued: [], postponed: [], settled: [], sent: [], comments: [], spoke: [], logs: [], released: [], slept: [] };
   const claimed = new Set<string>();
+  // As queue_github_followup keys them: a commit's CI, a pull request's
+  // open review batch.
+  const rows = new Map<string, string>();
   let turns = startTurns ?? 0;
   const deps: FollowUpDeps = {
     scope: async () => ({ orgId: "o1", projectId: "p1" }),
@@ -221,11 +227,21 @@ function fakeDeps(
       claimed.add(key);
       return true;
     },
-    linkedSessions: async () => sessions ?? [{ id: "w1", ownerId: "u1" }],
+    linkedSessions: async () => sessions ?? [{ id: "w1", ownerId: "u1", status: "ready" }],
     pullForBranch: async () => 30,
     queue: async (f) => {
       recorded.queued.push(f);
+      const key = f.kind === "ci" ? `ci:${f.prNumber}:${f.headSha}` : `review:${f.prNumber}`;
+      const id = rows.get(key);
+      if (id) return { id, fresh: false };
+      rows.set(key, `row${rows.size + 1}`);
+      return { id: `row${rows.size}`, fresh: true };
     },
+    release: async (key) => {
+      recorded.released.push(key);
+      claimed.delete(key);
+    },
+    times: async (ids) => ids.map((id) => ({ id, dueAt: new Date(NOW).toISOString(), done: true })),
     due: async () => waiting ?? [],
     postpone: async (id) => {
       recorded.postponed.push(id);
@@ -247,7 +263,7 @@ function fakeDeps(
     },
     review: async () => ({ review: { id: 555, state: "CHANGES_REQUESTED", body: "Add tests", user: { id: 7, login: "ada" } }, comments: [] }),
     member: async (githubId) => (githubId === 7 ? "u7" : null),
-    canRead: async () => true,
+    level: async () => "write",
     wakeAndSend: async (ownerId, workspaceId, prompt, from) => {
       recorded.sent.push({ ownerId, workspaceId, prompt, from });
       return true;
@@ -260,6 +276,9 @@ function fakeDeps(
     },
     appSlug: async () => SLUG,
     now: () => NOW,
+    sleep: async (ms) => {
+      recorded.slept.push(ms);
+    },
     ...over,
   };
   return { deps, recorded };
@@ -282,21 +301,24 @@ function due(over: Partial<DueFollowUp> = {}): DueFollowUp {
 
 test("CI failing is queued for each linked pull request, by its branch when GitHub names none", async () => {
   const { deps, recorded } = fakeDeps();
-  assert.equal(await queueCiFailure("check_suite", suite(), deps, SLUG), 1);
+  // The burst's first event made it, and waits for it; the rest only put
+  // it later.
+  assert.deepEqual(await queueCiFailure("check_suite", suite(), deps, SLUG), ["row1"]);
   assert.equal(recorded.queued[0].kind, "ci");
   assert.equal(recorded.queued[0].headSha, SHA);
   assert.equal(recorded.queued[0].prNumber, 30);
-  assert.equal(await queueCiFailure("check_suite", suite({ pulls: [] }), deps, SLUG), 1);
+  assert.deepEqual(await queueCiFailure("check_suite", suite({ pulls: [] }), deps, SLUG), []);
+  assert.equal(recorded.queued.length, 2);
 
   const unlinked = fakeDeps({ sessions: [] });
-  assert.equal(await queueCiFailure("check_suite", suite(), unlinked.deps, SLUG), 0);
+  assert.deepEqual(await queueCiFailure("check_suite", suite(), unlinked.deps, SLUG), []);
   assert.equal(unlinked.recorded.queued.length, 0);
 });
 
 test("a review is queued into its pull request's batch once, whatever GitHub redelivers", async () => {
   const { deps, recorded } = fakeDeps();
-  assert.equal(await queueReview("pull_request_review", reviewEvent(), deps), true);
-  assert.equal(await queueReview("pull_request_review", reviewEvent(), deps), false);
+  assert.equal(await queueReview("pull_request_review", reviewEvent(), deps), "row1");
+  assert.equal(await queueReview("pull_request_review", reviewEvent(), deps), null);
   assert.equal(recorded.queued.length, 1);
   assert.equal(recorded.queued[0].reviewId, 555);
 });
@@ -392,4 +414,56 @@ test("a follow-up that fails before it's taken is left for the next tick", async
   });
   assert.deepEqual([...(await flushFollowUps(deps))], [["f1", "error"]]);
   assert.equal(recorded.settled.length, 0);
+});
+
+test("a review that couldn't be queued gives its claim back, for GitHub's redelivery", async () => {
+  const { deps, recorded } = fakeDeps({
+    queue: async () => {
+      throw new Error("database down");
+    },
+  });
+  await assert.rejects(queueReview("pull_request_review", reviewEvent(), deps), /database down/);
+  assert.deepEqual(recorded.released, ["review:555"]);
+});
+
+test("a review deleted since is left out, and the rest of the batch still goes", async () => {
+  const { deps, recorded } = fakeDeps({
+    waiting: [due({ kind: "review", headSha: "", reviewIds: [1, 2] })],
+    review: async (_i, _r, _n, id) =>
+      id === 1 ? null : { review: { id: 2, state: "CHANGES_REQUESTED", body: "Add tests", user: { id: 7, login: "ada" } }, comments: [] },
+  });
+  assert.deepEqual([...(await flushFollowUps(deps))], [["f1", "sent"]]);
+  assert.match(recorded.sent[0].prompt, /> Add tests/);
+});
+
+test("a reviewer who may only read is heard by their own session, not another's", async () => {
+  const others = fakeDeps({
+    waiting: [due({ kind: "review", headSha: "", reviewIds: [1] })],
+    sessions: [{ id: "w1", ownerId: "u1", status: "ready" }],
+    level: async () => "read",
+  });
+  assert.deepEqual([...(await flushFollowUps(others.deps))], [["f1", "nothing"]]);
+  assert.equal(others.recorded.sent.length, 0);
+
+  const own = fakeDeps({
+    waiting: [due({ kind: "review", headSha: "", reviewIds: [1] })],
+    sessions: [{ id: "w7", ownerId: "u7", status: "ready" }],
+    level: async () => "read",
+  });
+  assert.deepEqual([...(await flushFollowUps(own.deps))], [["f1", "sent"]]);
+});
+
+test("the event that made a follow-up waits until it has gone, as often as it's put later", async () => {
+  let reads = 0;
+  const { deps, recorded } = fakeDeps({
+    // Due in a minute, then put later twice (more events, checks running),
+    // then gone.
+    times: async (ids) => {
+      reads++;
+      return ids.map((id) => ({ id, dueAt: new Date(NOW + 60_000).toISOString(), done: reads > 3 }));
+    },
+  });
+  await waitAndFlush(["row1"], deps);
+  assert.equal(reads, 4);
+  assert.deepEqual(recorded.slept, [62_000, 62_000, 62_000]);
 });

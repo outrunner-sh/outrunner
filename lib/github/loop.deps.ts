@@ -96,13 +96,17 @@ export async function runGitHubLoop(event: string, payload: unknown, appSlug: st
       await archiveClosed(event, payload, deps);
     } else if (event === "pull_request_review") {
       // A review joins its pull request's batch, sent once reviews stop
-      // coming (lib/github/followups.ts).
-      const { followUpDeps, flushAfter, REVIEW_SETTLE_SECONDS } = await import("@/lib/github/followups.deps");
-      if (await queueReview(event, payload, followUpDeps())) await flushAfter(REVIEW_SETTLE_SECONDS);
+      // coming (lib/github/followups.ts). The review that began the batch
+      // waits for it; the others only put it later.
+      const { followUpDeps, flushWhenDue } = await import("@/lib/github/followups.deps");
+      const batch = await queueReview(event, payload, followUpDeps());
+      if (batch) await flushWhenDue([batch]);
     } else if (event === "check_suite" || event === "check_run" || event === "workflow_run") {
       // CI failing: one turn per commit, once its burst of events is over.
-      const { followUpDeps, flushAfter, CI_SETTLE_SECONDS } = await import("@/lib/github/followups.deps");
-      if ((await queueCiFailure(event, payload, followUpDeps(), appSlug)) > 0) await flushAfter(CI_SETTLE_SECONDS);
+      // The burst's first event waits for it; the others only put it later.
+      const { followUpDeps, flushWhenDue } = await import("@/lib/github/followups.deps");
+      const made = await queueCiFailure(event, payload, followUpDeps(), appSlug);
+      if (made.length) await flushWhenDue(made);
     }
   } catch (error) {
     console.error(`GitHub loop: ${event} failed`, error);
