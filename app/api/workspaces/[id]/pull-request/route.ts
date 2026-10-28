@@ -6,10 +6,12 @@ import {
   getProject,
   getWorkspace,
   getWorkspacePullRequest,
+  relinkWorkspacePullRequest,
 } from "@/lib/db/repositories";
 import { findPullRequest, getPullRequestStatus } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { requireGitToken } from "@/lib/github/identity.deps";
+import { supersedingPullRequest } from "@/lib/session/pull-request-status";
 import { sessionRepo } from "@/lib/session/session-repos";
 import type { WorkspacePullRequest } from "@/lib/runtime/types";
 
@@ -18,7 +20,8 @@ type RouteContext = { params: Promise<{ id: string }> };
 /**
  * The session's pull request and where it stands. The one on record, else the
  * one its agent opened for the branch on GitHub (Create PR asks it to),
- * recorded once found; `{ pullRequest: null }` while there is none yet. The
+ * recorded once found; `{ pullRequest: null }` while there is none yet. One on
+ * record that closed unmerged gives way to a newer one from the branch. The
  * status (state, mergeability, checks) is read fresh each time, and is null
  * when GitHub couldn't be asked. `?projectId=` names one of a multi-repository
  * session's repositories; none is the session's own.
@@ -89,13 +92,26 @@ export async function GET(request: Request, context: RouteContext) {
     }
   }
 
-  const status = await getPullRequestStatus({
-    token,
-    repoFullName,
-    number: pullRequest.number,
-  }).catch((error: unknown) => {
-    console.error(`Workspace ${id} pull request status failed`, error);
-    return null;
-  });
+  const readStatus = (number: number) =>
+    getPullRequestStatus({ token, repoFullName, number }).catch((error: unknown) => {
+      console.error(`Workspace ${id} pull request status failed`, error);
+      return null;
+    });
+  let status = await readStatus(pullRequest.number);
+  // Closed unmerged: the agent may have opened another from the branch since.
+  if (status?.state === "closed") {
+    const newest = await findPullRequest({ token, repoFullName, headBranch: workspace.branch }).catch(() => null);
+    const next = supersedingPullRequest(pullRequest, status, newest);
+    if (next) {
+      const relinked = await relinkWorkspacePullRequest(pullRequest.id, next).catch((error: unknown) => {
+        console.error(`Workspace ${id} pull request could not be relinked`, error);
+        return null;
+      });
+      if (relinked) {
+        pullRequest = relinked;
+        status = await readStatus(relinked.number);
+      }
+    }
+  }
   return NextResponse.json({ pullRequest, status });
 }

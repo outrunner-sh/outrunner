@@ -417,13 +417,16 @@ function PullRequestRow({
   const lastLook = useRef(0);
   const opened = found ?? pullRequest;
   const hasPullRequest = opened !== null;
+  const openedNumber = opened?.number ?? null;
   // Looked for every PR_POLL_MS while the agent is at it, re-read every
-  // PR_STATUS_POLL_MS while open, and left alone once merged or closed.
+  // PR_STATUS_POLL_MS while open, and left alone once merged. One closed
+  // unmerged is still read: the agent may open another from the branch, which
+  // takes its place.
   const settled = status !== null && status.state !== "open";
   // A first look that didn't get an answer is tried again, so Create PR
   // isn't offered blind.
   const pollMs = hasPullRequest
-    ? settled
+    ? status?.state === "merged"
       ? null
       : PR_STATUS_POLL_MS
     : phase === "waiting" || (!looked && !error?.reconnect)
@@ -444,7 +447,8 @@ function PullRequestRow({
       lastLook.current = Date.now();
       if (result.answered) setLooked(true);
       if (result.pullRequest) {
-        if (!hasPullRequest) {
+        // Its first, or one that took over from a PR closed unmerged.
+        if (result.pullRequest.number !== openedNumber) {
           setFound(result.pullRequest);
           setPhase("idle");
           router.refresh();
@@ -469,7 +473,7 @@ function PullRequestRow({
       clearInterval(poll);
       clearTimeout(giveUp);
     };
-  }, [hasPullRequest, pollMs, workspaceId, router, repo?.projectId]);
+  }, [hasPullRequest, openedNumber, pollMs, workspaceId, router, repo?.projectId]);
 
   const errorLine = error && (
     <p aria-live="polite" className="studio-env-unfold text-destructive pt-0 text-xs">

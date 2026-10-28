@@ -988,6 +988,23 @@ export async function createWorkspacePullRequest(input: {
   return toWorkspacePullRequest(data);
 }
 
+/** Point a session's recorded pull request in one repository at another
+ *  (one that took over from it), and return it as recorded now. */
+export async function relinkWorkspacePullRequest(
+  id: string,
+  ref: { number: number; url: string; title: string; baseBranch: string },
+): Promise<WorkspacePullRequest> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("pull_requests")
+    .update({ github_number: ref.number, url: ref.url, title: ref.title, base_branch: ref.baseBranch })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return toWorkspacePullRequest(data);
+}
+
 // --- snapshots -------------------------------------------------------------
 
 /** A workspace's Snapshots, newest first (the Replay picker's list). */

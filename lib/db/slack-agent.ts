@@ -257,6 +257,22 @@ export async function claimVerdict(id: string, commentId: number): Promise<boole
   return (data ?? []).length > 0;
 }
 
+/** Make `pr` the pull request a thread follows, from scratch (its verdict
+ *  and its end not yet said), unless it already is: true when this call made
+ *  it so, false when the thread had it already. Conditional, so an event
+ *  delivered twice, or twice at once, claims it once. */
+export async function claimPullRequest(id: string, pr: { repo: string; number: number; url: string }): Promise<boolean> {
+  const { data, error } = await db()
+    .from("slack_conversations")
+    .update({ pr_repo: pr.repo, pr_number: pr.number, pr_url: pr.url, verdict_comment_id: null, merged_announced: false })
+    .eq("id", id)
+    // A repository's full name has no quotes; quoted for its "." and "/".
+    .or(`pr_number.is.null,pr_repo.is.null,pr_number.neq.${pr.number},pr_repo.neq."${pr.repo.replace(/"/g, "")}"`)
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
 /** Claim announcing the end of a thread's pull request (merged or closed):
  *  once. */
 export async function claimPullRequestEnd(id: string): Promise<boolean> {

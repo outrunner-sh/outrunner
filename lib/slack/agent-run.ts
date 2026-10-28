@@ -16,7 +16,6 @@ import { isOwner } from "@/lib/auth/allowlist";
 import { listOrgProjects } from "@/lib/db/org-access";
 import {
   sessionSummary,
-  conversationForItem,
   getConversation,
   getConversationById,
   getInstallation,
@@ -55,6 +54,8 @@ import {
   workerPrompt,
 } from "@/lib/slack/agent";
 import { agentTurn, type Lookups, oneShot } from "@/lib/slack/agent-model";
+import { announcePullRequestWith, type OpenedPullRequest } from "@/lib/slack/announce-pull-request";
+import { announceDeps } from "@/lib/slack/announce-pull-request.deps";
 import { findItems, itemStatus, recentWork } from "@/lib/slack/lookups";
 import { askResearch, wakeAndSend } from "@/lib/slack/research";
 import { awaitReply, fromThread, sendToSession, stopSession, watchForReply } from "@/lib/slack/relay";
@@ -548,61 +549,10 @@ async function pickRepo(install: SlackInstallation, conversation: SlackConversat
   }
 }
 
-/**
- * A pull request opened from the branch of a session that works on an item
- * the agent filed: posted in that item's thread, where the validator's
- * verdict will follow on the PR.
- */
-export async function announcePullRequest(pr: {
-  repoFullName: string;
-  headRef: string;
-  number: number;
-  url: string;
-  title: string;
-}): Promise<void> {
-  const db = createSupabaseAdminClient();
-  const { data: projects, error: projectsError } = await db
-    .from("projects")
-    .select("id")
-    .ilike("full_name", pr.repoFullName.replace(/[\\%_]/g, "\\$&"));
-  if (projectsError) throw projectsError;
-  if (!projects?.length) return;
-  const { data: sessions, error: sessionsError } = await db
-    .from("workspaces")
-    .select("id")
-    .eq("branch", pr.headRef)
-    .in(
-      "project_id",
-      projects.map((p) => p.id),
-    );
-  if (sessionsError) throw sessionsError;
-  if (!sessions?.length) return;
-  const { data: items, error: itemsError } = await db
-    .from("work_items")
-    .select("id, number")
-    .in(
-      "workspace_id",
-      sessions.map((s) => s.id),
-    );
-  if (itemsError) throw itemsError;
-  for (const item of items ?? []) {
-    const conversation = await conversationForItem(item.id);
-    if (!conversation) continue;
-    // Followed from here on: its validator's verdict, and its merge. A new
-    // PR on the thread (after one closed unmerged) starts over.
-    await updateConversation(conversation.id, {
-      pr: { repo: pr.repoFullName, number: pr.number, url: pr.url },
-      verdictCommentId: null,
-      mergedAnnounced: false,
-    });
-    const install = await getInstallation(conversation.teamId);
-    if (!install) continue;
-    await postMessage(install.botToken, {
-      channel: conversation.channelId,
-      threadTs: conversation.threadTs,
-      text: `Pull request for OR-${item.number}: <${pr.url}|#${pr.number} ${pr.title.replace(/[<>|]/g, "")}>. If the repository has the validation automation on, I'll post its verdict here, and when it's merged.`,
-    });
-  }
+/** A pull request opened from an agent-filed item's session, told in the
+ *  item's thread (lib/slack/announce-pull-request.ts). */
+export async function announcePullRequest(pr: OpenedPullRequest): Promise<void> {
+  await announcePullRequestWith(pr, announceDeps());
 }
 
 /**
