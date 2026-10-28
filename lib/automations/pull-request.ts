@@ -133,12 +133,18 @@ export function runTitle(automationName: string, event: Pick<PullRequestEvent, "
  * automation's own prompt. Its working tree is the pull request's head; the
  * change to look at is against its base.
  */
-export function runPrompt(automationPrompt: string, event: PullRequestEvent): string {
+export function runPrompt(automationPrompt: string, event: PullRequestEvent, appSlug?: string): string {
+  // What it posts is the App's bot's: only that account's comments are its
+  // own earlier passes, not another reviewer's (a person's, another app's).
+  const self = appSlug ? `${appSlug.toLowerCase()}[bot]` : null;
   return [
     `Pull request: ${event.repoFullName}#${event.number}${event.title ? ` "${event.title}"` : ""}`,
     `URL: ${event.url}`,
     `Base branch: ${event.baseRef}. Head branch: ${event.headRef}, at ${event.headSha}.`,
     `This session's working tree is the head's code. Read the change with \`gh pr diff ${event.number}\` and \`gh pr view ${event.number}\`; \`gh\` is signed in as the Outrunner GitHub App for this repository.`,
+    self
+      ? `What you post appears as ${self}. Its comments are from earlier passes of the App's automations, this one's included; comments by anyone else (people, other review bots) aren't, so don't call them a previous pass or a re-run, but don't repeat a point they've already made either.`
+      : "",
     event.trigger === "pull_request.synchronize"
       ? "The pull request has new commits since it was last looked at: look at it again, and don't repeat what's already been said on it."
       : "",

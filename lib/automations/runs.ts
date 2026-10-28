@@ -13,7 +13,13 @@ import type { RunCandidate } from "@/lib/db/automation-runs";
 import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/server-session";
 
 /** A run recorded, to start. */
-export type PendingRun = { runId: string; candidate: RunCandidate; event: PullRequestEvent };
+export type PendingRun = {
+  runId: string;
+  candidate: RunCandidate;
+  event: PullRequestEvent;
+  /** The App's slug: its session is told which comments are its own. */
+  appSlug?: string;
+};
 
 export type PlanDeps = {
   automationsForPullRequest(installationId: number, repoFullName: string): Promise<RunCandidate[]>;
@@ -46,7 +52,7 @@ export async function planRuns(payload: unknown, deps: PlanDeps, appSlug?: strin
   );
   return candidates.flatMap((candidate) => {
     const runId = recorded.get(`${candidate.automationId}:${candidate.projectId}`);
-    return runId ? [{ runId, candidate, event }] : [];
+    return runId ? [{ runId, candidate, event, appSlug }] : [];
   });
 }
 
@@ -100,7 +106,7 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     projectId: candidate.projectId,
     baseBranch: event.headRef,
     title: runTitle(candidate.name, event),
-    prompt: runPrompt(candidate.prompt, event),
+    prompt: runPrompt(candidate.prompt, event, run.appSlug),
     // As the App, reading code and commenting, with tokens its box asks for
     // as it goes (#187's git-credential), so none expires on it mid-review.
     reviewAsApp: true,
