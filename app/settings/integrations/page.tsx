@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -19,14 +20,15 @@ const SLACK_RESULTS: Record<string, string> = {
   unavailable: "Sign in with Slack isn't set up on this deployment.",
 };
 
-/** Integrations: where triage captures come from — Slack, and the CLI. */
+/** Connections: your own accounts, connected to an org (your Slack user, and
+ *  the CLI). The org's own are under Org → Integrations. */
 export default function IntegrationsSettings({
   searchParams,
 }: {
   searchParams: Promise<{ slack?: string }>;
 }) {
   return (
-    <Suspense fallback={<SettingsLoading title="Integrations" />}>
+    <Suspense fallback={<SettingsLoading title="Connections" />}>
       <IntegrationsSection searchParams={searchParams} />
     </Suspense>
   );
@@ -44,7 +46,12 @@ async function IntegrationsSection({ searchParams }: { searchParams: Promise<{ s
 
   return (
     <section className="space-y-8">
-      <h1 className="text-lg font-semibold text-foreground">Integrations</h1>
+      <div className="space-y-1">
+        <h1 className="text-lg font-semibold text-foreground">Connections</h1>
+        <Link href="/settings/org/integrations" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
+          View your org&apos;s integrations
+        </Link>
+      </div>
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium text-foreground">Slack</h2>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Github, Info, KeyRound, Layers, Plug, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Blocks, Box, Building2, CreditCard, Info, KeyRound, Layers, Plug, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -20,7 +20,8 @@ const groups = [
       // allowance bar points here.
       { href: USAGE_SETTINGS_HREF, label: "Usage", icon: BarChart3 },
       // Where triage captures come from: Slack, and the CLI.
-      { href: "/settings/integrations", label: "Integrations", icon: Plug },
+      // Your own Slack account, connected to an org.
+      { href: "/settings/integrations", label: "Connections", icon: Plug },
     ],
   },
   {
@@ -33,7 +34,7 @@ const groups = [
       // What Everyone and each role may do with its projects; admins'.
       { href: "/settings/org/access", label: "Roles & access", icon: ShieldCheck },
       // The Outrunner GitHub App's installations; admins install it.
-      { href: "/settings/org/github", label: "GitHub", icon: Github },
+      { href: "/settings/org/integrations", label: "Integrations", icon: Blocks },
       // Keys the org's members' cloud sessions run on; admins save them.
       { href: "/settings/org/keys", label: "Keys", icon: KeyRound },
       // Model and box size for members who haven't chosen; admins set them.
@@ -77,7 +78,10 @@ export function SettingsNav() {
         <div key={group.label} className="space-y-0.5">
           <h2 className="px-2 pb-1 text-[13px] text-muted-foreground">{group.label}</h2>
           {group.sections.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href;
+            // Integrations stays lit on the pages its cards open.
+            const active =
+              pathname === href ||
+              (href === "/settings/org/integrations" && (pathname === "/settings/org/github" || pathname === "/settings/org/slack"));
             return (
               <Link
                 key={href}

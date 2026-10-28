@@ -13,6 +13,7 @@ import {
   updateInstallation,
 } from "@/lib/db/github-installations";
 import {
+  appSlug,
   dropInstallationToken,
   githubAppConfig,
   toInstallation,
@@ -90,7 +91,7 @@ export async function POST(request: Request) {
       // Each run's session is set up after the answer, in after(): minutes on
       // a cold box, on Outrunner's long-running server (server.ts). One a
       // restart cuts off is swept by the reconciler (sweepStalledRuns).
-      const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, config.slug);
+      const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, await appSlug(config));
       after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
       // A PR closed or merged: archive its automation runs' review sessions.
       if (payload.action === "closed") after(() => closeRuns(payload, { pullRequestSessions, archiveServerSessions }));

@@ -347,6 +347,48 @@ export async function installationPullRequest(
   }
 }
 
+/** The App's slug as GitHub has it, kept an hour (a failed read's
+ *  fallback, 5 minutes): by its Client ID. */
+const slugs = new Map<string, { slug: string; until: number }>();
+/** A read under way, shared by everyone asking meanwhile. */
+const reading = new Map<string, Promise<string>>();
+const SLUG_TTL_MS = 60 * 60 * 1000;
+const SLUG_RETRY_MS = 5 * 60 * 1000;
+
+/**
+ * The App's slug as GitHub has it now, which its bot's login is (`<slug>[bot]`):
+ * an App can be renamed on GitHub, and its slug and login with it, while the
+ * deployment's GITHUB_APP_SLUG stays as it was set. Asked of GitHub with the
+ * App's own JWT and kept an hour; when GitHub can't be asked, the last one
+ * read (else the configured one), not asked again for 5 minutes, so a
+ * webhook never waits on GitHub each time it's down.
+ */
+export async function appSlug(config: GitHubAppConfig, doFetch: Fetch = fetch, now = Date.now()): Promise<string> {
+  const kept = slugs.get(config.clientId);
+  if (kept && now < kept.until) return kept.slug;
+  const under = reading.get(config.clientId);
+  if (under) return under;
+  const read = (async () => {
+    try {
+      const app = await call<{ slug?: unknown }>(doFetch, `${API}/app`, appJwt(config.clientId, config.privateKey));
+      if (typeof app.slug === "string" && app.slug) {
+        if (app.slug !== config.slug && kept?.slug !== app.slug) {
+          console.warn(`The GitHub App is ${app.slug} on GitHub; GITHUB_APP_SLUG says ${config.slug}`);
+        }
+        slugs.set(config.clientId, { slug: app.slug, until: now + SLUG_TTL_MS });
+        return app.slug;
+      }
+    } catch (error) {
+      console.error("Couldn't read the GitHub App's slug", error);
+    }
+    const fallback = kept?.slug ?? config.slug;
+    slugs.set(config.clientId, { slug: fallback, until: now + SLUG_RETRY_MS });
+    return fallback;
+  })().finally(() => reading.delete(config.clientId));
+  reading.set(config.clientId, read);
+  return read;
+}
+
 /** A repository an installation reaches. */
 export type InstallationRepository = {
   githubRepoId: number;

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
-import { githubAppConfig, installUrl, signInstallState } from "@/lib/github/app";
+import { appSlug, githubAppConfig, installUrl, signInstallState } from "@/lib/github/app";
 import { appUrl } from "@/lib/orgs/notify";
 import { getOrgContext } from "@/lib/orgs/server";
 
@@ -20,6 +20,6 @@ export async function GET(request: Request) {
   const context = await getOrgContext().catch(() => null);
   if (!context || context.active.role !== "admin") return back("not_admin");
   return NextResponse.redirect(
-    installUrl(config.slug, signInstallState(config.webhookSecret, { orgId: context.active.id, userId: owner.id })),
+    installUrl(await appSlug(config), signInstallState(config.webhookSecret, { orgId: context.active.id, userId: owner.id })),
   );
 }

@@ -210,7 +210,7 @@ export type AutomationRun = {
 };
 
 /** An org's latest runs, newest first. */
-export async function listRuns(orgId: string, limit = 50): Promise<AutomationRun[]> {
+export async function listRuns(orgId: string, limit = 50, onlyId?: string): Promise<AutomationRun[]> {
   const supabase = createSupabaseAdminClient();
   const { data: automations, error } = await supabase.from("automations").select("id, name").eq("org_id", orgId);
   if (error) throw error;
@@ -222,6 +222,7 @@ export async function listRuns(orgId: string, limit = 50): Promise<AutomationRun
       "automation_id",
       automations.map((a) => a.id),
     )
+    .match(onlyId ? { id: onlyId } : {})
     .order("created_at", { ascending: false })
     .limit(limit);
   if (runsError) throw runsError;
@@ -245,6 +246,12 @@ export async function listRuns(orgId: string, limit = 50): Promise<AutomationRun
     reason: r.reason,
     createdAt: r.created_at,
   }));
+}
+
+/** One of an org's runs, as the Automations page shows it; null when it
+ *  isn't the org's. */
+export async function getRun(orgId: string, runId: string): Promise<AutomationRun | null> {
+  return (await listRuns(orgId, 1, runId))[0] ?? null;
 }
 
 /**
@@ -394,4 +401,33 @@ export async function sessionOwner(workspaceId: string): Promise<string | null> 
     .maybeSingle();
   if (error) throw error;
   return data?.owner_id ?? null;
+}
+
+/**
+ * A run's session when it's the org's connector's, for the org's admins to
+ * read (lib/automations/review-view.ts): no one else's session, and no run
+ * of another org's. Null otherwise.
+ */
+export async function connectorRunSession(
+  orgId: string,
+  runId: string,
+): Promise<{ workspaceId: string; connectorId: string } | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data: run, error } = await supabase
+    .from("automation_runs")
+    .select("automation_id, workspace_id")
+    .eq("id", runId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!run?.workspace_id) return null;
+  const [automation, connector, session] = await Promise.all([
+    supabase.from("automations").select("id").eq("id", run.automation_id).eq("org_id", orgId).maybeSingle(),
+    supabase.from("org_connectors").select("user_id").eq("org_id", orgId).maybeSingle(),
+    supabase.from("workspaces").select("owner_id, org_id, status").eq("id", run.workspace_id).maybeSingle(),
+  ]);
+  for (const read of [automation, connector, session]) if (read.error) throw read.error;
+  if (!automation.data || !connector.data || !session.data) return null;
+  if (session.data.owner_id !== connector.data.user_id || session.data.org_id !== orgId) return null;
+  if (session.data.status === "destroyed") return null;
+  return { workspaceId: run.workspace_id, connectorId: connector.data.user_id };
 }

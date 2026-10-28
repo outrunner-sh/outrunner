@@ -10,10 +10,13 @@ test("a thread message tells the session who said it, and where", () => {
 test("a turn is over once there's a reply and the session has gone quiet", () => {
   const now = Date.parse("2026-10-29T10:00:00Z");
   const at = (ms: number) => new Date(now - ms).toISOString();
-  assert.equal(turnOver({ lastAssistantMessage: "Done: PR #12", lastActivity: at(QUIET_MS + 1) }, now), true);
-  assert.equal(turnOver({ lastAssistantMessage: "Working…", lastActivity: at(5_000) }, now), false);
-  assert.equal(turnOver({ lastAssistantMessage: null, lastActivity: at(60_000) }, now), false);
-  assert.equal(turnOver({ lastAssistantMessage: "x", lastActivity: "not a date" }, now), false);
+  assert.equal(turnOver({ lastAssistantMessage: "Done: PR #12", lastActivity: at(QUIET_MS + 1) }, 0, now), true);
+  assert.equal(turnOver({ lastAssistantMessage: "Working…", lastActivity: at(5_000) }, 0, now), false);
+  assert.equal(turnOver({ lastAssistantMessage: null, lastActivity: at(60_000) }, 0, now), false);
+  assert.equal(turnOver({ lastAssistantMessage: "x", lastActivity: "not a date" }, 0, now), false);
+  // A reply from before the message was sent (a slow wake) isn't this turn's.
+  assert.equal(turnOver({ lastAssistantMessage: "old", lastActivity: at(120_000) }, now - 60_000, now), false);
+  assert.equal(turnOver({ lastAssistantMessage: "new", lastActivity: at(30_000) }, now - 60_000, now), true);
 });
 
 test("the reply is posted in Slack's markup, with a link to the whole session", () => {

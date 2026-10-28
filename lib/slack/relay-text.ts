@@ -14,11 +14,19 @@ export function fromThread(name: string, text: string): string {
   return `${name} (in the Slack thread): ${text}`;
 }
 
-/** Whether a reply is over: there is one, and the session has gone quiet. */
-export function turnOver(summary: { lastAssistantMessage: string | null; lastActivity: string }, now = Date.now()): boolean {
+/**
+ * Whether the reply to what was sent at `since` is over: there's a reply, the
+ * session was active after the send (so it's this turn's, not an older one a
+ * slow wake left showing), and it has gone quiet.
+ */
+export function turnOver(
+  summary: { lastAssistantMessage: string | null; lastActivity: string },
+  since = 0,
+  now = Date.now(),
+): boolean {
   if (!summary.lastAssistantMessage?.trim()) return false;
   const last = Date.parse(summary.lastActivity);
-  return Number.isFinite(last) && now - last >= QUIET_MS;
+  return Number.isFinite(last) && last > since && now - last >= QUIET_MS;
 }
 
 /** Reply text for the thread: Slack's markup, a link to the whole session. */

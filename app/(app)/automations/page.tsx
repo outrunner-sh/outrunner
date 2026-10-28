@@ -7,7 +7,7 @@ import { AUTOMATION_TEMPLATES } from "@/lib/automations/templates";
 import { listRuns } from "@/lib/db/automation-runs";
 import { listAutomations } from "@/lib/db/automations";
 import { listOrgInstallations } from "@/lib/db/github-installations";
-import { githubAppConfig } from "@/lib/github/app";
+import { appSlug, githubAppConfig } from "@/lib/github/app";
 import { getOrgContext } from "@/lib/orgs/server";
 
 /**
@@ -62,7 +62,7 @@ async function AutomationsSection() {
   return (
     <Automations
       org={active}
-      appSlug={config?.slug ?? null}
+      appSlug={config ? await appSlug(config) : null}
       installations={installations?.map((i) => ({ login: i.accountLogin, suspended: i.suspended })) ?? null}
       automations={automations}
       runs={runs}

@@ -543,26 +543,36 @@ function RecentRuns({
                     <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">
                       <Ago at={run.createdAt} now={now} />
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 text-right text-xs">
-                      {/* A connector's session is its own, not a member's to open. */}
-                      {run.workspaceId && !byConnector ? (
-                        <Link
-                          href={`/workspaces/${run.workspaceId}`}
-                          className="text-muted-foreground hover:text-foreground hover:underline"
-                        >
-                          Open session
-                        </Link>
-                      ) : null}
-                      {admin && (run.status === "failed" || run.status === "refused") ? (
-                        <button
-                          type="button"
-                          onClick={() => void rerun(run)}
-                          disabled={rerunning !== null}
-                          className="text-muted-foreground hover:text-foreground hover:underline disabled:opacity-60"
-                        >
-                          {rerunning === run.id ? "Starting…" : "Run again"}
-                        </button>
-                      ) : null}
+                    <td className="whitespace-nowrap px-3 py-2.5 text-xs">
+                      <div className="flex justify-end gap-3">
+                        {/* A connector's session is its own, not a member's to open:
+                            its admins read it, read-only. */}
+                        {run.workspaceId && !byConnector ? (
+                          <Link
+                            href={`/workspaces/${run.workspaceId}`}
+                            className="text-muted-foreground hover:text-foreground hover:underline"
+                          >
+                            Open session
+                          </Link>
+                        ) : run.workspaceId && admin ? (
+                          <Link
+                            href={`/automations/runs/${run.id}`}
+                            className="text-muted-foreground hover:text-foreground hover:underline"
+                          >
+                            View session
+                          </Link>
+                        ) : null}
+                        {admin && (run.status === "failed" || run.status === "refused") ? (
+                          <button
+                            type="button"
+                            onClick={() => void rerun(run)}
+                            disabled={rerunning !== null}
+                            className="text-muted-foreground hover:text-foreground hover:underline disabled:opacity-60"
+                          >
+                            {rerunning === run.id ? "Starting…" : "Run again"}
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
