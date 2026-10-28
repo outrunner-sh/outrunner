@@ -320,15 +320,26 @@ export async function settleDueRunners(limit = 30): Promise<number> {
     .limit(limit * 3);
   if (error) throw error;
   const due = new Set((data ?? []).map((r) => r.runner_id));
-  // Live Runners: their pull requests, found without a webhook.
-  const { data: live } = await db()
+  // Runners' pull requests no webhook announced: live Runners', and those
+  // of Runners archived lately with none found yet (one archived with force
+  // still has its pull request to follow).
+  const { data: recent } = await db()
     .from("workspaces")
-    .select("id")
+    .select("id, status")
     .not("parent_mission_id", "is", null)
-    .in("status", ["ready", "idle", "suspended"])
+    .in("status", ["ready", "idle", "suspended", "archived"])
+    .gt("updated_at", new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString())
     .order("updated_at", { ascending: false })
-    .limit(limit);
-  for (const r of live ?? []) {
+    .limit(limit * 2);
+  const { data: known } = await db()
+    .from("runner_pull_requests")
+    .select("runner_id")
+    .in(
+      "runner_id",
+      (recent ?? []).map((r) => r.id),
+    );
+  const withRows = new Set((known ?? []).map((r) => r.runner_id));
+  for (const r of (recent ?? []).filter((r) => r.status !== "archived" || !withRows.has(r.id)).slice(0, limit)) {
     const runner = await sessionById(r.id);
     if (!runner) continue;
     await discoverRunnerPullRequests(runner).catch((e: unknown) => console.warn(`Runner ${r.id}: pull request lookup failed`, e));
