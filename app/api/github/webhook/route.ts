@@ -131,9 +131,10 @@ export async function POST(request: Request) {
     }
     if (event === "issue_comment") {
       // The App's own review, posted: its run's check closes with it.
-      after(() =>
-        finishCheckFromComment(payload, config.slug, { openCheckOf, closeCheck: closeRunCheck }).catch((error: unknown) =>
-          console.error("Couldn't close a run's check from its review", error),
+      // Its bot's login as GitHub has it now (the App can be renamed).
+      after(async () =>
+        finishCheckFromComment(payload, await appSlug(config), { openCheckOf, closeCheck: closeRunCheck }).catch(
+          (error: unknown) => console.error("Couldn't close a run's check from its review", error),
         ),
       );
       return new NextResponse(null, { status: 204 });

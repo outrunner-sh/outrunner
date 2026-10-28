@@ -392,6 +392,8 @@ export async function appSlug(config: GitHubAppConfig, doFetch: Fetch = fetch, n
   })().finally(() => reading.delete(config.clientId));
   reading.set(config.clientId, read);
   return read;
+}
+
 /** What a check run says: a title, and a summary in Markdown. */
 export type CheckOutput = { title: string; summary: string };
 
