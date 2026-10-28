@@ -42,7 +42,7 @@ import {
   workspaceCreateErrorResponse,
 } from "@/lib/http/workspace-create-errors";
 import { inTeamOrg } from "@/lib/db/orgs";
-import { getOrgDefaults } from "@/lib/db/org-defaults";
+import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { NoProviderKeyError } from "@/lib/providers/errors";
 import { isProviderId } from "@/lib/providers/registry";
@@ -576,7 +576,7 @@ async function provisionWorkspace({
         // Theirs once they chose one, else their org's (lib/orgs/defaults.ts).
         size: boxSizeOn(
           sandboxSettings.sandbox,
-          newBoxSize(sandboxSettings, (await getOrgDefaults(project.orgId)).boxSize),
+          newBoxSize(sandboxSettings, (await orgDefaultsFor(project.orgId)).boxSize),
           await planFor(owner.id),
         ),
         maxLiveComputers,

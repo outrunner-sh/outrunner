@@ -4,7 +4,7 @@ import { getOwner, type Owner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { getSandboxSettings } from "@/lib/db/credentials";
-import { getOrgDefaults } from "@/lib/db/org-defaults";
+import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import {
   getProject,
   getWorkspaceComputer,
@@ -247,7 +247,7 @@ async function bringBack(
     // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
     size: boxSizeOn(
       sandboxOf(provider.name),
-      newBoxSize(await getSandboxSettings(owner.id), (await getOrgDefaults(project.orgId)).boxSize),
+      newBoxSize(await getSandboxSettings(owner.id), (await orgDefaultsFor(project.orgId)).boxSize),
       await planFor(owner.id),
     ),
     previousSandboxId: ended,

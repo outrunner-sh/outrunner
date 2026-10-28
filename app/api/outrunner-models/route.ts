@@ -5,7 +5,7 @@ import { agentConnection, type AgentAuthStore } from "@/lib/agents/resolve";
 import { getOwner } from "@/lib/auth/owner";
 import { agentAuthStore, modelMenu, offersModels } from "@/lib/db/credentials";
 import { getModelLoadout } from "@/lib/db/model-loadout";
-import { getOrgDefaults } from "@/lib/db/org-defaults";
+import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import { withOrgDefault } from "@/lib/orgs/defaults";
 import { activeOrgId } from "@/lib/orgs/server";
 
@@ -36,8 +36,8 @@ export async function GET() {
   const [menu, loadout, claude, codex] = await Promise.all([
     modelMenu(owner.id, orgId),
     // Where they set no default, the org's (lib/orgs/defaults.ts).
-    Promise.all([getModelLoadout(owner.id), getOrgDefaults(orgId)]).then(([own, org]) =>
-      withOrgDefault(own, org.defaultModel),
+    Promise.all([getModelLoadout(owner.id), orgDefaultsFor(orgId)]).then(([mine, org]) =>
+      withOrgDefault(mine, org.defaultModel),
     ),
     connection(own, withOrg, "claude"),
     connection(own, withOrg, "codex"),

@@ -7,6 +7,7 @@
  * admin.
  */
 
+import { orgDefaultsOrNone } from "@/lib/orgs/defaults";
 import { isBoxSizeId, type BoxSizeId } from "@/lib/runtime/box-sizes";
 import { type LoadoutEntry, parseLoadoutEntry } from "@/lib/runtime/model-loadout";
 import { probeStatus } from "@/lib/supabase/probe";
@@ -30,6 +31,12 @@ export async function getOrgDefaults(orgId: string | undefined): Promise<OrgDefa
     defaultModel: parseLoadoutEntry(data?.default_model),
     boxSize: isBoxSizeId(data?.box_size) ? data.box_size : null,
   };
+}
+
+/** The org's defaults for a session starting or a menu: none, said in the
+ *  log, when they can't be read, rather than no session. */
+export function orgDefaultsFor(orgId: string | undefined): Promise<OrgDefaults> {
+  return orgDefaultsOrNone(() => getOrgDefaults(orgId), NO_ORG_DEFAULTS);
 }
 
 /** Set the org's defaults, as admin `by`; null clears one. */
