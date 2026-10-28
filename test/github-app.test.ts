@@ -4,7 +4,10 @@ import { test } from "node:test";
 
 import {
   appJwt,
+  GitHubAppError,
   dropInstallationToken,
+  InstallationGoneError,
+  installationPullRequest,
   installationToken,
   installUrl,
   listInstallationRepositories,
@@ -120,4 +123,42 @@ test("a few of an installation's repositories are one request; all of them, as m
   const all = await listInstallationRepositories("t", {}, fake);
   assert.equal(all.repositories.length, 150);
   assert.deepEqual(asked, ["100/1", "100/2"]);
+});
+
+test("a pull request is read with a kept token; one GitHub refuses is minted again once before the installation counts as gone", async () => {
+  const config = { clientId: "Iv23test", slug: "s", privateKey: pem, webhookSecret: "w" };
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  const run = async (answers: number[], installationId: number) => {
+    const calls: string[] = [];
+    let minted = 0;
+    const fake = (async (url: string | URL) => {
+      const path = new URL(String(url)).pathname;
+      calls.push(path);
+      if (path.endsWith("/access_tokens")) {
+        minted += 1;
+        return new Response(JSON.stringify({ token: `t${minted}`, expires_at: later }), { status: 201 });
+      }
+      const status = answers.shift() ?? 200;
+      return new Response(JSON.stringify(status === 200 ? { number: 7, state: "open" } : {}), { status });
+    }) as typeof fetch;
+    try {
+      return { result: await installationPullRequest(config, installationId, "o/r", 7, fake), calls };
+    } catch (error) {
+      return { error, calls };
+    } finally {
+      dropInstallationToken(installationId);
+    }
+  };
+  // Refused once (revoked kept token): minted again, read.
+  const retried = await run([401, 200], 101);
+  assert.deepEqual(retried.result, { number: 7, state: "open" });
+  assert.equal(retried.calls.filter((c) => c.endsWith("/access_tokens")).length, 2);
+  // Refused again with a fresh one: gone.
+  assert.ok((await run([401, 401], 102)).error instanceof InstallationGoneError);
+  // A pull request GitHub can't find isn't a gone installation.
+  const missing = await run([404], 103);
+  assert.ok(missing.error instanceof GitHubAppError && !(missing.error instanceof InstallationGoneError));
+  // No token to be had: gone.
+  const noToken = (async () => new Response("{}", { status: 404 })) as typeof fetch;
+  await assert.rejects(installationPullRequest(config, 104, "o/r", 7, noToken), InstallationGoneError);
 });

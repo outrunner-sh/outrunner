@@ -2,8 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { readClosedPullRequest, readPullRequestEvent, runPrompt, runTitle, triggerFor } from "@/lib/automations/pull-request";
-import { closeRuns, type PendingRun, planRuns, startRun, type StartDeps } from "@/lib/automations/runs";
-import type { RunCandidate } from "@/lib/db/automation-runs";
+import {
+  closeRuns,
+  type PendingRun,
+  planRuns,
+  type RerunDeps,
+  rerunRun,
+  startRun,
+  type StartDeps,
+} from "@/lib/automations/runs";
+import type { RerunTarget, RunCandidate } from "@/lib/db/automation-runs";
 import type { ServerSessionStart } from "@/lib/session/server-session";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -383,4 +391,118 @@ test("a pull request closing never throws", async () => {
   } finally {
     console.error = originalError;
   }
+});
+
+function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<string, unknown> } & Partial<RerunDeps> = {}) {
+  const reopened: string[] = [];
+  const recorded: unknown[] = [];
+  const target: RerunTarget | null =
+    over.target === null
+      ? null
+      : {
+          runId: "r1",
+          status: "failed",
+          headSha: SHA,
+          prNumber: 7,
+          enabled: true,
+          candidate,
+          repoFullName: "neevai-labs/outrunner",
+          installationId: 42,
+          covered: true,
+          workspaceId: "w-failed",
+          ...over.target,
+        };
+  const deps: RerunDeps = {
+    rerunTarget: async (orgId, runId) => (orgId === "o1" && runId === "r1" ? target : null),
+    pullRequest: async (installationId, repo, number) => {
+      assert.deepEqual([installationId, repo, number], [42, "neevai-labs/outrunner", 7]);
+      return { state: "open", ...payload().pull_request, ...over.pr };
+    },
+    reopenRun: async (runId) => {
+      reopened.push(runId);
+      return reopened.length === 1;
+    },
+    recordRuns: async (runs) => {
+      recorded.push(...runs);
+      return new Map([["a1:p1", "r2"]]);
+    },
+    ...over,
+  };
+  return { deps, reopened, recorded };
+}
+
+test("a run that failed runs again at the same commit as itself, once, told it's the App", async () => {
+  const { deps, reopened, recorded } = rerunDeps();
+  const rerun = await rerunRun("o1", "r1", deps, "outrunner-sh");
+  assert.ok(rerun.ok);
+  assert.equal(rerun.run.runId, "r1");
+  assert.equal(rerun.run.event.headSha, SHA);
+  // As newly opened: not told of new commits since a look that may never have been.
+  assert.equal(rerun.run.event.trigger, "pull_request.opened");
+  assert.equal(rerun.run.appSlug, "outrunner-sh");
+  // Its failed session is archived as it starts over: reopening unlinks it.
+  assert.equal(rerun.staleSession, "w-failed");
+  assert.deepEqual(reopened, ["r1"]);
+  assert.deepEqual(recorded, []);
+  // Twice at once: the second finds it running again.
+  assert.deepEqual(await rerunRun("o1", "r1", deps), { ok: false, status: 409, error: "It's running again already." });
+});
+
+test("one whose pull request has moved on runs at its head now, as a new run", async () => {
+  const later = "f".repeat(40);
+  const { deps, reopened, recorded } = rerunDeps({
+    pr: { head: { sha: later, ref: "feature/x", repo: { full_name: "neevai-labs/outrunner" } } },
+  });
+  const rerun = await rerunRun("o1", "r1", deps);
+  assert.ok(rerun.ok);
+  assert.equal(rerun.run.runId, "r2");
+  // The failed run keeps its session, archived by the new run once it's ready.
+  assert.equal(rerun.staleSession, null);
+  assert.deepEqual(reopened, []);
+  assert.deepEqual(recorded, [
+    { automationId: "a1", projectId: "p1", prNumber: 7, prTitle: "Add automations", headSha: later },
+  ]);
+  // Unless that commit has its run already.
+  const taken = rerunDeps({
+    pr: { head: { sha: later, ref: "feature/x", repo: { full_name: "neevai-labs/outrunner" } } },
+    recordRuns: async () => new Map(),
+  });
+  const refused = await rerunRun("o1", "r1", taken.deps);
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.match(refused.error, /newer commits/);
+});
+
+test("a run runs again only when it's the org's, failed or didn't start, and its pull request is open and reviewable", async () => {
+  const refusals: [string, Parameters<typeof rerunDeps>[0], number, RegExp][] = [
+    ["another org's", { target: null }, 404, /No such run/],
+    ["running", { target: { status: "ready" } }, 409, /failed or didn't start/],
+    ["starting", { target: { status: "started" } }, 409, /failed or didn't start/],
+    ["automation off", { target: { enabled: false } }, 409, /turn it on/],
+    ["no installation", { target: { installationId: null } }, 409, /isn't installed/],
+    ["repository taken off", { target: { covered: false } }, 409, /doesn't run on this repository/],
+    ["closed", { pr: { state: "closed" } }, 409, /closed/],
+    ["draft", { pr: { draft: true } }, 409, /draft/],
+  ];
+  for (const [what, over, status, error] of refusals) {
+    const { deps, reopened } = rerunDeps(over);
+    const rerun = await rerunRun("o1", "r1", deps);
+    assert.equal(rerun.ok, false, what);
+    if (!rerun.ok) {
+      assert.equal(rerun.status, status, what);
+      assert.match(rerun.error, error, what);
+    }
+    assert.deepEqual(reopened, [], what);
+  }
+  // A repository renamed since: the pull request names it as it is now (GitHub
+  // redirects), and that's no fork.
+  const renamed = { full_name: "neevai-labs/renamed" };
+  const moved = await rerunRun(
+    "o1",
+    "r1",
+    rerunDeps({ pr: { head: { sha: SHA, ref: "feature/x", repo: renamed }, base: { ref: "main", repo: renamed } } }).deps,
+  );
+  assert.ok(moved.ok);
+  assert.equal(moved.run.event.repoFullName, "neevai-labs/renamed");
+  // A refused one runs again too.
+  assert.ok((await rerunRun("o1", "r1", rerunDeps({ target: { status: "refused" } }).deps)).ok);
 });

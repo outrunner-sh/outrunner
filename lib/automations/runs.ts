@@ -15,7 +15,7 @@ import {
   runPrompt,
   runTitle,
 } from "@/lib/automations/pull-request";
-import type { RunCandidate } from "@/lib/db/automation-runs";
+import type { RerunTarget, RunCandidate } from "@/lib/db/automation-runs";
 import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/server-session";
 
 /** A run recorded, to start. */
@@ -174,4 +174,89 @@ export async function closeRuns(payload: unknown, deps: CloseDeps): Promise<numb
     console.error(`Couldn't archive the review sessions of ${closed.repoFullName}#${closed.number}`, error);
     return 0;
   }
+}
+
+export type RerunDeps = {
+  rerunTarget(orgId: string, runId: string): Promise<RerunTarget | null>;
+  /** The pull request as GitHub has it now, read as the installation. */
+  pullRequest(installationId: number, repoFullName: string, number: number): Promise<Record<string, unknown>>;
+  reopenRun(runId: string): Promise<boolean>;
+  recordRuns: PlanDeps["recordRuns"];
+};
+
+export type Rerun =
+  | {
+      ok: true;
+      run: PendingRun;
+      /** The session the run made before, to archive as it starts over:
+       *  reopening it unlinks it, and a failed run's box may still be up. */
+      staleSession: string | null;
+    }
+  | { ok: false; status: 404 | 409; error: string };
+
+const SKIPPED: Record<Exclude<ReturnType<typeof readPullRequestEvent>, PullRequestEvent>, string> = {
+  action: "The pull request can't be read from GitHub right now.",
+  unreadable: "The pull request can't be read from GitHub right now.",
+  draft: "The pull request is a draft: it runs once it's ready for review.",
+  fork: "The pull request is from a fork, which automations don't run on.",
+  bot: "The pull request is a bot's that automations don't run on.",
+};
+
+/**
+ * An admin runs a run that failed or didn't start again: on the pull
+ * request's head as GitHub has it now, so nothing older than it is reviewed.
+ * At the same commit, the run itself starts over; at a later one (no run
+ * there yet: the automation was off, say), a run is recorded for it. What to
+ * start, or why not.
+ */
+export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, appSlug?: string): Promise<Rerun> {
+  const target = await deps.rerunTarget(orgId, runId);
+  if (!target) return { ok: false, status: 404, error: "No such run." };
+  if (target.status !== "failed" && target.status !== "refused") {
+    return { ok: false, status: 409, error: "Only a run that failed or didn't start runs again." };
+  }
+  if (!target.enabled) return { ok: false, status: 409, error: "The automation is off: turn it on to run it." };
+  if (!target.covered) {
+    return { ok: false, status: 409, error: "The automation doesn't run on this repository any more." };
+  }
+  if (target.installationId === null) {
+    return { ok: false, status: 409, error: "The GitHub App isn't installed on this repository's account." };
+  }
+  const pr = await deps.pullRequest(target.installationId, target.repoFullName, target.prNumber);
+  if (pr.state !== "open") return { ok: false, status: 409, error: "The pull request is closed." };
+  // Read as a newly opened one: its session isn't told of commits since an
+  // earlier look, which may have been none. Its repository's name is the
+  // pull request's own, as GitHub has it now: one renamed since (GitHub
+  // redirects) isn't taken for a fork.
+  const event = readPullRequestEvent({ action: "opened", installation: { id: target.installationId }, pull_request: pr }, appSlug);
+  if (typeof event === "string") return { ok: false, status: 409, error: SKIPPED[event] };
+  if (event.headSha === target.headSha) {
+    if (!(await deps.reopenRun(target.runId))) {
+      return { ok: false, status: 409, error: "It's running again already." };
+    }
+    return {
+      ok: true,
+      run: { runId: target.runId, candidate: target.candidate, event, appSlug },
+      staleSession: target.workspaceId,
+    };
+  }
+  // Whatever the automation's triggers: an admin asked for it to run, and
+  // the head's commit is the one to look at now (one that triggers only on
+  // opened still runs here).
+  const recorded = await deps.recordRuns([
+    {
+      automationId: target.candidate.automationId,
+      projectId: target.candidate.projectId,
+      prNumber: event.number,
+      prTitle: event.title,
+      headSha: event.headSha,
+    },
+  ]);
+  const newId = recorded.get(`${target.candidate.automationId}:${target.candidate.projectId}`);
+  if (!newId) {
+    return { ok: false, status: 409, error: "The pull request has newer commits, with their own run: run that one again instead." };
+  }
+  // The failed run keeps its session, if it made one: the new run archives
+  // it as an earlier one once it's ready (runNeighbours).
+  return { ok: true, run: { runId: newId, candidate: target.candidate, event, appSlug }, staleSession: null };
 }

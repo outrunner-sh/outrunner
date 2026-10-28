@@ -167,7 +167,7 @@ export async function sweepStalledRuns(now = new Date()): Promise<number> {
     .from("automation_runs")
     .update({
       status: "refused",
-      reason: "Its session's setup never finished. New commits on the pull request run it again.",
+      reason: "Its session's setup never finished. Run it again, or push new commits to the pull request.",
       updated_at: now.toISOString(),
     })
     .eq("status", "started")
@@ -280,4 +280,111 @@ export async function runNeighbours(run: {
     // start leaves this as the pull request's review.
     superseded: others.some((r) => r.created_at > self.created_at && r.status === "ready"),
   };
+}
+
+/** What running a run again needs: the run, its automation as a candidate,
+ *  its repository and the org's installation on its account. */
+export type RerunTarget = {
+  runId: string;
+  status: AutomationRun["status"];
+  headSha: string;
+  prNumber: number;
+  enabled: boolean;
+  candidate: RunCandidate;
+  repoFullName: string;
+  /** The org's installation (claimed, not suspended) on the repository's
+   *  account; null when it has none. */
+  installationId: number | null;
+  /** Whether the automation still covers the repository (automation_repos). */
+  covered: boolean;
+  /** The session the run made, if any: archived before it starts over. */
+  workspaceId: string | null;
+};
+
+/** One of the org's runs, to run again; null when it isn't the org's. */
+export async function rerunTarget(orgId: string, runId: string): Promise<RerunTarget | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data: run, error } = await supabase
+    .from("automation_runs")
+    .select("id, automation_id, project_id, pr_number, head_sha, status, workspace_id")
+    .eq("id", runId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!run) return null;
+  const { data: automation, error: automationError } = await supabase
+    .from("automations")
+    .select("id, name, prompt, triggers, runs_as, enabled")
+    .eq("id", run.automation_id)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (automationError) throw automationError;
+  if (!automation) return null;
+  const { data: project, error: projectError } = await supabase
+    .from("projects")
+    .select("full_name")
+    .eq("id", run.project_id)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (projectError) throw projectError;
+  if (!project?.full_name) return null;
+  const { data: covering, error: coveringError } = await supabase
+    .from("automation_repos")
+    .select("project_id")
+    .eq("automation_id", run.automation_id)
+    .eq("project_id", run.project_id)
+    .maybeSingle();
+  if (coveringError) throw coveringError;
+  const { data: installations, error: installationsError } = await supabase
+    .from("github_installations")
+    .select("installation_id, account_login")
+    .eq("org_id", orgId)
+    .is("suspended_at", null);
+  if (installationsError) throw installationsError;
+  const owner = project.full_name.split("/")[0].toLowerCase();
+  const installation = (installations ?? []).find((i) => i.account_login.toLowerCase() === owner);
+  const stillMember = automation.runs_as ? await currentRunners(orgId, [automation.runs_as]) : new Set<string>();
+  return {
+    runId: run.id,
+    status: run.status,
+    headSha: run.head_sha,
+    prNumber: run.pr_number,
+    enabled: automation.enabled,
+    candidate: {
+      automationId: automation.id,
+      name: automation.name,
+      prompt: automation.prompt,
+      triggers: automation.triggers,
+      runsAs: automation.runs_as && stillMember.has(automation.runs_as) ? automation.runs_as : null,
+      projectId: run.project_id,
+      orgId,
+    },
+    repoFullName: project.full_name,
+    installationId: installation?.installation_id ?? null,
+    covered: covering !== null,
+    workspaceId: run.workspace_id,
+  };
+}
+
+/** Set a run that failed or didn't start back to starting, to run again;
+ *  false when it isn't one any more (it's running again already). */
+export async function reopenRun(runId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ status: "started", workspace_id: null, reason: null, updated_at: new Date().toISOString() })
+    .eq("id", runId)
+    .in("status", ["failed", "refused"])
+    .select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
+}
+
+/** Who a session is: its owner, as whom it's archived; null when it's gone. */
+export async function sessionOwner(workspaceId: string): Promise<string | null> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("workspaces")
+    .select("owner_id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.owner_id ?? null;
 }
