@@ -1092,8 +1092,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // WebSocket (`/events-ws`) handlers share one implementation.
 //
 //   - `writeEvent(id, payload)` emits one AgentEvent; `id` is the JSONL byte
-//     offset (0 for the non-resumable synthetic state event). Return false to
-//     stop (the transport is gone).
+//     offset (0 for the connect-time state event; a later state event carries
+//     the current cursor, see below). Return false to stop (the transport is
+//     gone).
 //   - `heartbeat()` keeps the connection alive on idle. Return false to stop.
 //
 // A synthetic `state` event is emitted first on fresh connects (fromOffset == 0)
@@ -1126,8 +1127,8 @@ func (s *Server) streamEvents(
 		})
 		return writeEvent(cursor, payload)
 	}
-	// stateChanged sends the state when it differs from the last one sent (or,
-	// on a resume, from the one the stream opened with).
+	// stateChanged rereads the state and sends it when it differs from the last
+	// one sent (or, on a resume, from the one the stream opened with).
 	stateChanged := func() bool {
 		state := sessionState()
 		if state == sent {
@@ -1161,10 +1162,14 @@ func (s *Server) streamEvents(
 				return
 			}
 		case ev := <-out:
-			// The log just yielded an event, so check the state first: the
-			// "running" lands before the first message it explains.
-			if !stateChanged() {
-				return
+			// The log just yielded an event, so it exists: the "running" lands
+			// before the first message it explains. No SessionLog lookup here,
+			// since a fresh connect replays the whole log through this path.
+			if sent != "running" {
+				sent = "running"
+				if !writeState(sent) {
+					return
+				}
 			}
 			var payload []byte
 			var mErr error
