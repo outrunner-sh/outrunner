@@ -219,10 +219,14 @@ export async function watchedSessions(limit = 150): Promise<string[]> {
   const ids = (live ?? []).map((w) => w.id);
   const computerIds = [...new Set((live ?? []).map((w) => w.computer_id).filter((id): id is string => Boolean(id)))];
   const [byWorkspace, byId, watched] = await Promise.all([
-    ids.length ? db().from("runtime_computers").select("workspace_id").eq("status", "ready").in("workspace_id", ids) : { data: [] },
-    computerIds.length ? db().from("runtime_computers").select("id").eq("status", "ready").in("id", computerIds) : { data: [] },
+    ids.length ? db().from("runtime_computers").select("workspace_id").eq("status", "ready").in("workspace_id", ids) : { data: [], error: null },
+    computerIds.length ? db().from("runtime_computers").select("id").eq("status", "ready").in("id", computerIds) : { data: [], error: null },
     db().from("session_activity").select("workspace_id").gt("watch_until", new Date().toISOString()),
   ]);
+  // A query that failed here would otherwise read as "nothing to read".
+  if (byWorkspace.error) throw byWorkspace.error;
+  if (byId.error) throw byId.error;
+  if (watched.error) throw watched.error;
   const upOwn = new Set((byWorkspace.data ?? []).map((c) => c.workspace_id));
   const upShared = new Set((byId.data ?? []).map((c) => c.id));
   const up = (live ?? []).filter((w) => upOwn.has(w.id) || (w.computer_id && upShared.has(w.computer_id))).map((w) => w.id);

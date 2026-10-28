@@ -143,9 +143,17 @@ export async function checkOpenPullRequests(limit = 25): Promise<Array<{ workspa
       const found = token && project ? await githubGet<{ state?: string; merged?: boolean; merged_at?: string | null }>(token, `/repos/${project.full_name}/pulls/${pr.github_number}`) : null;
       const state = found ? stateOf(found) : null;
       const patch = state && state !== pr.state ? { state, state_at: now, checked_at: now } : { checked_at: now };
-      const { error: updateError } = await db.from("pull_requests").update(patch).eq("id", pr.id).eq("state", "open");
+      const { data: updated, error: updateError } = await db
+        .from("pull_requests")
+        .update(patch)
+        .eq("id", pr.id)
+        .eq("state", "open")
+        .select("id");
       if (updateError) throw updateError;
-      if (state && state !== pr.state) changed.push({ workspaceId: pr.workspace_id, ownerId: pr.owner_id, from: pr.state, to: state });
+      // Recorded meanwhile (a webhook's delivery): it's that one's change.
+      if (state && state !== pr.state && updated?.length) {
+        changed.push({ workspaceId: pr.workspace_id, ownerId: pr.owner_id, from: pr.state, to: state });
+      }
     }),
   );
   return changed;
