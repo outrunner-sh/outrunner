@@ -5,8 +5,8 @@ import { clearProviderKey, getProviderKeyStatuses, setProviderKey, settleClaudeS
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
 import { keySource } from "@/lib/openrouter/keys";
-import { checkProviderKey } from "@/lib/providers/check";
-import { isKeyProviderId, type KeyProviderId, keyProblem, PROVIDERS } from "@/lib/providers/registry";
+import { acceptedKey } from "@/lib/providers/accept-key";
+import { isKeyProviderId, type KeyProviderId } from "@/lib/providers/registry";
 
 /**
  * The user's own keys for model providers, and the agents' API keys
@@ -54,35 +54,12 @@ export async function PUT(request: Request) {
   if (!isKeyProviderId(provider)) {
     return NextResponse.json({ error: "Choose one of the providers." }, { status: 400 });
   }
-  const key = typeof raw === "string" ? raw.trim() : "";
-  const problem = keyProblem(provider, key);
-  if (problem) return NextResponse.json({ error: problem }, { status: 400 });
-
-  const { label, keysPage } = PROVIDERS[provider];
-  let check;
-  try {
-    check = await checkProviderKey(provider, key);
-  } catch (error) {
-    console.error(`Could not check a ${label} key`, error);
-    return NextResponse.json(
-      { error: `Couldn't reach ${label} to check that key. Try again in a moment.` },
-      { status: 502 },
-    );
-  }
-  if (!check.accepted) {
-    return NextResponse.json(
-      {
-        error:
-          provider === "openrouter"
-            ? "OpenRouter didn't accept that as an API key. Use a key from OpenRouter → Keys, not a management key."
-            : `${label} didn't accept that key. Copy a new one from ${keysPage}.`,
-      },
-      { status: 400 },
-    );
-  }
+  const accepted = await acceptedKey(provider, raw);
+  if (accepted instanceof Response) return accepted;
+  const { key, warning } = accepted;
   return changing(async () => {
     await setProviderKey(owner.id, provider, key);
-    return NextResponse.json({ ...(await providers(owner.id)), warning: check.warning ?? null });
+    return NextResponse.json({ ...(await providers(owner.id)), warning });
   });
 }
 

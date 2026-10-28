@@ -378,6 +378,18 @@ type UserCredentialsRow = {
 // A user's own key for one model provider (Settings → Providers).
 // Service-role-only (RLS on, no policies); see
 // supabase/migrations/20261019120000_user_provider_keys.sql.
+// An org's keys for model providers (Settings → Org → Keys). Service-role-only;
+// see supabase/migrations/20261030110000_org_provider_keys.sql.
+type OrgProviderKeyRow = {
+  org_id: string;
+  provider: string;
+  key_ciphertext: string;
+  key_hint: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type UserProviderKeyRow = {
   user_id: string;
   provider: string;
@@ -972,6 +984,12 @@ export type Database = {
         Row: UserCredentialsRow;
         Insert: Insert<UserCredentialsRow, "user_id">;
         Update: Partial<UserCredentialsRow>;
+        Relationships: [];
+      };
+      org_provider_keys: {
+        Row: OrgProviderKeyRow;
+        Insert: Insert<OrgProviderKeyRow, "org_id" | "provider" | "key_ciphertext">;
+        Update: Partial<OrgProviderKeyRow>;
         Relationships: [];
       };
       user_provider_keys: {

@@ -103,6 +103,8 @@ export type SessionCheckout = {
 export type Workspace = {
   id: string;
   projectId: string;
+  /** Its project's org; absent on one made in code rather than read. */
+  orgId?: string;
   /** Who made it: on `user-daytona` or `user-modal`, whose key reaches it. */
   ownerId: string;
   /** Backend that owns this workspace's compute and durable storage. */

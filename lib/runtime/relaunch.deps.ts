@@ -17,17 +17,17 @@ export async function readyRelaunch(
   agent: AgentClient,
   identity: WorkspaceIdentity,
   upgrade: (() => Promise<void>) | undefined,
-  workspace: Pick<Workspace, "agent" | "model">,
+  workspace: Pick<Workspace, "agent" | "model" | "orgId">,
   ownerId: string,
 ): Promise<void> {
   await signInSession(
     sessionAuthClient(agent, identity, upgrade),
     workspace.agent,
-    agentAuthStore(ownerId),
+    agentAuthStore(ownerId, workspace.orgId),
     relaunchNeedsAccount(workspace.agent, workspace.model),
   );
   await putBackOnModel(
-    { setModel: (req) => agent.setModel(identity, req), keyFor: (holder) => modelKey(ownerId, holder) },
+    { setModel: (req) => agent.setModel(identity, req), keyFor: (holder) => modelKey(ownerId, holder, workspace.orgId) },
     workspace.model,
   );
 }

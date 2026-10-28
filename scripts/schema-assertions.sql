@@ -1632,3 +1632,24 @@ begin
   end if;
   raise notice 'ok: a claim of a stopped box answers once';
 end $$;
+
+-- 42. A team org keeps provider keys for its members; a personal org has none
+-- of its own, and the keys go with the org.
+do $$
+declare personal uuid;
+begin
+  insert into org_provider_keys (org_id, provider, key_ciphertext, key_hint)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'openrouter', 'v1.sealed', 'abcd');
+  select id into personal from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
+  begin
+    insert into org_provider_keys (org_id, provider, key_ciphertext) values (personal, 'openrouter', 'v1.sealed');
+    raise exception 'FAIL: a personal org kept a key of its own';
+  exception when check_violation then
+    null;
+  end;
+  if has_table_privilege('authenticated', 'org_provider_keys', 'select') then
+    raise exception 'FAIL: members can read the org''s keys directly';
+  end if;
+  delete from org_provider_keys where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  raise notice 'ok: a team org keeps provider keys, a personal org none';
+end $$;

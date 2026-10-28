@@ -294,11 +294,13 @@ async function restoreDaytonaWorkspace(
     // it goes back on, its key fetched now: before a box is started for it,
     // so a pick that can't run, or a key removed, starts nothing.
     const { auth, restoreOn } = await restoreSignIn(workspace, owner.id);
-    const model = restoreOn ? await recordedModelRequest(restoreOn, (holder) => modelKey(owner.id, holder)) : undefined;
+    const model = restoreOn
+      ? await recordedModelRequest(restoreOn, (holder) => modelKey(owner.id, holder, project.orgId))
+      : undefined;
 
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
-    const sessionEnv = await runtimeSessionEnvironment(owner.id, workspace.id);
+    const sessionEnv = await runtimeSessionEnvironment(owner.id, workspace.id, project.orgId);
     const ensured = await ensureComputer(provider, {
       scope,
       repoFullName: project.fullName,
@@ -330,7 +332,7 @@ async function restoreDaytonaWorkspace(
     // The restore relaunches the session at once, so its credential rides
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
-    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id, workspace.id);
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id, workspace.id, project.orgId);
     const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
     if (manifest.origin) {
       await requireFeature(features, AGENT_FEATURE_IMPORTS, "restore a session imported from a Mac");
@@ -424,13 +426,13 @@ async function restoreSignIn(
   workspace: Workspace,
   ownerId: string,
 ): Promise<{ auth: ResolvedAuth; restoreOn: RecordedModel | null }> {
-  const store = agentAuthStore(ownerId);
+  const store = agentAuthStore(ownerId, workspace.orgId);
   const ownAccount = relaunchNeedsAccount(workspace.agent, workspace.model);
   const auth = await resolveAgentAuth(store, workspace.agent, "cloud", { ownAccount });
   if (workspace.model || auth.credential || workspace.agent !== "claude") {
     return { auth, restoreOn: workspace.model };
   }
-  const fallback = defaultModel(await modelMenu(ownerId));
+  const fallback = defaultModel(await modelMenu(ownerId, workspace.orgId));
   // Nothing to run on: this says what to connect.
   if (!fallback) await resolveAgentAuth(store, workspace.agent, "cloud");
   return { auth, restoreOn: fallback && { model: fallback, effort: null } };

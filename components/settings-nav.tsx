@@ -34,6 +34,8 @@ const groups = [
       { href: "/settings/org/access", label: "Roles & access", icon: ShieldCheck },
       // The Outrunner GitHub App's installations; admins install it.
       { href: "/settings/org/github", label: "GitHub", icon: Github },
+      // Keys the org's members' cloud sessions run on; admins save them.
+      { href: "/settings/org/keys", label: "Keys", icon: KeyRound },
     ],
   },
   {

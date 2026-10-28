@@ -39,16 +39,18 @@ export async function runtimeSessionEnvironment(
    *  automation's review session's (review_sessions) never gets its user's
    *  GitHub token, on any boot of its box: it asks for the App's. */
   workspaceId: string | null,
+  /** The session's org: its Anthropic key, where the user has none. */
+  orgId?: string,
 ): Promise<Record<string, string>> {
   if (workspaceId && (await isReviewSession(workspaceId))) {
-    return withoutGitHubToken(await userEnvironment(userId));
+    return withoutGitHubToken(await userEnvironment(userId, orgId));
   }
-  return userEnvironment(userId);
+  return userEnvironment(userId, orgId);
 }
 
-async function userEnvironment(userId: string): Promise<Record<string, string>> {
+async function userEnvironment(userId: string, orgId: string | undefined): Promise<Record<string, string>> {
   const [credential, githubToken] = await Promise.all([
-    getClaudeCredential(userId),
+    getClaudeCredential(userId, orgId),
     getGithubIdentity(userId).then((identity) => (identity === "personal" ? getGithubToken(userId) : null)),
   ]);
   return {
@@ -75,9 +77,12 @@ export function boxUpgrade(
   /** The session the box is for: a review session's is booted without its
    *  user's GitHub token (runtimeSessionEnvironment). */
   workspaceId: string | null,
+  /** The session's org: its Anthropic key, where the user has none. */
+  orgId?: string,
 ): (() => Promise<void>) | undefined {
   if (!provider.upgradesAgents) return undefined;
-  return async () => provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId, workspaceId));
+  return async () =>
+    provider.upgradeAgent(sandboxId, secret, await runtimeSessionEnvironment(userId, workspaceId, orgId));
 }
 
 /** A box's environment without its user's GitHub token: an automation's

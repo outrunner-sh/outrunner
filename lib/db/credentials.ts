@@ -30,6 +30,8 @@ import {
 } from "@/lib/billing/model-allowance";
 import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
+import { openOrgKey, orgProviderKey, sealedOrgKeys, usableOrgProviders } from "@/lib/db/org-credentials";
+import { fillFromOrg } from "@/lib/orgs/keys";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
   createUserKey,
@@ -46,6 +48,7 @@ import { NoProviderKeyError } from "@/lib/providers/errors";
 import {
   isKeyProviderId,
   KEY_PROVIDER_IDS,
+  PROVIDER_IDS,
   type KeyProviderId,
   type ProviderId,
   usableProviders,
@@ -612,11 +615,16 @@ export async function settleClaudeSlot(userId: string): Promise<void> {
 /**
  * The credential a session runs the user's own Claude on: their subscription
  * token from the Claude slot, else (as before the Anthropic key had a place of
- * its own) their Anthropic API key. Null with neither.
+ * its own) their Anthropic API key, else, for a cloud session in a team org
+ * (`orgId`), the org's Anthropic key. Null with none.
  */
-export async function getClaudeCredential(userId: string): Promise<string | null> {
+export async function getClaudeCredential(userId: string, orgId?: string): Promise<string | null> {
   await settleClaudeSlot(userId);
-  return (await getAnthropicKey(userId)) ?? (await getProviderKey(userId, "anthropic"));
+  return (
+    (await getAnthropicKey(userId)) ??
+    (await getProviderKey(userId, "anthropic")) ??
+    (await orgProviderKey(userId, orgId, "anthropic"))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -654,9 +662,11 @@ export async function setAgentAuthChoice(userId: string, agent: AgentId, method:
 /**
  * The user's agent sign-ins, for lib/agents/resolve.ts. Loading an agent reads
  * its pick and every credential it could run on at once, sealed; a credential
- * is opened only when asked for, once.
+ * is opened only when asked for, once. With `orgId` (a cloud session's team
+ * org), a provider key the user has none of is the org's
+ * (lib/db/org-credentials.ts); never for a session on their Mac.
  */
-export function agentAuthStore(userId: string): AgentAuthStore {
+export function agentAuthStore(userId: string, orgId?: string): AgentAuthStore {
   return {
     async load(agent) {
       const credentials = AGENTS[agent].methods.map((method) => method.credential);
@@ -667,7 +677,7 @@ export function agentAuthStore(userId: string): AgentAuthStore {
       // An Anthropic API key still in the Claude slot is the provider's.
       if (usesSlot) await settleClaudeSlot(userId);
       const supabase = createSupabaseAdminClient();
-      const [choices, slot, keys] = await Promise.all([
+      const [choices, slot, keys, orgKeys] = await Promise.all([
         getAgentAuthChoices(userId),
         usesSlot
           ? supabase.from("user_credentials").select("anthropic_key_ciphertext").eq("user_id", userId).maybeSingle()
@@ -679,12 +689,15 @@ export function agentAuthStore(userId: string): AgentAuthStore {
               .eq("user_id", userId)
               .in("provider", providers)
           : null,
+        sealedOrgKeys(userId, orgId, providers),
       ]);
       if (slot?.error) throw slot.error;
       if (keys?.error && !beforeProviderKeys(keys.error)) throw keys.error;
       const sealed = new Map<string, string | null>();
       if (slot) sealed.set("claude-slot", slot.data?.anthropic_key_ciphertext ?? null);
       for (const row of keys?.data ?? []) sealed.set(row.provider, row.key_ciphertext);
+      // The org's, for a provider the user has no key of their own for.
+      const fromOrg = fillFromOrg(sealed, orgKeys);
 
       const opened = new Map<string, string | null>();
       return {
@@ -695,7 +708,12 @@ export function agentAuthStore(userId: string): AgentAuthStore {
           if (!opened.has(which)) {
             // The slot is logged as "anthropic", as getAnthropicKey does.
             const label = credential.kind === "claude-slot" ? "anthropic" : credential.provider;
-            opened.set(which, openOrNull(sealed.get(which), userId, label));
+            opened.set(
+              which,
+              fromOrg.has(which) && orgId
+                ? openOrgKey(sealed.get(which) ?? undefined, orgId, label)
+                : openOrNull(sealed.get(which), userId, label),
+            );
           }
           return opened.get(which) ?? null;
         },
@@ -706,13 +724,16 @@ export function agentAuthStore(userId: string): AgentAuthStore {
 
 /** What the user's model menu offers (lib/runtime/session-models.ts):
  *  Outrunner's models where the server has a key for them, and each provider
- *  the user has a key for that can be used. */
-export async function modelMenu(userId: string): Promise<ModelMenu> {
+ *  the user has a key for that can be used; with `orgId` (a cloud session's
+ *  team org), each one the org has a key for too. */
+export async function modelMenu(userId: string, orgId?: string): Promise<ModelMenu> {
   const source = keySource();
+  const [own, org] = await Promise.all([usableProviderKeys(userId), usableOrgProviders(userId, orgId)]);
+  const keys = new Set<string>([...own, ...org]);
   return {
     outrunner: source !== null,
     allowance: source === "per-user",
-    keys: await usableProviderKeys(userId),
+    keys: PROVIDER_IDS.filter((id) => keys.has(id)),
   };
 }
 
@@ -743,11 +764,12 @@ export function offersModels(menu: ModelMenu): boolean {
 
 /**
  * The key a model runs on: Outrunner's, for Outrunner's models; the user's
- * own for a provider's, or a NoProviderKeyError saying where to add one.
+ * own for a provider's, else, with `orgId` (a cloud session's team org), the
+ * org's; or a NoProviderKeyError saying where to add one.
  */
-export async function modelKey(userId: string, holder: KeyHolder): Promise<string> {
+export async function modelKey(userId: string, holder: KeyHolder, orgId?: string): Promise<string> {
   if (holder === "outrunner") return outrunnerModelKey(userId);
-  const key = await getProviderKey(userId, holder);
+  const key = (await getProviderKey(userId, holder)) ?? (await orgProviderKey(userId, orgId, holder));
   if (!key) throw new NoProviderKeyError(holder);
   return key;
 }
