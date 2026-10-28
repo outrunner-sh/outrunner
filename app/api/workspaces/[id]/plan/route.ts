@@ -36,15 +36,23 @@ export async function POST(request: Request, context: RouteContext) {
   const { workspace, provider, sandboxId, secret, agent, identity } = reach.reached;
 
   try {
-    await requireFeature(
-      {
-        features: async () => (await agent.health(identity)).features ?? [],
-        upgrade: boxUpgrade(provider, sandboxId, secret, owner.id, workspace.id),
-      },
-      AGENT_FEATURE_PLAN_MODE,
-      "approve a plan",
-    );
-    const approved = await agent.approvePlan(identity);
+    let approved;
+    try {
+      approved = await agent.approvePlan(identity);
+    } catch (error) {
+      // No such route: an agent from before plans, brought up to this one's,
+      // then asked again. Asked only then, not on every click.
+      if (!(error instanceof AgentRequestError && error.status === 404 && !error.error)) throw error;
+      await requireFeature(
+        {
+          features: async () => (await agent.health(identity)).features ?? [],
+          upgrade: boxUpgrade(provider, sandboxId, secret, owner.id, workspace.id),
+        },
+        AGENT_FEATURE_PLAN_MODE,
+        "approve a plan",
+      );
+      approved = await agent.approvePlan(identity);
+    }
     if (workspace.mode !== "build") await recordWorkspaceMode(workspace.id, "build");
     return NextResponse.json(approved);
   } catch (error) {

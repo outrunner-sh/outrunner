@@ -559,7 +559,8 @@ func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.ws.Compact(r.PathValue("id"), req.Instructions)
 	switch {
-	case errors.Is(err, workspace.ErrCompactBusy), errors.Is(err, workspace.ErrSessionUnchecked):
+	case errors.Is(err, workspace.ErrCompactBusy), errors.Is(err, workspace.ErrSessionUnchecked),
+		errors.Is(err, workspace.ErrPromptStaged):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
 	case errors.Is(err, workspace.ErrCompactUnsupported):
 		writeError(w, http.StatusConflict, "UNSUPPORTED", err.Error())

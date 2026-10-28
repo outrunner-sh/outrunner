@@ -71,3 +71,15 @@ func TestClaude2_1_304PlanMenuIsApprovedWithEnter(t *testing.T) {
 		t.Errorf("acceptEdits: key = %q, want none", got)
 	}
 }
+
+// The warning's words in a resumed conversation's scrollback, over the prompt
+// box, are no warning: nothing is pressed into the box.
+func TestTheBypassWarningIsTheDialogNotItsWords(t *testing.T) {
+	quoted := "  WARNING: Claude Code running in Bypass Permissions mode\n  ❯ No, exit\n    Yes, I accept\n\n" + composerPane
+	if isBypassWarning(quoted) || (claudeAgent{}).startupKey(quoted) != "" {
+		t.Error("the prompt box was taken for the bypass warning")
+	}
+	if !isBypassWarning(realPane(t, "bypass-warning")) {
+		t.Error("the real warning wasn't read as one")
+	}
+}

@@ -52,8 +52,13 @@ func (claudeAgent) startupKey(pane string) string {
 // Code 2.1.304 shows it at every such launch, whatever ~/.claude.json's
 // bypassPermissionsModeAccepted says, with "No, exit" preselected
 // (testdata/claude-2.1.304/bypass-warning.txt).
+//
+// The dialog itself, not its words anywhere: a resumed conversation that
+// quotes them (this repository's own could) shows its prompt box, and keys
+// pressed there would go into it.
 func isBypassWarning(pane string) bool {
-	return strings.Contains(pane, "running in Bypass Permissions mode")
+	return strings.Contains(pane, "WARNING: Claude Code running in Bypass Permissions mode") &&
+		strings.Contains(pane, "No, exit") && !isComposer(pane)
 }
 
 // bypassKey takes that warning toward "Yes, I accept". Bypass is Outrunner's

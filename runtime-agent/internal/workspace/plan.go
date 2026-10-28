@@ -173,6 +173,16 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	case a.isBusy(pane):
 		return ErrCompactBusy
 	}
+	// A prompt whose send gave up may still be in the prompt box: /compact
+	// typed after it would go as that prompt's tail, an ordinary turn, and
+	// nothing would compact. Refused until it is sent again (or has landed
+	// since, its box empty).
+	if st := lock.staged; st != nil {
+		if s.userTurns(workspaceID) <= st.baseline {
+			return ErrPromptStaged
+		}
+		lock.staged = nil
+	}
 	command := "/compact"
 	// Codex's /compact takes no instructions: typed after it, they would go
 	// as a prompt of their own, and the compaction never happen. It compacts
@@ -183,7 +193,6 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	if instructions = strings.TrimSpace(instructions); instructions != "" {
 		command += " " + instructions
 	}
-	lock.staged = nil // a prompt typed and never recorded is replaced
 	before := s.userTurns(workspaceID)
 	if err := s.tmux.Paste(ctx, name, command); err != nil {
 		return err
@@ -202,6 +211,10 @@ func (s *Service) Compact(workspaceID, instructions string) error {
 	}
 	return errors.New("the compaction didn't start; try again")
 }
+
+// ErrPromptStaged is a compaction asked for while the prompt box may still
+// hold a prompt whose send gave up.
+var ErrPromptStaged = errors.New("a message that didn't go may still be in the prompt box; send it again first, then compact")
 
 // ErrCompactBusy is a compaction asked for mid-turn.
 var ErrCompactBusy = errors.New("the agent is mid-turn; compact once it has finished")

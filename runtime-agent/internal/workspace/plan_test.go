@@ -432,3 +432,19 @@ func TestAPlanApprovedElsewhereIsntApprovedAgain(t *testing.T) {
 		t.Errorf("keys %q, typed %q into a session already building", fake.keys, fake.pasted)
 	}
 }
+
+// A prompt whose send gave up may still be in the box: /compact typed after
+// it would send them as one prompt. Refused until that prompt has landed.
+func TestACompactionWaitsOnAPromptStillInTheBox(t *testing.T) {
+	s, fake, id := landingSession(t)
+	fake.onEnter = func() string { return "✻ Compacting conversation… (esc to interrupt)" }
+	s.sendLock(id).staged = &stagedPrompt{content: "fix it", baseline: s.userTurns(id), at: time.Now()}
+	if err := s.Compact(id, ""); !errors.Is(err, ErrPromptStaged) || fake.pastes != 0 {
+		t.Fatalf("Compact = %v with %d pastes, want ErrPromptStaged and nothing typed", err, fake.pastes)
+	}
+	// It landed since: the box is empty, and /compact goes.
+	s.sendLock(id).staged.baseline = -1
+	if err := s.Compact(id, ""); err != nil || !slices.Equal(fake.pasted, []string{"/compact"}) {
+		t.Fatalf("Compact = %v, typed %q", err, fake.pasted)
+	}
+}
