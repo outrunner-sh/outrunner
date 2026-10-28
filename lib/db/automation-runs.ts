@@ -8,7 +8,7 @@
 
 import type { CheckOutcome } from "@/lib/automations/checks";
 import { readRunEvent, type RunEvent } from "@/lib/automations/run-event";
-import type { AutomationTrigger, RunStatus, TriggerKind } from "@/lib/automations/rules";
+import type { AutomationTrigger, RunStatus, SessionMode, TriggerKind } from "@/lib/automations/rules";
 import { type Schedule, scheduleFromRow } from "@/lib/automations/schedule";
 import { currentRunners } from "@/lib/db/automations";
 import type { Json } from "@/lib/supabase/database.types";
@@ -27,6 +27,11 @@ export type RunCandidate = {
   /** The repository, `owner/name`: its session is told. */
   repoFullName: string;
   orgId: string;
+  /** Whose review requests, and which labels, start it (filtersTake). */
+  reviewers: string[];
+  labels: string[];
+  /** A new session each run, or its last one on the repository. */
+  sessionMode: SessionMode;
 };
 
 type Admin = ReturnType<typeof createSupabaseAdminClient>;
@@ -42,15 +47,17 @@ async function candidatesOf(
   supabase: Admin,
   orgId: string,
   links: readonly { automation_id: string; project_id: string }[],
+  { enabledOnly = true }: { enabledOnly?: boolean } = {},
 ): Promise<RunCandidate[]> {
   if (links.length === 0) return [];
+  let automationsQuery = supabase
+    .from("automations")
+    .select("id, org_id, name, prompt, triggers, runs_as, reviewers, labels, session_mode")
+    .in("id", [...new Set(links.map((l) => l.automation_id))])
+    .eq("org_id", orgId);
+  if (enabledOnly) automationsQuery = automationsQuery.eq("enabled", true);
   const [automations, projects] = await Promise.all([
-    supabase
-      .from("automations")
-      .select("id, org_id, name, prompt, triggers, runs_as")
-      .in("id", [...new Set(links.map((l) => l.automation_id))])
-      .eq("org_id", orgId)
-      .eq("enabled", true),
+    automationsQuery,
     supabase
       .from("projects")
       .select("id, full_name")
@@ -80,6 +87,9 @@ async function candidatesOf(
         projectId: r.project_id,
         repoFullName,
         orgId,
+        reviewers: a.reviewers,
+        labels: a.labels,
+        sessionMode: a.session_mode,
       },
     ];
   });
@@ -144,7 +154,9 @@ export async function pullRequestSessions(
     .select("workspace_id")
     .in("project_id", scope.projectIds)
     .eq("pr_number", prNumber)
-    .not("workspace_id", "is", null);
+    .not("workspace_id", "is", null)
+    // Not the runs its closing starts, just now: theirs are only beginning.
+    .or(`trigger.is.null,trigger.not.in.("pull_request.closed","pull_request.merged")`);
   if (error) throw error;
   const ids = [...new Set((runs ?? []).flatMap((r) => (r.workspace_id ? [r.workspace_id] : [])))];
   if (ids.length === 0) return new Map();
@@ -167,40 +179,135 @@ export type RunRecord = {
   trigger: AutomationTrigger;
   /** The same key again records nothing (a redelivery, a repeated tick). */
   dedupeKey: string;
+  /** What a debounce window combines on (eventSubject). */
+  subject: string;
   event: RunEvent;
   prNumber?: number;
   prTitle?: string;
   headSha?: string;
+  issueNumber?: number;
   scheduledFor?: string;
 };
 
+/** A run recorded: its id, and whether it waits out a debounce window (it
+ *  may be one recorded before, that this trigger was combined into). */
+export type Recorded = { runId: string; queued: boolean };
+
 /**
- * Record runs in one statement, all or none: the new ones' ids, by
- * `${automationId}:${projectId}`. One whose key its automation already
- * recorded on the repository (a redelivery, a repeated event or tick) is
- * left out.
+ * Record runs in one transaction (record_automation_runs), all or none: by
+ * `${automationId}:${projectId}`, the runs made, or waiting runs they were
+ * combined into. None of an automation that's off or archived, none whose
+ * key its automation already recorded on the repository (a redelivery, a
+ * repeated event or tick), and none past its limit.
  */
-export async function recordRuns(runs: readonly RunRecord[]): Promise<Map<string, string>> {
+export async function recordRuns(runs: readonly RunRecord[]): Promise<Map<string, Recorded>> {
   if (runs.length === 0) return new Map();
+  const { data, error } = await createSupabaseAdminClient().rpc("record_automation_runs", {
+    runs: runs.map((run) => ({
+      automation_id: run.automationId,
+      project_id: run.projectId,
+      trigger: run.trigger,
+      dedupe_key: run.dedupeKey,
+      subject: run.subject,
+      context: run.event as unknown as Json,
+      pr_number: run.prNumber ?? null,
+      pr_title: run.prTitle ?? "",
+      head_sha: run.headSha ?? null,
+      issue_number: run.issueNumber ?? null,
+      scheduled_for: run.scheduledFor ?? null,
+    })),
+  });
+  if (error) throw error;
+  return new Map(
+    (data ?? []).map((r) => [`${r.run_automation_id}:${r.run_project_id}`, { runId: r.run_id, queued: r.queued }]),
+  );
+}
+
+/** A waiting run whose window has passed, taken to start: its event, the
+ *  last combined into it. */
+export type ClaimedRun = { runId: string; automationId: string; projectId: string; event: RunEvent | null; combined: number };
+
+/**
+ * Take the waiting runs whose window has passed by `now` to start them,
+ * each by one caller only (the tick, or the server that recorded it, waiting
+ * its window out): set to starting in the same statement that finds them.
+ * Only `runId` when given.
+ */
+export async function claimQueuedRuns(now: Date, runId?: string): Promise<ClaimedRun[]> {
+  let query = createSupabaseAdminClient()
+    .from("automation_runs")
+    .update({ status: "started", updated_at: now.toISOString() })
+    .eq("status", "queued")
+    .lte("not_before", now.toISOString());
+  if (runId) query = query.eq("id", runId);
+  // No limit on the update itself (PostgREST takes one only with an order):
+  // few wait past their window, and each is taken once.
+  const { data, error } = await query.select("id, automation_id, project_id, context, combined");
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    runId: r.id,
+    automationId: r.automation_id,
+    projectId: r.project_id,
+    event: readRunEvent(r.context),
+    combined: r.combined,
+  }));
+}
+
+/** When a waiting run's window ends now (a later trigger moves it on); null
+ *  once it isn't waiting. */
+export async function queuedUntil(runId: string): Promise<string | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("automation_runs")
-    .upsert(
-      runs.map((run) => ({
-        automation_id: run.automationId,
-        project_id: run.projectId,
-        trigger: run.trigger,
-        dedupe_key: run.dedupeKey,
-        context: run.event as unknown as Json,
-        pr_number: run.prNumber ?? null,
-        pr_title: run.prTitle ?? "",
-        head_sha: run.headSha ?? null,
-        scheduled_for: run.scheduledFor ?? null,
-      })),
-      { onConflict: "automation_id,project_id,dedupe_key", ignoreDuplicates: true },
-    )
-    .select("id, automation_id, project_id");
+    .select("status, not_before")
+    .eq("id", runId)
+    .maybeSingle();
   if (error) throw error;
-  return new Map((data ?? []).map((r) => [`${r.automation_id}:${r.project_id}`, r.id]));
+  return data?.status === "queued" ? data.not_before : null;
+}
+
+/** The automations' candidates on these repositories, on or off: a run
+ *  recorded before one was switched off still runs. */
+export async function claimedCandidates(runs: readonly { automationId: string; projectId: string }[]): Promise<RunCandidate[]> {
+  if (runs.length === 0) return [];
+  const supabase = createSupabaseAdminClient();
+  const { data: orgs, error } = await supabase
+    .from("automations")
+    .select("id, org_id")
+    .in("id", [...new Set(runs.map((r) => r.automationId))]);
+  if (error) throw error;
+  const orgOf = new Map((orgs ?? []).map((a) => [a.id, a.org_id]));
+  const byOrg = new Map<string, { automation_id: string; project_id: string }[]>();
+  for (const run of runs) {
+    const orgId = orgOf.get(run.automationId);
+    if (orgId) byOrg.set(orgId, [...(byOrg.get(orgId) ?? []), { automation_id: run.automationId, project_id: run.projectId }]);
+  }
+  return (await Promise.all([...byOrg].map(([orgId, l]) => candidatesOf(supabase, orgId, l, { enabledOnly: false })))).flat();
+}
+
+/** The session an automation's last run on a repository made, to give the
+ *  next run's prompt to (session_mode 'reuse'); null when there's none that
+ *  can be woken. */
+export async function reusableSession(run: { runId: string; automationId: string; projectId: string }): Promise<string | null> {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("automation_runs")
+    .select("workspace_id")
+    .eq("automation_id", run.automationId)
+    .eq("project_id", run.projectId)
+    .neq("id", run.runId)
+    .not("workspace_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.workspace_id) return null;
+  const { data: session, error: sessionError } = await supabase
+    .from("workspaces")
+    .select("id, status")
+    .eq("id", data.workspace_id)
+    .maybeSingle();
+  if (sessionError) throw sessionError;
+  return session && ["ready", "idle", "suspended", "archived"].includes(session.status) ? session.id : null;
 }
 
 /** A schedule that has come due, with its automation. */
@@ -355,6 +462,12 @@ export type AutomationRun = {
   headSha: string | null;
   /** A schedule's run's time. */
   scheduledFor: string | null;
+  /** An issue's run's. */
+  issueNumber: number | null;
+  /** How many triggers a debounce window combined into it. */
+  combined: number;
+  /** A waiting run's: when its window ends. */
+  notBefore: string | null;
   workspaceId: string | null;
   status: RunStatus;
   reason: string | null;
@@ -384,7 +497,9 @@ export async function listRuns(
   if (!automations?.length) return [];
   let query = supabase
     .from("automation_runs")
-    .select("id, automation_id, project_id, trigger, pr_number, pr_title, head_sha, scheduled_for, workspace_id, status, reason, created_at")
+    .select(
+      "id, automation_id, project_id, trigger, pr_number, pr_title, head_sha, scheduled_for, issue_number, combined, not_before, workspace_id, status, reason, created_at",
+    )
     .in(
       "automation_id",
       automations.map((a) => a.id),
@@ -410,6 +525,9 @@ export async function listRuns(
     prTitle: r.pr_title,
     headSha: r.head_sha,
     scheduledFor: r.scheduled_for,
+    issueNumber: r.issue_number,
+    combined: r.combined,
+    notBefore: r.not_before,
     workspaceId: r.workspace_id,
     status: r.status,
     reason: r.reason,
@@ -473,6 +591,9 @@ export type RerunTarget = {
   headSha: string | null;
   prNumber: number | null;
   enabled: boolean;
+  /** Whether it runs a count of times: off once it has, when a failed run
+   *  still runs again. */
+  limited: boolean;
   candidate: RunCandidate;
   repoFullName: string;
   /** The org's installation (claimed, not suspended) on the repository's
@@ -499,7 +620,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   if (!run) return null;
   const { data: automation, error: automationError } = await supabase
     .from("automations")
-    .select("id, name, prompt, triggers, runs_as, enabled")
+    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, reviewers, labels, session_mode")
     .eq("id", run.automation_id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -538,6 +659,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
     headSha: run.head_sha,
     prNumber: run.pr_number,
     enabled: automation.enabled,
+    limited: automation.max_runs !== null,
     candidate: {
       automationId: automation.id,
       name: automation.name,
@@ -547,6 +669,9 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
       projectId: run.project_id,
       repoFullName: project.full_name,
       orgId,
+      reviewers: automation.reviewers,
+      labels: automation.labels,
+      sessionMode: automation.session_mode,
     },
     repoFullName: project.full_name,
     installationId: installation?.installation_id ?? null,

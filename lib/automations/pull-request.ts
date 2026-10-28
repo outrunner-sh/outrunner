@@ -24,6 +24,9 @@ export type PullRequestEvent = {
   /** Branches, without a remote: the head is in the base repository. */
   headRef: string;
   baseRef: string;
+  /** Whose review was requested (`pull_request.review_requested`): a login,
+   *  or a team as `org/slug`. */
+  reviewer?: string;
 };
 
 /** Why an event starts nothing; null when it may. */
@@ -32,13 +35,14 @@ export type PullRequestSkip = "action" | "draft" | "fork" | "bot" | "unreadable"
 /**
  * The trigger an action is: a pull request opened, or opened again (reopened,
  * or ready for review after a draft), is reviewed as new; new commits are
- * `pull_request.synchronize`. Every other action starts nothing.
+ * `pull_request.synchronize`; closed is merged or not (`merged`, from the
+ * pull request); and a review requested. Every other action starts nothing.
  *
- * An automation runs once per commit of a pull request, whatever the trigger
- * (automation_runs' unique key): reopened at a commit it already ran at, it
- * doesn't run again; the code is the same.
+ * An automation runs once per commit of a pull request, whichever of opened
+ * and new commits (automation_runs' key): reopened at a commit it already ran
+ * at, it doesn't run again; the code is the same.
  */
-export function triggerFor(action: unknown): PullRequestTrigger | null {
+export function triggerFor(action: unknown, merged?: unknown): PullRequestTrigger | null {
   switch (action) {
     case "opened":
     case "reopened":
@@ -46,20 +50,33 @@ export function triggerFor(action: unknown): PullRequestTrigger | null {
       return "pull_request.opened";
     case "synchronize":
       return "pull_request.synchronize";
+    case "closed":
+      return merged === true ? "pull_request.merged" : "pull_request.closed";
+    case "review_requested":
+      return "pull_request.review_requested";
     default:
       return null;
   }
+}
+
+/** Whether a trigger is the pull request's code to look at, its head: its
+ *  session starts there. Closed and merged start from its base. */
+export function atHead(trigger: PullRequestTrigger): boolean {
+  return trigger !== "pull_request.closed" && trigger !== "pull_request.merged";
 }
 
 type Payload = {
   action?: unknown;
   installation?: { id?: unknown } | null;
   repository?: { full_name?: unknown } | null;
+  requested_reviewer?: { login?: unknown } | null;
+  requested_team?: { slug?: unknown } | null;
   pull_request?: {
     number?: unknown;
     title?: unknown;
     html_url?: unknown;
     draft?: unknown;
+    merged?: unknown;
     user?: { login?: unknown } | null;
     head?: { sha?: unknown; ref?: unknown; repo?: { full_name?: unknown } | null } | null;
     base?: { ref?: unknown; repo?: { full_name?: unknown } | null } | null;
@@ -76,13 +93,14 @@ export const SKIPPED_BOTS = ["dependabot[bot]", "renovate[bot]"] as const;
 
 /**
  * The event, or why it starts nothing. Drafts wait to be ready; a fork's head
- * isn't in the repository's mirror on the box; and dependency bots' pull
+ * isn't in the repository's mirror on the box (closed or merged, the run
+ * starts from the base, so a fork's is run); and dependency bots' pull
  * requests (SKIPPED_BOTS) aren't reviewed, nor are the Outrunner app's own
  * (`appSlug`'s bot), which would review itself.
  */
 export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRequestEvent | PullRequestSkip {
   const p = (payload ?? {}) as Payload;
-  const trigger = triggerFor(p.action);
+  const trigger = triggerFor(p.action, p.pull_request?.merged);
   if (!trigger) return "action";
   const pr = p.pull_request;
   const id = installationId(p.installation?.id);
@@ -106,10 +124,14 @@ export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRe
     return "unreadable";
   }
   if (pr.draft === true) return "draft";
-  if (text(pr.head?.repo?.full_name)?.toLowerCase() !== repoFullName.toLowerCase()) return "fork";
+  if (atHead(trigger) && text(pr.head?.repo?.full_name)?.toLowerCase() !== repoFullName.toLowerCase()) return "fork";
   const author = text(pr.user?.login)?.toLowerCase();
   const skipped: readonly string[] = appSlug ? [...SKIPPED_BOTS, `${appSlug.toLowerCase()}[bot]`] : SKIPPED_BOTS;
   if (author && skipped.includes(author)) return "bot";
+  // A team's as `org/slug`: the repository's owner is the team's org.
+  const team = text(p.requested_team?.slug);
+  const reviewer = text(p.requested_reviewer?.login) ?? (team ? `${repoFullName.split("/")[0]}/${team}` : null);
+  if (trigger === "pull_request.review_requested" && !reviewer) return "unreadable";
   return {
     installationId: id,
     trigger,
@@ -120,6 +142,7 @@ export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRe
     headSha,
     headRef,
     baseRef,
+    ...(trigger === "pull_request.review_requested" && reviewer ? { reviewer } : {}),
   };
 }
 
@@ -146,10 +169,24 @@ export function runTitle(automationName: string, event: Pick<PullRequestEvent, "
   return title.length > 120 ? `${title.slice(0, 119)}…` : title;
 }
 
+/** What happened to the pull request, as its session is told, beside its
+ *  head (opened, new commits). */
+function whatHappened(event: PullRequestEvent): string {
+  switch (event.trigger) {
+    case "pull_request.closed":
+      return `It was closed without being merged. This session's working tree is its base branch, ${event.baseRef}. Read what it changed with \`gh pr diff ${event.number}\` and \`gh pr view ${event.number}\`; \`gh\` is signed in as the Outrunner GitHub App for this repository.`;
+    case "pull_request.merged":
+      return `It was merged into ${event.baseRef}. This session's working tree is ${event.baseRef}, with the merge. Read what it changed with \`gh pr diff ${event.number}\` and \`gh pr view ${event.number}\`; \`gh\` is signed in as the Outrunner GitHub App for this repository.`;
+    default:
+      return `This session's working tree is the head's code. Read the change with \`gh pr diff ${event.number}\` and \`gh pr view ${event.number}\`; \`gh\` is signed in as the Outrunner GitHub App for this repository.`;
+  }
+}
+
 /**
- * What a run's session is told: the pull request it's for, then the
- * automation's own prompt. Its working tree is the pull request's head; the
- * change to look at is against its base.
+ * What a run's session is told: the pull request it's for, what happened to
+ * it, then the automation's own prompt. Opened or given new commits, its
+ * working tree is the pull request's head, the change to look at against its
+ * base; closed or merged, its base.
  */
 export function runPrompt(automationPrompt: string, event: PullRequestEvent, appSlug?: string, runId?: string): string {
   // What it posts is the App's bot's: only that account's comments are its
@@ -159,7 +196,7 @@ export function runPrompt(automationPrompt: string, event: PullRequestEvent, app
     `Pull request: ${event.repoFullName}#${event.number}${event.title ? ` "${event.title}"` : ""}`,
     `URL: ${event.url}`,
     `Base branch: ${event.baseRef}. Head branch: ${event.headRef}, at ${event.headSha}.`,
-    `This session's working tree is the head's code. Read the change with \`gh pr diff ${event.number}\` and \`gh pr view ${event.number}\`; \`gh\` is signed in as the Outrunner GitHub App for this repository.`,
+    whatHappened(event),
     self
       ? `What you post appears as ${self}. Its comments are from earlier passes of the App's automations, this one's included; comments by anyone else (people, other review bots) aren't, so don't call them a previous pass or a re-run, but don't repeat a point they've already made either.`
       : "",
@@ -168,6 +205,9 @@ export function runPrompt(automationPrompt: string, event: PullRequestEvent, app
       : "",
     event.trigger === "pull_request.synchronize"
       ? "The pull request has new commits since it was last looked at: look at it again, and don't repeat what's already been said on it."
+      : "",
+    event.trigger === "pull_request.review_requested" && event.reviewer
+      ? `A review of it was just requested of ${event.reviewer}.`
       : "",
     "",
     automationPrompt,

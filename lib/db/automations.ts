@@ -7,7 +7,12 @@
  * org's.
  */
 
-import type { Automation, AutomationInput, AutomationRepo, AutomationTrigger } from "@/lib/automations/rules";
+import {
+  type Automation,
+  type AutomationInput,
+  type AutomationRepo,
+  type AutomationTrigger,
+} from "@/lib/automations/rules";
 import { nextRun, type Schedule, scheduleFromRow, scheduleSpec } from "@/lib/automations/schedule";
 import { webhookTokenSettings } from "@/lib/db/automation-webhooks";
 import { people } from "@/lib/db/org-members";
@@ -32,10 +37,42 @@ type AutomationRowRead = {
   triggers: AutomationTrigger[];
   enabled: boolean;
   runs_as: string | null;
+  reviewers: string[];
+  labels: string[];
+  max_runs: number | null;
+  archive_when_done: boolean;
+  debounce_seconds: number;
+  session_mode: "new" | "reuse";
+  archived_at: string | null;
+  runs_since: string;
   created_at: string;
 };
 
-const COLUMNS = "id, name, template, prompt, triggers, enabled, runs_as, created_at";
+const COLUMNS =
+  "id, name, template, prompt, triggers, enabled, runs_as, reviewers, labels, max_runs, archive_when_done, debounce_seconds, session_mode, archived_at, runs_since, created_at";
+
+/** The times each limited automation has run since its count began: each
+ *  key once, however many repositories it ran on (record_automation_runs
+ *  counts so). For the page: read from its latest thousand runs, as many as
+ *  one read returns, past which the count is only shown as that far. */
+async function runsUsed(rows: readonly AutomationRowRead[]): Promise<Map<string, number>> {
+  const limited = rows.filter((r) => r.max_runs !== null);
+  const used = new Map<string, number>();
+  await Promise.all(
+    limited.map(async (r) => {
+      const { data, error } = await createSupabaseAdminClient()
+        .from("automation_runs")
+        .select("dedupe_key")
+        .eq("automation_id", r.id)
+        .gte("created_at", r.runs_since)
+        .order("created_at", { ascending: false })
+        .limit(1000);
+      if (error) throw error;
+      used.set(r.id, new Set((data ?? []).map((d) => d.dedupe_key)).size);
+    }),
+  );
+  return used;
+}
 
 /**
  * Of `userIds`, those still members of the org: an automation runs only as
@@ -69,13 +106,14 @@ async function withDetails(orgId: string, rows: AutomationRowRead[]): Promise<Au
   if (links.error) throw links.error;
   const projectIds = [...new Set((links.data ?? []).map((l) => l.project_id))];
   const runnerIds = rows.flatMap((r) => (r.runs_as ? [r.runs_as] : []));
-  const [projects, runners, members, schedules] = await Promise.all([
+  const [projects, runners, members, schedules, used] = await Promise.all([
     projectIds.length
       ? supabase.from("projects").select("id, full_name").in("id", projectIds)
       : Promise.resolve({ data: [], error: null }),
     people(runnerIds),
     currentRunners(orgId, runnerIds),
     schedulesOf(rows.map((r) => r.id)),
+    runsUsed(rows),
   ]);
   if (projects.error) throw projects.error;
   const nameOf = new Map((projects.data ?? []).map((p) => [p.id, p.full_name]));
@@ -94,6 +132,14 @@ async function withDetails(orgId: string, rows: AutomationRowRead[]): Promise<Au
     schedules: schedules.get(r.id) ?? [],
     repos: (reposOf.get(r.id) ?? []).sort((a, b) => a.fullName.localeCompare(b.fullName)),
     enabled: r.enabled,
+    reviewers: r.reviewers,
+    labels: r.labels,
+    maxRuns: r.max_runs,
+    archiveWhenDone: r.archive_when_done,
+    debounceSeconds: r.debounce_seconds,
+    sessionMode: r.session_mode,
+    archived: r.archived_at !== null,
+    runsUsed: used.get(r.id) ?? null,
     runsAs: r.runs_as && members.has(r.runs_as) ? { id: r.runs_as, login: runners.get(r.runs_as)?.login ?? "" } : null,
     createdAt: r.created_at,
   }));
@@ -127,6 +173,20 @@ export function scheduleRows(schedules: readonly Schedule[], now = Date.now()) {
       next_run_at: next === null ? null : new Date(next).toISOString(),
     };
   });
+}
+
+/** What's given of its filters and limits, as update_automation's settings
+ *  name them. */
+function limitSettings(change: Partial<AutomationInput>) {
+  return {
+    ...(change.reviewers !== undefined ? { reviewers: change.reviewers } : {}),
+    ...(change.labels !== undefined ? { labels: change.labels } : {}),
+    ...(change.maxRuns !== undefined ? { max_runs: change.maxRuns } : {}),
+    ...(change.archiveWhenDone !== undefined ? { archive_when_done: change.archiveWhenDone } : {}),
+    ...(change.debounceSeconds !== undefined ? { debounce_seconds: change.debounceSeconds } : {}),
+    ...(change.sessionMode !== undefined ? { session_mode: change.sessionMode } : {}),
+    ...(change.archived !== undefined ? { archived: change.archived } : {}),
+  };
 }
 
 /** An org's automations, oldest first. */
@@ -180,6 +240,7 @@ export async function createAutomation(orgId: string, runsAs: string, input: Aut
     settings: {
       schedules: scheduleRows(input.schedules),
       ...(input.triggers.includes("webhook") ? { webhook: webhookTokenSettings() } : {}),
+      ...limitSettings(input),
     },
   });
   if (error) throw refusal(error);
@@ -214,6 +275,7 @@ export async function updateAutomation(
       ...(schedules ? { schedules: scheduleRows(schedules) } : {}),
       // Its first URL, should it have none yet (the database keeps one it has).
       ...(change.triggers?.includes("webhook") ? { webhook: webhookTokenSettings() } : {}),
+      ...limitSettings(change),
     },
   });
   if (error) throw refusal(error);

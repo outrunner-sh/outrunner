@@ -44,6 +44,11 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
         prompt: template?.prompt ?? "",
         triggers: template?.triggers ?? ["pull_request.opened"],
         schedules: [],
+        reviewers: [],
+        labels: [],
+        limits: { maxRuns: null, archiveWhenDone: false, debounceSeconds: 0, sessionMode: "new" },
+        archived: false,
+        runsUsed: null,
         // From a template: every repository the GitHub App can post on, ticked
         // already, so turning it on is one Save. Only those known to be
         // ("installed"): with no coverage at all (no App, or it couldn't be

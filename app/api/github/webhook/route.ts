@@ -1,7 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { recordAudit } from "@/lib/audit/record";
-import { closeRuns, planRuns, startRun } from "@/lib/automations/runs";
+import { closeRuns, planIssueRuns, planRuns, startRun } from "@/lib/automations/runs";
 import { startDeps } from "@/lib/automations/start-deps";
 import { finishCheckFromComment } from "@/lib/automations/checks";
 import { checkOfRun, closeRunCheckWithout, closeRunCheckWithReview } from "@/lib/automations/checks.deps";
@@ -56,9 +56,9 @@ type Payload = {
  * GitHub: an uninstalled one is forgotten, a suspension is marked, and a
  * renamed account and a changed repository choice are recorded.
  *
- * A pull request event starts the automations of the org that has the
- * installation (lib/automations/runs.ts): their runs are recorded before the
- * answer, their sessions set up after. A redelivery starts nothing twice.
+ * A pull request or issue event starts the automations of the org that has
+ * the installation (lib/automations/runs.ts): their runs are recorded before
+ * the answer, their sessions set up after. A redelivery starts nothing twice.
  * An opened one is also posted in the Slack thread of the item its session
  * works on, if the Slack agent filed it.
  *
@@ -112,7 +112,12 @@ export async function POST(request: Request) {
       // Each run's session is set up after the answer, in after(): minutes on
       // a cold box, on Outrunner's long-running server (server.ts). One a
       // restart cuts off is swept by the reconciler (sweepStalledRuns).
-      const runs = await planRuns(payload, { automationsForPullRequest, recordRuns }, await appSlug(config));
+      const runs = await planRuns(
+        payload,
+        { automationsForPullRequest, recordRuns },
+        await appSlug(config),
+        request.headers.get("x-github-delivery"),
+      );
       after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
       // A PR closed or merged: archive its automation runs' review sessions.
       if (payload.action === "closed") {
@@ -153,6 +158,18 @@ export async function POST(request: Request) {
         }).catch((error: unknown) => console.error("Couldn't close a run's check from its review", error)),
       );
       return new NextResponse(null, { status: 204 });
+    }
+    if (event === "issues") {
+      // An issue opened or labeled starts the automations it's a trigger of
+      // (lib/automations/github-events.ts), as a pull request's event does.
+      const runs = await planIssueRuns(
+        payload,
+        { automationsForPullRequest, recordRuns },
+        await appSlug(config),
+        request.headers.get("x-github-delivery"),
+      );
+      after(() => Promise.all(runs.map((run) => startRun(run, startDeps()))));
+      return NextResponse.json({ received: true, runs: runs.length });
     }
     if (event === "installation") {
       // Said in the org's log as Outrunner's own: GitHub told it.

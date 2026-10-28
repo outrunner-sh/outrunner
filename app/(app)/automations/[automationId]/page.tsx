@@ -59,6 +59,16 @@ async function AutomationSection({ params }: { params: Params }) {
         prompt: automation.prompt,
         triggers: automation.triggers,
         schedules: automation.schedules,
+        reviewers: automation.reviewers,
+        labels: automation.labels,
+        limits: {
+          maxRuns: automation.maxRuns,
+          archiveWhenDone: automation.archiveWhenDone,
+          debounceSeconds: automation.debounceSeconds,
+          sessionMode: automation.sessionMode,
+        },
+        archived: automation.archived,
+        runsUsed: automation.runsUsed,
         projectIds: automation.repos.map((r) => r.projectId),
         enabled: automation.enabled,
         // Its runner's login, "" when it can't be told (no GitHub login on

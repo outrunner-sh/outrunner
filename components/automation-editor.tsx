@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AutomationWebhook } from "@/components/automation-webhook";
+import { AutomationLimits, type Limits } from "@/components/automation-limits";
 import { AutomationSchedules, type ScheduleForm, scheduleForm, scheduleOf, useLocalZone } from "@/components/automation-schedules";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,14 @@ export type AutomationDraft = {
   schedules: Schedule[];
   projectIds: string[];
   enabled: boolean;
+  /** Whose review requests, and which issue labels, start it. */
+  reviewers: string[];
+  labels: string[];
+  limits: Limits;
+  /** Done (it ran its count, or was archived): off until switched on. */
+  archived: boolean;
+  /** How many times it has run against its limit; null with none. */
+  runsUsed: number | null;
   /** Who it runs as, for one that exists: their login, "" when it can't be
    *  told, null once they're no longer in the org. */
   runsAs: string | null;
@@ -88,6 +97,9 @@ export function AutomationEditor({
     setTriggers(toggle(triggers, "schedule"));
     if (!scheduled && schedules.length === 0) setSchedules([scheduleForm(local)]);
   };
+  const [reviewers, setReviewers] = useState(draft.reviewers.join(", "));
+  const [labels, setLabels] = useState(draft.labels.join(", "));
+  const [limits, setLimits] = useState<Limits>(draft.limits);
   const [projectIds, setProjectIds] = useState<string[]>(draft.projectIds);
   const [enabled, setEnabled] = useState(draft.enabled);
   const [filter, setFilter] = useState("");
@@ -116,6 +128,11 @@ export function AutomationEditor({
   const creating = draft.id === null;
 
   const toggle = <T,>(list: T[], value: T) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+  const triggerCheck = (trigger: AutomationTrigger) => (
+    <Check key={trigger} checked={triggers.includes(trigger)} disabled={!editable} onChange={() => setTriggers(toggle(triggers, trigger))}>
+      {TRIGGER_LABELS[trigger]}
+    </Check>
+  );
 
   const save = async () => {
     if (saving) return;
@@ -130,9 +147,31 @@ export function AutomationEditor({
       // Schedules go with the triggers: either changed sends both.
       const before = draft.schedules.map((s) => scheduleOf(scheduleForm(s.timezone, s)));
       const timing = same(triggers, draft.triggers) && JSON.stringify(sent) === JSON.stringify(before) ? {} : { triggers, schedules: sent };
+      // Typed as a list, comma or space between; the server checks each.
+      const names = (text: string) => text.split(/[\s,]+/).filter(Boolean);
+      const filters = {
+        ...(JSON.stringify(names(reviewers)) !== JSON.stringify(draft.reviewers) ? { reviewers: names(reviewers) } : {}),
+        ...(JSON.stringify(names(labels)) !== JSON.stringify(draft.labels) ? { labels: names(labels) } : {}),
+      };
+      const changedLimits = Object.fromEntries(
+        (Object.keys(limits) as (keyof Limits)[]).filter((k) => limits[k] !== draft.limits[k]).map((k) => [k, limits[k]]),
+      );
       const body = creating
-        ? { name, template: draft.template, prompt, triggers, schedules: sent, projectIds, enabled }
+        ? {
+            name,
+            template: draft.template,
+            prompt,
+            triggers,
+            schedules: sent,
+            reviewers: names(reviewers),
+            labels: names(labels),
+            ...limits,
+            projectIds,
+            enabled,
+          }
         : {
+            ...filters,
+            ...changedLimits,
             ...(name !== draft.name ? { name } : {}),
             // The server keeps it trimmed.
             ...(prompt.trim() !== draft.prompt ? { prompt } : {}),
@@ -219,16 +258,45 @@ export function AutomationEditor({
 
         <Field label="Trigger">
           <div className="space-y-1.5">
-            {GITHUB_TRIGGERS.map((trigger) => (
-              <Check
-                key={trigger}
-                checked={triggers.includes(trigger)}
-                disabled={!editable}
-                onChange={() => setTriggers(toggle(triggers, trigger))}
-              >
-                {TRIGGER_LABELS[trigger]}
-              </Check>
-            ))}
+            <div className="text-xs text-muted-foreground">Pull requests</div>
+            {GITHUB_TRIGGERS.filter((t) => t.startsWith("pull_request.")).map((trigger) => triggerCheck(trigger))}
+            {triggers.includes("pull_request.review_requested") ? (
+              <div className="space-y-1 pl-5">
+                <Input
+                  value={reviewers}
+                  onChange={(event) => setReviewers(event.target.value)}
+                  disabled={!editable}
+                  placeholder="octocat, acme/reviewers"
+                  aria-label="Reviewers whose review requests start it"
+                  className="h-7 max-w-sm font-mono text-xs"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <p className="text-xs text-muted-foreground">
+                  A review requested of any of these starts it: GitHub logins, or teams as org/team. Requesting it again
+                  runs it again.
+                </p>
+              </div>
+            ) : null}
+            <div className="pt-1.5 text-xs text-muted-foreground">Issues</div>
+            {GITHUB_TRIGGERS.filter((t) => t.startsWith("issues.")).map((trigger) => triggerCheck(trigger))}
+            {triggers.includes("issues.labeled") ? (
+              <div className="space-y-1 pl-5">
+                <Input
+                  value={labels}
+                  onChange={(event) => setLabels(event.target.value)}
+                  disabled={!editable}
+                  placeholder="Any label"
+                  aria-label="Labels that start it"
+                  className="h-7 max-w-sm text-xs"
+                  autoComplete="off"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Only these labels, comma between; empty, any. A label that has spaces in it can&apos;t be named here yet.
+                </p>
+              </div>
+            ) : null}
+            <div className="pt-1.5 text-xs text-muted-foreground">Outrunner</div>
             <Check checked={scheduled} disabled={!editable} onChange={toggleSchedule}>
               On a schedule
             </Check>
@@ -292,17 +360,24 @@ export function AutomationEditor({
           />
           <p className="text-xs text-muted-foreground">
             The session is also told what started it: the pull request (its repository, number, and base and head
-            branches), the schedule and the time it was due, or the webhook&apos;s payload. Put the payload where it
+            branches) or issue, the schedule and the time it was due, or the webhook&apos;s payload. Put the payload where it
             belongs with <span className="font-mono">{"{{payload}}"}</span>, or one value of it with{" "}
             <span className="font-mono">{"{{payload.some.field}}"}</span>; with neither, it comes after the prompt. Anyone
             with the URL writes the payload, so the session is told to take it as data, not instructions.
           </p>
         </Field>
 
+        <Field label="Runs">
+          <AutomationLimits limits={limits} onChange={setLimits} editable={editable} runsUsed={draft.runsUsed} />
+        </Field>
+
         <Field label="Status">
           <Check checked={enabled} disabled={!editable} onChange={() => setEnabled(!enabled)}>
             Enabled
           </Check>
+          {draft.archived ? (
+            <p className="text-xs text-muted-foreground">Archived: it&apos;s done. Switching it on brings it back.</p>
+          ) : null}
         </Field>
 
         {error ? <InlineMessage actions={[{ label: "Dismiss", onClick: () => setError(null) }]}>{error}</InlineMessage> : null}

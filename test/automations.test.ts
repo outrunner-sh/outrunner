@@ -28,6 +28,13 @@ test("a whole automation is trimmed, deduplicated and kept in trigger order", ()
       schedules: [],
       projectIds: [A, B],
       enabled: false,
+      // Unsent, its filters and limits are none: every time, a session each.
+      reviewers: [],
+      labels: [],
+      maxRuns: null,
+      archiveWhenDone: false,
+      debounceSeconds: 0,
+      sessionMode: "new",
     },
   });
 });

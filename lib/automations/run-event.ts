@@ -1,12 +1,14 @@
 /**
  * What started a run, as its session is told: a pull request event
- * (lib/automations/pull-request.ts), a schedule coming due, or a POST to the
- * automation's webhook (lib/automations/webhook.ts). Kept with the
+ * (lib/automations/pull-request.ts), an issue's (lib/automations/github-events.ts),
+ * a schedule coming due, or a POST to the automation's webhook
+ * (lib/automations/webhook.ts). Kept with the
  * run (automation_runs.context), so a run that failed starts again as it
  * first would have. No I/O.
  */
 
-import { type PullRequestEvent, runPrompt, runTitle } from "@/lib/automations/pull-request";
+import { type IssueEvent, issuePrompt, issueTitle } from "@/lib/automations/github-events";
+import { atHead, type PullRequestEvent, runPrompt, runTitle } from "@/lib/automations/pull-request";
 import type { AutomationTrigger } from "@/lib/automations/rules";
 import { isTimeZone, wallTime } from "@/lib/automations/schedule";
 import { fillPayload, type WebhookEvent } from "@/lib/automations/webhook";
@@ -20,10 +22,22 @@ export type ScheduleEvent = {
   description: string;
 };
 
-export type RunEvent = PullRequestEvent | ScheduleEvent | WebhookEvent;
+export type RunEvent = PullRequestEvent | IssueEvent | ScheduleEvent | WebhookEvent;
 
 export function isPullRequestEvent(event: RunEvent): event is PullRequestEvent {
   return event.trigger.startsWith("pull_request.");
+}
+
+export function isIssueEvent(event: RunEvent): event is IssueEvent {
+  return event.trigger.startsWith("issues.");
+}
+
+/** What a debounce window combines triggers on, and a run is about: a pull
+ *  request, an issue, the schedule, the webhook. */
+export function eventSubject(event: RunEvent): string {
+  if (isPullRequestEvent(event)) return `pr:${event.number}`;
+  if (isIssueEvent(event)) return `issue:${event.number}`;
+  return event.trigger;
 }
 
 /** Where the run is, beside its event: told to its session. A pull
@@ -41,6 +55,7 @@ export function onClock(instant: string, timezone: string): string {
 /** A run's session title. */
 export function eventTitle(automationName: string, event: RunEvent): string {
   if (isPullRequestEvent(event)) return runTitle(automationName, event);
+  if (isIssueEvent(event)) return issueTitle(automationName, event);
   const title =
     event.trigger === "webhook"
       ? `${automationName}, webhook ${onClock(event.receivedAt, "UTC")} UTC`
@@ -50,13 +65,15 @@ export function eventTitle(automationName: string, event: RunEvent): string {
 
 /** The branch its session starts from; the repository's default when none. */
 export function eventBaseBranch(event: RunEvent): string | undefined {
-  return isPullRequestEvent(event) ? event.headRef : undefined;
+  if (isPullRequestEvent(event)) return atHead(event.trigger) ? event.headRef : event.baseRef;
+  return undefined;
 }
 
 /** What a run's session is told: what started it, where, then the
  *  automation's own prompt. */
 export function eventPrompt(automationPrompt: string, event: RunEvent, place: RunPlace): string {
   if (isPullRequestEvent(event)) return runPrompt(automationPrompt, event, place.appSlug, place.runId);
+  if (isIssueEvent(event)) return issuePrompt(automationPrompt, event, place.appSlug);
   return [
     event.trigger === "webhook"
       ? `Webhook run: a POST to this automation's URL, ${onClock(event.receivedAt, "UTC")} UTC.`
@@ -68,7 +85,13 @@ export function eventPrompt(automationPrompt: string, event: RunEvent, place: Ru
   ].join("\n");
 }
 
-const PR_TRIGGERS: readonly AutomationTrigger[] = ["pull_request.opened", "pull_request.synchronize"];
+const PR_TRIGGERS: readonly AutomationTrigger[] = [
+  "pull_request.opened",
+  "pull_request.synchronize",
+  "pull_request.closed",
+  "pull_request.merged",
+  "pull_request.review_requested",
+];
 
 /**
  * A run's kept event (automation_runs.context), read back; null for one that
@@ -90,6 +113,22 @@ export function readRunEvent(value: unknown): RunEvent | null {
     const timezone = text("timezone");
     if (!scheduledFor || Number.isNaN(Date.parse(scheduledFor)) || !isTimeZone(timezone)) return null;
     return { trigger: "schedule", scheduledFor, timezone, description: text("description") ?? "" };
+  }
+  if (v.trigger === "issues.opened" || v.trigger === "issues.labeled") {
+    const installationId = v.installationId;
+    const number = v.number;
+    const repoFullName = text("repoFullName");
+    if (typeof installationId !== "number" || typeof number !== "number" || !repoFullName) return null;
+    const label = text("label");
+    return {
+      installationId,
+      trigger: v.trigger,
+      repoFullName,
+      number,
+      title: text("title") ?? "",
+      url: text("url") ?? `https://github.com/${repoFullName}/issues/${number}`,
+      ...(label ? { label } : {}),
+    };
   }
   if (PR_TRIGGERS.includes(v.trigger as AutomationTrigger)) {
     const installationId = v.installationId;
@@ -119,6 +158,7 @@ export function readRunEvent(value: unknown): RunEvent | null {
       headSha,
       headRef,
       baseRef,
+      ...(text("reviewer") ? { reviewer: text("reviewer") as string } : {}),
     };
   }
   return null;

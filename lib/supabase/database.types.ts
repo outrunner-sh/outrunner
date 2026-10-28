@@ -553,7 +553,16 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
-export type AutomationTriggerDb = "pull_request.opened" | "pull_request.synchronize" | "schedule" | "webhook";
+export type AutomationTriggerDb =
+  | "pull_request.opened"
+  | "pull_request.synchronize"
+  | "pull_request.closed"
+  | "pull_request.merged"
+  | "pull_request.review_requested"
+  | "issues.opened"
+  | "issues.labeled"
+  | "schedule"
+  | "webhook";
 
 type AutomationRow = {
   id: string;
@@ -568,11 +577,20 @@ type AutomationRow = {
    *  again (supabase/migrations/20261102195000_automation_webhooks.sql). */
   webhook_token_hash: string | null;
   webhook_token_sealed: string | null;
+  /** supabase/migrations/20261102150000_automation_limits.sql */
+  reviewers: string[];
+  labels: string[];
+  max_runs: number | null;
+  archive_when_done: boolean;
+  debounce_seconds: number;
+  session_mode: "new" | "reuse";
+  archived_at: string | null;
+  runs_since: string;
   created_at: string;
   updated_at: string;
 };
 
-export type AutomationRunStatusDb = "started" | "ready" | "failed" | "refused";
+export type AutomationRunStatusDb = "queued" | "started" | "ready" | "failed" | "refused";
 
 type AutomationRunRow = {
   id: string;
@@ -587,6 +605,14 @@ type AutomationRunRow = {
   dedupe_key: string;
   scheduled_for: string | null;
   context: Json | null;
+  /** An issue's run's (supabase/migrations/20261102150000_automation_limits.sql). */
+  issue_number: number | null;
+  /** What a debounce window combines on: a pull request, an issue, the
+   *  schedule, the webhook. */
+  subject: string | null;
+  /** A queued run's: when its window ends. */
+  not_before: string | null;
+  combined: number;
   workspace_id: string | null;
   status: AutomationRunStatusDb;
   reason: string | null;
@@ -1508,6 +1534,11 @@ export type Database = {
           settings: Json;
         };
         Returns: boolean;
+      };
+      // supabase/migrations/20261102150000_automation_limits.sql
+      record_automation_runs: {
+        Args: { runs: Json };
+        Returns: { run_id: string; run_automation_id: string; run_project_id: string; queued: boolean }[];
       };
       // supabase/migrations/20261028130000_org_members.sql
       accept_org_invite: {

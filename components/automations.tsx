@@ -293,6 +293,7 @@ function Ago({ at, now }: { at: string; now: number }) {
 }
 
 const RUN_STATUS: Record<AutomationRun["status"], { label: string; text: string; dot: string }> = {
+  queued: { label: "Waiting", text: "text-muted-foreground", dot: "bg-muted-foreground/50" },
   started: { label: "Starting", text: "text-muted-foreground", dot: "bg-muted-foreground" },
   ready: { label: "Running", text: "text-positive", dot: "bg-positive" },
   failed: { label: "Failed", text: "text-destructive", dot: "bg-destructive" },
@@ -454,8 +455,17 @@ function AutomationList({
                             )}
                           />
                         </span>
-                        {automation.enabled ? "Enabled" : "Disabled"}
+                        {automation.enabled ? "Enabled" : automation.archived ? "Archived" : "Disabled"}
                       </button>
+                      {/* Run a count of times: how far it is, or that it's done
+                          (switching it on counts afresh). */}
+                      {automation.maxRuns !== null ? (
+                        <div className="pt-0.5 text-xs text-muted-foreground">
+                          {(automation.runsUsed ?? 0) >= automation.maxRuns
+                            ? `Done: ran ${automation.maxRuns === 1 ? "once" : `${automation.maxRuns} times`}`
+                            : `${automation.runsUsed ?? 0} of ${automation.maxRuns} runs`}
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -526,7 +536,7 @@ function RecentRuns({
   const all = runs ?? [];
   const counts = new Map<RunFilter, number>([["all", all.length]]);
   for (const run of all) counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
-  const filters = (["all", "ready", "started", "failed", "refused"] as const).filter((f) => counts.has(f));
+  const filters = (["all", "queued", "ready", "started", "failed", "refused"] as const).filter((f) => counts.has(f));
   const shown = counts.has(filter) ? filter : "all";
   const visible = shown === "all" ? all : all.filter((run) => run.status === shown);
 
@@ -559,7 +569,7 @@ function RecentRuns({
         <p className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-[13px] text-muted-foreground">
           {kind
             ? "No runs of this trigger yet."
-            : "No runs yet. One starts when an automation's trigger fires: a pull request opened or given new commits, a schedule come due, or a POST to its webhook."}
+            : "No runs yet. One starts when an automation's trigger fires: a pull request or issue event, a schedule come due, or a POST to its webhook."}
         </p>
       ) : (
         <>
@@ -626,6 +636,12 @@ function RecentRuns({
                       <td className="px-3 py-2.5">
                         <RunStatus status={run.status} />
                         {run.reason ? <div className="max-w-xs text-xs text-muted-foreground">{run.reason}</div> : null}
+                        {run.status === "queued" && run.notBefore ? (
+                          <div className="max-w-xs text-xs text-muted-foreground">
+                            Starts {WHEN.format(new Date(run.notBefore))} unless another trigger comes
+                          </div>
+                        ) : null}
+                        {run.combined > 1 ? <div className="text-xs text-muted-foreground">{run.combined} triggers combined</div> : null}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-muted-foreground">
                         <Ago at={run.createdAt} now={now} />

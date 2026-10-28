@@ -124,6 +124,9 @@ test("a webhook's run that failed starts again with the same payload", async () 
     projectId: "p1",
     repoFullName: "acme/web",
     orgId: "o1",
+    reviewers: [],
+    labels: [],
+    sessionMode: "new",
   };
   const target: RerunTarget = {
     runId: "r1",
@@ -133,6 +136,7 @@ test("a webhook's run that failed starts again with the same payload", async () 
     headSha: null,
     prNumber: null,
     enabled: true,
+    limited: false,
     candidate,
     repoFullName: "acme/web",
     installationId: 42,
