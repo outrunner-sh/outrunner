@@ -12,6 +12,8 @@
  */
 import { Container, getContainer } from "@cloudflare/containers";
 
+import { isNotRunningError, mayBeContainerError, waitFor } from "./container-ready";
+
 interface Env {
   CONTROL_PLANE: DurableObjectNamespace<OutrunnerControlPlane>;
   /** Which deploy of the Worker this is (wrangler.jsonc version_metadata):
@@ -91,6 +93,11 @@ interface Env {
 /** Where the Durable Object keeps the deploy its container was started under. */
 const IMAGE_VERSION_KEY = "image-version";
 
+/** How long a destroyed container may still read as running before it's
+ *  started regardless, and how often that's looked at. */
+const STOPPED_TIMEOUT_MS = 30_000;
+const STOPPED_POLL_MS = 250;
+
 export class OutrunnerControlPlane extends Container<Env> {
   // Next.js listens on $PORT (8080) inside the container — keep in sync with
   // the Dockerfile's `ENV PORT`.
@@ -105,6 +112,10 @@ export class OutrunnerControlPlane extends Container<Env> {
    *  failed check. */
   private current: Promise<void> | null = null;
 
+  /** The one start under way (startWhenStopped); null when there's none.
+   *  Every request waits on it before it's sent to the container. */
+  private starting: Promise<void> | null = null;
+
   /**
    * Every request goes to a container started from the latest deploy's image.
    *
@@ -116,10 +127,30 @@ export class OutrunnerControlPlane extends Container<Env> {
    * the first request under a new one replaces a container started under an
    * older one. Destroyed, not asked to stop: `pnpm start` runs as PID 1 and
    * doesn't answer SIGTERM.
+   *
+   * A request the Container class couldn't send because the container wasn't
+   * running is sent again, once, after starting it: it never reached the app,
+   * and the user would otherwise get the class's error as the page.
    */
   override async fetch(request: Request): Promise<Response> {
     await this.runCurrentImage();
     await this.checkBuild();
+    // A start a retry set off: sent now, this request would have the Container
+    // class start the container too, alongside it. Its failure is that
+    // retry's to report; this request then goes on as if there'd been none.
+    if (this.starting) await this.starting.catch(() => {});
+    const response = await super.fetch(request);
+    // A body already sent can't be sent again.
+    if (!mayBeContainerError(response) || request.bodyUsed) return response;
+    const body = await response.text();
+    if (!isNotRunningError(body)) return new Response(body, response);
+    console.log("The container wasn't running for a request; starting it and sending the request again");
+    try {
+      await this.startWhenStopped();
+    } catch (error: unknown) {
+      console.error("Couldn't start the container for a request it wasn't running for", error);
+      return new Response(body, response);
+    }
     return super.fetch(request);
   }
 
@@ -127,6 +158,9 @@ export class OutrunnerControlPlane extends Container<Env> {
    *  deployed one. */
   private checkedBuild: string | null = null;
   private lastBuildCheck = 0;
+  /** The check under way, which requests that come in meanwhile wait on
+   *  rather than go to a container it may be replacing. */
+  private buildCheck: Promise<void> | null = null;
   /** Containers replaced for this deploy (a deploy restarts the Durable
    *  Object): a few, never in a loop. */
   private replacements = 0;
@@ -140,11 +174,13 @@ export class OutrunnerControlPlane extends Container<Env> {
    * request rather than after it, as runCurrentImage does: replaced in the
    * background, a container would take requests under way down with it.
    */
-  private async checkBuild(): Promise<void> {
+  private checkBuild(): Promise<void> {
     const want = this.env.OUTRUNNER_BUILD;
-    if (!want || this.checkedBuild === want || Date.now() - this.lastBuildCheck < 60_000) return;
+    if (!want || this.checkedBuild === want) return Promise.resolve();
+    if (this.buildCheck) return this.buildCheck;
+    if (Date.now() - this.lastBuildCheck < 60_000) return Promise.resolve();
     this.lastBuildCheck = Date.now();
-    try {
+    this.buildCheck = (async () => {
       const health = await this.containerFetch("http://container/api/health");
       const build = ((await health.json()) as { build?: unknown }).build;
       if (build === want) {
@@ -155,29 +191,65 @@ export class OutrunnerControlPlane extends Container<Env> {
       this.replacements++;
       console.log(`The container runs build ${String(build)}, not ${want}: replacing it`);
       await this.destroy();
-    } catch (error) {
-      console.error("Couldn't check which build the container runs", error);
-    }
+      // Started here for the same reason as in runCurrentImage.
+      await this.startWhenStopped();
+    })()
+      .catch((error: unknown) => {
+        console.error("Couldn't check which build the container runs", error);
+      })
+      .finally(() => {
+        this.buildCheck = null;
+      });
+    return this.buildCheck;
   }
 
   private runCurrentImage(): Promise<void> {
-    // Once per Durable Object, which a deploy restarts: once per deploy.
+    // Once per Durable Object, which a deploy restarts: once per deploy. Every
+    // request that comes in meanwhile waits on this same one.
     this.current ??= (async () => {
       const version = this.env.CF_VERSION_METADATA?.id;
       if (!version) return;
       const startedUnder = await this.ctx.storage.get<string>(IMAGE_VERSION_KEY);
       if (startedUnder === version) return;
-      if (this.ctx.container?.running) {
-        console.log(`Replacing a container from deploy ${startedUnder ?? "(unrecorded)"} with deploy ${version}'s`);
-        await this.destroy();
+      if (!this.ctx.container?.running) {
+        // Nothing to replace: the request starts the container, this deploy's.
+        await this.ctx.storage.put(IMAGE_VERSION_KEY, version);
+        return;
       }
+      console.log(`Replacing a container from deploy ${startedUnder ?? "(unrecorded)"} with deploy ${version}'s`);
+      await this.destroy();
+      // Recorded before the start: if that fails, the next request starts the
+      // container, and it's this deploy's either way.
       await this.ctx.storage.put(IMAGE_VERSION_KEY, version);
+      // Started here, not left to the request: the Container class decides
+      // whether to start it from what may still read as the old one running.
+      await this.startWhenStopped();
     })().catch((error: unknown) => {
-      // Tried again on the next request; this one goes to what's running.
+      // Tried again on the next request; this one goes to what's running, or
+      // starts it.
       this.current = null;
-      console.error("Couldn't check the container is the latest deploy's", error);
+      console.error("Couldn't run the latest deploy's container", error);
     });
     return this.current;
+  }
+
+  /**
+   * Starts the container once it's stopped, and resolves when it answers on
+   * `defaultPort`. destroy() can resolve while the runtime still says the old
+   * one is running, and the start does nothing for a container that reads as
+   * running: it only waits for the port, which the old one may still answer.
+   * Its callers (the two replacements and fetch's retry) share one start,
+   * and fetch waits on it before sending any request.
+   */
+  private startWhenStopped(): Promise<void> {
+    this.starting ??= (async () => {
+      const stopped = await waitFor(() => !this.ctx.container?.running, STOPPED_TIMEOUT_MS, STOPPED_POLL_MS);
+      if (!stopped) console.error(`The container still read as running after ${STOPPED_TIMEOUT_MS / 1000}s; starting it regardless`);
+      await this.startAndWaitForPorts();
+    })().finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
   }
 
   // Mirror the base class's own ctx type rather than naming DurableObjectState
