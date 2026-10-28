@@ -162,6 +162,9 @@ export type TurnView = {
   state: "working" | "needs_input" | "idle";
   last_event_id: string | null;
   pending_input: { tool_use_id?: string } | null;
+  /** Whether a prompt is in the log past the watch's baseline (promptSince):
+   *  the log moving on counts as a turn only then. */
+  prompted?: boolean;
 };
 
 /**
@@ -186,7 +189,7 @@ export function watchStep(watch: WatchState, turn: TurnView | null): { events: W
   // An empty log reads as "0", on both sides, so two looks at nothing are
   // never taken for the log moving on.
   const at = turn.last_event_id ?? EMPTY_LOG;
-  const movedOn = watch.baselineEvent !== null && at !== watch.baselineEvent;
+  const movedOn = watch.baselineEvent !== null && at !== watch.baselineEvent && turn.prompted !== false;
   if (watch.seenWorking || movedOn) {
     return { events: ["turn.completed"], next: { awaiting: false, seenWorking: false, baselineEvent: null, askedToolUse: null } };
   }

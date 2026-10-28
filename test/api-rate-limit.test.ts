@@ -27,6 +27,16 @@ test("keys and buckets are counted apart", () => {
   assert.equal(limiter.take("b:create", rule).allowed, true);
 });
 
+test("several calls are spent at once, or none of them", () => {
+  const limiter = new RateLimiter({ now: () => 0 });
+  const rule = { perMinute: 10 };
+  assert.equal(limiter.take("k", rule, 7).remaining, 3);
+  const refused = limiter.take("k", rule, 5);
+  assert.equal(refused.allowed, false);
+  // Nothing was spent by the refusal.
+  assert.equal(limiter.take("k", rule, 3).allowed, true);
+});
+
 test("an allowed call's headers say what's left, with no Retry-After", () => {
   const headers = rateHeaders({ allowed: true, limit: 120, remaining: 7, retryAfter: 0 });
   assert.deepEqual(headers, { "X-RateLimit-Limit": "120", "X-RateLimit-Remaining": "7" });

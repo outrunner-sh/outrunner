@@ -36,7 +36,9 @@ import {
   webhookUrl,
   type WebhookEvent,
 } from "@/lib/api/webhooks";
-import { turnJsonOf, type CreateHooks } from "@/lib/api/workspaces";
+import { promptSince } from "@/lib/api/conversation";
+import { readLiveConversation } from "@/lib/api/live";
+import { turnJson, type CreateHooks } from "@/lib/api/workspaces";
 import {
   advanceWatch,
   awaitTurn,
@@ -194,8 +196,12 @@ async function lookOnce(workspaceId: string): Promise<boolean> {
   }
   if (workspace.status !== "ready" && workspace.status !== "idle") return true;
 
-  const turn = await turnJsonOf(workspace);
-  const step = watchStep(watch, turn as Parameters<typeof watchStep>[1]);
+  const live = await readLiveConversation(workspace);
+  const turn = live ? turnJson(live.entries, live.state) : null;
+  // The log moving on from the baseline counts only once a prompt is in it
+  // past there: an entry of another kind isn't a turn.
+  const prompted = live !== null && watch.baselineEvent !== null && promptSince(live.entries, Number(watch.baselineEvent));
+  const step = watchStep(watch, turn ? ({ ...turn, prompted } as Parameters<typeof watchStep>[1]) : null);
   if (step.events.length === 0) {
     await advanceWatch(workspaceId, watch, step.next);
     return step.next.awaiting;
@@ -289,6 +295,7 @@ function post(url: URL, body: string, headers: Record<string, string>): Promise<
   const host = url.hostname.replace(/^\[|\]$/g, "");
   // An address written in the URL is never looked up: checked here.
   if (isIP(host) && isPrivateAddress(host)) return Promise.reject(new Error("The URL points at a private address."));
+  const slow = () => new Error(`No answer in ${DELIVERY_TIMEOUT_MS / 1000}s.`);
   return new Promise((resolve, reject) => {
     const req = httpsRequest(
       url,
@@ -296,15 +303,19 @@ function post(url: URL, body: string, headers: Record<string, string>): Promise<
         method: "POST",
         headers: { ...headers, "content-length": Buffer.byteLength(body) },
         lookup: publicOnlyLookup,
+        // The whole call, however slowly its answer trickles in; `timeout`
+        // alone only catches a socket that goes silent.
+        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
         timeout: DELIVERY_TIMEOUT_MS,
       },
       (res) => {
-        res.resume();
+        // The status is all that's read: the body is let go, not drained.
         resolve(res.statusCode ?? 0);
+        res.destroy();
       },
     );
-    req.on("timeout", () => req.destroy(new Error(`No answer in ${DELIVERY_TIMEOUT_MS / 1000}s.`)));
-    req.on("error", reject);
+    req.on("timeout", () => req.destroy(slow()));
+    req.on("error", (error) => reject(error.name === "AbortError" || error.name === "TimeoutError" ? slow() : error));
     req.end(body);
   });
 }
