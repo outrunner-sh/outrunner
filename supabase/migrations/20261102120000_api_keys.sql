@@ -76,7 +76,11 @@ grant execute on function api_key_call_counts(uuid[], timestamptz) to service_ro
 -- ---------------------------------------------------------------------------
 -- Where a session came from, for the API's `source` filter: the app, a Slack
 -- thread, an automation, a GitHub mention, or the API. Sessions from before
--- are read from what they left behind: a thread's link, an automation run.
+-- are read from what they left behind: a thread's link, an automation run,
+-- and for a mention's, its GitHub link made with it. (A link is also made
+-- later to an app session found on a pull request's branch, so only one
+-- made within a minute of its session counts: a mention's is made as the
+-- session is, before its setup.) The API's own are all new.
 -- ---------------------------------------------------------------------------
 
 alter table workspaces
@@ -88,5 +92,11 @@ where source = 'app' and slack_thread_url is not null;
 
 update workspaces set source = 'automation'
 where source = 'app' and id in (select workspace_id from automation_runs where workspace_id is not null);
+
+update workspaces w set source = 'github'
+where w.source = 'app' and exists (
+  select 1 from github_session_links g
+  where g.workspace_id = w.id and g.created_at < w.created_at + interval '1 minute'
+);
 
 create index if not exists workspaces_org_source_idx on workspaces (org_id, source, created_at desc);
