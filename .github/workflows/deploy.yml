@@ -28,7 +28,9 @@ on:
 # replaced by any newer one (GitHub keeps one pending per group), so a burst
 # of merges deploys its latest; one under way is never cut off mid-deploy.
 concurrency:
-  group: deploy-production
+  # By ref: a manual run from elsewhere (skipped below) waits in a queue of
+  # its own, never in main's.
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
