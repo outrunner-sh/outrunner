@@ -41,6 +41,19 @@ export type RepositoryList = {
   connected: number[];
 };
 
+/** Where the repositories come from: the org they're added to (the active
+ *  one) and the user's others, each with the GitHub accounts its Outrunner
+ *  GitHub App reaches. An org without the App lists the user's own, when
+ *  they signed in with GitHub. */
+export type GitHubAccess = {
+  orgs: { id: string; name: string; personal: boolean; admin: boolean; accounts: string[] }[];
+  activeOrgId: string;
+  /** Signed in with GitHub: their own repositories, in an org without the App. */
+  personalGithub: boolean;
+  /** The App is set up on this server, so an admin can install it. */
+  appInstallable: boolean;
+};
+
 export type OnboardingEnv = {
   user: OnboardingUser;
   /** In the Mac app, Claude's subscription connects with one click there. */
@@ -57,6 +70,10 @@ export type OnboardingEnv = {
   /** Run sessions of `agent` on `method` from now on (Settings → Providers). */
   chooseMethod(agent: "claude" | "codex", method: AgentMethod): Promise<void>;
 
+  /** Where repositories come from; null before orgs. */
+  githubAccess(): Promise<GitHubAccess | null>;
+  /** Add repositories to this org from now on (the active org). */
+  useOrg(orgId: string): Promise<void>;
   repositories(): Promise<RepositoryList>;
   /** Connect repositories as projects; every project the user has after. */
   connect(githubRepoIds: number[]): Promise<Project[]>;

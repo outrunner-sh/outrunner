@@ -64,10 +64,16 @@ test("working as themselves, a member gets their own token, whatever the reposit
   const { d, minted } = deps({ identity: async () => "personal" });
   assert.deepEqual(await resolveGitCredential(ask, d), { identity: "personal", token: "gho_mine", expiresAt: null });
   assert.equal(minted.length, 0);
-  await assert.rejects(
-    resolveGitCredential(ask, { ...d, personalToken: async () => null }),
-    MissingGithubTokenError,
-  );
+});
+
+test("with no GitHub sign-in, a member's own is the org's App where it reaches the repository, else none", async () => {
+  const { d } = deps({ identity: async () => "personal", personalToken: async () => null });
+  assert.equal((await resolveGitCredential(ask, d)).identity, "app");
+  // No installation on its account, or not a project of theirs: no token, as before (a public clone).
+  await assert.rejects(resolveGitCredential(ask, { ...d, installations: async () => [] }), MissingGithubTokenError);
+  await assert.rejects(resolveGitCredential(ask, { ...d, repoLevel: async () => null }), MissingGithubTokenError);
+  // Asked for their own by name: never the App.
+  await assert.rejects(resolveGitCredential({ ...ask, identity: "personal" }, d), MissingGithubTokenError);
 });
 
 test("working as the App, a member gets its installation's token for that one repository, kept until near its end", async () => {

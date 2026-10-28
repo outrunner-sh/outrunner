@@ -13,7 +13,10 @@
  *
  * Neither falls back to the other: a member who chose the App and whose org
  * hasn't installed it on the repository's account is told so, with where to
- * fix it, rather than quietly pushing as themselves.
+ * fix it, rather than quietly pushing as themselves. The one exception is a
+ * member with no GitHub sign-in at all (signed in with Google): there's no
+ * account of theirs to act as, so their own is the App where it reaches the
+ * repository, and nothing (a public clone) where it doesn't.
  *
  * A box asks for its tokens as git needs them (app/api/runtime/git-credential),
  * since the App's expire within the hour; the server's own git calls (the
@@ -118,8 +121,15 @@ export async function resolveGitCredential(
   const identity = input.identity ?? (await deps.identity(input.userId));
   if (identity === "personal") {
     const token = await deps.personalToken(input.userId);
-    if (!token) throw new MissingGithubTokenError();
-    return { identity, token, expiresAt: null };
+    if (token) return { identity, token, expiresAt: null };
+    // No GitHub sign-in: the App, where it reaches the repository.
+    if (input.identity) throw new MissingGithubTokenError();
+    try {
+      return await resolveGitCredential({ ...input, identity: "app" }, deps);
+    } catch (error) {
+      if (error instanceof GitIdentityError) throw new MissingGithubTokenError();
+      throw error;
+    }
   }
 
   // The App reaches the org's repositories, not the member: what they may do

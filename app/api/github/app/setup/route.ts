@@ -66,6 +66,8 @@ export async function GET(request: Request) {
 
     await claimInstallation({ orgId, installation, githubId: owner.githubId, userId: owner.id });
     await setActiveOrg(orgId).catch(() => {});
+    // Onboarding lists the App's repositories as it comes back.
+    if (state.next) return NextResponse.redirect(appUrl(state.next, origin));
     return back(`installed=${encodeURIComponent(installation.accountLogin)}`);
   } catch (error) {
     if (error instanceof ClaimError) {

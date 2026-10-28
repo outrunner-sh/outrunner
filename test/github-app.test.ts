@@ -57,6 +57,9 @@ test("an install link's state names the org and admin, and only while it's ours,
   assert.deepEqual(readInstallState("s3cret", state, 1_000 + 60), { orgId: "org-1", userId: "user-1" });
   // Expired after 30 minutes.
   assert.equal(readInstallState("s3cret", state, 1_000 + 30 * 60 + 1), null);
+  // Back to onboarding when asked; never anywhere else.
+  const toOnboarding = signInstallState("s3cret", { orgId: "org-1", userId: "user-1", next: "/onboarding" }, 1_000);
+  assert.deepEqual(readInstallState("s3cret", toOnboarding, 1_000), { orgId: "org-1", userId: "user-1", next: "/onboarding" });
   // Another secret, or a payload changed.
   assert.equal(readInstallState("other", state, 1_060), null);
   const [, mac] = state.split(".");
