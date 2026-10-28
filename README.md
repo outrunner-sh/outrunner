@@ -112,9 +112,6 @@ you're looking at), by email (each one, or a daily digest, through
 minute and skip what you've seen by then. Choose in Settings → Account:
 browser on and email off until you change them.
 
-## Docs
-
-- API — [`docs/api.md`](docs/api.md)
 ## Missions
 
 A **Mission** is a long-lived session that owns one area of a project and
@@ -127,6 +124,7 @@ See [`docs/missions.md`](docs/missions.md).
 
 ## Docs
 
+- API — [`docs/api.md`](docs/api.md)
 - Missions and Runners — [`docs/missions.md`](docs/missions.md)
 - Architecture — [`docs/architecture/runtime-v1-plan.md`](docs/architecture/runtime-v1-plan.md)
 - Agent & protocol — [`runtime-agent.md`](docs/architecture/runtime-agent.md), [`protocol.md`](docs/architecture/protocol.md)
