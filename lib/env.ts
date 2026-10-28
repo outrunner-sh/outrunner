@@ -61,6 +61,9 @@ type EnvKey =
   | "GITHUB_APP_SLUG"
   | "GITHUB_APP_PRIVATE_KEY"
   | "GITHUB_APP_WEBHOOK_SECRET"
+  // Optional: the App's client secret, to ask GitHub who installed it for an
+  // admin with no GitHub account linked (lib/github/installer.ts).
+  | "GITHUB_APP_CLIENT_SECRET"
   // Dollars a month on Outrunner's models for each org's outrunner-connector,
   // which its automations run as (lib/billing/plans.ts connectorPlan).
   | "AUTOMATION_MODEL_ALLOWANCE_USD"
