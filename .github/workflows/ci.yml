@@ -38,10 +38,6 @@ jobs:
     name: App build (next build)
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
-      # The public values the image is built with (cloudflare/wrangler.jsonc
-      # image_vars): shipped to every visitor, not secrets.
-      NEXT_PUBLIC_SUPABASE_URL: https://butbnitdpiehgwqggowr.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_PzZINFybWQAKwQlBqs2qsg_4SNlVTMj
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +48,24 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Build with the image's public values
+        # From cloudflare/wrangler.jsonc's image_vars, the one place they're
+        # kept (shipped to every visitor, not secrets): a change there is
+        # what CI builds with too.
+        run: |
+          node -e '
+            const text = require("fs").readFileSync("cloudflare/wrangler.jsonc", "utf8");
+            const vars = JSON.parse(text.replace(/^\s*\/\/.*$/gm, "")).containers[0].image_vars;
+            for (const [name, value] of Object.entries(vars)) {
+              if (name.startsWith("NEXT_PUBLIC_")) console.log(`${name}=${value}`);
+            }
+          ' >> "$GITHUB_ENV"
+      # next build's own cache: much of a repeat build is reused.
+      - uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: next-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
       - run: pnpm build
 
   agent:
