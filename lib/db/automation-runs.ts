@@ -922,9 +922,10 @@ export async function abandonOldChecks(before: Date, retryBefore: Date): Promise
 }
 
 /** Of these automations on these repositories, those with a run on
- *  `subject` (a pull request, an issue) since `since`, by
+ *  `subject` (a pull request, an issue) touched since `since`, by
  *  `${automationId}:${projectId}`: what the App did there may be their own
- *  run's doing. */
+ *  run's doing. By `updated_at`, not when it was recorded: a run that waited
+ *  out a debounce window started long after. */
 export async function recentlyRanOn(
   runs: readonly { automationId: string; projectId: string }[],
   subject: string,
@@ -937,7 +938,7 @@ export async function recentlyRanOn(
     .in("automation_id", [...new Set(runs.map((r) => r.automationId))])
     .in("project_id", [...new Set(runs.map((r) => r.projectId))])
     .eq("subject", subject)
-    .gte("created_at", since.toISOString());
+    .gte("updated_at", since.toISOString());
   if (error) throw error;
   return new Set((data ?? []).map((r) => `${r.automation_id}:${r.project_id}`));
 }

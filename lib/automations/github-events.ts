@@ -50,7 +50,7 @@ function text(value: unknown): string | null {
  * which an automation's run may have opened: it would start itself), don't,
  * nor does what a dependency bot did to anyone's. What the App did to one (a
  * run labeling it) is marked `byApp`: it starts other automations, never
- * the one that just ran on it (byAppSkips).
+ * one that just ran on it (byAppSkips).
  */
 export function readIssueEvent(payload: unknown, appSlug?: string): IssueEvent | IssueSkip {
   const p = (payload ?? {}) as IssuePayload;
@@ -79,7 +79,7 @@ export function readIssueEvent(payload: unknown, appSlug?: string): IssueEvent |
   const author = text(p.issue?.user?.login)?.toLowerCase();
   const sender = text(p.sender?.login)?.toLowerCase();
   const skipped: readonly string[] = appSlug ? [...SKIPPED_BOTS, `${appSlug.toLowerCase()}[bot]`] : SKIPPED_BOTS;
-  if ((author && skipped.includes(author)) || (sender && SKIPPED_BOTS.includes(sender as never))) return "bot";
+  if ((author && skipped.includes(author)) || (sender && (SKIPPED_BOTS as readonly string[]).includes(sender))) return "bot";
   const byApp = Boolean(appSlug && sender === `${appSlug.toLowerCase()}[bot]`);
   return {
     installationId: id,

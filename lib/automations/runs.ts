@@ -63,15 +63,16 @@ export type PlanDeps = {
   recentlyRanOn?(runs: readonly { automationId: string; projectId: string }[], subject: string, since: Date): Promise<Set<string>>;
 };
 
-/** How long an automation that ran on a pull request or issue isn't started
- *  again on it by what the App did there: what its own run did. */
-export const SELF_TRIGGER_WINDOW_MS = 60 * 60_000;
+/** How long an automation whose run was last touched on a pull request or
+ *  issue (set up, settled) isn't started again on it by what the App did
+ *  there: what its own run did, which may take hours to get to. */
+export const SELF_TRIGGER_WINDOW_MS = 24 * 60 * 60_000;
 
 /**
  * What the App did (a label, a review request: an automation's run, as the
  * App) starts the automations it's a trigger of, so one can follow another
  * ("issue opened: triage and label it", then "labeled bug: try a fix"); but
- * never one that ran on the same issue or pull request within the hour,
+ * never one with a run on the same issue or pull request within the day,
  * which would be its own run starting it again, and again. The candidates
  * left to run.
  */

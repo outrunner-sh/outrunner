@@ -205,7 +205,8 @@ test("what the App did starts other automations, never one that just ran on the 
       ...deps,
       recentlyRanOn: async (runs, subject, since) => {
         asked.push([runs.map((r) => r.automationId), subject]);
-        assert.ok(Date.now() - since.getTime() >= 59 * 60_000);
+        // A day back: a run may take hours to get to its label.
+        assert.ok(Date.now() - since.getTime() >= 23 * 60 * 60_000);
         return new Set(["triage:p1"]);
       },
     },
