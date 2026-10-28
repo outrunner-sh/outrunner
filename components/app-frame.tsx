@@ -8,6 +8,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useServerAnswer } from "@/components/server-answer";
+import { useNotificationsFeed } from "@/hooks/use-notifications";
 import { standingsNow, useStandingsFeed } from "@/hooks/use-standings";
 import { activeSessionId, isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import type { Grouping } from "@/lib/nav/status-groups";
@@ -114,6 +115,9 @@ export function AppFrame({
       if (appData) router.refresh();
     },
   });
+  // Turns finished, questions, errors and pull requests, shown as they come
+  // (not for the session on screen).
+  useNotificationsFeed({ onScreen, open: (id) => router.push(`/workspaces/${id}`) });
   const here = useRef(onScreen);
   useEffect(() => {
     here.current = onScreen;

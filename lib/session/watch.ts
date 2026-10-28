@@ -17,6 +17,7 @@ import { AgentClient } from "@/lib/runtime/agent-client";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { resolveProvider } from "@/lib/runtime/resolve";
 import { toRuntimeComputer, toWorkspace } from "@/lib/db/mappers";
+import { notifyActivity } from "@/lib/notifications/record";
 import { readStream } from "@/lib/session/event-stream";
 import { foldEvents, IDLE, type TurnState } from "@/lib/session/turn-state";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
@@ -233,9 +234,10 @@ export async function watchedSessions(limit = 150): Promise<string[]> {
   return [...new Set([...up, ...(watched.data ?? []).map((a) => a.workspace_id)])].slice(0, limit);
 }
 
-/** watchAfterSend for a route's after(): never fails the send. */
+/** watchAfterSend for a route's after(), telling the user what it sees
+ *  (lib/notifications/record.ts): never fails the send. */
 export async function watchSent(workspaceId: string, ownerId: string): Promise<void> {
-  await watchAfterSend(workspaceId, ownerId).catch((error: unknown) =>
+  await watchAfterSend(workspaceId, ownerId, (change) => notifyActivity(change)).catch((error: unknown) =>
     console.error(`Watch: couldn't watch ${workspaceId} after a send`, error),
   );
 }

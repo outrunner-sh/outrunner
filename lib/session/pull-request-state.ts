@@ -16,7 +16,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 /** A pull request a session changed state (or was opened): changes recorded,
  *  by session. The sessions it's on are found by repository and branch, as
  *  the Slack agent's announcement finds them. */
-export async function recordPullRequestEvent(event: PullRequestEvent): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null }>> {
+export async function recordPullRequestEvent(event: PullRequestEvent): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }>> {
   const db = createSupabaseAdminClient();
   const { data: projects, error: projectsError } = await db
     .from("projects")
@@ -41,7 +41,7 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
   if (own.error) throw own.error;
   if (several.error) throw several.error;
   const sessions = [...new Map([...(own.data ?? []), ...(several.data ?? [])].map((s) => [s.id, s])).values()];
-  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null }> = [];
+  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState | null; to: PullRequestState; number: number }> = [];
   const now = new Date().toISOString();
   for (const session of sessions) {
     // The repository it's in: the session's own, or one of a session of several.
@@ -70,7 +70,7 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
       });
       // Recorded meanwhile by the session's page: its state is the next check's.
       if (error && error.code !== "23505") throw error;
-      if (!error) changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null });
+      if (!error) changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
       continue;
     }
     if (existing.github_number !== event.number) {
@@ -93,8 +93,12 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
         .eq("state", "closed")
         .select("id");
       if (error) throw error;
-      // Reopened meanwhile (a page's read, another delivery): nothing changed here.
-      if (replaced?.length) changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: "closed" });
+      // Reopened meanwhile (a page's read, another delivery): nothing changed
+      // here. A new pull request, not the closed one again: told as its first
+      // opening (from nothing), not as a reopen.
+      if (replaced?.length) {
+        changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: null, to: event.state, number: event.number });
+      }
       continue;
     }
     if (existing.state === event.state) continue;
@@ -103,7 +107,7 @@ export async function recordPullRequestEvent(event: PullRequestEvent): Promise<A
       .update({ state: event.state, state_at: now, checked_at: now, title: event.title })
       .eq("id", existing.id);
     if (error) throw error;
-    changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: existing.state });
+    changed.push({ workspaceId: session.id, ownerId: session.owner_id, from: existing.state, to: event.state, number: event.number });
   }
   return changed;
 }
@@ -118,7 +122,9 @@ function checkoutIds(checkouts: unknown): string[] {
  * the org's GitHub App: those GitHub now calls closed or merged are recorded
  * so. Each is checked once a tick at most, `limit` a tick.
  */
-export async function checkOpenPullRequests(limit = 25): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState }>> {
+export async function checkOpenPullRequests(
+  limit = 25,
+): Promise<Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }>> {
   const db = createSupabaseAdminClient();
   const { data: open, error } = await db
     .from("pull_requests")
@@ -134,7 +140,7 @@ export async function checkOpenPullRequests(limit = 25): Promise<Array<{ workspa
     .in("id", [...new Set(open.map((p) => p.project_id))]);
   if (projectsError) throw projectsError;
   const projectById = new Map((projects ?? []).map((p) => [p.id, p]));
-  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState }> = [];
+  const changed: Array<{ workspaceId: string; ownerId: string; from: PullRequestState; to: PullRequestState; number: number }> = [];
   const now = new Date().toISOString();
   await Promise.all(
     open.map(async (pr) => {
@@ -152,7 +158,7 @@ export async function checkOpenPullRequests(limit = 25): Promise<Array<{ workspa
       if (updateError) throw updateError;
       // Recorded meanwhile (a webhook's delivery): it's that one's change.
       if (state && state !== pr.state && updated?.length) {
-        changed.push({ workspaceId: pr.workspace_id, ownerId: pr.owner_id, from: pr.state, to: state });
+        changed.push({ workspaceId: pr.workspace_id, ownerId: pr.owner_id, from: pr.state, to: state, number: pr.github_number });
       }
     }),
   );

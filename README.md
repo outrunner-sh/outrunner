@@ -102,6 +102,16 @@ reply you haven't seen is marked, and ⌘J opens the next session that needs
 you. `/workspaces` lists every session in the org you may see, to search,
 filter and archive or delete several at once.
 
+## Notifications
+
+When a session's turn finishes, it needs your input or errors, or its pull
+request opens or merges, the server records it once (`lib/notifications`) and
+tells you: in the browser as it happens (not for the session
+you're looking at), by email (each one, or a daily digest, through
+`lib/email`) and by Slack DM if your Slack is linked. Email and Slack wait a
+minute and skip what you've seen by then. Choose in Settings → Account:
+browser on and email off until you change them.
+
 ## Docs
 
 - API — [`docs/api.md`](docs/api.md)

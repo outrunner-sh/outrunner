@@ -4,6 +4,7 @@ import { Suspense } from "react";
 
 import { signOut } from "@/app/auth/actions";
 import { GitHubIdentitySettings, type IdentityOrgView } from "@/components/github-identity-settings";
+import { NotificationSettings } from "@/components/notification-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { SignInButton } from "@/components/signin-button";
 import { SignOutButton } from "@/components/sign-out-button";
@@ -21,7 +22,8 @@ export const unstable_instant = {
   samples: [{ searchParams: { link_error: null } }],
 };
 
-/** Account: the signed-in identity; who sessions work on GitHub as
+/** Account: the signed-in identity; how the user hears of their sessions
+ *  (components/notification-settings.tsx); who sessions work on GitHub as
  *  (lib/github/identity.ts), or connecting GitHub to an account that signed
  *  in with Google or an emailed code; and sign-out — which is also how a
  *  revoked GitHub token is replaced (see components/github-reconnect-link). */
@@ -88,6 +90,8 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
           </p>
         </div>
       </div>
+
+      <NotificationSettings />
 
       {githubLinked ? (
         <>

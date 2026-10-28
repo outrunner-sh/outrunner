@@ -143,6 +143,8 @@ type WorkspaceRow = {
   slack_sync: boolean;
   /** Where it came from (20261102120000_api_keys.sql). */
   source: WorkspaceSourceDb;
+  /** When its status last turned failed (20261102163000); null otherwise. */
+  failed_at?: string | null;
 };
 
 type RuntimeComputerRow = {
@@ -283,6 +285,33 @@ type SessionActivityRow = {
   watch_until: string | null;
   read_at: string | null;
   created_at: string;
+  updated_at: string;
+};
+
+// supabase/migrations/20261102163000_session_notifications.sql
+export type NotificationKindDb = "turn_done" | "needs_input" | "errored" | "pr_opened" | "pr_merged";
+
+type SessionNotificationRow = {
+  id: string;
+  user_id: string;
+  workspace_id: string;
+  kind: NotificationKindDb;
+  event_key: string;
+  title: string;
+  body: string;
+  created_at: string;
+  emailed_at: string | null;
+  slacked_at: string | null;
+};
+
+type NotificationPreferencesRow = {
+  user_id: string;
+  browser: boolean;
+  email: "off" | "instant" | "digest";
+  slack: boolean;
+  kinds: NotificationKindDb[];
+  digest_sent_at: string | null;
+  digest_retry_at: string | null;
   updated_at: string;
 };
 
@@ -1335,6 +1364,18 @@ export type Database = {
         Row: SessionMarkRow;
         Insert: Insert<SessionMarkRow, "user_id" | "workspace_id"> & Partial<Pick<SessionMarkRow, "updated_at">>;
         Update: Partial<SessionMarkRow>;
+        Relationships: [];
+      };
+      session_notifications: {
+        Row: SessionNotificationRow;
+        Insert: Insert<SessionNotificationRow, "user_id" | "workspace_id" | "kind" | "event_key" | "title" | "body">;
+        Update: Partial<SessionNotificationRow>;
+        Relationships: [];
+      };
+      notification_preferences: {
+        Row: NotificationPreferencesRow;
+        Insert: Insert<NotificationPreferencesRow, "user_id"> & Partial<Pick<NotificationPreferencesRow, "updated_at">>;
+        Update: Partial<NotificationPreferencesRow>;
         Relationships: [];
       };
       slack_links: {
