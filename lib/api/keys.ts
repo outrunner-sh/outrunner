@@ -1,7 +1,7 @@
 /**
  * API keys, the parts with no database: what one looks like, how a request
  * carries it, and what a key may be named and how long it may live
- * (supabase/migrations/20261102100000_api_keys.sql; lib/db/api-keys.ts keeps
+ * (supabase/migrations/20261102120000_api_keys.sql; lib/db/api-keys.ts keeps
  * them). The public API also takes the CLI's own token (`or_cli_…`), so a
  * terminal signed in with `outrunner login` drives it without a key.
  */

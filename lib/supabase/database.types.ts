@@ -17,7 +17,7 @@ export type Json =
 export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
 export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
 
-// supabase/migrations/20261102100000_api_keys.sql
+// supabase/migrations/20261102120000_api_keys.sql
 export type WorkspaceSourceDb = "app" | "slack" | "automation" | "api";
 
 export type WorkspaceStatusDb =
@@ -141,7 +141,7 @@ type WorkspaceRow = {
   /** The Slack thread it was started from (20261031200000). */
   slack_thread_url: string | null;
   slack_sync: boolean;
-  /** Where it came from (20261102100000_api_keys.sql). */
+  /** Where it came from (20261102120000_api_keys.sql). */
   source: WorkspaceSourceDb;
 };
 
@@ -718,7 +718,7 @@ type CliTokenRow = {
   created_at: string;
 };
 
-// supabase/migrations/20261102100000_api_keys.sql
+// supabase/migrations/20261102120000_api_keys.sql
 type ApiKeyRow = {
   id: string;
   /** An org key's org; null for a personal key. */
@@ -1322,7 +1322,7 @@ export type Database = {
         Args: { org_name: string; creator: string; claimed_domain: string | null };
         Returns: string;
       };
-      // supabase/migrations/20261102100000_api_keys.sql
+      // supabase/migrations/20261102120000_api_keys.sql
       api_key_call_counts: {
         Args: { key_ids: string[]; since: string };
         Returns: { key_id: string; calls: number }[];

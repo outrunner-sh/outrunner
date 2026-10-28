@@ -1,6 +1,6 @@
 /**
  * API keys and the calls made with them (api_keys, api_requests;
- * supabase/migrations/20261102100000_api_keys.sql): hashes only, service role
+ * supabase/migrations/20261102120000_api_keys.sql): hashes only, service role
  * only. lib/api/keys.ts has what a key is; lib/api/auth.ts signs a request
  * in with one.
  */
