@@ -26,6 +26,17 @@ Commands:
   logout   Sign this terminal out
   whoami   Show who this terminal is signed in as
   triage   Add a work item to your triage: outrunner triage "fix the flaky test"
+
+Sessions (the API, docs/api.md; OUTRUNNER_API_KEY instead of a sign-in):
+  list     List your sessions
+  get      Show a session and where its turn is
+  create   Start a session: outrunner create --repo acme/web "fix the flaky test"
+  send     Send a session a message
+  read     Print a session's conversation
+  wait     Wait for a session's turn to end, and print what it said
+  delete   Delete a session for good
+
+Each takes --org <name> and --json; outrunner <command> --help for more.
 `
 
 // Main runs the command and returns its exit status. stdin is where the
@@ -93,6 +104,20 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 0
 	case "triage":
 		return triage(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
+	case "list":
+		return listCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+	case "get":
+		return getCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+	case "create":
+		return createCommand(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
+	case "send":
+		return sendCommand(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
+	case "read":
+		return readCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+	case "wait":
+		return waitCommand(ctx, url, config, flags.Args()[1:], stdout, stderr)
+	case "delete":
+		return deleteCommand(ctx, url, config, flags.Args()[1:], in, stdout, stderr)
 	case "help":
 		fmt.Fprint(stdout, usage)
 		return 0

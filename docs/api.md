@@ -244,6 +244,31 @@ A work item lands in triage, in the repository `project_id` names (an id or
 `owner/name`), or Unsorted. A `source_ref` an item of the org already has
 makes it a note on that one instead (`"created": false`).
 
+## CLI
+
+The `outrunner` CLI drives sessions through this API, signed in with
+`outrunner login`, or with `OUTRUNNER_API_KEY` set (a script, CI), which it
+sends instead. Each command takes `--org <name>` and `--json` (the API's
+answer as it came).
+
+```sh
+outrunner create --repo acme/web --model sonnet "Fix the flaky checkout test and open a PR" --wait
+outrunner list --status ready --source api
+outrunner get <id>
+outrunner send <id> "Also add a test for it." --wait
+outrunner read <id> --limit 20
+outrunner wait <id> --after 48213 --timeout 30m
+outrunner delete <id> --yes
+```
+
+`create` takes `--repo` (`owner/name` or an id), `--model`, `--agent`,
+`--effort`, `--size`, `--plan`, `--branch`, `--base` and `--webhook-url`, and
+reads the prompt from stdin when there's none in its arguments, as `send`
+does. `send` prints the `after_event` to `wait` on. `wait` keeps calling the
+API (ten minutes a call) until the turn is over, for at most `--timeout`, and
+exits 0 when it's over, 3 when the session needs input, 4 on timeout, and 1
+when the session failed or stopped.
+
 ## Webhooks
 
 A session started through the API (or MCP) tells what it does, as it does

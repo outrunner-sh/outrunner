@@ -43,8 +43,11 @@ terminal. It signs the terminal in through the browser (`/cli-login`, PKCE, a
 token kept in `~/.outrunner/cli.json`), offers to connect their Claude
 subscription when Claude Code is on the computer (it runs `claude setup-token`
 under a PTY and saves the token), then continues onboarding in the browser.
-`outrunner login | claude | whoami | logout` do one step each, and
-`outrunner triage "…"` adds a work item to triage; `claude` signs
+`outrunner login | claude | whoami | logout` do one step each,
+`outrunner triage "…"` adds a work item to triage, and `outrunner
+list | get | create | send | read | wait | delete` drive sessions through
+the API ([`docs/api.md`](docs/api.md#cli), `--json` for scripts,
+`OUTRUNNER_API_KEY` instead of a sign-in); `claude` signs
 in first if needed and opens no tab after, so it's what onboarding's
 subscription page shows (always with `--url`, the page's own app).
 `--url` or `OUTRUNNER_URL` points it at another app.
