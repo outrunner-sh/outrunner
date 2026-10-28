@@ -374,6 +374,13 @@ export function specCard(spec: AgentSpec, conversationId: string, repos: readonl
           text: { type: "plain_text", text: "Start session" },
           value: conversationId,
         },
+        // No repository to start in, or not now: it waits in triage.
+        {
+          type: "button",
+          action_id: SPEC_ACTIONS.file,
+          text: { type: "plain_text", text: "File to triage" },
+          value: conversationId,
+        },
         ...(picker ? [picker] : []),
       ],
     },

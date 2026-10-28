@@ -15,6 +15,7 @@
 import { isOwner } from "@/lib/auth/allowlist";
 import { listOrgProjects } from "@/lib/db/org-access";
 import {
+  sessionSummary,
   conversationForItem,
   getConversation,
   getConversationById,
@@ -70,7 +71,16 @@ import {
 } from "@/lib/slack/proactive-text";
 import { canTriage } from "@/lib/triage/access";
 import { signLinkToken, slackPermalink, slackToMarkdown } from "@/lib/slack/slack";
-import { addReaction, deleteMessage, postEphemeral, postMessage, threadReplies, updateMessage, userNames } from "@/lib/slack/web";
+import {
+  addReaction,
+  deleteMessage,
+  postEphemeral,
+  postMessage,
+  removeReaction,
+  threadReplies,
+  updateMessage,
+  userNames,
+} from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { TriageActor } from "@/lib/triage/access";
 import { itemUrl } from "@/lib/triage/urls";
@@ -467,6 +477,9 @@ async function startWorker(
     await awaitReply(conversation.id);
     await watchForReply(started);
   } else if (result.status !== "ready") {
+    if (install) {
+      await removeReaction(install.botToken, { channel: conversation.channelId, ts: conversation.threadTs, name: "eyes" }).catch(() => undefined);
+    }
     await react("x");
     await reply(`The session for ${filed.key} couldn't start: ${result.errorMessage ?? "unknown error"}. It's still in triage.`);
   }
@@ -477,6 +490,23 @@ async function toSession(install: SlackInstallation, conversation: SlackConversa
   const reply = (text: string) => postMessage(install.botToken, { channel: message.channel, threadTs: conversation.threadTs, text });
   const text = slackToMarkdown(message.text.replace(new RegExp(`<@${install.botUserId}(\\|[^>]*)?>`, "g"), "")).trim();
   if (!text || /^!aside\b/i.test(text) || /^\(aside\)/i.test(text)) return;
+  // The session runs as whoever started it, with their access: only someone
+  // connected, in the thread's org, who may read its repository, steers it.
+  const session = conversation.workspaceId ? await sessionSummary(conversation.workspaceId).catch(() => null) : null;
+  const speaker = await actorFor(message.teamId, message.user);
+  if (!speaker) {
+    await askToConnect(install, { channel: message.channel, user: message.user, threadTs: conversation.threadTs });
+    return;
+  }
+  if (!session || speaker.orgId !== conversation.orgId || !speaker.levels.has(session.projectId)) {
+    await postEphemeral(install.botToken, {
+      channel: message.channel,
+      threadTs: conversation.threadTs,
+      user: message.user,
+      text: "Only members of this org who can read the session's repository can talk to it.",
+    });
+    return;
+  }
   if (message.mention && /^stop\b/i.test(text)) {
     await reply((await stopSession(conversation)) ? "Stopped the session's turn." : "I couldn't reach the session to stop it.");
     return;

@@ -13,8 +13,10 @@ import { cn } from "@/lib/utils";
 export function SlackThreadLink({ workspaceId, url, sync: initial }: { workspaceId: string; url: string; sync: boolean }) {
   const [sync, setSync] = useState(initial);
   const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
   const toggle = async () => {
     setSaving(true);
+    setFailed(false);
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/slack-sync`, {
         method: "POST",
@@ -22,6 +24,9 @@ export function SlackThreadLink({ workspaceId, url, sync: initial }: { workspace
         body: JSON.stringify({ sync: !sync }),
       });
       if (response.ok) setSync(((await response.json()) as { sync: boolean }).sync);
+      else setFailed(true);
+    } catch {
+      setFailed(true);
     } finally {
       setSaving(false);
     }
@@ -51,6 +56,7 @@ export function SlackThreadLink({ workspaceId, url, sync: initial }: { workspace
       >
         {sync ? "Synced" : "Not synced"}
       </button>
+      {failed && <span className="text-[11px] text-destructive">Couldn&apos;t change it</span>}
     </span>
   );
 }
