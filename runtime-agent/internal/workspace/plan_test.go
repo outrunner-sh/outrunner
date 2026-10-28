@@ -524,4 +524,9 @@ func TestAnAnsweredPlansModeIsReadOffTheScreen(t *testing.T) {
 	if got := s.PlanAnsweredMode(id); got != ModePlan {
 		t.Errorf("planning: mode = %q", got)
 	}
+	// A building session whose reply quotes the plan footer is building.
+	fake.pane = "⏺ Press Shift+Tab until the footer says ⏸ plan mode on.\n" + realPane(t, "built")
+	if got := s.PlanAnsweredMode(id); got != ModeBuild {
+		t.Errorf("a reply quoting the footer: mode = %q, want build", got)
+	}
 }

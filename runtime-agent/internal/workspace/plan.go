@@ -276,7 +276,14 @@ const PlanApproved = "The plan is approved. Go ahead and implement it."
 // ("⏸ plan mode on", "⏵⏵ bypass permissions on", testdata/claude-2.1.304),
 // else the agent's record. The record is brought in line with it, so the next
 // prompt in build mode doesn't relaunch a session that builds already.
+//
+// Under the session's lifecycle and send locks, as ApprovePlan's work is, so
+// a mode switch running at the same time can't be undone by an older read.
 func (s *Service) PlanAnsweredMode(workspaceID string) string {
+	defer s.lockLifecycle(workspaceID)()
+	lock := s.sendLock(workspaceID)
+	lock.Lock()
+	defer lock.Unlock()
 	f, _ := s.getFacts(workspaceID)
 	mode := ModeBuild
 	if f.Plan {
@@ -287,7 +294,7 @@ func (s *Service) PlanAnsweredMode(workspaceID string) string {
 		defer cancel()
 		if pane, err := s.tmux.CapturePane(ctx, sessionName(workspaceID)); err == nil {
 			switch a := s.agentFor(workspaceID); {
-			case strings.Contains(pane, "plan mode on"):
+			case footerSays(pane, "⏸ plan mode on"):
 				mode = ModePlan
 			case a.isBusy(pane) || isComposer(pane):
 				mode = ModeBuild // at work or at its prompt box, and not planning
@@ -296,6 +303,22 @@ func (s *Service) PlanAnsweredMode(workspaceID string) string {
 	}
 	s.updateFacts(workspaceID, func(f *workspaceFacts) { f.Plan = mode == ModePlan })
 	return mode
+}
+
+// footerSays reports whether Claude's footer, the last lines of the pane
+// under its prompt box, says text: not the conversation above, which can
+// quote it (a reply explaining Shift+Tab).
+func footerSays(pane, text string) bool {
+	lines := nonBlankLines(pane)
+	if len(lines) > 2 {
+		lines = lines[len(lines)-2:]
+	}
+	for _, line := range lines {
+		if strings.Contains(line, text) {
+			return true
+		}
+	}
+	return false
 }
 
 // Approved plans: how ApprovePlan answered.
