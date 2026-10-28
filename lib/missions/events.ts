@@ -54,7 +54,15 @@ export const eventKey = {
 };
 
 function attr(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/\n/g, " ");
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, " ");
+}
+
+/** Text from outside (a Runner's reply, a pull request's title) as a block's
+ *  body: a `runner_event` tag in it is made harmless, so it can't close the
+ *  block and pass off one of its own as an event, to the Mission or the
+ *  page. */
+function inert(text: string): string {
+  return text.replace(/<(\/?)runner_event/gi, "<$1runner-event");
 }
 
 function prLine(pr: PullRequestRef | undefined): string {
@@ -86,7 +94,7 @@ function body(event: MissionEvent): string {
 /** One event as the Mission reads it. */
 export function formatEvent(event: MissionEvent): string {
   const name = event.payload.runner ? ` runner="${attr(event.payload.runner)}"` : "";
-  return `<runner_event kind="${event.kind}" runner_id="${event.runnerId}"${name} at="${event.createdAt}">\n${body(event)}\n</runner_event>`;
+  return `<runner_event kind="${event.kind}" runner_id="${event.runnerId}"${name} at="${event.createdAt}">\n${inert(body(event))}\n</runner_event>`;
 }
 
 /** A delivery: its events, oldest first, in one message. */
@@ -103,7 +111,7 @@ const BLOCK = /<runner_event\s+([^>]*)>\n?([\s\S]*?)\n?<\/runner_event>/g;
 const ATTR = /(\w+)="([^"]*)"/g;
 
 function unattr(value: string): string {
-  return value.replace(/&lt;/g, "<").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+  return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
 }
 
 export function parseRunnerEvents(text: string): { events: ParsedRunnerEvent[]; rest: string } {

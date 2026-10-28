@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     const delivered = done?.delivered;
     if (done && (done.changed || done.pullRequests || done.skipped || done.failures || delivered?.emailed || delivered?.slacked || delivered?.digests)) console.log("Sessions tick", done);
     const missions = await runMissionTick();
-    if (missions.turns || missions.pullRequests || missions.queued || missions.delivered) console.log("Missions tick", missions);
+    if (missions.turns || missions.pullRequests || missions.queued || missions.failures || missions.delivered) console.log("Missions tick", missions);
   });
   return NextResponse.json({ ticking: true });
 }

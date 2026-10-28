@@ -30,6 +30,11 @@ create table if not exists turn_watches (
   last_message text check (char_length(last_message) <= 200000),
   -- Its box first failed to answer, for telling a box that died.
   unreachable_since timestamptz,
+  -- Its agent first seen exited: a relaunch passes through that, so a
+  -- second look confirms it.
+  exited_since timestamptz,
+  -- First seen up: a brief's never-started window counts from then.
+  up_since timestamptz,
   checked_at timestamptz
 );
 

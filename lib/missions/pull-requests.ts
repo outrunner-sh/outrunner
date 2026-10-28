@@ -8,7 +8,7 @@
  */
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
-import { getPullRequestStatus } from "@/lib/github/client";
+import { getPullRequestStatusWithDetails } from "@/lib/github/client";
 import { optionalGitToken } from "@/lib/github/identity.deps";
 import { githubGet } from "@/lib/github/rest";
 import { sessionWorking } from "@/lib/missions/box";
@@ -20,6 +20,7 @@ import { readyNotification } from "@/lib/missions/events";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
 import { recordNotifications } from "@/lib/notifications/record";
 import { repoToken } from "@/lib/slack/github";
+import { toWorkspace } from "@/lib/db/mappers";
 import type { Workspace } from "@/lib/runtime/types";
 import { asBrowser } from "@/lib/slack/research";
 import { actAsUser } from "@/lib/supabase/acting-user";
@@ -91,31 +92,62 @@ export function activityOf(event: string | null, payload: Record<string, unknown
   return null;
 }
 
-/** The live Runners working in `repo`. */
-async function runnersIn(repo: string): Promise<Workspace[]> {
-  const { data: projects, error } = await db().from("projects").select("id").ilike("full_name", repo.replace(/[\\%_]/g, "\\$&"));
-  if (error) throw error;
-  if (!projects?.length) return [];
-  const { data, error: runnersError } = await db()
-    .from("workspaces")
-    .select("id")
-    .not("parent_mission_id", "is", null)
-    .in(
-      "project_id",
-      projects.map((p) => p.id),
-    )
-    .not("status", "in", "(destroyed,destroying)");
-  if (runnersError) throw runnersError;
-  const runners = await Promise.all((data ?? []).map((r) => sessionById(r.id)));
-  return runners.filter((r): r is Workspace => r !== null);
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
 }
 
-/** Note what a webhook said: a new pull request of a Runner's recorded, and
- *  activity on one starting (or extending) its stretch. The Runners whose
- *  pull requests it touched. */
+function checkoutIds(checkouts: unknown): string[] {
+  if (!Array.isArray(checkouts)) return [];
+  return checkouts.flatMap((c) =>
+    c && typeof c === "object" && typeof (c as { projectId?: unknown }).projectId === "string" ? [(c as { projectId: string }).projectId] : [],
+  );
+}
+
+/**
+ * The Runners an event in `repo` can be about: Runners in its orgs that work
+ * in the repository (as their own, or as one of a session of several), and
+ * of those, only the ones on a branch it names or with a pull request of
+ * its on record. Check runs come many a push: this keeps each to a query or
+ * two, whatever the number of Runners.
+ */
+async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
+  const { data: projects, error } = await db().from("projects").select("id, org_id").ilike("full_name", escapeLike(activity.repo));
+  if (error) throw error;
+  if (!projects?.length) return [];
+  const projectIds = new Set(projects.map((p) => p.id));
+  const { data, error: runnersError } = await db()
+    .from("workspaces")
+    .select("*")
+    .not("parent_mission_id", "is", null)
+    .in("org_id", [...new Set(projects.map((p) => p.org_id))])
+    .not("status", "in", "(destroyed,destroying)");
+  if (runnersError) throw runnersError;
+  const inRepo = (data ?? []).filter((row) => projectIds.has(row.project_id) || checkoutIds(row.checkouts).some((id) => projectIds.has(id)));
+  if (inRepo.length === 0) return [];
+  const refs = [...activity.headRefs, ...(activity.pr ? [activity.pr.headRef] : [])];
+  const known = new Set<string>();
+  if (activity.numbers.length > 0) {
+    const { data: rows, error: rowsError } = await db()
+      .from("runner_pull_requests")
+      .select("runner_id")
+      .in(
+        "runner_id",
+        inRepo.map((r) => r.id),
+      )
+      .ilike("repo", escapeLike(activity.repo))
+      .in("number", activity.numbers);
+    if (rowsError) throw rowsError;
+    for (const row of rows ?? []) known.add(row.runner_id);
+  }
+  return inRepo.filter((row) => known.has(row.id) || refs.some((ref) => isRunnerBranch(row.branch, ref))).map(toWorkspace);
+}
+
+/** Note what a webhook said: a new pull request of a Runner's recorded (or
+ *  one closed and reopened, open again), and activity on one starting (or
+ *  extending) its stretch. The Runners whose pull requests it touched. */
 export async function notePullRequestActivity(activity: PullRequestActivity): Promise<string[]> {
   const touched = new Set<string>();
-  const runners = await runnersIn(activity.repo);
+  const runners = await runnersFor(activity);
   const now = new Date().toISOString();
   for (const runner of runners) {
     const pr = activity.pr;
@@ -132,6 +164,10 @@ export async function notePullRequestActivity(activity: PullRequestActivity): Pr
             head_ref: pr.headRef,
             base_ref: pr.baseRef || null,
             ...(pr.headSha && { head_sha: pr.headSha }),
+            // A closed one reopened is watched again: nothing else sets its
+            // state back to open. Merged and closed are the settler's, from
+            // GitHub's own state.
+            ...(pr.state === "open" && { state: "open" as const }),
           },
           { onConflict: "runner_id,repo,number", ignoreDuplicates: false },
         );
@@ -141,13 +177,13 @@ export async function notePullRequestActivity(activity: PullRequestActivity): Pr
       .from("runner_pull_requests")
       .select("number, head_ref, verdict")
       .eq("runner_id", runner.id)
-      .ilike("repo", activity.repo.replace(/[\\%_]/g, "\\$&"))
+      .ilike("repo", escapeLike(activity.repo))
       .eq("state", "open");
     if (error) throw error;
     for (const row of rows ?? []) {
       if (!activity.numbers.includes(row.number) && !activity.headRefs.includes(row.head_ref)) continue;
       // A decided one starts a new stretch; an undecided one's goes on.
-      await db()
+      const { error: updateError } = await db()
         .from("runner_pull_requests")
         .update({
           last_activity_at: now,
@@ -157,7 +193,8 @@ export async function notePullRequestActivity(activity: PullRequestActivity): Pr
         })
         .eq("runner_id", runner.id)
         .eq("number", row.number)
-        .ilike("repo", activity.repo.replace(/[\\%_]/g, "\\$&"));
+        .ilike("repo", escapeLike(activity.repo));
+      if (updateError) throw updateError;
       touched.add(runner.id);
     }
   }
@@ -172,40 +209,60 @@ async function tokenFor(runner: Workspace, repo: string): Promise<string | null>
   return (await optionalGitToken(runner.ownerId, { orgId, fullName: repo })) ?? (await repoToken(orgId, repo).catch(() => null));
 }
 
-/** The Runner's repositories' full names. */
-async function runnerRepos(runner: Workspace): Promise<string[]> {
-  const ids = runner.checkouts?.map((c) => c.projectId) ?? [runner.projectId];
-  const { data } = await db().from("projects").select("full_name").in("id", ids);
-  return (data ?? []).map((p) => p.full_name);
-}
-
-/** Look on GitHub for the Runner's pull requests from its own branch, for
- *  when no webhook said (the App not installed, or a delivery lost). */
-export async function discoverRunnerPullRequests(runner: Workspace): Promise<void> {
-  for (const repo of await runnerRepos(runner)) {
-    const token = await tokenFor(runner, repo);
-    if (!token) continue;
-    const owner = repo.split("/")[0];
-    const pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?head=${encodeURIComponent(`${owner}:${runner.branch}`)}&state=all&per_page=20`);
-    for (const pull of pulls ?? []) {
-      if (!pull.number || !pull.head?.ref) continue;
-      const { data: known } = await db().from("runner_pull_requests").select("number").eq("runner_id", runner.id).eq("repo", repo).eq("number", pull.number).maybeSingle();
-      if (known) continue;
-      await db().from("runner_pull_requests").upsert(
-        {
-          runner_id: runner.id,
-          repo,
-          number: pull.number,
-          url: pull.html_url ?? `https://github.com/${repo}/pull/${pull.number}`,
-          title: pull.title ?? "",
-          head_ref: pull.head.ref,
-          base_ref: pull.base?.ref ?? null,
-          head_sha: pull.head.sha ?? null,
-        },
-        { onConflict: "runner_id,repo,number", ignoreDuplicates: true },
-      );
+/** Each Runner's repositories' full names. */
+async function reposOf(runners: Workspace[]): Promise<Map<string, Workspace[]>> {
+  const ids = [...new Set(runners.flatMap((r) => r.checkouts?.map((c) => c.projectId) ?? [r.projectId]))];
+  const byRepo = new Map<string, Workspace[]>();
+  if (ids.length === 0) return byRepo;
+  const { data, error } = await db().from("projects").select("id, full_name").in("id", ids);
+  if (error) throw error;
+  const name = new Map((data ?? []).map((p) => [p.id, p.full_name]));
+  for (const runner of runners) {
+    for (const id of runner.checkouts?.map((c) => c.projectId) ?? [runner.projectId]) {
+      const repo = name.get(id);
+      if (repo) byRepo.set(repo, [...(byRepo.get(repo) ?? []), runner]);
     }
   }
+  return byRepo;
+}
+
+/**
+ * Look on GitHub for Runners' pull requests no webhook announced (the App
+ * not installed, or a delivery lost): one list a repository, its most
+ * recently updated, matched to each Runner's branches, its own and the
+ * `<branch>-…` ones of stacked work. Runners with new ones found.
+ */
+export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (const [repo, here] of await reposOf(runners)) {
+    const token = await tokenFor(here[0], repo);
+    if (!token) continue;
+    const pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
+    for (const pull of pulls ?? []) {
+      if (!pull.number || !pull.head?.ref) continue;
+      for (const runner of here.filter((r) => isRunnerBranch(r.branch, pull.head!.ref!))) {
+        const { data: made, error } = await db()
+          .from("runner_pull_requests")
+          .upsert(
+            {
+              runner_id: runner.id,
+              repo,
+              number: pull.number,
+              url: pull.html_url ?? `https://github.com/${repo}/pull/${pull.number}`,
+              title: pull.title ?? "",
+              head_ref: pull.head.ref,
+              base_ref: pull.base?.ref ?? null,
+              head_sha: pull.head.sha ?? null,
+            },
+            { onConflict: "runner_id,repo,number", ignoreDuplicates: true },
+          )
+          .select("number");
+        if (error) throw error;
+        if (made?.length) found.add(runner.id);
+      }
+    }
+  }
+  return found;
 }
 
 /**
@@ -233,17 +290,15 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
     const fixRunning = working || (queuedFixes ?? 0) > 0;
     const token = await tokenFor(runner, row.repo);
     if (!token) continue;
-    const status = await getPullRequestStatus({ token, repoFullName: row.repo, number: row.number }).catch(() => null);
-    if (!status) continue;
+    // The pull request, its checks and its details in one read, and its
+    // reviews in another.
+    const read = await getPullRequestStatusWithDetails({ token, repoFullName: row.repo, number: row.number }).catch(() => null);
+    if (!read) continue;
+    const { status, details } = read;
     const reviews = (await githubGet<Parameters<typeof reviewState>[0][number][]>(token, `/repos/${row.repo}/pulls/${row.number}/reviews?per_page=100`)) ?? [];
-    const pull = await githubGet<GitHubPull>(token, `/repos/${row.repo}/pulls/${row.number}`);
-    const runs = await githubGet<{ check_runs?: { name?: string; status?: string; conclusion?: string | null; html_url?: string }[] }>(
-      token,
-      `/repos/${row.repo}/commits/${status.headSha}/check-runs?per_page=100`,
-    );
     const reviewed = reviewState(reviews);
     // A base that's another open pull request's head: stacked on it.
-    const stackedOn = rows.find((r) => r.repo === row.repo && r.state === "open" && r.head_ref === (pull?.base?.ref ?? row.base_ref))?.number ?? null;
+    const stackedOn = rows.find((r) => r.repo === row.repo && r.state === "open" && r.head_ref === (details.baseRef ?? row.base_ref))?.number ?? null;
     const decision = settle({
       now,
       firstActivityAt: Date.parse(row.first_activity_at),
@@ -251,7 +306,7 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
       fixRunning,
       facts: { ...status, ...reviewed, stackedOn },
     });
-    const pr: PullRequestRef = { repo: row.repo, number: row.number, url: row.url, title: pull?.title ?? row.title };
+    const pr: PullRequestRef = { repo: row.repo, number: row.number, url: row.url, title: details.title || row.title };
     const update = (patch: Record<string, unknown>) =>
       db()
         .from("runner_pull_requests")
@@ -260,14 +315,9 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
           head_sha: status.headSha,
           title: pr.title,
           // What the Runners pane shows of it.
-          additions: pull?.additions ?? null,
-          deletions: pull?.deletions ?? null,
-          checks: (runs?.check_runs ?? []).slice(0, 50).map((r) => ({
-            name: r.name ?? "check",
-            status: r.status ?? "completed",
-            conclusion: r.conclusion ?? null,
-            url: r.html_url ?? null,
-          })),
+          additions: details.additions,
+          deletions: details.deletions,
+          checks: details.checkRuns,
           review_state: reviewed.changesRequested ? "changes_requested" : reviewed.approved ? "approved" : "none",
           mergeable_state: status.mergeableState,
           ...patch,
@@ -352,8 +402,9 @@ async function archiveDoneRunner(runner: Workspace, missionId: string): Promise<
   });
 }
 
-/** The tick's part: Runners with open pull requests due a look, and live
- *  Runners' pull requests no webhook announced. */
+/** The tick's part: Runners with open pull requests due a look, Runners
+ *  whose pull requests no webhook announced, and Runners whose pull requests
+ *  are all done that are still to be archived. */
 export async function settleDueRunners(limit = 30): Promise<number> {
   const { data, error } = await db()
     .from("runner_pull_requests")
@@ -363,30 +414,38 @@ export async function settleDueRunners(limit = 30): Promise<number> {
     .limit(limit * 3);
   if (error) throw error;
   const due = new Set((data ?? []).map((r) => r.runner_id));
-  // Runners' pull requests no webhook announced: live Runners', and those
-  // of Runners archived lately with none found yet (one archived with force
-  // still has its pull request to follow).
-  const { data: recent } = await db()
+  // Runners lately at work: live ones, and those archived lately with none
+  // found yet (one archived with force still has its pull request to follow).
+  const { data: recent, error: recentError } = await db()
     .from("workspaces")
-    .select("id, status")
+    .select("*")
     .not("parent_mission_id", "is", null)
     .in("status", ["ready", "idle", "suspended", "archived"])
     .gt("updated_at", new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString())
     .order("updated_at", { ascending: false })
     .limit(limit * 2);
-  const { data: known } = await db()
+  if (recentError) throw recentError;
+  const runners = (recent ?? []).map(toWorkspace);
+  const { data: known, error: knownError } = await db()
     .from("runner_pull_requests")
-    .select("runner_id")
+    .select("runner_id, state")
     .in(
       "runner_id",
-      (recent ?? []).map((r) => r.id),
+      runners.map((r) => r.id),
     );
-  const withRows = new Set((known ?? []).map((r) => r.runner_id));
-  for (const r of (recent ?? []).filter((r) => r.status !== "archived" || !withRows.has(r.id)).slice(0, limit)) {
-    const runner = await sessionById(r.id);
-    if (!runner) continue;
-    await discoverRunnerPullRequests(runner).catch((e: unknown) => console.warn(`Runner ${r.id}: pull request lookup failed`, e));
-    due.add(r.id);
+  if (knownError) throw knownError;
+  const states = new Map<string, string[]>();
+  for (const row of known ?? []) states.set(row.runner_id, [...(states.get(row.runner_id) ?? []), row.state]);
+  const looking = runners.filter((r) => r.status !== "archived" || !states.has(r.id));
+  for (const id of await discoverRunnerPullRequests(looking).catch((e: unknown) => {
+    console.warn("Missions: looking for Runners' pull requests failed", e);
+    return new Set<string>();
+  })) {
+    due.add(id);
+  }
+  // All merged or closed, the Runner still up: archived (when it's at rest).
+  for (const runner of runners) {
+    if (runner.status !== "archived" && allPullRequestsDone((states.get(runner.id) ?? []) as ("open" | "merged" | "closed")[])) due.add(runner.id);
   }
   let settled = 0;
   for (const id of [...due].slice(0, limit)) {

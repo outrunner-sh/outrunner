@@ -21,6 +21,8 @@ export type WatchRow = {
   quietActivity: string | null;
   lastMessage: string | null;
   unreachableSince: string | null;
+  exitedSince?: string | null;
+  upSince?: string | null;
 };
 
 export type RecordedEvent = {
@@ -35,7 +37,9 @@ export type WatchDeps = {
   session(id: string): Promise<Workspace | null>;
   look(session: Workspace): Promise<Pick<TurnObservation, "reachable" | "working" | "waiting" | "waitingToolId" | "summary">>;
   save(row: WatchRow): Promise<void>;
-  close(workspaceId: string): Promise<void>;
+  /** Close the watch on the turn sent at `sentAt`: one a send since opened
+   *  is another turn's, and stays. */
+  close(workspaceId: string, sentAt: string): Promise<void>;
   /** Record the event once (its key); true when it's new. */
   record(event: RecordedEvent): Promise<boolean>;
   /** The Runner's next queued message, taken; null when none waits. */
@@ -58,6 +62,8 @@ function toState(row: WatchRow): WatchState {
     quietActivity: row.quietActivity,
     lastMessage: row.lastMessage,
     unreachableSince: ms(row.unreachableSince),
+    exitedSince: ms(row.exitedSince ?? null),
+    upSince: ms(row.upSince ?? null),
   };
 }
 
@@ -75,7 +81,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
   const runner = await deps.session(row.workspaceId);
   const missionId = runner?.parentMissionId;
   if (!runner || !missionId) {
-    await deps.close(row.workspaceId);
+    await deps.close(row.workspaceId, row.sentAt);
     return "closed";
   }
   const now = deps.now();
@@ -93,11 +99,13 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         quietActivity: s.quietActivity,
         lastMessage: s.lastMessage,
         unreachableSince: iso(s.unreachableSince),
+        exitedSince: iso(s.exitedSince ?? null),
+        upSince: iso(s.upSince ?? null),
       });
       return "waiting";
     }
     case "closed":
-      await deps.close(row.workspaceId);
+      await deps.close(row.workspaceId, row.sentAt);
       return "closed";
     case "waiting_on_user": {
       // Told once a wait (its call's id); the watch stays open for the turn's
@@ -117,6 +125,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         quietActivity: null,
         lastMessage: s.lastMessage,
         unreachableSince: null,
+        upSince: iso(s.upSince ?? null),
       });
       return "needs_attention";
     }
@@ -128,7 +137,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         payload: { runner: name, reason: verdict.cause },
         key: eventKey.needsAttention(runner.id, "turn", row.sentAt),
       });
-      await deps.close(row.workspaceId);
+      await deps.close(row.workspaceId, row.sentAt);
       return "needs_attention";
     case "over": {
       await deps.record({
@@ -138,7 +147,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         payload: { runner: name, response: verdict.message, ...(verdict.asleep && { asleep: true }) },
         key: eventKey.finished(runner.id, row.sentAt),
       });
-      await deps.close(row.workspaceId);
+      await deps.close(row.workspaceId, row.sentAt);
       await sendNextQueued(runner, deps);
       return "finished";
     }

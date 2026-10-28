@@ -8,11 +8,13 @@
 
 import { after } from "next/server";
 
-import { boxSummary } from "@/lib/missions/box";
+import { boxSummary, sessionWorking } from "@/lib/missions/box";
 import { notifyActivity } from "@/lib/notifications/record";
 import { readSession } from "@/lib/session/watch";
 import { deliverNow } from "@/lib/missions/outbox.deps";
 import { DELIVERY_MAX_WAIT_SECONDS, DELIVERY_SETTLE_SECONDS } from "@/lib/missions/outbox";
+import { toWorkspace } from "@/lib/db/mappers";
+import { eventKey } from "@/lib/missions/events";
 import { returnQueuedMessage, sessionById, takeQueuedMessage } from "@/lib/missions/store";
 import { checkRunnerWatch, type RecordedEvent, sendNextQueued, type WatchDeps, type WatchRow } from "@/lib/missions/watch";
 import type { Json } from "@/lib/supabase/database.types";
@@ -99,6 +101,8 @@ function toRow(row: {
   quiet_activity: string | null;
   last_message: string | null;
   unreachable_since: string | null;
+  exited_since: string | null;
+  up_since: string | null;
 }): WatchRow {
   return {
     workspaceId: row.workspace_id,
@@ -109,6 +113,8 @@ function toRow(row: {
     quietActivity: row.quiet_activity,
     lastMessage: row.last_message,
     unreachableSince: row.unreachable_since,
+    exitedSince: row.exited_since,
+    upSince: row.up_since,
   };
 }
 
@@ -133,6 +139,8 @@ export async function openRunnerWatch(runnerId: string, sentAt: Date, baseline: 
         quiet_since: null,
         quiet_activity: null,
         unreachable_since: null,
+        exited_since: null,
+        up_since: null,
         checked_at: null,
       },
       { onConflict: "workspace_id" },
@@ -171,6 +179,10 @@ async function lookAtRunner(runner: Workspace) {
 /** Where the Runner's conversation last was, before a send: activity after
  *  it is the send's turn. */
 async function lastEventAt(runner: Workspace): Promise<string | null> {
+  // Read up to now first: the record is only as fresh as its last read, and
+  // a turn that ended since would otherwise read as this send's.
+  const change = await readSession(runner.id).catch(() => null);
+  if (change) await notifyActivity(change).catch(() => undefined);
   const { data } = await db().from("session_activity").select("event_at").eq("workspace_id", runner.id).maybeSingle();
   return data?.event_at ?? (await boxSummary(runner).catch(() => null))?.lastActivity ?? null;
 }
@@ -188,6 +200,8 @@ export function watchDeps(): WatchDeps {
           quiet_activity: row.quietActivity,
           last_message: row.lastMessage?.slice(0, 200000) ?? null,
           unreachable_since: row.unreachableSince,
+          exited_since: row.exitedSince ?? null,
+          up_since: row.upSince ?? null,
           checked_at: new Date().toISOString(),
         })
         .eq("workspace_id", row.workspaceId)
@@ -195,8 +209,10 @@ export function watchDeps(): WatchDeps {
         .eq("sent_at", row.sentAt);
       if (error) throw error;
     },
-    close: async (workspaceId) => {
-      await db().from("turn_watches").delete().eq("workspace_id", workspaceId);
+    close: async (workspaceId, sentAt) => {
+      // Only the watch it read: a send since has opened a new one.
+      const { error } = await db().from("turn_watches").delete().eq("workspace_id", workspaceId).eq("sent_at", sentAt);
+      if (error) throw error;
     },
     record: recordMissionEvent,
     takeQueued: takeQueuedMessage,
@@ -270,8 +286,43 @@ export async function sendWaitingQueued(limit = 20): Promise<number> {
     if (await readWatch(runnerId)) continue;
     const runner = await sessionById(runnerId);
     if (!runner || runner.status === "creating" || runner.status === "provisioning" || runner.status === "failed") continue;
-    if ((await lookAtRunner(runner)).working) continue;
+    // The sessions tick has just read every session: its record is enough.
+    if (await sessionWorking(runner).catch(() => true)) continue;
     if (await sendNextQueued(runner, watchDeps())) sent++;
   }
   return sent;
+}
+
+/** How far back the tick looks for Runners that failed: a few ticks, so one
+ *  missed loses none (each is told once, by its failure's time). */
+const FAILED_WITHIN_MS = 15 * 60_000;
+
+/**
+ * The tick's part: Runners that failed with no turn watched (a wake or a
+ * restore that failed between turns), told to their Mission as needing
+ * attention. One with a watch open is told by its watch.
+ */
+export async function reportFailedRunners(limit = 50): Promise<number> {
+  const { data, error } = await db()
+    .from("workspaces")
+    .select("*")
+    .not("parent_mission_id", "is", null)
+    .eq("status", "failed")
+    .gt("failed_at", new Date(Date.now() - FAILED_WITHIN_MS).toISOString())
+    .limit(limit);
+  if (error) throw error;
+  let told = 0;
+  for (const row of data ?? []) {
+    if (await readWatch(row.id)) continue;
+    const runner = toWorkspace(row);
+    const fresh = await recordMissionEvent({
+      missionId: runner.parentMissionId as string,
+      runnerId: runner.id,
+      kind: "needs_attention",
+      payload: { runner: runner.title ?? runner.branch, reason: runner.errorMessage ? `its session failed: ${runner.errorMessage}` : "its session failed" },
+      key: eventKey.needsAttention(runner.id, "failed", row.failed_at ?? runner.updatedAt),
+    });
+    if (fresh) told++;
+  }
+  return told;
 }

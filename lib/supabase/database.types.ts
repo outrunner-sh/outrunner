@@ -180,6 +180,8 @@ type TurnWatchRow = {
   quiet_activity: string | null;
   last_message: string | null;
   unreachable_since: string | null;
+  exited_since: string | null;
+  up_since: string | null;
   checked_at: string | null;
 };
 type RunnerPullRequestRow = {

@@ -8,12 +8,13 @@
  *   pull reqs   Runners' pull requests due a decision, and ones no webhook
  *               announced
  *   queued      messages held for a Runner whose turn ended meanwhile
+ *   failures    Runners that failed between turns, with no watch to tell
  *   deliveries  events waiting for their Mission, retried with backoff
  */
 
 import { deliverNow, missionsWithPendingEvents } from "@/lib/missions/outbox.deps";
 import { settleDueRunners } from "@/lib/missions/pull-requests";
-import { checkStaleWatches, sendWaitingQueued } from "@/lib/missions/watch.deps";
+import { checkStaleWatches, reportFailedRunners, sendWaitingQueued } from "@/lib/missions/watch.deps";
 
 async function quietly<T>(label: string, work: () => Promise<T>): Promise<T | null> {
   try {
@@ -24,11 +25,12 @@ async function quietly<T>(label: string, work: () => Promise<T>): Promise<T | nu
   }
 }
 
-export async function runMissionTick(): Promise<{ turns: number; pullRequests: number; queued: number; delivered: number }> {
-  const [turns, pullRequests, queued] = await Promise.all([
+export async function runMissionTick(): Promise<{ turns: number; pullRequests: number; queued: number; failures: number; delivered: number }> {
+  const [turns, pullRequests, queued, failures] = await Promise.all([
     quietly("turns", () => checkStaleWatches()),
     quietly("pull requests", () => settleDueRunners()),
     quietly("queued messages", () => sendWaitingQueued()),
+    quietly("failures", () => reportFailedRunners()),
   ]);
   // Last: what the parts above recorded goes in the same tick.
   const delivered = await quietly("deliveries", async () => {
@@ -36,5 +38,5 @@ export async function runMissionTick(): Promise<{ turns: number; pullRequests: n
     for (const missionId of await missionsWithPendingEvents()) count += await deliverNow(missionId);
     return count;
   });
-  return { turns: turns ?? 0, pullRequests: pullRequests ?? 0, queued: queued ?? 0, delivered: delivered ?? 0 };
+  return { turns: turns ?? 0, pullRequests: pullRequests ?? 0, queued: queued ?? 0, failures: failures ?? 0, delivered: delivered ?? 0 };
 }

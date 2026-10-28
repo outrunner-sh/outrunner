@@ -32,12 +32,20 @@ create table workspaces (
 );
 
 -- The notifications tables (20261102163000_session_notifications.sql), as
--- much of them as the Missions migrations change: their kinds.
+-- much of them as the Missions migrations change: their kinds, with their
+-- checks as that migration names them, so a wrong name in the Missions
+-- migration's drop leaves the old check and fails the tests.
 create table session_notifications (
   id uuid primary key default gen_random_uuid(),
-  kind text not null
+  kind text not null check (kind in ('turn_done', 'needs_input', 'errored', 'pr_opened', 'pr_merged'))
 );
 create table notification_preferences (
   user_id uuid primary key,
-  kinds text[] not null default '{}'
+  kinds text[] not null default '{turn_done,needs_input,errored,pr_opened,pr_merged}'
+    check (kinds <@ array['turn_done', 'needs_input', 'errored', 'pr_opened', 'pr_merged'])
 );
+-- Someone who chose pull requests' news, and someone who didn't, from
+-- before the Missions migration.
+insert into notification_preferences (user_id, kinds) values
+  ('00000000-0000-0000-0000-0000000000a1', '{turn_done,pr_opened}'),
+  ('00000000-0000-0000-0000-0000000000a2', '{turn_done}');

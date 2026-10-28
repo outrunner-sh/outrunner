@@ -220,3 +220,12 @@ test("the tick is told Missions whose events are due, oldest first, not those ba
   assert.ok(!due.includes(backingOff));
   assert.ok(!due.includes(held));
 });
+
+test("a pull request ready is a notification kind, on for whoever had pull requests' news", { skip }, () => {
+  psql(`insert into session_notifications (kind) values ('pr_ready')`);
+  assert.equal(psql(`select 'pr_ready' = any (kinds) from notification_preferences where user_id = '00000000-0000-0000-0000-0000000000a1'`), "t");
+  assert.equal(psql(`select 'pr_ready' = any (kinds) from notification_preferences where user_id = '00000000-0000-0000-0000-0000000000a2'`), "f");
+  psql(`insert into notification_preferences (user_id) values ('00000000-0000-0000-0000-0000000000a3')`);
+  assert.equal(psql(`select 'pr_ready' = any (kinds) from notification_preferences where user_id = '00000000-0000-0000-0000-0000000000a3'`), "t");
+  fails(`insert into session_notifications (kind) values ('gossip')`, /check constraint/);
+});

@@ -35,8 +35,9 @@ function setup(runner: Partial<Workspace> = {}, look: Partial<Awaited<ReturnType
     save: async (r) => {
       row = r;
     },
-    close: async () => {
-      row = null;
+    close: async (_id, sentAt) => {
+      // As the database's: only the watch on that turn.
+      if (row && row.sentAt === sentAt) row = null;
     },
     record: async (e) => {
       if (keys.has(e.key)) return false;
@@ -55,7 +56,16 @@ function setup(runner: Partial<Workspace> = {}, look: Partial<Awaited<ReturnType
     },
     now: () => clock,
   };
-  return { deps, recorded, sent, row: () => row, tick: (ms: number) => void (clock += ms) };
+  return {
+    deps,
+    recorded,
+    sent,
+    row: () => row,
+    tick: (ms: number) => void (clock += ms),
+    reopen: (sentAt: string) => {
+      row = { ...(row as WatchRow), sentAt, quietSince: null, quietActivity: null, seenWorking: false };
+    },
+  };
 }
 
 test("a turn's end is recorded once as finished, even seen by two at once, then the queue goes", async () => {
@@ -86,6 +96,9 @@ test("a spawn whose setup failed reaches the Mission as needing attention, with 
 
 test("a Runner whose agent crashed mid-turn reaches the Mission as needing attention", async () => {
   const w = setup({}, { summary: { lastAssistantMessage: "x", lastActivity: iso(T0 + 1000), state: "exited" } as never });
+  // Seen once, then confirmed: a relaunch passes through exited too.
+  assert.equal(await checkRunnerWatch(w.row()!, w.deps), "waiting");
+  w.tick(16_000);
   assert.equal(await checkRunnerWatch(w.row()!, w.deps), "needs_attention");
   assert.equal(w.recorded[0].payload.reason, "its agent exited");
 });
@@ -118,4 +131,15 @@ test("a Runner waiting on a person reaches its Mission once a wait, and the watc
   assert.equal(w.recorded.length, 1);
   assert.match(String(w.recorded[0].payload.reason), /asked a question only a person can answer/);
   assert.notEqual(w.row(), null);
+});
+
+test("a turn's end closes only its own watch, not one a send since has opened", async () => {
+  const w = setup();
+  assert.equal(await checkRunnerWatch(w.row()!, w.deps), "waiting");
+  const ending = w.row()!;
+  w.tick(16_000);
+  // The Mission sends again meanwhile: a new watch, on the next turn.
+  w.reopen(iso(T0 + 70_000));
+  assert.equal(await checkRunnerWatch(ending, w.deps), "finished");
+  assert.equal(w.row()?.sentAt, iso(T0 + 70_000));
 });

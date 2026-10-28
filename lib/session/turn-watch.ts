@@ -74,6 +74,13 @@ export type WatchState = {
   quietActivity: string | null;
   lastMessage: string | null;
   unreachableSince: number | null;
+  /** First seen with its agent exited: a relaunch (a model switch, a
+   *  restore) passes through that for a moment, so only a second look
+   *  confirms it. */
+  exitedSince?: number | null;
+  /** First seen up (ready or idle): a brief's never-started window counts
+   *  from then, not through its setup. */
+  upSince?: number | null;
 };
 
 /** One look at the session. */
@@ -130,15 +137,18 @@ export function observeTurn(watch: WatchState, look: TurnObservation): TurnVerdi
     default:
       break;
   }
+  const upSince = watch.upSince ?? look.now;
   if (!look.reachable || !look.summary) {
     const since = watch.unreachableSince ?? look.now;
     if (look.now - since >= UNREACHABLE_MS) return { kind: "lost", cause: "its box stopped answering" };
-    return waiting({ unreachableSince: since });
+    return waiting({ unreachableSince: since, upSince });
   }
   const summary = look.summary;
   const reply = summary.lastAssistantMessage?.trim() ? summary.lastAssistantMessage : null;
-  const seen = { unreachableSince: null, lastMessage: reply ?? watch.lastMessage };
+  const seen = { unreachableSince: null, lastMessage: reply ?? watch.lastMessage, upSince, exitedSince: null };
   if (summary.state === "exited" || summary.state === "degraded") {
+    const since = watch.exitedSince ?? look.now;
+    if (look.now - since < CONFIRM_MS) return waiting({ ...seen, exitedSince: since });
     return { kind: "lost", cause: summary.state === "exited" ? "its agent exited" : "its agent is in a degraded state" };
   }
   if (look.waiting && look.waitingToolId) {
@@ -147,10 +157,13 @@ export function observeTurn(watch: WatchState, look: TurnObservation): TurnVerdi
   if (look.working === true) return waiting({ ...seen, seenWorking: true, quietSince: null, quietActivity: null });
 
   const last = Date.parse(summary.lastActivity);
-  const activeSince = Number.isFinite(last) && last > (watch.baselineActivity ?? watch.sentAt);
+  // The agent's placeholder before its session exists (`starting`) reads as
+  // active every time it's asked: not a start.
+  const activeSince = summary.state !== "starting" && Number.isFinite(last) && last > (watch.baselineActivity ?? watch.sentAt);
   const started = watch.seenWorking || activeSince;
   if (!started) {
-    if (look.now - watch.sentAt >= NEVER_STARTED_MS) return { kind: "lost", cause: "it never started on its message" };
+    // From when it was first up: a slow setup isn't the agent's to answer for.
+    if (look.now - Math.max(watch.sentAt, upSince) >= NEVER_STARTED_MS) return { kind: "lost", cause: "it never started on its message" };
     return waiting({ ...seen, quietSince: null, quietActivity: null });
   }
   // Not mid-turn, with a reply. A box that can't say whether it's mid-turn

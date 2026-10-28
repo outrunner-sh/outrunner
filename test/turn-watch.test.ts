@@ -126,7 +126,12 @@ test("what can't end is lost, with its cause", () => {
     kind: "lost",
     cause: "its session failed: the plan's box limit",
   });
-  assert.deepEqual(observeTurn(watch(), look(T0, {}, { state: "exited" })), { kind: "lost", cause: "its agent exited" });
+  // Exited is confirmed on a second look: a relaunch passes through it.
+  const exited = observeTurn(watch(), look(T0, {}, { state: "exited" }));
+  assert.equal(exited.kind, "waiting");
+  const confirming = exited.kind === "waiting" ? exited.state : watch();
+  assert.equal(observeTurn(confirming, look(T0 + 5_000, {}, { state: "running" })).kind, "waiting");
+  assert.deepEqual(observeTurn(confirming, look(T0 + CONFIRM_MS, {}, { state: "exited" })), { kind: "lost", cause: "its agent exited" });
   // Not answering: waited for a while first.
   const gone = observeTurn(watch(), look(T0, { reachable: false, summary: null }));
   assert.equal(gone.kind, "waiting");
@@ -139,7 +144,7 @@ test("what can't end is lost, with its cause", () => {
   // Answering again clears it.
   const back = observeTurn(since, look(T0 + 60_000, { working: true }));
   assert.equal(back.kind === "waiting" && back.state.unreachableSince, null);
-  assert.deepEqual(observeTurn(watch(), look(T0 + NEVER_STARTED_MS, {}, { lastActivity: iso(T0 - 90_000) })), {
+  assert.deepEqual(observeTurn(watch({ upSince: T0 }), look(T0 + NEVER_STARTED_MS, {}, { lastActivity: iso(T0 - 90_000) })), {
     kind: "lost",
     cause: "it never started on its message",
   });
@@ -177,4 +182,28 @@ test("a turn stopped to wait on a person is said as such, each wait once by its 
   assert.equal(v.kind, "waiting_on_user");
   assert.equal(v.kind === "waiting_on_user" && v.toolId, "tu9");
   assert.equal(v.kind === "waiting_on_user" && v.state.seenWorking, true);
+});
+
+test("a relaunch that comes back between looks isn't taken for an exit", () => {
+  const first = observeTurn(watch(), look(T0, {}, { state: "exited" }));
+  const state = first.kind === "waiting" ? first.state : watch();
+  const back = observeTurn(state, look(T0 + 5_000, { working: true }));
+  assert.equal(back.kind, "waiting");
+  assert.equal(back.kind === "waiting" && back.state.exitedSince, null);
+});
+
+test("a brief's never-started window counts from when its box came up, and the agent's placeholder isn't a start", () => {
+  const sentAt = T0;
+  // Up only after a long setup.
+  const up = T0 + NEVER_STARTED_MS;
+  const placeholder = { lastAssistantMessage: null, state: "starting" };
+  const first = observeTurn(watch({ sentAt, baselineActivity: null }), look(up, {}, { ...placeholder, lastActivity: iso(up) }));
+  assert.equal(first.kind, "waiting");
+  const state = first.kind === "waiting" ? first.state : watch();
+  assert.equal(state.upSince, up);
+  assert.equal(observeTurn(state, look(up + NEVER_STARTED_MS - 1, {}, { ...placeholder, lastActivity: iso(up + NEVER_STARTED_MS - 1) })).kind, "waiting");
+  assert.deepEqual(observeTurn(state, look(up + NEVER_STARTED_MS, {}, { ...placeholder, lastActivity: iso(up + NEVER_STARTED_MS) })), {
+    kind: "lost",
+    cause: "it never started on its message",
+  });
 });
