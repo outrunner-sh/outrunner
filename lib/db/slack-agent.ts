@@ -1,0 +1,252 @@
+/**
+ * The Slack agent's records (20261031100000_slack_agent.sql): the app's
+ * install per Slack workspace (its bot token, sealed), the threads it's in,
+ * the events it has handled, and each org's own key for the models the agent
+ * runs on. All the server's (service role).
+ */
+
+import { open, seal } from "@/lib/crypto/secret-box";
+import { createUserKey, disableUserKey, keySource, OutrunnerModelsUnavailableError, sharedApiKey } from "@/lib/openrouter/keys";
+import { ensureUserKey } from "@/lib/openrouter/user-key";
+import { optionalEnv } from "@/lib/env";
+import type { AgentSpec } from "@/lib/slack/agent";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import type { Json } from "@/lib/supabase/database.types";
+
+function db() {
+  return createSupabaseAdminClient();
+}
+
+// ---------------------------------------------------------------------------
+// Installs
+// ---------------------------------------------------------------------------
+
+export type SlackInstallation = { teamId: string; teamName: string | null; botUserId: string; botToken: string };
+
+/** Keep the bot token an install gave (installing again replaces it). */
+export async function saveInstallation(install: SlackInstallation): Promise<void> {
+  const { error } = await db().from("slack_installations").upsert(
+    {
+      team_id: install.teamId,
+      team_name: install.teamName,
+      bot_user_id: install.botUserId,
+      bot_token_ciphertext: seal(install.botToken),
+    },
+    { onConflict: "team_id" },
+  );
+  if (error) throw error;
+}
+
+/** The app's install in a Slack workspace; null when it isn't installed
+ *  there (or was installed before the bot token was kept: install again). */
+export async function getInstallation(teamId: string): Promise<SlackInstallation | null> {
+  const { data, error } = await db().from("slack_installations").select("*").eq("team_id", teamId).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { teamId: data.team_id, teamName: data.team_name, botUserId: data.bot_user_id, botToken: open(data.bot_token_ciphertext) };
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+/** True the first time an event id is seen; false for Slack sending it again. */
+export async function firstSighting(eventId: string): Promise<boolean> {
+  const client = db();
+  const { error } = await client.from("slack_events_seen").insert({ event_id: eventId });
+  if (error?.code === "23505") return false;
+  if (error) throw error;
+  // Slack retries within minutes: a day's ids are plenty to keep.
+  void client
+    .from("slack_events_seen")
+    .delete()
+    .lt("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .then(() => undefined, () => undefined);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Conversations
+// ---------------------------------------------------------------------------
+
+export type ConversationState = "gathering" | "proposed" | "filed" | "started";
+
+export type SlackConversation = {
+  id: string;
+  teamId: string;
+  channelId: string;
+  threadTs: string;
+  orgId: string;
+  startedBy: string | null;
+  state: ConversationState;
+  rounds: number;
+  proposal: AgentSpec | null;
+  proposalTs: string | null;
+  itemId: string | null;
+  workspaceId: string | null;
+};
+
+type ConversationRow = {
+  id: string;
+  team_id: string;
+  channel_id: string;
+  thread_ts: string;
+  org_id: string;
+  started_by: string | null;
+  state: ConversationState;
+  rounds: number;
+  proposal: Json | null;
+  proposal_ts: string | null;
+  item_id: string | null;
+  workspace_id: string | null;
+};
+
+function toConversation(row: ConversationRow): SlackConversation {
+  return {
+    id: row.id,
+    teamId: row.team_id,
+    channelId: row.channel_id,
+    threadTs: row.thread_ts,
+    orgId: row.org_id,
+    startedBy: row.started_by,
+    state: row.state,
+    rounds: row.rounds,
+    proposal: (row.proposal as AgentSpec | null) ?? null,
+    proposalTs: row.proposal_ts,
+    itemId: row.item_id,
+    workspaceId: row.workspace_id,
+  };
+}
+
+export async function getConversation(teamId: string, channelId: string, threadTs: string): Promise<SlackConversation | null> {
+  const { data, error } = await db()
+    .from("slack_conversations")
+    .select("*")
+    .eq("team_id", teamId)
+    .eq("channel_id", channelId)
+    .eq("thread_ts", threadTs)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toConversation(data) : null;
+}
+
+export async function getConversationById(id: string): Promise<SlackConversation | null> {
+  const { data, error } = await db().from("slack_conversations").select("*").eq("id", id).maybeSingle();
+  if (error) throw error;
+  return data ? toConversation(data) : null;
+}
+
+/** The thread's conversation, made on first mention (two mentions at once
+ *  share one). */
+export async function openConversation(input: {
+  teamId: string;
+  channelId: string;
+  threadTs: string;
+  orgId: string;
+  startedBy: string;
+}): Promise<SlackConversation> {
+  const { error } = await db().from("slack_conversations").upsert(
+    {
+      team_id: input.teamId,
+      channel_id: input.channelId,
+      thread_ts: input.threadTs,
+      org_id: input.orgId,
+      started_by: input.startedBy,
+    },
+    { onConflict: "team_id,channel_id,thread_ts", ignoreDuplicates: true },
+  );
+  if (error) throw error;
+  const conversation = await getConversation(input.teamId, input.channelId, input.threadTs);
+  if (!conversation) throw new Error("The conversation wasn't recorded.");
+  return conversation;
+}
+
+export async function updateConversation(
+  id: string,
+  patch: Partial<{
+    state: ConversationState;
+    rounds: number;
+    proposal: AgentSpec | null;
+    proposalTs: string | null;
+    itemId: string | null;
+    workspaceId: string | null;
+  }>,
+): Promise<void> {
+  const { error } = await db()
+    .from("slack_conversations")
+    .update({
+      ...(patch.state !== undefined && { state: patch.state }),
+      ...(patch.rounds !== undefined && { rounds: patch.rounds }),
+      ...(patch.proposal !== undefined && { proposal: patch.proposal as unknown as Json }),
+      ...(patch.proposalTs !== undefined && { proposal_ts: patch.proposalTs }),
+      ...(patch.itemId !== undefined && { item_id: patch.itemId }),
+      ...(patch.workspaceId !== undefined && { workspace_id: patch.workspaceId }),
+    })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+/** The thread a work item was filed from, if it came from the agent. */
+export async function conversationForItem(itemId: string): Promise<SlackConversation | null> {
+  const { data, error } = await db().from("slack_conversations").select("*").eq("item_id", itemId).limit(1).maybeSingle();
+  if (error) throw error;
+  return data ? toConversation(data) : null;
+}
+
+// ---------------------------------------------------------------------------
+// The org's model key
+// ---------------------------------------------------------------------------
+
+/** What an org's key may spend, in USD, before OpenRouter refuses it. */
+function orgKeyLimitUsd(): number {
+  const raw = Number(optionalEnv("SLACK_AGENT_ORG_LIMIT_USD"));
+  return Number.isFinite(raw) && raw > 0 ? raw : 25;
+}
+
+/**
+ * The OpenRouter key the Slack agent's calls for an org run on, so the org
+ * pays for them: the shared API key when the server has only that, otherwise
+ * one made for the org the first time (capped at SLACK_AGENT_ORG_LIMIT_USD)
+ * and kept, as a user's is.
+ */
+export async function orgModelKey(orgId: string): Promise<string> {
+  const source = keySource();
+  if (source === null) throw new OutrunnerModelsUnavailableError();
+  if (source === "shared") return sharedApiKey() as string;
+
+  const client = db();
+  const { error: rowError } = await client
+    .from("org_model_keys")
+    .upsert({ org_id: orgId }, { onConflict: "org_id", ignoreDuplicates: true });
+  if (rowError) throw rowError;
+  return ensureUserKey(
+    {
+      async read() {
+        const { data, error } = await client
+          .from("org_model_keys")
+          .select("key_ciphertext, key_hash")
+          .eq("org_id", orgId)
+          .single();
+        if (error) throw error;
+        return { ciphertext: data.key_ciphertext, hash: data.key_hash };
+      },
+      async claim(key) {
+        const { data, error } = await client
+          .from("org_model_keys")
+          .update({ key_ciphertext: key.ciphertext, key_hash: key.hash, created_at: key.createdAt })
+          .eq("org_id", orgId)
+          .is("key_ciphertext", null)
+          .select("org_id");
+        if (error) throw error;
+        return data.length > 0;
+      },
+    },
+    {
+      open,
+      seal,
+      create: () => createUserKey(`outrunner-org-${orgId}`, orgKeyLimitUsd()),
+      disable: disableUserKey,
+      log: (message, error) => console.error(message, error),
+    },
+  );
+}

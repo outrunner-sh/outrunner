@@ -613,6 +613,7 @@ type WorkItemRow = {
   duplicate_of: string | null;
   workspace_id: string | null;
   triaged_at: string | null;
+  prompt: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -636,6 +637,42 @@ type SlackLinkRow = {
   org_id: string;
   team_name: string | null;
   slack_user_name: string | null;
+  created_at: string;
+};
+
+// supabase/migrations/20261031100000_slack_agent.sql
+type SlackInstallationRow = {
+  team_id: string;
+  team_name: string | null;
+  bot_user_id: string;
+  bot_token_ciphertext: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type SlackConversationRow = {
+  id: string;
+  team_id: string;
+  channel_id: string;
+  thread_ts: string;
+  org_id: string;
+  started_by: string | null;
+  state: "gathering" | "proposed" | "filed" | "started";
+  rounds: number;
+  proposal: Json | null;
+  proposal_ts: string | null;
+  item_id: string | null;
+  workspace_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type SlackEventSeenRow = { event_id: string; created_at: string };
+
+type OrgModelKeyRow = {
+  org_id: string;
+  key_ciphertext: string | null;
+  key_hash: string | null;
   created_at: string;
 };
 
@@ -893,6 +930,30 @@ export type Database = {
         Row: WorkItemNoteRow;
         Insert: Insert<WorkItemNoteRow, "org_id" | "item_id" | "body">;
         Update: Partial<WorkItemNoteRow>;
+        Relationships: [];
+      };
+      slack_installations: {
+        Row: SlackInstallationRow;
+        Insert: Insert<SlackInstallationRow, "team_id" | "bot_user_id" | "bot_token_ciphertext">;
+        Update: Partial<SlackInstallationRow>;
+        Relationships: [];
+      };
+      slack_conversations: {
+        Row: SlackConversationRow;
+        Insert: Insert<SlackConversationRow, "team_id" | "channel_id" | "thread_ts" | "org_id">;
+        Update: Partial<SlackConversationRow>;
+        Relationships: [];
+      };
+      slack_events_seen: {
+        Row: SlackEventSeenRow;
+        Insert: Insert<SlackEventSeenRow, "event_id">;
+        Update: Partial<SlackEventSeenRow>;
+        Relationships: [];
+      };
+      org_model_keys: {
+        Row: OrgModelKeyRow;
+        Insert: Insert<OrgModelKeyRow, "org_id">;
+        Update: Partial<OrgModelKeyRow>;
         Relationships: [];
       };
       slack_links: {

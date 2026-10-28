@@ -48,6 +48,7 @@ function toWorkItem(row: ItemRow): WorkItem {
     sourceRef: row.source_ref,
     duplicateOf: row.duplicate_of,
     workspaceId: row.workspace_id,
+    prompt: row.prompt,
     triagedAt: row.triaged_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -64,6 +65,26 @@ function toNote(row: NoteRow): WorkItemNote {
     author: row.author,
     createdAt: row.created_at,
   };
+}
+
+/** Keep the session prompt an item was filed with (the Slack agent's). */
+export async function setWorkItemPrompt(orgId: string, itemId: string, prompt: string): Promise<void> {
+  const { error } = await db().from("work_items").update({ prompt }).eq("org_id", orgId).eq("id", itemId);
+  if (error) throw error;
+}
+
+/** Open items of the org, newest first: the Slack agent checks for one that
+ *  already covers a request. */
+export async function openItemTitles(orgId: string, limit = 30): Promise<{ key: string; title: string }[]> {
+  const { data, error } = await db()
+    .from("work_items")
+    .select("number, title")
+    .eq("org_id", orgId)
+    .in("status", ["triage", "todo", "in_progress"])
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map((row) => ({ key: `OR-${row.number}`, title: row.title }));
 }
 
 /** Why a change was refused, for the route to answer with: 400 for a bad

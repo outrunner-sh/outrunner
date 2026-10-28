@@ -1,0 +1,425 @@
+/**
+ * The Slack agent at work: a turn of the conversation when someone mentions
+ * Outrunner or replies in its thread, and what its spec card's buttons do.
+ * Each runs after Slack has had its answer (Slack waits 3 seconds), so it
+ * reports what happened in the thread itself.
+ *
+ *   coordinator - this agent: asks, then proposes a spec with acceptance
+ *                 criteria and a session prompt (lib/slack/agent.ts)
+ *   worker      - a cloud session a person starts from the card
+ *                 (startServerSession), told to open a PR naming the item
+ *   validator   - the "Validate against acceptance criteria" automation on
+ *                 that PR (lib/automations/templates.ts)
+ */
+
+import { isOwner } from "@/lib/auth/allowlist";
+import { listOrgProjects } from "@/lib/db/org-access";
+import {
+  conversationForItem,
+  getConversation,
+  getConversationById,
+  getInstallation,
+  openConversation,
+  orgModelKey,
+  type SlackConversation,
+  type SlackInstallation,
+  updateConversation,
+} from "@/lib/db/slack-agent";
+import { slackLinkTarget } from "@/lib/db/slack-links";
+import {
+  addNote,
+  captureWorkItem,
+  getWorkItem,
+  linkWorkItemToSession,
+  openItemTitles,
+  resolveProject,
+  setWorkItemPrompt,
+  triageActor,
+} from "@/lib/db/work-items";
+import { optionalEnv } from "@/lib/env";
+import { ModelKeyRefusedError, OutrunnerModelsUnavailableError } from "@/lib/openrouter/keys";
+import { startServerSession } from "@/lib/session/server-session";
+import {
+  type AgentSpec,
+  filedCard,
+  parseAgentReply,
+  SPEC_ACTIONS,
+  specCard,
+  specMarkdown,
+  specSummary,
+  systemPrompt,
+  transcript,
+  workerPrompt,
+} from "@/lib/slack/agent";
+import { agentTurn } from "@/lib/slack/agent-model";
+import { signLinkToken, slackPermalink, slackToMarkdown } from "@/lib/slack/slack";
+import { postEphemeral, postMessage, threadReplies, updateMessage, userNames } from "@/lib/slack/web";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import type { TriageActor } from "@/lib/triage/access";
+import { itemUrl } from "@/lib/triage/urls";
+import { itemKey } from "@/lib/triage/work-items";
+
+/** A message event, as the events endpoint passes it on. */
+export type AgentMessage = {
+  teamId: string;
+  teamDomain?: string | null;
+  channel: string;
+  channelType?: string | null;
+  user: string;
+  text: string;
+  ts: string;
+  threadTs?: string | null;
+  /** An @mention of the bot (app_mention), rather than a reply or a DM. */
+  mention: boolean;
+};
+
+function appUrl(path: string): string {
+  const base = optionalEnv("RUNTIME_BASE_URL");
+  try {
+    return base ? new URL(path, base).toString() : path;
+  } catch {
+    return path;
+  }
+}
+
+/** The Slack user's linked account as a triager in the org their captures go
+ *  to; null when they haven't linked (or may no longer sign in). */
+async function actorFor(teamId: string, slackUserId: string): Promise<TriageActor | null> {
+  const target = await slackLinkTarget(teamId, slackUserId);
+  if (!target) return null;
+  const { data, error } = await createSupabaseAdminClient().auth.admin.getUserById(target.ownerId);
+  if (error || !data.user || !isOwner(data.user)) return null;
+  return triageActor(target.ownerId, target.orgId);
+}
+
+/** Tell one person, in the thread, to connect their account first. */
+async function askToConnect(install: SlackInstallation, message: { channel: string; user: string; threadTs: string }) {
+  const secret = optionalEnv("SLACK_SIGNING_SECRET");
+  if (!secret) return;
+  const link = appUrl(
+    `/slack/link?t=${signLinkToken({ teamId: install.teamId, teamName: install.teamName, userId: message.user, userName: null }, secret)}`,
+  );
+  await postEphemeral(install.botToken, {
+    ...message,
+    text: `Connect Slack to your Outrunner account first: <${link}|Connect Slack to Outrunner> (valid for 10 minutes). Then mention me again.`,
+  });
+}
+
+/**
+ * A message for the agent: an @mention starts or continues its thread; a
+ * reply in a thread it's in, or a DM, continues it. Once the thread's work is
+ * filed, what's said there becomes notes on the item.
+ */
+export async function handleAgentMessage(message: AgentMessage): Promise<void> {
+  const install = await getInstallation(message.teamId);
+  if (!install) {
+    console.error(`Slack agent: no bot token for team ${message.teamId}; install the app again through its install link.`);
+    return;
+  }
+  if (message.user === install.botUserId) return;
+  // A channel message mentioning the bot comes as an app_mention too: that
+  // one answers.
+  if (!message.mention && message.channelType !== "im" && message.text.includes(`<@${install.botUserId}`)) return;
+  const threadTs = message.threadTs ?? message.ts;
+  const reply = (text: string) => postMessage(install.botToken, { channel: message.channel, threadTs, text });
+
+  try {
+    let conversation = await getConversation(message.teamId, message.channel, threadTs);
+    if (!conversation) {
+      // Only a mention, or a DM, starts one: other threads aren't the agent's.
+      if (!message.mention && message.channelType !== "im") return;
+      const starter = await actorFor(message.teamId, message.user);
+      if (!starter) {
+        await askToConnect(install, { channel: message.channel, user: message.user, threadTs });
+        return;
+      }
+      conversation = await openConversation({
+        teamId: message.teamId,
+        channelId: message.channel,
+        threadTs,
+        orgId: starter.orgId,
+        startedBy: starter.userId,
+      });
+    }
+
+    if (conversation.state === "filed" || conversation.state === "started") {
+      await noteOnItem(conversation, message);
+      if (message.mention) {
+        const item = conversation.itemId ? await itemOf(conversation) : null;
+        await reply(item ? `This is filed as <${item.url}|${item.key}>; I've added that as a note.` : "This thread's work is filed already.");
+      }
+      return;
+    }
+
+    await runTurn(install, conversation, message.channel, threadTs);
+  } catch (error) {
+    console.error("Slack agent: the turn failed", error);
+    await reply("Sorry, something went wrong on my side. Mention me again to retry.").catch(() => undefined);
+  }
+}
+
+async function itemOf(conversation: SlackConversation): Promise<{ key: string; url: string } | null> {
+  if (!conversation.itemId || !conversation.startedBy) return null;
+  const actor = await triageActor(conversation.startedBy, conversation.orgId);
+  const item = actor ? await getWorkItem(actor, conversation.itemId) : null;
+  return item ? { key: itemKey(item), url: itemUrl(item) } : null;
+}
+
+/** A message in a filed thread: a note on its item, by whoever said it. */
+async function noteOnItem(conversation: SlackConversation, message: AgentMessage) {
+  if (!conversation.itemId || !conversation.startedBy) return;
+  const actor = (await actorFor(message.teamId, message.user)) ?? (await triageActor(conversation.startedBy, conversation.orgId));
+  if (!actor || actor.orgId !== conversation.orgId) return;
+  const item = await getWorkItem(actor, conversation.itemId);
+  const body = slackToMarkdown(message.text).trim();
+  if (!item || !body) return;
+  const names = await getInstallation(message.teamId).then((i) => (i ? userNames(i.botToken, [message.user]) : new Map()));
+  await addNote(actor, item, {
+    body,
+    source: "slack",
+    sourceUrl: slackPermalink({
+      teamDomain: message.teamDomain ?? null,
+      channelId: message.channel,
+      ts: message.ts,
+      threadTs: conversation.threadTs,
+    }),
+    author: names.get(message.user) ?? null,
+  });
+}
+
+/** One turn: read the thread, ask the model, ask or propose in the thread. */
+async function runTurn(install: SlackInstallation, conversation: SlackConversation, channel: string, threadTs: string) {
+  const reply = (text: string) => postMessage(install.botToken, { channel, threadTs, text });
+  const starter = conversation.startedBy ? await triageActor(conversation.startedBy, conversation.orgId) : null;
+  if (!starter) {
+    await reply("Whoever started this thread is no longer in the Outrunner org, so I can't file from it.");
+    return;
+  }
+
+  let key: string;
+  try {
+    key = await orgModelKey(conversation.orgId);
+  } catch (error) {
+    if (error instanceof OutrunnerModelsUnavailableError) {
+      await reply("Outrunner's models aren't set up on this deployment, so I can't think this through yet.");
+      return;
+    }
+    if (error instanceof ModelKeyRefusedError) {
+      await reply("This org's allowance for me is used up. An admin can raise it.");
+      return;
+    }
+    throw error;
+  }
+
+  const [messages, projects, openItems] = await Promise.all([
+    threadReplies(install.botToken, channel, threadTs),
+    listOrgProjects(conversation.orgId),
+    openItemTitles(conversation.orgId),
+  ]);
+  // Only the repositories the thread's starter may see are offered.
+  const repos = projects.filter((p) => starter.levels.has(p.id)).map((p) => ({ fullName: p.fullName, description: null }));
+  const names = await userNames(
+    install.botToken,
+    messages.flatMap((m) => (m.user && m.user !== install.botUserId ? [m.user] : [])),
+  );
+  const chat = transcript(
+    messages.map((m) => ({ user: m.user, botId: m.bot_id, text: m.text, subtype: m.subtype })),
+    { userId: install.botUserId },
+    names,
+  );
+  if (chat.length === 0) return;
+
+  const context = { repos, openItems, rounds: conversation.rounds };
+  const repoNames = repos.map((r) => r.fullName);
+  const call = [{ role: "system" as const, content: systemPrompt(context) }, ...chat];
+  let answer = parseAgentReply(await agentTurn(key, call), repoNames);
+  // One more try on an answer that doesn't hold together.
+  if (!answer) answer = parseAgentReply(await agentTurn(key, call), repoNames);
+  if (!answer) {
+    await reply("I couldn't make sense of that one. Could you say it another way?");
+    return;
+  }
+
+  if (answer.action === "ask") {
+    await reply(answer.message);
+    await updateConversation(conversation.id, { state: "gathering", rounds: conversation.rounds + 1 });
+    return;
+  }
+  const ts = await postMessage(install.botToken, {
+    channel,
+    threadTs,
+    text: specSummary(answer.spec),
+    blocks: [{ type: "section", text: { type: "mrkdwn", text: answer.message } }, ...specCard(answer.spec, conversation.id)],
+  });
+  await updateConversation(conversation.id, { state: "proposed", proposal: answer.spec, proposalTs: ts });
+}
+
+/** A click on the spec card. */
+export type CardAction = {
+  actionId: string;
+  conversationId: string;
+  teamId: string;
+  teamDomain?: string | null;
+  user: string;
+  userName?: string | null;
+};
+
+export async function handleCardAction(action: CardAction): Promise<void> {
+  const conversation = await getConversationById(action.conversationId);
+  if (!conversation || conversation.teamId !== action.teamId) return;
+  const install = await getInstallation(action.teamId);
+  if (!install) return;
+  const where = { channel: conversation.channelId, threadTs: conversation.threadTs };
+  const reply = (text: string) => postMessage(install.botToken, { ...where, text });
+  const tellClicker = (text: string) => postEphemeral(install.botToken, { ...where, user: action.user, text });
+
+  try {
+    if (action.actionId === SPEC_ACTIONS.refine) {
+      if (conversation.state !== "proposed") return;
+      await updateConversation(conversation.id, { state: "gathering" });
+      await reply("Sure. What should change? Mention me with it.");
+      return;
+    }
+    const start = action.actionId === SPEC_ACTIONS.fileStart;
+    if (action.actionId !== SPEC_ACTIONS.file && !start) return;
+    if (conversation.state !== "proposed" || !conversation.proposal) {
+      await tellClicker("That proposal is filed already, or was replaced by a newer one.");
+      return;
+    }
+    const actor = await actorFor(action.teamId, action.user);
+    if (!actor) {
+      await askToConnect(install, { channel: conversation.channelId, user: action.user, threadTs: conversation.threadTs });
+      return;
+    }
+    if (actor.orgId !== conversation.orgId) {
+      await tellClicker("Your Slack account is connected to a different Outrunner org than this thread's.");
+      return;
+    }
+    // Claimed before anything is filed: a second click finds it taken.
+    await updateConversation(conversation.id, { state: "filed" });
+    const filed = await fileSpec(actor, conversation, conversation.proposal, action);
+    const by = action.userName ? `@${action.userName}` : `<@${action.user}>`;
+    if (conversation.proposalTs) {
+      await updateMessage(install.botToken, {
+        channel: conversation.channelId,
+        ts: conversation.proposalTs,
+        text: `Filed as ${filed.key}`,
+        blocks: filedCard(conversation.proposal, { key: filed.key, url: filed.url, by, started: start && !!filed.projectId }),
+      }).catch((error: unknown) => console.error("Slack agent: couldn't update the card", error));
+    }
+    if (!start) {
+      await reply(`Filed as <${filed.url}|${filed.key}>. Replies here are added to it as notes.`);
+      return;
+    }
+    if (!filed.projectId) {
+      await reply(
+        `Filed as <${filed.url}|${filed.key}>, but you can't start sessions in ${conversation.proposal.repo ?? "its repository"}, so it waits in triage.`,
+      );
+      return;
+    }
+    await startWorker(actor, conversation, filed, reply);
+  } catch (error) {
+    console.error("Slack agent: the card action failed", error);
+    await reply("Sorry, that didn't go through. Try the button again.").catch(() => undefined);
+  }
+}
+
+type Filed = { id: string; key: string; url: string; projectId: string | null; prompt: string; title: string };
+
+/** The proposal as a work item in triage, with its worker prompt kept on it. */
+async function fileSpec(actor: TriageActor, conversation: SlackConversation, spec: AgentSpec, action: CardAction): Promise<Filed> {
+  const projectId = spec.repo ? await resolveProject(actor, spec.repo) : null;
+  const result = await captureWorkItem(actor, {
+    title: spec.title,
+    body: specMarkdown(spec),
+    projectId,
+    source: "slack",
+    sourceUrl: slackPermalink({ teamDomain: action.teamDomain ?? null, channelId: conversation.channelId, ts: conversation.threadTs }),
+    // The thread's ref: a later shortcut capture from this thread is a note.
+    sourceRef: `slack:${conversation.teamId}/${conversation.channelId}/${conversation.threadTs}`,
+  });
+  const item = result.item;
+  const key = itemKey(item);
+  const url = itemUrl(item);
+  const prompt = workerPrompt(spec, { key, url });
+  await setWorkItemPrompt(actor.orgId, item.id, prompt);
+  await updateConversation(conversation.id, { state: "filed", itemId: item.id });
+  return { id: item.id, key, url, projectId: item.projectId ?? projectId, prompt, title: spec.title };
+}
+
+/** The worker: a cloud session, as the person who clicked, on the item's
+ *  prompt; the thread hears when it's made and when it's ready. */
+async function startWorker(
+  actor: TriageActor,
+  conversation: SlackConversation,
+  filed: Filed,
+  reply: (text: string) => Promise<string>,
+) {
+  if (!filed.projectId) return;
+  const result = await startServerSession({
+    userId: actor.userId,
+    projectId: filed.projectId,
+    title: filed.title,
+    prompt: filed.prompt,
+    onCreated: async (workspaceId) => {
+      await linkWorkItemToSession(actor, filed.id, { workspaceId, projectId: filed.projectId as string });
+      await updateConversation(conversation.id, { state: "started", workspaceId });
+      await reply(`Filed as <${filed.url}|${filed.key}> and starting a session: <${appUrl(`/workspaces/${workspaceId}`)}|open it>.`);
+    },
+  });
+  if (result.status === "ready") {
+    await reply(`The session for ${filed.key} is working on it. I'll post the pull request here when it opens.`);
+  } else {
+    await reply(`The session for ${filed.key} couldn't start: ${result.errorMessage ?? "unknown error"}. It's still in triage.`);
+  }
+}
+
+/**
+ * A pull request opened from the branch of a session that works on an item
+ * the agent filed: posted in that item's thread, where the validator's
+ * verdict will follow on the PR.
+ */
+export async function announcePullRequest(pr: {
+  repoFullName: string;
+  headRef: string;
+  number: number;
+  url: string;
+  title: string;
+}): Promise<void> {
+  const db = createSupabaseAdminClient();
+  const { data: projects, error: projectsError } = await db
+    .from("projects")
+    .select("id")
+    .ilike("full_name", pr.repoFullName.replace(/[\\%_]/g, "\\$&"));
+  if (projectsError) throw projectsError;
+  if (!projects?.length) return;
+  const { data: sessions, error: sessionsError } = await db
+    .from("workspaces")
+    .select("id")
+    .eq("branch", pr.headRef)
+    .in(
+      "project_id",
+      projects.map((p) => p.id),
+    );
+  if (sessionsError) throw sessionsError;
+  if (!sessions?.length) return;
+  const { data: items, error: itemsError } = await db
+    .from("work_items")
+    .select("id, number")
+    .in(
+      "workspace_id",
+      sessions.map((s) => s.id),
+    );
+  if (itemsError) throw itemsError;
+  for (const item of items ?? []) {
+    const conversation = await conversationForItem(item.id);
+    if (!conversation) continue;
+    const install = await getInstallation(conversation.teamId);
+    if (!install) continue;
+    await postMessage(install.botToken, {
+      channel: conversation.channelId,
+      threadTs: conversation.threadTs,
+      text: `Pull request for OR-${item.number}: <${pr.url}|#${pr.number} ${pr.title.replace(/[<>|]/g, "")}>. A validator checks it against the acceptance criteria if the repository has the validation automation on.`,
+    });
+  }
+}

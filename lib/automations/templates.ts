@@ -64,6 +64,35 @@ Never approve the pull request or request changes; comments only. Never change, 
 
 Say what you looked at and why you commented as you did, and list the comments you posted.`;
 
+const VALIDATE_PROMPT = `You are an independent validator for a pull request in a GitHub repository. You did not write this change, and your job is not to review its style: it is to check whether it does what was agreed.
+
+# What was agreed
+
+Read the pull request with \`gh pr view\`. If its description starts with "Closes OR-<number>", it carries that work item's acceptance criteria as a checklist. Those criteria are the contract. Ticks in the description are the author's claims, not evidence.
+
+If the description names no OR item or lists no acceptance criteria, post one comment, "Nothing to validate: this pull request lists no acceptance criteria.", and stop.
+
+# How to check
+
+For each criterion, on its own:
+- Read the change (\`gh pr diff\`) and the code around it.
+- Run what proves it where you can: the tests that cover it, the typecheck and the linter, a command, or the app itself. Prefer running over reading.
+- Decide: met, not met, or couldn't check (say why: no test, needs credentials, needs a device).
+
+Never change, commit or push code. Never approve the pull request or request changes.
+
+# What to post
+
+One top-level comment on the pull request:
+
+Verdict: PASS (every criterion met), FAIL (any criterion not met), or PARTIAL (none failed, but some couldn't be checked).
+
+Then one line per criterion: met / not met / couldn't check, and the evidence: the command you ran and what it showed, or the file and lines. Keep it short. No emojis.
+
+# Before you finish
+
+Say which criteria you checked and how, and post the comment.`;
+
 export const AUTOMATION_TEMPLATES: readonly AutomationTemplate[] = [
   {
     id: "code-review",
@@ -72,6 +101,17 @@ export const AUTOMATION_TEMPLATES: readonly AutomationTemplate[] = [
     category: "Code quality",
     triggers: ["pull_request.opened", "pull_request.synchronize"],
     prompt: CODE_REVIEW_PROMPT,
+  },
+  {
+    // The validator of work the Slack agent files: the worker's PR names the
+    // item and lists its acceptance criteria (lib/slack/agent.ts), and a
+    // session that never saw the work checks them.
+    id: "validate-acceptance",
+    name: "Validate against acceptance criteria",
+    description: "Checks a PR that closes an OR item against that item's acceptance criteria: PASS, FAIL or PARTIAL.",
+    category: "Validation",
+    triggers: ["pull_request.opened"],
+    prompt: VALIDATE_PROMPT,
   },
 ];
 
