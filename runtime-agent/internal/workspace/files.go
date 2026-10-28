@@ -31,12 +31,20 @@ const (
 var ErrNoFile = errors.New("file not found in this workspace")
 
 // Files lists the worktree's files, tracked and untracked, without the ignored
-// ones, sorted; truncated says the list was cut at maxListedFiles.
+// ones, sorted; truncated says the list was cut at maxListedFiles. A folder of
+// checkouts lists each one's, its paths under its folder ("api/src/x.ts"), as
+// Changes does.
 func (s *Service) Files(ctx context.Context, workspaceID string) ([]string, bool, error) {
 	worktree := s.worktreePath(workspaceID)
-	files, err := s.gitFiles(ctx, worktree)
+	f, ok := s.getFacts(workspaceID)
+	var files []string
+	var err error
+	if len(f.Checkouts) > 0 {
+		files, err = s.checkoutFiles(ctx, worktree, f.Checkouts)
+	} else {
+		files, err = s.gitFiles(ctx, worktree)
+	}
 	if err != nil {
-		f, ok := s.getFacts(workspaceID)
 		if !ok || !f.InPlace {
 			return nil, false, err
 		}
@@ -50,6 +58,22 @@ func (s *Service) Files(ctx context.Context, workspaceID string) ([]string, bool
 		files = files[:maxListedFiles]
 	}
 	return files, truncated, nil
+}
+
+// checkoutFiles lists each checkout of a session's folder under its name.
+func (s *Service) checkoutFiles(ctx context.Context, folder string, checkouts []Checkout) ([]string, error) {
+	files := []string{}
+	for _, c := range checkouts {
+		listed, err := s.gitFiles(ctx, filepath.Join(folder, c.Name))
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range listed {
+			files = append(files, c.Name+"/"+path)
+		}
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 // gitFiles is git's own listing of a worktree, ignored files left out.

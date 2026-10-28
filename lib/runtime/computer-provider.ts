@@ -461,9 +461,9 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
   }
 
   /** Every file in an interactive worktree, for the Files panel. */
-  async listWorkspaceFiles(sandboxId: string, worktreePath: string): Promise<WorktreeFiles> {
+  async listWorkspaceFiles(sandboxId: string, worktreePath: string, checkouts?: string[]): Promise<WorktreeFiles> {
     const box = await this.backend.get(sandboxId);
-    return listWorktreeFiles(box.gitExec, { worktree: worktreePath });
+    return listWorktreeFiles(box.gitExec, { worktree: worktreePath, checkouts });
   }
 
   /** One file of an interactive worktree, bounded, for the Files panel. */

@@ -290,6 +290,26 @@ test("the Files panel lists a worktree's files and reads only those inside it", 
   assert.deepEqual(long, { content: "✓✓", binary: false, truncated: true, size: 30 });
 });
 
+test("the Files panel lists a folder of checkouts under each one's folder", async (t) => {
+  const folder = await mkdtemp(join(tmpdir(), "outrunner-checkouts-"));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  for (const name of ["web", "api"]) {
+    const dir = join(folder, name);
+    await mkdir(dir, { recursive: true });
+    await sh(dir, "init", "--quiet", "-b", "main");
+    await writeFile(join(dir, "README.md"), `${name}\n`);
+  }
+  await writeFile(join(folder, "api", "new.go"), "package api\n");
+
+  assert.deepEqual(await listWorktreeFiles(realGit, { worktree: folder, checkouts: ["web", "api"] }), {
+    files: ["api/README.md", "api/new.go", "web/README.md"],
+    truncated: false,
+  });
+  // The folder itself is no repository: listed as one, it fails.
+  await assert.rejects(listWorktreeFiles(realGit, { worktree: folder }));
+  assert.equal((await readWorktreeFile(realGit, { worktree: folder, path: "api/new.go" })).content, "package api\n");
+});
+
 test("fileContent reads bytes that aren't UTF-8 as binary", () => {
   assert.equal(fileContent(Buffer.from([0xff, 0xfe, 0x61]).toString("utf8"), 3).binary, true);
   assert.equal(fileContent("plain\n", 6).binary, false);

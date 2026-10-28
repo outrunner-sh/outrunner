@@ -234,6 +234,21 @@ export type ChangesResponse = z.infer<typeof ChangesResponse>;
 /** One changed file's bounded diff (GET /workspaces/{id}/changes?path=). */
 export const ChangedFileDiffResponse = z.object({ diff: z.string() });
 
+/** Every file in a session's worktree, for the Files panel (GET
+ *  /workspaces/{id}/files): the shape /api/workspaces/[id]/files answers in. */
+export const FilesResponse = z.object({ files: z.array(z.string()), truncated: z.boolean() });
+export type FilesResponse = z.infer<typeof FilesResponse>;
+
+/** One worktree file's bounded text, or that it is binary (GET
+ *  /workspaces/{id}/files?path=). */
+export const FileContentResponse = z.object({
+  content: z.string(),
+  binary: z.boolean(),
+  truncated: z.boolean(),
+  size: z.number().int(),
+});
+export type FileContentResponse = z.infer<typeof FileContentResponse>;
+
 /** The agent restores a session onto its model (RestoreWorkspaceRequest's
  *  `model`); an older one ignores it, and relaunches on Claude's default. */
 export const AGENT_FEATURE_RESTORE_MODEL = "restore-model";

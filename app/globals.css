@@ -314,7 +314,7 @@
 .studio-files-icon:not([class*="text-"]) { color: rgba(255,255,255,.5); }
 .studio-files-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--studio-green); }
 .studio-code { display: flex; min-width: max-content; padding: 8px 0 16px; font: 12px/1.6 var(--font-geist-mono); }
-.studio-code pre { margin: 0; font: inherit; white-space: pre; tab-size: 2; }
+.studio-code pre, .studio-code code { margin: 0; font: inherit; white-space: pre; tab-size: 2; }
 .studio-code-gutter { position: sticky; left: 0; flex-shrink: 0; padding: 0 12px 0 14px; color: rgba(255,255,255,.28); background: var(--studio-bg); text-align: right; user-select: none; }
 .studio-code-text { padding-right: 16px; color: rgba(255,255,255,.88); }
 

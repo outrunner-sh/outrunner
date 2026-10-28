@@ -341,6 +341,24 @@ test("the change set and a file's diff are read from the box's agent", async () 
   ]);
 });
 
+test("the worktree's files and one file's text are read from the box's agent", async () => {
+  const asked: string[] = [];
+  const fakeFetch = (async (url: string) => {
+    asked.push(url);
+    const body = url.includes("?path=")
+      ? { content: "hi\n", binary: false, truncated: false, size: 3 }
+      : { files: ["api/a b.ts", "web/README.md"], truncated: false };
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  assert.deepEqual(await client.listFiles(identity), { files: ["api/a b.ts", "web/README.md"], truncated: false });
+  assert.deepEqual(await client.readFile(identity, "api/a b.ts"), { content: "hi\n", binary: false, truncated: false, size: 3 });
+  assert.deepEqual(asked, [
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/files",
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/files?path=api%2Fa%20b.ts",
+  ]);
+});
+
 // A box no session has yet (a ready box being warmed) is asked box-wide: the
 // listing id makes a token; an empty one doesn't, and every warm used to fail.
 test("a box-wide health check of a ready box mints a token for the listing id", async () => {

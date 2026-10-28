@@ -499,18 +499,31 @@ const MAX_LISTED_FILES = 25_000;
 /** Every file in a worktree for the Files panel: tracked and untracked, not
  * the ignored ones nor those deleted from disk, sorted. Kept in step with the
  * agent's Files (runtime-agent/internal/workspace/files.go), which serves a
- * local session. */
+ * local session. A folder of `checkouts` lists each one's, its paths under its
+ * folder ("api/src/x.ts"). */
 export async function listWorktreeFiles(
   exec: GitExec,
-  input: { worktree: string },
+  input: { worktree: string; checkouts?: string[] },
 ): Promise<WorktreeFiles> {
+  const listings = input.checkouts?.length
+    ? await Promise.all(
+        input.checkouts.map(async (name) =>
+          (await gitFiles(exec, `${input.worktree}/${name}`)).map((path) => `${name}/${path}`),
+        ),
+      )
+    : [await gitFiles(exec, input.worktree)];
+  const files = listings.flat().sort();
+  return { files: files.slice(0, MAX_LISTED_FILES), truncated: files.length > MAX_LISTED_FILES };
+}
+
+/** One worktree's files as git lists them, less those deleted from disk. */
+async function gitFiles(exec: GitExec, worktree: string): Promise<string[]> {
   const [listed, deleted] = await Promise.all([
-    git(exec, ["-C", input.worktree, "ls-files", "--cached", "--others", "--exclude-standard", "-z"]),
-    git(exec, ["-C", input.worktree, "ls-files", "--deleted", "-z"]),
+    git(exec, ["-C", worktree, "ls-files", "--cached", "--others", "--exclude-standard", "-z"]),
+    git(exec, ["-C", worktree, "ls-files", "--deleted", "-z"]),
   ]);
   const gone = new Set(deleted.split("\0"));
-  const files = [...new Set(listed.split("\0"))].filter((path) => path && !gone.has(path)).sort();
-  return { files: files.slice(0, MAX_LISTED_FILES), truncated: files.length > MAX_LISTED_FILES };
+  return [...new Set(listed.split("\0"))].filter((path) => path && !gone.has(path));
 }
 
 /** Reads one file of a worktree, its size first: a link is followed only

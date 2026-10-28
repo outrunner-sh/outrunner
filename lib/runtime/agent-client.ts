@@ -20,6 +20,8 @@ import {
   CreateWorkspaceRequest,
   EditorResponse,
   ErrorResponse,
+  FileContentResponse,
+  FilesResponse,
   LISTING_WORKSPACE_ID,
   PortsResponse,
   RestoreWorkspaceRequest,
@@ -169,6 +171,19 @@ export class AgentClient {
   async changedFileDiff(identity: WorkspaceIdentity, path: string): Promise<string> {
     const query = `?path=${encodeURIComponent(path)}`;
     return ChangedFileDiffResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/changes${query}`, identity)).diff;
+  }
+
+  /** Every file in the session's worktree, for the Files panel. An agent from
+   *  before this answers 404 with no error envelope. */
+  async listFiles(identity: WorkspaceIdentity): Promise<FilesResponse> {
+    return FilesResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/files`, identity));
+  }
+
+  /** One worktree file's bounded text: 400 INVALID_REQUEST for a path that
+   *  could leave the worktree, 404 NOT_FOUND for one that isn't a file in it. */
+  async readFile(identity: WorkspaceIdentity, path: string): Promise<FileContentResponse> {
+    const query = `?path=${encodeURIComponent(path)}`;
+    return FileContentResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/files${query}`, identity));
   }
 
   /** Stop the turn the workspace's session is running, as Escape does in its

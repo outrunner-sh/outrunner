@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,18 @@ func TestASessionOfSeveralRepositories(t *testing.T) {
 	if _, err := s.FileDiff(ctx, "ws1", "README"); !errors.Is(err, ErrNotChanged) {
 		t.Errorf("a path without its folder = %v, want ErrNotChanged", err)
 	}
+	// The Files panel lists each checkout's files under its folder, and reads them.
+	_ = os.MkdirAll(filepath.Join(folder, "web", "node_modules"), 0o755)
+	_ = os.WriteFile(filepath.Join(folder, "web", "node_modules", "dep.js"), []byte("x\n"), 0o644)
+	listed, truncated, err := s.Files(ctx, "ws1")
+	wantFiles := []string{"api/.gitignore", "api/README", "api/new.go", "web/.gitignore", "web/README"}
+	if err != nil || truncated || !reflect.DeepEqual(listed, wantFiles) {
+		t.Errorf("Files = %v, %v, %v; want %v", listed, truncated, err, wantFiles)
+	}
+	if file, err := s.ReadFile(ctx, "ws1", "api/new.go"); err != nil || file.Content != "package api\n" {
+		t.Errorf("ReadFile(api/new.go) = %+v, %v", file, err)
+	}
+
 	f, _ := s.getFacts("ws1")
 	if changed, touched, _ := gitStats(ctx, folder, checkoutDirs(folder, f.Checkouts)); changed != 2 || len(touched) != 2 {
 		t.Errorf("summary: %d changed, touched %v", changed, touched)
