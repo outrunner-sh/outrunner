@@ -86,6 +86,7 @@ export function WorkspaceEnvironment({
       {view === "changes" && (
         <div className="studio-env-body">
           <WorkspaceChanges
+            workspaceId={workspace.id}
             changes={changes}
             active={isReady}
             baseBranch={summary.baseBranch}

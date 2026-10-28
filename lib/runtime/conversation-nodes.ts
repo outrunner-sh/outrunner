@@ -1,5 +1,6 @@
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 import { isInterruption } from "@/lib/runtime/conversation-events";
+import { parseCommentQuotes } from "@/lib/session/diff-comments";
 import { isEcho } from "@/lib/session/optimistic-echo";
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
@@ -129,13 +130,21 @@ export type ConversationTurn = { key: string; prompt: string; reply: string | nu
 export function conversationTurns(nodes: ConversationNode[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   for (const node of nodes) {
-    if (node.kind === "prompt") turns.push({ key: node.key, prompt: plainText(node.text), reply: null });
+    if (node.kind === "prompt") turns.push({ key: node.key, prompt: promptPreview(node.text), reply: null });
     else if (node.kind === "prose" && turns.length > 0) {
       const reply = plainText(node.text);
       if (reply) turns[turns.length - 1].reply = reply;
     }
   }
   return turns;
+}
+
+/** A prompt as the turn rail names it: its words, without the comments on
+ *  the diff it carried; one of comments alone says so. */
+function promptPreview(text: string): string {
+  const { text: words, quotes } = parseCommentQuotes(text);
+  if (quotes.length === 0 || words.trim()) return plainText(words);
+  return quotes.length === 1 ? "1 comment on the diff" : `${quotes.length} comments on the diff`;
 }
 
 /**
