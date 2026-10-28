@@ -2178,6 +2178,12 @@ begin
   if (select count(*) from automation_runs where automation_id = a and status = 'queued') <> 1 then
     raise exception 'FAIL: a debounce window kept two waiting runs';
   end if;
+  -- The first trigger's key, taken in, still records nothing: started and
+  -- all, a redelivery of it isn't a run of its own.
+  update automation_runs set status = 'started' where id = waiting;
+  select count(*) into n from record_automation_runs(jsonb_build_array(
+    jsonb_build_object('automation_id', a, 'project_id', p.id, 'trigger', 'webhook', 'dedupe_key', 'webhook:5', 'subject', 'webhook')));
+  if n <> 0 then raise exception 'FAIL: a key a debounce window took in was recorded again'; end if;
   delete from automations where id = a;
   raise notice 'ok: an automation''s limits and debounce window hold as its runs are recorded';
 end $$;

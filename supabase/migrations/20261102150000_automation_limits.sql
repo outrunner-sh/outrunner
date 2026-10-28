@@ -15,9 +15,11 @@
 --   on the same thing (`subject`: a pull request, an issue, the schedule,
 --   the webhook) are one run, of the last of them, once the window passes
 --   with no other. It waits `queued`, until `not_before`; `combined` says
---   how many it took in.
+--   how many it took in, and `absorbed_keys` keeps their keys, which record
+--   nothing again.
 -- - `session_mode`: 'new', a session each run as before, or 'reuse', the
---   automation's last session on the repository, given the run's prompt.
+--   automation's last session on the same thing (`subject`) in the
+--   repository, given the run's prompt.
 --
 -- record_automation_runs records a batch of runs in one transaction, each
 -- automation locked while it's counted, so two events at once never run it
@@ -55,6 +57,10 @@ alter table automation_runs add column if not exists issue_number integer check 
 alter table automation_runs add column if not exists subject text;
 alter table automation_runs add column if not exists not_before timestamptz;
 alter table automation_runs add column if not exists combined integer not null default 1 check (combined >= 1);
+-- The keys of the triggers a waiting run took in, beside its own (the
+-- last's): each still records nothing again, a redelivery of an earlier one
+-- included.
+alter table automation_runs add column if not exists absorbed_keys text[] not null default '{}';
 
 alter table automation_runs drop constraint if exists automation_runs_trigger_check;
 alter table automation_runs add constraint automation_runs_trigger_check
@@ -110,9 +116,11 @@ begin
     for item in select r from jsonb_array_elements(runs) r where (r->>'automation_id')::uuid = a.id loop
       project := (item->>'project_id')::uuid;
       key := item->>'dedupe_key';
-      -- Recorded already (a redelivery, a tick sent twice): nothing.
+      -- Recorded already (a redelivery, a tick sent twice), as a run's own
+      -- key or one it took in: nothing.
       if exists (
-        select 1 from automation_runs x where x.automation_id = a.id and x.project_id = project and x.dedupe_key = key
+        select 1 from automation_runs x
+        where x.automation_id = a.id and x.project_id = project and (x.dedupe_key = key or key = any (x.absorbed_keys))
       ) then
         continue;
       end if;
@@ -126,6 +134,7 @@ begin
         if found then
           update automation_runs set
             trigger = item->>'trigger',
+            absorbed_keys = absorbed_keys || dedupe_key,
             dedupe_key = key,
             context = item->'context',
             pr_number = (item->>'pr_number')::integer,
@@ -147,7 +156,8 @@ begin
         select count(distinct x.dedupe_key) into fired from automation_runs x
         where x.automation_id = a.id and x.created_at >= a.runs_since;
         if fired >= a.max_runs and not exists (
-          select 1 from automation_runs x where x.automation_id = a.id and x.dedupe_key = key and x.created_at >= a.runs_since
+          select 1 from automation_runs x
+          where x.automation_id = a.id and (x.dedupe_key = key or key = any (x.absorbed_keys)) and x.created_at >= a.runs_since
         ) then
           continue;
         end if;

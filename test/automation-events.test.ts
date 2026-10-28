@@ -251,8 +251,12 @@ test("a run in a debounce window starts once it passes, as the last trigger it t
 test("reusing its session, a run is sent to the automation's last one; one that can't be woken is replaced", async () => {
   const reuse = { ...candidate, sessionMode: "reuse" as const };
   const sent: unknown[] = [];
+  const asked: unknown[] = [];
   const { deps, started, settled, archived } = startDeps({
-    reusableSession: async () => "w-last",
+    reusableSession: async (run) => {
+      asked.push(run);
+      return "w-last";
+    },
     continueSession: async (userId, workspaceId, prompt) => {
       sent.push([userId, workspaceId, prompt]);
       return true;
@@ -267,6 +271,24 @@ test("reusing its session, a run is sent to the automation's last one; one that 
   assert.match(prompt, /^This session ran this automation before.*gh pr checkout 7/);
   assert.match(prompt, /Pull request: neevai-labs\/outrunner#7/);
   assert.deepEqual(archived, []);
+  // Its session on this pull request, not another's that may be mid-run.
+  assert.deepEqual(asked, [{ runId: "r1", automationId: "a1", projectId: "p1", subject: "pr:7" }]);
+  // A merge's run is told to start from the base, not the pull request's
+  // head (which may be gone).
+  const merged = readPullRequestEvent(prPayload("closed", {}, { merged: true })) as PullRequestEvent;
+  const toBase: string[] = [];
+  await startRun(
+    { runId: "r3", candidate: reuse, event: merged },
+    startDeps({
+      reusableSession: async () => "w-last",
+      continueSession: async (_u, _w, prompt) => {
+        toBase.push(prompt);
+        return true;
+      },
+    }).deps,
+  );
+  assert.match(toBase[0], /^This session ran this automation before.*first, check out main and pull it\./);
+  assert.doesNotMatch(toBase[0], /gh pr checkout/);
   // None to reuse, or it won't wake: a new one, and nothing archived (the
   // next run reuses it).
   const fresh = startDeps({ reusableSession: async () => "w-gone", continueSession: async () => false });
@@ -303,7 +325,8 @@ test("the tick starts runs whose window passed, and says why one can't", async (
       ],
       claimedCandidates: async () => [candidate],
       settleRun: async (runId, outcome) => {
-        settled.push([runId, outcome.status]);
+        assert.equal(outcome.status, "refused");
+        settled.push([runId, outcome.reason]);
       },
     },
     "outrunner-connector",
@@ -313,8 +336,8 @@ test("the tick starts runs whose window passed, and says why one can't", async (
     [["r1", 2, false, "outrunner-connector"]],
   );
   assert.deepEqual(settled, [
-    ["r2", "refused"],
-    ["r3", "refused"],
+    ["r2", "The automation doesn't run on this repository any more."],
+    ["r3", "Its event couldn't be read back to start it."],
   ]);
 });
 
@@ -327,7 +350,7 @@ function target(over: Partial<RerunTarget>): RerunTarget {
     headSha: SHA,
     prNumber: 7,
     enabled: true,
-    limited: false,
+    atLimit: false,
     candidate,
     repoFullName: REPO,
     installationId: 42,
@@ -348,8 +371,9 @@ test("a failed run of a merge starts again as itself; one of an automation done 
   const merged = await rerunRun("o1", "r1", deps(target({})));
   assert.ok(merged.ok);
   assert.equal(merged.run.event.trigger, "pull_request.merged");
-  // Off because it ran its count: the failed one is one of them.
-  assert.ok((await rerunRun("o1", "r1", deps(target({ enabled: false, limited: true })))).ok);
+  // Off because it ran its count: the failed one is one of them. Off by
+  // hand before it, it doesn't run.
+  assert.ok((await rerunRun("o1", "r1", deps(target({ enabled: false, atLimit: true })))).ok);
   const off = await rerunRun("o1", "r1", deps(target({ enabled: false })));
   assert.equal(off.ok, false);
 });

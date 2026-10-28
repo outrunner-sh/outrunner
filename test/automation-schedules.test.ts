@@ -350,7 +350,7 @@ test("a scheduled run that failed starts again as itself, told the same time", a
     headSha: null,
     prNumber: null,
     enabled: true,
-    limited: false,
+    atLimit: false,
     candidate,
     repoFullName: "acme/web",
     installationId: 42,

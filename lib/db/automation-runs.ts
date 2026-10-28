@@ -284,16 +284,22 @@ export async function claimedCandidates(runs: readonly { automationId: string; p
   return (await Promise.all([...byOrg].map(([orgId, l]) => candidatesOf(supabase, orgId, l, { enabledOnly: false })))).flat();
 }
 
-/** The session an automation's last run on a repository made, to give the
- *  next run's prompt to (session_mode 'reuse'); null when there's none that
- *  can be woken. */
-export async function reusableSession(run: { runId: string; automationId: string; projectId: string }): Promise<string | null> {
+/** The session an automation's last run on the same thing (`subject`) in a
+ *  repository made, to give the next run's prompt to (session_mode
+ *  'reuse'); null when there's none that can be woken. */
+export async function reusableSession(run: {
+  runId: string;
+  automationId: string;
+  projectId: string;
+  subject: string;
+}): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("automation_runs")
     .select("workspace_id")
     .eq("automation_id", run.automationId)
     .eq("project_id", run.projectId)
+    .eq("subject", run.subject)
     .neq("id", run.runId)
     .not("workspace_id", "is", null)
     .order("created_at", { ascending: false })
@@ -591,9 +597,9 @@ export type RerunTarget = {
   headSha: string | null;
   prNumber: number | null;
   enabled: boolean;
-  /** Whether it runs a count of times: off once it has, when a failed run
+  /** Whether it has run its count (off for that, then): a failed run of it
    *  still runs again. */
-  limited: boolean;
+  atLimit: boolean;
   candidate: RunCandidate;
   repoFullName: string;
   /** The org's installation (claimed, not suspended) on the repository's
@@ -608,6 +614,20 @@ export type RerunTarget = {
   workspaceId: string | null;
 };
 
+/** The times an automation has run since `since`: each key once, however
+ *  many repositories it ran on, as record_automation_runs counts them. */
+async function timesRun(automationId: string, since: string): Promise<number> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("automation_runs")
+    .select("dedupe_key")
+    .eq("automation_id", automationId)
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (error) throw error;
+  return new Set((data ?? []).map((r) => r.dedupe_key)).size;
+}
+
 /** One of the org's runs, to run again; null when it isn't the org's. */
 export async function rerunTarget(orgId: string, runId: string): Promise<RerunTarget | null> {
   const supabase = createSupabaseAdminClient();
@@ -620,7 +640,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
   if (!run) return null;
   const { data: automation, error: automationError } = await supabase
     .from("automations")
-    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, reviewers, labels, session_mode")
+    .select("id, name, prompt, triggers, runs_as, enabled, max_runs, runs_since, reviewers, labels, session_mode")
     .eq("id", run.automation_id)
     .eq("org_id", orgId)
     .maybeSingle();
@@ -659,7 +679,7 @@ export async function rerunTarget(orgId: string, runId: string): Promise<RerunTa
     headSha: run.head_sha,
     prNumber: run.pr_number,
     enabled: automation.enabled,
-    limited: automation.max_runs !== null,
+    atLimit: automation.max_runs !== null && (await timesRun(automation.id, automation.runs_since)) >= automation.max_runs,
     candidate: {
       automationId: automation.id,
       name: automation.name,

@@ -613,6 +613,8 @@ type AutomationRunRow = {
   /** A queued run's: when its window ends. */
   not_before: string | null;
   combined: number;
+  /** The keys of the triggers a debounce window took into it. */
+  absorbed_keys: string[];
   workspace_id: string | null;
   status: AutomationRunStatusDb;
   reason: string | null;

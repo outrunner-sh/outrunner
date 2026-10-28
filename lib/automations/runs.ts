@@ -180,7 +180,7 @@ export type QueuedDeps = {
  * itself as its window ends (startRun); this is for one a restart cut off,
  * and windows past the time that server waits. Either takes it once. One
  * whose automation no longer runs on its repository, or whose event can't
- * be read, doesn't start, saying why.
+ * be read, doesn't start, saying which.
  */
 export async function planQueuedRuns(now: Date, deps: QueuedDeps, appSlug?: string): Promise<PendingRun[]> {
   const claimed = await deps.claimQueuedRuns(now);
@@ -190,8 +190,11 @@ export async function planQueuedRuns(now: Date, deps: QueuedDeps, appSlug?: stri
   for (const run of claimed) {
     const candidate = candidates.find((c) => c.automationId === run.automationId && c.projectId === run.projectId);
     if (!candidate || !run.event) {
+      const reason = !candidate
+        ? "The automation doesn't run on this repository any more."
+        : "Its event couldn't be read back to start it.";
       await deps
-        .settleRun(run.runId, { status: "refused", reason: "The automation doesn't run on this repository any more." })
+        .settleRun(run.runId, { status: "refused", reason })
         .catch((error: unknown) => console.error(`Run ${run.runId} couldn't be kept`, error));
       continue;
     }
@@ -228,9 +231,10 @@ export type StartDeps = {
    *  in. Null when another took it (the tick, a later trigger's wait), or
    *  it's no longer waiting. */
   waitOutWindow(runId: string): Promise<{ event: RunEvent; combined: number } | null>;
-  /** The automation's last session on the repository, that can be woken
-   *  (reusableSession); null when there's none. */
-  reusableSession(run: { runId: string; automationId: string; projectId: string }): Promise<string | null>;
+  /** The automation's last session on the same thing (`subject`: the pull
+   *  request, the issue, the schedule, the webhook) in the repository, that
+   *  can be woken (reusableSession); null when there's none. */
+  reusableSession(run: { runId: string; automationId: string; projectId: string; subject: string }): Promise<string | null>;
   /** Give one of `userId`'s sessions a prompt, waking or restoring it first;
    *  false when it can't be (gone, not answering). */
   continueSession(userId: string, workspaceId: string, prompt: string): Promise<boolean>;
@@ -239,9 +243,14 @@ export type StartDeps = {
 /** What a session that ran the automation before is told first: its tree
  *  is where the last run left it. */
 function continuing(event: RunEvent): string {
-  const where = isPullRequestEvent(event)
-    ? `check out the pull request with \`gh pr checkout ${event.number}\``
-    : "check out the repository's default branch and pull it";
+  // A pull request closed or merged is run from its base (its head may be
+  // gone): the same in a reused session.
+  const where =
+    isPullRequestEvent(event) && atHead(event.trigger)
+      ? `check out the pull request with \`gh pr checkout ${event.number}\``
+      : isPullRequestEvent(event)
+        ? `check out ${event.baseRef} and pull it`
+        : "check out the repository's default branch and pull it";
   return `This session ran this automation before, and this is its next run. Its working tree is where the last run left it: first, ${where}.`;
 }
 
@@ -305,15 +314,19 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
   ]
     .filter(Boolean)
     .join("\n\n");
-  // Reusing its session: the automation's last one on the repository is
-  // given this run's prompt, woken or restored first. One that can't be is
-  // left, and a new one made, which the next run reuses.
+  // Reusing its session: the automation's last one on the same thing (this
+  // pull request, this issue, the schedule, the webhook) is given this
+  // run's prompt, woken or restored first. Not one on another pull request,
+  // which may be mid-run: two runs on one session would talk over each
+  // other. One that can't be woken is left, and a new one made, which the
+  // next run on it reuses.
   if (candidate.sessionMode === "reuse") {
     try {
       const session = await deps.reusableSession({
         runId: run.runId,
         automationId: candidate.automationId,
         projectId: candidate.projectId,
+        subject: eventSubject(event),
       });
       if (session && (await deps.continueSession(runner, session, `${continuing(event)}\n\n${prompt}`))) {
         await settle({ status: "ready", workspaceId: session, reason: null });
@@ -459,8 +472,9 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
     return { ok: false, status: 409, error: "Only a run that failed or didn't start runs again." };
   }
   // One that has run its count is off, but a run of it that failed still
-  // runs again: it's one of its count.
-  if (!target.enabled && !target.limited) {
+  // runs again: it's one of its count. Off by hand before its count, it
+  // doesn't.
+  if (!target.enabled && !target.atLimit) {
     return { ok: false, status: 409, error: "The automation is off: turn it on to run it." };
   }
   if (!target.covered) {

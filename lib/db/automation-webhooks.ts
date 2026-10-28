@@ -78,19 +78,25 @@ export async function rotateWebhookToken(orgId: string, automationId: string): P
   return (data ?? []).length > 0 ? webhookPath(token) : null;
 }
 
-/** The runs a key recorded for an automation: a retried request's, to
- *  answer as the first was answered. */
+/** The runs a key recorded for an automation, as their own key or one a
+ *  debounce window took in: a retried request's, to answer as the first
+ *  was answered. */
 export async function runsByKey(
   automationId: string,
   dedupeKey: string,
 ): Promise<{ runId: string; projectId: string; workspaceId: string | null; status: string; reason: string | null }[]> {
-  const { data, error } = await createSupabaseAdminClient()
-    .from("automation_runs")
-    .select("id, project_id, workspace_id, status, reason")
-    .eq("automation_id", automationId)
-    .eq("dedupe_key", dedupeKey);
-  if (error) throw error;
-  return (data ?? []).map((r) => ({
+  const supabase = createSupabaseAdminClient();
+  const columns = "id, project_id, workspace_id, status, reason";
+  // Two reads, not one `or`: a caller's Idempotency-Key may hold the
+  // characters a filter string would need escaped.
+  const [own, absorbed] = await Promise.all([
+    supabase.from("automation_runs").select(columns).eq("automation_id", automationId).eq("dedupe_key", dedupeKey),
+    supabase.from("automation_runs").select(columns).eq("automation_id", automationId).contains("absorbed_keys", [dedupeKey]),
+  ]);
+  if (own.error) throw own.error;
+  if (absorbed.error) throw absorbed.error;
+  const rows = new Map([...(own.data ?? []), ...(absorbed.data ?? [])].map((r) => [r.id, r]));
+  return [...rows.values()].map((r) => ({
     runId: r.id,
     projectId: r.project_id,
     workspaceId: r.workspace_id,

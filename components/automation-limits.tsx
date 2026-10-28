@@ -145,12 +145,13 @@ export function AutomationLimits({
           "reuse",
           limits.sessionMode === "reuse",
           () => set({ sessionMode: "reuse" }),
-          "Reuse one session across runs, on each repository",
+          "Reuse one session across runs on the same thing",
         )}
         {limits.sessionMode === "reuse" ? (
           <p className="text-xs text-muted-foreground">
-            Each run is sent to the automation&apos;s last session on the repository, woken or restored first, so it keeps
-            what it learned; one that can&apos;t be woken is replaced by a new one.
+            Each run is sent to the automation&apos;s last session on the same pull request, issue, schedule or webhook (in
+            each repository), woken or restored first, so it keeps what it learned there; one that can&apos;t be woken is
+            replaced by a new one. Runs on different pull requests or issues get sessions of their own.
           </p>
         ) : null}
       </div>

@@ -136,7 +136,7 @@ test("a webhook's run that failed starts again with the same payload", async () 
     headSha: null,
     prNumber: null,
     enabled: true,
-    limited: false,
+    atLimit: false,
     candidate,
     repoFullName: "acme/web",
     installationId: 42,

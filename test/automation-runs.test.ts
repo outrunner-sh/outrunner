@@ -440,7 +440,7 @@ function rerunDeps(over: { target?: Partial<RerunTarget> | null; pr?: Record<str
           headSha: SHA,
           prNumber: 7,
           enabled: true,
-          limited: false,
+          atLimit: false,
           candidate,
           repoFullName: "neevai-labs/outrunner",
           installationId: 42,
