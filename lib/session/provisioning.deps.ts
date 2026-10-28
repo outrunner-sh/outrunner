@@ -24,5 +24,8 @@ export async function sweepInterruptedSetups(now = new Date()): Promise<number> 
     .lt("updated_at", unchangedSince)
     .select("id");
   if (error) throw error;
-  return (data ?? []).length;
+  // Which ones, as a deploy is what fails them: the cron answers a count.
+  const ids = (data ?? []).map((row) => row.id);
+  if (ids.length > 0) console.warn(`Failed ${ids.length} interrupted session setup(s): ${ids.join(", ")}`);
+  return ids.length;
 }

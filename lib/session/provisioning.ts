@@ -21,13 +21,17 @@ export const SETUP_STALLS_AFTER_MS = 10 * 60_000;
  * up to 3 minutes waiting on another request's provisioning, then Daytona's
  * 3-minute create or Neev's 10-minute prepare, then the clone of a large
  * repository. Well past SETUP_STALLS_AFTER_MS, so the page offers to keep
- * waiting first, and a slow setup that is still going is left alone.
+ * waiting first, and a slow setup that is still going is left alone. The
+ * sweep sees only a row that stopped changing, so a step that hung (a call
+ * with no deadline) is failed alike, hence the message's "may". One step has
+ * no bound of its own: a Modal box's dependency install, which a large
+ * monorepo on a cold volume could take past this, and be failed while going.
  */
 export const SETUP_INTERRUPTED_AFTER_MS = 20 * 60_000;
 
 /** What the session page says of a setup cut off. */
 export const SETUP_INTERRUPTED_MESSAGE =
-  "Setup was interrupted before it finished (Outrunner restarted while it ran). Try again to start a fresh session.";
+  "Setup stopped before it finished (Outrunner may have restarted while it ran). Try again to start a fresh session.";
 
 /**
  * The sessions whose setup was cut off at `now`, and what they become:
