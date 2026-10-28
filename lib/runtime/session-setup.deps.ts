@@ -5,6 +5,7 @@
  */
 
 import { getAgentConfig } from "@/lib/db/agent-config";
+import { getGithubIdentity } from "@/lib/db/credentials";
 import { defaultEnvironmentId, environmentSetup, type EnvironmentSetup } from "@/lib/db/environments";
 import { getProjectEnvironment } from "@/lib/db/project-environment";
 import type { AgentClient, WorkspaceIdentity } from "@/lib/runtime/agent-client";
@@ -22,10 +23,14 @@ export async function setUpSession(
   /** The project the session started from; null for one from before
    *  projects, which gets its repository's default project. */
   environmentId: string | null,
+  /** `appIdentity`: it works as the Outrunner App whatever its user chose
+   *  (an automation's review). */
+  override?: { appIdentity?: boolean },
 ): Promise<void> {
-  const [environment, agentConfig] = await Promise.all([
+  const [environment, agentConfig, githubIdentity] = await Promise.all([
     sessionEnvironment(ownerId, projectId, environmentId),
     getAgentConfig(ownerId),
+    getGithubIdentity(ownerId),
   ]);
   await deliverSessionSetup(
     {
@@ -37,6 +42,7 @@ export async function setUpSession(
     {
       environment,
       agentConfig,
+      appIdentity: override?.appIdentity || githubIdentity === "app",
       downloadUrl: (path) => mintSnapshotDownloadUrl(supabaseSnapshotStorage(), path, ownerId),
     },
   );

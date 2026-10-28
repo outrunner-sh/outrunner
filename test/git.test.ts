@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   addWorktree,
   cloneMirror,
+  syncMirrors,
   commitAll,
   fetchMirror,
   fileContent,
@@ -292,4 +293,55 @@ test("the Files panel lists a worktree's files and reads only those inside it", 
 test("fileContent reads bytes that aren't UTF-8 as binary", () => {
   assert.equal(fileContent(Buffer.from([0xff, 0xfe, 0x61]).toString("utf8"), 3).binary, true);
   assert.equal(fileContent("plain\n", 6).binary, false);
+});
+
+test("syncMirrors fetches the mirrors a box has and clones the rest, or another repository's", async () => {
+  const calls: Call[] = [];
+  const exec: GitExec = async (argv, options) => {
+    calls.push({ argv, options });
+    // web's mirror is acme/web's; api's folder holds another repository's;
+    // docs has none.
+    if (argv.includes("get-url")) {
+      if (argv.includes("/r/repos/web.git")) return { stdout: "https://github.com/acme/web.git\n", stderr: "", exitCode: 0 };
+      if (argv.includes("/r/repos/api.git")) return { stdout: "https://github.com/old-org/api.git\n", stderr: "", exitCode: 0 };
+      return { stdout: "", stderr: "not a git repository", exitCode: 128 };
+    }
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+  await syncMirrors(exec, {
+    root: "/r/repos",
+    repos: [
+      { fullName: "acme/web", checkout: "web" },
+      { fullName: "acme/api", checkout: "api" },
+      { fullName: "acme/docs", checkout: "docs" },
+    ],
+    token: "t",
+  });
+  const shown = calls.map((c) => c.argv.join(" "));
+  assert.ok(shown.some((c) => c.includes("/r/repos/web.git") && c.includes("fetch --prune origin")), shown.join("\n"));
+  assert.ok(!shown.includes("git init --bare /r/repos/web.git"));
+  for (const name of ["api", "docs"]) {
+    assert.ok(shown.includes(`rm -rf /r/repos/${name}.git`), name);
+    assert.ok(shown.includes(`git init --bare /r/repos/${name}.git`), name);
+  }
+});
+
+test("syncMirrors never deletes another repository's mirror a worktree still uses", async () => {
+  const calls: string[] = [];
+  const exec: GitExec = async (argv) => {
+    calls.push(argv.join(" "));
+    if (argv.includes("get-url")) return { stdout: "https://github.com/old-org/api.git\n", stderr: "", exitCode: 0 };
+    if (argv.includes("worktree")) {
+      return { stdout: "worktree /r/repos/api.git\nbare\n\nworktree /r/workspaces/ws1/api\nbranch refs/heads/b\n", stderr: "", exitCode: 0 };
+    }
+    return { stdout: "", stderr: "", exitCode: 0 };
+  };
+  await assert.rejects(
+    syncMirrors(exec, { root: "/r/repos", repos: [{ fullName: "acme/api", checkout: "api" }] }),
+    /belongs to another repository/,
+  );
+  assert.ok(!calls.some((c) => c.startsWith("rm ")), calls.join("\n"));
+  // Stale entries are pruned before the mirror is judged in use.
+  assert.ok(calls.indexOf("git -C /r/repos/api.git worktree prune") < calls.indexOf("git -C /r/repos/api.git worktree list --porcelain"));
+  assert.ok(calls.includes("git -C /r/repos/api.git worktree prune"));
 });

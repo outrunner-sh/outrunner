@@ -2,41 +2,52 @@ import { after, NextResponse } from "next/server";
 
 import { resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import { getOwner, type Owner } from "@/lib/auth/owner";
+import { projectOrgId } from "@/lib/db/work-items";
 import { cloudBoxStartGate, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { agentAuthStore, modelKey, modelMenu } from "@/lib/db/credentials";
-import { optionalGithubToken } from "@/lib/github/token";
+import { gitTokensFor, optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import {
-  createWorkspaceSnapshot,
   deleteWorkspaceSnapshots,
   getProject,
   getWorkspaceComputer,
   getWorkspace,
   listWorkspaceSnapshots,
   markRuntimeComputerStoppedIfReady,
-  readRuntimeComputerSecret,
   recordWorkspaceModel,
   transitionWorkspace,
   updateWorkspace,
 } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
-import { AGENT_FEATURE_CODEX_GATEWAY, AGENT_FEATURE_IMPORTS, AGENT_FEATURE_RESTORE_MODEL } from "@/lib/runtime/agent-protocol";
+import {
+  AGENT_FEATURE_CODEX_GATEWAY,
+  AGENT_FEATURE_IMPORTS,
+  AGENT_FEATURE_MULTI_REPO_SNAPSHOTS,
+  AGENT_FEATURE_RESTORE_MODEL,
+} from "@/lib/runtime/agent-protocol";
 import { requireFeature } from "@/lib/runtime/box-features";
 import { setUpSession } from "@/lib/runtime/session-setup.deps";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
 import { scopeOf } from "@/lib/runtime/computer-scope";
 import { recordedModelRequest } from "@/lib/runtime/model-switch";
 import { readyRelaunch } from "@/lib/runtime/relaunch.deps";
-import { relaunchNeedsAccount, restoreSignedIn, sessionAuthClient, signInFailure } from "@/lib/runtime/session-auth";
+import {
+  relaunchNeedsAccount,
+  restoreSignedIn,
+  sessionAuthClient,
+  signInFailure,
+} from "@/lib/runtime/session-auth";
 import { defaultModel, onCodexGateway, type RecordedModel } from "@/lib/runtime/session-models";
 import { boxUpgrade, runtimeSessionEnvironment } from "@/lib/runtime/session-environment";
 import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
-import { mintSnapshotDownloadUrl, mintSnapshotUpload } from "@/lib/runtime/storage";
+import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
+import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
 import { canDestroy } from "@/lib/session/provisioning";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
@@ -175,68 +186,16 @@ async function daytonaLifecycle(
   return destroyDaytonaWorkspace(workspace, provider, owner);
 }
 
-/**
- * Archive → produce a Workspace Snapshot. Next mints one signed upload URL per
- * artifact, the agent captures + uploads them (manifest last) and returns the
- * manifest, then Next caches it on a `workspace_snapshots` row and marks the
- * workspace `archived`. The worktree is intentionally kept (Restore reclaims it
- * later), so an archived workspace is revivable — not destroyed.
- */
+/** Archive → a Workspace Snapshot (lib/session/archive-session.ts). */
 async function archiveDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
 ) {
-  if (workspace.status !== "ready" && workspace.status !== "idle") {
-    return NextResponse.json(
-      { error: "Only an active workspace can be archived." },
-      { status: 409 },
-    );
-  }
-  const transitioned = await startTransition(workspace, ["ready", "idle"], "archiving");
-  if (!transitioned) return lifecycleConflict();
-
-  try {
-    const archivedAt = new Date().toISOString();
-    const { prefix, urls } = await mintSnapshotUpload(
-      supabaseSnapshotStorage(),
-      owner.id,
-      workspace.id,
-      archivedAt,
-      // A Codex session's raw rollout too, so a restore resumes Codex itself
-      // (only an agent that runs Codex is asked: an older one refuses it).
-      workspace.agent === "codex" ? ["rollout"] : [],
-    );
-    const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
-
-    const { agent, identity } = await daytonaAgent(workspace, provider, owner);
-    const manifest = await agent.archiveWorkspace(identity, { archivedAt, uploads });
-
-    await createWorkspaceSnapshot({
-      ownerId: owner.id,
-      workspaceId: workspace.id,
-      archivedAt,
-      storagePath: prefix,
-      manifest,
-    });
-  } catch (error) {
-    console.error(`Workspace ${workspace.id} archive failed`, error);
-    await restoreAfterFailure(workspace, "archiving", lifecycleError("archive")).catch(
-      (updateError: unknown) => console.error("Could not persist archive failure", updateError),
-    );
-    return NextResponse.json({ error: lifecycleError("archive") }, { status: 502 });
-  }
-
-  const completed = await completeTransition({
-    id: workspace.id,
-    from: "archiving",
-    patch: { status: "archived", errorMessage: null },
-  });
-  // The last session off its box frees it: paused now, not when idle.
-  if (completed) after(() => releaseWorkspaceBox(provider, workspace, false));
-  return completed
-    ? NextResponse.json({ workspace: { id: workspace.id, status: "archived" } })
-    : lifecycleReconciliationRequired("archive");
+  const archived = await archiveCloudSession(workspace, provider, owner);
+  if (archived.ok) return NextResponse.json({ workspace: { id: workspace.id, status: "archived" } });
+  if (archived.reason === "failed") return NextResponse.json({ error: archived.error }, { status: archived.status });
+  return archived.reason === "reconcile" ? lifecycleReconciliationRequired("archive") : lifecycleConflict();
 }
 
 /**
@@ -265,13 +224,25 @@ async function restoreDaytonaWorkspace(
       { status: 409 },
     );
   }
+  // The Snapshot's trees are the session's repositories, folder for folder:
+  // otherwise the agent would read a tar as a bundle, or miss a checkout.
+  // Checked before any box starts: such a restore can never succeed.
+  if (!snapshotMatchesSession(snapshot.manifest.tree, workspace.checkouts)) {
+    return NextResponse.json(
+      { error: "This session's Snapshot doesn't hold the repositories the session has, so it can't be restored." },
+      { status: 409 },
+    );
+  }
   // The box it restores on: its own (paused when it was archived), or, for a
   // session from before each had its own, its project's shared one.
   const currentComputer = await getWorkspaceComputer(workspace);
   const scope = scopeOf(workspace, currentComputer);
   // A box may be about to start (the box may be gone): the plan's hours and
   // box count get their say before anything changes.
-  const gate = await cloudBoxStartGate(owner, provider.name, scope);
+  // The org's plan (billing is the org's).
+  const orgId = workspace.orgId ?? (await projectOrgId(workspace.projectId));
+  if (!orgId) return NextResponse.json({ error: "This session's project is gone." }, { status: 404 });
+  const gate = await cloudBoxStartGate(owner, orgId, provider.name, scope);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
   const transitioned = await startTransition(workspace, ["archived"], "restoring");
   if (!transitioned) return lifecycleConflict();
@@ -279,7 +250,9 @@ async function restoreDaytonaWorkspace(
   try {
     const project = await getProject(workspace.projectId);
     if (!project) throw new Error("Project not found for restore.");
-    const githubToken = await optionalGithubToken(owner.id);
+    // A review box's mirror as the App, as on create: never its user's token.
+    const as = await sessionGitAs(workspace.id);
+    const githubToken = await optionalGitToken(owner.id, project, as);
 
     // Manifest pointers -> signed download URLs for exactly what the agent needs.
     const storage = supabaseSnapshotStorage();
@@ -325,11 +298,13 @@ async function restoreDaytonaWorkspace(
     // it goes back on, its key fetched now: before a box is started for it,
     // so a pick that can't run, or a key removed, starts nothing.
     const { auth, restoreOn } = await restoreSignIn(workspace, owner.id);
-    const model = restoreOn ? await recordedModelRequest(restoreOn, (holder) => modelKey(owner.id, holder)) : undefined;
+    const model = restoreOn
+      ? await recordedModelRequest(restoreOn, (holder) => modelKey(owner.id, holder, project.orgId))
+      : undefined;
 
     // Ensure a box (any) and refresh its mirror before the agent branches from
     // the bundle. Matches the create flow's lazy-provision path.
-    const sessionEnv = await runtimeSessionEnvironment(owner.id);
+    const sessionEnv = await runtimeSessionEnvironment(owner.id, workspace.id);
     const ensured = await ensureComputer(provider, {
       scope,
       repoFullName: project.fullName,
@@ -361,10 +336,13 @@ async function restoreDaytonaWorkspace(
     // The restore relaunches the session at once, so its credential rides
     // with it; checked first, as is that the box runs the session's agent
     // (an agent too old for Codex would make a Claude Code session of it).
-    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id);
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, ensured.agentSecret, owner.id, workspace.id);
     const features = { features: async () => (await agent.health(identity)).features ?? [], upgrade };
     if (manifest.origin) {
       await requireFeature(features, AGENT_FEATURE_IMPORTS, "restore a session imported from a Mac");
+    }
+    if (workspace.checkouts) {
+      await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "restore a session of several repositories");
     }
     // An older agent would ignore the model, and relaunch on Claude's own.
     if (model) await requireFeature(features, AGENT_FEATURE_RESTORE_MODEL, "restore a session on its model");
@@ -372,9 +350,20 @@ async function restoreDaytonaWorkspace(
     if (restoreOn && onCodexGateway(workspace.agent, restoreOn.model)) {
       await requireFeature(features, AGENT_FEATURE_CODEX_GATEWAY, "run Codex on Outrunner's models");
     }
+    const tree = manifest.tree;
+    // A session of several repositories: a mirror of each, its bundle's
+    // commits imported into it by the restore. After the checks: none is
+    // fetched for a box that can't restore it.
+    if (workspace.checkouts) {
+      await provider.syncRepoMirrors(
+        computer.daytonaSandboxId,
+        workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout })),
+        gitTokensFor(owner.id, project.orgId, as),
+      );
+    }
     // Before the restore, which launches the session at once.
     await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
-    const bundleRef = manifest.tree.ref && manifest.tree.ref !== workspace.branch ? manifest.tree.ref : undefined;
+    const bundleRef = tree.kind === "git-bundle+patch" && tree.ref && tree.ref !== workspace.branch ? tree.ref : undefined;
     let restoredWorktree: string | undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, async (credential) => {
       const restored = await agent.restoreWorkspace(identity, {
@@ -387,6 +376,9 @@ async function restoreDaytonaWorkspace(
         ...(model && { model }),
         ...(bundleRef && { bundleRef }),
         ...(manifest.origin && { originWorktree: manifest.origin.worktree }),
+        ...(workspace.checkouts && {
+          repos: workspace.checkouts.map((c) => ({ fullName: c.fullName, checkout: c.checkout, baseBranch: c.baseBranch })),
+        }),
       });
       restoredWorktree = restored.worktree;
     });
@@ -438,40 +430,16 @@ async function restoreSignIn(
   workspace: Workspace,
   ownerId: string,
 ): Promise<{ auth: ResolvedAuth; restoreOn: RecordedModel | null }> {
-  const store = agentAuthStore(ownerId);
+  const store = agentAuthStore(ownerId, workspace.orgId);
   const ownAccount = relaunchNeedsAccount(workspace.agent, workspace.model);
   const auth = await resolveAgentAuth(store, workspace.agent, "cloud", { ownAccount });
   if (workspace.model || auth.credential || workspace.agent !== "claude") {
     return { auth, restoreOn: workspace.model };
   }
-  const fallback = defaultModel(await modelMenu(ownerId));
+  const fallback = defaultModel(await modelMenu(ownerId, workspace.orgId));
   // Nothing to run on: this says what to connect.
   if (!fallback) await resolveAgentAuth(store, workspace.agent, "cloud");
   return { auth, restoreOn: fallback && { model: fallback, effort: null } };
-}
-
-async function daytonaAgent(
-  workspace: Workspace,
-  provider: ComputerRuntimeProvider,
-  owner: Owner,
-): Promise<{ agent: AgentClient; identity: WorkspaceIdentity; upgrade?: () => Promise<void> }> {
-  const computer = await getWorkspaceComputer(workspace);
-  if (!computer?.daytonaSandboxId || computer.status !== "ready") {
-    throw new Error("Runtime Computer is not available.");
-  }
-  const secret = await readRuntimeComputerSecret(computer.id);
-  if (!secret) throw new Error("Runtime Computer secret is missing.");
-  const target = await provider.agentTarget(computer.daytonaSandboxId, secret);
-  return {
-    upgrade: boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id),
-    agent: new AgentClient(target),
-    identity: {
-      workspaceId: workspace.id,
-      projectId: workspace.projectId,
-      computerId: computer.id,
-      userId: owner.id,
-    },
-  };
 }
 
 async function resumeDaytonaWorkspace(
@@ -760,4 +728,12 @@ function lifecycleReconciliationRequired(action: LifecycleAction) {
     },
     { status: 503 },
   );
+}
+
+/** Whether a Snapshot's tree holds the session's repositories: a tree of one
+ *  for a session of one, the same checkout folders for a session of several. */
+function snapshotMatchesSession(tree: SnapshotManifest["tree"], checkouts: Workspace["checkouts"]): boolean {
+  const inSnapshot = tree.kind === "git-bundles+patches" ? tree.checkouts.map((c) => c.name).toSorted() : null;
+  const inSession = checkouts?.map((c) => c.checkout).toSorted() ?? null;
+  return JSON.stringify(inSnapshot) === JSON.stringify(inSession);
 }

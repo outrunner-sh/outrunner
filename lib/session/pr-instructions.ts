@@ -16,9 +16,15 @@ export function prInstructions(input: {
   branch: string;
   baseBranch: string;
   uncommitted: number | null;
+  /** One repository of a session of several: its folder and `owner/name`.
+   *  The PR is that repository's alone. */
+  repo?: { checkout: string; fullName: string };
 }): string {
-  const { branch, baseBranch, uncommitted } = input;
+  const { branch, baseBranch, uncommitted, repo } = input;
   const state = [
+    repo
+      ? `This PR is for ${repo.fullName} only, the repository in the \`${repo.checkout}/\` folder. Run every step below in that folder (\`cd ${repo.checkout}\`), and leave the other repositories' folders alone.`
+      : null,
     uncommitted === null
       ? null
       : uncommitted === 0

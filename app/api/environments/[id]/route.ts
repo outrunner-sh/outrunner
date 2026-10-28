@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getOwner } from "@/lib/auth/owner";
-import { getEnvironment, updateEnvironment, type EnvironmentPatch } from "@/lib/db/environments";
+import { EnvironmentAccessError, getEnvironment, updateEnvironment, type EnvironmentPatch } from "@/lib/db/environments";
 import {
   EnvironmentRuleError,
   MAX_DESCRIPTION,
@@ -13,13 +13,15 @@ import {
 } from "@/lib/environments/rules";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
+import { refillAfterChange } from "@/lib/runtime/warm-pool.deps";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 /**
  * A project (an `environments` row; lib/db/environments.ts) for its settings
  * page. GET returns it with its variables' names and its files' paths, never
- * their values. PATCH changes its name, description, instructions or scripts;
+ * their values. PATCH changes its name, description, instructions, scripts or
+ * hooks;
  * a field left out is left as it is, an empty one is cleared.
  */
 
@@ -33,6 +35,7 @@ const Patch = z
       .partial()
       .strict()
       .optional(),
+    hooks: z.object({ warm: z.string().nullable(), start: z.string().nullable() }).partial().strict().optional(),
   })
   .strict();
 
@@ -76,6 +79,12 @@ export async function PATCH(request: Request, context: RouteContext) {
           ...(body.scripts.archive !== undefined && { archive: script(body.scripts.archive, "archive script") }),
         },
       }),
+      ...(body.hooks && {
+        hooks: {
+          ...(body.hooks.warm !== undefined && { warm: script(body.hooks.warm, "warm hook") }),
+          ...(body.hooks.start !== undefined && { start: script(body.hooks.start, "start hook") }),
+        },
+      }),
     };
   } catch (error) {
     if (error instanceof EnvironmentRuleError) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -84,7 +93,14 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   return savingSettings("project settings", async () => {
     if (!(await getEnvironment(owner.id, id))) return notFound();
-    await updateEnvironment(owner.id, id, patch);
+    try {
+      await updateEnvironment(owner.id, id, patch);
+    } catch (error) {
+      if (error instanceof EnvironmentAccessError) return NextResponse.json({ error: error.message }, { status: 403 });
+      throw error;
+    }
+    // A new warm hook: the project's ready boxes are made again with it.
+    if (patch.hooks?.warm !== undefined) after(() => refillAfterChange(owner.id, id));
     return NextResponse.json(await getEnvironment(owner.id, id));
   });
 }

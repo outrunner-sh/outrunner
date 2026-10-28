@@ -1,6 +1,8 @@
 /**
- * Setting a cloud session up before it launches: the user's own agent setup
- * on its computer (lib/db/agent-config.ts) and its project's environment
+ * Setting a cloud session up before it launches: an agent that can ask for
+ * GitHub tokens, for a user who works as the Outrunner App
+ * (lib/github/identity.ts); the user's own agent setup on its computer
+ * (lib/db/agent-config.ts) and its project's environment
  * (lib/db/environments.ts): variables, files, setup script, instructions. A box whose agent is too old for either is
  * upgraded in place first; one that can't be launches the session without
  * it, rather than not at all.
@@ -11,7 +13,9 @@ import type { EnvironmentSetup } from "@/lib/db/environments";
 import {
   AGENT_FEATURE_AGENT_CONFIG,
   AGENT_FEATURE_ENVIRONMENT,
+  AGENT_FEATURE_GIT_CREDENTIAL,
   AGENT_FEATURE_INSTRUCTIONS,
+  AGENT_FEATURE_WARM_HOOKS,
   type SetAgentConfigRequest,
   type SetEnvironmentRequest,
 } from "@/lib/runtime/agent-protocol";
@@ -26,12 +30,18 @@ export type SetupClient = FeatureClient & {
 export type SessionSetup = {
   environment: EnvironmentSetup | null;
   agentConfig: AgentConfig | null;
+  /** Its user works on GitHub as the Outrunner App, whose tokens the box
+   *  must ask for as it goes (lib/github/identity.ts). */
+  appIdentity?: boolean;
   /** A signed download URL for the setup's archive. */
   downloadUrl(path: string): Promise<string>;
 };
 
 /** Deliver the session's setup; what the box can't take is skipped, said. */
 export async function deliverSessionSetup(client: SetupClient, setup: SessionSetup): Promise<void> {
+  // First: an upgrade boots the agent again, asking with what it needs to.
+  if (setup.appIdentity) await supports(client, AGENT_FEATURE_GIT_CREDENTIAL, "work on GitHub as Outrunner's GitHub App");
+
   const config = setup.agentConfig;
   if (config && (config.archive || Object.keys(config.mcpServers).length > 0 || Object.keys(config.settings).length > 0)) {
     if (await supports(client, AGENT_FEATURE_AGENT_CONFIG, "take your agent setup")) {
@@ -59,7 +69,14 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
   if (environment.instructions && (await supports(client, AGENT_FEATURE_INSTRUCTIONS, "take a project's instructions"))) {
     req.instructions = environment.instructions;
   }
-  if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions) return;
+  const hooks = environment.hooks;
+  if ((hooks?.warm || hooks?.start) && (await supports(client, AGENT_FEATURE_WARM_HOOKS, "run a project's warm and start hooks"))) {
+    if (hooks.warm) req.warmHook = hooks.warm;
+    if (hooks.start) req.startHook = hooks.start;
+  }
+  if (Object.keys(req.env).length === 0 && !req.files && !req.setup && !req.instructions && !req.warmHook && !req.startHook) {
+    return;
+  }
   if (await supports(client, AGENT_FEATURE_ENVIRONMENT, "take a project's environment")) {
     await client.setEnvironment(req);
   }

@@ -84,7 +84,22 @@ type CreateWorkspaceRequest struct {
 	Agent string `json:"agent,omitempty"`
 	// GitUser is the git identity for commits; nil uses the system default.
 	GitUser *GitUser `json:"gitUser,omitempty"`
+	// Repos, when set, make a session of a project's several repositories
+	// (FeatureMultiRepo): a folder of worktrees, one a repository, each off
+	// its mirror at $ROOT/repos/<checkout>.git, all on Branch. RepoFullName
+	// and BaseBranch are then the first's.
+	Repos []RepoCheckout `json:"repos,omitempty"`
 }
+
+// RepoCheckout is one repository of a multi-repository session.
+type RepoCheckout struct {
+	FullName   string `json:"fullName"`
+	Checkout   string `json:"checkout"`
+	BaseBranch string `json:"baseBranch"`
+}
+
+// FeatureMultiRepo is CreateWorkspaceRequest's Repos.
+const FeatureMultiRepo = "multi-repo"
 
 // SetModelRequest switches a workspace's session to another model. With a
 // gateway ("openrouter") the session runs through it on Token instead of the
@@ -215,7 +230,15 @@ type RestoreWorkspaceRequest struct {
 	// /workspaces/{id}/model): a fresh box has no record of it. Absent, the
 	// session relaunches on its agent's own default.
 	Model *SetModelRequest `json:"model,omitempty"`
+	// Repos restore a session of several repositories (FeatureMultiRepoSnapshots):
+	// its folder of checkouts, each off its mirror at $ROOT/repos/<checkout>.git
+	// (on the box before the restore), from the Snapshot's tars.
+	Repos []RepoCheckout `json:"repos,omitempty"`
 }
+
+// FeatureMultiRepoSnapshots is archiving a session of several repositories,
+// and RestoreWorkspaceRequest's Repos.
+const FeatureMultiRepoSnapshots = "multi-repo-snapshots"
 
 // Health is what the unauthenticated GET /health says: that the agent is up,
 // the gateways it can run a session through, the agents it can run, and the
@@ -243,6 +266,45 @@ type SetEnvironmentRequest struct {
 	// own orientation at every launch (FeatureInstructions). Empty removes
 	// them.
 	Instructions string `json:"instructions,omitempty"`
+	// WarmHook runs once in the session's worktree at its first launch,
+	// unless the worktree was warmed on a ready box; StartHook at every
+	// launch (FeatureWarmHooks). Empty removes them.
+	WarmHook  string `json:"warmHook,omitempty"`
+	StartHook string `json:"startHook,omitempty"`
+}
+
+// FeatureWarmHooks is POST/GET /warm, a ready box's warming, and
+// SetEnvironmentRequest's WarmHook and StartHook.
+const FeatureWarmHooks = "warm-hooks"
+
+// WarmRequest warms a ready box (POST /warm, the listing token): a checkout
+// of BaseBranch with the project's files in it and its hook run there.
+type WarmRequest struct {
+	BaseBranch string            `json:"baseBranch"`
+	Env        map[string]string `json:"env,omitempty"`
+	Files      map[string]string `json:"files,omitempty"`
+	Hook       string            `json:"hook,omitempty"`
+	// Repos, when set, warm a folder of a project's several repositories
+	// (FeatureMultiRepoWarm), laid out as a session of them is: one checkout
+	// a repository, each off its mirror at $ROOT/repos/<checkout>.git (on the
+	// box before the warm), with the hook run at the folder's root. BaseBranch
+	// is then the first's.
+	Repos []RepoCheckout `json:"repos,omitempty"`
+}
+
+// FeatureMultiRepoWarm is WarmRequest's Repos, and a session of several
+// repositories taking the folder warmed with them.
+const FeatureMultiRepoWarm = "multi-repo-warm"
+
+// WarmStatus is how a box's warming went (GET /warm): State is "", running,
+// succeeded or failed; Log the end of the hook's output.
+type WarmStatus struct {
+	State      string `json:"state"`
+	BaseBranch string `json:"baseBranch,omitempty"`
+	StartedAt  string `json:"startedAt,omitempty"`
+	FinishedAt string `json:"finishedAt,omitempty"`
+	ExitCode   int    `json:"exitCode,omitempty"`
+	Log        string `json:"log,omitempty"`
 }
 
 // SetAgentConfigRequest is the user's own agent setup for this computer
@@ -266,6 +328,20 @@ const FeatureEnvironment = "session-environment"
 // FeatureInstructions is SetEnvironmentRequest's Instructions: an older
 // agent ignores them.
 const FeatureInstructions = "project-instructions"
+
+// FeatureRequestSecrets is a Claude session's request_secrets tool and
+// POST /workspaces/{id}/secrets, the user's answer to it.
+const FeatureRequestSecrets = "request-secrets"
+
+// ProvideSecretsRequest is the user's answer to the request for secrets a
+// session is waiting on (POST /workspaces/{id}/secrets): the request's
+// variables, as the form showed them, and the values given for some of
+// them; or that the user skipped it.
+type ProvideSecretsRequest struct {
+	Keys    []string          `json:"keys"`
+	Values  map[string]string `json:"values,omitempty"`
+	Skipped bool              `json:"skipped,omitempty"`
+}
 
 // FeatureImports is restoring an imported session: compressed downloads, a
 // bundle's branch under another name, and the conversation's folder moved.
@@ -306,6 +382,13 @@ const FeatureRestoreModel = "restore-model"
 // gateway, for OpenRouter): Outrunner's models in Codex. An older agent
 // refuses the gateway.
 const FeatureCodexGateway = "codex-gateway"
+
+// FeatureGitCredential is fresh GitHub tokens for the sessions: launched
+// with RUNTIME_SANDBOX_ID and OUTRUNNER_APP_URL, the agent has git and gh ask
+// it for a token whenever they need one, and asks the control plane's
+// /api/runtime/git-credential for it, signed with its secret (package
+// gitcred). An older agent ignores the variables and keeps GH_TOKEN.
+const FeatureGitCredential = "git-credential"
 
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
@@ -365,11 +448,15 @@ type ContentBlock struct {
 
 // ConversationMessage is a structured turn derived from Claude's JSONL.
 type ConversationMessage struct {
-	T          string         `json:"t"` // "message"
-	UUID       string         `json:"uuid"`
-	ParentUUID *string        `json:"parentUuid"`
-	Role       string         `json:"role"`
-	Model      string         `json:"model,omitempty"` // assistant turns only
+	T          string  `json:"t"` // "message"
+	UUID       string  `json:"uuid"`
+	ParentUUID *string `json:"parentUuid"`
+	Role       string  `json:"role"`
+	Model      string  `json:"model,omitempty"` // assistant turns only
+	// Why the assistant reply stopped, as Claude logs it ("tool_use": the turn
+	// goes on; "end_turn" and the like: it's over). Empty where the log says
+	// none (a user turn, a Codex translation).
+	StopReason string         `json:"stopReason,omitempty"`
 	Timestamp  string         `json:"timestamp"`
 	Content    []ContentBlock `json:"content"`
 }

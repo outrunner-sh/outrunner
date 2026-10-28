@@ -1,5 +1,6 @@
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { isGitHubFullName, type RepositoryListing } from "@/lib/github/listing";
+import type { VerifiedEmail } from "@/lib/orgs/domains";
 
 /**
  * A GitHub repository normalized to the fields Runtime persists, plus the
@@ -56,16 +57,18 @@ export class GitHubSyncError extends Error {
 
 /**
  * The user has no usable GitHub token. Recoverable, and always by the same
- * action: sign out and back in so the OAuth round trip mints a fresh one.
+ * action: (re)connecting GitHub from Settings → Account, so an OAuth round trip
+ * mints a fresh one.
  *
- * Reached when the user last signed in before the `repo` scope was requested,
+ * Reached when the user signed in with Google and never connected GitHub, last
+ * signed in before the `repo` scope was requested,
  * or when a stored token could not be decrypted (see lib/db/credentials.ts).
  * Lives here, beside the other GitHub errors, so code that maps errors to
  * responses need not pull in the credential store; lib/github/token re-exports it.
  */
 export class MissingGithubTokenError extends Error {
   constructor() {
-    super("Connect your GitHub account: sign out and back in to grant repository access.");
+    super("Connect your GitHub account in Settings → Account to grant repository access.");
     this.name = "MissingGithubTokenError";
   }
 }
@@ -297,6 +300,68 @@ export async function listGitHubRepositories(token: string): Promise<GitHubRepos
 }
 
 /**
+ * The repositories a GitHub App installation reaches, with `token` one of its
+ * installation tokens (lib/github/app.ts): all of an account's, or the ones
+ * its owner picked. The first page says how many there are; the rest are
+ * fetched a few at a time, as {@link listGitHubRepositories} does.
+ */
+export async function listInstallationRepositoryRecords(token: string): Promise<GitHubRepositoryList> {
+  const first = await fetchInstallationPage(token, 1);
+  const lastPage = Math.max(1, Math.ceil(first.total / PER_PAGE));
+  const morePages = Array.from({ length: Math.min(lastPage, MAX_PAGES) - 1 }, (_, i) => i + 2);
+  const pages = [
+    first,
+    ...(await mapWithConcurrency(morePages, PAGE_CONCURRENCY, (page) => fetchInstallationPage(token, page))),
+  ];
+  return mergeRepositoryLists([
+    {
+      repositories: pages.flatMap((page) => page.repositories),
+      complete: lastPage <= MAX_PAGES && pages.every((page) => page.skipped === 0),
+      ssoPartialOrgIds: [],
+    },
+  ]);
+}
+
+/** Listings as one: each repository once, most recently pushed first, and
+ *  complete only if every one was. */
+export function mergeRepositoryLists(lists: GitHubRepositoryList[]): GitHubRepositoryList {
+  const byId = new Map<number, GitHubRepository>();
+  for (const list of lists) {
+    for (const repo of list.repositories) byId.set(repo.githubRepoId, repo);
+  }
+  return {
+    repositories: [...byId.values()].sort(newestPushFirst),
+    complete: lists.every((list) => list.complete),
+    ssoPartialOrgIds: [...new Set(lists.flatMap((list) => list.ssoPartialOrgIds))],
+  };
+}
+
+async function fetchInstallationPage(
+  token: string,
+  page: number,
+): Promise<{ repositories: GitHubRepository[]; skipped: number; total: number }> {
+  const url = new URL("/installation/repositories", GITHUB_API_URL);
+  url.searchParams.set("per_page", String(PER_PAGE));
+  url.searchParams.set("page", String(page));
+  const response = await fetchGitHub(url, token);
+  if (!response.ok) {
+    // An installation token GitHub refuses isn't the user's to reconnect.
+    console.error("GitHub installation repository request was rejected", { status: response.status });
+    throw new GitHubSyncError("GitHub could not list the App's repositories. Please try again.", response.status);
+  }
+  const data = (await readJson(response)) as { total_count?: unknown; repositories?: unknown } | null;
+  if (!data || !Array.isArray(data.repositories) || typeof data.total_count !== "number") {
+    throw new GitHubSyncError("GitHub returned an invalid response.");
+  }
+  const repositories: GitHubRepository[] = [];
+  for (const record of data.repositories) {
+    const repo = normalizeRepository(record);
+    if (repo) repositories.push(repo);
+  }
+  return { repositories, skipped: data.repositories.length - repositories.length, total: data.total_count };
+}
+
+/**
  * One repository, by id or `owner/name`, as `token` sees it — or null when it
  * cannot: it does not exist, is private to others, or belongs to an
  * organization whose single sign-on the token is not authorized for (a 403
@@ -330,6 +395,59 @@ export async function getGitHubRepository(
   const repo = normalizeRepository(await readJson(response));
   if (!repo) throw new GitHubSyncError("GitHub returned an invalid repository record.");
   return repo;
+}
+
+// ---------------------------------------------------------------------------
+// The user's verified emails: the domain a team org claims comes from one.
+// ---------------------------------------------------------------------------
+
+/**
+ * The emails GitHub has verified for the token's user (the `user:email`
+ * scope), primary first. An unverified email proves nothing about who the
+ * user is, so it's left out.
+ */
+export async function listVerifiedEmails(token: string): Promise<VerifiedEmail[]> {
+  const response = await fetchGitHub(new URL("/user/emails", GITHUB_API_URL), token);
+  if (!response.ok) {
+    throw rejected(response, "email listing", "GitHub could not list your emails. Please try again.");
+  }
+  const records = await readJson(response);
+  if (!Array.isArray(records)) throw new GitHubSyncError(GITHUB_UNREADABLE);
+  return records
+    .filter(
+      (r): r is { email: string; verified: true; primary?: boolean } =>
+        typeof r?.email === "string" && r.verified === true,
+    )
+    .map((r) => ({ email: r.email, primary: r.primary === true }))
+    .sort((a, b) => Number(b.primary) - Number(a.primary));
+}
+
+/** Whose a token is, as GitHub answers: a user's (by numeric id), not one
+ *  GitHub takes at all, or no answer (down, timed out, rate limited). */
+export type TokenOwner = { kind: "user"; id: number } | { kind: "refused" } | { kind: "unreachable" };
+
+/**
+ * The GitHub user a token belongs to. Never throws: it vouches for a token
+ * before it is stored. "refused" is GitHub's own no (401, or a 403 that isn't
+ * a rate limit: not a GitHub token, or a revoked one); "unreachable" is no
+ * answer, which says nothing about the token.
+ */
+export async function tokenOwner(token: string): Promise<TokenOwner> {
+  try {
+    const response = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
+    if (response.ok) {
+      const body = (await readJson(response)) as { id?: unknown } | null;
+      return typeof body?.id === "number" && Number.isSafeInteger(body.id)
+        ? { kind: "user", id: body.id }
+        : { kind: "unreachable" };
+    }
+    const rateLimited =
+      response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
+    if (response.status === 401 || (response.status === 403 && !rateLimited)) return { kind: "refused" };
+    return { kind: "unreachable" };
+  } catch {
+    return { kind: "unreachable" };
+  }
 }
 
 // ---------------------------------------------------------------------------

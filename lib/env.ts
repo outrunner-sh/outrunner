@@ -34,6 +34,9 @@ type EnvKey =
   | "DAYTONA_API_URL"
   | "DAYTONA_TARGET"
   | "DAYTONA_SNAPSHOT"
+  // "1" where the Daytona account is this deployment's alone: the orphaned-box
+  // sweep then deletes boxes from before they were labelled with it too.
+  | "ORPHAN_SWEEP_UNLABELLED"
   // Neev sandboxes (Runtime Computer backend)
   | "NEEV_API_KEY"
   | "NEEV_ORG_ID"
@@ -47,10 +50,35 @@ type EnvKey =
   | "RUNTIME_BASE_URL"
   // Bearer token the Cloudflare cron sends to POST /api/billing/reconcile.
   | "BILLING_CRON_SECRET"
+  // Email through Resend (lib/email/send.ts), both optional: org invites and
+  // requests to join. Without them, an invite's link is shown to share.
+  | "RESEND_API_KEY"
+  | "EMAIL_FROM"
+  // The Outrunner GitHub App (lib/github/app.ts), all four or none: its
+  // Client ID (the JWT's issuer), slug (its install link), private key (the
+  // .pem) and webhook secret.
+  | "GITHUB_APP_CLIENT_ID"
+  | "GITHUB_APP_SLUG"
+  | "GITHUB_APP_PRIVATE_KEY"
+  | "GITHUB_APP_WEBHOOK_SECRET"
+  // Dollars a month on Outrunner's models for each org's outrunner-connector,
+  // which its automations run as (lib/billing/plans.ts connectorPlan).
+  | "AUTOMATION_MODEL_ALLOWANCE_USD"
   // Stripe (RUNTIME_BILLING=stripe): a restricted or secret key, and the
   // webhook endpoint's signing secret.
   | "STRIPE_SECRET_KEY"
   | "STRIPE_WEBHOOK_SECRET"
+  // Slack app (triage capture): its signing secret, from the app's Basic
+  // Information page. Unset turns /api/integrations/slack off.
+  | "SLACK_SIGNING_SECRET"
+  // The same app's Client ID and Client Secret (Basic Information): linking a
+  // Slack user signs in with Slack. Unset, no one can link.
+  | "SLACK_CLIENT_ID"
+  | "SLACK_CLIENT_SECRET"
+  // The Slack agent: the OpenRouter model it thinks with (default
+  // anthropic/claude-sonnet-5.5). It runs on the org's key for Outrunner's
+  // models, within the org's plan allowance.
+  | "SLACK_AGENT_MODEL"
   // Agent engine: "jcode" provisions a jcode box; unset/other = Claude Code.
   | "RUNTIME_ENGINE"
   // Where the control plane reads jcode credentials to inject (default ~/.jcode).

@@ -145,14 +145,31 @@ begin
   raise notice 'ok: updated_at trigger fires';
 end $$;
 
--- 11. Pull requests are owner-scoped and one-to-one with a workspace.
+-- 11. Pull requests are owner-scoped, one per workspace and repository
+--     (20261028170000), and name their repository (not null, no default).
 insert into pull_requests (
-  owner_id, workspace_id, github_number, url, title, base_branch, head_branch
+  owner_id, workspace_id, project_id, github_number, url, title, base_branch, head_branch
 )
 select
-  '11111111-1111-1111-1111-111111111111', id, 7,
+  '11111111-1111-1111-1111-111111111111', id, project_id, 7,
   'https://github.com/immadsahin/runtime/pull/7', 'Runtime test', 'main', 'feat/x'
 from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+
+do $$
+declare workspace uuid; repo uuid;
+begin
+  -- The workspace and repository of the pull request just above.
+  select workspace_id, project_id into workspace, repo from pull_requests where github_number = 7;
+  insert into pull_requests (
+    owner_id, workspace_id, project_id, github_number, url, title, base_branch, head_branch
+  ) values (
+    '11111111-1111-1111-1111-111111111111', workspace, repo, 8,
+    'https://github.com/immadsahin/runtime/pull/8', 'Duplicate', 'main', 'feat/x'
+  );
+  raise exception 'FAIL: a second pull request in the same workspace and repository was allowed';
+exception when unique_violation then
+  raise notice 'ok: one pull request per workspace and repository enforced';
+end $$;
 
 do $$
 declare workspace uuid;
@@ -161,12 +178,12 @@ begin
   insert into pull_requests (
     owner_id, workspace_id, github_number, url, title, base_branch, head_branch
   ) values (
-    '11111111-1111-1111-1111-111111111111', workspace, 8,
-    'https://github.com/immadsahin/runtime/pull/8', 'Duplicate', 'main', 'feat/x'
+    '11111111-1111-1111-1111-111111111111', workspace, 9,
+    'https://github.com/immadsahin/runtime/pull/9', 'No repository', 'main', 'feat/x'
   );
-  raise exception 'FAIL: duplicate workspace pull request was allowed';
-exception when unique_violation then
-  raise notice 'ok: one pull request per workspace enforced';
+  raise exception 'FAIL: a pull request without its repository was allowed';
+exception when not_null_violation then
+  raise notice 'ok: a pull request names its repository';
 end $$;
 
 -- 12. RLS isolates rows by owner.
@@ -177,6 +194,9 @@ begin
   end if;
   grant usage on schema public to authed;
   grant all on all tables in schema public to authed;
+  -- What's granted to signed-in users only (check_org_box_cap), as Supabase's
+  -- authenticated role has it.
+  grant authenticated to authed;
 end $do$;
 
 set role authed;
@@ -409,26 +429,29 @@ end $$;
 reset role;
 
 do $$
+declare one uuid; two uuid;
 begin
-  insert into billing_customers (user_id, stripe_customer_id) values ('11111111-1111-1111-1111-111111111111', 'cus_1');
+  select id into one from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
+  select id into two from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222';
+  insert into billing_customers (org_id, user_id, stripe_customer_id) values (one, '11111111-1111-1111-1111-111111111111', 'cus_1');
   begin
-    insert into billing_customers (user_id, stripe_customer_id) values ('22222222-2222-2222-2222-222222222222', 'cus_1');
-    raise exception 'FAIL: two users shared a Stripe customer';
+    insert into billing_customers (org_id, user_id, stripe_customer_id) values (two, '22222222-2222-2222-2222-222222222222', 'cus_1');
+    raise exception 'FAIL: two orgs shared a Stripe customer';
   exception when unique_violation then
     null;
   end;
   begin
-    insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
+    insert into subscriptions (stripe_subscription_id, org_id, user_id, stripe_customer_id, status, plan,
                                current_period_start, current_period_end, synced_at)
-    values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'free', now(), now(), now());
+    values ('sub_1', one, '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'free', now(), now(), now());
     raise exception 'FAIL: a subscription was stored for a plan Stripe does not sell';
   exception when check_violation then
     null;
   end;
-  insert into subscriptions (stripe_subscription_id, user_id, stripe_customer_id, status, plan,
+  insert into subscriptions (stripe_subscription_id, org_id, user_id, stripe_customer_id, status, plan,
                              billing_interval, current_period_start, current_period_end, synced_at)
-  values ('sub_1', '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
-  raise notice 'ok: one Stripe customer per user, and subscriptions are for a sold plan';
+  values ('sub_1', one, '11111111-1111-1111-1111-111111111111', 'cus_1', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
+  raise notice 'ok: one Stripe customer per org, and subscriptions are for a sold plan';
 end $$;
 
 -- 20. The model allowance's state, beside the user's key.
@@ -841,8 +864,7 @@ end $$;
 
 -- 24. One project per repository per org: the same repository in two orgs is
 -- two projects, and an upsert keyed on (org, repo) given no org finds its
--- owner's personal org. The upsert from before the orgs, on (owner, repo),
--- still works, for the app deployed before the migration.
+-- owner's personal org.
 do $$
 declare n integer;
 begin
@@ -858,12 +880,6 @@ begin
   if not exists (select 1 from projects where github_repo_id = 42 and description = 'again') then
     raise exception 'FAIL: the (org, repo) upsert did not update the existing project';
   end if;
-  insert into projects (owner_id, github_repo_id, full_name, owner, name, description)
-  values ('22222222-2222-2222-2222-222222222222', 42, 'immadsahin/runtime', 'immadsahin', 'runtime', 'old app')
-  on conflict (owner_id, github_repo_id) do update set description = excluded.description;
-  if not exists (select 1 from projects where github_repo_id = 42 and description = 'old app') then
-    raise exception 'FAIL: the (owner, repo) upsert from before the orgs did not update the project';
-  end if;
   raise notice 'ok: one project per repository per org, and the upsert finds it';
 end $$;
 
@@ -875,8 +891,6 @@ values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'Team', '11111111-1111-1111-1111
 insert into organization_members (org_id, user_id, role)
 values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'admin'),
        ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'member');
--- Another repository: one per user still holds (projects_owner_repo_unique)
--- until team orgs ship.
 insert into projects (id, org_id, owner_id, github_repo_id, full_name, owner, name)
 values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
         '11111111-1111-1111-1111-111111111111', 4242, 'team/app', 'team', 'app');
@@ -919,11 +933,12 @@ begin
   if not exists (select 1 from workspaces where branch = 'member-session') then
     raise exception 'FAIL: a member can''t see their own session in the org';
   end if;
-  -- The project is its owner's to change.
+  -- The org gives Everyone write (as every org starts, 20261028145000), so
+  -- a member may change a project they didn't connect.
   update projects set description = 'changed' where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
   get diagnostics n = row_count;
-  if n <> 0 then
-    raise exception 'FAIL: a member changed a project they don''t own';
+  if n <> 1 then
+    raise exception 'FAIL: a member with write couldn''t change the org''s project';
   end if;
   -- And they can't add themselves anywhere.
   begin
@@ -1017,4 +1032,817 @@ begin
     end if;
   end;
   raise notice 'ok: sessions and boxes stay with org members, and projects stay in their org';
+end $$;
+
+-- 27. Team orgs: a user may have the same repository in their personal org
+-- and a team org, makes one team org at most, and no one but the server
+-- reads or writes the domains orgs claimed.
+do $$
+begin
+  insert into projects (org_id, owner_id, github_repo_id, full_name, owner, name)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+          42, 'immadsahin/runtime', 'immadsahin', 'runtime');
+  begin
+    insert into organizations (name, created_by)
+    values ('Second team', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: a user made a second team org';
+  exception when unique_violation then
+    null;
+  end;
+  insert into organization_domains (domain, org_id, claimed_by)
+  values ('example.com', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111');
+  begin
+    insert into organization_domains (domain, org_id)
+    values ('example.com', (select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'));
+    raise exception 'FAIL: two orgs claimed one domain';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into organization_domains (domain, org_id) values ('Example.COM', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    raise exception 'FAIL: a domain was kept in capitals';
+  exception when check_violation then
+    null;
+  end;
+  if has_table_privilege('authenticated', 'organization_domains', 'select')
+     or has_table_privilege('anon', 'organization_domains', 'select') then
+    raise exception 'FAIL: users may read the domains orgs claimed';
+  end if;
+  raise notice 'ok: a repository in a personal and a team org, one team org per user, one org per domain';
+end $$;
+
+-- 28. A warm pool per member: two members of an org each keep a pooled box
+-- for the same project, and each sees only their own.
+insert into organization_members (org_id, user_id, role)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'member')
+on conflict do nothing;
+insert into runtime_computers (owner_id, project_id, pooled, status)
+values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', true, 'stopped'),
+       ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', true, 'stopped');
+
+do $$
+begin
+  insert into runtime_computers (owner_id, project_id, pooled, status)
+  values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', true, 'stopped');
+  raise exception 'FAIL: a member kept two pooled boxes for one project';
+exception when unique_violation then
+  raise notice 'ok: one pooled box per member per project';
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+begin
+  if (select count(*) from runtime_computers
+      where project_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and pooled) <> 1
+     or exists (select 1 from runtime_computers where owner_id <> '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a member sees a pooled box that isn''t theirs';
+  end if;
+  raise notice 'ok: a member sees only their own pooled box';
+end $$;
+
+reset role;
+
+-- 29. Making a team org is the server's: its creator is its admin, its
+-- domain is claimed with it, and a taken domain leaves nothing behind.
+do $$
+declare org uuid;
+begin
+  if has_function_privilege('authenticated', 'create_team_org(text, uuid, text)', 'execute')
+     or has_function_privilege('anon', 'create_team_org(text, uuid, text)', 'execute') then
+    raise exception 'FAIL: a user may make team orgs directly';
+  end if;
+  org := create_team_org('Third team', '33333333-3333-3333-3333-333333333333', 'third.example');
+  if not exists (select 1 from organization_members
+                 where org_id = org and user_id = '33333333-3333-3333-3333-333333333333' and role = 'admin')
+     or not exists (select 1 from organization_domains where domain = 'third.example' and org_id = org) then
+    raise exception 'FAIL: a team org was made without its admin or its domain';
+  end if;
+  begin
+    perform create_team_org('Fourth team', '22222222-2222-2222-2222-222222222222', 'third.example');
+    raise exception 'FAIL: a second org claimed a domain';
+  exception when unique_violation then
+    null;
+  end;
+  if exists (select 1 from organizations where name = 'Fourth team') then
+    raise exception 'FAIL: a failed team org left its org behind';
+  end if;
+  raise notice 'ok: a team org is made with its admin and domain, or not at all';
+end $$;
+
+-- 30. Members: an invite is accepted once, by its token, while it's open;
+-- inviting again while one is open is refused; a request is approved once.
+-- No user reaches any of it but the server.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  org uuid;
+begin
+  if has_table_privilege('authenticated', 'organization_invites', 'select')
+     or has_table_privilege('authenticated', 'organization_join_requests', 'select')
+     or has_table_privilege('authenticated', 'organization_removals', 'select')
+     or has_function_privilege('authenticated', 'accept_org_invite(text, uuid)', 'execute')
+     or has_function_privilege('authenticated', 'remove_org_member(uuid, uuid, uuid)', 'execute') then
+    raise exception 'FAIL: a user may reach invites, requests, removals or the member functions';
+  end if;
+
+  insert into organization_invites (org_id, email, role, token_hash, expires_at)
+  values (team, 'third@example.com', 'member', repeat('c', 64), now() + interval '7 days');
+  begin
+    insert into organization_invites (org_id, email, role, token_hash, expires_at)
+    values (team, 'third@example.com', 'admin', repeat('d', 64), now() + interval '7 days');
+    raise exception 'FAIL: two open invites for one email';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into organization_invites (org_id, email, role, token_hash, expires_at)
+    values (team, 'Third@Example.com', 'member', repeat('e', 64), now() + interval '7 days');
+    raise exception 'FAIL: an invite kept an email in capitals';
+  exception when check_violation then
+    null;
+  end;
+
+  org := accept_org_invite(repeat('c', 64), '33333333-3333-3333-3333-333333333333');
+  if org <> team or not exists (
+    select 1 from organization_members
+    where org_id = team and user_id = '33333333-3333-3333-3333-333333333333' and role = 'member'
+  ) then
+    raise exception 'FAIL: an accepted invite made no member';
+  end if;
+  begin
+    perform accept_org_invite(repeat('c', 64), '22222222-2222-2222-2222-222222222222');
+    raise exception 'FAIL: an invite was accepted twice';
+  exception when raise_exception then
+    if sqlerrm <> 'invite_invalid' then raise; end if;
+  end;
+
+  insert into organization_invites (org_id, email, role, token_hash, expires_at)
+  values (team, 'late@example.com', 'member', repeat('f', 64), now() - interval '1 minute');
+  begin
+    perform accept_org_invite(repeat('f', 64), '22222222-2222-2222-2222-222222222222');
+    raise exception 'FAIL: an expired invite was accepted';
+  exception when raise_exception then
+    if sqlerrm <> 'invite_invalid' then raise; end if;
+  end;
+
+  -- A request to join, approved once.
+  delete from organization_members where org_id = team and user_id = '22222222-2222-2222-2222-222222222222';
+  insert into organization_join_requests (id, org_id, user_id, email)
+  values ('dddddddd-dddd-dddd-dddd-dddddddddddd', team, '22222222-2222-2222-2222-222222222222', 'other@example.com');
+  begin
+    insert into organization_join_requests (org_id, user_id, email)
+    values (team, '22222222-2222-2222-2222-222222222222', 'other@example.com');
+    raise exception 'FAIL: two pending requests from one user to one org';
+  exception when unique_violation then
+    null;
+  end;
+  perform approve_join_request('dddddddd-dddd-dddd-dddd-dddddddddddd', '11111111-1111-1111-1111-111111111111', 'member');
+  if not exists (select 1 from organization_members where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: an approved request made no member';
+  end if;
+  begin
+    perform approve_join_request('dddddddd-dddd-dddd-dddd-dddddddddddd', '11111111-1111-1111-1111-111111111111', 'admin');
+    raise exception 'FAIL: a request was approved twice';
+  exception when raise_exception then
+    if sqlerrm <> 'request_not_pending' then raise; end if;
+  end;
+  raise notice 'ok: invites and requests let a member in once, and only the server reaches them';
+end $$;
+
+-- 31. Removal: never the last admin, never out of a personal org; a removed
+-- member is recorded with the time, and coming back clears it.
+do $$
+declare team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+begin
+  begin
+    perform remove_org_member(team, '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: the last admin left their org';
+  exception when raise_exception then
+    if sqlerrm <> 'last_admin' then raise; end if;
+  end;
+  begin
+    perform set_org_member_role(team, '11111111-1111-1111-1111-111111111111', 'member');
+    raise exception 'FAIL: the last admin was made a member';
+  exception when raise_exception then
+    if sqlerrm <> 'last_admin' then raise; end if;
+  end;
+  begin
+    perform remove_org_member(
+      (select id from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111'),
+      '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: someone was taken out of a personal org';
+  exception when raise_exception then
+    if sqlerrm <> 'personal_org' then raise; end if;
+  end;
+
+  -- With a second admin, the first may go.
+  perform set_org_member_role(team, '33333333-3333-3333-3333-333333333333', 'admin');
+  perform set_org_member_role(team, '11111111-1111-1111-1111-111111111111', 'member');
+  perform set_org_member_role(team, '11111111-1111-1111-1111-111111111111', 'admin');
+
+  perform remove_org_member(team, '22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111');
+  if exists (select 1 from organization_members where org_id = team and user_id = '22222222-2222-2222-2222-222222222222')
+     or not exists (select 1 from organization_removals where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a removed member is still in, or not recorded as removed';
+  end if;
+  begin
+    perform remove_org_member(team, '22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111');
+    raise exception 'FAIL: a non-member was removed';
+  exception when raise_exception then
+    if sqlerrm <> 'not_a_member' then raise; end if;
+  end;
+
+  perform add_org_member(team, '22222222-2222-2222-2222-222222222222', 'member');
+  if exists (select 1 from organization_removals where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: coming back left the removal, and its clock, running';
+  end if;
+  raise notice 'ok: an org keeps an admin, a personal org its owner, and a removal is recorded until they return';
+end $$;
+
+-- 32. A project (environments) is its org's: one default per repository,
+-- which any member makes and every member's session starts from; its
+-- repositories are in its org; and a session's project is in the session's.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  shared uuid;
+  personal_env uuid;
+  personal_project uuid;
+begin
+  -- Made by a member who isn't the repository's owner: in the team org.
+  insert into environments (owner_id, name, default_for_project_id)
+  values ('22222222-2222-2222-2222-222222222222', 'app', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+  returning id into shared;
+  if (select org_id from environments where id = shared) <> team then
+    raise exception 'FAIL: a repository''s default project isn''t in the repository''s org';
+  end if;
+  insert into environment_repos (owner_id, environment_id, project_id, checkout_name)
+  values ('22222222-2222-2222-2222-222222222222', shared, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'app');
+  if (select org_id from environment_repos where environment_id = shared) <> team then
+    raise exception 'FAIL: a project''s repository took another org';
+  end if;
+
+  begin
+    insert into environments (owner_id, name, default_for_project_id)
+    values ('11111111-1111-1111-1111-111111111111', 'app again', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+    raise exception 'FAIL: a repository got a second default project';
+  exception when unique_violation then
+    null;
+  end;
+
+  -- A repository of another org can't be one of the project's.
+  select id into personal_project from projects
+  where owner_id = '22222222-2222-2222-2222-222222222222' and org_id <> team limit 1;
+  begin
+    insert into environment_repos (owner_id, environment_id, project_id, checkout_name)
+    values ('22222222-2222-2222-2222-222222222222', shared, personal_project, 'other');
+    raise exception 'FAIL: a project took a repository from another org';
+  exception when foreign_key_violation then
+    null;
+  end;
+
+  -- The admin's session starts from the project the member made.
+  insert into workspaces (owner_id, project_id, branch, environment_id)
+  values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'from-shared', shared);
+
+  -- But not from a project of another org.
+  insert into environments (owner_id, name) values ('11111111-1111-1111-1111-111111111111', 'mine')
+  returning id into personal_env;
+  if (select org_id from environments where id = personal_env) =  team then
+    raise exception 'FAIL: a project made with no repository went to a team org';
+  end if;
+  begin
+    insert into workspaces (owner_id, project_id, branch, environment_id)
+    values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'from-personal', personal_env);
+    raise exception 'FAIL: a session started from another org''s project';
+  exception when foreign_key_violation then
+    null;
+  end;
+  raise notice 'ok: a project is its org''s, one default per repository, shared by its members';
+end $$;
+
+-- 33. Access: every org starts with Everyone write; an admin can narrow it to
+-- read, or to nothing, and give a role write on one project; a member gets
+-- the highest any grant gives them; admins have write always. What a member
+-- can't read, they can't see or start a session on.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  app uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  builders uuid;
+begin
+  if not exists (select 1 from access_grants where org_id = team and role_id is null and project_id is null and level = 'write') then
+    raise exception 'FAIL: a new org didn''t start with Everyone: write';
+  end if;
+  if has_table_privilege('authenticated', 'access_grants', 'select')
+     or has_table_privilege('authenticated', 'member_roles', 'select')
+     or has_table_privilege('authenticated', 'organization_roles', 'select')
+     or has_function_privilege('authenticated', 'project_level(uuid, uuid)', 'execute')
+     or has_function_privilege('authenticated', 'environment_level(uuid, uuid)', 'execute') then
+    raise exception 'FAIL: a user may read grants or roles, or ask about someone else''s access';
+  end if;
+
+  update access_grants set level = 'read' where org_id = team and role_id is null and project_id is null;
+  if project_level('22222222-2222-2222-2222-222222222222', app) <> 'read' then
+    raise exception 'FAIL: Everyone: read didn''t give a member read';
+  end if;
+  if project_level('11111111-1111-1111-1111-111111111111', app) <> 'write' then
+    raise exception 'FAIL: an admin lost write';
+  end if;
+  if project_level('33333333-3333-3333-3333-333333333333', app) <> 'write'
+     and not exists (select 1 from organization_members where org_id = team and user_id = '33333333-3333-3333-3333-333333333333' and role = 'admin') then
+    raise exception 'FAIL: unexpected level for the third user';
+  end if;
+
+  insert into organization_roles (org_id, name) values (team, 'Builders') returning id into builders;
+  insert into access_grants (org_id, role_id, project_id, level) values (team, builders, app, 'write');
+  insert into member_roles (org_id, user_id, role_id) values (team, '22222222-2222-2222-2222-222222222222', builders);
+  if project_level('22222222-2222-2222-2222-222222222222', app) <> 'write' then
+    raise exception 'FAIL: a role''s write on one project didn''t reach its member';
+  end if;
+  if environment_level('22222222-2222-2222-2222-222222222222',
+       (select id from environments where default_for_project_id = app)) <> 'write' then
+    raise exception 'FAIL: a project''s settings didn''t follow its repository''s level';
+  end if;
+  begin
+    insert into access_grants (org_id, role_id, project_id, level) values (team, builders, app, 'read');
+    raise exception 'FAIL: two grants to one role on one project';
+  exception when unique_violation then
+    null;
+  end;
+  raise notice 'ok: grants to Everyone and to roles, on all projects and on one, give the highest; admins write';
+end $$;
+
+-- As the member: read on everything, write on the app project through the
+-- role, so they change it, but can't connect a new project.
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+declare n integer;
+begin
+  update projects set description = 'builders' where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  get diagnostics n = row_count;
+  if n <> 1 then
+    raise exception 'FAIL: a role''s write didn''t let its member change the project';
+  end if;
+  update projects set description = 'not mine' where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and id <> 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  get diagnostics n = row_count;
+  if n <> 0 then
+    raise exception 'FAIL: read let a member change % projects', n;
+  end if;
+  begin
+    insert into projects (org_id, owner_id, github_repo_id, full_name, owner, name)
+    values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 777, 'team/new', 'team', 'new');
+    raise exception 'FAIL: a member without write on all projects connected one';
+  exception when insufficient_privilege then
+    null;
+  end;
+  if my_project_level('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb') <> 'write' then
+    raise exception 'FAIL: my_project_level didn''t answer for the signed-in user';
+  end if;
+  raise notice 'ok: a member changes what they may write, and only that';
+end $$;
+
+reset role;
+
+-- Nothing for Everyone, and the role gone: the member sees none of the org's
+-- projects and can't start a session on one; their own sessions stay theirs.
+delete from access_grants where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and role_id is null and project_id is null;
+delete from member_roles where user_id = '22222222-2222-2222-2222-222222222222';
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+
+do $$
+begin
+  if exists (select 1 from projects where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') then
+    raise exception 'FAIL: a member with no grant sees the org''s projects';
+  end if;
+  begin
+    insert into workspaces (owner_id, project_id, branch)
+    values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'no-access');
+    raise exception 'FAIL: a member started a session on a project they can''t read';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if not exists (select 1 from workspaces where branch = 'member-session') then
+    raise exception 'FAIL: losing read took a member''s own session away';
+  end if;
+  raise notice 'ok: no grant, no project, and no new session on it; their sessions stay theirs';
+end $$;
+
+reset role;
+
+-- 34. A repository's default project and its repository are made together,
+-- and asking again finds the one there.
+do $$
+declare first uuid; again uuid; app2 uuid;
+begin
+  select id into app2 from projects
+  where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and github_repo_id = 42;
+  first := make_default_environment(app2, '11111111-1111-1111-1111-111111111111', 'runtime');
+  again := make_default_environment(app2, '22222222-2222-2222-2222-222222222222', 'runtime');
+  if first is distinct from again
+     or (select count(*) from environment_repos where environment_id = first) <> 1 then
+    raise exception 'FAIL: a default project was made twice, or without its repository';
+  end if;
+  if has_function_privilege('authenticated', 'make_default_environment(uuid, uuid, text)', 'execute') then
+    raise exception 'FAIL: a user may make default projects directly';
+  end if;
+  raise notice 'ok: a default project and its repository are made together, once';
+end $$;
+
+-- 35. Changing access is one step: a grant set or taken in place, a failed
+-- one leaving what was there; a member's roles all or none; never an admin's;
+-- an admin made holds none.
+do $$
+declare
+  team uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  builders uuid := (select id from organization_roles where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' and name = 'Builders');
+  other_role uuid;
+begin
+  perform set_grant(team, null, null, 'write');
+  perform set_grant(team, null, null, 'read');
+  if (select count(*) from access_grants where org_id = team and role_id is null and project_id is null) <> 1
+     or (select level from access_grants where org_id = team and role_id is null and project_id is null) <> 'read' then
+    raise exception 'FAIL: set_grant didn''t change Everyone''s grant in place';
+  end if;
+  -- A project of another org: refused, and Everyone keeps read.
+  begin
+    perform set_grant(team, null, (select id from projects where org_id <> team limit 1), 'write');
+    raise exception 'FAIL: a grant on another org''s project';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if (select level from access_grants where org_id = team and role_id is null and project_id is null) <> 'read' then
+    raise exception 'FAIL: a refused grant changed Everyone''s';
+  end if;
+  perform set_grant(team, null, null, null);
+  if exists (select 1 from access_grants where org_id = team and role_id is null and project_id is null) then
+    raise exception 'FAIL: set_grant(null) left the grant';
+  end if;
+  perform set_grant(team, null, null, 'write');
+
+  perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[builders]);
+  insert into organization_roles (org_id, name)
+  values ((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), 'Elsewhere')
+  returning id into other_role;
+  begin
+    perform set_member_roles(team, '22222222-2222-2222-2222-222222222222', array[other_role]);
+    raise exception 'FAIL: a member got another org''s role';
+  exception when foreign_key_violation then
+    null;
+  end;
+  if not exists (select 1 from member_roles where org_id = team and user_id = '22222222-2222-2222-2222-222222222222' and role_id = builders) then
+    raise exception 'FAIL: a refused change took a member''s roles away';
+  end if;
+  begin
+    perform set_member_roles(team, '11111111-1111-1111-1111-111111111111', array[builders]);
+    raise exception 'FAIL: an admin was given a role';
+  exception when raise_exception then
+    if sqlerrm <> 'admin_roles' then raise; end if;
+  end;
+  perform set_org_member_role(team, '22222222-2222-2222-2222-222222222222', 'admin');
+  if exists (select 1 from member_roles where org_id = team and user_id = '22222222-2222-2222-2222-222222222222') then
+    raise exception 'FAIL: a member made admin kept their roles';
+  end if;
+  perform set_org_member_role(team, '22222222-2222-2222-2222-222222222222', 'member');
+  if has_function_privilege('authenticated', 'set_grant(uuid, uuid, uuid, text)', 'execute')
+     or has_function_privilege('authenticated', 'set_member_roles(uuid, uuid, uuid[])', 'execute') then
+    raise exception 'FAIL: a user may change grants or roles directly';
+  end if;
+  raise notice 'ok: grants and roles change in one step, and a refused change keeps what was there';
+end $$;
+
+-- 36. The GitHub App's installations: one org each, the server's alone, and
+-- gone with their org.
+do $$
+declare personal uuid := (select id from organizations where personal_owner_id = '33333333-3333-3333-3333-333333333333');
+begin
+  if has_table_privilege('authenticated', 'github_installations', 'select')
+     or has_table_privilege('anon', 'github_installations', 'select') then
+    raise exception 'FAIL: users may read the App''s installations';
+  end if;
+  insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+  values (12345, personal, 'third', 'User', 'all');
+  begin
+    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+    values (12345, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'third', 'User', 'all');
+    raise exception 'FAIL: one installation kept by two orgs';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into github_installations (installation_id, org_id, account_login, account_type, repository_selection)
+    values (999, personal, 'x', 'Enterprise', 'all');
+    raise exception 'FAIL: an installation on an account GitHub has no such type of';
+  exception when check_violation then
+    null;
+  end;
+  raise notice 'ok: an installation is one org''s, and only the server reaches it';
+end $$;
+
+-- 37. An installation GitHub told of but no org has claimed keeps who
+-- installed it; one with neither isn't kept.
+do $$
+begin
+  insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_id, installer_login)
+  values (777, 'acme', 'Organization', 'all', 4242, 'acme-owner');
+  begin
+    insert into github_installations (installation_id, account_login, account_type, repository_selection, installer_login)
+    values (778, 'acme', 'Organization', 'all', 'only-a-login');
+    raise exception 'FAIL: an unclaimed installation with no installer to claim it';
+  exception when check_violation then
+    null;
+  end;
+  raise notice 'ok: an unclaimed installation keeps its installer';
+end $$;
+
+-- 38. An installation an org removed remembers which, gone with that org.
+do $$
+begin
+  update github_installations set removed_from = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' where installation_id = 777;
+  if (select removed_from from github_installations where installation_id = 777) <> 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' then
+    raise exception 'FAIL: removed_from not kept';
+  end if;
+  raise notice 'ok: an installation remembers the org that removed it';
+end $$;
+
+-- 39. Deleting the org that removed an installation deletes it with the org,
+-- rather than clearing the mark that keeps it from other orgs.
+do $$
+declare doomed uuid;
+begin
+  insert into organizations (name, created_by) values ('Doomed', null) returning id into doomed;
+  update github_installations set removed_from = doomed where installation_id = 777;
+  delete from organizations where id = doomed;
+  if exists (select 1 from github_installations where installation_id = 777) then
+    raise exception 'FAIL: an installation outlived the org that removed it, claimable by any org';
+  end if;
+  raise notice 'ok: an installation goes with the org that removed it';
+end $$;
+
+-- 40. A user's GitHub identity is their own sign-in until they choose the App,
+-- and nothing else.
+do $$
+declare someone constant uuid := '11111111-1111-1111-1111-111111111111';
+begin
+  insert into user_credentials (user_id) values (someone) on conflict (user_id) do nothing;
+  if (select github_identity from user_credentials where user_id = someone) <> 'personal' then
+    raise exception 'FAIL: a user is not on their own GitHub sign-in at first';
+  end if;
+  update user_credentials set github_identity = 'app' where user_id = someone;
+  begin
+    update user_credentials set github_identity = 'bot' where user_id = someone;
+    raise exception 'FAIL: an unknown GitHub identity was kept';
+  exception when check_violation then
+    null;
+  end;
+  update user_credentials set github_identity = 'personal' where user_id = someone;
+  raise notice 'ok: a GitHub identity is personal or app, personal at first';
+end $$;
+
+-- 41. A claim answers once: a session that takes a ready box (stopped, now
+-- its own) gets one row to provision it, as does a stopped project box
+-- (20261030110000; the rewrites lost 20260805150000's `return`).
+do $$
+declare someone constant uuid := '11111111-1111-1111-1111-111111111111';
+declare project uuid; session uuid; rows integer;
+begin
+  perform set_config('request.jwt.claim.sub', someone::text, true);
+  select id into project from projects where owner_id = someone limit 1;
+  insert into workspaces (owner_id, project_id, branch, base_branch, provider, status)
+    values (someone, project, 'claims-answer-once', 'main', 'daytona', 'creating') returning id into session;
+  insert into runtime_computers (owner_id, project_id, agent_secret, status, pooled, pool_slot, daytona_sandbox_id, provider)
+    values (someone, project, 's', 'stopped', true, 1, 'box-once', 'daytona');
+  if claim_pooled_computer(session, 'daytona') is distinct from 'box-once' then
+    raise exception 'FAIL: the ready box was not handed to the session';
+  end if;
+  select count(*) into rows from claim_workspace_computer(session, 'secret', 'v1', null);
+  if rows <> 1 then
+    raise exception 'FAIL: claiming a session''s stopped box answered % rows, want 1', rows;
+  end if;
+  -- The project's shared box from before (one a project), stopped.
+  if not exists (select 1 from runtime_computers where project_id = project and workspace_id is null and not pooled) then
+    insert into runtime_computers (owner_id, project_id, agent_secret, status, daytona_sandbox_id)
+      values (someone, project, 's', 'stopped', 'box-project-once');
+  end if;
+  update runtime_computers set status = 'stopped'
+    where project_id = project and workspace_id is null and not pooled;
+  select count(*) into rows from claim_runtime_computer(project, 'secret', 'v1', null);
+  if rows <> 1 then
+    raise exception 'FAIL: claiming a project''s stopped box answered % rows, want 1', rows;
+  end if;
+  raise notice 'ok: a claim of a stopped box answers once';
+end $$;
+
+-- 42. A team org keeps provider keys for its members; a personal org has none
+-- of its own, and the keys go with the org.
+do $$
+declare personal uuid;
+begin
+  insert into org_provider_keys (org_id, provider, key_ciphertext, key_hint)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'openrouter', 'v1.sealed', 'abcd');
+  select id into personal from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
+  begin
+    insert into org_provider_keys (org_id, provider, key_ciphertext) values (personal, 'openrouter', 'v1.sealed');
+    raise exception 'FAIL: a personal org kept a key of its own';
+  exception when check_violation then
+    null;
+  end;
+  if has_table_privilege('authenticated', 'org_provider_keys', 'select') then
+    raise exception 'FAIL: members can read the org''s keys directly';
+  end if;
+  delete from org_provider_keys where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  raise notice 'ok: a team org keeps provider keys, a personal org none';
+end $$;
+
+-- 43. A team org keeps defaults for its members; a personal org none of its
+-- own. A user's box size is theirs only once they chose it.
+do $$
+declare personal uuid;
+begin
+  insert into organization_settings (org_id, default_model, box_size)
+  values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{"provider":"outrunner","id":"glm"}', 'medium');
+  begin
+    update organization_settings set box_size = 'huge' where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    raise exception 'FAIL: an unknown box size was kept';
+  exception when check_violation then
+    null;
+  end;
+  select id into personal from organizations where personal_owner_id = '11111111-1111-1111-1111-111111111111';
+  begin
+    insert into organization_settings (org_id, box_size) values (personal, 'small');
+    raise exception 'FAIL: a personal org kept defaults of its own';
+  exception when check_violation then
+    null;
+  end;
+  insert into user_credentials (user_id) values ('11111111-1111-1111-1111-111111111111') on conflict (user_id) do nothing;
+  if (select box_size_chosen from user_credentials where user_id = '11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: a box size no one chose counts as chosen';
+  end if;
+  delete from organization_settings where org_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  raise notice 'ok: a team org keeps defaults, a personal org none';
+end $$;
+
+-- 44. Billing is the org's: its cap counts every member's boxes, and only
+-- its members check it; a subscription and a customer belong to an org.
+insert into runtime_computers (owner_id, project_id, agent_secret, image_version, status, daytona_sandbox_id)
+values ('22222222-2222-2222-2222-222222222222', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 's-org-cap', 'v1', 'ready', 'box-org-cap');
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  -- A member's own box count is 0 here, but the org runs one: its cap of 1
+  -- is reached.
+  begin
+    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+    raise exception 'FAIL: the org cap left out another member''s box';
+  exception when others then
+    if SQLSTATE <> 'P4BX1' then raise; end if;
+  end;
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 2);
+  begin
+    perform check_org_box_cap((select id from organizations where personal_owner_id = '22222222-2222-2222-2222-222222222222'), 5);
+    raise exception 'FAIL: a user checked another org''s cap';
+  exception when others then
+    if SQLERRM <> 'org not found' then raise; end if;
+  end;
+  begin
+    perform live_org_computers('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    raise exception 'FAIL: a user counted the org''s boxes directly';
+  exception when insufficient_privilege then
+    null;
+  end;
+  raise notice 'ok: an org''s box cap counts every member''s boxes, for its members';
+end $$;
+reset role;
+
+do $$
+declare buyer constant uuid := '33333333-3333-3333-3333-333333333399';
+begin
+  if exists (select 1 from subscriptions where org_id is null) or exists (select 1 from billing_customers where org_id is null) then
+    raise exception 'FAIL: billing left without an org';
+  end if;
+  -- The admin who bought a team org's plan leaving keeps the org's plan.
+  insert into auth.users (id) values (buyer);
+  insert into billing_customers (org_id, user_id, stripe_customer_id) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', buyer, 'cus_team');
+  insert into subscriptions (stripe_subscription_id, org_id, user_id, stripe_customer_id, status, plan,
+                             billing_interval, current_period_start, current_period_end, synced_at)
+  values ('sub_team', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', buyer, 'cus_team', 'active', 'pro', 'month', now(), now() + interval '1 month', now());
+  delete from auth.users where id = buyer;
+  if not exists (select 1 from subscriptions where stripe_subscription_id = 'sub_team' and user_id is null)
+     or not exists (select 1 from billing_customers where stripe_customer_id = 'cus_team' and user_id is null) then
+    raise exception 'FAIL: the buyer leaving took the org''s plan with them';
+  end if;
+  delete from subscriptions where stripe_subscription_id = 'sub_team';
+  delete from billing_customers where stripe_customer_id = 'cus_team';
+  delete from runtime_computers where daytona_sandbox_id = 'box-org-cap';
+  raise notice 'ok: subscriptions and customers are an org''s';
+end $$;
+
+-- 45. An org's connector runs on its own plan: its boxes take no room in the
+-- org's, and its cap counts only its own.
+insert into auth.users (id) values ('44444444-4444-4444-4444-444444444444');
+insert into organization_members (org_id, user_id, role)
+values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444', 'admin');
+insert into org_connectors (org_id, user_id) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444');
+insert into runtime_computers (owner_id, project_id, agent_secret, image_version, status, daytona_sandbox_id)
+values ('44444444-4444-4444-4444-444444444444', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 's-conn', 'v1', 'ready', 'box-conn');
+
+set role authed;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  -- A member: the connector's running box doesn't count.
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+  raise notice 'ok: a member''s cap leaves out the connector''s boxes';
+end $$;
+set request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
+do $$
+begin
+  begin
+    perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 1);
+    raise exception 'FAIL: the connector''s cap left out its own box';
+  exception when others then
+    if SQLSTATE <> 'P4BX1' then raise; end if;
+  end;
+  perform check_org_box_cap('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 2);
+  raise notice 'ok: the connector''s cap counts its own boxes';
+end $$;
+reset role;
+delete from runtime_computers where daytona_sandbox_id = 'box-conn';
+
+-- 46. A team org's allowance on Outrunner's models is the server's alone, and
+-- goes with the org.
+do $$
+begin
+  if has_table_privilege('authenticated', 'org_model_allowance', 'select') then
+    raise exception 'FAIL: members can read the org''s model key';
+  end if;
+  insert into organizations (id, name, created_by) values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'Gone', null);
+  insert into org_model_allowance (org_id, key_hash) values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'h');
+  delete from organizations where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  if exists (select 1 from org_model_allowance where org_id = 'dddddddd-dddd-dddd-dddd-dddddddddddd') then
+    raise exception 'FAIL: an org''s model key outlived it';
+  end if;
+  raise notice 'ok: an org''s model allowance is the server''s, gone with the org';
+end $$;
+
+-- 47. A session's first prompt is claimed once per idempotency key
+-- (claimFirstPrompt): a second claim, the same key's or another's, finds it
+-- held; released, the key claims it again; a claim abandoned mid-send is
+-- taken over by its own key, never by another, and never once sent; the
+-- request it was taken from can't release it (matched on claimed_at). The
+-- key is kept short.
+do $$
+declare
+  ws uuid;
+  n int;
+begin
+  select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  update workspaces set first_prompt_key = 'k1', first_prompt_claimed_at = now()
+  where id = ws and first_prompt_key is null;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: a session''s first prompt could not be claimed'; end if;
+  update workspaces set first_prompt_key = 'k2' where id = ws and first_prompt_key is null;
+  get diagnostics n = row_count;
+  if n <> 0 or (select first_prompt_key from workspaces where id = ws) <> 'k1' then
+    raise exception 'FAIL: a session''s first prompt was claimed twice';
+  end if;
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null;
+  update workspaces set first_prompt_key = 'k1', first_prompt_claimed_at = now() - interval '10 minutes'
+  where id = ws and first_prompt_key is null;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: a released first prompt could not be claimed again'; end if;
+  update workspaces set first_prompt_claimed_at = now()
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null
+    and first_prompt_claimed_at < now() - interval '2 minutes';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: an abandoned first-prompt claim could not be taken over'; end if;
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null
+    and first_prompt_claimed_at = now() - interval '10 minutes';
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: a taken-over first-prompt claim was released by its old request'; end if;
+  update workspaces set first_prompt_sent_at = now() where id = ws and first_prompt_key = 'k1';
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null
+  where id = ws and first_prompt_key = 'k1' and first_prompt_sent_at is null;
+  if (select first_prompt_key from workspaces where id = ws) is distinct from 'k1' then
+    raise exception 'FAIL: a sent first prompt was released';
+  end if;
+  begin
+    update workspaces set first_prompt_key = repeat('x', 101) where id = ws;
+    raise exception 'FAIL: an overlong first-prompt key was kept';
+  exception when check_violation then
+    null;
+  end;
+  update workspaces set first_prompt_key = null, first_prompt_claimed_at = null, first_prompt_sent_at = null
+  where id = ws;
+  raise notice 'ok: a session''s first prompt is claimed once per key';
 end $$;

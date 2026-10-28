@@ -13,6 +13,10 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
+// supabase/migrations/20261030120000_work_items.sql
+export type WorkItemStatusDb = "triage" | "todo" | "in_progress" | "done" | "declined" | "duplicate";
+export type WorkItemSourceDb = "app" | "slack" | "cli" | "api";
+
 export type WorkspaceStatusDb =
   | "creating"
   | "provisioning"
@@ -111,6 +115,9 @@ type WorkspaceRow = {
   /** The environment (the app's Project) it started from; null for a
    *  session from before environments. */
   environment_id: string | null;
+  /** A multi-repository session's repositories (20261028160000); null for
+   *  one of one. */
+  checkouts: Json | null;
   /** The coding agent it runs: "claude" or "codex". */
   agent: string;
   /** The model it runs, whose it is, and its effort; null before the first
@@ -121,6 +128,13 @@ type WorkspaceRow = {
   last_active_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Run by the server out of sight (a Slack thread's research): not listed. */
+  background: boolean;
+  /** The idempotency key its first prompt was claimed under, when, and when
+   *  it reached the box (20261031190000); null until one is. */
+  first_prompt_key: string | null;
+  first_prompt_claimed_at: string | null;
+  first_prompt_sent_at: string | null;
 };
 
 type RuntimeComputerRow = {
@@ -135,6 +149,10 @@ type RuntimeComputerRow = {
   /** Made ready ahead of a session and stopped, for the next one to take
    *  (20261025120000_warm_pool.sql). */
   pooled: boolean;
+  /** Which of the project's two ready boxes it is (20261028150000_warm_hooks.sql). */
+  pool_slot: number;
+  /** The project's setup_generation it was made from. */
+  generation: number | null;
   status: RuntimeComputerStatusDb;
   image_version: string;
   daytona_sandbox_id: string | null;
@@ -153,6 +171,8 @@ type RuntimeComputerRow = {
 type ComputeIntervalRow = {
   id: string;
   owner_id: string;
+  /** The org the box ran for, whose hours they are (20261031150000_org_billing.sql). */
+  org_id: string | null;
   computer_id: string | null;
   sandbox_id: string;
   cpu: number;
@@ -162,7 +182,9 @@ type ComputeIntervalRow = {
 };
 
 type BillingCustomerRow = {
-  user_id: string;
+  /** The org it bills (20261031150000_org_billing.sql); the user who made it. */
+  org_id: string;
+  user_id: string | null;
   stripe_customer_id: string;
   created_at: string;
 };
@@ -170,7 +192,9 @@ type BillingCustomerRow = {
 /** A copy of a Stripe subscription (supabase/migrations/20261017150000_stripe_billing.sql). */
 type SubscriptionRow = {
   stripe_subscription_id: string;
-  user_id: string;
+  /** The org whose plan it is (20261031150000_org_billing.sql); who bought it. */
+  org_id: string;
+  user_id: string | null;
   stripe_customer_id: string;
   status: string;
   plan: string;
@@ -220,6 +244,8 @@ type PullRequestRow = {
   id: string;
   owner_id: string;
   workspace_id: string;
+  /** The repository it's in (20261028170000). */
+  project_id: string;
   github_number: number;
   url: string;
   title: string;
@@ -266,9 +292,13 @@ type ProjectEnvironmentRow = {
   updated_at: string;
 };
 
-/** What the app calls a Project (20261027120000_environments.sql). */
+/** What the app calls a Project (20261027121000_environments.sql). */
 type EnvironmentRow = {
   id: string;
+  /** Its org (20261028140000_org_environments.sql): its repository's, for a
+   *  repository's default; given none, its maker's personal org. */
+  org_id: string;
+  /** Who made it. */
   owner_id: string;
   name: string;
   description: string | null;
@@ -281,11 +311,18 @@ type EnvironmentRow = {
   archive_script: string | null;
   default_for_project_id: string | null;
   archived_at: string | null;
+  warm_hook: string | null;
+  start_hook: string | null;
+  setup_generation: number;
+  /** Each member's last warm run, by user id (20261028150000_warm_hooks.sql). */
+  warm_runs: Json;
   created_at: string;
   updated_at: string;
 };
 
 type EnvironmentRepoRow = {
+  /** Its project's org, set from the project. */
+  org_id: string;
   owner_id: string;
   environment_id: string;
   project_id: string;
@@ -340,6 +377,10 @@ type UserCredentialsRow = {
   modal_token_updated_at: string | null;
   // supabase/migrations/20261013130000_user_box_size.sql.
   box_size: "x-small" | "small" | "medium" | "large";
+  // supabase/migrations/20261030150000_org_defaults.sql.
+  box_size_chosen: boolean;
+  // Settings → Account (supabase/migrations/20261030100000_github_identity.sql).
+  github_identity: "personal" | "app";
   // Settings → Providers (supabase/migrations/20261016140000_user_openrouter_key.sql).
   // Replaced by user_provider_keys; dropped in a later release.
   openrouter_key_ciphertext: string | null;
@@ -352,6 +393,42 @@ type UserCredentialsRow = {
 // A user's own key for one model provider (Settings → Providers).
 // Service-role-only (RLS on, no policies); see
 // supabase/migrations/20261019120000_user_provider_keys.sql.
+// An org's keys for model providers (Settings → Org → Keys). Service-role-only;
+// see supabase/migrations/20261030115000_org_provider_keys.sql.
+// A team org's key and allowance on Outrunner's models; see
+// supabase/migrations/20261031175000_org_model_allowance.sql.
+type OrgModelAllowanceRow = {
+  org_id: string;
+  key_ciphertext: string | null;
+  key_hash: string | null;
+  key_created_at: string | null;
+  allowance_period: string | null;
+  allowance_plan: string | null;
+  allowance_baseline_usd: number | null;
+  allowance_limit_usd: number | null;
+  created_at: string;
+};
+
+// An org's defaults for its members' new sessions (Settings → Org →
+// Defaults); see supabase/migrations/20261030150000_org_defaults.sql.
+type OrganizationSettingsRow = {
+  org_id: string;
+  default_model: Json | null;
+  box_size: "x-small" | "small" | "medium" | "large" | null;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+type OrgProviderKeyRow = {
+  org_id: string;
+  provider: string;
+  key_ciphertext: string;
+  key_hint: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type UserProviderKeyRow = {
   user_id: string;
   provider: string;
@@ -438,6 +515,130 @@ type OrganizationMemberRow = {
   created_at: string;
 };
 
+export type AutomationTriggerDb = "pull_request.opened" | "pull_request.synchronize";
+
+type AutomationRow = {
+  id: string;
+  org_id: string;
+  runs_as: string | null;
+  name: string;
+  template: string | null;
+  prompt: string;
+  triggers: AutomationTriggerDb[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AutomationRunStatusDb = "started" | "ready" | "failed" | "refused";
+
+type AutomationRunRow = {
+  id: string;
+  automation_id: string;
+  project_id: string;
+  pr_number: number;
+  pr_title: string;
+  head_sha: string;
+  workspace_id: string | null;
+  status: AutomationRunStatusDb;
+  reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AutomationRepoRow = {
+  automation_id: string;
+  project_id: string;
+};
+
+type OrganizationDomainRow = {
+  domain: string;
+  org_id: string;
+  claimed_by: string | null;
+  created_at: string;
+};
+
+type OrganizationInviteRow = {
+  id: string;
+  org_id: string;
+  email: string;
+  role: OrgRoleDb;
+  token_hash: string;
+  invited_by: string | null;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+  accepted_by: string | null;
+  revoked_at: string | null;
+};
+
+export type JoinRequestStatusDb = "pending" | "approved" | "declined" | "cancelled";
+
+type OrganizationJoinRequestRow = {
+  id: string;
+  org_id: string;
+  user_id: string;
+  email: string;
+  status: JoinRequestStatusDb;
+  created_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+};
+
+type OrganizationRemovalRow = {
+  org_id: string;
+  user_id: string;
+  removed_by: string | null;
+  removed_at: string;
+};
+
+type OrganizationRoleRow = {
+  id: string;
+  org_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type MemberRoleRow = {
+  org_id: string;
+  user_id: string;
+  role_id: string;
+};
+
+export type AccessLevelDb = "read" | "write";
+
+type AccessGrantRow = {
+  id: string;
+  org_id: string;
+  /** Null: Everyone in the org. */
+  role_id: string | null;
+  /** Null: all the org's projects. */
+  project_id: string | null;
+  level: AccessLevelDb;
+  created_at: string;
+};
+
+type GithubInstallationRow = {
+  installation_id: number;
+  /** Null until its installer claims it for an org (20261029110000). */
+  org_id: string | null;
+  account_login: string;
+  account_type: "User" | "Organization";
+  repository_selection: "all" | "selected";
+  installed_by: string | null;
+  /** The GitHub user who installed it (the webhook's sender), by numeric
+   *  id: what a claim is matched by. */
+  installer_id: number | null;
+  /** Their login then, for showing. */
+  installer_login: string | null;
+  /** The org that removed it (unclaimed it): the only one it goes back to. */
+  removed_from: string | null;
+  suspended_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type CliTokenRow = {
   id: string;
   user_id: string;
@@ -445,6 +646,120 @@ type CliTokenRow = {
   device_name: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  created_at: string;
+};
+
+type WorkItemRow = {
+  id: string;
+  org_id: string;
+  created_by: string | null;
+  project_id: string | null;
+  number: number;
+  title: string;
+  body: string;
+  status: WorkItemStatusDb;
+  source: WorkItemSourceDb;
+  source_url: string | null;
+  source_ref: string | null;
+  duplicate_of: string | null;
+  workspace_id: string | null;
+  triaged_at: string | null;
+  prompt: string | null;
+  slack_nudged_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type WorkItemNoteRow = {
+  id: string;
+  org_id: string;
+  item_id: string;
+  author_id: string | null;
+  body: string;
+  source: WorkItemSourceDb;
+  source_url: string | null;
+  author: string | null;
+  created_at: string;
+};
+
+type SlackLinkRow = {
+  team_id: string;
+  slack_user_id: string;
+  owner_id: string;
+  org_id: string;
+  team_name: string | null;
+  slack_user_name: string | null;
+  created_at: string;
+};
+
+// supabase/migrations/20261031100000_slack_agent.sql
+type SlackInstallationRow = {
+  team_id: string;
+  team_name: string | null;
+  bot_user_id: string;
+  bot_token_ciphertext: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type SlackConversationRow = {
+  id: string;
+  team_id: string;
+  channel_id: string;
+  thread_ts: string;
+  org_id: string;
+  started_by: string | null;
+  state: "gathering" | "proposed" | "filed" | "started";
+  rounds: number;
+  proposal: Json | null;
+  proposal_ts: string | null;
+  item_id: string | null;
+  workspace_id: string | null;
+  research_workspace_id: string | null;
+  pr_repo: string | null;
+  pr_number: number | null;
+  pr_url: string | null;
+  verdict_comment_id: number | null;
+  merged_announced: boolean;
+  pr_checked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// supabase/migrations/20261031170000_slack_proactive.sql
+type SlackChannelRow = {
+  team_id: string;
+  channel_id: string;
+  org_id: string;
+  set_by: string | null;
+  watch: boolean;
+  digest: "daily" | "weekly" | null;
+  digest_hour: number;
+  digest_tz: string;
+  last_digest_on: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// supabase/migrations/20261031110000_slack_research.sql
+type SlackResearchRow = {
+  id: string;
+  conversation_id: string;
+  workspace_id: string | null;
+  asked_by: string | null;
+  question: string;
+  token_hash: string;
+  status: "asked" | "answered" | "failed";
+  created_at: string;
+  answered_at: string | null;
+};
+
+type SlackEventSeenRow = { event_id: string; created_at: string };
+
+type OrgModelKeyRow = {
+  org_id: string;
+  key_ciphertext: string | null;
+  key_hash: string | null;
   created_at: string;
 };
 
@@ -458,6 +773,84 @@ export type Database = {
         Row: OrganizationRow;
         Insert: Insert<OrganizationRow, "name">;
         Update: Partial<OrganizationRow>;
+        Relationships: [];
+      };
+      organization_domains: {
+        Row: OrganizationDomainRow;
+        Insert: Insert<OrganizationDomainRow, "domain" | "org_id">;
+        Update: Partial<OrganizationDomainRow>;
+        Relationships: [];
+      };
+      automations: {
+        Row: AutomationRow;
+        Insert: Insert<AutomationRow, "org_id" | "name" | "prompt" | "triggers">;
+        Update: Partial<AutomationRow>;
+        Relationships: [];
+      };
+      org_connectors: {
+        Row: { org_id: string; user_id: string; created_at: string };
+        Insert: { org_id: string; user_id: string };
+        Update: Partial<{ org_id: string; user_id: string }>;
+        Relationships: [];
+      };
+      review_sessions: {
+        Row: { workspace_id: string; created_at: string };
+        Insert: { workspace_id: string };
+        Update: Partial<{ workspace_id: string }>;
+        Relationships: [];
+      };
+      automation_runs: {
+        Row: AutomationRunRow;
+        Insert: Insert<AutomationRunRow, "automation_id" | "project_id" | "pr_number" | "head_sha">;
+        Update: Partial<AutomationRunRow>;
+        Relationships: [];
+      };
+      automation_repos: {
+        Row: AutomationRepoRow;
+        Insert: AutomationRepoRow;
+        Update: Partial<AutomationRepoRow>;
+        Relationships: [];
+      };
+      organization_invites: {
+        Row: OrganizationInviteRow;
+        Insert: Insert<OrganizationInviteRow, "org_id" | "email" | "role" | "token_hash" | "expires_at">;
+        Update: Partial<OrganizationInviteRow>;
+        Relationships: [];
+      };
+      organization_join_requests: {
+        Row: OrganizationJoinRequestRow;
+        Insert: Insert<OrganizationJoinRequestRow, "org_id" | "user_id" | "email">;
+        Update: Partial<OrganizationJoinRequestRow>;
+        Relationships: [];
+      };
+      organization_removals: {
+        Row: OrganizationRemovalRow;
+        Insert: Insert<OrganizationRemovalRow, "org_id" | "user_id">;
+        Update: Partial<OrganizationRemovalRow>;
+        Relationships: [];
+      };
+      organization_roles: {
+        Row: OrganizationRoleRow;
+        Insert: Insert<OrganizationRoleRow, "org_id" | "name">;
+        Update: Partial<OrganizationRoleRow>;
+        Relationships: [];
+      };
+      member_roles: {
+        Row: MemberRoleRow;
+        Insert: MemberRoleRow;
+        Update: Partial<MemberRoleRow>;
+        Relationships: [];
+      };
+      access_grants: {
+        Row: AccessGrantRow;
+        Insert: Insert<AccessGrantRow, "org_id" | "level">;
+        Update: Partial<AccessGrantRow>;
+        Relationships: [];
+      };
+      github_installations: {
+        Row: GithubInstallationRow;
+        Insert: Insert<GithubInstallationRow, "installation_id" | "account_login" | "account_type" | "repository_selection">;
+        Update: Partial<GithubInstallationRow>;
         Relationships: [];
       };
       organization_members: {
@@ -620,6 +1013,60 @@ export type Database = {
         Update: Partial<CliLoginCodeRow>;
         Relationships: [];
       };
+      work_items: {
+        Row: WorkItemRow;
+        Insert: Insert<WorkItemRow, "org_id" | "title">;
+        Update: Partial<WorkItemRow>;
+        Relationships: [];
+      };
+      work_item_notes: {
+        Row: WorkItemNoteRow;
+        Insert: Insert<WorkItemNoteRow, "org_id" | "item_id" | "body">;
+        Update: Partial<WorkItemNoteRow>;
+        Relationships: [];
+      };
+      slack_installations: {
+        Row: SlackInstallationRow;
+        Insert: Insert<SlackInstallationRow, "team_id" | "bot_user_id" | "bot_token_ciphertext">;
+        Update: Partial<SlackInstallationRow>;
+        Relationships: [];
+      };
+      slack_conversations: {
+        Row: SlackConversationRow;
+        Insert: Insert<SlackConversationRow, "team_id" | "channel_id" | "thread_ts" | "org_id">;
+        Update: Partial<SlackConversationRow>;
+        Relationships: [];
+      };
+      slack_channels: {
+        Row: SlackChannelRow;
+        Insert: Insert<SlackChannelRow, "team_id" | "channel_id" | "org_id">;
+        Update: Partial<SlackChannelRow>;
+        Relationships: [];
+      };
+      slack_research: {
+        Row: SlackResearchRow;
+        Insert: Insert<SlackResearchRow, "conversation_id" | "question" | "token_hash">;
+        Update: Partial<SlackResearchRow>;
+        Relationships: [];
+      };
+      slack_events_seen: {
+        Row: SlackEventSeenRow;
+        Insert: Insert<SlackEventSeenRow, "event_id">;
+        Update: Partial<SlackEventSeenRow>;
+        Relationships: [];
+      };
+      org_model_keys: {
+        Row: OrgModelKeyRow;
+        Insert: Insert<OrgModelKeyRow, "org_id">;
+        Update: Partial<OrgModelKeyRow>;
+        Relationships: [];
+      };
+      slack_links: {
+        Row: SlackLinkRow;
+        Insert: Insert<SlackLinkRow, "team_id" | "slack_user_id" | "owner_id" | "org_id">;
+        Update: Partial<SlackLinkRow>;
+        Relationships: [];
+      };
       cli_tokens: {
         Row: CliTokenRow;
         Insert: Insert<CliTokenRow, "user_id" | "token_hash" | "device_name">;
@@ -630,6 +1077,24 @@ export type Database = {
         Row: UserCredentialsRow;
         Insert: Insert<UserCredentialsRow, "user_id">;
         Update: Partial<UserCredentialsRow>;
+        Relationships: [];
+      };
+      org_model_allowance: {
+        Row: OrgModelAllowanceRow;
+        Insert: Insert<OrgModelAllowanceRow, "org_id">;
+        Update: Partial<OrgModelAllowanceRow>;
+        Relationships: [];
+      };
+      organization_settings: {
+        Row: OrganizationSettingsRow;
+        Insert: Insert<OrganizationSettingsRow, "org_id">;
+        Update: Partial<OrganizationSettingsRow>;
+        Relationships: [];
+      };
+      org_provider_keys: {
+        Row: OrgProviderKeyRow;
+        Insert: Insert<OrgProviderKeyRow, "org_id" | "provider" | "key_ciphertext">;
+        Update: Partial<OrgProviderKeyRow>;
         Relationships: [];
       };
       user_provider_keys: {
@@ -658,7 +1123,7 @@ export type Database = {
       };
       billing_customers: {
         Row: BillingCustomerRow;
-        Insert: Insert<BillingCustomerRow, "user_id" | "stripe_customer_id">;
+        Insert: Insert<BillingCustomerRow, "org_id" | "stripe_customer_id">;
         Update: Partial<BillingCustomerRow>;
         Relationships: [];
       };
@@ -667,7 +1132,7 @@ export type Database = {
         Insert: Insert<
           SubscriptionRow,
           | "stripe_subscription_id"
-          | "user_id"
+          | "org_id"
           | "stripe_customer_id"
           | "status"
           | "plan"
@@ -698,6 +1163,90 @@ export type Database = {
         Args: { org: string };
         Returns: boolean;
       };
+      // supabase/migrations/20261028120000_team_orgs.sql
+      my_org_ids: {
+        Args: Record<never, never>;
+        Returns: string[];
+      };
+      create_team_org: {
+        Args: { org_name: string; creator: string; claimed_domain: string | null };
+        Returns: string;
+      };
+      // supabase/migrations/20261028145000_org_access.sql
+      project_level: {
+        Args: { member: string; target_project: string };
+        Returns: AccessLevelDb | null;
+      };
+      // supabase/migrations/20261030120000_work_items.sql
+      triage_project_levels: {
+        Args: { member: string; target_org: string };
+        Returns: { project_id: string; level: AccessLevelDb }[];
+      };
+      org_projects_level: {
+        Args: { member: string; target_org: string };
+        Returns: AccessLevelDb | null;
+      };
+      environment_level: {
+        Args: { member: string; target_environment: string };
+        Returns: AccessLevelDb | null;
+      };
+      // supabase/migrations/20261028155000_org_access_atomic.sql
+      set_grant: {
+        Args: { target_org: string; target_role: string | null; target_project: string | null; new_level: AccessLevelDb | null };
+        Returns: undefined;
+      };
+      set_member_roles: {
+        Args: { target_org: string; member: string; role_ids: string[] };
+        Returns: undefined;
+      };
+      make_default_environment: {
+        Args: { target_project: string; maker: string; checkout: string };
+        Returns: string;
+      };
+      // supabase/migrations/20261030130000_automations.sql
+      create_automation: {
+        Args: {
+          target_org: string;
+          runner: string;
+          automation_name: string;
+          automation_template: string | null;
+          automation_prompt: string;
+          automation_triggers: AutomationTriggerDb[];
+          is_enabled: boolean;
+          project_ids: string[];
+        };
+        Returns: string;
+      };
+      update_automation: {
+        Args: {
+          target_org: string;
+          automation: string;
+          editor: string;
+          automation_name: string | null;
+          automation_prompt: string | null;
+          automation_triggers: AutomationTriggerDb[] | null;
+          is_enabled: boolean | null;
+          project_ids: string[] | null;
+        };
+        Returns: boolean;
+      };
+      // supabase/migrations/20261028130000_org_members.sql
+      accept_org_invite: {
+        Args: { invite_token_hash: string; member: string };
+        Returns: string;
+      };
+      approve_join_request: {
+        Args: { request: string; decider: string; member_role: OrgRoleDb };
+        Returns: string;
+      };
+      remove_org_member: {
+        Args: { target_org: string; member: string; remover: string };
+        Returns: undefined;
+      };
+      set_org_member_role: {
+        Args: { target_org: string; member: string; member_role: OrgRoleDb };
+        Returns: undefined;
+      };
       // supabase/migrations/20261019130000_move_claude_slot_key.sql
       move_claude_slot_key: {
         Args: { mover: string; sealed: string; hint: string };
@@ -707,8 +1256,16 @@ export type Database = {
         Args: { lease_name: string; seconds: number };
         Returns: boolean;
       };
+      record_warm_run: {
+        Args: { target: string; member: string; run: Json };
+        Returns: undefined;
+      };
+      bump_environment_generation: {
+        Args: { target: string };
+        Returns: number;
+      };
       claim_pooled_computer: {
-        Args: { requested_workspace_id: string; requested_provider: string };
+        Args: { requested_workspace_id: string; requested_provider: string; requested_generation?: number | null };
         Returns: string | null;
       };
       claim_workspace_computer: {
@@ -744,6 +1301,8 @@ export type Database = {
       job_status: JobStatusDb;
       runtime_computer_status: RuntimeComputerStatusDb;
       archive_policy: ArchivePolicyDb;
+      work_item_status: WorkItemStatusDb;
+      work_item_source: WorkItemSourceDb;
     };
     CompositeTypes: Record<never, never>;
   };

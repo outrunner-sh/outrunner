@@ -11,7 +11,12 @@ import {
   Activity,
   AgentHealth,
   AnswerRequest,
+  ProvideSecretsRequest,
+  WarmRequest,
+  WarmStatus,
   ArchiveWorkspaceRequest,
+  ChangedFileDiffResponse,
+  ChangesResponse,
   CreateWorkspaceRequest,
   EditorResponse,
   ErrorResponse,
@@ -70,6 +75,13 @@ const AGENT_LIFECYCLE_TIMEOUT_MS = 180_000;
 const AGENT_START_TIMEOUT_MS = 30_000;
 
 /**
+ * A send waits for Claude to record the prompt (about 8s of Enter presses),
+ * and the agent gives a hung tmux up to 30s before letting go. Outlast that,
+ * so a slow send the agent still delivers isn't reported here as unreachable.
+ */
+const AGENT_SEND_TIMEOUT_MS = 35_000;
+
+/**
  * A model switch checks the session (up to 10s on the agent) and relaunches
  * Claude on the new model (up to 60s), so it outlasts both.
  */
@@ -126,9 +138,7 @@ export class AgentClient {
    * reply streams back on the Conversation SSE; this just starts the turn.
    */
   sendMessage(identity: WorkspaceIdentity, content: string): Promise<unknown> {
-    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, {
-      content,
-    });
+    return this.post(`/workspaces/${identity.workspaceId}/message`, identity, { content }, AGENT_SEND_TIMEOUT_MS);
   }
 
   /**
@@ -147,6 +157,20 @@ export class AgentClient {
     return PortsResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/ports`, identity)).ports;
   }
 
+  /** The session's changed files since its base branch, read by git on the
+   *  box: one request, where reading them from outside takes one per git
+   *  command. An agent from before this answers 404 with no error envelope. */
+  async listChanges(identity: WorkspaceIdentity): Promise<ChangesResponse["files"]> {
+    return ChangesResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/changes`, identity)).files;
+  }
+
+  /** One changed file's bounded diff, from the same base: 400 INVALID_REQUEST
+   *  for a path that isn't one, 404 NOT_FOUND for a file not in the changes. */
+  async changedFileDiff(identity: WorkspaceIdentity, path: string): Promise<string> {
+    const query = `?path=${encodeURIComponent(path)}`;
+    return ChangedFileDiffResponse.parse(await this.get(`/workspaces/${identity.workspaceId}/changes${query}`, identity)).diff;
+  }
+
   /** Stop the turn the workspace's session is running, as Escape does in its
    *  terminal; a session not running one is already stopped. */
   interrupt(identity: WorkspaceIdentity): Promise<unknown> {
@@ -158,6 +182,14 @@ export class AgentClient {
    *  the agent refuses an answer to any it isn't waiting on (409 CONFLICT). */
   answer(identity: WorkspaceIdentity, req: AnswerRequest): Promise<unknown> {
     return this.post(`/workspaces/${identity.workspaceId}/answer`, identity, AnswerRequest.parse(req));
+  }
+
+  /** Answer the request for secrets the workspace's session is waiting on
+   *  (its agent's request_secrets call): the values go into its session,
+   *  never into a log. An answer to a request it isn't waiting on is 409
+   *  CONFLICT. */
+  provideSecrets(identity: WorkspaceIdentity, req: ProvideSecretsRequest): Promise<unknown> {
+    return this.post(`/workspaces/${identity.workspaceId}/secrets`, identity, ProvideSecretsRequest.parse(req));
   }
 
   resumeWorkspace(identity: WorkspaceIdentity): Promise<unknown> {
@@ -270,6 +302,17 @@ export class AgentClient {
   async activity(box: Omit<WorkspaceIdentity, "workspaceId">): Promise<Activity> {
     const raw = await this.get("/activity", { ...box, workspaceId: LISTING_WORKSPACE_ID });
     return Activity.parse(raw);
+  }
+
+  /** Start warming a ready box (POST /warm): box-wide, so the listing
+   *  token. A box warming already answers 409 CONFLICT. */
+  startWarm(box: Omit<WorkspaceIdentity, "workspaceId">, req: WarmRequest): Promise<unknown> {
+    return this.post("/warm", { ...box, workspaceId: LISTING_WORKSPACE_ID }, WarmRequest.parse(req));
+  }
+
+  /** How the box's warming went (GET /warm). */
+  async warmStatus(box: Omit<WorkspaceIdentity, "workspaceId">): Promise<WarmStatus> {
+    return WarmStatus.parse(await this.get("/warm", { ...box, workspaceId: LISTING_WORKSPACE_ID }));
   }
 
   /**

@@ -6,8 +6,10 @@ import { ServerAnswer } from "@/components/server-answer";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProjects, listWorkspacePullRequests } from "@/lib/db/repositories";
 import { listProjectsOnce, listWorkspacesOnce } from "@/lib/db/request-cache";
+import { countTriage, triageActor } from "@/lib/db/work-items";
 import { GET_STARTED_COOKIE } from "@/lib/nav/get-started";
 import { FOLDED_PROJECTS_COOKIE, readFoldedProjects, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
+import { getOrgContext } from "@/lib/orgs/server";
 import type { Project, Workspace, WorkspacePullRequest } from "@/lib/runtime/types";
 
 /**
@@ -66,23 +68,34 @@ async function SidebarData() {
   const owner = await getOwnerSafe();
   if (!owner) return null;
 
+  // The active org's projects and the user's sessions in it (lib/orgs/active.ts).
   // The sidebar is auxiliary: a failed load shows an empty list, never an error
   // page in place of the session the user opened.
+  const orgs = await getOrgContext().catch((error: unknown) => {
+    console.error("Sidebar: could not load orgs", error);
+    return null;
+  });
+  const orgId = orgs?.active.id;
   const [listed, workspaces] = await Promise.all([
-    listProjectsOnce().catch((error: unknown): Project[] => {
+    listProjectsOnce(orgId).catch((error: unknown): Project[] => {
       console.error("Sidebar: could not load repositories", error);
       return [];
     }),
-    listWorkspacesOnce().catch((error: unknown): Workspace[] => {
+    listWorkspacesOnce(orgId).catch((error: unknown): Workspace[] => {
       console.error("Sidebar: could not load workspaces", error);
       return [];
     }),
   ]);
-  const [hidden, pullRequests] = await Promise.all([
+  const [hidden, pullRequests, triageCount] = await Promise.all([
     hiddenSessionProjects(listed, workspaces),
     listWorkspacePullRequests(workspaces.map((w) => w.id)).catch((error: unknown): WorkspacePullRequest[] => {
       console.error("Sidebar: could not load pull requests", error);
       return [];
+    }),
+    // What waits in the active org's triage that the user may see.
+    (orgId ? triageActor(owner.id, orgId).then((actor) => (actor ? countTriage(actor) : 0)) : Promise.resolve(0)).catch((error: unknown): number => {
+      console.error("Sidebar: could not count triage", error);
+      return 0;
     }),
   ]);
 
@@ -93,10 +106,13 @@ async function SidebarData() {
           projects: listed,
           hiddenProjects: hidden,
           workspaces,
-          pullRequests: Object.fromEntries(pullRequests.map((pr) => [pr.workspaceId, pr])),
+          pullRequests: sessionPullRequests(workspaces, pullRequests),
         },
-        ownerLogin: owner.githubLogin,
+        ownerLogin: owner.githubLogin || owner.name,
         ownerAvatarUrl: owner.avatarUrl,
+        orgs: orgs?.orgs ?? [],
+        activeOrgId: orgId ?? null,
+        triageCount,
       }}
     />
   );
@@ -114,4 +130,22 @@ async function hiddenSessionProjects(listed: Project[], workspaces: Workspace[])
     console.error("Sidebar: could not load hidden repositories", error);
     return [];
   });
+}
+
+/** One pull request a session for the sidebar: its own repository's, else
+ *  (a session of several that opened one elsewhere first) its oldest. The
+ *  session's page reads each repository's itself. */
+function sessionPullRequests(
+  workspaces: Workspace[],
+  pullRequests: WorkspacePullRequest[],
+): Record<string, WorkspacePullRequest> {
+  const own = new Map(workspaces.map((w) => [w.id, w.projectId]));
+  const picked: Record<string, WorkspacePullRequest> = {};
+  for (const pr of pullRequests) {
+    const current = picked[pr.workspaceId];
+    if (!current || (current.projectId !== own.get(pr.workspaceId) && pr.projectId === own.get(pr.workspaceId))) {
+      picked[pr.workspaceId] = pr;
+    }
+  }
+  return picked;
 }

@@ -2,8 +2,10 @@ package conversation
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -245,5 +247,21 @@ func TestDecodeCapturesAssistantModel(t *testing.T) {
 	}
 	if uev.Message.Model != "" {
 		t.Fatalf("user turn model = %q, want empty", uev.Message.Model)
+	}
+}
+
+func TestDecodeCarriesWhyTheReplyStopped(t *testing.T) {
+	// Claude's words before a tool call: a record of their own, the turn going on.
+	line := `{"type":"assistant","uuid":"a1","timestamp":"t","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"Checking."}]}}`
+	ev, ok := decode([]byte(line))
+	if !ok || ev.Message.StopReason != "tool_use" {
+		t.Fatalf("stop reason = %q (ok %v), want tool_use", ev.Message.StopReason, ok)
+	}
+	// None logged: none sent, so the field is left out of the frame.
+	line = `{"type":"assistant","uuid":"a2","timestamp":"t","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`
+	ev, _ = decode([]byte(line))
+	frame, _ := json.Marshal(ev.Message)
+	if strings.Contains(string(frame), "stopReason") {
+		t.Fatalf("frame %s names a stop reason the log didn't", frame)
 	}
 }

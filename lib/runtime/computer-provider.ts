@@ -4,9 +4,17 @@ import os from "node:os";
 import path from "node:path";
 
 import { optionalEnv } from "@/lib/env";
+import { gitCredentialEnvironment } from "@/lib/runtime/git-credential";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
 import { AgentEndpointCache } from "@/lib/runtime/agent-endpoint-cache";
 import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
+import {
+  BOX_IMAGE_MAX_BYTES,
+  IMAGE_MISSING,
+  IMAGE_TOO_LARGE,
+  imageBase64,
+  imageReadCommand,
+} from "@/lib/runtime/chat-image";
 import {
   AGENT_PORT,
   deployClaude,
@@ -18,12 +26,15 @@ import {
   cloneMirror,
   commitAll,
   fetchMirror,
+  syncMirrors,
+  type GitTokenFor,
   listChangedFiles,
   listWorktreeFiles,
   pushBranch,
   readFileDiff,
   readWorktreeFile,
 } from "@/lib/runtime/git";
+import { boxLabels, deploymentName } from "@/lib/runtime/orphan-boxes";
 import type { BoxResources, SandboxBackend, SandboxBox } from "@/lib/runtime/sandbox/backend";
 import type {
   ChangedFile,
@@ -246,7 +257,9 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       onStage: (t) => input.onStage?.(t.stage, t.ms),
     });
 
-    const labels = { "runtime.role": "computer", "runtime.engine": "claude" };
+    // Its role and deployment are what the orphaned-box sweep goes by
+    // (lib/runtime/orphan-boxes.ts).
+    const labels = boxLabels("claude", deploymentName(optionalEnv("RUNTIME_BASE_URL")));
     let sandbox: SandboxBox | null = null;
     try {
       sandbox = await this.restoreBox(timer, labels, input);
@@ -259,7 +272,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       await timer.stage("agent_boot", () =>
         deployClaude(box.io, binary, input.secret, {
           root: home,
-          sessionEnv: input.sessionEnv,
+          sessionEnv: boxEnvironment(box.id, input.sessionEnv),
         }),
       );
 
@@ -351,7 +364,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       // (worktrees, jcode sessions, conversation logs) stay live, so
       // reconnect/resume just works with no wake path.
       sandbox = await timer.stage("sandbox_create", () =>
-        this.backend.create({ "runtime.role": "computer", "runtime.engine": "jcode" }, input.size),
+        this.backend.create(boxLabels("jcode", deploymentName(optionalEnv("RUNTIME_BASE_URL"))), input.size),
       );
       const box = sandbox;
       const home = await box.home();
@@ -397,6 +410,28 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       repoDir: `${await box.home()}/repo.git`,
       token: githubToken,
     });
+  }
+
+  /** A mirror of each repository of a multi-repository session, at
+   *  $HOME/repos/<checkout>.git where the agent finds them (its
+   *  RepoMirrorPath): fetched where the box has one, cloned where not. Each
+   *  with its own token where they differ (the App's are per repository). */
+  async syncRepoMirrors(
+    sandboxId: string,
+    repos: { fullName: string; checkout: string }[],
+    githubToken?: string | GitTokenFor,
+  ): Promise<void> {
+    const box = await this.backend.get(sandboxId);
+    const home = await box.home();
+    await box.gitExec(["mkdir", "-p", `${home}/repos`]);
+    // One at a time, each in the log as it's done, so a session stopped among
+    // them shows which repository it was at.
+    for (const repo of repos) {
+      const began = Date.now();
+      console.log(`Box ${sandboxId}: syncing ${repo.fullName}'s mirror`);
+      await syncMirrors(box.gitExec, { root: `${home}/repos`, repos: [repo], token: githubToken });
+      console.log(`Box ${sandboxId}: ${repo.fullName}'s mirror synced (${Math.round((Date.now() - began) / 1000)}s)`);
+    }
   }
 
   /** Git projection for one interactive worktree on the shared computer: its
@@ -474,6 +509,21 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       box.io.upload(Buffer.from("*\n"), `${dir}/.gitignore`),
       ...files.map((file) => box.io.upload(file.bytes, `${dir}/${file.filename}`)),
     ]);
+  }
+
+  /** The file at `path` on the box (absolute), for the chat to show as an
+   *  image: its bytes, or why not. Its type is the caller's to check. */
+  async readBoxImage(sandboxId: string, path: string): Promise<Buffer | "missing" | "too-large"> {
+    const box = await this.backend.get(sandboxId);
+    const { stdout, exitCode } = await box.io.exec(imageReadCommand(path));
+    if (exitCode === IMAGE_MISSING) return "missing";
+    if (exitCode === IMAGE_TOO_LARGE) return "too-large";
+    if (exitCode !== 0) throw new Error(`Reading ${path} off the box exited ${exitCode}`);
+    const base64 = imageBase64(stdout);
+    if (base64 === null) throw new Error(`Reading ${path} off the box printed no image`);
+    const bytes = Buffer.from(base64, "base64");
+    // It grew past the cap between being measured and read.
+    return bytes.length > BOX_IMAGE_MAX_BYTES ? "too-large" : bytes;
   }
 
   /** Push an interactive worktree's persisted branch with a request-scoped token. */
@@ -580,7 +630,10 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     if (running) return running;
     const upgrade = (async () => {
       const box = await this.backend.get(sandboxId);
-      await deployClaude(box.io, await this.binary(), secret, { root: await box.home(), sessionEnv });
+      await deployClaude(box.io, await this.binary(), secret, {
+        root: await box.home(),
+        sessionEnv: boxEnvironment(sandboxId, sessionEnv),
+      });
     })().finally(() => UPGRADING.delete(key));
     UPGRADING.set(key, upgrade);
     return upgrade;
@@ -685,4 +738,10 @@ export function boxGone(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const { name, status, statusCode } = error as { name?: unknown; status?: unknown; statusCode?: unknown };
   return (typeof name === "string" && name.endsWith("NotFoundError")) || status === 404 || statusCode === 404;
+}
+
+/** A box's agent boots with its user's environment, and with what it asks
+ *  Outrunner for GitHub tokens with (lib/runtime/git-credential.ts). */
+function boxEnvironment(sandboxId: string, sessionEnv: Record<string, string> | undefined): Record<string, string> {
+  return { ...sessionEnv, ...gitCredentialEnvironment(sandboxId, optionalEnv("RUNTIME_BASE_URL")) };
 }

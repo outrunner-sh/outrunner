@@ -26,10 +26,16 @@ export function ApiKeyCard({
   provider,
   stored,
   onChange,
+  endpoint = "/api/settings/providers",
+  whose = "Your",
 }: {
   provider: KeyProviderId;
   stored: StoredKey;
   onChange: (keys: ProviderKeys) => void;
+  /** Where the key is saved: the user's own, or an org's (/api/orgs/[id]/keys). */
+  endpoint?: string;
+  /** Whose account the key bills, as the details say it. */
+  whose?: string;
 }) {
   const { label, keyPlaceholder, keysUrl, keysPage, models } = PROVIDERS[provider];
   const [key, setKey] = useState("");
@@ -48,7 +54,7 @@ export function ApiKeyCard({
     setStatus("pending");
     try {
       const data = await requestJson<{ keys: ProviderKeys; warning?: string | null }>(
-        method === "PUT" ? "/api/settings/providers" : `/api/settings/providers?provider=${provider}`,
+        method === "PUT" ? endpoint : `${endpoint}?provider=${provider}`,
         { method, body: method === "PUT" ? { provider, key: key.trim() } : undefined, has: (d) => d.keys !== undefined },
       );
       onChange(data.keys);
@@ -82,7 +88,7 @@ export function ApiKeyCard({
               </span>
             </DetailRow>
           ) : null}
-          <DetailRow term="Billing">Your {label} account</DetailRow>
+          <DetailRow term="Billing">{`${whose} ${label} account`}</DetailRow>
           <DetailRow term="Models">{models.map((model) => model.label).join(", ")}</DetailRow>
         </Details>
       </div>

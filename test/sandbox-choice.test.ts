@@ -22,6 +22,7 @@ const settings = (sandbox: SandboxChoice, connected: boolean, boxSize: BoxSizeId
   daytona: { connected, hint: connected ? "ab12" : null, updatedAt: null },
   modal: { connected, hint: connected ? "cd34" : null, updatedAt: null },
   boxSize,
+  boxSizeChosen: false,
 });
 
 const saved = process.env.RUNTIME_PROVIDER;

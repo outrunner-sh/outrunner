@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Box, CreditCard, Info, KeyRound, Layers, Terminal, User } from "lucide-react";
+import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Github, Info, KeyRound, Layers, Plug, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -19,6 +19,25 @@ const groups = [
       // What Outrunner's models and the user's own keys have used; the sidebar's
       // allowance bar points here.
       { href: USAGE_SETTINGS_HREF, label: "Usage", icon: BarChart3 },
+      // Where triage captures come from: Slack, and the CLI.
+      { href: "/settings/integrations", label: "Integrations", icon: Plug },
+    ],
+  },
+  {
+    label: "Org",
+    sections: [
+      // The org the app is showing (the sidebar's switcher picks it).
+      { href: "/settings/org", label: "General", icon: Building2 },
+      // Who's in it; its admins invite, answer requests and remove.
+      { href: "/settings/org/members", label: "Members", icon: Users },
+      // What Everyone and each role may do with its projects; admins'.
+      { href: "/settings/org/access", label: "Roles & access", icon: ShieldCheck },
+      // The Outrunner GitHub App's installations; admins install it.
+      { href: "/settings/org/github", label: "GitHub", icon: Github },
+      // Keys the org's members' cloud sessions run on; admins save them.
+      { href: "/settings/org/keys", label: "Keys", icon: KeyRound },
+      // Model and box size for members who haven't chosen; admins set them.
+      { href: "/settings/org/defaults", label: "Defaults", icon: SlidersHorizontal },
     ],
   },
   {

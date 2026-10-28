@@ -10,6 +10,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { useServerAnswer } from "@/components/server-answer";
 import { isStudioPath, SIDEBAR_COOKIE } from "@/lib/nav/sidebar";
 import { startNewSession } from "@/lib/session/new-session-reset";
+import type { Org } from "@/lib/orgs/active";
 import type { AppData } from "@/lib/session/session-view";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,12 @@ export type FrameData = {
   appData: AppData;
   ownerLogin: string;
   ownerAvatarUrl: string | null;
+  /** The user's orgs, personal first, for the switcher; empty before orgs. */
+  orgs: Org[];
+  /** The org the sidebar lists (lib/orgs/active.ts). */
+  activeOrgId: string | null;
+  /** Work items waiting in triage: the sidebar's count. */
+  triageCount: number;
 };
 
 /**
@@ -95,7 +102,7 @@ export function AppFrame({
   };
 
   // App-wide shortcuts: ⌘N a new session, ⌘K search the sidebar (opening it
-  // if collapsed). With a modifier they are safe even while typing. (A browser
+  // if collapsed), ⌘I capture a triage item. With a modifier they are safe even while typing. (A browser
   // keeps ⌘N for itself; the Mac app passes it through.)
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -109,6 +116,9 @@ export function AppFrame({
         event.preventDefault();
         setAndRemember(false);
         setSearchSignal((n) => n + 1);
+      } else if (key === "i") {
+        event.preventDefault();
+        router.push("/triage?new=1");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -153,6 +163,9 @@ export function AppFrame({
                 workspaces={appData?.workspaces ?? NO_WORKSPACES}
                 ownerLogin={frame?.ownerLogin ?? ""}
                 ownerAvatarUrl={frame?.ownerAvatarUrl ?? null}
+                orgs={frame?.orgs ?? NO_ORGS}
+                activeOrgId={frame?.activeOrgId ?? null}
+                triageCount={frame?.triageCount ?? 0}
                 onCollapse={() => setAndRemember(true)}
                 searchSignal={searchSignal}
                 initialFolded={look?.folded ?? NO_FOLDED}
@@ -228,4 +241,5 @@ function SidebarButtons({ className, expand }: { className?: string; expand: () 
 }
 
 const NO_WORKSPACES: AppData["workspaces"] = [];
+const NO_ORGS: Org[] = [];
 const NO_FOLDED: string[] = [];

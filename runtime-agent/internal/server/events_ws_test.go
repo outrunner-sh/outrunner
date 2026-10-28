@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,36 @@ func TestEventsWSEmitsStateThenMessage(t *testing.T) {
 	assertMessageWithText(t, msg, "first")
 	if msg.ID == "0" || msg.ID == "" {
 		t.Fatalf("message frame must carry a resumable id, got %q", msg.ID)
+	}
+}
+
+func TestEventsWSReportsRunningOnceLogAppears(t *testing.T) {
+	f := newServerFixture(t)
+	defer f.stop()
+	if err := os.Remove(f.jsonlPath); err != nil {
+		t.Fatalf("remove jsonl: %v", err)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(f.wsURL(t, ""), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	if got := stateOf(t, readWSFrame(t, conn, 2*time.Second)); got != "starting" {
+		t.Fatalf("initial state = %q, want starting", got)
+	}
+
+	// An empty log yields no event, so the periodic check reports it.
+	if err := os.WriteFile(f.jsonlPath, nil, 0o600); err != nil {
+		t.Fatalf("touch jsonl: %v", err)
+	}
+	state := readWSFrame(t, conn, 3*time.Second)
+	if got := stateOf(t, state); got != "running" {
+		t.Fatalf("state after log appears = %q, want running", got)
+	}
+	if state.ID != "0" {
+		t.Fatalf("state frame ID should be the cursor 0, got %q", state.ID)
 	}
 }
 

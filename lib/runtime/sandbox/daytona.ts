@@ -3,6 +3,7 @@ import { Daytona, DaytonaNotFoundError, type Sandbox } from "@daytonaio/sdk";
 import { optionalEnv, requireEnv } from "@/lib/env";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
+import type { ListedBox } from "@/lib/runtime/orphan-boxes";
 import {
   homeOf,
   type AgentEndpoint,
@@ -14,6 +15,17 @@ import {
 const CREATE_TIMEOUT_SECONDS = 180;
 /** Signed WS preview lifetime; refreshed on reconnect (Spike 1 finding). */
 const SIGNED_URL_TTL_SECONDS = 300;
+/**
+ * How long one command on a box may run. The SDK puts no deadline on a
+ * command given none, so a call Daytona never answers held a session's setup
+ * on "Starting Claude" for good, the box idle. Generous: a large repository's
+ * first clone and Claude Code's install are the longest, a few minutes each.
+ * Past it the command is ended and its step fails, naming it.
+ */
+export const EXEC_TIMEOUT_SECONDS = 10 * 60;
+/** The SDK's deadline for its other calls (get, start, uploads), 24 hours
+ *  unless set: none of them takes minutes. */
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
@@ -34,8 +46,9 @@ export class DaytonaBackend implements SandboxBackend {
   /** Lazy so constructing the backend (e.g. in a test) needs no credentials. */
   private daytona(): Promise<Daytona> {
     this.client ??= (async () => {
-      if (this.apiKey) return new Daytona({ apiKey: await this.apiKey() });
+      if (this.apiKey) return new Daytona({ apiKey: await this.apiKey(), requestTimeoutMs: REQUEST_TIMEOUT_MS });
       return new Daytona({
+        requestTimeoutMs: REQUEST_TIMEOUT_MS,
         apiKey: requireEnv("DAYTONA_API_KEY"),
         apiUrl: optionalEnv("DAYTONA_API_URL"),
         target: optionalEnv("DAYTONA_TARGET"),
@@ -79,13 +92,28 @@ export class DaytonaBackend implements SandboxBackend {
     await daytona.delete(await daytona.get(id));
   }
 
+  /** The account's boxes carrying `labels`, made and last active before
+   *  `quietSince`: for the orphaned-box sweep (lib/runtime/orphan-boxes.deps.ts). */
+  async *list(labels: Record<string, string>, quietSince: Date): AsyncIterable<ListedBox> {
+    const query = { labels, createdAtBefore: quietSince, lastActivityBefore: quietSince };
+    for await (const sandbox of (await this.daytona()).list(query)) {
+      yield {
+        id: sandbox.id,
+        labels: sandbox.labels ?? {},
+        state: sandbox.state,
+        createdAt: sandbox.createdAt,
+        lastActivityAt: sandbox.lastActivityAt,
+      };
+    }
+  }
+
   async pause(id: string): Promise<void> {
     await (await (await this.daytona()).get(id)).stop();
   }
 
-  /** The stopped box `id`, started again on the disk it kept. Null when it's
-   *  gone or broken, so a new box is the only way on. */
-  async restore(id: string): Promise<SandboxBox | null> {
+  /** The stopped box `id`, started again on the disk it kept, with `labels`
+   *  on it. Null when it's gone or broken, so a new box is the only way on. */
+  async restore(id: string, labels: Record<string, string> = {}): Promise<SandboxBox | null> {
     let sandbox: Sandbox;
     try {
       sandbox = await (await this.daytona()).get(id);
@@ -110,18 +138,31 @@ export class DaytonaBackend implements SandboxBackend {
       console.error(`Daytona box ${id} is ${state}, not stopped; starting a new one`);
       return null;
     }
+    await relabel(sandbox, labels);
     return box(sandbox);
   }
+}
+
+/** Put `labels` on a box made before them (the deployment's, which the
+ *  orphaned-box sweep goes by), keeping its others. Best effort: the box is
+ *  up either way. Exported for tests. */
+export async function relabel(sandbox: Sandbox, labels: Record<string, string>): Promise<void> {
+  const current = sandbox.labels ?? {};
+  if (Object.entries(labels).every(([key, value]) => current[key] === value)) return;
+  await sandbox
+    .setLabels({ ...current, ...labels })
+    .catch((error: unknown) => console.warn(`Could not label Daytona box ${sandbox.id}`, error));
 }
 
 /** States a box is started again from, and ones it's on its way up in. */
 const STOPPED_STATES = new Set(["stopped", "archived"]);
 const STARTING_STATES = new Set(["starting", "restoring", "creating"]);
 
-function box(sandbox: Sandbox): SandboxBox {
+/** A box's commands and files, from its sandbox. Exported for tests. */
+export function box(sandbox: Sandbox): SandboxBox {
   const io: BoxIO = {
     exec: async (command) => {
-      const res = await sandbox.process.executeCommand(command);
+      const res = await sandbox.process.executeCommand(command, undefined, undefined, EXEC_TIMEOUT_SECONDS);
       return { stdout: res.result ?? "", exitCode: res.exitCode ?? 0 };
     },
     // Through a background session with runAsync: a synchronous
@@ -146,6 +187,7 @@ function box(sandbox: Sandbox): SandboxBox {
       `bash -lc ${shellQuote(inner)}`,
       undefined,
       options?.env,
+      EXEC_TIMEOUT_SECONDS,
     );
     return { stdout: res.result ?? "", stderr: "", exitCode: res.exitCode ?? 0 };
   };

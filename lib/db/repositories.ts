@@ -1,7 +1,7 @@
 import type { AgentId } from "@/lib/agents/registry";
 import { isUuid } from "@/lib/ids";
 import { probeStatus } from "@/lib/supabase/probe";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   toJob,
   toProject,
@@ -11,6 +11,7 @@ import {
   toWorkspaceSnapshot,
 } from "@/lib/db/mappers";
 import type { ComputerScope } from "@/lib/runtime/computer-scope";
+import type { FirstPromptClaim } from "@/lib/session/first-prompt-claim";
 import type { RecordedModel } from "@/lib/runtime/session-models";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type {
@@ -27,6 +28,7 @@ import type {
   ProvisionTimings,
   RuntimeComputer,
   RuntimeComputerStatus,
+  SessionCheckout,
   Workspace,
   WorkspacePullRequest,
   WorkspaceStatus,
@@ -39,14 +41,18 @@ import type {
 
 // --- projects --------------------------------------------------------------
 
-export async function listProjects(): Promise<Project[]> {
+/** The projects of `orgId`, or of every org the user is in when it's not
+ *  given (RLS: an org's members see its projects). */
+export async function listProjects(orgId?: string): Promise<Project[]> {
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("projects")
     .select("*")
     .is("hidden_at", null)
     .order("pushed_at", { ascending: false, nullsFirst: false });
+  if (orgId) query = query.eq("org_id", orgId);
 
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []).map(toProject);
 }
@@ -74,8 +80,12 @@ export async function getProjects(ids: string[]): Promise<Project[]> {
   return (data ?? []).map(toProject);
 }
 
-/** Upsert the repositories returned by GitHub, keyed on (org, repo id): the
- *  database puts them in the owner's personal org, given no org. */
+/**
+ * Upsert the repositories returned by GitHub as projects of `orgId` (the
+ * owner's personal org when not given), keyed on (org, repo id). A repository
+ * another member connected to the org already is theirs: it's left as it is
+ * (only its owner may change it) and not counted.
+ */
 export async function upsertProjects(
   ownerId: string,
   repos: Array<{
@@ -90,14 +100,32 @@ export async function upsertProjects(
     htmlUrl: string;
     pushedAt: string | null;
   }>,
+  orgId?: string,
 ): Promise<number> {
   if (repos.length === 0) return 0;
 
   const supabase = await createSupabaseServerClient();
+  let mine = repos;
+  if (orgId) {
+    const { data: theirs, error: lookupError } = await supabase
+      .from("projects")
+      .select("github_repo_id")
+      .eq("org_id", orgId)
+      .neq("owner_id", ownerId)
+      .in(
+        "github_repo_id",
+        repos.map((r) => r.githubRepoId),
+      );
+    if (lookupError) throw lookupError;
+    const taken = new Set((theirs ?? []).map((p) => p.github_repo_id));
+    mine = repos.filter((r) => !taken.has(r.githubRepoId));
+    if (mine.length === 0) return 0;
+  }
   const { error, count } = await supabase
     .from("projects")
     .upsert(
-      repos.map((r) => ({
+      mine.map((r) => ({
+        ...(orgId ? { org_id: orgId } : {}),
         owner_id: ownerId,
         github_repo_id: r.githubRepoId,
         full_name: r.fullName,
@@ -114,22 +142,27 @@ export async function upsertProjects(
     );
 
   if (error) throw error;
-  return count ?? repos.length;
+  return count ?? mine.length;
 }
 
 // --- workspaces ------------------------------------------------------------
 
+/** The user's live sessions (RLS: only their own), of one project or one
+ *  org when asked. */
 export async function listWorkspaces(
-  projectId?: string,
+  filter: { projectId?: string; orgId?: string } = {},
 ): Promise<Workspace[]> {
   const supabase = await createSupabaseServerClient();
   let query = supabase
     .from("workspaces")
     .select("*")
     .neq("status", "destroyed")
+    // A Slack thread's research session runs out of sight.
+    .eq("background", false)
     .order("last_active_at", { ascending: false, nullsFirst: false });
 
-  if (projectId) query = query.eq("project_id", projectId);
+  if (filter.projectId) query = query.eq("project_id", filter.projectId);
+  if (filter.orgId) query = query.eq("org_id", filter.orgId);
 
   const { data, error } = await query;
   if (error) throw error;
@@ -159,6 +192,8 @@ export async function createWorkspaceRow(input: {
   agent?: AgentId;
   /** The project it starts from; null before the migration that adds them. */
   environmentId?: string | null;
+  /** A multi-repository session's repositories. */
+  checkouts?: SessionCheckout[] | null;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -174,6 +209,7 @@ export async function createWorkspaceRow(input: {
       ...(input.agent && input.agent !== "claude" && { agent: input.agent }),
       // Named only when there is one, for the same reason.
       ...(input.environmentId && { environment_id: input.environmentId }),
+      ...(input.checkouts && { checkouts: input.checkouts }),
       status: "creating",
     })
     .select("*")
@@ -224,6 +260,98 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
     .select("id");
   if (error) throw error;
   return (data ?? []).length > 0;
+}
+
+/**
+ * Claim the session's first prompt for `key`, before it is sent: "claimed"
+ * when this call took it (free, or `key`'s own claim abandoned mid-send before
+ * `abandonedBefore`), with the claimed_at it wrote as the claim's token; "sent"
+ * when `key` holds it and its send went, "sending" when that send is still
+ * going, "other" when another key holds it. Conditional, as the title is, so
+ * two sends racing can't both claim it.
+ */
+export async function claimFirstPrompt(id: string, key: string, abandonedBefore: string): Promise<FirstPromptClaim> {
+  const supabase = await createSupabaseServerClient();
+  const claimedAt = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .update({ first_prompt_key: key, first_prompt_claimed_at: claimedAt, first_prompt_sent_at: null })
+    .eq("id", id)
+    .is("first_prompt_key", null)
+    .select("id");
+  if (error) throw error;
+  if ((data ?? []).length > 0) return { state: "claimed", claimedAt };
+  const { data: retaken, error: retakeError } = await supabase
+    .from("workspaces")
+    .update({ first_prompt_claimed_at: claimedAt })
+    .eq("id", id)
+    .eq("first_prompt_key", key)
+    .is("first_prompt_sent_at", null)
+    .lt("first_prompt_claimed_at", abandonedBefore)
+    .select("id");
+  if (retakeError) throw retakeError;
+  if ((retaken ?? []).length > 0) return { state: "claimed", claimedAt };
+  const { data: row, error: readError } = await supabase
+    .from("workspaces")
+    .select("first_prompt_key, first_prompt_sent_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (readError) throw readError;
+  if (row?.first_prompt_key !== key) return { state: "other" };
+  return { state: row.first_prompt_sent_at ? "sent" : "sending" };
+}
+
+/** The first-prompt claim `claimedAt` names, matched on its key and token. */
+function ownClaim<Q extends { eq: (column: string, value: string) => Q; is: (column: string, value: null) => Q }>(
+  query: Q,
+  id: string,
+  key: string,
+  claimedAt: string,
+): Q {
+  return query
+    .eq("id", id)
+    .eq("first_prompt_key", key)
+    .eq("first_prompt_claimed_at", claimedAt)
+    .is("first_prompt_sent_at", null);
+}
+
+/** Renew the claim `claimedAt` names, just before its prompt goes: its new
+ *  token, or null when another request has taken it over. */
+export async function renewFirstPrompt(id: string, key: string, claimedAt: string): Promise<string | null> {
+  const supabase = await createSupabaseServerClient();
+  const renewedAt = new Date().toISOString();
+  const { data, error } = await ownClaim(
+    supabase.from("workspaces").update({ first_prompt_claimed_at: renewedAt }),
+    id,
+    key,
+    claimedAt,
+  ).select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0 ? renewedAt : null;
+}
+
+/** The first prompt claimed under `claimedAt` reached the box: repeats are answered as sent. */
+export async function markFirstPromptSent(id: string, key: string, claimedAt: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await ownClaim(
+    supabase.from("workspaces").update({ first_prompt_sent_at: new Date().toISOString() }),
+    id,
+    key,
+    claimedAt,
+  );
+  if (error) throw error;
+}
+
+/** Let the claim go, as a send that failed does, so a retry with `key` sends. */
+export async function releaseFirstPrompt(id: string, key: string, claimedAt: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await ownClaim(
+    supabase.from("workspaces").update({ first_prompt_key: null, first_prompt_claimed_at: null }),
+    id,
+    key,
+    claimedAt,
+  );
+  if (error) throw error;
 }
 
 /** Fields a workspace update may set, by their Workspace names. */
@@ -359,18 +487,30 @@ export async function getWorkspaceComputer(
   return rows.find((row) => row.workspaceId === workspace.id) ?? rows[0] ?? null;
 }
 
-/** The owner's computers, whatever their state: what a plan's box count is
- *  counted over (see lib/billing/limits.ts). */
-export async function runtimeComputersForOwner(ownerId: string): Promise<RuntimeComputer[]> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("runtime_computers")
-    .select("*")
-    .eq("owner_id", ownerId)
-    .order("id");
-
+/** What a plan's box count is counted over (see lib/billing/limits.ts),
+ *  whatever their state: an org's computers, every member's but its
+ *  connector's (which is on its own plan); or one owner's, the connector's.
+ *  As the server: a member sees only their own. */
+export async function runtimeComputersFor(
+  whose: { orgId: string } | { ownerId: string },
+): Promise<RuntimeComputer[]> {
+  const supabase = createSupabaseAdminClient();
+  const query = supabase.from("runtime_computers").select("*");
+  const { data, error } = await ("orgId" in whose
+    ? query.eq("org_id", whose.orgId)
+    : query.eq("owner_id", whose.ownerId)
+  ).order("id");
   if (error) throw error;
-  return (data ?? []).map(toRuntimeComputer);
+  const connectors = "orgId" in whose ? await orgConnectorIds(whose.orgId) : new Set<string>();
+  return (data ?? []).filter((row) => !connectors.has(row.owner_id)).map(toRuntimeComputer);
+}
+
+/** The org's connector, whose boxes and hours are its own plan's. */
+export async function orgConnectorIds(orgId: string): Promise<Set<string>> {
+  const { data, error } = await createSupabaseAdminClient().from("org_connectors").select("user_id").eq("org_id", orgId);
+  if (error && probeStatus(error) === "missing") return new Set();
+  if (error) throw error;
+  return new Set((data ?? []).map((row) => row.user_id));
 }
 
 /**
@@ -459,11 +599,17 @@ export async function claimRuntimeComputer(input: {
  * still stopped, for its setup to start again. The box's id, or null when
  * there's none to take, or before the warm pool's migration.
  */
-export async function claimPooledComputer(workspaceId: string, provider: ProviderName): Promise<string | null> {
+export async function claimPooledComputer(
+  workspaceId: string,
+  provider: ProviderName,
+  /** Only a box made from this generation of the project's setup; null: any. */
+  generation: number | null = null,
+): Promise<string | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("claim_pooled_computer", {
     requested_workspace_id: workspaceId,
     requested_provider: provider,
+    ...(generation !== null && { requested_generation: generation }),
   });
   // Before the migration: no function to call, or no column. No pool, then.
   if (error && (error.code === "PGRST202" || error.code === "42883" || probeStatus(error) === "outdated")) {
@@ -474,26 +620,29 @@ export async function claimPooledComputer(workspaceId: string, provider: Provide
   return typeof data === "string" ? data : null;
 }
 
-/** The project's pooled box, if it has one, in whatever state. */
-export async function getPooledComputer(projectId: string): Promise<RuntimeComputer | null> {
+/** A member's pooled boxes of the project, in whatever state: each member
+ *  of an org has their own (20261028120000). */
+export async function getPooledComputers(projectId: string, ownerId: string): Promise<RuntimeComputer[]> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("runtime_computers")
     .select("*")
     .eq("project_id", projectId)
-    .eq("pooled", true)
-    .maybeSingle();
+    .eq("owner_id", ownerId)
+    .eq("pooled", true);
   if (error) throw error;
-  return data ? toRuntimeComputer(data) : null;
+  return (data ?? []).map(toRuntimeComputer);
 }
 
-/** Start the project's pooled box's row: null when it has one already (the
- *  unique index says so), so two refills make one box. */
+/** Start a pooled box's row in `slot`: null when the slot is taken (the
+ *  unique index says so), so two refills make one box a slot. */
 export async function createPooledComputer(input: {
   ownerId: string;
   projectId: string;
   provider: ProviderName;
   agentSecret: string;
+  slot: number;
+  generation: number | null;
 }): Promise<RuntimeComputer | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -505,6 +654,8 @@ export async function createPooledComputer(input: {
       agent_secret: input.agentSecret,
       status: "provisioning",
       pooled: true,
+      pool_slot: input.slot,
+      ...(input.generation !== null && { generation: input.generation }),
     })
     .select("*")
     .single();
@@ -538,6 +689,15 @@ export async function markPooledFailed(id: string, leftover: string | null): Pro
     .eq("id", id)
     .eq("pooled", true);
   if (error) throw error;
+}
+
+/** Take a box out of the pool: its row deleted only while still pooled.
+ *  False when a session claimed it first (its row is no longer pooled). */
+export async function releasePooledComputer(id: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("runtime_computers").delete().eq("id", id).eq("pooled", true).select("id");
+  if (error) throw error;
+  return (data ?? []).length > 0;
 }
 
 /** Forget a pooled box's row whose box couldn't be made. */
@@ -768,14 +928,18 @@ export async function transitionJob(input: {
   return data ? toJob(data) : null;
 }
 
+/** The session's pull request in `projectId`, a repository of it (a session
+ *  of several has one in each). */
 export async function getWorkspacePullRequest(
   workspaceId: string,
+  projectId: string,
 ): Promise<WorkspacePullRequest | null> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("pull_requests")
     .select("*")
     .eq("workspace_id", workspaceId)
+    .eq("project_id", projectId)
     .maybeSingle();
   if (error) throw error;
   return data ? toWorkspacePullRequest(data) : null;
@@ -785,7 +949,12 @@ export async function getWorkspacePullRequest(
 export async function listWorkspacePullRequests(workspaceIds: string[]): Promise<WorkspacePullRequest[]> {
   if (workspaceIds.length === 0) return [];
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.from("pull_requests").select("*").in("workspace_id", workspaceIds);
+  // Oldest first: callers that keep one a session keep its first.
+  const { data, error } = await supabase
+    .from("pull_requests")
+    .select("*")
+    .in("workspace_id", workspaceIds)
+    .order("created_at", { ascending: true });
   if (error) throw error;
   return (data ?? []).map(toWorkspacePullRequest);
 }
@@ -793,6 +962,7 @@ export async function listWorkspacePullRequests(workspaceIds: string[]): Promise
 export async function createWorkspacePullRequest(input: {
   ownerId: string;
   workspaceId: string;
+  projectId: string;
   number: number;
   url: string;
   title: string;
@@ -805,6 +975,7 @@ export async function createWorkspacePullRequest(input: {
     .insert({
       owner_id: input.ownerId,
       workspace_id: input.workspaceId,
+      project_id: input.projectId,
       github_number: input.number,
       url: input.url,
       title: input.title,

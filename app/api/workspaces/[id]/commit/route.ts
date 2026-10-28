@@ -45,6 +45,14 @@ export async function POST(request: Request, context: RouteContext) {
       { status: 409 },
     );
   }
+  // A folder of checkouts is no one repository: its agent commits in each
+  // (Create PR, a repository at a time).
+  if (workspace.checkouts) {
+    return NextResponse.json(
+      { error: "A session of several repositories commits in each one: use Create PR on the repository's row." },
+      { status: 409 },
+    );
+  }
 
   let body: { summary?: unknown; description?: unknown };
   try {
@@ -64,8 +72,9 @@ export async function POST(request: Request, context: RouteContext) {
   const resolution = resolveProvider(workspace);
   if (!resolution.ok) return providerErrorResponse(resolution);
   const provider = resolution.provider;
+  // Someone who signed in with Google may have no GitHub login: their name.
   const author = {
-    name: owner.githubLogin,
+    name: owner.githubLogin || owner.name,
     email: owner.email ?? `${owner.githubLogin}@users.noreply.github.com`,
   };
 

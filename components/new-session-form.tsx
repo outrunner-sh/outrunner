@@ -1,6 +1,6 @@
 "use client";
 
-import { GitBranch, GitFork } from "lucide-react";
+import { GitBranch, GitFork, Inbox } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { ProjectEnvironmentPicker } from "@/components/import-setup-picker";
@@ -10,6 +10,7 @@ import { SessionComposer } from "@/components/session-composer";
 import { Notice } from "@/components/ui/notice";
 import { LocalBlocker, LocalRepositoryButton, SessionLocationMenu } from "@/components/session-location-picker";
 import { useCreateSession } from "@/hooks/use-create-session";
+import { useWorkItemPrompt } from "@/hooks/use-work-item-prompt";
 import { type FirstSessionEnvironment, useFirstSessionEnvironment } from "@/hooks/use-first-session-environment";
 import { useSessionLocation } from "@/hooks/use-session-location";
 import { useOutrunnerModels } from "@/hooks/use-outrunner-models";
@@ -47,6 +48,7 @@ export function NewSessionForm({
   initialProjectId,
   openPicker = false,
   focusComposer = false,
+  workItemId,
 }: {
   projects: Project[];
   /** False until the list arrives (a cold start): it is not yet "none". */
@@ -57,19 +59,21 @@ export function NewSessionForm({
   openPicker?: boolean;
   /** Focuses the composer: as the form mounts, or as it turns true. */
   focusComposer?: boolean;
+  /** The triage item to start from (Start session): its prompt fills the
+   *  composer, and the session is linked to it. */
+  workItemId?: string;
 }) {
   const { projects, projectId, selectProject, selected, isCreating, message, messageAction, create, createLocal } =
     useCreateSession(listed, initialProjectId);
   // The model the session starts on, picked in the composer as in a session;
-  // none picked, what it starts on anyway: the menu's default on the cloud,
-  // and on a Mac whose Claude Code isn't logged in; otherwise the user's
-  // Claude, on CLAUDE_DEFAULT_MODEL.
+  // none picked, what it starts on anyway: the user's Claude, on
+  // CLAUDE_DEFAULT_MODEL, where it's connected; otherwise the menu's default.
   const menu = useOutrunnerModels();
   // The model picked in the composer, else the loadout's default: its agent
   // decides what this Mac needs for a local session (Claude Code, or Codex).
   const [picked, setPicked] = useState<SessionModel | null>(null);
   // The effort picked in the composer; undefined until one is, when the
-  // loadout's for the model it starts on shows, else DEFAULT_EFFORT.
+  // loadout's for its default model shows, else DEFAULT_EFFORT.
   const [pickedEffort, setPickedEffort] = useState<Effort | null | undefined>(undefined);
   // Asked to open the picker, until it has been shut once: the cloud picker
   // can give way to the Mac's as this Mac's agent answers, and that one opens
@@ -90,6 +94,7 @@ export function NewSessionForm({
     setFocusComposerSeen(focusComposer);
     if (focusComposer) setFocusAsks(focusAsks + 1);
   }
+  const workItem = useWorkItemPrompt(workItemId);
   const where = useSessionLocation(agentOf((picked ?? menu?.loadout.default)?.provider ?? "claude"));
   const local = where.location === "local";
   // A repository's first cloud session can bring its environment from this Mac.
@@ -113,17 +118,21 @@ export function NewSessionForm({
     : [];
   const groups = menu ? modelGroups(menu, accounts) : [];
   const connect = menu ? AGENT_IDS.filter((agent) => !accounts.includes(agent)) : [];
-  // Without the user's Claude here, a session starts on the menu's default:
-  // Outrunner's model, or one on their key.
-  const onDefault = !accounts.includes("claude") || (local ? where.outrunnerModel : menu?.available === true);
+  // Without the user's Claude here (or on a Mac whose Claude Code isn't
+  // logged in), a session starts on the menu's default: Outrunner's model, or
+  // one on their key.
+  const onDefault = !accounts.includes("claude") || (local && where.outrunnerModel);
   // The loadout's default (Settings → Default models) where the menu offers
   // it here; else what a session starts on without one: the menu's default,
   // or, where it starts on the user's Claude, Opus.
   const chosenDefault = menu ? (loadoutDefault(menu.loadout, groups) ?? null) : null;
   const startsOn = picked ?? chosenDefault ?? (menu ? (onDefault ? defaultModel(menu) : CLAUDE_DEFAULT_MODEL) : null);
   const startModel = picked ?? chosenDefault ?? undefined;
+  // What the session is started at: none picked, the loadout's default goes
+  // with its effort, and the user's Claude with DEFAULT_EFFORT (the server's
+  // and createLocal's for it).
   const effort =
-    pickedEffort !== undefined ? pickedEffort : startsOn ? effortOnPick(menu?.loadout, startsOn) : DEFAULT_EFFORT;
+    pickedEffort !== undefined ? pickedEffort : chosenDefault ? effortOnPick(menu?.loadout, chosenDefault) : DEFAULT_EFFORT;
 
   // Either kind of session opens in about a second (a cloud one shows its
   // setup progress on its own page), so the form only waits, disabled; one
@@ -189,6 +198,12 @@ export function NewSessionForm({
                 {details.worktree.label}
               </span>
             )}
+            {workItem && (
+              <span className={CHIP} title={`Started from triage: ${workItem.title}`}>
+                <Inbox className="shrink-0" />
+                {workItem.key}
+              </span>
+            )}
           </div>
         )}
 
@@ -223,7 +238,9 @@ export function NewSessionForm({
                 )
               : // Kept first, so the session's box starts with it; one that
                 // fails keeps the prompt, and the session isn't started.
-                environment.keep().then((kept) => kept && create(text, attachmentIds, startModel, effort))
+                environment
+                  .keep()
+                  .then((kept) => kept && create(text, attachmentIds, startModel, effort, workItem?.id))
           }
           model={startsOn?.id}
           modelChoice={
@@ -263,6 +280,7 @@ export function NewSessionForm({
           }
           allowAttachments={!local}
           focusSignal={focusAsks}
+          prefill={workItem?.prompt ?? null}
         />
       </div>
     </div>

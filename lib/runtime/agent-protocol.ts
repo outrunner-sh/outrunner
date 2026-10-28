@@ -87,6 +87,11 @@ export const SetEnvironmentRequest = z
     /** The project's instructions for its agent, after Outrunner's own at
      *  every launch (AGENT_FEATURE_INSTRUCTIONS). */
     instructions: z.string().max(16 * 1024).optional(),
+    /** The project's warm hook, run once at the session's first launch
+     *  unless its worktree was warmed on a ready box, and its start hook, run
+     *  at every launch (AGENT_FEATURE_WARM_HOOKS). */
+    warmHook: z.string().max(64 * 1024).optional(),
+    startHook: z.string().max(64 * 1024).optional(),
   })
   .strict();
 export type SetEnvironmentRequest = z.infer<typeof SetEnvironmentRequest>;
@@ -117,6 +122,71 @@ export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
  *  (SetEnvironmentRequest's `instructions`); an older one ignores them. */
 export const AGENT_FEATURE_INSTRUCTIONS = "project-instructions";
 
+/** The agent makes sessions of several repositories (CreateWorkspaceRequest's
+ *  `repos`). */
+export const AGENT_FEATURE_MULTI_REPO = "multi-repo";
+
+/** The agent archives a session of several repositories and restores one
+ *  (RestoreWorkspaceRequest's `repos`). */
+export const AGENT_FEATURE_MULTI_REPO_SNAPSHOTS = "multi-repo-snapshots";
+
+/** The agent warms a ready box (POST/GET /warm) and runs a session's warm
+ *  and start hooks. */
+export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
+
+/** The agent warms a ready box of a project of several repositories in a
+ *  folder of their checkouts (WarmRequest's `repos`), and a session of the
+ *  same repositories takes it. An older one is left unwarmed: it would warm
+ *  one checkout no session of the project takes. */
+export const AGENT_FEATURE_MULTI_REPO_WARM = "multi-repo-warm";
+
+/** The agent's git and `gh` ask Outrunner for GitHub tokens as they need them
+ *  (app/api/runtime/git-credential), rather than keep the one it booted with:
+ *  the Outrunner App's last an hour. */
+export const AGENT_FEATURE_GIT_CREDENTIAL = "git-credential";
+
+/** A project's several repositories, each in its own folder (its
+ *  checkout) off its mirror at $ROOT/repos/<checkout>.git. */
+const RepoCheckouts = z
+  .array(
+    z.object({
+      fullName: z.string().min(1),
+      checkout: z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/),
+      baseBranch: z.string().min(1),
+    }),
+  )
+  .min(2)
+  .max(5);
+
+/** POST /warm (the listing token): warm a ready box, a checkout of the base
+ *  branch with the project's files in it and its warm hook run there. */
+export const WarmRequest = z
+  .object({
+    baseBranch: z.string().min(1),
+    env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string()).optional(),
+    files: z.record(z.string(), z.string()).optional(),
+    hook: z.string().max(64 * 1024).optional(),
+    /** A project's several repositories (AGENT_FEATURE_MULTI_REPO_WARM): a
+     *  folder of their checkouts, laid out as its sessions' are, with the
+     *  hook run at its root. `baseBranch` is then the first's. */
+    repos: RepoCheckouts.optional(),
+  })
+  .strict();
+export type WarmRequest = z.infer<typeof WarmRequest>;
+
+/** GET /warm: how the box's warming went, with the end of its log. */
+export const WarmStatus = z
+  .object({
+    state: z.enum(["", "running", "succeeded", "failed"]),
+    baseBranch: z.string().optional(),
+    startedAt: z.string().optional(),
+    finishedAt: z.string().optional(),
+    exitCode: z.number().int().optional(),
+    log: z.string().optional(),
+  })
+  .strict();
+export type WarmStatus = z.infer<typeof WarmStatus>;
+
 /** What an agent can do that an older one can't: `restore-imports` restores
  *  an imported session (compressed downloads, its branch renamed, its
  *  conversation moved to the worktree). */
@@ -145,6 +215,24 @@ export const PortsResponse = z
   })
   .strict();
 export type PortsResponse = z.infer<typeof PortsResponse>;
+
+/** A session's changed files since its base branch, as git on its box reads
+ *  them (GET /workspaces/{id}/changes): the shape /api/workspaces/[id]/changes
+ *  answers in. Not strict: a field added later doesn't fail an older page. */
+export const ChangesResponse = z.object({
+  files: z.array(
+    z.object({
+      path: z.string(),
+      status: z.enum(["added", "modified", "deleted", "renamed", "untracked"]),
+      additions: z.number().int(),
+      deletions: z.number().int(),
+    }),
+  ),
+});
+export type ChangesResponse = z.infer<typeof ChangesResponse>;
+
+/** One changed file's bounded diff (GET /workspaces/{id}/changes?path=). */
+export const ChangedFileDiffResponse = z.object({ diff: z.string() });
 
 /** The agent restores a session onto its model (RestoreWorkspaceRequest's
  *  `model`); an older one ignores it, and relaunches on Claude's default. */
@@ -194,6 +282,25 @@ export const AnswerRequest = z.object({
 });
 export type AnswerRequest = z.infer<typeof AnswerRequest>;
 
+/** The agent serves request_secrets and takes its answer
+ *  (POST /workspaces/{id}/secrets). */
+export const AGENT_FEATURE_REQUEST_SECRETS = "request-secrets";
+
+/**
+ * POST /workspaces/{id}/secrets: the user's answer to the request for
+ * secrets the session is waiting on (runtime-agent/internal/ask/secrets.go).
+ * `keys` are the request's variables as the form showed them; the agent
+ * matches them to the call. Values for some of them, or skipped.
+ */
+export const ProvideSecretsRequest = z
+  .object({
+    keys: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/)).min(1).max(10),
+    values: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string().min(1).max(64 * 1024)).optional(),
+    skipped: z.boolean().optional(),
+  })
+  .strict();
+export type ProvideSecretsRequest = z.infer<typeof ProvideSecretsRequest>;
+
 export const SetAuthRequest = z
   .object({
     kind: z.enum(["none", "claude-oauth-token", "anthropic-api-key", "openai-api-key"]),
@@ -233,6 +340,10 @@ export const CreateWorkspaceRequest = z.object({
   agent: AgentName.optional(),
   /** Git user identity for commits; omitted uses the system default. */
   gitUser: GitUser.optional(),
+  /** A project's several repositories (AGENT_FEATURE_MULTI_REPO): the
+   *  session works in a folder of worktrees, one a repository, each off its
+   *  mirror at $ROOT/repos/<checkout>.git, all on `branch`. */
+  repos: RepoCheckouts.optional(),
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
@@ -343,6 +454,9 @@ export const RestoreWorkspaceRequest = z
         path: ["token"],
       })
       .optional(),
+    /** A session of several repositories (AGENT_FEATURE_MULTI_REPO_SNAPSHOTS):
+     *  each restored in its folder off its mirror, on the box already. */
+    repos: CreateWorkspaceRequest.shape.repos,
   })
   .refine((v) => coversExactly(v.downloads.map((d) => d.artifact), RESTORE_ARTIFACTS, OPTIONAL_ARTIFACTS), {
     message: "restore downloads must cover exactly bundle, patch, and conversation (and may add a rollout)",
@@ -503,6 +617,11 @@ export const ConversationMessage = z.object({
   // The Claude model that produced the turn (assistant only; omitted on user
   // turns). Lets the composer show the model actually in use.
   model: z.string().optional(),
+  // Why the assistant reply stopped, as Claude logs it: "tool_use" while the
+  // turn goes on (its words before a tool call are a record of their own),
+  // "end_turn" and the like once it's over. Absent from an agent from before
+  // it, a user turn, or a log that says none (a Codex translation).
+  stopReason: z.string().optional(),
   timestamp: z.string(),
   // Tolerate content blocks the UI doesn't model (e.g. redacted_thinking, image,
   // or a newer Claude block type): drop the unrenderable ones instead of failing
@@ -565,6 +684,9 @@ export const PROTOCOL_SCHEMAS = {
   ConversationMessage,
   TokenUsage,
   WorkspaceStateChanged,
+  WarmRequest,
+  WarmStatus,
+  ProvideSecretsRequest,
   SetEnvironmentRequest,
   SetAgentConfigRequest,
   EditorResponse,

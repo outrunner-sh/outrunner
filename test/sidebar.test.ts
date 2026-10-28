@@ -39,6 +39,7 @@ function workspace(id: string, projectId: string, at: string, title: string | nu
     tmuxSession: null,
     agentWorkspaceId: null,
     environmentId: null,
+    checkouts: null,
     agent: "claude",
     model: null,
     lastActiveAt: at,
@@ -108,6 +109,8 @@ test("sessions nest under their workspace, newest first, with links and times", 
       branch: "runtime/new",
       at: "2026-10-02T00:00:00Z",
       deletion: { kind: "cloud" },
+      archive: { can: true },
+      archived: false,
     },
     {
       id: "old",
@@ -116,6 +119,8 @@ test("sessions nest under their workspace, newest first, with links and times", 
       branch: "runtime/old",
       at: "2026-10-01T00:00:00Z",
       deletion: { kind: "cloud" },
+      archive: { can: true },
+      archived: false,
     },
   ]);
 });
@@ -422,6 +427,27 @@ test("deleting a local session removes its worktree, or only forgets an in-place
       ["tree", { kind: "local-worktree" }],
     ],
   );
+});
+
+test("a cloud session offers Archive, an archived one says so, and a Mac one offers neither", () => {
+  const at = "2026-10-01T00:00:00Z";
+  const [cloud] = buildSidebarGroups(
+    [project("p1", "outrunner")],
+    [
+      { ...workspace("live", "p1", at), status: "ready" },
+      { ...workspace("setup", "p1", at), status: "provisioning" },
+      { ...workspace("shelved", "p1", at), status: "archived" },
+      // A legacy sandbox has no Snapshot to restore from.
+      { ...workspace("legacy", "p1", at), provider: "modal" },
+    ],
+    [],
+  );
+  assert.deepEqual(
+    Object.fromEntries(cloud.sessions.map((s) => [s.id, [s.archive?.can ?? null, s.archived]])),
+    { live: [true, false], setup: [false, false], shelved: [null, true], legacy: [null, false] },
+  );
+  const [mac] = buildSidebarGroups([], [], [local("tree", "/Users/ada/app", at)]);
+  assert.deepEqual([mac.sessions[0].archive, mac.sessions[0].archived], [null, false]);
 });
 
 test("the delete confirmation says what goes and what stays", () => {

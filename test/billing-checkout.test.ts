@@ -11,7 +11,7 @@ import {
 import type { SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
-const user = { id: "u-1", githubLogin: "octo", email: null };
+const user = { orgId: "o-1", orgName: "octo", userId: "u-1", githubLogin: "octo", email: null };
 const BASE = "https://app.outrunner.sh";
 
 function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = {}) {
@@ -19,7 +19,7 @@ function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = 
   const calls: string[] = [];
   const d: CheckoutDeps = {
     customerIdFor: async () => stored,
-    claimCustomer: async (_u, id) => {
+    claimCustomer: async (_o, _u, id) => {
       stored ??= id;
       return stored;
     },
@@ -42,10 +42,10 @@ function deps(opts: { stored?: string; subscriptions?: SubscriptionRecord[] } = 
   return { d, calls, stored: () => stored };
 }
 
-test("a first checkout makes the user's customer once, by user id", async () => {
+test("a first checkout makes the org's customer once, by org id", async () => {
   const { d, calls } = deps();
   assert.equal(await ensureCustomer(user, d), "cus_new");
-  assert.deepEqual(calls, ["create customer outrunner-customer-u-1"]);
+  assert.deepEqual(calls, ["create customer outrunner-org-customer-o-1"]);
   // Stored: the next checkout reuses it.
   assert.equal(await ensureCustomer(user, d), "cus_new");
   assert.equal(calls.length, 1);
@@ -84,6 +84,7 @@ test("a new user from a pricing link goes back to onboarding, paid or not", asyn
 test("a user with a subscription that can still bill goes to the portal, never a second checkout", async () => {
   const pro: SubscriptionRecord = {
     stripeSubscriptionId: "sub_1",
+    orgId: "o-1",
     userId: "u-1",
     stripeCustomerId: "cus_1",
     status: "active",
@@ -116,8 +117,8 @@ test("a user with a subscription that can still bill goes to the portal, never a
 });
 
 test("the portal needs a customer", async () => {
-  assert.equal(await portalDestination("u-1", BASE, deps().d), null);
-  assert.equal(await portalDestination("u-1", BASE, deps({ stored: "cus_1" }).d), "https://billing.stripe.com/p/session/1");
+  assert.equal(await portalDestination("o-1", BASE, deps().d), null);
+  assert.equal(await portalDestination("o-1", BASE, deps({ stored: "cus_1" }).d), "https://billing.stripe.com/p/session/1");
 });
 
 test("a link asks for a plan Outrunner sells, monthly unless it says yearly", () => {

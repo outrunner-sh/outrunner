@@ -32,7 +32,7 @@ function event(type: string, object: object, id = "evt_1"): Stripe.Event {
 }
 
 /** Stripe holding `subscription` now; the database knowing `customers`. */
-function world(subscription: Stripe.Subscription, customers: Record<string, string> = { cus_1: "u-1" }) {
+function world(subscription: Stripe.Subscription, customers: Record<string, string> = { cus_1: "o-1" }) {
   const saved: SubscriptionRecord[] = [];
   const deleted: string[] = [];
   const handled = new Set<string>();
@@ -43,7 +43,8 @@ function world(subscription: Stripe.Subscription, customers: Record<string, stri
       retrieves += 1;
       return subscription;
     },
-    userForCustomer: async (id) => customers[id] ?? null,
+    orgForCustomer: async (id) => customers[id] ?? null,
+    personalOrgOf: async (userId) => `personal-${userId}`,
     subscriptionById: async (id) => saved.findLast((r) => r.stripeSubscriptionId === id) ?? null,
     saveSubscription: async (r) => {
       saved.push(r);
@@ -77,7 +78,7 @@ test("an event is a cue: the subscription is fetched and stored as Stripe has it
   const outcome = await handleEvent(event("customer.subscription.updated", { id: "sub_1", status: "active" }), w.deps);
   assert.equal(outcome, "synced");
   assert.equal(w.saved.at(-1)?.status, "canceled");
-  assert.equal(w.saved.at(-1)?.userId, "u-1");
+  assert.equal(w.saved.at(-1)?.orgId, "o-1");
 });
 
 test("an event delivered twice is handled once", async () => {
@@ -97,22 +98,29 @@ test("a failure leaves the event unrecorded, so Stripe's retry handles it", asyn
   assert.equal(w.handled.has("evt_1"), false);
 });
 
-test("the stored customer decides whose a subscription is; checkout's metadata only fills in", async () => {
-  // Metadata naming someone else doesn't move a subscription to them.
-  const w = world(stripeSubscription("active", { metadata: { user_id: "u-other" } }));
+test("the stored customer decides whose org a subscription is; checkout's metadata only fills in", async () => {
+  // Metadata naming another org doesn't move a subscription to it.
+  const w = world(stripeSubscription("active", { metadata: { org_id: "o-other", user_id: "u-1" } }));
   await handleEvent(event("customer.subscription.created", { id: "sub_1" }), w.deps);
+  assert.equal(w.saved.at(-1)?.orgId, "o-1");
   assert.equal(w.saved.at(-1)?.userId, "u-1");
   // A customer not stored yet (the webhook beat checkout's write): metadata.
-  const early = world(stripeSubscription("active", { customer: "cus_new", metadata: { user_id: "u-2" } }), {});
+  const early = world(stripeSubscription("active", { customer: "cus_new", metadata: { org_id: "o-2", user_id: "u-2" } }), {});
   await handleEvent(event("customer.subscription.created", { id: "sub_1" }), early.deps);
-  assert.equal(early.saved.at(-1)?.userId, "u-2");
+  assert.equal(early.saved.at(-1)?.orgId, "o-2");
+  // One from before billing was the org's names only its buyer: theirs is
+  // their personal org's.
+  const before = world(stripeSubscription("active", { customer: "cus_old", metadata: { user_id: "u-3" } }), {});
+  await handleEvent(event("customer.subscription.created", { id: "sub_1" }), before.deps);
+  assert.equal(before.saved.at(-1)?.orgId, "personal-u-3");
 });
 
-test("a subscription that's no Outrunner user's is logged and acknowledged, not stored", async () => {
+test("a subscription that's no Outrunner org's is logged and acknowledged, not stored", async () => {
   const w = world(stripeSubscription("active", { customer: "cus_stranger" }), {});
+  w.deps.personalOrgOf = async () => null;
   assert.equal(await handleEvent(event("customer.subscription.created", { id: "sub_1" }), w.deps), "synced");
   assert.equal(w.saved.length, 0);
-  assert.match(w.logs[0], /no Outrunner user/);
+  assert.match(w.logs[0], /no Outrunner org/);
   assert.equal(w.handled.has("evt_1"), true, "acknowledged, so Stripe stops retrying");
 });
 
@@ -165,10 +173,10 @@ test("a subscription moved to a price Outrunner doesn't sell is forgotten, so it
   await handleEvent(event("customer.subscription.updated", { id: "sub_1" }), w.deps);
   assert.deepEqual(w.deleted, ["sub_1"]);
   assert.equal(w.saved.length, 0);
-  assert.deepEqual(refreshed, ["u-1"], "its plan is gone: the allowance follows");
+  assert.deepEqual(refreshed, ["o-1"], "its plan is gone: the allowance follows");
 });
 
-test("a stored subscription refreshes the user's allowances; a failure there doesn't fail the event", async () => {
+test("a stored subscription refreshes the org's allowances; a failure there doesn't fail the event", async () => {
   const w = world(stripeSubscription("active"));
   const refreshed: string[] = [];
   w.deps.changed = async (userId) => {
@@ -176,7 +184,7 @@ test("a stored subscription refreshes the user's allowances; a failure there doe
     throw new Error("OpenRouter down");
   };
   assert.equal(await handleEvent(event("customer.subscription.updated", { id: "sub_1" }), w.deps), "synced");
-  assert.deepEqual(refreshed, ["u-1"]);
-  assert.match(w.logs[0], /Could not refresh user u-1's allowances/);
+  assert.deepEqual(refreshed, ["o-1"]);
+  assert.match(w.logs[0], /Could not refresh org o-1's allowances/);
   assert.equal(w.handled.has("evt_1"), true);
 });

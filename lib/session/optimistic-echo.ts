@@ -12,6 +12,19 @@
  * prompt before the session's answer comes back ({@link settlePending}).
  */
 
+/** What a bubble's message is known by in the timeline, as no message from
+ *  the stream is. */
+export function echoUuid(id: string): string {
+  return `${ECHO_PREFIX}${id}`;
+}
+
+/** Whether a message is a bubble's, not one the stream recorded. */
+export function isEcho(uuid: string): boolean {
+  return uuid.startsWith(ECHO_PREFIX);
+}
+
+const ECHO_PREFIX = "optimistic-";
+
 /** One bubble: `expect` is the delivered-prompt count the stream must pass for
  *  it to go, or null while the session has not taken the prompt yet. */
 export type PendingPrompt = { id: string; text: string; expect: number | null };

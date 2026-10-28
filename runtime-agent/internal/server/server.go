@@ -26,6 +26,7 @@ import (
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/editor"
+	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/ports"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/ptyx"
@@ -51,6 +52,10 @@ const (
 	eventsWSPongWait  = 60 * time.Second
 	eventsWSWriteWait = 10 * time.Second
 )
+
+// How often a Conversation stream rechecks the session state, so a "starting"
+// stream reports "running" once the session log appears.
+const stateCheckInterval = time.Second
 
 type Server struct {
 	secret string
@@ -108,10 +113,17 @@ func (s *Server) Handler() http.Handler {
 	// The session's own relay asks, with the session's ask token rather than
 	// a Runtime token (package ask).
 	mux.HandleFunc("POST /workspaces/{id}/ask", s.ask)
+	mux.HandleFunc("POST /workspaces/{id}/ask-secrets", s.askSecrets)
+	mux.HandleFunc("POST /workspaces/{id}/secrets", s.authed(s.provideSecrets))
+	// git's credential helper and the gh wrapper on this box ask, with the
+	// agent's credential token (package gitcred).
+	mux.HandleFunc("POST /git-credential", s.gitCredential)
 	mux.HandleFunc("POST /workspaces/{id}/model", s.authed(s.setModel))
 	mux.HandleFunc("POST /workspaces/{id}/auth", s.authed(s.setAuth))
 	mux.HandleFunc("POST /workspaces/{id}/environment", s.authed(s.setEnvironment))
 	mux.HandleFunc("POST /config", s.authed(s.setAgentConfig))
+	mux.HandleFunc("POST /warm", s.authed(s.startWarm))
+	mux.HandleFunc("GET /warm", s.authed(s.warmStatus))
 	mux.HandleFunc("GET /pty", s.pty)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /events-ws", s.eventsWS)
@@ -136,7 +148,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		Status:   "ok",
 		Gateways: gateways,
 		Agents:   s.ws.Agents(),
-		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions},
+		Features: []string{protocol.FeatureImports, protocol.FeatureEnvironment, protocol.FeatureAgentConfig, protocol.FeatureRestoreModel, protocol.FeatureEditor, protocol.FeaturePorts, protocol.FeatureCodexGateway, protocol.FeatureInstructions, protocol.FeatureRequestSecrets, protocol.FeatureWarmHooks, protocol.FeatureMultiRepo, protocol.FeatureMultiRepoSnapshots, protocol.FeatureGitCredential, protocol.FeatureMultiRepoWarm},
 	})
 }
 
@@ -193,9 +205,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		Model:          req.Model,
 		Agent:          req.Agent,
 		GitUser:        gitUser,
+		Checkouts:      checkouts(req.Repos),
 	})
 	switch {
-	case errors.Is(err, workspace.ErrBypassInFolder):
+	case errors.Is(err, workspace.ErrBypassInFolder), errors.Is(err, workspace.ErrInvalidCheckouts):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	case err != nil:
@@ -300,7 +313,7 @@ func (s *Server) restoreWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	name, err := s.ws.Restore(r.Context(), r.PathValue("id"), req, model)
 	switch {
-	case errors.Is(err, workspace.ErrAuthMismatch), errors.Is(err, workspace.ErrGatewayUnsupported):
+	case errors.Is(err, workspace.ErrAuthMismatch), errors.Is(err, workspace.ErrGatewayUnsupported), errors.Is(err, workspace.ErrInvalidCheckouts):
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 	case errors.Is(err, workspace.ErrModelUnsupported):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
@@ -363,6 +376,48 @@ func (s *Server) activity(w http.ResponseWriter, r *http.Request) {
 		LastActivity:   last.UTC().Format(time.RFC3339),
 		TurnInProgress: turnInProgress,
 	})
+}
+
+// startWarm starts warming this box ahead of a session (workspace.Warm).
+// Box-wide, so only the listing token may.
+func (s *Server) startWarm(w http.ResponseWriter, r *http.Request) {
+	if !s.listingOnly(w, r, "warming the box") {
+		return
+	}
+	var req protocol.WarmRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.Warm(r.Context(), workspace.WarmRequest{BaseBranch: req.BaseBranch, Env: req.Env, Files: req.Files, Hook: req.Hook, Checkouts: checkouts(req.Repos)})
+	switch {
+	case errors.Is(err, workspace.ErrWarmBusy):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrInvalidEnvironment), errors.Is(err, workspace.ErrInvalidCheckouts):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	default:
+		respond(w, "warming", err)
+	}
+}
+
+// warmStatus says how the box's warming went.
+func (s *Server) warmStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.listingOnly(w, r, "reading the box's warming") {
+		return
+	}
+	st := s.ws.WarmState()
+	writeJSON(w, http.StatusOK, protocol.WarmStatus{
+		State: st.State, BaseBranch: st.BaseBranch, StartedAt: st.StartedAt, FinishedAt: st.FinishedAt, ExitCode: st.ExitCode, Log: st.Log,
+	})
+}
+
+// listingOnly refuses a box-wide call made with a workspace's own token.
+func (s *Server) listingOnly(w http.ResponseWriter, r *http.Request, what string) bool {
+	claims, _ := r.Context().Value(claimsContextKey{}).(*protocol.RuntimeTokenClaims)
+	if claims == nil || claims.WorkspaceID != protocol.ListingWorkspaceID {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Runtime token does not authorize "+what)
+		return false
+	}
+	return true
 }
 
 func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
@@ -610,6 +665,118 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// askSecrets holds a request for secrets the session's agent made (its
+// request_secrets call) until the user answers it in the browser, or the
+// relay gives the call up. The request names variables; no value comes this
+// way.
+func (s *Server) askSecrets(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validWorkspaceID(id) || !s.ws.AskAuthorized(id, bearer(r)) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "this session can't ask for secrets here")
+		return
+	}
+	var req struct {
+		RequestID string `json:"requestId"`
+		ask.SecretRequest
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "malformed request: "+err.Error())
+		return
+	}
+	if req.RequestID == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "a request needs a requestId")
+		return
+	}
+	_, _ = io.Copy(io.Discard, r.Body) // as ask: the server then watches the connection
+	text, err := s.ws.RequestSecrets(r.Context(), id, req.RequestID, req.SecretRequest)
+	switch {
+	case r.Context().Err() != nil:
+		return
+	case errors.Is(err, ask.ErrInvalid):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	case errors.Is(err, ask.ErrBusy), errors.Is(err, ask.ErrReplaced):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"text": text})
+	}
+}
+
+// provideSecrets gives the user's answer to the request for secrets the
+// session is waiting on. Its values are never logged or echoed back.
+func (s *Server) provideSecrets(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWorkspace(w, r, r.PathValue("id")) {
+		return
+	}
+	var req protocol.ProvideSecretsRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	err := s.ws.ProvideSecrets(r.PathValue("id"), req.Keys, req.Values, req.Skipped)
+	switch {
+	case errors.Is(err, ask.ErrNotWaiting):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, workspace.ErrInvalidEnvironment):
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+	default:
+		respond(w, "provided", err)
+	}
+}
+
+// gitCredential gives git's credential helper or the gh wrapper a GitHub
+// token for a repository, from the control plane, or forgets one git was
+// refused. Its refusals are {"error": message}, the helpers' to show: a
+// message from the control plane (a repository the user's GitHub doesn't
+// reach) is passed on as it came.
+func (s *Server) gitCredential(w http.ResponseWriter, r *http.Request) {
+	refuse := func(status int, message string) {
+		writeJSON(w, status, gitcred.LocalError{Error: message})
+	}
+	if !s.ws.GitCredentialEnabled() {
+		refuse(http.StatusNotFound, "this computer gets no GitHub tokens from Outrunner")
+		return
+	}
+	if !s.ws.GitCredentialAuthorized(bearer(r)) {
+		refuse(http.StatusUnauthorized, "invalid credential token")
+		return
+	}
+	var req gitcred.LocalRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		refuse(http.StatusBadRequest, "malformed request")
+		return
+	}
+	if req.Erase {
+		if err := s.ws.EraseGitCredential(req.Repo); err != nil {
+			refuse(http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	cred, err := s.ws.GitCredential(r.Context(), req.Repo)
+	var refusal *gitcred.Error
+	switch {
+	case errors.Is(err, gitcred.ErrInvalidRepo):
+		refuse(http.StatusBadRequest, err.Error())
+		return
+	case errors.As(err, &refusal) && refusal.Refused():
+		// Outrunner said no (the user chose the App, and it isn't installed
+		// there): the helpers mustn't answer with the box's own token instead.
+		refuse(http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		refuse(http.StatusBadGateway, err.Error())
+		return
+	}
+	answer := gitcred.LocalResponse{Token: cred.Token}
+	if !cred.ExpiresAt.IsZero() {
+		at := cred.ExpiresAt.UTC().Format(time.RFC3339)
+		answer.ExpiresAt = &at
+	}
+	writeJSON(w, http.StatusOK, answer)
+}
+
 // setModel switches the workspace's session to another model, relaunching a
 // running session on it (its conversation continues).
 func (s *Server) setModel(w http.ResponseWriter, r *http.Request) {
@@ -704,10 +871,16 @@ func (s *Server) setEnvironment(w http.ResponseWriter, r *http.Request) {
 	// and setup without the instructions.
 	err := workspace.ValidInstructions(req.Instructions)
 	if err == nil {
+		err = workspace.ValidHooks(req.WarmHook, req.StartHook)
+	}
+	if err == nil {
 		err = s.ws.SetEnvironment(r.Context(), r.PathValue("id"), req.Env, req.Files, req.Setup)
 	}
 	if err == nil {
 		err = s.ws.SetInstructions(r.PathValue("id"), req.Instructions)
+	}
+	if err == nil {
+		err = s.ws.SetHooks(r.PathValue("id"), req.WarmHook, req.StartHook)
 	}
 	if errors.Is(err, workspace.ErrInvalidEnvironment) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
@@ -799,7 +972,9 @@ func (s *Server) pty(w http.ResponseWriter, r *http.Request) {
 	// contract ("output is coalesced") and prevents one-keystroke-per-frame
 	// flooding. The redactor preserves a suffix between calls so no secret can
 	// leak when it crosses a PTY read boundary.
-	redactor := redact.New(append(s.ws.RedactionSecrets(), s.secret))
+	// Following the live ones: a secret provided while this terminal is open
+	// is masked in it from then on.
+	redactor := redact.New(append(s.ws.RedactionSecrets(), s.secret)).Follow(s.ws.LiveSecrets())
 	coalescer := ptyx.NewCoalescer(coalesceInterval, coalesceThreshold, func(seq int, data []byte) error {
 		output := redactor.Redact(data)
 		if output == "" {
@@ -917,6 +1092,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable nginx/proxy buffering
 	w.WriteHeader(http.StatusOK)
+	// Send the headers now: a resume with nothing new writes no frame, and the
+	// client would otherwise wait for the first heartbeat to see the stream open.
+	flusher.Flush()
 
 	// Serialize every write on this response — the ticker, the watcher goroutine,
 	// and the state emitter all write frames concurrently.
@@ -948,14 +1126,23 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 // WebSocket (`/events-ws`) handlers share one implementation.
 //
 //   - `writeEvent(id, payload)` emits one AgentEvent; `id` is the JSONL byte
-//     offset (0 for the non-resumable synthetic state event). Return false to
-//     stop (the transport is gone).
+//     offset (0 for the connect-time state event; a later state event carries
+//     the current cursor, see below). Return false to stop (the transport is
+//     gone).
 //   - `heartbeat()` keeps the connection alive on idle. Return false to stop.
 //
 // A synthetic `state` event is emitted first on fresh connects (fromOffset == 0)
 // so subscribers know whether the workspace is running before any conversation
-// event lands; a resume (fromOffset > 0) skips it. Returns when ctx is cancelled
-// (client gone) or a write fails.
+// event lands; a resume (fromOffset > 0) skips it. A stream that opens
+// "starting" then sends "running" once the session log appears, so no client
+// is left showing a stale start. That is the only change it reports: a log
+// that goes away mid-session is a teardown or a session briefly looking empty,
+// not a session starting again, and a late "starting" would sit under the
+// whole conversation. The "running" carries the resume cursor (the last
+// event's offset, or fromOffset) as its id: state isn't in the JSONL, so
+// resuming there skips and repeats nothing, and an SSE client's Last-Event-ID
+// never moves backwards.
+// Returns when ctx is cancelled (client gone) or a write fails.
 func (s *Server) streamEvents(
 	ctx context.Context,
 	workspaceID string,
@@ -963,15 +1150,28 @@ func (s *Server) streamEvents(
 	writeEvent func(id int64, payload []byte) bool,
 	heartbeat func() bool,
 ) {
-	if fromOffset == 0 {
-		state := "starting"
-		if s.ws.SessionLog(workspaceID) != "" {
-			state = "running"
-		}
+	cursor := fromOffset
+	running := s.ws.SessionLog(workspaceID) != ""
+	writeState := func(state string) bool {
 		payload, _ := json.Marshal(protocol.WorkspaceStateChanged{
 			T: "state", WorkspaceID: workspaceID, State: state,
 		})
-		if !writeEvent(0, payload) {
+		return writeEvent(cursor, payload)
+	}
+	// reportRunning sends "running" the first time the stream sees the log.
+	reportRunning := func() bool {
+		if running {
+			return true
+		}
+		running = true
+		return writeState("running")
+	}
+	if fromOffset == 0 {
+		state := "starting"
+		if running {
+			state = "running"
+		}
+		if !writeState(state) {
 			return
 		}
 	}
@@ -985,12 +1185,36 @@ func (s *Server) streamEvents(
 
 	ticker := time.NewTicker(sseHeartbeat)
 	defer ticker.Stop()
+	// Watch for the log only while the stream is still "starting"; a nil
+	// channel never fires, so a running stream does no extra lookups.
+	var stateCheck <-chan time.Time
+	stopStateCheck := func() {}
+	if !running {
+		stateTicker := time.NewTicker(stateCheckInterval)
+		defer stateTicker.Stop()
+		stateCheck = stateTicker.C
+		stopStateCheck = func() { stateTicker.Stop(); stateCheck = nil }
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-stateCheck:
+			if s.ws.SessionLog(workspaceID) != "" {
+				stopStateCheck()
+				if !reportRunning() {
+					return
+				}
+			}
 		case ev := <-out:
+			// The log just yielded an event, so it exists: the "running" lands
+			// before the first message it explains. No SessionLog lookup here,
+			// since a fresh connect replays the whole log through this path.
+			stopStateCheck()
+			if !reportRunning() {
+				return
+			}
 			var payload []byte
 			var mErr error
 			switch {
@@ -1007,6 +1231,7 @@ func (s *Server) streamEvents(
 			if !writeEvent(ev.ID, payload) {
 				return
 			}
+			cursor = ev.ID
 		case <-ticker.C:
 			if !heartbeat() {
 				return
@@ -1154,4 +1379,16 @@ func validImportRestore(req protocol.RestoreWorkspaceRequest) error {
 		return fmt.Errorf("invalid origin folder %q", o)
 	}
 	return nil
+}
+
+// checkouts are a request's repositories as the workspace takes them.
+func checkouts(repos []protocol.RepoCheckout) []workspace.Checkout {
+	if len(repos) == 0 {
+		return nil
+	}
+	out := make([]workspace.Checkout, len(repos))
+	for i, r := range repos {
+		out[i] = workspace.Checkout{Name: r.Checkout, FullName: r.FullName, BaseBranch: r.BaseBranch}
+	}
+	return out
 }

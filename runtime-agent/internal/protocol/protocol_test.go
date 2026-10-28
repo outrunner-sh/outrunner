@@ -44,7 +44,7 @@ func TestTheNewestHealthFixtureNamesEveryFeature(t *testing.T) {
 		t.Fatal(err)
 	}
 	newest := groups.AgentHealth[len(groups.AgentHealth)-1].Features
-	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway} {
+	for _, feature := range []string{FeatureImports, FeatureEnvironment, FeatureAgentConfig, FeatureRestoreModel, FeatureEditor, FeaturePorts, FeatureCodexGateway, FeatureWarmHooks, FeatureMultiRepo, FeatureMultiRepoSnapshots, FeatureGitCredential, FeatureMultiRepoWarm} {
 		if !slices.Contains(newest, feature) {
 			t.Errorf("the newest AgentHealth fixture lacks %s: %q", feature, newest)
 		}
@@ -95,6 +95,12 @@ func decodeInto(name string, raw json.RawMessage) error {
 		return json.Unmarshal(raw, &SetAgentConfigRequest{})
 	case "SetEnvironmentRequest":
 		return json.Unmarshal(raw, &SetEnvironmentRequest{})
+	case "WarmRequest":
+		return json.Unmarshal(raw, &WarmRequest{})
+	case "WarmStatus":
+		return json.Unmarshal(raw, &WarmStatus{})
+	case "ProvideSecretsRequest":
+		return json.Unmarshal(raw, &ProvideSecretsRequest{})
 	case "ProviderPorts":
 		return json.Unmarshal(raw, &[]int{})
 	case "ReservedEnv":

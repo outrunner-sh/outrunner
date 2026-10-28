@@ -24,6 +24,7 @@ function workspace(id: string, over: Partial<Workspace> = {}): Workspace {
     tmuxSession: null,
     agentWorkspaceId: null,
     environmentId: null,
+    checkouts: null,
     lastActiveAt: null,
     errorMessage: null,
     createdAt: "2026-10-01T00:00:00Z",
@@ -35,6 +36,7 @@ function workspace(id: string, over: Partial<Workspace> = {}): Workspace {
 const pr: WorkspacePullRequest = {
   id: "pr1",
   workspaceId: "w1",
+  projectId: "p",
   number: 7,
   url: "https://github.com/o/r/pull/7",
   title: "Fix",
@@ -58,6 +60,7 @@ function project(id: string, fullName: string): Project {
     htmlUrl: `https://github.com/${fullName}`,
     pushedAt: null,
     linearIssueIds: [],
+    orgId: "org-1",
     createdAt: "2026-10-01T00:00:00Z",
     updatedAt: "2026-10-01T00:00:00Z",
   };

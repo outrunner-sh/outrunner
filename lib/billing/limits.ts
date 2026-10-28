@@ -129,8 +129,9 @@ export function exemptFromPlanLimits(
 }
 
 /**
- * May this owner start another of Outrunner's boxes on `provider` for the
- * box of `scope` (null: a new session's)? The refusal to answer with, or the
+ * May this owner start another of Outrunner's boxes on `provider`, in `orgId`
+ * (the session's: billing is the org's, so its plan, its hours and every
+ * member's boxes count), for the box of `scope` (null: a new session's)? The refusal to answer with, or the
  * cap the claim in the database enforces (null: the owner's own sandbox, or
  * an owner the limits are not for). Called where a box may start: creating a
  * workspace, restoring one, and session attach bringing an ended box back.
@@ -139,6 +140,7 @@ export function exemptFromPlanLimits(
  */
 export async function cloudBoxStartGate(
   owner: Owner,
+  orgId: string,
   provider: ProviderName,
   scope: ComputerScope | null,
 ): Promise<CloudBoxStartGate> {
@@ -146,23 +148,27 @@ export async function cloudBoxStartGate(
   // Node test runner: these pull Next's request scope (next/headers) through
   // lib/supabase/server, which tests have none of. lib/supabase/probe.ts
   // loads its client the same way.
-  const [{ isMetered, intervalsFor }, { entitlementsFor }, { runtimeComputersForOwner }] =
+  const [{ isMetered, intervalsFor }, { entitlementsFor, personalEntitlements }, { runtimeComputersFor }, { isConnector }] =
     await Promise.all([
       import("@/lib/billing/metering-store"),
       import("@/lib/billing/entitlements"),
       import("@/lib/db/repositories"),
+      import("@/lib/automations/connector"),
     ]);
   if (!isMetered(provider)) return { cap: null };
   if (exemptFromPlanLimits(owner, optionalEnv("RUNTIME_PLAN_LIMIT_EXEMPT_GITHUB_LOGIN"))) {
     return { cap: null };
   }
   const now = new Date();
-  const { plan, allowancePeriod } = await entitlementsFor(owner.id);
+  // An org's connector, which its automations run as, is on its own plan,
+  // paid by the deployment: its own hours and boxes, apart from the org's.
+  const whose = (await isConnector(owner.id)) ? { ownerId: owner.id } : { orgId };
+  const { plan, allowancePeriod } = "ownerId" in whose ? await personalEntitlements(owner.id) : await entitlementsFor(orgId);
   const period = allowancePeriod ?? calendarMonth(now);
-  const used = hoursUsed(await intervalsFor(owner.id, period), period, now);
+  const used = hoursUsed(await intervalsFor(whose, period), period, now);
   const hours = hoursDenial(plan, used);
   if (hours) return { denial: hours };
-  const computers = await runtimeComputersForOwner(owner.id);
+  const computers = await runtimeComputersFor(whose);
   if (!boxLive(computers, scope, now)) {
     const boxes = boxesDenial(plan, liveMeteredComputers(computers, now));
     if (boxes) return { denial: boxes };

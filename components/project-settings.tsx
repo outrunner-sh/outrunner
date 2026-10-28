@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, KeyRound, Plus, Settings2, SquareTerminal, Trash2 } from "lucide-react";
+import { FileText, KeyRound, Plus, Settings2, SquareTerminal, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -12,6 +12,7 @@ import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
 import { LoadingButton, type ActionStatus } from "@/components/ui/loading-button";
 import { InlineMessage } from "@/components/ui/notice";
+import { SELECT_OPTIONS } from "@/components/ui/select-options";
 import { Textarea } from "@/components/ui/textarea";
 import type { Environment } from "@/lib/db/environments";
 import { MAX_REPOS, parseDotenv, type SecretsEdit } from "@/lib/environments/rules";
@@ -22,7 +23,7 @@ import { cn } from "@/lib/utils";
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings2 },
   { id: "variables", label: "Environment variables", icon: KeyRound },
-  { id: "setup", label: "Setup script", icon: SquareTerminal },
+  { id: "setup", label: "Setup scripts", icon: SquareTerminal },
   { id: "files", label: "Files", icon: FileText },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -52,6 +53,7 @@ export function ProjectSettings({ initial }: { initial: Environment }) {
   const setSection = (id: SectionId) => router.replace(id === "general" ? pathname : `${pathname}?tab=${id}`, { scroll: false });
   // Sessions start in a repository until a project can hold more than one.
   const repo = environment.repos[0];
+  const readOnly = environment.access !== "write";
 
   return (
     <div className="px-8 py-8">
@@ -91,18 +93,29 @@ export function ProjectSettings({ initial }: { initial: Environment }) {
               </button>
             ))}
           </nav>
-          <main className="min-w-0">
-            {section === "general" && <GeneralSection environment={environment} onSaved={setEnvironment} />}
-            {section === "variables" && (
-              <VariablesSection
-                environment={environment}
-                onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))}
-              />
+          <main className="min-w-0 space-y-4">
+            {/* Read access: everything shows, nothing changes (the server
+                refuses a change too). A disabled fieldset disables every
+                field and button in it. */}
+            {readOnly && (
+              <InlineMessage tone="info">
+                You can see this project and start sessions in it, but not change it. Ask an admin of its org for write
+                access.
+              </InlineMessage>
             )}
-            {section === "setup" && <SetupSection environment={environment} onSaved={setEnvironment} />}
-            {section === "files" && (
-              <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
-            )}
+            <fieldset disabled={readOnly} className="min-w-0">
+              {section === "general" && <GeneralSection environment={environment} onSaved={setEnvironment} />}
+              {section === "variables" && (
+                <VariablesSection
+                  environment={environment}
+                  onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))}
+                />
+              )}
+              {section === "setup" && <SetupSection environment={environment} onSaved={setEnvironment} />}
+              {section === "files" && (
+                <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
+              )}
+            </fieldset>
           </main>
         </div>
       </div>
@@ -123,6 +136,114 @@ function SectionTitle({ title, detail }: { title: string; detail: string }) {
 /** A bordered panel of rows, as Replicas' sections are. */
 function Panel({ children }: { children: React.ReactNode }) {
   return <div className="divide-y divide-border/60 rounded-lg border border-border/60">{children}</div>;
+}
+
+/** A connected repository that can be added to the project. */
+type Addable = { projectId: string; fullName: string; defaultBranch: string };
+
+/** The project's repositories: each cloned into its own folder of a new
+ *  session's, added from the owner's connected repositories, up to MAX_REPOS. */
+function RepositoriesEditor({ environment, onSaved }: { environment: Environment; onSaved: (e: Environment) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [addable, setAddable] = useState<Addable[] | null>(null);
+  const [picked, setPicked] = useState("");
+  const save = useSave();
+  const several = environment.repos.length > 1;
+  const full = environment.repos.length >= MAX_REPOS;
+
+  const open = async () => {
+    setAdding(true);
+    if (addable) return;
+    const answer = await save.run(() =>
+      requestJson<{ repositories: Addable[] }>(`/api/environments/${environment.id}/repos`, { has: (d) => Array.isArray(d.repositories) }),
+    );
+    if (answer) setAddable(answer.repositories);
+  };
+  const change = async (method: "POST" | "DELETE", projectId: string) => {
+    const saved = await save.run(() =>
+      requestJson<Environment>(
+        `/api/environments/${environment.id}/repos${method === "DELETE" ? `?projectId=${projectId}` : ""}`,
+        { method, body: method === "POST" ? { projectId } : undefined, has: (d) => d.id !== undefined },
+      ),
+    );
+    if (!saved) return;
+    onSaved(saved);
+    // Removed, it can be added again: the list is fetched anew when opened.
+    setAddable((list) => (method === "DELETE" ? null : (list?.filter((r) => r.projectId !== projectId) ?? null)));
+    setPicked("");
+    // Closed on any change: opened again, it lists what can be added now.
+    setAdding(false);
+  };
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-0.5">
+          <SectionHeader title="Repositories" />
+          <p className="text-xs text-muted-foreground">
+            {several
+              ? "Each is cloned into its own folder of a new session's, all on the session's branch."
+              : "Cloned on its default branch. Add more to work on them together in one session."}{" "}
+            Up to {MAX_REPOS}.
+          </p>
+        </div>
+        {!adding && (
+          <Button size="sm" variant="outline" disabled={full} onClick={() => void open()}>
+            <Plus /> Add repository
+          </Button>
+        )}
+      </div>
+      <ul className="divide-y divide-border/60 rounded-md border border-border/60">
+        {environment.repos.map((r) => (
+          <li key={r.projectId} className="flex items-center gap-2.5 px-3 py-2 text-[13px]">
+            <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 truncate text-foreground">{r.fullName}</span>
+            <span className="font-mono text-xs text-muted-foreground">{r.branch ?? r.defaultBranch}</span>
+            {several && <span className="ml-auto font-mono text-xs text-muted-foreground">{r.checkoutName}/</span>}
+            {several && r.projectId !== environment.defaultForProjectId && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="text-muted-foreground"
+                aria-label={`Remove ${r.fullName}`}
+                title={`Remove ${r.fullName}`}
+                onClick={() => void change("DELETE", r.projectId)}
+              >
+                <X />
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {adding && (
+        <div className="flex items-center gap-2">
+          <select
+            aria-label="Repository to add"
+            value={picked}
+            onChange={(e) => setPicked(e.target.value)}
+            className={cn("h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2 text-[13px] text-foreground dark:bg-input/30", SELECT_OPTIONS)}
+          >
+            <option value="">{addable === null ? "Loading repositories…" : addable.length ? "Pick a repository" : "No other connected repositories"}</option>
+            {addable?.map((r) => (
+              <option key={r.projectId} value={r.projectId}>
+                {r.fullName}
+              </option>
+            ))}
+          </select>
+          <LoadingButton status={save.status} disabled={!picked} labels={{ idle: "Add" }} onClick={() => void change("POST", picked)} />
+          <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
+            Cancel
+          </Button>
+        </div>
+      )}
+      {several && (
+        <p className="text-xs text-muted-foreground">
+          Sessions open a pull request in each repository they change, from its own row.
+        </p>
+      )}
+      {save.error && <InlineMessage>{save.error}</InlineMessage>}
+    </>
+  );
 }
 
 /** Delete a variable or a file: a trash button that turns into a hold, since
@@ -213,31 +334,7 @@ function GeneralSection({ environment, onSaved }: { environment: Environment; on
           />
         </div>
         <div className="space-y-3 p-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-0.5">
-              <SectionHeader title="Repositories" />
-              <p className="text-xs text-muted-foreground">
-                Cloned on their default branch unless another is set. Up to {MAX_REPOS} per project.
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled
-              title="Projects with more than one repository are coming soon."
-            >
-              <Plus /> Add repository
-            </Button>
-          </div>
-          <ul className="divide-y divide-border/60 rounded-md border border-border/60">
-            {environment.repos.map((r) => (
-              <li key={r.projectId} className="flex items-center gap-2.5 px-3 py-2.5 text-[13px]">
-                <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate text-foreground">{r.fullName}</span>
-                <span className="font-mono text-xs text-muted-foreground">{r.branch ?? r.defaultBranch}</span>
-              </li>
-            ))}
-          </ul>
+          <RepositoriesEditor environment={environment} onSaved={onSaved} />
         </div>
         <div className="space-y-3 p-4">
           <div className="space-y-0.5">
@@ -340,40 +437,161 @@ function VariablesSection({ environment, onSaved }: { environment: Environment; 
   );
 }
 
+/** Where the project's ready boxes stand, from its warm hook's last run:
+ *  ready, being made, or failed. */
+function warmState(environment: Environment): { tone: "ready" | "applying" | "failed" | "none"; text: string } {
+  const run = environment.warm;
+  if (!environment.hooks.warm) return { tone: "none", text: "No warm hook: new sessions start from a plain checkout." };
+  if (!run || run.generation !== environment.setupGeneration) {
+    return { tone: "applying", text: "Applying: ready boxes are being made with these changes." };
+  }
+  if (run.status === "running") return { tone: "applying", text: "Applying: the warm hook is running." };
+  if (run.status === "failed") return { tone: "failed", text: "Needs attention: the warm hook failed on the ready boxes. New sessions run it themselves as they start." };
+  return { tone: "ready", text: `Ready: the warm hook succeeded${run.finishedAt ? ` ${relativeTime(run.finishedAt)}` : ""}.` };
+}
+
+function relativeTime(iso: string): string {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
+}
+
 function SetupSection({ environment, onSaved }: { environment: Environment; onSaved: (e: Environment) => void }) {
-  const [setup, setSetup] = useState(environment.scripts.setup ?? "");
-  const save = useSave();
+  const status = warmState(environment);
+  const [showLog, setShowLog] = useState(false);
+  const retry = useSave();
   return (
     <section className="space-y-5">
       <SectionTitle
-        title="Setup script"
-        detail="Runs once in a new session's checkout when it first starts, with the project's variables and files. Its output is in the session's setup log."
+        title="Setup scripts"
+        detail="The warm hook prepares sessions ahead of time. The start hook runs each time a session's agent starts."
       />
-      <Panel>
-        <div className="space-y-3 p-4">
-          <Textarea
-            value={setup}
-            onChange={(e) => setSetup(e.target.value)}
-            placeholder={"#!/bin/bash\n# e.g. pnpm install"}
-            aria-label="Setup script"
-            spellCheck={false}
-            className="min-h-48 font-mono text-xs"
-          />
-          <div className="flex items-center justify-end gap-3">
-            {save.error && <InlineMessage>{save.error}</InlineMessage>}
-            <LoadingButton
-              status={save.status}
-              disabled={setup === (environment.scripts.setup ?? "")}
-              labels={{ idle: "Save", success: "Saved" }}
-              onClick={async () => {
-                const saved = await save.run(() => patchEnvironment(environment.id, { scripts: { setup: setup || null } }));
-                if (saved) onSaved(saved);
-              }}
+      <div className="space-y-2 rounded-lg border border-border/60 px-4 py-3 text-[13px]">
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 rounded-full",
+                status.tone === "ready" && "bg-positive",
+                status.tone === "applying" && "bg-warning",
+                status.tone === "failed" && "bg-destructive",
+                status.tone === "none" && "bg-muted-foreground/50",
+              )}
             />
-          </div>
+            <span className="text-foreground/80">{status.text}</span>
+          </span>
+          <span className="flex items-center gap-2">
+            {environment.warm?.log && (
+              <Button size="xs" variant="ghost" onClick={() => setShowLog((v) => !v)}>
+                {showLog ? "Hide log" : "View log"}
+              </Button>
+            )}
+            {status.tone === "failed" && (
+              <LoadingButton
+                size="sm"
+                variant="outline"
+                status={retry.status}
+                labels={{ idle: "Try again" }}
+                onClick={async () => {
+                  const saved = await retry.run(() =>
+                    requestJson<Environment>(`/api/environments/${environment.id}/warm`, {
+                      method: "POST",
+                      has: (d) => d.id !== undefined,
+                    }),
+                  );
+                  if (saved) onSaved(saved);
+                }}
+              />
+            )}
+          </span>
         </div>
+        {retry.error && <InlineMessage>{retry.error}</InlineMessage>}
+        {showLog && environment.warm?.log && (
+          <pre className="max-h-72 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-xs whitespace-pre-wrap text-foreground/80">
+            {environment.warm.log}
+          </pre>
+        )}
+      </div>
+      <Panel>
+        <ScriptEditor
+          title="Warm hook"
+          detail="Runs ahead of time on the project's ready boxes, in a checkout of the repository with the project's variables and files, before any session takes one: dependency installs, builds. Its work (node_modules, build output) is kept for the session. Up to an hour. Changing it makes the ready boxes again."
+          placeholder={"#!/bin/bash\n# e.g. pnpm install"}
+          value={environment.hooks.warm}
+          save={(warm) => patchEnvironment(environment.id, { hooks: { warm } })}
+          onSaved={onSaved}
+        />
+        <ScriptEditor
+          title="Start hook"
+          detail="Runs in the session's checkout each time its agent starts, after the warm hook: keep it quick. Its output is in the session's setup log."
+          placeholder={"#!/bin/bash\n# e.g. docker compose up -d db"}
+          value={environment.hooks.start}
+          save={(start) => patchEnvironment(environment.id, { hooks: { start } })}
+          onSaved={onSaved}
+        />
+        {environment.scripts.setup !== null && (
+          <ScriptEditor
+            title="Session setup script"
+            detail="Imported from Conductor: runs once in each new session's checkout, after the warm hook. Move what it does into the warm or start hook, then clear it."
+            placeholder=""
+            value={environment.scripts.setup}
+            save={(setup) => patchEnvironment(environment.id, { scripts: { setup } })}
+            onSaved={onSaved}
+          />
+        )}
       </Panel>
     </section>
+  );
+}
+
+/** One script: its editor and Save. */
+function ScriptEditor({
+  title,
+  detail,
+  placeholder,
+  value,
+  save: send,
+  onSaved,
+}: {
+  title: string;
+  detail: string;
+  placeholder: string;
+  value: string | null;
+  save: (value: string | null) => Promise<Environment>;
+  onSaved: (e: Environment) => void;
+}) {
+  const [text, setText] = useState(value ?? "");
+  const save = useSave();
+  return (
+    <div className="space-y-3 p-4">
+      <div className="space-y-0.5">
+        <SectionHeader title={title} />
+        <p className="text-xs text-muted-foreground">{detail}</p>
+      </div>
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={placeholder}
+        aria-label={title}
+        spellCheck={false}
+        className="min-h-36 font-mono text-xs"
+      />
+      <div className="flex items-center justify-end gap-3">
+        {save.error && <InlineMessage>{save.error}</InlineMessage>}
+        <LoadingButton
+          status={save.status}
+          disabled={text === (value ?? "")}
+          labels={{ idle: "Save", success: "Saved" }}
+          onClick={async () => {
+            const saved = await save.run(() => send(text || null));
+            if (saved) onSaved(saved);
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

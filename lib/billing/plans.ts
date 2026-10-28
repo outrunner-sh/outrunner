@@ -61,6 +61,27 @@ export const PLANS: Readonly<Record<PlanId, Plan>> = {
   },
 };
 
+/**
+ * What an org's `outrunner-connector` (lib/automations/connector.ts), the
+ * service user its automations run as, is entitled to: paid by the
+ * deployment, not a member. Enterprise's limits, ten boxes at once, small
+ * boxes, and `modelsUsd` a month on Outrunner's models
+ * (AUTOMATION_MODEL_ALLOWANCE_USD). Its id stays enterprise's, as a stored
+ * allowance names a plan Stripe sells.
+ */
+export function connectorPlan(modelsUsd: number): Plan {
+  return {
+    ...PLANS.enterprise,
+    label: "Automations",
+    concurrentCloudSessions: 10,
+    largestBoxSize: "small",
+    models: { usd: modelsUsd, per: "month" },
+  };
+}
+
+/** The connector's monthly allowance when the deployment sets none. */
+export const DEFAULT_AUTOMATION_MODEL_ALLOWANCE_USD = 50;
+
 /** The plans Stripe sells, and how often each is billed. */
 export type PaidPlanId = Exclude<PlanId, "free">;
 export type BillingInterval = "month" | "year";

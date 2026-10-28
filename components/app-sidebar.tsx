@@ -3,11 +3,12 @@
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Archive,
   ChevronRight,
   Ellipsis,
-  Flag,
   GitBranchPlus,
   Folder,
+  Inbox,
   Laptop,
   PanelLeft,
   Plus,
@@ -21,6 +22,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AppUpdate } from "@/components/app-update";
+import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
 import { GetStarted } from "@/components/get-started";
 import { HomeUserMenu } from "@/components/home-user-menu";
@@ -48,6 +50,8 @@ import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
+import { OrgSwitcher } from "@/components/org-switcher";
+import type { Org } from "@/lib/orgs/active";
 
 /**
  * The one sidebar every app page shares (rendered by app/(app)/layout.tsx, so
@@ -61,6 +65,9 @@ export function AppSidebar({
   workspaces,
   ownerLogin,
   ownerAvatarUrl,
+  orgs = [],
+  activeOrgId = null,
+  triageCount = 0,
   onCollapse,
   searchSignal = 0,
   initialFolded = [],
@@ -72,6 +79,12 @@ export function AppSidebar({
   workspaces: Workspace[];
   ownerLogin: string;
   ownerAvatarUrl: string | null;
+  /** The user's orgs, for the switcher in the header; none before they load. */
+  orgs?: Org[];
+  /** The org the sidebar lists. */
+  activeOrgId?: string | null;
+  /** Work items waiting in triage, shown beside its link. */
+  triageCount?: number;
   onCollapse: () => void;
   /** Changes each time ⌘K is pressed: open the search field. */
   searchSignal?: number;
@@ -126,6 +139,15 @@ export function AppSidebar({
     refreshLocal();
   };
 
+  // The session whose archive confirmation is open. Once it is archived, leave
+  // it if it is the one on screen (left open, its page would restore it at
+  // once), and re-read the list, which then marks it archived.
+  const [archiving, setArchiving] = useState<ArchivingSession | null>(null);
+  const onArchived = (id: string) => {
+    if (id === active) router.push("/");
+    router.refresh();
+  };
+
   // ⌘K (AppFrame): open search, which focuses its field as it mounts.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -139,11 +161,16 @@ export function AppSidebar({
 
   return (
     <aside className="flex h-full min-h-0 flex-col gap-5 border-r border-border/60 bg-sidebar px-3 pb-3 pt-5">
-      <div className="flex items-center justify-between px-2">
-        <Link href="/" className="flex items-center gap-2 font-mono text-sm font-semibold text-foreground">
-          <Terminal className="size-4" />
-          outrunner
-        </Link>
+      <div className="flex items-center justify-between gap-2 px-2">
+        {/* The org being shown, which switches orgs; before they've loaded
+            (or with none, before orgs), the app's mark, home. */}
+        {orgs.length > 0 ? (
+          <OrgSwitcher orgs={orgs} activeOrgId={activeOrgId} />
+        ) : (
+          <Link href="/" aria-label="Home" className="flex items-center text-foreground">
+            <Terminal className="size-4" />
+          </Link>
+        )}
         <button
           type="button"
           onClick={onCollapse}
@@ -166,8 +193,21 @@ export function AppSidebar({
           active={pathname === "/" || pathname === "/new"}
         />
         {/* Import (/import) is hidden from the nav for now; the page still works. */}
-        <NavSoon icon={<Flag />} label="Runner" />
-        <NavSoon icon={<Sparkles />} label="Automations" />
+        <NavLink
+          href="/triage"
+          icon={<Inbox />}
+          label="Triage"
+          hint="⌘I"
+          count={triageCount}
+          active={pathname === "/triage"}
+        />
+        {/* The org's automations, which post as the Outrunner GitHub App. */}
+        <NavLink
+          href="/automations"
+          icon={<Sparkles />}
+          label="Automations"
+          active={pathname === "/automations" || pathname.startsWith("/automations/")}
+        />
         {searching ? (
           <SearchField value={query} onChange={setQuery} onClose={closeSearch} />
         ) : (
@@ -212,6 +252,7 @@ export function AppSidebar({
                   active={active}
                   now={now}
                   onDelete={setDeleting}
+                  onArchive={setArchiving}
                   folded={folded.includes(group.key)}
                   searching={query.trim() !== ""}
                   onToggle={() => toggleFolded(group.key)}
@@ -229,6 +270,13 @@ export function AppSidebar({
         }}
         onDeleting={onDeleting}
         onDeleted={onDeleted}
+      />
+      <ArchiveSessionDialog
+        session={archiving}
+        onOpenChange={(open) => {
+          if (!open) setArchiving(null);
+        }}
+        onArchived={onArchived}
       />
 
       {/* Counted once both lists are in, so no step reads undone as they land;
@@ -268,6 +316,7 @@ function WorkspaceGroup({
   active,
   now,
   onDelete,
+  onArchive,
   folded,
   searching,
   onToggle,
@@ -277,6 +326,8 @@ function WorkspaceGroup({
   now: number;
   /** Opens the delete confirmation for one of its sessions. */
   onDelete: (session: DeletingSession) => void;
+  /** Opens the archive confirmation for one of its sessions. */
+  onArchive: (session: ArchivingSession) => void;
   folded: boolean;
   searching: boolean;
   onToggle: () => void;
@@ -355,7 +406,7 @@ function WorkspaceGroup({
         )}
         {shownSessions(group, { folded, searching, active }).map((session) => {
           const isActive = session.id === active;
-          const { deletion } = session;
+          const { deletion, archive } = session;
           // A cloud session warms up as the pointer rests on it, so its click
           // shows the conversation at once. A Mac one is near already, and
           // attaching would start it.
@@ -371,14 +422,40 @@ function WorkspaceGroup({
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-2 rounded-md py-1 pl-[32px] pr-2 text-[13px] transition-colors",
+                  // Room for both of the row's buttons as they show.
+                  deletion && archive && "group-hover/row:pr-10 group-focus-within/row:pr-10",
                   isActive
                     ? "bg-accent text-foreground"
                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
               >
                 <span className="min-w-0 flex-1 truncate">{session.title}</span>
-                <RowTail at={session.at} now={now} hideOnHover={deletion !== null} />
+                {session.archived && (
+                  <span title="Archived. Opening it restores it." className="shrink-0">
+                    <Archive aria-label="Archived" className="size-3 text-muted-foreground" />
+                  </span>
+                )}
+                <RowTail at={session.at} now={now} hideOnHover={deletion !== null || archive !== null} />
               </Link>
+              {archive && (
+                <button
+                  type="button"
+                  // Not `disabled`: a disabled button shows no tooltip saying why.
+                  aria-disabled={!archive.can}
+                  onClick={() => {
+                    if (archive.can) onArchive({ id: session.id, title: session.title });
+                  }}
+                  aria-label={`Archive ${session.title}`}
+                  title={archive.can ? "Archive session" : archive.why}
+                  className={cn(
+                    "absolute top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition focus-visible:opacity-100 group-hover/row:opacity-100",
+                    deletion ? "right-7" : "right-1",
+                    archive.can ? "hover:bg-accent hover:text-foreground" : "cursor-not-allowed group-hover/row:opacity-40 focus-visible:opacity-40",
+                  )}
+                >
+                  <Archive className="size-3.5" />
+                </button>
+              )}
               {deletion && (
                 <button
                   type="button"
@@ -440,12 +517,15 @@ const ADD_PROJECT_LABEL = LOCAL_SESSIONS ? "Add a project" : "Add a repository f
 
 type DeletingSession = { id: string; title: string; deletion: SessionDeletion };
 
+type ArchivingSession = { id: string; title: string };
+
 function NavLink({
   href,
   onClick,
   icon,
   label,
   hint,
+  count = 0,
   active,
 }: {
   href: string;
@@ -454,6 +534,8 @@ function NavLink({
   label: string;
   /** Its keyboard shortcut, shown at the row's end on hover. */
   hint?: string;
+  /** How many wait there; shown at the row's end, giving way to the hint on hover. */
+  count?: number;
   active: boolean;
 }) {
   return (
@@ -470,7 +552,18 @@ function NavLink({
     >
       {icon}
       <span className="flex-1">{label}</span>
-      {hint && <Kbd>{hint}</Kbd>}
+      {count > 0 && (
+        <span
+          aria-label={`${count} waiting`}
+          className={cn(
+            "text-[11px] tabular-nums text-muted-foreground",
+            hint && "group-hover/nav:hidden group-focus-visible/nav:hidden",
+          )}
+        >
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
+      {hint && <Kbd hidden={count > 0}>{hint}</Kbd>}
     </Link>
   );
 }
@@ -501,9 +594,15 @@ function NavButton({
 }
 
 /** A shortcut, shown only while its row is hovered or focused. */
-function Kbd({ children }: { children: string }) {
+function Kbd({ children, hidden = false }: { children: string; hidden?: boolean }) {
   return (
-    <kbd className="font-sans text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover/nav:opacity-100 group-focus-visible/nav:opacity-100">
+    <kbd
+      className={cn(
+        "font-sans text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover/nav:opacity-100 group-focus-visible/nav:opacity-100",
+        // Out of the row until hovered, where a count holds its place.
+        hidden && "hidden group-hover/nav:inline group-focus-visible/nav:inline",
+      )}
+    >
       {children}
     </kbd>
   );
@@ -512,21 +611,6 @@ function Kbd({ children }: { children: string }) {
 /** "⌘K" as aria-keyshortcuts spells it. */
 function keyShortcut(hint: string): string {
   return hint.replace("⌘", "Meta+");
-}
-
-/** A destination that does not exist yet: shown dimmed, not clickable; its
- *  tooltip says it is coming. */
-function NavSoon({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <div
-      aria-disabled="true"
-      title={`${label} is coming soon`}
-      className={cn(SIDEBAR_ROW, "cursor-default text-muted-foreground/60")}
-    >
-      {icon}
-      {label}
-    </div>
-  );
 }
 
 /** "Search" turned into its field: filters the workspaces below as you type.

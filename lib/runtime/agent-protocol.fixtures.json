@@ -48,6 +48,16 @@
       "baseBranch": "main"
     },
     {
+      "workspaceId": "ws-3",
+      "repoFullName": "acme/web",
+      "branch": "feat/z",
+      "baseBranch": "main",
+      "repos": [
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+      ]
+    },
+    {
       "workspaceId": "ws-2",
       "repoFullName": "acme/app",
       "branch": "feat/y",
@@ -246,6 +256,19 @@
   ],
   "RestoreWorkspaceRequest": [
     {
+      "branch": "feat/z",
+      "sessionId": "sess-3",
+      "downloads": [
+        { "artifact": "bundle", "url": "https://storage.example/download/bundle?token=t" },
+        { "artifact": "patch", "url": "https://storage.example/download/patch?token=t" },
+        { "artifact": "conversation", "url": "https://storage.example/download/conversation?token=t" }
+      ],
+      "repos": [
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+      ]
+    },
+    {
       "branch": "feat/x",
       "baseBranch": "main",
       "sessionId": "sess-1",
@@ -415,7 +438,13 @@
         "editor",
         "ports",
         "codex-gateway",
-        "project-instructions"
+        "project-instructions",
+        "request-secrets",
+        "warm-hooks",
+        "multi-repo",
+        "multi-repo-snapshots",
+        "git-credential",
+        "multi-repo-warm"
       ]
     }
   ],
@@ -468,10 +497,68 @@
         "apps/backend/.env": "JWT_SECRET=x\n"
       },
       "setup": "bun install",
-      "instructions": "Use pnpm. Run pnpm test before opening a PR."
+      "instructions": "Use pnpm. Run pnpm test before opening a PR.",
+      "warmHook": "pnpm install",
+      "startHook": "docker compose up -d db"
     },
     {
       "env": {}
+    }
+  ],
+  "WarmRequest": [
+    {
+      "baseBranch": "main",
+      "env": {
+        "NPM_TOKEN": "npm_x"
+      },
+      "files": {
+        "apps/api/.env": "X=1\n"
+      },
+      "hook": "pnpm install"
+    },
+    {
+      "baseBranch": "main"
+    },
+    {
+      "baseBranch": "main",
+      "hook": "pnpm -C web install && pnpm -C api install",
+      "repos": [
+        { "fullName": "acme/web", "checkout": "web", "baseBranch": "main" },
+        { "fullName": "acme/api", "checkout": "api", "baseBranch": "develop" }
+      ]
+    }
+  ],
+  "WarmStatus": [
+    {
+      "state": "succeeded",
+      "baseBranch": "main",
+      "startedAt": "2026-10-27T10:00:00Z",
+      "finishedAt": "2026-10-27T10:03:00Z",
+      "log": "done\n"
+    },
+    {
+      "state": "failed",
+      "exitCode": 1
+    },
+    {
+      "state": ""
+    }
+  ],
+  "ProvideSecretsRequest": [
+    {
+      "keys": [
+        "VERCEL_TOKEN",
+        "VERCEL_ORG"
+      ],
+      "values": {
+        "VERCEL_TOKEN": "tok"
+      }
+    },
+    {
+      "keys": [
+        "VERCEL_TOKEN"
+      ],
+      "skipped": true
     }
   ],
   "SetAgentConfigRequest": [

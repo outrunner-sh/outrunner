@@ -44,7 +44,7 @@ export function sameEntry(a: LoadoutEntry | null | undefined, b: LoadoutEntry | 
 
 /** An entry from anywhere (a request, a stored row), checked as a menu
  *  choice is; null for anything else. */
-function parseEntry(raw: unknown): LoadoutEntry | null {
+export function parseLoadoutEntry(raw: unknown): LoadoutEntry | null {
   if (!raw || typeof raw !== "object") return null;
   const { provider, id, effort } = raw as { provider?: unknown; id?: unknown; effort?: unknown };
   const model = modelChoice(provider, id);
@@ -65,10 +65,10 @@ export function parseLoadout(raw: unknown): ModelLoadout {
   const { models, default: chosen } = raw as { models?: unknown; default?: unknown };
   const entries: LoadoutEntry[] = [];
   for (const item of Array.isArray(models) ? models : []) {
-    const entry = parseEntry(item);
+    const entry = parseLoadoutEntry(item);
     if (entry && !entries.some((e) => sameEntry(e, entry)) && entries.length < LOADOUT_MAX) entries.push(entry);
   }
-  const fallback = parseEntry(chosen);
+  const fallback = parseLoadoutEntry(chosen);
   return { models: entries, default: entries.find((e) => sameEntry(e, fallback)) ?? null };
 }
 

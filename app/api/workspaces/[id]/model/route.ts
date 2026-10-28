@@ -97,7 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
   // OpenRouter, so only for a switch that can go ahead.
   let req;
   try {
-    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder), effort);
+    req = await setModelRequest(model, (holder) => modelKey(owner.id, holder, workspace.orgId), effort);
   } catch (error) {
     return modelKeyErrorResponse(error, `Model: could not get the ${model.provider} key of ${owner.id}`);
   }
@@ -121,7 +121,7 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     // The switch relaunches the session: signed in as the user picks now, so
     // a key replaced since is the one it relaunches on.
-    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+    const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id);
     // An agent from before Codex ran through a gateway would refuse the model.
     // Checked before signing in, which may take the session's own key away
     // (a model on Outrunner's key needs none): a switch refused here must
@@ -133,7 +133,7 @@ export async function POST(request: Request, context: RouteContext) {
     await signInSession(
       sessionAuthClient(agent, identity, upgrade),
       workspace.agent,
-      agentAuthStore(owner.id),
+      agentAuthStore(owner.id, workspace.orgId),
       runsOnOwnAccount(model),
     );
   } catch (error) {

@@ -7,6 +7,7 @@ import { AGENT_IDS } from "@/lib/agents/registry";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { modelMenu } from "@/lib/db/credentials";
 import { getModelLoadout } from "@/lib/db/model-loadout";
+import { activeOrgId } from "@/lib/orgs/server";
 import { modelGroups } from "@/lib/runtime/session-models";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
@@ -25,7 +26,9 @@ export default function DefaultModels() {
 async function DefaultModelsSection() {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin?next=/settings/models");
-  const [menu, loadout] = await Promise.all([modelMenu(owner.id), getModelLoadout(owner.id)]);
+  // With the active org's keys: its models may be a default for its cloud sessions.
+  const orgId = await activeOrgId().catch(() => undefined);
+  const [menu, loadout] = await Promise.all([modelMenu(owner.id, orgId), getModelLoadout(owner.id)]);
   // Every agent's models, connected or not: a loadout is set up here ahead,
   // and the picker shows only those it offers at the time.
   return <ModelLoadoutSettings groups={modelGroups(menu, AGENT_IDS)} initial={loadout} />;

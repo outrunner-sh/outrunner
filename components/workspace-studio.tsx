@@ -1,10 +1,12 @@
 "use client";
 
-import { Code, MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
+import { Archive, Code, MessageSquarePlus, PanelRight, PanelRightClose } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
+import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { SessionComposer } from "@/components/session-composer";
 import { SessionDidntStart } from "@/components/session-didnt-start";
 import { SetupStalled } from "@/components/setup-stalled";
@@ -19,6 +21,7 @@ import { localSessionLabel } from "@/lib/desktop/local-sessions";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { archiveOffer } from "@/lib/session/archive-control";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
@@ -31,6 +34,7 @@ export function WorkspaceStudio({
   local,
   pullRequest,
   initialPrompt,
+  initialPromptKey,
   initialAttachmentIds,
 }: {
   workspace: Workspace;
@@ -43,6 +47,8 @@ export function WorkspaceStudio({
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
   initialPrompt?: string;
+  /** The first prompt's idempotency key (lib/session/first-prompt.ts). */
+  initialPromptKey?: string;
   /** Attachment ids staged on the home composer, sent with the first prompt. */
   initialAttachmentIds?: string[];
 }) {
@@ -68,6 +74,11 @@ export function WorkspaceStudio({
   const queued = useQueuedFirstPrompt(workspace.id, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] });
   // Beside the title: the repository by its short name, or this Mac's folder.
   const place = local ? local.name : projectName?.split("/").pop();
+  // Archive, for a cloud session that has a Snapshot to restore from. Once it
+  // is archived, leave it: left open, this page would restore it at once.
+  const archive = isLocal ? null : archiveOffer(workspace);
+  const [archiving, setArchiving] = useState(false);
+  const router = useRouter();
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector")}>
@@ -98,6 +109,20 @@ export function WorkspaceStudio({
               <Code />
             </button>
           )}
+          {archive && (
+            <button
+              className="studio-icon-button aria-disabled:cursor-not-allowed aria-disabled:opacity-40"
+              // Not `disabled`: a disabled button shows no tooltip saying why.
+              aria-disabled={!archive.can}
+              onClick={() => {
+                if (archive.can) setArchiving(true);
+              }}
+              title={archive.can ? "Archive session" : archive.why}
+              aria-label="Archive session"
+            >
+              <Archive />
+            </button>
+          )}
           <button
             className="studio-icon-button"
             onClick={() => {
@@ -112,6 +137,14 @@ export function WorkspaceStudio({
           </button>
         </div>
       </header>
+      <ArchiveSessionDialog
+        session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
+        onOpenChange={setArchiving}
+        onArchived={() => {
+          router.push("/");
+          router.refresh();
+        }}
+      />
 
       <section className="studio-chat">
         {hasLiveSession ? (
@@ -119,9 +152,11 @@ export function WorkspaceStudio({
             workspaceId={workspace.id}
             projectId={isLocal ? undefined : workspace.projectId}
             agent={workspace.agent}
+            recorded={workspace.model}
             local={isLocal}
             untitled={!isLocal && !workspace.title}
             initialPrompt={initialPrompt}
+            initialPromptKey={initialPromptKey}
             initialAttachmentIds={initialAttachmentIds}
             onSender={setSender}
           />

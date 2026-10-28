@@ -13,7 +13,7 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Markdown } from "@/components/markdown";
 import { TickingFact } from "@/components/ui/notice";
@@ -27,12 +27,23 @@ import {
   thoughtLabel,
   type ToolKind,
   toolRow,
+  workingElapsed,
 } from "@/lib/runtime/conversation-format";
-import { isInterruption } from "@/lib/runtime/conversation-events";
-import { type ConversationNode, conversationNodes } from "@/lib/runtime/conversation-nodes";
+import { claudeIsWorking } from "@/lib/runtime/conversation-events";
+import {
+  type ConversationNode,
+  conversationNodes,
+  type ConversationTurn,
+  conversationTurns,
+  currentTurn,
+} from "@/lib/runtime/conversation-nodes";
 import type { ConversationPlaceholder } from "@/lib/session/conversation-placeholder";
+import { FOLLOW_SLACK_PX, followsAfterScroll, USER_SCROLL_MS } from "@/lib/session/follow-scroll";
 import { isLive } from "@/lib/session/streaming";
 import { cn } from "@/lib/utils";
+
+/** Long enough for any smooth scroll back to a turn to finish. */
+const JUMP_MS = 1500;
 
 /**
  * The Conversation projection of the Workspace Session — the ordered list of
@@ -42,8 +53,8 @@ import { cn } from "@/lib/utils";
  * one AgentEvent; nothing is derived from PTY output (see
  * docs/architecture/session-contract.md). Each of Claude's steps is a row: its
  * words as plain prose, a thought as a quiet line, a tool call as a bordered
- * row that opens onto its input and output. A prompt is a full-width box that
- * stays pinned at the top while its turn scrolls beneath it.
+ * row that opens onto its input and output. A prompt is a full-width box, and
+ * a tick on the turn rail beside the chat, which jumps to it.
  */
 export function ConversationTimeline({
   events,
@@ -60,83 +71,217 @@ export function ConversationTimeline({
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottom = useRef(true);
+  // Where the view was at the last scroll, for which way the next one went,
+  // and to put it back where the panel is shown again (followsAfterScroll).
+  const lastTop = useRef(0);
+  // When the user last touched the view's scrolling (wheel, touch, keys, its
+  // scrollbar), so a scroll they didn't make can't stop the follow.
+  const lastInput = useRef(0);
+  const userInput = () => {
+    lastInput.current = performance.now();
+  };
+  // A pointer held on the view (dragging its scrollbar) is the user's however
+  // long the drag lasts; it's let go anywhere on the page.
+  const pointerHeld = useRef(false);
+  const holdPointer = () => {
+    userInput();
+    pointerHeld.current = true;
+    const release = () => {
+      pointerHeld.current = false;
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+  };
+  // Where a jump back to a turn (the turn rail) is headed, until it gets there,
+  // the user takes over, or it has had its time.
+  const jumpingTo = useRef<{ top: number; since: number } | null>(null);
+  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const nodes = useMemo(() => conversationNodes(events), [events]);
+  const turns = useMemo(() => conversationTurns(nodes), [nodes]);
+  // The turn being read, as the rail marks it.
+  const [current, setCurrent] = useState(-1);
+
+  // Which turn is read: the last whose prompt is above the top third of the
+  // view, or, scrolled to the end, the last.
+  const measure = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const prompts = el.querySelectorAll<HTMLElement>("[data-turn]");
+    const tops = Array.from(prompts, (prompt) => prompt.offsetTop);
+    setCurrent(
+      stickToBottom.current ? tops.length - 1 : currentTurn(tops, el.scrollTop + el.clientHeight / 3),
+    );
+  }, []);
 
   // Auto-follow: keep pinned to the bottom as the conversation grows, unless
   // the user scrolled up (then honor their position). Grows, not "as events
   // arrive": a reply keeps lengthening after its event, as its text is
   // revealed, so this follows the content's height rather than the list.
+  // Also runs as a session kept for going back to is shown again, its view
+  // reset by being hidden: to the end, or back where the user left it.
   useEffect(() => {
     const el = parentRef.current;
     const content = contentRef.current;
     if (!el || !content) return;
+    if (!stickToBottom.current) el.scrollTop = lastTop.current;
     const follow = () => {
       if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+      measure();
     };
     follow();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(follow);
     observer.observe(content);
     return () => observer.disconnect();
+  }, [measure]);
+
+  // A scroll is measured once a frame, however many events it fires.
+  const frame = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
   }, []);
 
+  /** Scroll the turn's prompt to the top of the view. */
+  const jumpTo = (index: number) => {
+    const el = parentRef.current;
+    const prompt = el?.querySelectorAll<HTMLElement>("[data-turn]")[index];
+    if (!el || !prompt) return;
+    // Reading back: the conversation stops following its end, as a scroll up
+    // does, for the whole of the smooth scroll there.
+    const top = Math.max(0, Math.min(prompt.offsetTop - 16, el.scrollHeight - el.clientHeight));
+    // One that lands within reach of the end is a return there: following
+    // again, whatever jump back was still under way.
+    if (el.scrollHeight - top - el.clientHeight < FOLLOW_SLACK_PX) {
+      jumpingTo.current = null;
+      if (jumpTimer.current) clearTimeout(jumpTimer.current);
+      stickToBottom.current = true;
+      el.scrollTo({ top, behavior: "smooth" });
+      return;
+    }
+    stickToBottom.current = false;
+    jumpingTo.current = { top, since: performance.now() };
+    if (jumpTimer.current) clearTimeout(jumpTimer.current);
+    jumpTimer.current = setTimeout(() => {
+      jumpingTo.current = null;
+    }, JUMP_MS);
+    el.scrollTo({ top, behavior: "smooth" });
+  };
+
   return (
-    <div
-      ref={parentRef}
-      onScroll={(e) => {
-        const el = e.currentTarget;
-        stickToBottom.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-      }}
-      className="min-h-0 flex-1 overflow-auto bg-background text-[0.8125rem] leading-relaxed text-foreground"
-    >
-      <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
-        {placeholder === "connecting" && (
-          <div role="status" className="conversation-placeholder">
-            <DotMatrix rows={6} cols={9} />
-            <span>Connecting to Claude</span>
-          </div>
-        )}
-        {placeholder === "ready" && (
-          <div className="conversation-placeholder is-ready">
-            <span>Ready when you are</span>
-            <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
-          </div>
-        )}
-        {/* Under a placeholder there is only the session's state to show,
-            which the placeholder already speaks for. */}
-        {!placeholder && conversationNodes(events).map((node) => (
-          <div key={node.key} className={cn("timeline-row", node.kind === "prompt" && "is-prompt")}>
-            <NodeRow node={node} />
-          </div>
-        ))}
-        {working && <WorkingIndicator />}
+    <div className="turn-rail-host relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={parentRef}
+        // Focusable, so keys that scroll it after a click in it come through it.
+        tabIndex={-1}
+        onWheel={userInput}
+        onTouchMove={userInput}
+        onKeyDown={userInput}
+        onPointerDown={holdPointer}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const byUser = pointerHeld.current || performance.now() - lastInput.current < USER_SCROLL_MS;
+          // A jump ends where it was headed, or as the user takes over: by
+          // input since it began, not a trackpad's momentum from before.
+          const jump = jumpingTo.current;
+          if (
+            jump &&
+            (pointerHeld.current || lastInput.current > jump.since || Math.abs(el.scrollTop - jump.top) < 2)
+          ) {
+            jumpingTo.current = null;
+          }
+          stickToBottom.current = followsAfterScroll({
+            following: stickToBottom.current,
+            byUser,
+            jumping: jumpingTo.current !== null,
+            top: el.scrollTop,
+            lastTop: lastTop.current,
+            viewHeight: el.clientHeight,
+            scrollHeight: el.scrollHeight,
+          });
+          if (el.clientHeight > 0) lastTop.current = el.scrollTop;
+          if (frame.current !== null) return;
+          frame.current = requestAnimationFrame(() => {
+            frame.current = null;
+            measure();
+          });
+        }}
+        // Positioned, so each prompt's offsetTop is from the conversation's top.
+        className="relative min-h-0 flex-1 overflow-auto bg-background outline-none text-[0.8125rem] leading-relaxed text-foreground"
+      >
+        <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
+          {placeholder === "connecting" && (
+            <div role="status" className="conversation-placeholder">
+              <DotMatrix rows={6} cols={9} />
+              <span>Connecting to Claude</span>
+            </div>
+          )}
+          {placeholder === "ready" && (
+            <div className="conversation-placeholder is-ready">
+              <span>Ready when you are</span>
+              <span className="text-muted-foreground/60">Claude is connected. Send a prompt to start.</span>
+            </div>
+          )}
+          {/* Under a placeholder there is only the session's state to show,
+              which the placeholder already speaks for. */}
+          {!placeholder && nodes.map((node) => (
+            <div key={node.key} className="timeline-row" data-turn={node.kind === "prompt" ? "" : undefined}>
+              <NodeRow node={node} />
+            </div>
+          ))}
+          {working && <WorkingIndicator />}
+        </div>
       </div>
+      {/* One turn has nowhere else to go. */}
+      {!placeholder && turns.length > 1 && <TurnRail turns={turns} current={current} onJump={jumpTo} />}
     </div>
   );
 }
 
-/** Whether Claude is still working on the current turn — so the moving indicator
- *  shows through the whole thing, not just the gap before the first reply. It's
- *  working while the latest turn is the user's (a fresh prompt or a tool result
- *  it must act on), or while its own latest turn ended on thinking or a tool_use
- *  (more is coming). A turn that ends in text is Claude done and idle. */
-export function claudeIsWorking(events: AgentEvent[]): boolean {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i];
-    if (event.t === "state") {
-      // A terminated session is never "working", whatever the last turn was.
-      if (event.state === "exited" || event.state === "archived") return false;
-      continue;
-    }
-    if (event.t !== "message") continue;
-    // A prompt or a tool result awaiting Claude; not the record of a stop.
-    if (event.role === "user") return !isInterruption(event);
-    const last = event.content[event.content.length - 1];
-    return last ? last.type !== "text" : false;
-  }
-  return false;
+/**
+ * The conversation's turns as ticks down the chat's left edge, the one being
+ * read marked: hovering (or focusing) one shows its prompt and Claude's last
+ * words in it, and clicking it scrolls there. Ticks shrink to fit a long
+ * session in the rail's height.
+ */
+function TurnRail({
+  turns,
+  current,
+  onJump,
+}: {
+  turns: ConversationTurn[];
+  current: number;
+  onJump: (index: number) => void;
+}) {
+  const [shown, setShown] = useState<number | null>(null);
+  return (
+    <nav aria-label="Turns" className="turn-rail" onMouseLeave={() => setShown(null)}>
+      {turns.map((turn, i) => (
+        <button
+          key={turn.key}
+          type="button"
+          className={cn("turn-rail-tick", i === current && "is-current")}
+          aria-label={turn.prompt || "Prompt"}
+          aria-current={i === current ? "location" : undefined}
+          onClick={() => onJump(i)}
+          onMouseEnter={() => setShown(i)}
+          onFocus={() => setShown(i)}
+          onBlur={() => setShown(null)}
+        >
+          {shown === i && (
+            <span className="turn-rail-card" aria-hidden>
+              <span className="turn-rail-card-prompt">{turn.prompt || "Prompt"}</span>
+              {turn.reply && <span className="turn-rail-card-reply">{turn.reply}</span>}
+            </span>
+          )}
+        </button>
+      ))}
+    </nav>
+  );
 }
 
 /** Live "Claude is working" affordance: a small dot-matrix wave and an elapsed
@@ -157,7 +302,7 @@ function WorkingIndicator() {
       {/* The timer ticks ten times a second, so it stays out of the live
           region; "Working" is the announcement, once. */}
       <TickingFact className="font-mono text-[11px] tabular-nums text-muted-foreground/70">
-        {(elapsed / 1000).toFixed(1)}s
+        {workingElapsed(elapsed)}
       </TickingFact>
     </div>
   );

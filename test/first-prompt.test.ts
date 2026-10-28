@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  firstPromptCutOff,
   firstPromptFromUrl,
   firstPromptQuery,
   forgetFirstPrompt,
   handOverFirstPrompt,
+  keepFirstPromptFromUrl,
+  markFirstPromptGoing,
+  newFirstPrompt,
   rememberedFirstPrompt,
   rememberFirstPrompt,
   sendFirstPromptOnce,
@@ -93,6 +97,70 @@ test("a prompt only in the URL is read back from it, for a tab without the kept 
   assert.equal(firstPromptFromUrl(new URL("https://outrunner.test/workspaces/ws-1")), null);
 });
 
+test("a prompt the URL carries moves into the kept copy, and out of the URL", () => {
+  const storage = memoryStorage();
+  const url = new URL("https://outrunner.test/workspaces/ws-1?prompt=fix+it&attachment=a1&tab=env");
+  assert.equal(keepFirstPromptFromUrl(storage, "ws-1", url), "/workspaces/ws-1?tab=env");
+  // A reload of that page sends it from the copy, once.
+  assert.deepEqual(rememberedFirstPrompt(storage, "ws-1"), { prompt: "fix it", attachmentIds: ["a1"] });
+});
+
+test("with nothing in the URL, nothing is kept and the URL stays", () => {
+  const storage = memoryStorage();
+  assert.equal(keepFirstPromptFromUrl(storage, "ws-1", new URL("https://outrunner.test/workspaces/ws-1?tab=env")), null);
+  assert.equal(storage.items.size, 0);
+});
+
+test("storage refusing, or missing outright, leaves the prompt in the URL until it goes", () => {
+  const url = new URL("https://outrunner.test/workspaces/ws-1?prompt=fix+it");
+  for (const storage of [refusing, null]) {
+    assert.equal(keepFirstPromptFromUrl(storage, "ws-1", url), null);
+  }
+});
+
+test("a send a reload cut off is let go, and one that failed waits to go again", () => {
+  const storage = memoryStorage();
+  rememberFirstPrompt(storage, "cut-1", { prompt: "fix it", attachmentIds: ["a"] });
+  assert.equal(firstPromptCutOff(storage, "cut-1"), false);
+  // Marked as its POST leaves; the page then reloads, so no send of this page
+  // load has it.
+  markFirstPromptGoing(storage, "cut-1", true);
+  assert.equal(firstPromptCutOff(storage, "cut-1"), true);
+  assert.deepEqual(rememberedFirstPrompt(storage, "cut-1"), { prompt: "fix it", attachmentIds: ["a"] });
+  markFirstPromptGoing(storage, "cut-1", false);
+  assert.equal(firstPromptCutOff(storage, "cut-1"), false);
+  assert.deepEqual(rememberedFirstPrompt(storage, "cut-1"), { prompt: "fix it", attachmentIds: ["a"] });
+});
+
+test("a send still going in this page load isn't cut off: a page mounted again waits on it", async () => {
+  const storage = memoryStorage();
+  rememberFirstPrompt(storage, "cut-2", { prompt: "fix it", attachmentIds: [] });
+  const going = controlledSend();
+  const firstMount = sendFirstPromptOnce("cut-2", () => {
+    markFirstPromptGoing(storage, "cut-2", true);
+    return going.send();
+  });
+  assert.equal(firstPromptCutOff(storage, "cut-2"), false);
+  going.calls[0](true);
+  assert.equal(await firstMount, "sent");
+});
+
+test("moving the URL's prompt keeps a copy already kept, and its mark", () => {
+  const storage = memoryStorage();
+  rememberFirstPrompt(storage, "cut-3", { prompt: "fix it", attachmentIds: [] });
+  markFirstPromptGoing(storage, "cut-3", true);
+  const url = new URL("https://outrunner.test/workspaces/cut-3?prompt=fix+it");
+  assert.equal(keepFirstPromptFromUrl(storage, "cut-3", url), "/workspaces/cut-3");
+  assert.equal(firstPromptCutOff(storage, "cut-3"), true);
+});
+
+test("storage refusing, or missing outright, marks nothing and cuts nothing off", () => {
+  for (const storage of [refusing, null]) {
+    assert.doesNotThrow(() => markFirstPromptGoing(storage, "cut-4", true));
+    assert.equal(firstPromptCutOff(storage, "cut-4"), false);
+  }
+});
+
 test("start over with no prompt waiting hands over nothing", () => {
   const storage = memoryStorage();
   assert.equal(handOverFirstPrompt(storage, "old", "new"), null);
@@ -144,4 +212,35 @@ test("when the earlier send fails, the page on screen sends it itself", async ()
 test("a send that throws counts as failed, and leaves the prompt to send again", async () => {
   assert.equal(await sendFirstPromptOnce("once-3", () => Promise.reject(new Error("offline"))), "failed");
   assert.equal(await sendFirstPromptOnce("once-3", () => Promise.resolve(true)), "sent");
+});
+
+test("a first prompt's key goes everywhere the prompt does: URL, kept copy, its mark, start over", () => {
+  const first = newFirstPrompt("fix it", ["a"]);
+  assert.match(first.key ?? "", /^[0-9a-f-]{36}$/);
+  assert.notEqual(newFirstPrompt("fix it", ["a"]).key, first.key);
+
+  const url = new URL(`https://outrunner.test/workspaces/ws-k${firstPromptQuery(first)}`);
+  assert.deepEqual(firstPromptFromUrl(url), first);
+  assert.equal(withoutFirstPrompt(url), "/workspaces/ws-k");
+
+  // Kept from the URL alone (a tab the new-session screen didn't keep it in).
+  const storage = memoryStorage();
+  keepFirstPromptFromUrl(storage, "ws-k", url);
+  assert.deepEqual(rememberedFirstPrompt(storage, "ws-k"), first);
+  markFirstPromptGoing(storage, "ws-k", true);
+  markFirstPromptGoing(storage, "ws-k", false);
+  assert.deepEqual(rememberedFirstPrompt(storage, "ws-k"), first);
+  assert.deepEqual(handOverFirstPrompt(storage, "ws-k", "ws-k2"), first);
+  assert.deepEqual(rememberedFirstPrompt(storage, "ws-k2"), first);
+});
+
+test("no key, or nothing to send, puts no key in the URL", () => {
+  assert.equal(firstPromptQuery({ prompt: " ", attachmentIds: [], key: "k1" }), "");
+  assert.equal(
+    firstPromptFromUrl(new URL("https://outrunner.test/workspaces/w?prompt=hi"))?.key,
+    undefined,
+  );
+  const storage = memoryStorage();
+  storage.setItem("outrunner:first-prompt:w1", JSON.stringify({ prompt: "hi", attachmentIds: [], key: 7 }));
+  assert.deepEqual(rememberedFirstPrompt(storage, "w1"), { prompt: "hi", attachmentIds: [] });
 });

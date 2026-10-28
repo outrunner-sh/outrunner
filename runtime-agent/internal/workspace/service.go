@@ -21,8 +21,10 @@ import (
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/codex"
+	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/protocol"
+	"runtime-agent/internal/redact"
 	"runtime-agent/internal/snapshot"
 	"runtime-agent/internal/tmux"
 	"runtime-agent/internal/transcript"
@@ -113,6 +115,20 @@ type Service struct {
 	// asks holds the questions sessions are waiting on the user to answer
 	// (ask.go).
 	asks *ask.Broker
+	// secretAsks holds the requests for secrets sessions are waiting on
+	// (secrets.go).
+	secretAsks *ask.SecretsBroker
+	// liveSecrets are values provided while sessions run: terminals and
+	// recordings already open mask them from then on (LiveSecrets).
+	liveSecrets *redact.Tokens
+	// liveMu makes reading the live secrets' sources and setting them one
+	// step (refreshLiveSecrets).
+	liveMu sync.Mutex
+	// gitTokens are the GitHub tokens the control plane gives the sessions,
+	// and gitToken the helpers' proof they ask from this box (gitcred.go);
+	// nil and empty when it gives none.
+	gitTokens *gitcred.Cache
+	gitToken  string
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
@@ -142,6 +158,12 @@ type workspaceFacts struct {
 	// commit yet): there is nothing to branch, so Claude works in the folder
 	// itself rather than a worktree, and Destroy must never remove it.
 	InPlace bool `json:"inPlace,omitempty"`
+	// Warmed marks a worktree taken from a ready box's warmed checkout
+	// (warm.go): the project's warm hook ran in it already.
+	Warmed bool `json:"warmed,omitempty"`
+	// Checkouts are a multi-repository session's repositories (checkouts.go);
+	// none for a session of one.
+	Checkouts []Checkout `json:"checkouts,omitempty"`
 	// ClaudeSessionID names an in-place session's conversation. Its working
 	// directory is the user's folder, not its own, so Claude's project directory
 	// for it may hold other sessions' conversations there — or the user's own
@@ -209,24 +231,30 @@ type CreateInput struct {
 	Agent string
 	// GitUser is the git identity for commits; nil uses the system default.
 	GitUser *GitUser
+	// Checkouts, when set, make a session of several repositories: a folder
+	// of worktrees (checkouts.go). Each base branch is its own; BaseBranch is
+	// the first's.
+	Checkouts []Checkout
 }
 
 func NewService(root string) *Service {
 	env, secrets := sessionEnvironment(os.Environ())
 	return &Service{
-		Root:       root,
-		tmux:       tmux.New(),
-		env:        env,
-		secrets:    secrets,
-		facts:      map[string]workspaceFacts{},
-		sendLocks:  map[string]*sendState{},
-		lifeLocks:  map[string]*sync.Mutex{},
-		summaries:  map[string]*Summary{},
-		recorders:  map[string]*cast.Recorder{},
-		lookPath:   exec.LookPath,
-		runCommand: runCommand,
-		codexTails: map[string]*codexTail{},
-		asks:       ask.NewBroker(),
+		Root:        root,
+		tmux:        tmux.New(),
+		env:         env,
+		secrets:     secrets,
+		facts:       map[string]workspaceFacts{},
+		sendLocks:   map[string]*sendState{},
+		lifeLocks:   map[string]*sync.Mutex{},
+		summaries:   map[string]*Summary{},
+		recorders:   map[string]*cast.Recorder{},
+		lookPath:    exec.LookPath,
+		runCommand:  runCommand,
+		codexTails:  map[string]*codexTail{},
+		asks:        ask.NewBroker(),
+		secretAsks:  ask.NewSecretsBroker(),
+		liveSecrets: &redact.Tokens{},
 	}
 }
 
@@ -237,6 +265,8 @@ func NewService(root string) *Service {
 //
 // The user's GitHub token (GH_TOKEN) stays, for `gh`, and git is pointed at it
 // for github.com only (githubCredentialEnv), so the agent can push its branch.
+// A box whose control plane gives it fresh tokens points git at this agent
+// instead (UseGitCredential), and keeps GH_TOKEN as the fallback.
 func sessionEnvironment(base []string) ([]string, []string) {
 	env := make([]string, 0, len(base))
 	secrets := make([]string, 0, 2)
@@ -247,7 +277,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 			continue
 		}
 		switch key {
-		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT":
+		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL":
 			continue
 		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN":
 			if value != "" {
@@ -278,8 +308,22 @@ var githubCredentialEnv = []string{
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
 	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
+	secrets = append(append(secrets, s.providedTokens()...), s.credentialTokens()...)
 	return append(secrets, agentConfigTokens()...)
 }
+
+// refreshLiveSecrets sets the live secrets from their sources: the values
+// provided to sessions, and the GitHub tokens handed out. Each source calls
+// it after it changes, so whichever runs last sets them all.
+func (s *Service) refreshLiveSecrets() {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	s.liveSecrets.Set(append(s.providedTokens(), s.credentialTokens()...))
+}
+
+// LiveSecrets are secrets that arrive after a redactor is made: an open
+// terminal follows them (redact.Redactor.Follow).
+func (s *Service) LiveSecrets() *redact.Tokens { return s.liveSecrets }
 
 func sessionName(workspaceID string) string { return "ws-" + workspaceID }
 
@@ -361,6 +405,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if in.RepoPath != "" && in.PermissionMode == claude.Bypass {
 		return "", ErrBypassInFolder
 	}
+	if len(in.Checkouts) > 0 {
+		if in.RepoPath != "" {
+			return "", fmt.Errorf("%w: a local session has one folder", ErrInvalidCheckouts)
+		}
+		if err := ValidCheckouts(in.Checkouts); err != nil {
+			return "", err
+		}
+		in.BaseBranch = in.Checkouts[0].BaseBranch
+	}
 	defer s.lockLifecycle(in.WorkspaceID)()
 	facts := workspaceFacts{
 		Branch:         in.Branch,
@@ -394,6 +447,12 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	}
 	// Its effort is SetModel's alone, so a repeated Create keeps it as well.
 	facts.Effort = prior.Effort
+	facts.Checkouts = in.Checkouts
+	if existed {
+		// A retry keeps what the first Create recorded (before it made
+		// anything): a session never switches between one and several.
+		facts.Checkouts = prior.Checkouts
+	}
 	if in.RepoPath != "" {
 		folder, err := s.inspectFolder(ctx, in.RepoPath)
 		if err != nil {
@@ -444,17 +503,48 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
 		return "", err
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
-		"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	if len(facts.Checkouts) > 0 {
+		// The box's warmed folder, when it was warmed with these repositories
+		// (warm.go); otherwise new checkouts.
+		if s.adoptWarmCheckouts(ctx, worktree, in.Branch, facts.Checkouts) {
+			facts.Warmed = true
+			s.setFacts(in.WorkspaceID, facts)
+			for _, c := range facts.Checkouts {
+				setGitUser(ctx, filepath.Join(worktree, c.Name), in.GitUser)
+			}
+		} else if err := s.createCheckouts(ctx, worktree, in.Branch, facts.Checkouts, in.GitUser); err != nil {
+			return "", err
+		}
+		return worktree, nil
 	}
-	// Configure git author so commits are attributed to the Outrunner user.
-	if in.GitUser != nil && in.GitUser.Name != "" && in.GitUser.Email != "" {
-		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.name", in.GitUser.Name).Run()
-		_ = exec.CommandContext(ctx, "git", "-C", worktree, "config", "user.email", in.GitUser.Email).Run()
+	// The box's warmed checkout, when it has one for this base (warm.go);
+	// otherwise a new worktree.
+	if s.adoptWarm(ctx, worktree, in.Branch, in.BaseBranch) {
+		facts.Warmed = true
+		s.setFacts(in.WorkspaceID, facts)
+	} else {
+		// A branch that wasn't there before is this add's to take back; one
+		// that was (the add fails on it) isn't. The worktree is: it wasn't
+		// there (above), and one cut off half way would pass for made.
+		ours := s.branchMissing(ctx, s.mirrorPath(), in.Branch)
+		out, err := exec.CommandContext(ctx, "git", "-C", s.mirrorPath(),
+			"worktree", "add", "-b", in.Branch, worktree, "origin/"+in.BaseBranch).CombinedOutput()
+		if err != nil {
+			s.undoWorktree(ctx, worktree, in.Branch, ours)
+			return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
+	setGitUser(ctx, worktree, in.GitUser)
 	return worktree, nil
+}
+
+// setGitUser configures a checkout's git author so commits are attributed to
+// the Outrunner user; nil (or one without both) keeps the system default.
+func setGitUser(ctx context.Context, dir string, user *GitUser) {
+	if user != nil && user.Name != "" && user.Email != "" {
+		_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.name", user.Name).Run()
+		_ = exec.CommandContext(ctx, "git", "-C", dir, "config", "user.email", user.Email).Run()
+	}
 }
 
 // ErrBypassInFolder refuses bypassPermissions for a session in a folder on the
@@ -816,6 +906,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	f, _ := s.getFacts(workspaceID)
 	// A session in the user's own folder has no branch of its own.
 	o := claude.Orientation(worktree, f.BaseBranch, !f.InPlace && onPlaceholderBranch(worktree))
+	if len(f.Checkouts) > 0 {
+		o += "\n\n" + checkoutsNote(f.Checkouts, f.Branch)
+	}
 	switch {
 	case !f.Gateway.SpeaksAsOutrunner():
 	case f.Agent == AgentCodex:
@@ -838,6 +931,17 @@ var placeholderBranch = regexp.MustCompile(`^runtime/[0-9a-z]+-[0-9a-f]{8}$`)
 // from git each launch, so a branch renamed since (at the user's request)
 // isn't called a placeholder.
 func onPlaceholderBranch(worktree string) bool {
+	if !fileExists(filepath.Join(worktree, ".git")) {
+		// A folder of checkouts: they share the branch, so the first's.
+		if entries, err := os.ReadDir(worktree); err == nil {
+			for _, e := range entries {
+				if e.IsDir() && fileExists(filepath.Join(worktree, e.Name(), ".git")) {
+					worktree = filepath.Join(worktree, e.Name())
+					break
+				}
+			}
+		}
+	}
 	if worktree == "" {
 		return false
 	}
@@ -1213,6 +1317,7 @@ func (s *Service) Archive(ctx context.Context, workspaceID string, req protocol.
 	return snapshot.Produce(ctx, snapshot.Input{
 		WorkspaceID:      workspaceID,
 		Worktree:         s.worktreePath(workspaceID),
+		Checkouts:        s.snapshotCheckouts(f.Checkouts),
 		CastPath:         s.castPath(workspaceID),
 		ConversationPath: s.SessionLog(workspaceID),
 		SessionID:        s.sessionID(workspaceID),
@@ -1252,7 +1357,16 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 	if sessionID != "" && !validSessionID(sessionID) {
 		return "", fmt.Errorf("cannot restore: invalid session id %q", sessionID)
 	}
-	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent})
+	var checkouts []Checkout
+	for _, r := range req.Repos {
+		checkouts = append(checkouts, Checkout{Name: r.Checkout, FullName: r.FullName, BaseBranch: r.BaseBranch})
+	}
+	if len(checkouts) > 0 {
+		if err := ValidCheckouts(checkouts); err != nil {
+			return "", err
+		}
+	}
+	s.setFacts(workspaceID, workspaceFacts{Branch: req.Branch, BaseBranch: req.BaseBranch, Agent: req.Agent, Checkouts: checkouts})
 	if req.Auth != nil && req.Auth.Kind != AuthNone {
 		if err := s.SetAuth(ctx, workspaceID, req.Auth.Kind, req.Auth.Token); err != nil {
 			return "", err
@@ -1272,6 +1386,7 @@ func (s *Service) Restore(ctx context.Context, workspaceID string, req protocol.
 		BundleRef:      req.BundleRef,
 		OriginWorktree: req.OriginWorktree,
 		Downloads:      req.Downloads,
+		Checkouts:      s.snapshotCheckouts(checkouts),
 	}
 	switch {
 	case codexSession:
@@ -1373,7 +1488,7 @@ func (s *Service) sessionID(workspaceID string) *string {
 func (s *Service) startRecorder(ctx context.Context, workspaceID string) {
 	s.stopRecorder(ctx, workspaceID)
 	// Masked like the browser's terminal: a cast is archived and uploaded.
-	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{Secrets: s.RedactionSecrets()})
+	rec := cast.NewSessionRecorder(sessionName(workspaceID), s.castDir(workspaceID), cast.Options{Secrets: s.RedactionSecrets(), Live: s.liveSecrets})
 	s.recordersMu.Lock()
 	s.recorders[workspaceID] = rec
 	s.recordersMu.Unlock()
@@ -1452,6 +1567,17 @@ func (s *Service) Destroy(ctx context.Context, workspaceID string) error {
 		return nil
 	}
 	worktree := s.worktreePath(workspaceID)
+	if f, _ := s.getFacts(workspaceID); len(f.Checkouts) > 0 {
+		// A folder of checkouts: each leaves its own mirror, then the folder.
+		for _, c := range f.Checkouts {
+			s.removeCheckout(ctx, worktree, c)
+		}
+		if err := os.RemoveAll(worktree); err != nil {
+			return fmt.Errorf("remove the session's folder: %w", err)
+		}
+		s.forgetWorkspace(workspaceID)
+		return nil
+	}
 	if _, err := os.Stat(worktree); os.IsNotExist(err) {
 		s.forgetWorkspace(workspaceID)
 		return nil
@@ -1475,6 +1601,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	s.removeEnvironment(workspaceID)
+	s.removeProvided(workspaceID)
 	s.forgetAsk(workspaceID)
 	// A session's own Codex home holds a copy of its key (auth.json).
 	_ = os.RemoveAll(s.codexHome(workspaceID))
@@ -1513,7 +1640,9 @@ func (s *Service) beginSummary(workspaceID, worktree string) {
 	s.summariesMu.Lock()
 	sum, ok := s.summaries[workspaceID]
 	if !ok {
+		f, _ := s.getFacts(workspaceID)
 		sum = newSummary(workspaceID, worktree)
+		sum.checkouts = checkoutDirs(worktree, f.Checkouts)
 		s.summaries[workspaceID] = sum
 	}
 	s.summariesMu.Unlock()
@@ -1548,4 +1677,14 @@ func (s *Service) SummaryOf(ctx context.Context, workspaceID string) protocol.Wo
 		return startingSummary(s.worktreePath(workspaceID))
 	}
 	return sum.Snapshot(ctx)
+}
+
+// snapshotCheckouts are a session's checkouts as a Snapshot captures or
+// restores them, each with its mirror.
+func (s *Service) snapshotCheckouts(checkouts []Checkout) []snapshot.Checkout {
+	var out []snapshot.Checkout
+	for _, c := range checkouts {
+		out = append(out, snapshot.Checkout{Name: c.Name, FullName: c.FullName, BaseBranch: c.BaseBranch, MirrorPath: RepoMirrorPath(s.Root, c.Name)})
+	}
+	return out
 }

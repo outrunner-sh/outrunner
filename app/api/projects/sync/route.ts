@@ -2,26 +2,31 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { listProjects, upsertProjects } from "@/lib/db/repositories";
-import { getGitHubRepository, listGitHubRepositories, type GitHubRepository } from "@/lib/github/client";
+import type { GitHubRepository } from "@/lib/github/client";
 import { connectRepositories } from "@/lib/github/connect";
 import { githubErrorResponse } from "@/lib/github/http";
 import { cachedRepositoryList } from "@/lib/github/repository-cache";
-import { requireGithubToken } from "@/lib/github/token";
+import { repositorySource } from "@/lib/github/repository-source";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { connectRefusal } from "@/lib/orgs/connect-access";
+import { activeOrgId } from "@/lib/orgs/server";
 
 /** Repositories one request may connect by id; the picker sends one. */
 const MAX_SELECTION = 100;
 
 /**
- * Connect repositories as projects.
+ * Connect repositories as projects of the active org (lib/orgs/active.ts).
  *
  * With `{ repoIds: [...] }`, only those repositories are connected — the picker
  * posts the user's selection, so browsing hundreds of repositories does not
  * turn all of them into projects. Each is looked up on GitHub by id rather than
- * trusting the posted ids: a repository the token cannot see must not become a
- * project row. With no body, every repository the user's GitHub token can
- * reach is connected (the original bulk behaviour, still used by the plain
- * "Sync repositories" button).
+ * trusting the posted ids: a repository that can't be seen must not become a
+ * project row. With no body, every repository there is connected (the
+ * original bulk behaviour, still used by the plain "Sync repositories"
+ * button).
+ *
+ * Seen as the org's GitHub App when it has one installed, else as the user
+ * (lib/github/repository-source.ts).
  */
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) {
@@ -57,22 +62,38 @@ export async function POST(request: Request) {
   }
 
   try {
-    const token = await requireGithubToken(owner.id);
+    const orgId = await activeOrgId();
+    const refused = await connectRefusal(owner.id, orgId);
+    if (refused) return refused;
+    const upsert = (ownerId: string, repos: GitHubRepository[]) => upsertProjects(ownerId, repos, orgId);
+    const access = await repositorySource(owner.id, orgId);
     let repositories: GitHubRepository[];
     let synced: number;
     let complete = true;
     if (selection) {
-      ({ repositories, synced } = await connectRepositories(owner.id, token, selection, {
-        lookup: getGitHubRepository,
-        upsert: upsertProjects,
-      }));
-      // Asked for specific repositories and the token can see none of them: an
-      // organization that hasn't approved Outrunner, or access since removed.
-      // The picker names the repository and says where to grant access.
+      ({ repositories, synced } = await connectRepositories(owner.id, selection, { lookup: access.lookup, upsert }));
+      // Asked for specific repositories and none can be seen: an organization
+      // that hasn't approved Outrunner, a repository the App wasn't given, or
+      // access since removed. The picker names the repository and says where
+      // to grant access.
       if (repositories.length === 0) {
+        const accounts = access.source.kind === "app" ? access.source.accounts : [];
+        if (accounts.length > 0 && accounts.every((a) => a.suspended)) {
+          // Adding the repository on GitHub won't help while it's suspended.
+          return NextResponse.json(
+            {
+              error: `Outrunner's GitHub App is suspended on ${accounts.map((a) => a.login).join(", ")}. Unsuspend it on GitHub first.`,
+              code: "app-suspended",
+            },
+            { status: 409 },
+          );
+        }
         return NextResponse.json(
           {
-            error: "GitHub isn't giving Outrunner access to this repository.",
+            error:
+              access.source.kind === "app"
+                ? "Outrunner's GitHub App can't reach this repository."
+                : "GitHub isn't giving Outrunner access to this repository.",
             code: "repo-no-access",
           },
           { status: 403 },
@@ -80,12 +101,10 @@ export async function POST(request: Request) {
       }
     } else {
       // A fresh listing, which the picker then reuses for its next few seconds.
-      const list = await cachedRepositoryList(owner.id, () => listGitHubRepositories(token), {
-        fresh: true,
-      });
+      const list = await cachedRepositoryList(access.source.key, access.list, { fresh: true });
       repositories = list.repositories;
       complete = list.complete;
-      synced = await upsertProjects(owner.id, repositories);
+      synced = await upsert(owner.id, repositories);
     }
     // Return the projects too: the composer connects a repository and needs its
     // project id in the same round trip to start a session on it.
@@ -93,7 +112,7 @@ export async function POST(request: Request) {
       synced,
       discovered: repositories.length,
       complete,
-      projects: await listProjects(),
+      projects: await listProjects(orgId),
     });
   } catch (error) {
     return githubErrorResponse(

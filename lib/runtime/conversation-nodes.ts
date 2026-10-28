@@ -1,5 +1,6 @@
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 import { isInterruption } from "@/lib/runtime/conversation-events";
+import { isEcho } from "@/lib/session/optimistic-echo";
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
@@ -42,7 +43,7 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
   let previousAt: string | null = null;
   events.forEach((event, ei) => {
     if (event.t === "state") {
-      nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
+      if (!staleStart(events, ei)) nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
       return;
     }
     if (event.t === "usage") {
@@ -79,6 +80,22 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
   return nodes;
 }
 
+/**
+ * Whether the state event at `index` is a "starting" that the stream has
+ * since outgrown. "starting" only means Claude's log didn't exist yet. The
+ * agent now sends "running" when the log appears, but agents older than that
+ * sent the state only once, as the stream connected, and boxes keep running
+ * them until upgraded, so this stays. Once a message from the log follows it,
+ * the session is running, and the row would only misstate it. The echo of a
+ * prompt just sent is not from the log: the session may not have taken it yet
+ * (a box still booting), so it is still starting.
+ */
+function staleStart(events: AgentEvent[], index: number): boolean {
+  const event = events[index];
+  if (event.t !== "state" || event.state !== "starting") return false;
+  return events.slice(index + 1).some((later) => later.t === "message" && !isEcho(later.uuid));
+}
+
 function toolNode(key: string, block: ToolUse, results: Map<string, unknown>): ConversationNode {
   return {
     kind: "tool",
@@ -100,4 +117,55 @@ export function thoughtSeconds(previousAt: string | null, at: string): number | 
   const ms = Date.parse(at) - Date.parse(previousAt);
   if (!Number.isFinite(ms) || ms < 1000) return null;
   return Math.round(ms / 1000);
+}
+
+/** A turn of the conversation, as the turn rail shows it: the prompt that
+ *  starts it (`key` is its row's), and the last of Claude's words in it, as
+ *  plain text; null while it has said none. */
+export type ConversationTurn = { key: string; prompt: string; reply: string | null };
+
+/** The conversation's turns, one per prompt, in order. Rows before the first
+ *  prompt (a session's state) belong to none. */
+export function conversationTurns(nodes: ConversationNode[]): ConversationTurn[] {
+  const turns: ConversationTurn[] = [];
+  for (const node of nodes) {
+    if (node.kind === "prompt") turns.push({ key: node.key, prompt: plainText(node.text), reply: null });
+    else if (node.kind === "prose" && turns.length > 0) {
+      const reply = plainText(node.text);
+      if (reply) turns[turns.length - 1].reply = reply;
+    }
+  }
+  return turns;
+}
+
+/**
+ * Markdown read as a line of plain text, for a preview: links by their text,
+ * code without its fences and backticks, and no emphasis, heading or list
+ * marks; whitespace runs as one space.
+ */
+export function plainText(markdown: string): string {
+  return markdown
+    .replace(/```[^\n]*\n?/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+[.)])\s+/gm, "")
+    .replace(/[*`~]+/g, "")
+    // Underscores only as emphasis: user_turn_count and claude_agent.go keep theirs.
+    .replace(/(^|\W)_+|_+(?=\W|$)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Which turn is the one being read: the last whose prompt has reached the
+ * reading line (`line`, in the same coordinates as `tops`, each prompt's
+ * offset from the conversation's top); the first while none has. -1 with no
+ * turns.
+ */
+export function currentTurn(tops: number[], line: number): number {
+  if (tops.length === 0) return -1;
+  let current = 0;
+  tops.forEach((top, i) => {
+    if (top <= line) current = i;
+  });
+  return current;
 }

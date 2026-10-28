@@ -109,6 +109,9 @@ func (r *Recorder) Start(ctx context.Context) error {
 
 	r.file, r.cw, r.fifo, r.fifoPath = file, cw, fifo, fifoPath
 	r.redactor = redact.New(opts.Secrets)
+	if opts.Live != nil {
+		r.redactor.Follow(opts.Live)
+	}
 	r.stopping.Store(false)
 	r.wg.Add(1)
 	go r.drain()

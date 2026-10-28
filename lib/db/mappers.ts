@@ -9,6 +9,7 @@ import type {
   ProviderName,
   ProvisionTimings,
   RuntimeComputer,
+  SessionCheckout,
   Workspace,
   WorkspacePullRequest,
 } from "@/lib/runtime/types";
@@ -28,6 +29,7 @@ function toProviderName(value: string): ProviderName {
 export function toProject(row: Tables["projects"]["Row"]): Project {
   return {
     id: row.id,
+    orgId: row.org_id,
     githubRepoId: row.github_repo_id,
     fullName: row.full_name,
     owner: row.owner,
@@ -48,6 +50,7 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
   return {
     id: row.id,
     projectId: row.project_id,
+    orgId: row.org_id,
     ownerId: row.owner_id,
     provider: toProviderName(row.provider),
     status: row.status,
@@ -64,6 +67,7 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
     agentWorkspaceId: row.agent_workspace_id,
     // Absent before the migration that adds it.
     environmentId: row.environment_id ?? null,
+    checkouts: toCheckouts(row.checkouts),
     // Claude Code: every session from before the column, and a value a later
     // release added.
     agent: isAgentId(row.agent) ? row.agent : "claude",
@@ -110,6 +114,8 @@ export function toRuntimeComputer(
     // `?? null`: a deploy can run before the migration that adds the column.
     workspaceId: row.workspace_id ?? null,
     pooled: row.pooled ?? false,
+    poolSlot: row.pool_slot ?? 0,
+    generation: row.generation ?? null,
     status: row.status,
     imageVersion: row.image_version,
     daytonaSandboxId: row.daytona_sandbox_id,
@@ -150,6 +156,7 @@ export function toWorkspacePullRequest(
   return {
     id: row.id,
     workspaceId: row.workspace_id,
+    projectId: row.project_id,
     number: row.github_number,
     url: row.url,
     title: row.title,
@@ -178,4 +185,18 @@ export function toWorkspaceSnapshot(
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/** A session's recorded repositories, read defensively: anything that isn't
+ *  a list of two or more is a session of one. */
+function toCheckouts(value: unknown): SessionCheckout[] | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const checkouts = value.flatMap((c) => {
+    if (!c || typeof c !== "object") return [];
+    const { projectId, fullName, checkout, baseBranch, private: isPrivate } = c as Record<string, unknown>;
+    return typeof projectId === "string" && typeof fullName === "string" && typeof checkout === "string" && typeof baseBranch === "string"
+      ? [{ projectId, fullName, checkout, baseBranch, ...(typeof isPrivate === "boolean" && { private: isPrivate }) }]
+      : [];
+  });
+  return checkouts.length === value.length ? checkouts : null;
 }

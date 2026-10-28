@@ -1,6 +1,7 @@
 import { connection, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { billingBuyer } from "@/lib/billing/buyer";
 import { BILLING_PATH, checkoutDestination, requestedPlan } from "@/lib/billing/checkout";
 import { billingMode } from "@/lib/billing/mode";
 import { checkoutDeps } from "@/lib/billing/stripe-deps";
@@ -38,8 +39,11 @@ export async function GET(request: Request) {
   }
   const returnPath = (await needsOnboarding()) ? "/onboarding" : BILLING_PATH;
   if (!plan || billingMode() !== "stripe") return to(returnPath);
+  // For the org they're looking at; Billing says why when they can't.
+  const who = await billingBuyer(owner);
+  if ("refusal" in who) return to(BILLING_PATH);
   try {
-    const destination = await checkoutDestination(owner, plan, interval, base, checkoutDeps, returnPath);
+    const destination = await checkoutDestination(who.buyer, plan, interval, base, checkoutDeps, returnPath);
     return NextResponse.redirect(destination.url, 303);
   } catch (error) {
     console.error("Could not start a checkout from a link", error);

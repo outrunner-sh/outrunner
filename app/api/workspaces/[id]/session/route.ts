@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getOwner, type Owner } from "@/lib/auth/owner";
-import { planFor } from "@/lib/billing/entitlements";
+import { sessionPlan } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { getSandboxSettings } from "@/lib/db/credentials";
+import { orgDefaultsFor } from "@/lib/db/org-defaults";
 import {
   getProject,
   getWorkspaceComputer,
@@ -11,8 +12,9 @@ import {
   markRuntimeComputerStoppedIfReady,
   readRuntimeComputerSecret,
 } from "@/lib/db/repositories";
-import { optionalGithubToken } from "@/lib/github/token";
+import { optionalGitToken, sessionGitAs } from "@/lib/github/identity.deps";
 import { isSameOriginRequest } from "@/lib/http/guards";
+import { newBoxSize } from "@/lib/orgs/defaults";
 import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { SessionUrls } from "@/lib/runtime/agent-protocol";
 import { isComputerProvider, type ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
@@ -167,7 +169,7 @@ export async function POST(request: Request, context: RouteContext) {
     try {
       // Signed in as the user picks now, and on its model's key as it is
       // now, before it launches.
-      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id);
+      const upgrade = boxUpgrade(provider, computer.daytonaSandboxId, secret, owner.id, workspace.id);
       await readyRelaunch(agent, identity, upgrade, workspace, owner.id);
       await agent.startWorkspace(identity);
     } catch (error) {
@@ -233,16 +235,21 @@ async function bringBack(
   // A box is about to start: the plan's hours and box count get their say,
   // and the claim in the database enforces the cap.
   const scope = scopeOf(workspace, computer);
-  const gate = await cloudBoxStartGate(owner, provider.name, scope);
+  const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, scope);
   if ("denial" in gate) throw new CloudLimitError(gate.denial);
   const ensured = await ensureComputer(provider, {
     scope,
     repoFullName: project.fullName,
-    githubToken: await optionalGithubToken(owner.id),
-    sessionEnv: await runtimeSessionEnvironment(owner.id),
+    // A review box's mirror as the App, as on create: never its user's token.
+    githubToken: await optionalGitToken(owner.id, project, await sessionGitAs(workspace.id)),
+    sessionEnv: await runtimeSessionEnvironment(owner.id, workspace.id),
     // The owner's size now, as a new box on this provider would get, within
     // their plan on Outrunner's: Modal sizes a box as it starts, restored or not.
-    size: boxSizeOn(sandboxOf(provider.name), (await getSandboxSettings(owner.id)).boxSize, await planFor(owner.id)),
+    size: boxSizeOn(
+      sandboxOf(provider.name),
+      newBoxSize(await getSandboxSettings(owner.id), (await orgDefaultsFor(project.orgId)).boxSize),
+      await sessionPlan(owner.id, project.orgId),
+    ),
     previousSandboxId: ended,
     maxLiveComputers: gate.cap,
   });

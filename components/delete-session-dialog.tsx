@@ -1,10 +1,7 @@
 "use client";
 
-import { useState } from "react";
-
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { ConfirmSessionDialog } from "@/components/confirm-session-dialog";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
-import { Spinner } from "@/components/ui/loaders";
 import { deletionConsequence, type SessionDeletion } from "@/lib/nav/sidebar";
 import { deleteSession } from "@/lib/session/delete-session";
 
@@ -26,65 +23,23 @@ export function DeleteSessionDialog({
   onDeleting?: (id: string) => void;
   onDeleted: (id: string) => void;
 }) {
-  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
-
-  const confirm = async () => {
-    if (!session) return;
-    setState({ busy: true, error: null });
-    onDeleting?.(session.id);
-    try {
-      await deleteSession(session.id, session.deletion);
-      setState({ busy: false, error: null });
-      onDeleted(session.id);
-      onOpenChange(false);
-    } catch (error) {
-      setState({ busy: false, error: error instanceof Error ? error.message : "Could not delete this session." });
-    }
-  };
-
   return (
-    <Dialog
+    <ConfirmSessionDialog
       open={session !== null}
-      onOpenChange={(open) => {
-        // Not while it is being deleted: the outcome has to be seen.
-        if (state.busy) return;
-        if (!open) setState({ busy: false, error: null });
-        onOpenChange(open);
+      title={`Delete “${session?.title ?? ""}”?`}
+      description={session ? `${deletionConsequence(session.deletion)} This can't be undone.` : null}
+      busyLabel="Deleting"
+      failure="Could not delete this session."
+      confirm={(go) => <HoldToConfirm label="Delete session" onConfirm={go} />}
+      run={async () => {
+        if (!session) return;
+        onDeleting?.(session.id);
+        await deleteSession(session.id, session.deletion);
       }}
-    >
-      <DialogContent className="max-w-sm gap-5 bg-[#0d0d0d]" showClose={!state.busy}>
-        <div className="space-y-2">
-          <DialogTitle className="text-[15px] font-medium leading-snug">
-            Delete “{session?.title}”?
-          </DialogTitle>
-          <DialogDescription className="text-[13px] text-muted-foreground">
-            {session ? `${deletionConsequence(session.deletion)} This can't be undone.` : null}
-          </DialogDescription>
-        </div>
-        {state.error && (
-          <p role="alert" className="text-[13px] text-destructive">
-            {state.error}
-          </p>
-        )}
-        <div className="flex items-center justify-end gap-2">
-          {state.busy ? (
-            <span role="status" className="inline-flex h-8 items-center gap-2 text-[13px] text-muted-foreground">
-              <Spinner /> Deleting
-            </span>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => onOpenChange(false)}
-                className="route-state-button"
-              >
-                Cancel
-              </button>
-              <HoldToConfirm label="Delete session" onConfirm={() => void confirm()} />
-            </>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+      onOpenChange={onOpenChange}
+      onDone={() => {
+        if (session) onDeleted(session.id);
+      }}
+    />
   );
 }

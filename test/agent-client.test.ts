@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { AgentClient, AgentRequestError, type AgentTarget } from "@/lib/runtime/agent-client";
+import { AGENT_FEATURE_WARM_HOOKS, LISTING_WORKSPACE_ID } from "@/lib/runtime/agent-protocol";
 import { verifyRuntimeToken } from "@/lib/runtime/runtime-token";
 
 const target: AgentTarget = {
@@ -319,4 +320,39 @@ test("listPorts reads the box's servers", async () => {
   }) as unknown as typeof fetch;
   const ports = await new AgentClient(target, fakeFetch).listPorts(identity);
   assert.deepEqual(ports, [{ port: 3000, process: "node" }, { port: 5173 }]);
+});
+
+test("the change set and a file's diff are read from the box's agent", async () => {
+  const asked: string[] = [];
+  const fakeFetch = (async (url: string) => {
+    asked.push(url);
+    const body = url.includes("?path=")
+      ? { diff: "@@ -1 +1 @@" }
+      : { files: [{ path: "a b.ts", status: "modified", additions: 2, deletions: 1 }] };
+    return new Response(JSON.stringify(body), { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  assert.deepEqual(await client.listChanges(identity), [{ path: "a b.ts", status: "modified", additions: 2, deletions: 1 }]);
+  assert.equal(await client.changedFileDiff(identity, "a b.ts"), "@@ -1 +1 @@");
+  assert.deepEqual(asked, [
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/changes",
+    // The path is one query value, whatever it holds.
+    "https://8080-sbx.daytonaproxy01.net/workspaces/ws-1/changes?path=a%20b.ts",
+  ]);
+});
+
+// A box no session has yet (a ready box being warmed) is asked box-wide: the
+// listing id makes a token; an empty one doesn't, and every warm used to fail.
+test("a box-wide health check of a ready box mints a token for the listing id", async () => {
+  let seenAuth = "";
+  const fakeFetch = (async (_url: string, init: RequestInit) => {
+    seenAuth = (init.headers as Record<string, string>)["authorization"] ?? "";
+    return new Response(JSON.stringify({ status: "ok", features: [AGENT_FEATURE_WARM_HOOKS] }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const client = new AgentClient(target, fakeFetch);
+  const box = { projectId: "p-1", computerId: "c-1", userId: "u-1" };
+  const health = await client.health({ ...box, workspaceId: LISTING_WORKSPACE_ID });
+  assert.deepEqual(health.features, [AGENT_FEATURE_WARM_HOOKS]);
+  assert.equal(verifyRuntimeToken(seenAuth.replace("Bearer ", ""), target.secret).workspaceId, LISTING_WORKSPACE_ID);
+  await assert.rejects(client.health({ ...box, workspaceId: "" }));
 });

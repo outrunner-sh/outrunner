@@ -42,6 +42,8 @@ const nextConfig: NextConfig = {
     // GitHub avatar served for the signed-in owner in the app shell.
     remotePatterns: [
       { protocol: "https", hostname: "avatars.githubusercontent.com" },
+      // Google sign-in's profile pictures.
+      { protocol: "https", hostname: "lh3.googleusercontent.com" },
     ],
   },
 

@@ -19,7 +19,7 @@ import { AGENT_IDS, AGENTS, type AgentId, type AuthCredential, type AuthMethodId
 import type { AgentAuthStore } from "@/lib/agents/resolve";
 import { dueForRenewal } from "@/lib/billing/allowance-renewal";
 import { entitlingSubscriptions } from "@/lib/billing/billing-store";
-import { entitlementsFor, planFor } from "@/lib/billing/entitlements";
+import { connectorPeriod, personalEntitlements } from "@/lib/billing/entitlements";
 import {
   type AllowanceState,
   type AllowanceStore,
@@ -30,6 +30,15 @@ import {
 } from "@/lib/billing/model-allowance";
 import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
+import { openOrgKey, orgProviderKey, sealedOrgKeys, usableOrgProviders } from "@/lib/db/org-credentials";
+import {
+  orgAllowancePeriods,
+  orgModelAllowance,
+  orgOutrunnerModelKey,
+  refreshOrgModelAllowance,
+} from "@/lib/db/org-model-allowance";
+import { getOrg, memberRole, personalOwners } from "@/lib/db/orgs";
+import { isConnector } from "@/lib/automations/connector";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
   createUserKey,
@@ -46,6 +55,7 @@ import { NoProviderKeyError } from "@/lib/providers/errors";
 import {
   isKeyProviderId,
   KEY_PROVIDER_IDS,
+  PROVIDER_IDS,
   type KeyProviderId,
   type ProviderId,
   usableProviders,
@@ -147,6 +157,41 @@ export async function setGithubToken(
   if (error) throw error;
 }
 
+/** Forget the user's GitHub token: for one an invite signed in who never got
+ *  in (lib/orgs/invitee.ts). */
+export async function clearGithubToken(userId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .update({ github_token_ciphertext: null, github_token_login: null, github_token_updated_at: null })
+    .eq("user_id", userId);
+  if (error) throw error;
+}
+
+/** Who a user's sessions clone, push and open pull requests as
+ *  (20261030100000_github_identity.sql): their own GitHub sign-in, or the
+ *  Outrunner GitHub App of the session's org (lib/github/identity.ts). */
+export type GitHubIdentity = "personal" | "app";
+
+/** The user's GitHub identity; their own sign-in until they choose, and
+ *  until the migration is applied. */
+export async function getGithubIdentity(userId: string): Promise<GitHubIdentity> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .select("github_identity")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error && probeStatus(error) === "outdated") return "personal";
+  if (error) throw error;
+  return data?.github_identity === "app" ? "app" : "personal";
+}
+
+export async function setGithubIdentity(userId: string, identity: GitHubIdentity): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .upsert({ user_id: userId, github_identity: identity }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
 /** The user's Anthropic API key, or null when unset or unreadable. */
 export async function getAnthropicKey(userId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
@@ -216,6 +261,9 @@ export type SandboxSettings = {
   /** How big a new sandbox is, on Outrunner's or the user's own Modal
    *  (lib/runtime/box-sizes.ts). */
   boxSize: BoxSizeId;
+  /** Whether they chose it: until they do, their org's is theirs
+   *  (lib/orgs/defaults.ts newBoxSize). */
+  boxSizeChosen: boolean;
 };
 
 const SANDBOX_COLUMNS = "sandbox, daytona_key_ciphertext, daytona_key_hint, daytona_key_updated_at";
@@ -225,7 +273,10 @@ export async function getSandboxSettings(userId: string): Promise<SandboxSetting
   const supabase = createSupabaseAdminClient();
   const read = (columns: string) =>
     supabase.from("user_credentials").select(columns).eq("user_id", userId).maybeSingle();
-  let { data, error } = await read(`${SANDBOX_COLUMNS}, box_size, ${MODAL_COLUMNS}`);
+  let { data, error } = await read(`${SANDBOX_COLUMNS}, box_size, box_size_chosen, ${MODAL_COLUMNS}`);
+  // Until 20261030150000_org_defaults.sql, a size other than the first is
+  // one they chose.
+  if (error && probeStatus(error) === "outdated") ({ data, error } = await read(`${SANDBOX_COLUMNS}, box_size, ${MODAL_COLUMNS}`));
   // Each migration not yet applied reads as before it: until
   // 20261013140000_user_modal.sql, no Modal token; until
   // 20261013130000_user_box_size.sql, the default size; and until
@@ -248,15 +299,20 @@ export async function getSandboxSettings(userId: string): Promise<SandboxSetting
       updatedAt: row?.modal_token_updated_at ?? null,
     },
     boxSize: isBoxSizeId(row?.box_size) ? row.box_size : DEFAULT_BOX_SIZE,
+    boxSizeChosen: row?.box_size_chosen ?? (isBoxSizeId(row?.box_size) && row.box_size !== DEFAULT_BOX_SIZE),
   };
 }
 
 /** Make the user's new sandboxes this size. */
 export async function setBoxSize(userId: string, size: BoxSizeId): Promise<void> {
   const supabase = createSupabaseAdminClient();
-  const { error } = await supabase
+  let { error } = await supabase
     .from("user_credentials")
-    .upsert({ user_id: userId, box_size: size }, { onConflict: "user_id" });
+    .upsert({ user_id: userId, box_size: size, box_size_chosen: true }, { onConflict: "user_id" });
+  // Until 20261030150000_org_defaults.sql: the size alone.
+  if (error && probeStatus(error) === "outdated") {
+    ({ error } = await supabase.from("user_credentials").upsert({ user_id: userId, box_size: size }, { onConflict: "user_id" }));
+  }
 
   if (error) throw error;
 }
@@ -577,7 +633,9 @@ export async function settleClaudeSlot(userId: string): Promise<void> {
 /**
  * The credential a session runs the user's own Claude on: their subscription
  * token from the Claude slot, else (as before the Anthropic key had a place of
- * its own) their Anthropic API key. Null with neither.
+ * its own) their Anthropic API key. Null with neither. Never an org's: that
+ * reaches a session only as its sign-in (agentAuthStore), not the box's
+ * environment, where a session on another model would have it too.
  */
 export async function getClaudeCredential(userId: string): Promise<string | null> {
   await settleClaudeSlot(userId);
@@ -619,9 +677,11 @@ export async function setAgentAuthChoice(userId: string, agent: AgentId, method:
 /**
  * The user's agent sign-ins, for lib/agents/resolve.ts. Loading an agent reads
  * its pick and every credential it could run on at once, sealed; a credential
- * is opened only when asked for, once.
+ * is opened only when asked for, once. With `orgId` (a cloud session's team
+ * org), a provider key the user has none of is the org's
+ * (lib/db/org-credentials.ts); never for a session on their Mac.
  */
-export function agentAuthStore(userId: string): AgentAuthStore {
+export function agentAuthStore(userId: string, orgId?: string): AgentAuthStore {
   return {
     async load(agent) {
       const credentials = AGENTS[agent].methods.map((method) => method.credential);
@@ -632,7 +692,7 @@ export function agentAuthStore(userId: string): AgentAuthStore {
       // An Anthropic API key still in the Claude slot is the provider's.
       if (usesSlot) await settleClaudeSlot(userId);
       const supabase = createSupabaseAdminClient();
-      const [choices, slot, keys] = await Promise.all([
+      const [choices, slot, keys, orgKeys] = await Promise.all([
         getAgentAuthChoices(userId),
         usesSlot
           ? supabase.from("user_credentials").select("anthropic_key_ciphertext").eq("user_id", userId).maybeSingle()
@@ -644,6 +704,7 @@ export function agentAuthStore(userId: string): AgentAuthStore {
               .eq("user_id", userId)
               .in("provider", providers)
           : null,
+        sealedOrgKeys(userId, orgId, providers),
       ]);
       if (slot?.error) throw slot.error;
       if (keys?.error && !beforeProviderKeys(keys.error)) throw keys.error;
@@ -660,7 +721,11 @@ export function agentAuthStore(userId: string): AgentAuthStore {
           if (!opened.has(which)) {
             // The slot is logged as "anthropic", as getAnthropicKey does.
             const label = credential.kind === "claude-slot" ? "anthropic" : credential.provider;
-            opened.set(which, openOrNull(sealed.get(which), userId, label));
+            // Their own, else (one they don't have, or that won't open) the
+            // org's, as modelKey reads them.
+            const own = openOrNull(sealed.get(which), userId, label);
+            const org = credential.kind === "provider-key" && orgId ? orgKeys.get(credential.provider) : undefined;
+            opened.set(which, own ?? (org && orgId ? openOrgKey(org, orgId, label) : null));
           }
           return opened.get(which) ?? null;
         },
@@ -671,13 +736,16 @@ export function agentAuthStore(userId: string): AgentAuthStore {
 
 /** What the user's model menu offers (lib/runtime/session-models.ts):
  *  Outrunner's models where the server has a key for them, and each provider
- *  the user has a key for that can be used. */
-export async function modelMenu(userId: string): Promise<ModelMenu> {
+ *  the user has a key for that can be used; with `orgId` (a cloud session's
+ *  team org), each one the org has a key for too. */
+export async function modelMenu(userId: string, orgId?: string): Promise<ModelMenu> {
   const source = keySource();
+  const [own, org] = await Promise.all([usableProviderKeys(userId), usableOrgProviders(userId, orgId)]);
+  const keys = new Set<string>([...own, ...org]);
   return {
     outrunner: source !== null,
     allowance: source === "per-user",
-    keys: await usableProviderKeys(userId),
+    keys: PROVIDER_IDS.filter((id) => keys.has(id)),
   };
 }
 
@@ -708,11 +776,16 @@ export function offersModels(menu: ModelMenu): boolean {
 
 /**
  * The key a model runs on: Outrunner's, for Outrunner's models; the user's
- * own for a provider's, or a NoProviderKeyError saying where to add one.
+ * own for a provider's, else, with `orgId` (a cloud session's team org), the
+ * org's; or a NoProviderKeyError saying where to add one.
  */
-export async function modelKey(userId: string, holder: KeyHolder): Promise<string> {
-  if (holder === "outrunner") return outrunnerModelKey(userId);
-  const key = await getProviderKey(userId, holder);
+export async function modelKey(userId: string, holder: KeyHolder, orgId?: string): Promise<string> {
+  if (holder === "outrunner") {
+    // A team org's cloud session runs them on the org's key, within its
+    // plan's allowance; anyone else's on their own.
+    return (await orgPaysModels(userId, orgId)) ? orgOutrunnerModelKey(orgId!) : outrunnerModelKey(userId);
+  }
+  const key = (await getProviderKey(userId, holder)) ?? (await orgProviderKey(userId, orgId, holder));
   if (!key) throw new NoProviderKeyError(holder);
   return key;
 }
@@ -724,9 +797,11 @@ export async function modelKey(userId: string, holder: KeyHolder): Promise<strin
  * key exists, nothing is spent of their plan's allowance. A user with their
  * own key too still has this one, for the models they run on it.
  */
-export async function outrunnerModelAllowance(userId: string): Promise<Allowance | null> {
+export async function outrunnerModelAllowance(userId: string, orgId?: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
-  return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await planFor(userId)).models.usd };
+  // In a team org, the org's (lib/db/org-model-allowance.ts).
+  if (await orgPaysModels(userId, orgId)) return orgModelAllowance(orgId!);
+  return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await personalEntitlements(userId)).plan.models.usd };
 }
 
 /**
@@ -780,7 +855,8 @@ export async function refreshModelAllowance(userId: string): Promise<RefreshedAl
   return refreshAllowance(store, {
     usage: keyUsage,
     setLimit: setKeyLimit,
-    entitlements: () => entitlementsFor(userId),
+    // Their personal org's plan sets it, until the allowance is the org's.
+    entitlements: () => personalEntitlements(userId),
   });
 }
 
@@ -792,7 +868,10 @@ export async function refreshModelAllowance(userId: string): Promise<RefreshedAl
 export async function renewDueModelAllowances(now = new Date()): Promise<number> {
   if (keySource() !== "per-user") return 0;
   const subscriptions = await entitlingSubscriptions();
-  const userIds = [...new Set(subscriptions.map((s) => s.userId))];
+  // A personal org's plan sets its owner's key; a team org's, its own.
+  const owners = await personalOwners([...new Set(subscriptions.map((s) => s.orgId))]);
+  const holderOf = (subscription: { orgId: string }) => owners.get(subscription.orgId) ?? null;
+  const userIds = [...new Set(owners.values())];
   const stored = new Map<string, string | null>();
   for (let i = 0; i < userIds.length; i += 200) {
     const { data, error } = await createSupabaseAdminClient()
@@ -803,13 +882,42 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
     if (error) throw error;
     for (const row of data) stored.set(row.user_id, row.neev_allowance_period);
   }
+  // And each org's connector (lib/automations/connector.ts), whose allowance
+  // turns over with the calendar month rather than a subscription.
+  const { data: connectors, error: connectorsError } = await createSupabaseAdminClient()
+    .from("org_connectors")
+    .select("user_id");
+  if (connectorsError) throw connectorsError;
+  const connectorDue: string[] = [];
+  const connectorIds = (connectors ?? []).map((c) => c.user_id);
+  if (connectorIds.length) {
+    const month = connectorPeriod(now).start.toISOString();
+    const { data, error } = await createSupabaseAdminClient()
+      .from("user_credentials")
+      .select("user_id, neev_allowance_period")
+      .in("user_id", connectorIds)
+      .not("neev_key_hash", "is", null);
+    if (error) throw error;
+    for (const row of data) if (row.neev_allowance_period !== month) connectorDue.push(row.user_id);
+  }
   let renewed = 0;
-  for (const userId of dueForRenewal(subscriptions, stored, now)) {
+  for (const userId of [...dueForRenewal(subscriptions, holderOf, stored, now), ...connectorDue]) {
     try {
       await refreshModelAllowance(userId);
       renewed += 1;
     } catch (error) {
       console.error(`Could not renew the model allowance of user ${userId}`, error);
+    }
+  }
+  // Team orgs with a key of their own (lib/db/org-model-allowance.ts).
+  const teams = [...new Set(subscriptions.map((s) => s.orgId))].filter((orgId) => !owners.has(orgId));
+  const orgStored = await orgAllowancePeriods(teams);
+  for (const orgId of dueForRenewal(subscriptions, (s) => (owners.has(s.orgId) ? null : s.orgId), orgStored, now)) {
+    try {
+      await refreshOrgModelAllowance(orgId);
+      renewed += 1;
+    } catch (error) {
+      console.error(`Could not renew the model allowance of org ${orgId}`, error);
     }
   }
   return renewed;
@@ -874,7 +982,7 @@ export async function outrunnerModelKey(userId: string): Promise<string> {
       create: async () =>
         createUserKey(
           `outrunner user ${userId}`,
-          (nextAllowance(await entitlementsFor(userId), null, 0) as AllowanceState).limitUsd,
+          (nextAllowance(await personalEntitlements(userId), null, 0) as AllowanceState).limitUsd,
         ),
       disable: disableUserKey,
       log: (message, error) => console.error(`${message} (user ${userId})`, error),
@@ -891,4 +999,19 @@ export async function outrunnerModelKey(userId: string): Promise<string> {
   });
   refuseUnusable(allowance);
   return key;
+}
+
+/**
+ * Whether `orgId` pays for `userId`'s use of Outrunner's models: a team org
+ * they're a member of (billing is the org's). Not a personal org, whose
+ * plan is its owner's key's already, nor its connector, on its own; nor a
+ * session on a Mac, which names no org.
+ */
+async function orgPaysModels(userId: string, orgId: string | undefined): Promise<boolean> {
+  if (!orgId) return false;
+  // The org first: most are personal, where the rest needn't be asked.
+  const org = await getOrg(orgId);
+  if (!org || org.personal) return false;
+  const [role, connector] = await Promise.all([memberRole(orgId, userId), isConnector(userId)]);
+  return Boolean(role && !connector);
 }
