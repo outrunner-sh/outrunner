@@ -311,6 +311,7 @@ type NotificationPreferencesRow = {
   slack: boolean;
   kinds: NotificationKindDb[];
   digest_sent_at: string | null;
+  digest_retry_at: string | null;
   updated_at: string;
 };
 

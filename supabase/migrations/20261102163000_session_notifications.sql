@@ -46,6 +46,9 @@ create table if not exists notification_preferences (
   kinds text[] not null default '{turn_done,needs_input,errored,pr_opened,pr_merged}'
     check (kinds <@ array['turn_done', 'needs_input', 'errored', 'pr_opened', 'pr_merged']),
   digest_sent_at timestamptz,
+  -- A digest that couldn't be sent waits until then to be tried again, over
+  -- the same window (digest_sent_at stays where it was).
+  digest_retry_at timestamptz,
   updated_at timestamptz not null default now()
 );
 

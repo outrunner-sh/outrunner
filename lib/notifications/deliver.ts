@@ -187,6 +187,8 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
     .select("user_id, digest_sent_at")
     .eq("email", "digest")
     .or(`digest_sent_at.is.null,digest_sent_at.lt.${cutoff}`)
+    // Not one waiting to try again after a failure.
+    .or(`digest_retry_at.is.null,digest_retry_at.lt.${new Date(now).toISOString()}`)
     // Longest waiting first, so people whose digests go through are never
     // crowded out by one that keeps failing.
     .order("digest_sent_at", { ascending: true, nullsFirst: true })
@@ -196,13 +198,17 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
   for (const user of data ?? []) {
     const stamp = new Date(now).toISOString();
     // Claimed first: two ticks at once send one digest.
-    let claim = db().from("notification_preferences").update({ digest_sent_at: stamp }).eq("user_id", user.user_id);
+    let claim = db().from("notification_preferences").update({ digest_sent_at: stamp, digest_retry_at: null }).eq("user_id", user.user_id);
     claim = user.digest_sent_at === null ? claim.is("digest_sent_at", null) : claim.eq("digest_sent_at", user.digest_sent_at);
     const { data: claimed, error: claimError } = await claim.select("user_id");
     if (claimError) throw claimError;
     if (!claimed?.length) continue;
 
-    const from = user.digest_sent_at && Date.parse(user.digest_sent_at) > Date.parse(cutoff) ? user.digest_sent_at : cutoff;
+    // Since the last digest, so a retry covers what the failed one would
+    // have; at most two days back (a first digest, or one long refused).
+    const floor = new Date(now - 2 * DIGEST_EVERY_MS).toISOString();
+    const from =
+      user.digest_sent_at && Date.parse(user.digest_sent_at) > Date.parse(floor) ? user.digest_sent_at : user.digest_sent_at ? floor : cutoff;
     const { data: rows, error: rowsError } = await db()
       .from("session_notifications")
       .select("id, user_id, workspace_id, kind, title, body, created_at, emailed_at, slacked_at")
@@ -226,14 +232,13 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
       sent++;
       continue;
     }
-    // Not sent (no address read, or the email refused): the claim is moved
-    // back where it's still ours, so the digest is tried again in an hour,
-    // not lost and not retried every tick for an address that never works.
-    // That try reads the day before it, so it may leave out the first hour
-    // of what this one held.
+    // Not sent (no address read, or the email refused): the claim is given
+    // back where it's still ours, digest_sent_at as it was, so the retry
+    // reads the same window; and it waits an hour, not retried every tick for
+    // an address that never works.
     const { error: releaseError } = await db()
       .from("notification_preferences")
-      .update({ digest_sent_at: new Date(now - DIGEST_EVERY_MS + DIGEST_RETRY_MS).toISOString() })
+      .update({ digest_sent_at: user.digest_sent_at, digest_retry_at: new Date(now + DIGEST_RETRY_MS).toISOString() })
       .eq("user_id", user.user_id)
       .eq("digest_sent_at", stamp);
     if (releaseError) throw releaseError;
