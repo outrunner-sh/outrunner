@@ -10,6 +10,10 @@
  */
 
 import { getOwner } from "@/lib/auth/owner";
+import { getWorkspace } from "@/lib/db/repositories";
+import { isComputerProvider } from "@/lib/runtime/computer-provider";
+import { resolveProvider } from "@/lib/runtime/resolve";
+import { archiveCloudSession } from "@/lib/session/archive-session";
 import { OUTRUNNER_MODELS } from "@/lib/runtime/session-models";
 import { createCloudSession, type SessionOutcome } from "@/lib/session/create-cloud-session";
 import { ActAsUserError, actAsUser } from "@/lib/supabase/acting-user";
@@ -93,4 +97,40 @@ function failed(workspaceId: string | null, errorMessage: string): ServerSession
 
 function refused(errorMessage: string): ServerSessionResult {
   return { workspaceId: null, status: "refused", errorMessage };
+}
+
+/**
+ * Archive sessions of `userId`'s, as they would from the session page: an
+ * automation's earlier review sessions, once a new one has taken over. One
+ * not ready or idle (stopped, deleted, already archived) is left as it is.
+ * How many were archived; never throws.
+ */
+export async function archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number> {
+  if (workspaceIds.length === 0) return 0;
+  try {
+    return await actAsUser(userId, async () => {
+      const owner = await getOwner();
+      if (!owner) return 0;
+      let archived = 0;
+      for (const id of workspaceIds) {
+        // One that fails doesn't keep the rest from being archived.
+        try {
+          const workspace = await getWorkspace(id);
+          if (!workspace || workspace.ownerId !== owner.id) continue;
+          if (workspace.status !== "ready" && workspace.status !== "idle") continue;
+          const resolution = resolveProvider(workspace);
+          if (!resolution.ok || !isComputerProvider(resolution.provider)) continue;
+          const result = await archiveCloudSession(workspace, resolution.provider, owner);
+          if (result.ok) archived++;
+          else console.warn(`Couldn't archive the session ${id}`, result);
+        } catch (error) {
+          console.error(`Couldn't archive the session ${id}`, error);
+        }
+      }
+      return archived;
+    });
+  } catch (error) {
+    console.error(`Couldn't archive earlier sessions for ${userId}`, error);
+    return 0;
+  }
 }

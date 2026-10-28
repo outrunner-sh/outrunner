@@ -199,3 +199,39 @@ export async function listRuns(orgId: string, limit = 50): Promise<AutomationRun
   }));
 }
 
+/**
+ * Where a run stands among the automation's runs on its pull request, by when
+ * each was recorded (runs set up side by side, and a later commit's can be
+ * ready first): the sessions of the runs before it, and whether one after it
+ * is ready already, when its own session is the stale one.
+ */
+export async function runNeighbours(run: {
+  runId: string;
+  automationId: string;
+  projectId: string;
+  prNumber: number;
+}): Promise<{ earlierSessions: string[]; superseded: boolean }> {
+  const supabase = createSupabaseAdminClient();
+  const { data: self, error: selfError } = await supabase
+    .from("automation_runs")
+    .select("created_at")
+    .eq("id", run.runId)
+    .single();
+  if (selfError) throw selfError;
+  const { data, error } = await supabase
+    .from("automation_runs")
+    .select("id, workspace_id, status, created_at")
+    .eq("automation_id", run.automationId)
+    .eq("project_id", run.projectId)
+    .eq("pr_number", run.prNumber)
+    .neq("id", run.runId);
+  if (error) throw error;
+  const others = data ?? [];
+  return {
+    earlierSessions: others.flatMap((r) => (r.created_at < self.created_at && r.workspace_id ? [r.workspace_id] : [])),
+    // Taken over only by a later run that's ready: one still setting up
+    // archives this one itself once it is, and one that failed or didn't
+    // start leaves this as the pull request's review.
+    superseded: others.some((r) => r.created_at > self.created_at && r.status === "ready"),
+  };
+}
