@@ -17,7 +17,8 @@ const valueOf = (m: { provider: string; id: string }) => `${m.provider}\u0000${m
 
 /**
  * Settings → Org → Defaults: the model a member's new session starts on, and
- * the size of their new box, for members who haven't chosen their own. Its
+ * the size of their new box, for members who haven't chosen their own; and
+ * whether sessions are archived when their issue or pull request closes. Its
  * admins set them; each saves as it's picked.
  */
 export function OrgDefaultsSettings({
@@ -138,6 +139,23 @@ export function OrgDefaultsSettings({
           </p>
         )}
         <p className="text-xs text-muted-foreground">Never beyond what each member&apos;s plan allows.</p>
+      </div>
+
+      <div className="space-y-2 border-t border-border/60 pt-6">
+        <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <input
+            type="checkbox"
+            className="size-4 accent-foreground"
+            disabled={!admin || saving}
+            checked={defaults.archiveOnClose}
+            onChange={(event) => void save({ ...defaults, archiveOnClose: event.target.checked })}
+          />
+          Archive a session when its issue or pull request closes
+        </label>
+        <p className="text-xs text-muted-foreground">
+          A session started from <code>@outrunner</code> on GitHub, or one that opened the pull request, is archived when
+          it closes or merges. Archived sessions can be restored.
+        </p>
       </div>
 
       {error && <InlineMessage tone="error">{error}</InlineMessage>}
