@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { AutomationEditor } from "@/components/automation-editor";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgAppCoverage } from "@/lib/automations/coverage";
+import type { AppCoverage } from "@/lib/automations/rules";
 import { getAutomation, listOrgRepos } from "@/lib/db/automations";
 import { isUuid } from "@/lib/ids";
 import { getOrgContext } from "@/lib/orgs/server";
@@ -31,7 +32,7 @@ async function AutomationSection({ params }: { params: Params }) {
   const [automation, repos] = await Promise.all([getAutomation(active.id, automationId), listOrgRepos(active.id)]);
   if (!automation) notFound();
   // Coverage only flags repositories: without it, the editor still works.
-  const coverage = await orgAppCoverage(active.id, repos).catch((error: unknown) => {
+  const coverage: Record<string, AppCoverage> = await orgAppCoverage(active.id, repos).catch((error: unknown) => {
     console.error("Automation: could not read the GitHub App's coverage", error);
     return {};
   });
