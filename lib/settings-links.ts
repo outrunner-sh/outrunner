@@ -64,3 +64,12 @@ export function providerSettingsHref(where: ProviderTab | KeyProviderId, method?
   const shown = isAgentId(place.tab) ? (method ?? place.method) : undefined;
   return `${PROVIDERS_SETTINGS_HREF}?tab=${place.tab}${shown ? `&method=${shown}` : ""}`;
 }
+
+/** `url` (Settings → Providers) open on `tab`, for the address bar as the
+ *  user moves between tabs: the method a link named was for the tab it opened. */
+export function withProviderTab(url: URL, tab: ProviderTab): string {
+  const next = new URL(url);
+  next.searchParams.set("tab", tab);
+  next.searchParams.delete("method");
+  return `${next.pathname}${next.search}${next.hash}`;
+}

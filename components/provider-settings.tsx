@@ -7,11 +7,12 @@ import { AgentIcon, ProviderIcon } from "@/components/brand-icons";
 import { ApiKeyCard, type ProviderKeys } from "@/components/api-key-card";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { AGENTS, type AgentId, isAgentId } from "@/lib/agents/registry";
+import { replaceAddressBar } from "@/lib/client/address-bar";
 import type { AgentAuthChoices } from "@/lib/db/credentials";
 import { forgetOutrunnerModels } from "@/lib/desktop/local-runtime";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
 import { PROVIDERS } from "@/lib/providers/registry";
-import { type ProviderPlace, PROVIDER_TABS, type ProviderTab } from "@/lib/settings-links";
+import { type ProviderPlace, PROVIDER_TABS, type ProviderTab, withProviderTab } from "@/lib/settings-links";
 
 /** What Settings → Providers shows. */
 export type ProviderSettings = { keys: ProviderKeys; choices: AgentAuthChoices; claude: ClaudeTokenMeta };
@@ -41,10 +42,7 @@ export function ProviderSettingsForm({ initial, place }: { initial: ProviderSett
 
   function remember(tab: ProviderTab) {
     // A reload, or a link copied from the address bar, comes back here.
-    const url = new URL(window.location.href);
-    url.searchParams.set("tab", tab);
-    url.searchParams.delete("method");
-    window.history.replaceState(window.history.state, "", url);
+    replaceAddressBar(withProviderTab(new URL(window.location.href), tab));
   }
 
   function changeKeys(next: ProviderKeys, provider: keyof ProviderKeys) {
