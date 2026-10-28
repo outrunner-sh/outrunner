@@ -114,7 +114,7 @@ export async function createApiKey(input: {
   orgId: string | null;
   name: string;
   expiresAt: string | null;
-}): Promise<{ key: string; id: string }> {
+}): Promise<{ key: string; id: string; hint: string }> {
   const key = newApiKey();
   const { data, error } = await createSupabaseAdminClient()
     .from("api_keys")
@@ -129,28 +129,28 @@ export async function createApiKey(input: {
     .select("id")
     .single();
   if (error) throw error;
-  return { key, id: data.id };
+  return { key, id: data.id, hint: keyHint(key) };
 }
 
 /**
  * Stop a key working, by whoever may: an org key by any of its org's admins
- * (`orgId`), a personal key by its maker (`userId`). False when there's no
- * such key of theirs still working.
+ * (`orgId`), a personal key by its maker (`userId`). Its name and hint, or
+ * null when there's no such key of theirs still working.
  */
 export async function revokeApiKey(
   id: string,
   by: string,
   whose: { orgId: string } | { userId: string },
-): Promise<boolean> {
+): Promise<{ name: string; hint: string } | null> {
   let query = createSupabaseAdminClient()
     .from("api_keys")
     .update({ revoked_at: new Date().toISOString(), revoked_by: by })
     .eq("id", id)
     .is("revoked_at", null);
   query = "orgId" in whose ? query.eq("org_id", whose.orgId) : query.eq("user_id", whose.userId).is("org_id", null);
-  const { data, error } = await query.select("id");
+  const { data, error } = await query.select("name, hint");
   if (error) throw error;
-  return (data ?? []).length > 0;
+  return data?.[0] ?? null;
 }
 
 /** The key with this hash, revoked or not, or null. */
