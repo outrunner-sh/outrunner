@@ -263,9 +263,9 @@ const RUN_STATUS: Record<AutomationRun["status"], { label: string; text: string;
   refused: { label: "Didn't start", text: "text-warning", dot: "bg-warning" },
 };
 
-/** A run's status as a dot and its word. */
-function RunStatus({ status }: { status: AutomationRun["status"] }) {
-  const { label, text, dot } = RUN_STATUS[status];
+/** A run's status as a dot and its word, or `label` in its place. */
+function RunStatus({ status, label = RUN_STATUS[status].label }: { status: AutomationRun["status"]; label?: string }) {
+  const { text, dot } = RUN_STATUS[status];
   return (
     <span className={cn("inline-flex items-center gap-1.5", text)}>
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dot)} />
@@ -381,7 +381,9 @@ function AutomationList({
                     <td className="whitespace-nowrap px-3 py-2.5 text-xs">
                       {last ? (
                         <div className="space-y-0.5">
-                          <RunStatus status={last.status} />
+                          {/* "Running" for a run from days ago would read as still going: here,
+                              a run that got going says when it started. */}
+                          <RunStatus status={last.status} label={last.status === "ready" ? "Started" : undefined} />
                           <div className="text-muted-foreground">
                             <Ago at={last.createdAt} now={now} />
                           </div>
@@ -490,6 +492,8 @@ function RecentRuns({
         </p>
       ) : (
         <>
+          {/* "All" and at least two statuses: with one, a pill would only
+              repeat what every row says. */}
           {filters.length > 2 ? (
             <div role="group" aria-label="Filter runs by status" className="flex flex-wrap gap-1.5">
               {filters.map((f) => (
