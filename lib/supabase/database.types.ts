@@ -707,7 +707,7 @@ type SlackConversationRow = {
   updated_at: string;
 };
 
-// supabase/migrations/20261031120000_slack_proactive.sql
+// supabase/migrations/20261031170000_slack_proactive.sql
 type SlackChannelRow = {
   team_id: string;
   channel_id: string;
