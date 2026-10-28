@@ -587,3 +587,31 @@ export async function checksToSweep(before: Date, retryBefore: Date): Promise<{ 
   if (unsent.error) throw unsent.error;
   return { stale: (stale.data ?? []).map((r) => r.id), unsent: (unsent.data ?? []).map((r) => r.id) };
 }
+
+/** Give up on the checks past checksToSweep's day: kept as closed, so the
+ *  open-check index holds only the open, and the row says it was let go.
+ *  How many. */
+export async function abandonOldChecks(before: Date, retryBefore: Date): Promise<number> {
+  const supabase = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+  const [stale, unsent] = await Promise.all([
+    supabase
+      .from("automation_runs")
+      .update({ check_closed_at: now })
+      .not("check_run_id", "is", null)
+      .is("check_closed_at", null)
+      .is("check_reviewed_at", null)
+      .lte("created_at", new Date(before.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .select("id"),
+    supabase
+      .from("automation_runs")
+      .update({ check_closed_at: now })
+      .not("check_run_id", "is", null)
+      .is("check_closed_at", null)
+      .lte("check_reviewed_at", new Date(retryBefore.getTime() - CHECK_RETRY_DAY_MS).toISOString())
+      .select("id"),
+  ]);
+  if (stale.error) throw stale.error;
+  if (unsent.error) throw unsent.error;
+  return (stale.data ?? []).length + (unsent.data ?? []).length;
+}

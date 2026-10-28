@@ -13,6 +13,7 @@ import {
 } from "@/lib/automations/checks";
 import type { PendingRun } from "@/lib/automations/runs";
 import {
+  abandonOldChecks,
   checksToSweep,
   checkStateOf,
   claimCheck,
@@ -107,10 +108,12 @@ export async function checkOfRun(runId: string): Promise<OpenCheck | null> {
  *  this. */
 export async function sweepOpenChecks(now = new Date()): Promise<number> {
   if (!githubAppConfig()) return 0;
-  const { stale, unsent } = await checksToSweep(
-    new Date(now.getTime() - CHECK_HOURS * 3_600_000),
-    new Date(now.getTime() - 2 * 60_000),
-  );
+  const before = new Date(now.getTime() - CHECK_HOURS * 3_600_000);
+  const retryBefore = new Date(now.getTime() - 2 * 60_000);
+  const { stale, unsent } = await checksToSweep(before, retryBefore);
+  // Those GitHub hasn't taken in a day won't be: let go of, said so.
+  const abandoned = await abandonOldChecks(before, retryBefore);
+  if (abandoned > 0) console.warn(`Gave up on ${abandoned} automation run check(s) GitHub wouldn't take for a day`);
   const reason = `No review was posted within ${CHECK_HOURS === 1 ? "an hour" : `${CHECK_HOURS} hours`}.`;
   await Promise.all([
     ...stale.map((runId) => closeRunCheckWithout(runId, reason)),
