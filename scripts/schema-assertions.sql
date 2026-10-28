@@ -2111,7 +2111,7 @@ begin
   raise notice 'ok: a webhook''s token is made with it, kept, and its own';
 end $$;
 
--- 51. An automation's limits, kept as runs are recorded: a time it runs is
+-- 52. An automation's limits, kept as runs are recorded: a time it runs is
 -- one key, on however many repositories; past its count nothing is
 -- recorded, and reaching it switches it off (archived too, if it's to be);
 -- switched on again, it counts afresh. In a debounce window, a trigger on
