@@ -8,7 +8,13 @@
  * so what it posts is the App's and it can't push.
  */
 
-import { type PullRequestEvent, readPullRequestEvent, runPrompt, runTitle } from "@/lib/automations/pull-request";
+import {
+  type PullRequestEvent,
+  readClosedPullRequest,
+  readPullRequestEvent,
+  runPrompt,
+  runTitle,
+} from "@/lib/automations/pull-request";
 import type { RunCandidate } from "@/lib/db/automation-runs";
 import type { ServerSessionResult, ServerSessionStart } from "@/lib/session/server-session";
 
@@ -140,5 +146,32 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     } catch (error) {
       console.error(`Run ${run.runId}: couldn't archive the earlier review sessions`, error);
     }
+  }
+}
+
+export type CloseDeps = {
+  /** The open sessions of the automations' runs on the pull request, by
+   *  their owner (pullRequestSessions). */
+  pullRequestSessions(installationId: number, repoFullName: string, prNumber: number): Promise<Map<string, string[]>>;
+  archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
+};
+
+/**
+ * A pull request closed or merged: its review sessions are archived (a
+ * snapshot each, restorable), as each one's runner, and their boxes freed.
+ * How many were. Never throws: a session left open is only its box's idle
+ * time, which pauses it anyway.
+ */
+export async function closeRuns(payload: unknown, deps: CloseDeps): Promise<number> {
+  const closed = readClosedPullRequest(payload);
+  if (!closed) return 0;
+  try {
+    const byOwner = await deps.pullRequestSessions(closed.installationId, closed.repoFullName, closed.number);
+    let archived = 0;
+    for (const [owner, ids] of byOwner) archived += await deps.archiveServerSessions(owner, ids);
+    return archived;
+  } catch (error) {
+    console.error(`Couldn't archive the review sessions of ${closed.repoFullName}#${closed.number}`, error);
+    return 0;
   }
 }

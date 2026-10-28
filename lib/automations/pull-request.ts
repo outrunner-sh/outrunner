@@ -122,6 +122,23 @@ export function readPullRequestEvent(payload: unknown, appSlug?: string): PullRe
   };
 }
 
+/** A pull request closed or merged: its review sessions are done with. */
+export type ClosedPullRequest = { installationId: number; repoFullName: string; number: number };
+
+/** The pull request a `closed` event is for; null for any other event, or
+ *  one that can't be read. */
+export function readClosedPullRequest(payload: unknown): ClosedPullRequest | null {
+  const p = (payload ?? {}) as Payload;
+  if (p.action !== "closed") return null;
+  const id = installationId(p.installation?.id);
+  const repoFullName = text(p.repository?.full_name) ?? text(p.pull_request?.base?.repo?.full_name);
+  const number = p.pull_request?.number;
+  if (id === null || !repoFullName || typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0) {
+    return null;
+  }
+  return { installationId: id, repoFullName, number };
+}
+
 /** A run's session title: the pull request it's for. */
 export function runTitle(automationName: string, event: Pick<PullRequestEvent, "number" | "title">): string {
   const title = `${automationName} #${event.number}${event.title ? `: ${event.title}` : ""}`;
