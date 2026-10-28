@@ -41,10 +41,10 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(request: Request, { params }: Params) {
   const { id, userId } = await params;
   if (!isUuid(userId)) return NextResponse.json({ error: "No such member." }, { status: 404 });
-  // The org's outrunner-connector isn't one of its people to change.
-  if (await isConnector(userId)) return NextResponse.json({ error: "No such member." }, { status: 404 });
   const caller = await orgCaller(request, id, { admin: false });
   if (caller instanceof Response) return caller;
+  // The org's outrunner-connector isn't one of its people to change.
+  if (await isConnector(userId)) return NextResponse.json({ error: "No such member." }, { status: 404 });
   const leaving = userId === caller.owner.id;
   if (!leaving && caller.role !== "admin") {
     return NextResponse.json({ error: "Only the org's admins can remove someone." }, { status: 403 });

@@ -8,6 +8,7 @@
 
 import { connectorUserId } from "@/lib/automations/connector-id";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
+import { probeStatus } from "@/lib/supabase/probe";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 export { CONNECTOR_NAME, connectorUserId };
@@ -30,6 +31,8 @@ export async function isConnector(userId: string): Promise<boolean> {
     .select("org_id")
     .eq("user_id", userId)
     .maybeSingle();
+  // Before its migration, no one is: every user's entitlements ask this.
+  if (error && probeStatus(error) === "missing") return false;
   if (error) throw error;
   if (data) known.set(userId, true);
   return data !== null;
@@ -42,6 +45,7 @@ export async function connectorsAmong(userIds: readonly string[]): Promise<Set<s
     .from("org_connectors")
     .select("user_id")
     .in("user_id", [...new Set(userIds)]);
+  if (error && probeStatus(error) === "missing") return new Set();
   if (error) throw error;
   return new Set((data ?? []).map((r) => r.user_id));
 }
