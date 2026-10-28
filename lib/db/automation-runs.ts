@@ -197,6 +197,7 @@ export async function settleRun(
 /** A run, as the Automations page shows it. */
 export type AutomationRun = {
   id: string;
+  automationId: string;
   automationName: string;
   repoFullName: string;
   prNumber: number;
@@ -233,6 +234,7 @@ export async function listRuns(orgId: string, limit = 50): Promise<AutomationRun
   const repoOf = new Map((projects ?? []).map((p) => [p.id, p.full_name]));
   return (runs ?? []).map((r) => ({
     id: r.id,
+    automationId: r.automation_id,
     automationName: nameOf.get(r.automation_id) ?? "",
     repoFullName: repoOf.get(r.project_id) ?? "",
     prNumber: r.pr_number,
