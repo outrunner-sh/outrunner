@@ -1914,6 +1914,7 @@ begin
     raise exception 'FAIL: an actor going took their events';
   end if;
   raise notice 'ok: the audit log is append-only, the server''s, and goes with its org';
+end $$;
 
 -- 49. Where a session stands: what the server's watch read of its agent is the
 -- server's to write and its owner's to read; each person's marks are their
