@@ -3,9 +3,10 @@
  * (lib/slack/relay.ts) for a thread's reply, and Missions
  * (lib/missions/watch.ts) for a Runner's turn. The parts with no network.
  *
- * A turn is over when the agent says it isn't mid-turn (the box's activity:
- * its last message is a reply with no tool call open, so a subagent at work,
- * or any tool, keeps it open), it has replied since the send, it has been
+ * A turn is over when the agent isn't mid-turn by its conversation, as the
+ * server's watch folds it (lib/session/turn-state.ts: its last message is a
+ * reply with no tool call open, so a subagent at work, or any tool, keeps it
+ * open), it has replied since the send, it has been
  * quiet a while, and all of that holds on a second look some seconds later:
  * a pause between one tool call and the next isn't an end. A background task
  * the agent started finishing later starts a turn of its own, which no watch
@@ -13,6 +14,7 @@
  */
 
 import type { WorkspaceStatus } from "@/lib/runtime/types";
+import type { Waiting } from "@/lib/session/turn-state";
 
 /** Quiet this long after its last activity, a session's turn is over. */
 export const QUIET_MS = 20_000;
@@ -81,8 +83,13 @@ export type TurnObservation = {
   errorMessage?: string | null;
   /** Whether its box answered. */
   reachable: boolean;
-  /** Whether its agent is mid-turn; null for a box that can't say. */
+  /** Whether its agent is mid-turn (session_activity, lib/session/watch.ts);
+   *  null when nothing has read it yet. */
   working: boolean | null;
+  /** What it waits on a person for (a question, a plan, secrets), and the
+   *  call that waits; none when it doesn't. */
+  waiting?: Waiting | null;
+  waitingToolId?: string | null;
   summary: { lastAssistantMessage: string | null; lastActivity: string; state: string } | null;
 };
 
@@ -94,7 +101,10 @@ export type TurnVerdict =
   /** It won't end: the session failed, or its box or agent died. */
   | { kind: "lost"; cause: string }
   /** Nothing more to watch (archived or deleted on purpose). */
-  | { kind: "closed" };
+  | { kind: "closed" }
+  /** It stopped mid-turn to wait on a person: someone has to answer before
+   *  the turn can end. The watch stays open. */
+  | { kind: "waiting_on_user"; waiting: Waiting; toolId: string; state: WatchState };
 
 /** Where the turn stands after this look. */
 export function observeTurn(watch: WatchState, look: TurnObservation): TurnVerdict {
@@ -130,6 +140,9 @@ export function observeTurn(watch: WatchState, look: TurnObservation): TurnVerdi
   const seen = { unreachableSince: null, lastMessage: reply ?? watch.lastMessage };
   if (summary.state === "exited" || summary.state === "degraded") {
     return { kind: "lost", cause: summary.state === "exited" ? "its agent exited" : "its agent is in a degraded state" };
+  }
+  if (look.waiting && look.waitingToolId) {
+    return { kind: "waiting_on_user", waiting: look.waiting, toolId: look.waitingToolId, state: { ...watch, ...seen, seenWorking: true, quietSince: null, quietActivity: null } };
   }
   if (look.working === true) return waiting({ ...seen, seenWorking: true, quietSince: null, quietActivity: null });
 

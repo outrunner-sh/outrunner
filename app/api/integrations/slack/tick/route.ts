@@ -2,7 +2,6 @@ import { after, NextResponse } from "next/server";
 
 import { optionalEnv } from "@/lib/env";
 import { bearerMatches } from "@/lib/http/bearer";
-import { runMissionTick } from "@/lib/missions/tick";
 import { runTick } from "@/lib/slack/proactive";
 
 /**
@@ -17,12 +16,6 @@ export async function POST(request: Request) {
   if (!bearerMatches(request.headers.get("authorization"), secret)) {
     return NextResponse.json({ error: "Not allowed." }, { status: 401 });
   }
-  // Missions' turns, pull requests and deliveries (lib/missions/tick.ts) ride
-  // the same clock, with or without Slack.
-  after(async () => {
-    const done = await runMissionTick();
-    if (done.turns || done.pullRequests || done.queued || done.delivered) console.log("Missions tick", done);
-  });
   if (!optionalEnv("SLACK_SIGNING_SECRET")) return NextResponse.json({ skipped: "Slack isn't set up." });
   after(async () => {
     const done = await runTick();

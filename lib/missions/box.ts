@@ -82,19 +82,19 @@ export async function writeBoxFile(
   return resolution.provider.writeWorkspaceFile(data.daytona_sandbox_id, workspace.worktreePath, relPath, Buffer.from(content), options);
 }
 
-/** One look at a session's box for its turn watch (lib/session/turn-watch.ts):
- *  whether it answered, whether its agent is mid-turn (null for an agent too
- *  old to say), and its summary. */
-export async function lookAtBox(
-  workspace: Workspace,
-): Promise<{ reachable: boolean; working: boolean | null; summary: WorkspaceSummary | null }> {
-  const reached = await reachBox(workspace).catch(() => null);
-  if (!reached) return { reachable: false, working: null, summary: null };
-  const { workspaceId: _, ...box } = reached.identity;
-  void _;
-  const [summary, activity] = await Promise.all([
-    reached.agent.workspaceSummary(reached.identity).catch(() => null),
-    reached.agent.activity(box).catch(() => null),
-  ]);
-  return { reachable: summary !== null, working: activity ? activity.turnInProgress : null, summary };
+
+/**
+ * Whether the session's agent is mid-turn, as the server's watch has it for
+ * every session (session_activity, lib/session/watch.ts: what the sidebar
+ * and notifications read too). Its box is asked only for a session nothing
+ * has read yet.
+ */
+export async function sessionWorking(workspace: Workspace): Promise<boolean> {
+  if (workspace.status !== "ready" && workspace.status !== "idle") return false;
+  const { data } = await createSupabaseAdminClient()
+    .from("session_activity")
+    .select("turn")
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  return data ? data.turn === "working" : boxWorking(workspace);
 }

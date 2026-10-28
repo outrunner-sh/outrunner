@@ -1,6 +1,6 @@
 /**
- * Missions on the cron's tick (every 2 minutes, with the Slack agent's,
- * app/api/integrations/slack/tick): whatever the watches right after a send
+ * Missions on the sessions tick (every 2 minutes, after the sessions' own
+ * reads, app/api/sessions/tick): whatever the watches right after a send
  * and the webhooks didn't finish. Each part bounded and logged, never thrown,
  * so one failing doesn't stop the others; each safe to run twice at once.
  *

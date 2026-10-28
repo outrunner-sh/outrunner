@@ -20,6 +20,7 @@ const LEAD: Record<NotificationKind, string> = {
   errored: "Errored",
   pr_opened: "Pull request opened",
   pr_merged: "Pull request merged",
+  pr_ready: "Ready to review",
 };
 
 const EMOJI: Record<NotificationKind, string> = {
@@ -28,6 +29,7 @@ const EMOJI: Record<NotificationKind, string> = {
   errored: ":warning:",
   pr_opened: ":arrow_heading_up:",
   pr_merged: ":tada:",
+  pr_ready: ":eyes:",
 };
 
 const SETTINGS = "/settings/account";

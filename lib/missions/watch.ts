@@ -33,7 +33,7 @@ export type RecordedEvent = {
 
 export type WatchDeps = {
   session(id: string): Promise<Workspace | null>;
-  look(session: Workspace): Promise<Pick<TurnObservation, "reachable" | "working" | "summary">>;
+  look(session: Workspace): Promise<Pick<TurnObservation, "reachable" | "working" | "waiting" | "waitingToolId" | "summary">>;
   save(row: WatchRow): Promise<void>;
   close(workspaceId: string): Promise<void>;
   /** Record the event once (its key); true when it's new. */
@@ -62,6 +62,13 @@ function toState(row: WatchRow): WatchState {
 }
 
 export type WatchOutcome = "waiting" | "finished" | "needs_attention" | "closed";
+
+/** What a Runner waiting on a person is told to its Mission as. */
+const WAITING_REASON = {
+  question: "it asked a question only a person can answer: open the Runner to answer it",
+  plan: "it's waiting for its plan to be approved: open the Runner to approve it",
+  secrets: "it's waiting for secrets: open the Runner to provide them",
+} as const;
 
 /** Look at one watched turn, and act on what's seen. */
 export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<WatchOutcome> {
@@ -92,6 +99,27 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
     case "closed":
       await deps.close(row.workspaceId);
       return "closed";
+    case "waiting_on_user": {
+      // Told once a wait (its call's id); the watch stays open for the turn's
+      // end once someone answers.
+      await deps.record({
+        missionId,
+        runnerId: runner.id,
+        kind: "needs_attention",
+        payload: { runner: name, reason: WAITING_REASON[verdict.waiting] },
+        key: eventKey.needsAttention(runner.id, "waiting", verdict.toolId),
+      });
+      const s = verdict.state;
+      await deps.save({
+        ...row,
+        seenWorking: s.seenWorking,
+        quietSince: null,
+        quietActivity: null,
+        lastMessage: s.lastMessage,
+        unreachableSince: null,
+      });
+      return "needs_attention";
+    }
     case "lost":
       await deps.record({
         missionId,

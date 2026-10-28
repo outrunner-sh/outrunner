@@ -84,3 +84,20 @@ create index if not exists runner_pull_requests_repo_idx on runner_pull_requests
 
 alter table runner_pull_requests enable row level security;
 revoke all on table runner_pull_requests from anon, authenticated;
+
+-- Notifications (20261102163000_session_notifications.sql) gain one kind: a
+-- Mission's Runner's pull request ready to review (lib/missions/
+-- pull-requests.ts), told on the Mission. Whoever wanted pull requests'
+-- news (pr_opened) gets it too; a new person gets every kind, as before.
+alter table session_notifications drop constraint if exists session_notifications_kind_check;
+alter table session_notifications add constraint session_notifications_kind_check
+  check (kind in ('turn_done', 'needs_input', 'errored', 'pr_opened', 'pr_merged', 'pr_ready'));
+
+alter table notification_preferences drop constraint if exists notification_preferences_kinds_check;
+alter table notification_preferences add constraint notification_preferences_kinds_check
+  check (kinds <@ array['turn_done', 'needs_input', 'errored', 'pr_opened', 'pr_merged', 'pr_ready']);
+alter table notification_preferences
+  alter column kinds set default '{turn_done,needs_input,errored,pr_opened,pr_merged,pr_ready}';
+update notification_preferences
+  set kinds = array_append(kinds, 'pr_ready')
+  where 'pr_opened' = any (kinds) and not ('pr_ready' = any (kinds));

@@ -171,3 +171,10 @@ test("watchUntil looks until done, or until its time is up", async () => {
   assert.equal(await watchUntil(async () => false, opts), false);
   assert.equal(clock, 100);
 });
+
+test("a turn stopped to wait on a person is said as such, each wait once by its call", () => {
+  const v = observeTurn(watch(), look(T0 + 30_000, { working: true, waiting: "question", waitingToolId: "tu9" }));
+  assert.equal(v.kind, "waiting_on_user");
+  assert.equal(v.kind === "waiting_on_user" && v.toolId, "tu9");
+  assert.equal(v.kind === "waiting_on_user" && v.state.seenWorking, true);
+});

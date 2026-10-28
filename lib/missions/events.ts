@@ -6,6 +6,7 @@
  * shows them as cards). The parts with no network.
  */
 
+import type { NotificationDraft } from "@/lib/notifications/events";
 import type { MissionEventKind } from "@/lib/supabase/database.types";
 
 export type { MissionEventKind };
@@ -117,4 +118,25 @@ export function parseRunnerEvents(text: string): { events: ParsedRunnerEvent[]; 
     return "";
   });
   return { events, rest: rest.replace(/\n{3,}/g, "\n\n").trim() };
+}
+
+/** A Runner's pull request ready, as the notification its Mission's owner
+ *  gets (lib/notifications): on the Mission, once a decision. */
+export function readyNotification(input: {
+  ownerId: string;
+  missionId: string;
+  missionTitle: string;
+  runnerName: string;
+  runnerId: string;
+  pr: PullRequestRef;
+  seq: number;
+}): NotificationDraft {
+  return {
+    userId: input.ownerId,
+    workspaceId: input.missionId,
+    kind: "pr_ready",
+    eventKey: `${input.runnerId}:${input.pr.repo.toLowerCase()}#${input.pr.number}:${input.seq}`,
+    title: input.missionTitle,
+    body: `#${input.pr.number} ready to review: ${input.pr.title} (${input.runnerName})`,
+  };
 }

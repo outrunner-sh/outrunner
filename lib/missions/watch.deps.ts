@@ -8,7 +8,9 @@
 
 import { after } from "next/server";
 
-import { boxSummary, lookAtBox } from "@/lib/missions/box";
+import { boxSummary } from "@/lib/missions/box";
+import { notifyActivity } from "@/lib/notifications/record";
+import { readSession } from "@/lib/session/watch";
 import { deliverNow } from "@/lib/missions/outbox.deps";
 import { DELIVERY_MAX_WAIT_SECONDS, DELIVERY_SETTLE_SECONDS } from "@/lib/missions/outbox";
 import { returnQueuedMessage, sessionById, takeQueuedMessage } from "@/lib/missions/store";
@@ -138,10 +140,45 @@ export async function openRunnerWatch(runnerId: string, sentAt: Date, baseline: 
   if (error) throw error;
 }
 
+/**
+ * One look at a Runner: what's new on its conversation read the way every
+ * session's is (readSession, lib/session/watch.ts, which keeps
+ * session_activity for the sidebar too, its news passed on as any read's
+ * is), then where its turn stands by that record. Its box's summary adds
+ * whether its agent is still running and its whole last reply.
+ */
+async function lookAtRunner(runner: Workspace) {
+  const change = await readSession(runner.id).catch(() => null);
+  if (change) await notifyActivity(change).catch((error: unknown) => console.error(`Runner ${runner.id}: its news`, error));
+  const [{ data: activity }, summary] = await Promise.all([
+    db().from("session_activity").select("turn, waiting, waiting_tool_id, event_at").eq("workspace_id", runner.id).maybeSingle(),
+    boxSummary(runner).catch(() => null),
+  ]);
+  return {
+    reachable: summary !== null,
+    working: activity ? activity.turn === "working" : null,
+    waiting: activity?.waiting ?? null,
+    waitingToolId: activity?.waiting_tool_id ?? null,
+    summary: summary && {
+      lastAssistantMessage: summary.lastAssistantMessage,
+      // The conversation's own times, the box's clock: as the baseline is.
+      lastActivity: activity?.event_at ?? summary.lastActivity,
+      state: summary.state,
+    },
+  };
+}
+
+/** Where the Runner's conversation last was, before a send: activity after
+ *  it is the send's turn. */
+async function lastEventAt(runner: Workspace): Promise<string | null> {
+  const { data } = await db().from("session_activity").select("event_at").eq("workspace_id", runner.id).maybeSingle();
+  return data?.event_at ?? (await boxSummary(runner).catch(() => null))?.lastActivity ?? null;
+}
+
 export function watchDeps(): WatchDeps {
   return {
     session: sessionById,
-    look: lookAtBox,
+    look: lookAtRunner,
     save: async (row) => {
       const { error } = await db()
         .from("turn_watches")
@@ -174,8 +211,9 @@ export function watchDeps(): WatchDeps {
  * it starts. False when it didn't go.
  */
 export async function sendToRunner(runner: Workspace, content: string): Promise<boolean> {
-  // Its box's clock before the send: what's after it is this turn's.
-  const baseline = (await boxSummary(runner).catch(() => null))?.lastActivity ?? null;
+  // Its conversation's last time before the send: what's after it is this
+  // turn's.
+  const baseline = await lastEventAt(runner);
   const sentAt = new Date();
   if (!(await wakeAndSend(runner.ownerId, runner.id, content).catch(() => false))) return false;
   await openRunnerWatch(runner.id, sentAt, baseline);
@@ -232,7 +270,7 @@ export async function sendWaitingQueued(limit = 20): Promise<number> {
     if (await readWatch(runnerId)) continue;
     const runner = await sessionById(runnerId);
     if (!runner || runner.status === "creating" || runner.status === "provisioning" || runner.status === "failed") continue;
-    if ((await lookAtBox(runner)).working) continue;
+    if ((await lookAtRunner(runner)).working) continue;
     if (await sendNextQueued(runner, watchDeps())) sent++;
   }
   return sent;

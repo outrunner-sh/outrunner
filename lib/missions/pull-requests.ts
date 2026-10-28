@@ -11,12 +11,14 @@ import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route
 import { getPullRequestStatus } from "@/lib/github/client";
 import { optionalGitToken } from "@/lib/github/identity.deps";
 import { githubGet } from "@/lib/github/rest";
-import { boxWorking } from "@/lib/missions/box";
+import { sessionWorking } from "@/lib/missions/box";
 import { eventKey, type PullRequestRef } from "@/lib/missions/events";
 import { isLiveRunner } from "@/lib/missions/rules";
 import { allPullRequestsDone, isNews, isRunnerBranch, reviewState, settle } from "@/lib/missions/settle";
 import { queuedCounts, sessionById } from "@/lib/missions/store";
+import { readyNotification } from "@/lib/missions/events";
 import { recordMissionEvent } from "@/lib/missions/watch.deps";
+import { recordNotifications } from "@/lib/notifications/record";
 import { repoToken } from "@/lib/slack/github";
 import type { Workspace } from "@/lib/runtime/types";
 import { asBrowser } from "@/lib/slack/research";
@@ -220,7 +222,7 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
   // A fix running: the Runner mid-turn (GitHub's follow-ups run in its own
   // session), or one the GitHub agent loop has queued for it and not yet
   // sent (github_followups, lib/github/followups.ts).
-  const working = await boxWorking(runner).catch(() => false);
+  const working = await sessionWorking(runner).catch(() => false);
   for (const row of rows.filter((r) => r.state === "open")) {
     const { count: queuedFixes } = await db()
       .from("github_followups")
@@ -314,6 +316,14 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
       payload: { runner: name, pr, reason: decision.reason },
       key: eventKey.decision(runner.id, pr, seq),
     });
+    // Ready is the user's to hear too, as a notification on the Mission under
+    // their preferences (browser, email, Slack): once a decision.
+    if (decision.kind === "ready") {
+      const mission = await sessionById(missionId).catch(() => null);
+      await recordNotifications([
+        readyNotification({ ownerId: runner.ownerId, missionId, missionTitle: mission?.title ?? "Mission", runnerName: name, runnerId: runner.id, pr, seq }),
+      ]).catch((error: unknown) => console.error(`Mission ${missionId}: couldn't record #${pr.number} ready`, error));
+    }
   }
   if (allPullRequestsDone(rows.map((r) => r.state))) await archiveDoneRunner(runner, missionId);
 }
@@ -323,7 +333,7 @@ export async function settleRunner(runner: Workspace, now = Date.now()): Promise
  *  look does it). */
 async function archiveDoneRunner(runner: Workspace, missionId: string): Promise<void> {
   if (!isLiveRunner(runner) || runner.status === "archiving") return;
-  if (await boxWorking(runner).catch(() => true)) return;
+  if (await sessionWorking(runner).catch(() => true)) return;
   if (((await queuedCounts([runner.id])).get(runner.id) ?? 0) > 0) return;
   if (runner.status === "creating" || runner.status === "provisioning") return;
   const archived = await actAsUser(runner.ownerId, async () => {

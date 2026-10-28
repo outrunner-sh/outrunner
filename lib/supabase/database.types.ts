@@ -368,7 +368,7 @@ type SessionActivityRow = {
 };
 
 // supabase/migrations/20261102163000_session_notifications.sql
-export type NotificationKindDb = "turn_done" | "needs_input" | "errored" | "pr_opened" | "pr_merged";
+export type NotificationKindDb = "turn_done" | "needs_input" | "errored" | "pr_opened" | "pr_merged" | "pr_ready";
 
 type SessionNotificationRow = {
   id: string;

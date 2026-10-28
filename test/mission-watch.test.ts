@@ -110,3 +110,12 @@ test("a session that isn't a Runner closes its watch quietly", async () => {
   assert.equal(await checkRunnerWatch(w.row()!, w.deps), "closed");
   assert.equal(w.recorded.length, 0);
 });
+
+test("a Runner waiting on a person reaches its Mission once a wait, and the watch stays for the turn's end", async () => {
+  const w = setup({}, { working: true, waiting: "question", waitingToolId: "tu9" } as never);
+  assert.equal(await checkRunnerWatch(w.row()!, w.deps), "needs_attention");
+  assert.equal(await checkRunnerWatch(w.row()!, w.deps), "needs_attention");
+  assert.equal(w.recorded.length, 1);
+  assert.match(String(w.recorded[0].payload.reason), /asked a question only a person can answer/);
+  assert.notEqual(w.row(), null);
+});

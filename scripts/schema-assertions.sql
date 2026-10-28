@@ -2284,7 +2284,7 @@ begin
   exception when check_violation then null;
   end;
   insert into notification_preferences (user_id) values ('11111111-1111-1111-1111-111111111111');
-  if (select browser and email = 'off' and not slack and cardinality(kinds) = 5
+  if (select browser and email = 'off' and not slack and cardinality(kinds) = 6
       from notification_preferences where user_id = '11111111-1111-1111-1111-111111111111') is not true then
     raise exception 'FAIL: notification preferences don''t default to the browser alone, for every kind';
   end if;
@@ -2349,4 +2349,34 @@ begin
   end if;
   update workspaces set status = 'ready', failed_at = null, title = null where id = ws;
   raise notice 'ok: failed_at marks when a session failed, and only that';
+end $$;
+
+-- 56. Missions (20261102200000_missions.sql, 20261102210000_mission_events.sql):
+-- a Runner's parent is a Mission of its owner's, and a Mission's Runner's
+-- pull request ready is a kind of notification.
+do $$
+declare
+  owner uuid := '11111111-1111-1111-1111-111111111111';
+  plain uuid;
+  mission uuid;
+  runner uuid;
+begin
+  select id into plain from workspaces where owner_id = owner limit 1;
+  insert into workspaces (owner_id, project_id, branch, base_branch, provider, status, kind)
+    select owner, project_id, 'mission-assert', base_branch, provider, 'ready', 'mission' from workspaces where id = plain
+    returning id into mission;
+  begin
+    insert into workspaces (owner_id, project_id, branch, base_branch, provider, parent_mission_id)
+      select owner, project_id, 'runner-of-plain', base_branch, provider, plain from workspaces where id = plain;
+    raise exception 'FAIL: a session that isn''t a Mission took a Runner';
+  exception when check_violation then null;
+  end;
+  insert into workspaces (owner_id, project_id, branch, base_branch, provider, parent_mission_id)
+    select owner, project_id, 'runner-assert', base_branch, provider, mission from workspaces where id = plain
+    returning id into runner;
+  insert into session_notifications (user_id, workspace_id, kind, event_key, title, body)
+    values (owner, mission, 'pr_ready', 'assert', 'A Mission', '#1 ready to review');
+  delete from session_notifications where workspace_id = mission;
+  delete from workspaces where id in (runner, mission);
+  raise notice 'ok: a Runner''s parent is a Mission, and a pull request ready is told on it';
 end $$;

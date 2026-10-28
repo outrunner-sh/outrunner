@@ -11,7 +11,7 @@
 
 import type { TurnState } from "@/lib/session/turn-state";
 
-export const NOTIFICATION_KINDS = ["turn_done", "needs_input", "errored", "pr_opened", "pr_merged"] as const;
+export const NOTIFICATION_KINDS = ["turn_done", "needs_input", "errored", "pr_opened", "pr_merged", "pr_ready"] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 export function isNotificationKind(value: unknown): value is NotificationKind {
@@ -25,7 +25,25 @@ export const KIND_LABEL: Record<NotificationKind, string> = {
   errored: "A session errors",
   pr_opened: "A pull request opens",
   pr_merged: "A pull request merges",
+  pr_ready: "A Mission's pull request is ready to review",
 };
+
+/**
+ * Whether news is a Mission's to hear rather than the user's (docs/missions.md).
+ * A Runner's own news (its turns, its questions, its pull requests, its
+ * failures) reaches its Mission, which handles it and tells the user what
+ * needs them. A Mission's turns end on its Runners' news all day: those
+ * aren't told either. What's left for the user is a Mission that needs them
+ * (needs_input, errored) and its Runners' pull requests ready (pr_ready).
+ */
+export function missionsQuiet(
+  kind: NotificationKind,
+  session: { kind?: "session" | "mission" | null; parentMissionId?: string | null },
+): boolean {
+  if (session.parentMissionId) return true;
+  if (session.kind === "mission") return kind === "turn_done" || kind === "pr_opened" || kind === "pr_merged";
+  return false;
+}
 
 /** A notification before it's recorded: whose, about which session, and what
  *  to say. `title` is the session's; `body` the news. */

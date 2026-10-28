@@ -7,7 +7,7 @@
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { getEnvironment } from "@/lib/db/environments";
 import { environmentLevel, projectLevel } from "@/lib/db/org-access";
-import { boxSummary, boxWorking, writeBoxFile } from "@/lib/missions/box";
+import { boxSummary, sessionWorking, writeBoxFile } from "@/lib/missions/box";
 import { NOTES_FILE } from "@/lib/missions/rules";
 import { runnerPullRequests } from "@/lib/missions/pulls";
 import { startRunner } from "@/lib/missions/spawn";
@@ -54,7 +54,7 @@ export function missionToolDeps(): MissionToolDeps {
     },
     session: sessionById,
     runners: runnersOf,
-    working: boxWorking,
+    working: sessionWorking,
     latestResponse: async (session) => (await boxSummary(session))?.lastAssistantMessage ?? (await lastRecordedResponse(session.id)),
     pullRequests: runnerPullRequests,
     startRunner,
