@@ -1,6 +1,6 @@
 /**
  * A team org's allowance on Outrunner's models
- * (20261031170000_org_model_allowance.sql): one OpenRouter key of the org's,
+ * (20261031175000_org_model_allowance.sql): one OpenRouter key of the org's,
  * capped at its plan's allowance, which its members' cloud sessions run
  * Outrunner's models on. As a user's own key is at theirs
  * (lib/db/credentials.ts outrunnerModelKey), with the same rules

@@ -391,7 +391,7 @@ type UserCredentialsRow = {
 // An org's keys for model providers (Settings → Org → Keys). Service-role-only;
 // see supabase/migrations/20261030115000_org_provider_keys.sql.
 // A team org's key and allowance on Outrunner's models; see
-// supabase/migrations/20261031170000_org_model_allowance.sql.
+// supabase/migrations/20261031175000_org_model_allowance.sql.
 type OrgModelAllowanceRow = {
   org_id: string;
   key_ciphertext: string | null;
