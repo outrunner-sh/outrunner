@@ -35,9 +35,6 @@ export class OutrunnerModelsUnavailableError extends Error {
   }
 }
 
-/** The user's key can't run anything, so it isn't handed out: handed out, it
- *  would only fail inside the session with OpenRouter's raw error. The message
- *  is for the user. */
 /** OpenRouter refused a change to a key, with its HTTP status. */
 export class OpenRouterKeyError extends Error {
   readonly status: number;
@@ -49,6 +46,9 @@ export class OpenRouterKeyError extends Error {
   }
 }
 
+/** The user's key can't run anything, so it isn't handed out: handed out, it
+ *  would only fail inside the session with OpenRouter's raw error. The message
+ *  is for the user. */
 export class ModelKeyRefusedError extends Error {
   constructor(message: string) {
     super(message);
@@ -219,7 +219,9 @@ export async function createUserKey(name: string, limitUsd: number): Promise<Cre
 /**
  * Disable a user's key, so it can spend nothing more. Used for a key that lost
  * a race to be stored, or one whose stored copy can no longer be decrypted —
- * either is still live on OpenRouter with its own allowance until this runs.
+ * either is still live on OpenRouter with its own allowance until this runs —
+ * and for the Slack agent's old keys of its own, retired by the reconciler
+ * (lib/db/slack-agent.ts). An OpenRouterKeyError carries OpenRouter's status.
  */
 export async function disableUserKey(hash: string): Promise<void> {
   const management = managementKey();
