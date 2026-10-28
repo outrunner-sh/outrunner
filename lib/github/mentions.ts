@@ -324,7 +324,9 @@ export function startPrompt(mention: Mention, appSlug?: string): string {
 
 function replyHint(mention: Pick<Mention, "target" | "number">): string {
   const command = mention.target === "pull" ? `gh pr comment ${mention.number}` : `gh issue comment ${mention.number}`;
-  return `When you're done, or if you need something from them, say so in a comment there (\`${command}\`), short.`;
+  // What the session posts may be as its owner, not the App's bot: a
+  // mention in it would be read as theirs, and start the loop again.
+  return `When you're done, or if you need something from them, say so in a comment there (\`${command}\`), short, and never write "@outrunner" in it.`;
 }
 
 /** A session's title, from what it was started on. */
