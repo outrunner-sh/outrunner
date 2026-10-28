@@ -1996,3 +1996,75 @@ begin
   delete from github_pr_loops where project_id = p;
   raise notice 'ok: GitHub follow-ups go once per burst, and CI stops at its limit';
 end $$;
+
+-- 50. Automations on a schedule: their schedules are saved with them, in one
+-- step, and changing one makes the editor the runner as changing triggers
+-- does (unchanged, their next times worked out again, it changes no one); a
+-- run is once per key, a schedule's time as a commit's; and only a pull
+-- request's run has a pull request.
+do $$
+declare
+  p projects%rowtype;
+  a uuid;
+  n int;
+begin
+  select * into p from projects where full_name = 'immadsahin/runtime' and owner_id = '11111111-1111-1111-1111-111111111111';
+  insert into organization_members (org_id, user_id, role)
+  values (p.org_id, '22222222-2222-2222-2222-222222222222', 'admin') on conflict do nothing;
+  a := create_automation(p.org_id, '11111111-1111-1111-1111-111111111111', 'Nightly', null, 'Look.', '{schedule}', true,
+    array[p.id], '{"schedules": [
+      {"kind": "weekly", "timezone": "Europe/Berlin", "spec": {"days": [1], "time": "09:00"}, "next_run_at": "2026-11-02T08:00:00Z"},
+      {"kind": "cron", "timezone": "UTC", "spec": {"expression": "0 9 * * *"}, "next_run_at": null}]}');
+  if (select count(*) from automation_schedules where automation_id = a) <> 2 then
+    raise exception 'FAIL: an automation''s schedules weren''t saved with it';
+  end if;
+  perform update_automation(p.org_id, a, '22222222-2222-2222-2222-222222222222', null, null, null, true, null,
+    '{"schedules": [
+      {"kind": "weekly", "timezone": "Europe/Berlin", "spec": {"time": "09:00", "days": [1]}, "next_run_at": "2026-11-09T08:00:00Z"},
+      {"kind": "cron", "timezone": "UTC", "spec": {"expression": "0 9 * * *"}, "next_run_at": "2026-11-03T09:00:00Z"}]}');
+  if (select runs_as from automations where id = a) <> '11111111-1111-1111-1111-111111111111' then
+    raise exception 'FAIL: schedules saved unchanged changed who the automation runs as';
+  end if;
+  if (select next_run_at from automation_schedules where automation_id = a and position = 1) is distinct from '2026-11-03T09:00:00Z' then
+    raise exception 'FAIL: a schedule''s next time wasn''t worked out again';
+  end if;
+  perform update_automation(p.org_id, a, '22222222-2222-2222-2222-222222222222', null, null, null, null, null,
+    '{"schedules": [{"kind": "weekly", "timezone": "Europe/Berlin", "spec": {"days": [2], "time": "09:00"}, "next_run_at": null}]}');
+  if (select runs_as from automations where id = a) <> '22222222-2222-2222-2222-222222222222' then
+    raise exception 'FAIL: changing a schedule didn''t make the editor the runner';
+  end if;
+  perform update_automation(p.org_id, a, '11111111-1111-1111-1111-111111111111', 'Renamed', null, null, null, null, '{}');
+  if (select count(*) from automation_schedules where automation_id = a) <> 1 then
+    raise exception 'FAIL: a change without schedules touched them';
+  end if;
+
+  insert into automation_runs (automation_id, project_id, trigger, dedupe_key, scheduled_for)
+  values (a, p.id, 'schedule', 'schedule:2026-11-02T08:00:00.000Z', '2026-11-02T08:00:00Z');
+  insert into automation_runs (automation_id, project_id, trigger, dedupe_key, scheduled_for)
+  values (a, p.id, 'schedule', 'schedule:2026-11-02T08:00:00.000Z', '2026-11-02T08:00:00Z')
+  on conflict (automation_id, project_id, dedupe_key) do nothing;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: a schedule''s time ran twice'; end if;
+  begin
+    insert into automation_runs (automation_id, project_id, trigger, dedupe_key, pr_number)
+    values (a, p.id, 'pull_request.opened', 'pr:1:none', 1);
+    raise exception 'FAIL: a pull request''s run without its commit was kept';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into automation_runs (automation_id, project_id, trigger, dedupe_key) values (a, p.id, 'push', 'x');
+    raise exception 'FAIL: a run with an unknown trigger was kept';
+  exception when check_violation then null;
+  end;
+  begin
+    update automations set triggers = '{push}' where id = a;
+    raise exception 'FAIL: an unknown trigger was kept';
+  exception when check_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'automation_schedules', 'select') then
+    raise exception 'FAIL: members can read automations'' schedules directly';
+  end if;
+  delete from automations where id = a;
+  delete from organization_members where org_id = p.org_id and user_id = '22222222-2222-2222-2222-222222222222';
+  raise notice 'ok: automations'' schedules save with them, and each time runs once';
+end $$;
