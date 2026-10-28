@@ -495,6 +495,16 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     ]);
   }
 
+  /** Write a file at `relPath` in a worktree (its folder made as needed):
+   *  for a Mission's notes, kept on its box as they're saved
+   *  (lib/missions/store.ts). The path is the caller's, never a user's. */
+  async writeWorkspaceFile(sandboxId: string, worktreePath: string, relPath: string, bytes: Buffer): Promise<void> {
+    const box = await this.backend.get(sandboxId);
+    const path = `${worktreePath}/${relPath}`;
+    await box.io.exec(`mkdir -p ${shellQuote(path.slice(0, path.lastIndexOf("/")))}`);
+    await box.io.upload(bytes, path);
+  }
+
   /** The file at `path` on the box (absolute), for the chat to show as an
    *  image: its bytes, or why not. Its type is the caller's to check. */
   async readBoxImage(sandboxId: string, path: string): Promise<Buffer | "missing" | "too-large"> {

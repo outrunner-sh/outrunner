@@ -7,7 +7,8 @@
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { getEnvironment } from "@/lib/db/environments";
 import { environmentLevel, projectLevel } from "@/lib/db/org-access";
-import { boxSummary, boxWorking } from "@/lib/missions/box";
+import { boxSummary, boxWorking, writeBoxFile } from "@/lib/missions/box";
+import { NOTES_FILE } from "@/lib/missions/rules";
 import { runnerPullRequests } from "@/lib/missions/pulls";
 import { startRunner } from "@/lib/missions/spawn";
 import {
@@ -60,6 +61,16 @@ export function missionToolDeps(): MissionToolDeps {
     queued: queuedCounts,
     archive: (runner) => archiveAsOwner(runner.ownerId, runner.id, runner.status),
     readNotes,
-    writeNotes,
+    // Saved, then laid on the Mission's box too, so the file it reads is what
+    // it saved; a box that's down gets them at its next setup.
+    writeNotes: async (missionId, body) => {
+      await writeNotes(missionId, body);
+      const mission = await sessionById(missionId);
+      if (mission) {
+        await writeBoxFile(mission, NOTES_FILE, body).catch((error: unknown) =>
+          console.warn(`Mission ${missionId}: notes saved, but not written to its box`, error),
+        );
+      }
+    },
   };
 }

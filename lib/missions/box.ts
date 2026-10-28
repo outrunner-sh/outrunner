@@ -61,3 +61,19 @@ export async function boxWorking(workspace: Workspace): Promise<boolean> {
   const activity = await reached.agent.activity(box).catch(() => null);
   return activity?.turnInProgress ?? false;
 }
+
+/** Write a file into the session's worktree, if its box is up; false when
+ *  it isn't (its next setup lays it out instead). */
+export async function writeBoxFile(workspace: Workspace, relPath: string, content: string): Promise<boolean> {
+  if ((workspace.status !== "ready" && workspace.status !== "idle") || !workspace.worktreePath) return false;
+  const resolution = resolveProvider(workspace);
+  if (!resolution.ok || !isComputerProvider(resolution.provider)) return false;
+  const { data } = await createSupabaseAdminClient()
+    .from("runtime_computers")
+    .select("workspace_id, status, daytona_sandbox_id")
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  if (!data?.daytona_sandbox_id || data.status !== "ready") return false;
+  await resolution.provider.writeWorkspaceFile(data.daytona_sandbox_id, workspace.worktreePath, relPath, Buffer.from(content));
+  return true;
+}
