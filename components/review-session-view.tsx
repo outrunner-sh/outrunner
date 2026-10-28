@@ -70,9 +70,6 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
         if (body.mode !== "live") return;
         source = new EventSource(`${base}/stream${cursor.current ? `?lastEventId=${cursor.current}` : ""}`);
         source.onmessage = (message) => {
-          // Reset on what's read, not on opening: a stream that opens and
-          // closes straight away keeps backing off.
-          attempt.current = 0;
           let parsed;
           try {
             parsed = AgentEvent.safeParse(JSON.parse(message.data));
@@ -81,7 +78,13 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
           }
           if (!parsed.success) return;
           const event = parsed.data;
-          if (message.lastEventId && message.lastEventId !== "0") cursor.current = message.lastEventId;
+          // Healthy once it moves on: not on opening, nor on the state event
+          // every fresh connect sends, so a stream that drops straight after
+          // keeps backing off.
+          if (message.lastEventId && message.lastEventId !== "0") {
+            cursor.current = message.lastEventId;
+            attempt.current = 0;
+          }
           setEvents((prev) => appendEvent(prev, event, message.lastEventId, seen.current));
         };
         // Reconnected here, not by EventSource: from the kept cursor, after a
