@@ -65,12 +65,15 @@ export function isInterruption(event: AgentEvent): boolean {
   return event.t === "message" && event.role === "user" && messageText(event).startsWith(INTERRUPTED);
 }
 
-/** How Claude Code records a slash command it runs itself (/compact, /model):
- *  user messages of the command and of what it printed, never answered. */
+/** How Claude Code records a slash command (/compact, /model, or a custom
+ *  command or skill like /review): the command's own record and what it
+ *  printed, as user messages. Some are answered; for turn state see
+ *  isLocalCommandOutput. */
 const LOCAL_COMMAND = /^<(command-name|command-message|local-command-stdout|local-command-stderr|local-command-caveat)>/;
 
-/** Whether an event is Claude Code's record of a slash command it ran itself:
- *  no turn for Claude to answer. */
+/** Whether an event is Claude Code's record of a slash command, or of what
+ *  one printed: a command row in the timeline, not a prompt. Not whether a
+ *  turn is over (isLocalCommandOutput says that). */
 export function isLocalCommand(event: AgentEvent): boolean {
   return event.t === "message" && event.role === "user" && LOCAL_COMMAND.test(messageText(event));
 }
