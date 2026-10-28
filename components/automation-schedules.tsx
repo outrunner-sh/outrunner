@@ -6,8 +6,10 @@ import { useSyncExternalStore } from "react";
 import { Input } from "@/components/ui/input";
 import {
   describeSchedule,
+  MIN_INTERVAL_MINUTES,
   nextRun,
   parseSchedule,
+  runTooOften,
   type Schedule,
   type ScheduleKind,
   SCHEDULES_MAX,
@@ -248,6 +250,11 @@ export function AutomationSchedules({
           <span />
         )}
       </div>
+      {now !== null && valid.length > 1 && runTooOften(valid, now) ? (
+        <p className="text-xs text-warning">
+          Together, these run more often than every {MIN_INTERVAL_MINUTES} minutes: space them out to save.
+        </p>
+      ) : null}
       {valid.length > 0 ? (
         <div className="space-y-1">
           <div className="text-xs text-muted-foreground">Next runs</div>

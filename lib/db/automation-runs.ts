@@ -216,7 +216,10 @@ export type DueSchedule = {
  * The schedules due by `now`, earliest first, of enabled automations that
  * run on a schedule. A due one of an automation that's off (or no longer
  * scheduled) has its next time cleared on the way: it's worked out again
- * when it's switched on, and it never crowds out the ones to run.
+ * when it's switched on, and it never crowds out the ones to run. So does
+ * one that can't be read as a schedule any more (a zone this runtime no
+ * longer knows, say), which nothing would ever move on; saving it again
+ * gives it a next time.
  */
 export async function dueSchedules(now: Date, limit = 100): Promise<DueSchedule[]> {
   const supabase = createSupabaseAdminClient();
@@ -234,7 +237,7 @@ export async function dueSchedules(now: Date, limit = 100): Promise<DueSchedule[
     .in("id", [...new Set(data.map((s) => s.automation_id))]);
   if (automationsError) throw automationsError;
   const live = new Set((automations ?? []).filter((a) => a.enabled && a.triggers.includes("schedule")).map((a) => a.id));
-  const idle = data.filter((s) => !live.has(s.automation_id)).map((s) => s.id);
+  const idle = data.filter((s) => !live.has(s.automation_id) || !scheduleFromRow(s)).map((s) => s.id);
   if (idle.length > 0) {
     const { error: clearError } = await supabase.from("automation_schedules").update({ next_run_at: null }).in("id", idle);
     if (clearError) throw clearError;
@@ -259,8 +262,14 @@ export async function advanceSchedule(scheduleId: string, dueAt: string, next: s
   return (data ?? []).length > 0;
 }
 
-/** The enabled automations among `automationIds`, as candidates on each of
- *  their repositories. */
+/**
+ * The enabled automations among `automationIds`, as candidates on each of
+ * their repositories where the org's GitHub App is live (claimed, not
+ * suspended): a schedule's or a webhook's run works on GitHub as the App, so
+ * on a repository it can't reach it would only make a box that fails, every
+ * time. A pull request's event comes through a live installation already
+ * (installationProjects).
+ */
 export async function automationCandidates(automationIds: readonly string[]): Promise<RunCandidate[]> {
   if (automationIds.length === 0) return [];
   const supabase = createSupabaseAdminClient();
@@ -276,7 +285,16 @@ export async function automationCandidates(automationIds: readonly string[]): Pr
     const orgId = orgOf.get(link.automation_id);
     if (orgId) byOrg.set(orgId, [...(byOrg.get(orgId) ?? []), link]);
   }
-  return (await Promise.all([...byOrg].map(([orgId, l]) => candidatesOf(supabase, orgId, l)))).flat();
+  const candidates = (await Promise.all([...byOrg].map(([orgId, l]) => candidatesOf(supabase, orgId, l)))).flat();
+  if (candidates.length === 0) return [];
+  const { data: installations, error } = await supabase
+    .from("github_installations")
+    .select("org_id, account_login")
+    .in("org_id", [...byOrg.keys()])
+    .is("suspended_at", null);
+  if (error) throw error;
+  const live = new Set((installations ?? []).map((i) => `${i.org_id}:${i.account_login.toLowerCase()}`));
+  return candidates.filter((c) => live.has(`${c.orgId}:${c.repoFullName.split("/")[0].toLowerCase()}`));
 }
 
 /** How long a run may stay "started" before it's taken to have been cut off:

@@ -151,6 +151,19 @@ test("the schedule trigger needs a schedule, and triggers without it keep none",
   assert.equal(parseAutomationInput({ schedules: Array(11).fill(weekly) }, { full: false, now: NOW }).ok, false);
 });
 
+test("an automation's schedules together keep to the floor each keeps alone", () => {
+  const every = (expression: string) => ({ kind: "cron", timezone: "UTC", expression });
+  // Each every 15 minutes, staggered by five: together every five.
+  const staggered = parseAutomationInput(
+    { schedules: [every("*/15 * * * *"), every("5-59/15 * * * *"), every("10-59/15 * * * *")] },
+    { full: false, now: NOW },
+  );
+  assert.equal(staggered.ok, false);
+  if (!staggered.ok) assert.match(staggered.error, /Together, its schedules run at most every 15 minutes/);
+  // Two at the same times are one run.
+  assert.ok(parseAutomationInput({ schedules: [every("*/15 * * * *"), every("0,15,30,45 * * * *")] }, { full: false, now: NOW }).ok);
+});
+
 const candidate: RunCandidate = {
   automationId: "a1",
   name: "Nightly",
@@ -347,4 +360,17 @@ test("a scheduled run that failed starts again as itself, told the same time", a
   assert.deepEqual(await rerunRun("o1", "r1", deps), { ok: false, status: 409, error: "It's running again already." });
   const lost = await rerunRun("o1", "r1", { ...deps, rerunTarget: async () => ({ ...target, event: null }) });
   assert.equal(lost.ok, false);
+  // Without the App live on its account, it isn't reopened: its session
+  // couldn't get a token.
+  reopened.length = 0;
+  const suspended = await rerunRun("o1", "r1", {
+    ...deps,
+    rerunTarget: async () => ({ ...target, installationId: null, installationSuspended: true }),
+  });
+  assert.equal(suspended.ok, false);
+  if (!suspended.ok) assert.match(suspended.error, /suspended/);
+  const uninstalled = await rerunRun("o1", "r1", { ...deps, rerunTarget: async () => ({ ...target, installationId: null }) });
+  assert.equal(uninstalled.ok, false);
+  if (!uninstalled.ok) assert.match(uninstalled.error, /isn't installed/);
+  assert.deepEqual(reopened, []);
 });

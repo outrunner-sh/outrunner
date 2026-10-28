@@ -3,7 +3,13 @@
  * Automations routes run on what the page sends.
  */
 
-import { parseSchedule, type Schedule, SCHEDULES_MAX } from "@/lib/automations/schedule";
+import {
+  MIN_INTERVAL_MINUTES,
+  parseSchedule,
+  runTooOften,
+  type Schedule,
+  SCHEDULES_MAX,
+} from "@/lib/automations/schedule";
 import { isUuid } from "@/lib/ids";
 
 export const AUTOMATION_TRIGGERS = ["pull_request.opened", "pull_request.synchronize", "schedule"] as const;
@@ -134,6 +140,9 @@ export function parseAutomationInput(
       const parsed = parseSchedule(item, now);
       if (!parsed.ok) return parsed;
       schedules.push(parsed.value);
+    }
+    if (runTooOften(schedules, now)) {
+      return { ok: false, error: `Together, its schedules run at most every ${MIN_INTERVAL_MINUTES} minutes.` };
     }
     value.schedules = schedules;
   }

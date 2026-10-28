@@ -318,18 +318,20 @@ export async function rerunRun(orgId: string, runId: string, deps: RerunDeps, ap
   if (!target.covered) {
     return { ok: false, status: 409, error: "The automation doesn't run on this repository any more." };
   }
+  // Every run works on GitHub as the App: without it live on the
+  // repository's account, its session couldn't get a token.
+  if (target.installationSuspended) {
+    return { ok: false, status: 409, error: SUSPENDED };
+  }
+  if (target.installationId === null) {
+    return { ok: false, status: 409, error: "The GitHub App isn't installed on this repository's account." };
+  }
   // Anything but a pull request's head starts over as it first would have:
   // the same run, told the same event (a schedule's time, say).
   if (target.prNumber === null) {
     if (!target.event) return { ok: false, status: 409, error: "This run can't be started again." };
     if (!(await deps.reopenRun(target.runId))) return { ok: false, status: 409, error: "It's running again already." };
     return { ok: true, run: { runId: target.runId, candidate: target.candidate, event: target.event, appSlug }, staleSession: target.workspaceId };
-  }
-  if (target.installationSuspended) {
-    return { ok: false, status: 409, error: SUSPENDED };
-  }
-  if (target.installationId === null) {
-    return { ok: false, status: 409, error: "The GitHub App isn't installed on this repository's account." };
   }
   const pr = await deps.pullRequest(target.installationId, target.repoFullName, target.prNumber);
   if (pr.state !== "open") return { ok: false, status: 409, error: "The pull request is closed." };
