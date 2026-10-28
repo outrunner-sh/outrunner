@@ -479,8 +479,8 @@ func TestRetriesKeepToTheTimeout(t *testing.T) {
 	if *calls != 1 || time.Since(started) > 500*time.Millisecond {
 		t.Fatalf("%d calls in %s", *calls, time.Since(started))
 	}
-	if !strings.Contains(out.String(), "--after 480") {
-		t.Fatalf("printed %q", out.String())
+	if !strings.Contains(out.String(), "--after 480") || !strings.Contains(errs.String(), "502") {
+		t.Fatalf("printed %q, said %q", out.String(), errs.String())
 	}
 }
 

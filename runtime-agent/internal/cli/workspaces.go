@@ -523,7 +523,9 @@ func waitAndPrint(ctx context.Context, api API, id, after string, timeout time.D
 		raw, err := waitCall(ctx, api, id, query, hold, deadline, &w)
 		if errors.Is(err, errWaitDeadline) {
 			// The deadline came while a failed call waited to be tried
-			// again: a timeout, as one the API answered.
+			// again: a timeout, as one the API answered, but said, so it
+			// isn't taken for a turn that only took too long.
+			fmt.Fprintln(stderr, "outrunner:", err)
 			w = Workspace{ID: id, TimedOut: true}
 			if asJSON {
 				printJSON(stdout, json.RawMessage(fmt.Sprintf(`{"id":%q,"timed_out":true}`, id)))
@@ -579,7 +581,8 @@ func waitCall(ctx context.Context, api API, id string, query url.Values, hold ti
 		pause := waitRetries[attempt]
 		if !deadline.IsZero() {
 			if time.Until(deadline) <= pause {
-				return nil, errWaitDeadline
+				// With why it was being tried again, for the caller to say.
+				return nil, fmt.Errorf("%w: %v", errWaitDeadline, err)
 			}
 			hold = time.Until(deadline) - pause
 			if hold > maxWait {
