@@ -5,15 +5,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"runtime-agent/internal/codex"
+	"runtime-agent/internal/conversation"
 	"runtime-agent/internal/transcript"
 )
 
@@ -34,6 +37,10 @@ func conversationPath(root, workspaceID string) string {
 // codexTailInterval is how often a running session's rollout is read. Records
 // held for their usage wait at most two of these.
 const codexTailInterval = 250 * time.Millisecond
+
+// codexStopSettle bounds how long a stop's record waits for Codex to finish
+// writing the turn it stopped (codexTail.settle).
+const codexStopSettle = time.Second
 
 // rolloutFindSlack allows for a rollout's time and the launch time being read
 // off clocks of different precision.
@@ -303,6 +310,10 @@ type codexTail struct {
 	s           *Service
 	workspaceID string
 
+	// mu serializes reads and writes: the tail's own, and a stop's record
+	// (interrupted), which must land after what Codex wrote before it.
+	mu sync.Mutex
+
 	rollout string // the rollout read, "" before one is found
 	offset  int64
 	partial []byte
@@ -358,10 +369,12 @@ func (t *codexTail) run(ctx context.Context) {
 		t.read()
 		select {
 		case <-ctx.Done():
-			t.read()
+			t.mu.Lock()
+			t.readLocked()
 			if t.tr != nil {
 				t.write(t.tr.Flush()) // nothing more is waited for
 			}
+			t.mu.Unlock()
 			return
 		case <-ticker.C:
 		}
@@ -370,6 +383,12 @@ func (t *codexTail) run(ctx context.Context) {
 
 // read translates what the rollout gained since the last read.
 func (t *codexTail) read() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.readLocked()
+}
+
+func (t *codexTail) readLocked() {
 	rollout := t.s.codexRollout(t.workspaceID)
 	if rollout == "" {
 		return
@@ -415,6 +434,73 @@ func (t *codexTail) read() {
 		t.heldBefore = false
 	} else {
 		t.heldBefore = true
+	}
+}
+
+// interrupted records a stopped turn in the log, after what Codex wrote of it.
+// Codex writes nothing when a turn is stopped, so its log ended on the turn's
+// last thinking or tool call: read as a turn still going, the page showed the
+// session working again on a reload, in another tab, or after a stop from
+// Slack, and the box counted it mid-turn. The record is Claude's own for a
+// stop, which both already read as the end of a turn. Its uuid is no Codex
+// record's (codex.RecordOffset), so a restarted tail neither skips to it nor
+// writes it again.
+func (t *codexTail) interrupted(now time.Time) {
+	t.settle()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.readLocked()
+	if t.tr == nil {
+		return // no rollout yet: no turn to have stopped
+	}
+	t.write(t.tr.Flush()) // the stopped turn's records, held for usage that won't come
+	line, err := json.Marshal(map[string]any{
+		"type":       "user",
+		"uuid":       fmt.Sprintf("interrupted-%d", now.UnixNano()),
+		"parentUuid": nil,
+		"timestamp":  now.UTC().Format(time.RFC3339Nano),
+		"message": map[string]any{
+			"role":    "user",
+			"content": []map[string]string{{"type": "text", "text": conversation.Interrupted + "]"}},
+		},
+	})
+	if err != nil {
+		return
+	}
+	t.pending = append(t.pending, append(line, '\n')...)
+	t.write(nil)
+}
+
+// settle waits, up to codexStopSettle, for the rollout to stop growing for a
+// tail interval: Codex may still write some of the stopped turn once its
+// screen says it stopped (a stopped tool call's output, say), which, read
+// after the stop's record, would leave the log ending on the turn again.
+func (t *codexTail) settle() {
+	size := func() int64 {
+		if info, err := os.Stat(t.s.codexRollout(t.workspaceID)); err == nil {
+			return info.Size()
+		}
+		return -1
+	}
+	deadline := time.Now().Add(codexStopSettle)
+	for last := size(); time.Now().Before(deadline); {
+		time.Sleep(codexTailInterval)
+		now := size()
+		if now == last {
+			return
+		}
+		last = now
+	}
+}
+
+// codexInterrupted records a stopped turn in a running Codex session's log
+// (codexTail.interrupted); a session with no tail running has none to record.
+func (s *Service) codexInterrupted(workspaceID string) {
+	s.codexTailsMu.Lock()
+	tail := s.codexTails[workspaceID]
+	s.codexTailsMu.Unlock()
+	if tail != nil {
+		tail.interrupted(time.Now())
 	}
 }
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
+import { claudeIsWorking, userPrompts } from "@/lib/runtime/conversation-events";
 import { parseConversation } from "@/lib/runtime/replay/conversation";
 
 const fixture = JSON.parse(
@@ -57,4 +58,26 @@ test("parseConversation drops empty/absent protocol fields like the Go omitempty
   const [event] = parseConversation(jsonl);
   // `text` and `id` are empty -> dropped; `extra` is not a protocol key -> dropped.
   assert.deepEqual((event as { content: unknown[] }).content, [{ type: "text" }]);
+});
+
+test("a prompt Claude took in mid-turn is the user's next prompt, and a task notice is not", () => {
+  // As Claude Code 2.1.310 wrote it: the prompt typed while a Bash call ran is
+  // queued, then joins the turn after that call's result, as an attachment only.
+  const jsonl = [
+    '{"type":"user","uuid":"p1","parentUuid":null,"timestamp":"t1","message":{"role":"user","content":"FIRST run a sleep"}}',
+    '{"type":"assistant","uuid":"a1","parentUuid":"p1","timestamp":"t2","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"sleep 12"}}]}}',
+    '{"type":"queue-operation","operation":"enqueue","timestamp":"t3","content":"SECOND typed mid-turn"}',
+    '{"type":"queue-operation","operation":"remove","timestamp":"t4","content":"SECOND typed mid-turn","reason":"absorbed_mid_turn"}',
+    '{"type":"user","uuid":"r1","parentUuid":"a1","timestamp":"t4","message":{"role":"user","content":[{"tool_use_id":"tu1","type":"tool_result","content":"slept","is_error":false}]}}',
+    '{"type":"attachment","uuid":"q1","parentUuid":"r1","timestamp":"t4","attachment":{"type":"queued_command","prompt":"SECOND typed mid-turn","commandMode":"prompt","origin":{"kind":"human"},"humanTurn":true}}',
+    '{"type":"attachment","uuid":"q2","parentUuid":"q1","timestamp":"t4","attachment":{"type":"queued_command","prompt":"<task-notification>done</task-notification>","commandMode":"task-notification"}}',
+  ].join("\n");
+  const events = parseConversation(jsonl);
+  assert.deepEqual(userPrompts(events), ["FIRST run a sleep", "SECOND typed mid-turn"]);
+  // Claude has the prompt to answer: at work, until its reply.
+  assert.equal(claudeIsWorking(events), true);
+  const replied = parseConversation(
+    `${jsonl}\n{"type":"assistant","uuid":"a2","parentUuid":"q2","timestamp":"t5","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Updated."}]}}`,
+  );
+  assert.equal(claudeIsWorking(replied), false);
 });

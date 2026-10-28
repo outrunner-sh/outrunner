@@ -34,6 +34,14 @@ type rawRecord struct {
 		Content    json.RawMessage             `json:"content"`
 		Usage      *map[string]json.RawMessage `json:"usage"`
 	} `json:"message"`
+	// A prompt typed while Claude is mid-turn: queued, then taken into the
+	// running turn at its next tool call, where Claude records it as this
+	// attachment and never as a user message.
+	Attachment *struct {
+		Type        string          `json:"type"`
+		Prompt      json.RawMessage `json:"prompt"`
+		CommandMode string          `json:"commandMode"`
+	} `json:"attachment"`
 }
 
 // rawBlock is a content block as the log writes it. Claude names a tool
@@ -89,8 +97,9 @@ func New(pathFn PathFunc, fromOffset int64) *Watcher {
 func (w *Watcher) SetInterval(d time.Duration) { w.interval = d }
 
 // Run polls the file until ctx is cancelled, emitting one Event per new
-// user/assistant record on out. App-internal record types (queue-operation,
-// attachment, ai-title, last-prompt, mode, pr-link, system, …) are ignored.
+// user/assistant record on out, and per prompt Claude took in mid-turn (an
+// attachment, decodeQueuedPrompt). Other app-internal record types
+// (queue-operation, ai-title, last-prompt, mode, pr-link, system, …) are ignored.
 func (w *Watcher) Run(ctx context.Context, out chan<- Event) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
@@ -174,6 +183,9 @@ func decode(line []byte) (Event, bool) {
 	if err := json.Unmarshal(line, &rec); err != nil {
 		return Event{}, false // tolerate unparseable lines
 	}
+	if rec.Type == "attachment" {
+		return decodeQueuedPrompt(rec)
+	}
 	if rec.Type != "user" && rec.Type != "assistant" {
 		return Event{}, false // ignore app-internal record types
 	}
@@ -201,6 +213,33 @@ func decode(line []byte) (Event, bool) {
 		Content:    content,
 	}
 	return Event{Message: msg}, true
+}
+
+// decodeQueuedPrompt turns a prompt Claude took in mid-turn into the user
+// message it stands for. Claude writes such a prompt (one typed while it works,
+// and the user's sends Outrunner hands it then) only as a queued_command
+// attachment, after the tool result it joined; without this the prompt never
+// reached the timeline, and the page, waiting for it, stayed "working" with
+// every later message held in its queue. A queued background-task notice is
+// the same record with another commandMode: Claude's, not the user's, so it
+// stays out. The TS replay parser mirrors this.
+func decodeQueuedPrompt(rec rawRecord) (Event, bool) {
+	a := rec.Attachment
+	if a == nil || a.Type != "queued_command" || (a.CommandMode != "" && a.CommandMode != "prompt") {
+		return Event{}, false
+	}
+	content, ok := parseContent(a.Prompt)
+	if !ok {
+		return Event{}, false
+	}
+	return Event{Message: &protocol.ConversationMessage{
+		T:          "message",
+		UUID:       rec.UUID,
+		ParentUUID: rec.ParentID,
+		Role:       "user",
+		Timestamp:  rec.Timestamp,
+		Content:    content,
+	}}, true
 }
 
 // parseContent decodes a Claude message's `content`, which is polymorphic: a
@@ -255,4 +294,24 @@ func UsageFrom(raw map[string]json.RawMessage) *protocol.TokenUsage {
 	_ = json.Unmarshal(raw["cache_read_input_tokens"], &u.CacheReadInputTokens)
 	_ = json.Unmarshal(raw["service_tier"], &u.ServiceTier)
 	return u
+}
+
+// Interrupted begins the text Claude Code records, as a user message, when the
+// user stops a turn ("[Request interrupted by user]", or "… for tool use]").
+// It is no prompt: the turn it follows is over.
+const Interrupted = "[Request interrupted by user"
+
+// IsInterruption reports whether a message is the record of a stopped turn.
+// lib/runtime/conversation-events.ts (isInterruption) reads it the same way.
+func IsInterruption(msg *protocol.ConversationMessage) bool {
+	if msg == nil || msg.Role != "user" {
+		return false
+	}
+	var text strings.Builder
+	for _, block := range msg.Content {
+		if block.Type == "text" {
+			text.WriteString(block.Text)
+		}
+	}
+	return strings.HasPrefix(strings.TrimSpace(text.String()), Interrupted)
 }

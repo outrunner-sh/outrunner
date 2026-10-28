@@ -165,3 +165,77 @@ func TestChangesAndDiffOfALocalWorktree(t *testing.T) {
 		t.Errorf("Changes without a base = %+v, %v; want %+v", files, err, uncommitted)
 	}
 }
+
+func TestBigFilesInAChangeSetAreLeftUnreadOrCut(t *testing.T) {
+	isolateGit(t)
+	repo := newCheckout(t)
+	s := NewService(t.TempDir())
+	worktree, err := s.Create(context.Background(), CreateInput{
+		WorkspaceID: "ws-big", Branch: "runtime/big", BaseBranch: "main", RepoPath: repo,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	lines := func(bytes int) []byte { // over `bytes` long
+		const line = "a line of generated text, much like any other\n"
+		return []byte(strings.Repeat(line, bytes/len(line)+1))
+	}
+	write := func(name string, data []byte) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(worktree, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An untracked file over the counting limit isn't read for its lines (git
+	// would read it whole on every look at the panel); a small one is.
+	write("small.txt", []byte("1\n2\n3\n"))
+	write("server.log", lines(maxCountedFileBytes+1))
+	files, err := s.Changes(context.Background(), "ws-big")
+	want := []protocol.ChangedFile{
+		{Path: "server.log", Status: "untracked"},
+		{Path: "small.txt", Status: "untracked", Additions: 3},
+	}
+	if err != nil || !reflect.DeepEqual(files, want) {
+		t.Fatalf("Changes = %+v, %v; want %+v", files, err, want)
+	}
+
+	// A file too big to diff says so, rather than git holding it in memory
+	// several times over; one under that limit comes back cut to the cap.
+	write("dump.sql", lines(maxDiffedFileBytes+1))
+	write("generated.ts", lines(3*maxDiffBytes))
+	run(t, worktree, "add", "dump.sql", "generated.ts")
+	if diff, err := s.FileDiff(context.Background(), "ws-big", "dump.sql"); err != nil || !strings.Contains(diff, "too large") {
+		t.Errorf("FileDiff(dump.sql) = %.80q, %v; want it called too large", diff, err)
+	}
+	diff, err := s.FileDiff(context.Background(), "ws-big", "generated.ts")
+	if err != nil || !strings.Contains(diff, "+a line of generated text") || !strings.HasSuffix(diff, "truncated by Runtime …") {
+		t.Errorf("FileDiff(generated.ts) = %.80q…, %v; want its diff, cut", diff, err)
+	}
+	if len(diff) > maxDiffBytes+100 {
+		t.Errorf("FileDiff(generated.ts) is %d bytes, over the cap", len(diff))
+	}
+
+	// A deleted file is measured as it was.
+	run(t, worktree, "commit", "--quiet", "-m", "big")
+	run(t, worktree, "rm", "--quiet", "dump.sql")
+	run(t, worktree, "commit", "--quiet", "-m", "gone")
+	if size := s.diffedSize(context.Background(), worktree, "HEAD~1", "dump.sql"); size <= maxDiffedFileBytes {
+		t.Errorf("a deleted file's size = %d, want its size at the base", size)
+	}
+}
+
+func TestGitCappedStopsReadingAtItsLimit(t *testing.T) {
+	isolateGit(t)
+	repo := newCheckout(t)
+	s := NewService(t.TempDir())
+	out, err := s.gitCapped(context.Background(), repo, 10, "log", "--format=%H")
+	if err != nil || len(out) != 11 {
+		t.Errorf("gitCapped = %q, %v; want the limit and one byte more", out, err)
+	}
+	if out, err := s.gitCapped(context.Background(), repo, 1<<20, "rev-parse", "HEAD"); err != nil || len(strings.TrimSpace(out)) != 40 {
+		t.Errorf("gitCapped under its limit = %q, %v", out, err)
+	}
+	if _, err := s.gitCapped(context.Background(), repo, 10, "no-such-command"); err == nil {
+		t.Error("a failing git command didn't fail")
+	}
+}

@@ -202,6 +202,20 @@ func TestSummaryTurnIsOpenUntilClaudeAnswersWithText(t *testing.T) {
 		t.Error("a text answer didn't end the turn")
 	}
 
+	// A stop ends the turn: Claude records it as a user message, which waits
+	// on nothing.
+	message("user", protocol.ContentBlock{Type: "text", Text: "go on"})
+	message("user", protocol.ContentBlock{Type: "text", Text: "[Request interrupted by user]"})
+	if open() {
+		t.Error("a stopped turn is still open")
+	}
+	message("assistant", protocol.ContentBlock{Type: "tool_use", Name: "Bash"})
+	message("user", protocol.ContentBlock{Type: "tool_result"})
+	message("user", protocol.ContentBlock{Type: "text", Text: "[Request interrupted by user for tool use]"})
+	if open() {
+		t.Error("a turn stopped during a tool call is still open")
+	}
+
 	// A session that exited mid-turn is not working.
 	message("user", protocol.ContentBlock{Type: "text", Text: "again"})
 	sum.stop()

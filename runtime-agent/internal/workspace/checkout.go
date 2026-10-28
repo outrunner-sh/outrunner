@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,4 +128,39 @@ func (s *Service) gitRaw(ctx context.Context, dir string, args ...string) (strin
 		return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(stderr.String()+stdout.String()))
 	}
 	return stdout.String(), nil
+}
+
+// gitCapped is gitRaw for output that is shown only up to limit bytes (a
+// diff): what's past limit+1 is never read, and git is stopped there, so a
+// huge file's diff doesn't pass through memory whole on its way to being cut.
+func (s *Service) gitCapped(ctx context.Context, dir string, limit int, args ...string) (string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(append([]string(nil), s.env...), "GIT_TERMINAL_PROMPT=0")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("git %s: %v", args[0], err)
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(limit)+1))
+	cut := len(out) > limit
+	if cut {
+		cancel() // the rest is never shown
+	}
+	err = cmd.Wait()
+	if cut {
+		return string(out), nil
+	}
+	if err == nil {
+		err = readErr
+	}
+	if err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(stderr.String()))
+	}
+	return string(out), nil
 }

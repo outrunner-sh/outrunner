@@ -75,28 +75,13 @@ function decodeLine(line: string): AgentEvent | null {
     return null; // tolerate unparseable lines
   }
   if (!isObject(rec)) return null;
+  if (rec.type === "attachment") return decodeQueuedPrompt(rec);
   if (rec.type !== "user" && rec.type !== "assistant") return null; // whitelist
   const message = rec.message;
   if (!isObject(message)) return null;
 
-  // message.content is polymorphic: a block array for assistant turns and
-  // tool-result user turns, but a plain string for a typed user prompt ("hi").
-  // Mirror the Go parser (parseContent): wrap a non-empty string in a single
-  // text block; keep the array path; drop anything else.
-  const rawContent = message.content;
-  let content: ContentBlock[];
-  if (Array.isArray(rawContent) && rawContent.every(isObject)) {
-    // Drop block types the timeline can't model (redacted_thinking, image, a
-    // newer Claude type) so replay matches the live schema, which does the same —
-    // otherwise an archived turn can leave an unrenderable block stuck.
-    content = rawContent.map(cleanBlock).filter((b) => KNOWN_BLOCK_TYPES.has(b.type));
-  } else if (typeof rawContent === "string") {
-    const text = rawContent.trim();
-    if (text === "") return null; // empty prompt: nothing to render
-    content = [{ type: "text", text }];
-  } else {
-    return null;
-  }
+  const content = contentOf(message.content);
+  if (!content) return null;
 
   // Mirror the Go `omitempty`: include `model` only when present (assistant
   // turns), so replay stays byte-equivalent to the live decoder and the shared
@@ -114,4 +99,49 @@ function decodeLine(line: string): AgentEvent | null {
     timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
     content,
   };
+}
+
+/**
+ * A prompt Claude took in mid-turn, as the user message it stands for. Claude
+ * records such a prompt only as a queued_command attachment, never as a user
+ * message; a queued background-task notice (another commandMode) is Claude's,
+ * not the user's, and stays out. Mirrors the Go decodeQueuedPrompt.
+ */
+function decodeQueuedPrompt(rec: Record<string, unknown>): AgentEvent | null {
+  const attachment = rec.attachment;
+  if (!isObject(attachment) || attachment.type !== "queued_command") return null;
+  const mode = attachment.commandMode;
+  // As Go reads it: a mode absent, null or empty is a prompt's.
+  if (mode !== undefined && mode !== null && mode !== "" && mode !== "prompt") return null;
+  const content = contentOf(attachment.prompt);
+  if (!content) return null;
+  return {
+    t: "message",
+    uuid: typeof rec.uuid === "string" ? rec.uuid : "",
+    parentUuid: typeof rec.parentUuid === "string" ? rec.parentUuid : null,
+    role: "user",
+    timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
+    content,
+  };
+}
+
+/**
+ * A message's content as timeline blocks, or null when there is nothing to
+ * render. It is polymorphic: a block array for assistant turns and tool-result
+ * user turns, but a plain string for a typed user prompt ("hi"). Mirrors the Go
+ * parser (parseContent): wrap a non-empty string in a single text block; keep
+ * the array path; drop anything else.
+ */
+function contentOf(rawContent: unknown): ContentBlock[] | null {
+  if (Array.isArray(rawContent) && rawContent.every(isObject)) {
+    // Drop block types the timeline can't model (redacted_thinking, image, a
+    // newer Claude type) so replay matches the live schema, which does the same —
+    // otherwise an archived turn can leave an unrenderable block stuck.
+    return rawContent.map(cleanBlock).filter((b) => KNOWN_BLOCK_TYPES.has(b.type));
+  }
+  if (typeof rawContent === "string") {
+    const text = rawContent.trim();
+    return text === "" ? null : [{ type: "text", text }]; // empty prompt: nothing to render
+  }
+  return null;
 }

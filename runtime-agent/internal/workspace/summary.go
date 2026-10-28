@@ -35,7 +35,8 @@ type Summary struct {
 	hasAssistantMessage  bool
 	// turnOpen: Claude is mid-turn, by the last message: a user one (a prompt
 	// or a tool's result) waits on the model, and an assistant one asking for
-	// a tool waits on the tool. An assistant one with only text ends the turn.
+	// a tool waits on the tool. An assistant one with only text ends the turn,
+	// and so does the record of a stop.
 	turnOpen bool
 
 	cancel context.CancelFunc // stops the collector goroutine when non-nil
@@ -122,7 +123,11 @@ func (s *Summary) applyEvent(ev conversation.Event) {
 				}
 			}
 		case "user":
-			s.turnOpen = true
+			// Claude records a stop as a user message, which waits on nothing:
+			// counted as a prompt, a stopped session looked mid-turn, so the
+			// control plane left its box running for the 2h a stuck turn gets
+			// rather than pausing it once idle.
+			s.turnOpen = !conversation.IsInterruption(ev.Message)
 		}
 	}
 	if ev.Usage != nil {

@@ -66,7 +66,9 @@ Grounded in the real schema (Spike 3, Claude Code 2.0.24):
 
 **Parser rules (defensive — the JSONL format is internal, undocumented, `version`-tagged):**
 - Whitelist rendered record types (`user`, `assistant`); **ignore** app-internal types
-  (`queue-operation`, `attachment`, `ai-title`, `last-prompt`, `mode`, `pr-link`, `system`, …).
+  (`queue-operation`, `attachment`, `ai-title`, `last-prompt`, `mode`, `pr-link`, `system`, …),
+  except a `queued_command` attachment of `commandMode` `prompt`: a prompt Claude took in
+  mid-turn, recorded only so, which is rendered as the user message it stands for.
 - Tolerate unknown record types and unknown object keys without failing.
 - Tail incrementally by byte offset; buffer a partial trailing line until its newline arrives.
 - Handle session rotation (`claude --continue` may open a new `<uuid>.jsonl`).
