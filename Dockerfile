@@ -55,4 +55,8 @@ ENV RUNTIME_AGENT_BINARY_PATH=bin/runtime-agent-linux-amd64
 COPY --from=build /app /app
 COPY --from=agent /out/runtime-agent-linux-amd64 /app/bin/runtime-agent-linux-amd64
 EXPOSE 8080
+# The commit it's built from, for /api/health (cloudflare/worker.ts checks the
+# running container is the latest deploy's). Last, so it costs no cache.
+ARG OUTRUNNER_BUILD=""
+ENV OUTRUNNER_BUILD=$OUTRUNNER_BUILD
 CMD ["pnpm", "start"]

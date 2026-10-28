@@ -49,6 +49,15 @@ jobs:
         # cloudflare/, so nothing else looks at this file.
         run: pnpm check
 
+      - name: Stamp the image with the commit
+        working-directory: cloudflare
+        # /api/health reports it, so the Worker (and the check below) can tell
+        # the running container is this deploy's. A build arg, like the
+        # NEXT_PUBLIC_* ones.
+        run: |
+          sed -i 's/"image_vars": {/"image_vars": {\n        "OUTRUNNER_BUILD": "'"$GITHUB_SHA"'",/' wrangler.jsonc
+          grep -q "\"OUTRUNNER_BUILD\": \"$GITHUB_SHA\"" wrangler.jsonc
+
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
@@ -56,7 +65,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare
           wranglerVersion: "4"
-          command: deploy
+          command: deploy --var OUTRUNNER_BUILD:${{ github.sha }}
 
       - name: Verify the deployment is actually usable
         # A deploy that returns 200 can still be broken: without
@@ -72,3 +81,20 @@ jobs:
           : "${body:?/api/health never responded}"
           echo "$body"
           python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else print('health OK:',c)" <<< "$body"
+
+      - name: Wait until users get this deploy
+        # A deploy can succeed while the container keeps the image before it
+        # (cloudflare/worker.ts): only /api/health reporting this commit says
+        # users have it. The Worker replaces a container on an older build
+        # within a minute or so of a request; this asks for up to 10 minutes.
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 40); do
+            build=$(curl -fsS --max-time 20 https://app.outrunner.sh/api/health | python3 -c "import json,sys; print(json.load(sys.stdin).get('build') or '')" || true)
+            if [ "$build" = "$GITHUB_SHA" ]; then echo "Serving $GITHUB_SHA"; exit 0; fi
+            echo "Still serving ${build:-a build from before builds were reported}"
+            sleep 15
+          done
+          echo "::error::app.outrunner.sh still isn't serving $GITHUB_SHA after 10 minutes"
+          exit 1
