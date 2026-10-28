@@ -69,7 +69,7 @@ function world(extra: Workspace[] = []) {
               url: "https://github.com/acme/app/pull/7",
               title: "x",
               status: { state: "open", draft: false, mergeableState: "clean", headSha: "abc", checks: { passing: 3, failing: 0, pending: 0 } },
-              verdict: { label: "Ready to merge", tone: "ready", canMerge: true },
+              verdict: { label: "Ready to merge", tone: "ready", canMerge: true, why: "" },
             },
           ]
         : [],
