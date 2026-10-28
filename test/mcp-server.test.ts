@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { McpServer, PROTOCOL_VERSIONS, rpcResponse, toolResult, type McpTool } from "@/lib/mcp/server";
+import { MAX_BATCH, McpServer, PROTOCOL_VERSIONS, rpcResponse, toolCallCount, toolResult, type McpTool } from "@/lib/mcp/server";
 
 type Context = { user: string };
 
@@ -91,4 +91,14 @@ test("a batch is answered in one, notifications left out", async () => {
 
 test("a tool's failure is a result the model reads, flagged as an error", () => {
   assert.deepEqual(toolResult("No such session.", true), { content: [{ type: "text", text: "No such session." }], isError: true });
+});
+
+test("a batch is capped, and its tool calls counted for the rate limit", async () => {
+  const ping = (id: number) => ({ jsonrpc: "2.0", id, method: "ping" });
+  const big = (await server().handle(Array.from({ length: MAX_BATCH + 1 }, (_, i) => ping(i)), { user: "u1" })) as { error: { code: number } };
+  assert.equal(big.error.code, -32600);
+  const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "echo", arguments: { text: "x" } } };
+  assert.equal(toolCallCount([call, call, ping(3)]), 2);
+  assert.equal(toolCallCount(call), 1);
+  assert.equal(toolCallCount(null), 0);
 });

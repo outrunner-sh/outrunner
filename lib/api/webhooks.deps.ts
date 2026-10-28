@@ -15,7 +15,8 @@
  * deliveries that failed.
  */
 
-import { lookup } from "node:dns/promises";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
 
 import { after } from "next/server";
 
@@ -24,11 +25,13 @@ import type { ApiCaller } from "@/lib/api/auth";
 import { apiError } from "@/lib/api/errors";
 import { appRequest, routeParams, type ApiContext } from "@/lib/api/handler";
 import { workspaceJson } from "@/lib/api/serialize";
+import { publicOnlyLookup } from "@/lib/api/webhook-lookup";
 import {
   eventBody,
   isPrivateAddress,
   nextAttemptAt,
   signature,
+  EMPTY_LOG,
   watchStep,
   webhookUrl,
   type WebhookEvent,
@@ -64,6 +67,8 @@ const AWAIT_MS = 2 * 60 * 60_000;
 const WATCH_MS = 10 * 60_000;
 const WATCH_EVERY_MS = 10_000;
 const DELIVERY_TIMEOUT_MS = 10_000;
+/** Watches looked at, and deliveries tried, at once in a tick. */
+const TICK_WIDTH = 8;
 
 function base(): string {
   return optionalEnv("RUNTIME_BASE_URL") ?? "http://localhost";
@@ -89,6 +94,7 @@ export function webhookHooks(context: ApiContext): CreateHooks {
         userId: context.caller.userId,
         who,
         webhookUrl: input.webhookUrl,
+        forMs: AWAIT_MS,
       });
       workspaceId = workspace.id;
       if (settled) await setupEnded(settled);
@@ -111,24 +117,27 @@ async function setupEnded(outcome: { workspaceId: string; status: "ready" | "fai
   if (!watch) return;
   const workspace = await getWorkspace(outcome.workspaceId).catch(() => null);
   if (outcome.status === "failed") {
-    // Watched from its making, with watch_until unset: told here, once.
-    await endWatch(watch.workspaceId);
+    // Told once: by whichever ends the watch, this or a look that saw the
+    // session failed first.
+    if (!(await endWatch(watch.workspaceId))) return;
     await emit(watch, "error", workspace, { message: outcome.errorMessage ?? "The session's setup failed." });
     return;
   }
   await emit(watch, "workspace.ready", workspace, {});
-  // Its first prompt went with the ready: its turn's end is awaited.
-  await turnAwaited(watch.workspaceId);
+  // Its first prompt went with the ready: its turn's end is awaited, from
+  // a log that had nothing before it.
+  await turnAwaited(watch.workspaceId, EMPTY_LOG);
 }
 
-/** After a message the API sent: its turn's end is awaited. */
-export async function messageSent(workspace: Workspace): Promise<void> {
+/** After a message the API sent: its turn's end is awaited, from the
+ *  send's fence (where the log stood before it), when there is one. */
+export async function messageSent(workspace: Workspace, fence: number | null): Promise<void> {
   if (!(await getWatch(workspace.id))) return;
-  await turnAwaited(workspace.id);
+  await turnAwaited(workspace.id, fence === null ? null : String(fence));
 }
 
-async function turnAwaited(workspaceId: string): Promise<void> {
-  await awaitTurn(workspaceId, AWAIT_MS);
+async function turnAwaited(workspaceId: string, baseline: string | null): Promise<void> {
+  await awaitTurn(workspaceId, AWAIT_MS, baseline);
   // Watched as the session's owner, on their kept sign-in, after the answer.
   const release = holdActingUser();
   later(async () => {
@@ -151,15 +160,17 @@ function later(work: () => Promise<void>): void {
   }
 }
 
+/** Look now, then every WATCH_EVERY_MS, for `forMs` or until there's
+ *  nothing left to watch for. */
 async function watchFor(workspaceId: string, forMs: number): Promise<void> {
   const until = Date.now() + forMs;
-  while (Date.now() < until) {
-    await new Promise((resolve) => setTimeout(resolve, WATCH_EVERY_MS));
+  for (;;) {
     const going = await lookOnce(workspaceId).catch((error: unknown) => {
       console.error(`Webhooks: couldn't look at ${workspaceId}`, error);
       return true;
     });
-    if (!going) return;
+    if (!going || Date.now() + WATCH_EVERY_MS > until) return;
+    await new Promise((resolve) => setTimeout(resolve, WATCH_EVERY_MS));
   }
 }
 
@@ -251,31 +262,15 @@ async function deliver(delivery: Delivery, secret?: string): Promise<void> {
   let status: number | null = null;
   let failure: string | null = null;
   try {
-    const url = new URL(delivery.url);
-    // Checked as it goes: a name can point at a private address later.
-    const host = url.hostname.replace(/^\[|\]$/g, "");
-    const addresses = await lookup(host, { all: true });
-    if (addresses.length === 0 || addresses.some((a) => isPrivateAddress(a.address))) {
-      throw new Error("The URL's host points at a private address.");
-    }
     const signingSecret = secret ?? (await webhookSettings(delivery)).secret;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "user-agent": "Outrunner-Webhooks/1",
-        "outrunner-event": delivery.event,
-        "outrunner-delivery": delivery.id,
-        "outrunner-signature": signature(signingSecret, body, Math.floor(Date.now() / 1000)),
-      },
-      body,
-      // A redirect could send it anywhere: it counts as an answer, not followed.
-      redirect: "manual",
-      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+    status = await post(new URL(delivery.url), body, {
+      "content-type": "application/json",
+      "user-agent": "Outrunner-Webhooks/1",
+      "outrunner-event": delivery.event,
+      "outrunner-delivery": delivery.id,
+      "outrunner-signature": signature(signingSecret, body, Math.floor(Date.now() / 1000)),
     });
-    status = response.status;
-    await response.body?.cancel().catch(() => undefined);
-    if (!response.ok) failure = `Answered ${response.status}.`;
+    if (status < 200 || status >= 300) failure = `Answered ${status}.`;
   } catch (error) {
     failure = error instanceof Error ? error.message : "Couldn't reach it.";
   }
@@ -286,6 +281,41 @@ async function deliver(delivery: Delivery, secret?: string): Promise<void> {
     delivered: failure === null,
     nextAttemptAt: failure === null ? null : nextAttemptAt(attempts),
   });
+}
+
+/** POST `body` to `url` (https), and the status it was answered with.
+ *  Redirects count as answers, never followed. */
+function post(url: URL, body: string, headers: Record<string, string>): Promise<number> {
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  // An address written in the URL is never looked up: checked here.
+  if (isIP(host) && isPrivateAddress(host)) return Promise.reject(new Error("The URL points at a private address."));
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(
+      url,
+      {
+        method: "POST",
+        headers: { ...headers, "content-length": Buffer.byteLength(body) },
+        lookup: publicOnlyLookup,
+        timeout: DELIVERY_TIMEOUT_MS,
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error(`No answer in ${DELIVERY_TIMEOUT_MS / 1000}s.`)));
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+/** Run `work` on each of `items`, `width` at a time. */
+async function eachAtMost<T>(items: readonly T[], width: number, work: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) await work(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane));
 }
 
 /**
@@ -305,15 +335,17 @@ export async function runWebhookTick(): Promise<{ watched: number; delivered: nu
       console.error("Webhooks tick: couldn't prune old records", error),
     );
   }
+  // A few at a time: one slow box or receiver doesn't hold up the rest, and
+  // a tick ends well inside the two minutes to the next.
   const watches = await dueWatches();
-  for (const watch of watches) {
+  await eachAtMost(watches, TICK_WIDTH, async (watch) => {
     await actAsUserKept(watch.userId, () => lookOnce(watch.workspaceId)).catch((error: unknown) =>
       console.error(`Webhooks: couldn't look at ${watch.workspaceId}`, error),
     );
-  }
+  });
   const deliveries = await dueDeliveries();
-  for (const delivery of deliveries) {
+  await eachAtMost(deliveries, TICK_WIDTH, async (delivery) => {
     await deliver(delivery).catch((error: unknown) => console.error(`Webhooks: delivery ${delivery.id} failed`, error));
-  }
+  });
   return { watched: watches.length, delivered: deliveries.length };
 }

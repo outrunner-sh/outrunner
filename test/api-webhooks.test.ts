@@ -49,12 +49,25 @@ test("only https URLs on the public internet are told", () => {
 });
 
 test("private, loopback and link-local addresses are told apart from public ones", () => {
-  for (const address of ["10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:10.0.0.1"]) {
+  for (const address of [
+    "10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0",
+    "::1", "::", "fd00::1", "fe80::1", "ff02::1",
+    // IPv4 in IPv6, however it's written: the URL parser writes the hex form.
+    "::ffff:10.0.0.1", "::ffff:7f00:1", "::ffff:a9fe:a9fe", "::7f00:1", "::127.0.0.1",
+    // NAT64 and 6to4 reach IPv4 through a gateway.
+    "64:ff9b::808:808", "2002:c000:204::1",
+  ]) {
     assert.equal(isPrivateAddress(address), true, address);
   }
-  for (const address of ["8.8.8.8", "172.32.0.1", "2606:4700::1111"]) {
+  for (const address of ["8.8.8.8", "172.32.0.1", "2606:4700::1111", "::ffff:808:808"]) {
     assert.equal(isPrivateAddress(address), false, address);
   }
+});
+
+test("an IPv4-mapped loopback in a URL is refused, as the parser writes it", () => {
+  assert.equal(new URL("https://[::ffff:127.0.0.1]/").hostname, "[::ffff:7f00:1]");
+  assert.equal(webhookUrl("https://[::ffff:127.0.0.1]/"), undefined);
+  assert.equal(webhookUrl("https://[::ffff:169.254.169.254]/latest"), undefined);
 });
 
 test("a failed delivery is tried again with longer waits, then given up", () => {
@@ -99,6 +112,31 @@ test("a question is told once, and again only for a new one", () => {
   );
 });
 
+test("two looks at an empty log aren't the log moving on", () => {
+  const first = watchStep(awaiting, { state: "idle", last_event_id: null, pending_input: null });
+  assert.deepEqual(first.events, []);
+  assert.deepEqual(watchStep(first.next, { state: "idle", last_event_id: null, pending_input: null }).events, []);
+});
+
+test("from the send's fence, a turn already over at the first look is told", () => {
+  // The fence (where the log stood before the message) is the baseline: a
+  // short reply done before anyone looked still moved the log on.
+  const fenced: WatchState = { ...awaiting, baselineEvent: "200" };
+  assert.deepEqual(watchStep(fenced, { state: "idle", last_event_id: "380", pending_input: null }).events, ["turn.completed"]);
+  // A session's first prompt: from an empty log.
+  const first: WatchState = { ...awaiting, baselineEvent: "0" };
+  assert.deepEqual(watchStep(first, { state: "idle", last_event_id: null, pending_input: null }).events, []);
+  assert.deepEqual(watchStep(first, { state: "idle", last_event_id: "90", pending_input: null }).events, ["turn.completed"]);
+});
+
 test("a box that didn't answer changes nothing", () => {
   assert.deepEqual(watchStep(awaiting, null), { events: [], next: awaiting });
+});
+
+test("a delivery's connection never resolves to a private address", async () => {
+  const { publicOnlyLookup } = await import("@/lib/api/webhook-lookup");
+  const error = await new Promise<Error | null>((resolve) =>
+    publicOnlyLookup("localhost", { family: 0 }, (err) => resolve(err)),
+  );
+  assert.match(error?.message ?? "", /private address/);
 });

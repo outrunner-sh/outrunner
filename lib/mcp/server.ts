@@ -11,6 +11,16 @@
  * to an existing server by registering them.
  */
 
+/** The most messages one POST may batch: each tool call reads a box, and
+ *  the 2025-06-18 protocol dropped batches anyway. */
+export const MAX_BATCH = 20;
+
+/** How many tool calls a POST's body holds, for its route's rate limit. */
+export function toolCallCount(body: unknown): number {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.filter((m) => m && typeof m === "object" && (m as { method?: unknown }).method === "tools/call").length;
+}
+
 /** The protocol versions this server speaks, newest first. */
 export const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 
@@ -84,6 +94,7 @@ export class McpServer<C> {
   async handle(body: unknown, context: C): Promise<JsonRpcResponse | JsonRpcResponse[] | null> {
     if (Array.isArray(body)) {
       if (body.length === 0) return failure(null, INVALID_REQUEST, "An empty batch.");
+      if (body.length > MAX_BATCH) return failure(null, INVALID_REQUEST, `A batch holds at most ${MAX_BATCH} messages.`);
       const answers = (await Promise.all(body.map((message) => this.one(message, context)))).filter(
         (a): a is JsonRpcResponse => a !== null,
       );

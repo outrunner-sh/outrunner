@@ -51,10 +51,39 @@ export function signatureMatches(
   return expected.length === given.length && timingSafeEqual(expected, given);
 }
 
+/** An IPv6 address's eight groups, or null for one that doesn't parse. An
+ *  IPv4 tail ("::ffff:1.2.3.4") is read as its two groups. */
+function ipv6Groups(address: string): number[] | null {
+  let text = address.toLowerCase().replace(/%.*$/, "");
+  const v4 = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number);
+    text = `${text.slice(0, v4.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
+  const groups = [...head, ...Array<string>(halves.length === 2 ? missing : 0).fill("0"), ...tail].map((g) =>
+    /^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN,
+  );
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g)) ? groups : null;
+}
+
+/** The IPv4 address in an IPv6 address's last 32 bits. */
+function embeddedV4(groups: number[]): string {
+  return [groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255].join(".");
+}
+
 /**
  * Whether an address is one the server must not be made to call: loopback,
  * private, link-local (a cloud's metadata service), and the like. A webhook
- * goes only to the public internet.
+ * goes only to the public internet. An IPv6 address that carries an IPv4
+ * one (mapped, compatible) is judged by it, in whatever form it's written:
+ * the URL parser writes ::ffff:127.0.0.1 as ::ffff:7f00:1. NAT64 and 6to4,
+ * which reach IPv4 addresses through a gateway, are refused outright.
  */
 export function isPrivateAddress(address: string): boolean {
   const kind = isIP(address);
@@ -73,10 +102,17 @@ export function isPrivateAddress(address: string): boolean {
     );
   }
   if (kind === 6) {
-    const lower = address.toLowerCase();
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-    if (mapped) return isPrivateAddress(mapped[1]);
-    return lower === "::" || lower === "::1" || /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower) || lower.startsWith("ff");
+    const g = ipv6Groups(address);
+    if (!g) return true;
+    const zeroTo = (n: number) => g.slice(0, n).every((x) => x === 0);
+    // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (compatible, deprecated).
+    if (zeroTo(5) && g[5] === 0xffff) return isPrivateAddress(embeddedV4(g));
+    if (zeroTo(6)) return g[6] === 0 && g[7] <= 1 ? true : isPrivateAddress(embeddedV4(g));
+    // NAT64 (64:ff9b::/96, and the local-use 64:ff9b:1::/48) and 6to4.
+    if (g[0] === 0x64 && g[1] === 0xff9b) return true;
+    if (g[0] === 0x2002) return true;
+    // Unique local (fc00::/7), link-local (fe80::/10), multicast (ff00::/8).
+    return (g[0] & 0xfe00) === 0xfc00 || (g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xff00) === 0xff00;
   }
   return true;
 }
@@ -131,8 +167,10 @@ export type TurnView = {
 /**
  * What a look at the session's turn means: the events to tell, and what to
  * remember. A turn has ended once it's idle after it was seen working, or
- * after the conversation moved on from where it was first seen (a turn too
- * quick to be caught working). A question is told once.
+ * after the conversation moved on from its baseline (a turn too quick to be
+ * caught working). The baseline is where the log stood before the prompt
+ * (the send's fence, or an empty log for a session's first); with none
+ * known, it's where the first look finds the log. A question is told once.
  */
 export function watchStep(watch: WatchState, turn: TurnView | null): { events: WebhookEvent[]; next: WatchState } {
   if (!turn) return { events: [], next: watch };
@@ -145,12 +183,18 @@ export function watchStep(watch: WatchState, turn: TurnView | null): { events: W
     return { events: ["needs_input"], next: { ...watch, askedToolUse: asked } };
   }
   if (!watch.awaiting) return { events: [], next: watch };
-  const movedOn = watch.baselineEvent !== null && turn.last_event_id !== watch.baselineEvent;
+  // An empty log reads as "0", on both sides, so two looks at nothing are
+  // never taken for the log moving on.
+  const at = turn.last_event_id ?? EMPTY_LOG;
+  const movedOn = watch.baselineEvent !== null && at !== watch.baselineEvent;
   if (watch.seenWorking || movedOn) {
     return { events: ["turn.completed"], next: { awaiting: false, seenWorking: false, baselineEvent: null, askedToolUse: null } };
   }
-  return { events: [], next: { ...watch, baselineEvent: watch.baselineEvent ?? turn.last_event_id ?? "" } };
+  return { events: [], next: { ...watch, baselineEvent: watch.baselineEvent ?? at } };
 }
+
+/** Where a log with no events stands, as a watch's baseline. */
+export const EMPTY_LOG = "0";
 
 /** An event as it's delivered. */
 export function eventBody(input: {

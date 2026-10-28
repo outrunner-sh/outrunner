@@ -106,7 +106,7 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
     name: "send_message",
     description:
       "Send a message to a session, waking it first if it was paused or archived. Then wait_for_workspace with the after_event " +
-      "this answers with, for its reply.",
+      "this answers with, for its reply. If after_event is null, poll get_workspace until turn.state is working before you wait.",
     inputSchema: {
       type: "object",
       properties: { ...WORKSPACE_ID, content: { type: "string", description: "The message." } },
@@ -150,12 +150,12 @@ export const API_TOOLS: McpTool<ApiContext>[] = [
   },
   {
     name: "list_workspaces",
-    description: "List sessions in the org, newest first, by status, source (app, slack, automation, api), user (or `me`) and repository.",
+    description: "List sessions in the org, newest first, by status, source (app, slack, automation, github, api), user (or `me`) and repository.",
     inputSchema: {
       type: "object",
       properties: {
         status: { type: "string" },
-        source: { type: "string", enum: ["app", "slack", "automation", "api"] },
+        source: { type: "string", enum: ["app", "slack", "automation", "github", "api"] },
         user_id: { type: "string" },
         project_id: { type: "string" },
         page: { type: "integer", minimum: 1 },

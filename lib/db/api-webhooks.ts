@@ -106,13 +106,15 @@ function toWatch(row: WatchRow): Watch {
 const WATCH_COLUMNS =
   "workspace_id, org_id, user_id, scope, scope_id, webhook_url, awaiting, seen_working, baseline_event, asked_tool_use, told_prs, watch_until";
 
-/** Watch a session made through the API. */
+/** Watch a session made through the API, from its setup on, for `forMs`:
+ *  its setup's end is told once, by whichever look ends the watch. */
 export async function createWatch(input: {
   workspaceId: string;
   orgId: string;
   userId: string;
   who: WebhookScope;
   webhookUrl: string | null;
+  forMs: number;
 }): Promise<void> {
   const { error } = await db().from("api_watches").insert({
     workspace_id: input.workspaceId,
@@ -121,6 +123,7 @@ export async function createWatch(input: {
     scope: input.who.scope,
     scope_id: input.who.scopeId,
     webhook_url: input.webhookUrl,
+    watch_until: new Date(Date.now() + input.forMs).toISOString(),
   });
   if (error) throw error;
 }
@@ -131,14 +134,15 @@ export async function getWatch(workspaceId: string): Promise<Watch | null> {
   return data ? toWatch(data) : null;
 }
 
-/** A turn's end is now awaited (a message was sent), for `forMs`. */
-export async function awaitTurn(workspaceId: string, forMs: number): Promise<void> {
+/** A turn's end is now awaited (a message was sent), for `forMs`, from
+ *  `baseline`: where the log stood before its prompt, when that's known. */
+export async function awaitTurn(workspaceId: string, forMs: number, baseline: string | null): Promise<void> {
   const { error } = await db()
     .from("api_watches")
     .update({
       awaiting: true,
       seen_working: false,
-      baseline_event: null,
+      baseline_event: baseline,
       asked_tool_use: null,
       watch_until: new Date(Date.now() + forMs).toISOString(),
     })

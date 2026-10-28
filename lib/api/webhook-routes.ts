@@ -45,7 +45,9 @@ export async function changeWebhooks(request: Request, who: WebhookScope, by: Ow
   }
   return savingSettings("webhooks", async () => {
     await setWebhookEndpoint(who, url, by.id);
-    await audit("webhook.changed", { url });
+    // Its origin only: a receiver's URL often carries a credential in its
+    // path or query, and the log outlives the setting.
+    await audit("webhook.changed", { url: url && new URL(url).origin });
     return NextResponse.json(await webhookView(who));
   });
 }

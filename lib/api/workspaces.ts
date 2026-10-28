@@ -261,7 +261,7 @@ async function wake(context: ApiContext, workspace: Workspace): Promise<Response
 export async function sendMessageApi(
   context: ApiContext,
   id: string,
-  onSent?: (workspace: Workspace) => Promise<void>,
+  onSent?: (workspace: Workspace, fence: number | null) => Promise<void>,
 ): Promise<Response> {
   const raw = await jsonBody(context.request);
   if (raw instanceof Response) return raw;
@@ -278,8 +278,8 @@ export async function sendMessageApi(
     routeParams({ id }),
   );
   if (!sent.ok) return errorFromRoute(sent, context.base);
-  await onSent?.(workspace);
   const fence = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content, sentAt);
+  await onSent?.(workspace, fence);
   return Response.json({ result: "sent", workspace_id: id, after_event: fence === null ? null : String(fence) }, { status: 202 });
 }
 
