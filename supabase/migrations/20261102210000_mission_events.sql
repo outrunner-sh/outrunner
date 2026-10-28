@@ -1,4 +1,4 @@
--- What fills a Mission's outbox (20261102170000_missions.sql): its Runners'
+-- What fills a Mission's outbox (20261102200000_missions.sql): its Runners'
 -- turns ending, and their pull requests settling, merging or closing
 -- (docs/missions.md).
 -- ---------------------------------------------------------------------------

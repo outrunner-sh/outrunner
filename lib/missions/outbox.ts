@@ -1,6 +1,6 @@
 /**
  * Delivering a Mission's events (mission_events) to it, exactly once
- * (20261102170000_missions.sql has the whole of how):
+ * (20261102200000_missions.sql has the whole of how):
  *
  * - a delivery is claimed under a lease (claim_mission_delivery), so racing
  *   ticks and watches send it once, and a claimer that dies is taken over;

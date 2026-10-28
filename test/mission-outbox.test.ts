@@ -7,7 +7,7 @@ import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 
 /**
  * The outbox as claim_mission_delivery and friends keep it
- * (20261102170000_missions.sql; test/missions-sql.test.ts runs the SQL
+ * (20261102200000_missions.sql; test/missions-sql.test.ts runs the SQL
  * itself), with a box that sends each key once as the runtime-agent does.
  */
 function world(status: WorkspaceStatus = "ready") {

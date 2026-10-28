@@ -169,7 +169,7 @@ type MissionEventRow = {
   delivery_id: string | null;
   delivered_at: string | null;
 };
-// supabase/migrations/20261102180000_mission_events.sql
+// supabase/migrations/20261102210000_mission_events.sql
 type TurnWatchRow = {
   workspace_id: string;
   purpose: "runner";
