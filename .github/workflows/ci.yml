@@ -54,10 +54,17 @@ jobs:
         # what CI builds with too.
         run: |
           node -e '
-            const text = require("fs").readFileSync("cloudflare/wrangler.jsonc", "utf8");
-            const vars = JSON.parse(text.replace(/^\s*\/\/.*$/gm, "")).containers[0].image_vars;
-            for (const [name, value] of Object.entries(vars)) {
-              if (name.startsWith("NEXT_PUBLIC_")) console.log(`${name}=${value}`);
+            // JSONC as wrangler reads it (comments anywhere, trailing commas).
+            const ts = require("typescript");
+            const file = "cloudflare/wrangler.jsonc";
+            const { config, error } = ts.parseConfigFileTextToJson(file, require("fs").readFileSync(file, "utf8"));
+            if (error) throw new Error(`${file}: ${ts.flattenDiagnosticMessageText(error.messageText, " ")}`);
+            const vars = config.containers?.[0]?.image_vars ?? {};
+            for (const name of ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"]) {
+              // As the Dockerfile refuses: next build passes without them,
+              // and ships a bundle that cannot reach Supabase.
+              if (!vars[name]) throw new Error(`${file} has no image_vars.${name}`);
+              console.log(`${name}=${vars[name]}`);
             }
           ' >> "$GITHUB_ENV"
       # next build's own cache: much of a repeat build is reused.
