@@ -6,6 +6,7 @@ import { runUsageSweep } from "@/lib/billing/usage-sweep.deps";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
+import { sweepFollowUps } from "@/lib/github/followups.deps";
 import { bearerMatches } from "@/lib/http/bearer";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
@@ -14,7 +15,6 @@ import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
 import { sweepOpenChecks } from "@/lib/automations/checks.deps";
 import { sweepStalledRuns } from "@/lib/db/automation-runs";
-import { sweepFollowUps } from "@/lib/github/followups.deps";
 import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
 
 /**
@@ -112,11 +112,11 @@ export async function POST(request: Request) {
       usage,
       allowancesRenewed,
       slackKeysRetired,
+      githubFollowUps,
       poolsSwept,
       removalsSettled,
       runsSwept,
       checksClosed,
-      githubFollowUps,
       setupsFailed,
       orphansDeleted: orphans?.deleted ?? null,
       orphansHeld: orphans?.held ?? null,
