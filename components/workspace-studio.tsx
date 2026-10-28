@@ -35,6 +35,7 @@ export function WorkspaceStudio({
   local,
   pullRequest,
   initialPrompt,
+  initialPromptKey,
   initialAttachmentIds,
 }: {
   workspace: Workspace;
@@ -47,6 +48,8 @@ export function WorkspaceStudio({
   pullRequest: WorkspacePullRequest | null;
   /** First prompt carried in from the new-session screen, sent once connected. */
   initialPrompt?: string;
+  /** The first prompt's idempotency key (lib/session/first-prompt.ts). */
+  initialPromptKey?: string;
   /** Attachment ids staged on the home composer, sent with the first prompt. */
   initialAttachmentIds?: string[];
 }) {
@@ -129,6 +132,7 @@ export function WorkspaceStudio({
             local={isLocal}
             untitled={!isLocal && !workspace.title}
             initialPrompt={initialPrompt}
+            initialPromptKey={initialPromptKey}
             initialAttachmentIds={initialAttachmentIds}
             onSender={setSender}
           />

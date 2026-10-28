@@ -7,12 +7,22 @@
  * as it opens, where storage allows, so the URL never carries it into a
  * reload; it sends whichever it finds, then forgets both. The kept copy is
  * marked as its send leaves, so a reload mid-send doesn't send it twice.
+ *
+ * Each carries its idempotency key (?promptKey=, and in the kept copy), made
+ * once with the prompt: every send of it, a reload's or Send it again's,
+ * names the same key, and the message route sends it to Claude once per
+ * session however often it is asked (lib/session/first-prompt-claim.ts).
  */
-export type FirstPrompt = { prompt: string; attachmentIds: string[] };
+export type FirstPrompt = { prompt: string; attachmentIds: string[]; key?: string };
 
 type PromptStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 const KEY_PREFIX = "outrunner:first-prompt:";
+
+/** A fresh first prompt, with the key its every send names. */
+export function newFirstPrompt(prompt: string, attachmentIds: string[]): FirstPrompt {
+  return { prompt, attachmentIds, key: crypto.randomUUID() };
+}
 
 /**
  * This tab's sessionStorage, or null where the browser refuses it: reading
@@ -72,6 +82,7 @@ export function firstPromptQuery(first: FirstPrompt): string {
   const prompt = first.prompt.trim();
   if (prompt) params.set("prompt", prompt);
   for (const id of first.attachmentIds) params.append("attachment", id);
+  if (params.size > 0 && first.key) params.set("promptKey", first.key);
   return params.size > 0 ? `?${params}` : "";
 }
 
@@ -81,7 +92,8 @@ export function firstPromptFromUrl(url: URL): FirstPrompt | null {
     prompt: url.searchParams.get("prompt") ?? "",
     attachmentIds: url.searchParams.getAll("attachment"),
   };
-  return hasFirstPrompt(first) ? first : null;
+  const key = url.searchParams.get("promptKey");
+  return hasFirstPrompt(first) ? { ...first, ...(key && { key }) } : null;
 }
 
 /** `url` without the first prompt, once it has gone: a reload must not send it again. */
@@ -89,6 +101,7 @@ export function withoutFirstPrompt(url: URL): string {
   const next = new URL(url);
   next.searchParams.delete("prompt");
   next.searchParams.delete("attachment");
+  next.searchParams.delete("promptKey");
   return `${next.pathname}${next.search}${next.hash}`;
 }
 
@@ -125,7 +138,10 @@ export function keepFirstPromptFromUrl(storage: PromptStorage | null, workspaceI
 export function rememberFirstPrompt(storage: PromptStorage | null, workspaceId: string, first: FirstPrompt): void {
   if (!storage || !hasFirstPrompt(first)) return;
   try {
-    storage.setItem(key(workspaceId), JSON.stringify({ prompt: first.prompt.trim(), attachmentIds: first.attachmentIds }));
+    storage.setItem(
+      key(workspaceId),
+      JSON.stringify({ prompt: first.prompt.trim(), attachmentIds: first.attachmentIds, ...(first.key && { key: first.key }) }),
+    );
   } catch {
     // The URL still carries it.
   }
@@ -147,12 +163,13 @@ function readKept(storage: PromptStorage | null, workspaceId: string): { first: 
   }
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { prompt?: unknown; attachmentIds?: unknown; going?: unknown };
+    const parsed = JSON.parse(raw) as { prompt?: unknown; attachmentIds?: unknown; key?: unknown; going?: unknown };
     const first: FirstPrompt = {
       prompt: typeof parsed.prompt === "string" ? parsed.prompt : "",
       attachmentIds: Array.isArray(parsed.attachmentIds)
         ? parsed.attachmentIds.filter((id): id is string => typeof id === "string")
         : [],
+      ...(typeof parsed.key === "string" && parsed.key && { key: parsed.key }),
     };
     return hasFirstPrompt(first) ? { first, going: parsed.going === true } : null;
   } catch {
@@ -179,10 +196,11 @@ export function markFirstPromptGoing(storage: PromptStorage | null, workspaceId:
  * Whether a send of the session's first prompt was cut off: its kept copy is
  * marked going, but no send of this page load has it. Only a reload (or a
  * closed tab, restored) does that, and the prompt most likely reached Claude
- * anyway: the server carries on with a request whose page has gone. Sending it
- * again would have Claude do it twice, so the page lets it go instead. At most
- * once, rather than at least: for the rare send that never got there (a reload
- * before it left, the route failing after), the page offers it again instead.
+ * anyway: the server carries on with a request whose page has gone. So the page
+ * doesn't send it again unasked; for the rare send that never got there (a
+ * reload before it left, the route failing after), it offers it again. That
+ * resend names the prompt's key, so if the first got there after all the
+ * server sends nothing (lib/session/first-prompt-claim.ts).
  */
 export function firstPromptCutOff(storage: PromptStorage | null, workspaceId: string): boolean {
   if (sending.has(workspaceId) || sent.has(workspaceId)) return false;

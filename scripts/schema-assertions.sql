@@ -1792,3 +1792,34 @@ begin
   end if;
   raise notice 'ok: an org''s model allowance is the server''s, gone with the org';
 end $$;
+
+-- 47. A session's first prompt is claimed once per idempotency key
+-- (claimFirstPrompt): a second claim, the same key's or another's, finds it
+-- held; released, the key claims it again. The key is kept short.
+do $$
+declare
+  ws uuid;
+  n int;
+begin
+  select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  update workspaces set first_prompt_key = 'k1' where id = ws and first_prompt_key is null;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: a session''s first prompt could not be claimed'; end if;
+  update workspaces set first_prompt_key = 'k2' where id = ws and first_prompt_key is null;
+  get diagnostics n = row_count;
+  if n <> 0 or (select first_prompt_key from workspaces where id = ws) <> 'k1' then
+    raise exception 'FAIL: a session''s first prompt was claimed twice';
+  end if;
+  update workspaces set first_prompt_key = null where id = ws and first_prompt_key = 'k1';
+  update workspaces set first_prompt_key = 'k1' where id = ws and first_prompt_key is null;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: a released first prompt could not be claimed again'; end if;
+  begin
+    update workspaces set first_prompt_key = repeat('x', 101) where id = ws;
+    raise exception 'FAIL: an overlong first-prompt key was kept';
+  exception when check_violation then
+    null;
+  end;
+  update workspaces set first_prompt_key = null where id = ws;
+  raise notice 'ok: a session''s first prompt is claimed once per key';
+end $$;

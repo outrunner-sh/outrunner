@@ -9,6 +9,7 @@ import {
   handOverFirstPrompt,
   keepFirstPromptFromUrl,
   markFirstPromptGoing,
+  newFirstPrompt,
   rememberedFirstPrompt,
   rememberFirstPrompt,
   sendFirstPromptOnce,
@@ -211,4 +212,35 @@ test("when the earlier send fails, the page on screen sends it itself", async ()
 test("a send that throws counts as failed, and leaves the prompt to send again", async () => {
   assert.equal(await sendFirstPromptOnce("once-3", () => Promise.reject(new Error("offline"))), "failed");
   assert.equal(await sendFirstPromptOnce("once-3", () => Promise.resolve(true)), "sent");
+});
+
+test("a first prompt's key goes everywhere the prompt does: URL, kept copy, its mark, start over", () => {
+  const first = newFirstPrompt("fix it", ["a"]);
+  assert.match(first.key ?? "", /^[0-9a-f-]{36}$/);
+  assert.notEqual(newFirstPrompt("fix it", ["a"]).key, first.key);
+
+  const url = new URL(`https://outrunner.test/workspaces/ws-k${firstPromptQuery(first)}`);
+  assert.deepEqual(firstPromptFromUrl(url), first);
+  assert.equal(withoutFirstPrompt(url), "/workspaces/ws-k");
+
+  // Kept from the URL alone (a tab the new-session screen didn't keep it in).
+  const storage = memoryStorage();
+  keepFirstPromptFromUrl(storage, "ws-k", url);
+  assert.deepEqual(rememberedFirstPrompt(storage, "ws-k"), first);
+  markFirstPromptGoing(storage, "ws-k", true);
+  markFirstPromptGoing(storage, "ws-k", false);
+  assert.deepEqual(rememberedFirstPrompt(storage, "ws-k"), first);
+  assert.deepEqual(handOverFirstPrompt(storage, "ws-k", "ws-k2"), first);
+  assert.deepEqual(rememberedFirstPrompt(storage, "ws-k2"), first);
+});
+
+test("no key, or nothing to send, puts no key in the URL", () => {
+  assert.equal(firstPromptQuery({ prompt: " ", attachmentIds: [], key: "k1" }), "");
+  assert.equal(
+    firstPromptFromUrl(new URL("https://outrunner.test/workspaces/w?prompt=hi"))?.key,
+    undefined,
+  );
+  const storage = memoryStorage();
+  storage.setItem("outrunner:first-prompt:w1", JSON.stringify({ prompt: "hi", attachmentIds: [], key: 7 }));
+  assert.deepEqual(rememberedFirstPrompt(storage, "w1"), { prompt: "hi", attachmentIds: [] });
 });

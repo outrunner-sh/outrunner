@@ -107,6 +107,7 @@ export function WorkspaceSession({
   local = false,
   untitled = false,
   initialPrompt,
+  initialPromptKey,
   initialAttachmentIds,
   onSender,
 }: {
@@ -127,6 +128,9 @@ export function WorkspaceSession({
   untitled?: boolean;
   /** First prompt to send once the session accepts input (from /new). */
   initialPrompt?: string;
+  /** Its idempotency key: every send of it names it, so the server sends it
+   *  once (lib/session/first-prompt-claim.ts). */
+  initialPromptKey?: string;
   /** Attachment ids from the home composer, delivered with the first prompt. */
   initialAttachmentIds?: string[];
   /** Given a sender while the session can send, null when it no longer can:
@@ -191,8 +195,16 @@ export function WorkspaceSession({
   const anchor = (pendingId: string, sentAt: number) =>
     setPending((prev) => settlePending(prev, pendingId, userPrompts(eventsRef.current), sentAt));
 
-  /** `leaving` is called as the request itself goes, once attached. */
-  const send = (text: string, attachmentIds: string[] = [], retry?: () => void, leaving?: () => void) => {
+  /** `leaving` is called as the request itself goes, once attached. A
+   *  session's first prompt names its `firstPromptKey`, so the server sends it
+   *  once however often it is asked. */
+  const send = (
+    text: string,
+    attachmentIds: string[] = [],
+    retry?: () => void,
+    leaving?: () => void,
+    firstPromptKey?: string,
+  ) => {
     const trimmed = text.trim();
     const pendingId = crypto.randomUUID();
     if (trimmed) {
@@ -217,7 +229,7 @@ export function WorkspaceSession({
     return whenAttached().then(
       () => {
         leaving?.();
-        return deliver(text, attachmentIds, pendingId, failed);
+        return deliver(text, attachmentIds, pendingId, failed, firstPromptKey);
       },
       (error: unknown) => failed(error instanceof Error ? error.message : "Could not connect to send that message."),
     );
@@ -230,6 +242,7 @@ export function WorkspaceSession({
     attachmentIds: string[],
     pendingId: string,
     failed: (message: string, code?: string) => boolean,
+    firstPromptKey?: string,
   ) => {
     // The stream may record the prompt before the session answers.
     const sentAt = userPromptCount(eventsRef.current);
@@ -250,7 +263,7 @@ export function WorkspaceSession({
     return fetch(`/api/workspaces/${workspaceId}/message`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: text, attachmentIds }),
+      body: JSON.stringify({ content: text, attachmentIds, ...(firstPromptKey && { firstPromptKey }) }),
     }).then(
       async (res) => {
         const body = (await res.json().catch(() => ({}))) as { titled?: boolean; error?: string; code?: string };
@@ -593,13 +606,17 @@ export function WorkspaceSession({
   // The first prompt a reload cut off mid-send, while the conversation hasn't
   // shown it. Only once the stream is live: until then the events are the
   // copy kept from before the reload, which seldom has the prompt yet, and a
-  // Send it again offered then would most often send it twice.
+  // Send it again offered then would most often be for a prompt that went.
   const [cutOff, setCutOff] = useState<FirstPrompt | null>(null);
   const cutOffShown =
     cutOff && conversation.status === "connected" && userPromptCount(conversation.events) === 0 ? cutOff : null;
   useEffect(() => {
     if (sentInitial.current || !attached) return;
-    const fromUrl: FirstPrompt = { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] };
+    const fromUrl: FirstPrompt = {
+      prompt: initialPrompt ?? "",
+      attachmentIds: initialAttachmentIds ?? [],
+      ...(initialPromptKey && { key: initialPromptKey }),
+    };
     const first = hasFirstPrompt(fromUrl)
       ? fromUrl
       : local
@@ -637,9 +654,15 @@ export function WorkspaceSession({
     // it waits on the session, so a reload mid-request finds it marked; any
     // failure, the route's own included, puts it back to waiting.
     const attempt = (): Promise<boolean> =>
-      send(first.prompt, first.attachmentIds, retry, () => {
-        if (!local) markFirstPromptGoing(tabStorage(), workspaceId, true);
-      }).then((landed) => {
+      send(
+        first.prompt,
+        first.attachmentIds,
+        retry,
+        () => {
+          if (!local) markFirstPromptGoing(tabStorage(), workspaceId, true);
+        },
+        first.key,
+      ).then((landed) => {
         if (landed) itWent();
         else if (!local) markFirstPromptGoing(tabStorage(), workspaceId, false);
         return landed;
@@ -654,7 +677,7 @@ export function WorkspaceSession({
     });
     // send is stable enough; guard prevents a repeat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attached, initialPrompt, initialAttachmentIds]);
+  }, [attached, initialPrompt, initialPromptKey, initialAttachmentIds]);
 
   return (
     <div className="studio-live-session" data-testid="workspace-session">
@@ -774,8 +797,10 @@ export function WorkspaceSession({
               onClick: () => {
                 setCutOff(null);
                 // Its own Retry, so a resend that fails keeps the prompt.
-                const { prompt, attachmentIds } = cutOffShown;
-                const again = (): void => void send(prompt, attachmentIds, again);
+                // Under the prompt's own key: if the cut-off send got there
+                // after all, the server answers as sent and sends nothing.
+                const { prompt, attachmentIds, key } = cutOffShown;
+                const again = (): void => void send(prompt, attachmentIds, again, undefined, key);
                 again();
               },
             },

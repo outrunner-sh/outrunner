@@ -11,6 +11,7 @@ import {
   toWorkspaceSnapshot,
 } from "@/lib/db/mappers";
 import type { ComputerScope } from "@/lib/runtime/computer-scope";
+import type { FirstPromptClaim } from "@/lib/session/first-prompt-claim";
 import type { RecordedModel } from "@/lib/runtime/session-models";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type {
@@ -259,6 +260,42 @@ export async function setWorkspaceTitleIfUnset(id: string, title: string): Promi
     .select("id");
   if (error) throw error;
   return (data ?? []).length > 0;
+}
+
+/**
+ * Claim the session's first prompt for `key`, before it is sent: "claimed"
+ * when this call took it, "repeat" when `key` holds it already (that prompt
+ * went, or is going), "other" when another key does. Conditional, as the
+ * title is, so two sends racing can't both claim it.
+ */
+export async function claimFirstPrompt(id: string, key: string): Promise<FirstPromptClaim> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("workspaces")
+    .update({ first_prompt_key: key })
+    .eq("id", id)
+    .is("first_prompt_key", null)
+    .select("id");
+  if (error) throw error;
+  if ((data ?? []).length > 0) return "claimed";
+  const { data: row, error: readError } = await supabase
+    .from("workspaces")
+    .select("first_prompt_key")
+    .eq("id", id)
+    .maybeSingle();
+  if (readError) throw readError;
+  return row?.first_prompt_key === key ? "repeat" : "other";
+}
+
+/** Let the claim go, as a send that failed does, so a retry with `key` sends. */
+export async function releaseFirstPrompt(id: string, key: string): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({ first_prompt_key: null })
+    .eq("id", id)
+    .eq("first_prompt_key", key);
+  if (error) throw error;
 }
 
 /** Fields a workspace update may set, by their Workspace names. */

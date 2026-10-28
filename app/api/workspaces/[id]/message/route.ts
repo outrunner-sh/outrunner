@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { claimFirstPrompt, releaseFirstPrompt } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
 import { materializeAttachments } from "@/lib/runtime/materialize-attachments";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
 import { attachmentsUnavailable } from "@/lib/runtime/worktree-access";
+import { firstPromptKey, gateFirstPrompt } from "@/lib/session/first-prompt-claim";
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { sendFailureMessage } from "@/lib/session/send-failure";
 import { BOX_GONE } from "@/lib/session/session-codes";
@@ -21,6 +23,10 @@ type RouteContext = { params: Promise<{ id: string }> };
  * Server-to-server on purpose: the agent lives on a different origin (the
  * Daytona preview host) with no CORS, and the Runtime token secret must stay on
  * the server.
+ *
+ * A session's first prompt names its idempotency key (firstPromptKey): it is
+ * sent once per key, and a repeat answers as sent without sending again
+ * (lib/session/first-prompt-claim.ts).
  */
 export async function POST(request: Request, context: RouteContext) {
   if (!isSameOriginRequest(request)) {
@@ -32,7 +38,7 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const body = (await request.json().catch(() => null)) as
-    | { content?: string; attachmentIds?: unknown }
+    | { content?: string; attachmentIds?: unknown; firstPromptKey?: unknown }
     | null;
   const content = body?.content?.trim() ?? "";
   const attachmentIds = Array.isArray(body?.attachmentIds)
@@ -55,6 +61,15 @@ export async function POST(request: Request, context: RouteContext) {
   const noFiles = attachmentsUnavailable(attachmentIds.length, workspace.worktreePath);
   if (noFiles) return NextResponse.json({ error: noFiles }, { status: 409 });
 
+  // Claimed before anything reaches the box, so a repeat copies no files
+  // either; let go on any failure below, so a retry still sends.
+  const gate = await gateFirstPrompt(
+    firstPromptKey(body?.firstPromptKey),
+    { claim: (key) => claimFirstPrompt(workspace.id, key), release: (key) => releaseFirstPrompt(workspace.id, key) },
+    workspace.id,
+  );
+  if (gate.repeat) return NextResponse.json({ result: "already", titled: false });
+
   let prompt = content;
   try {
     prompt = await materializeAttachments({
@@ -67,6 +82,7 @@ export async function POST(request: Request, context: RouteContext) {
     });
   } catch (error) {
     console.error(`Message: attachments failed for ${workspace.id}`, error);
+    await gate.release();
     return NextResponse.json(
       { error: "Could not attach those files. Please try again." },
       { status: 502 },
@@ -77,6 +93,7 @@ export async function POST(request: Request, context: RouteContext) {
     await agent.sendMessage(identity, prompt);
   } catch (error) {
     console.error(`Message: send failed for ${workspace.id}`, error);
+    await gate.release();
     // The agent's own 404 (unknown workspace) means the session's box is gone,
     // so retrying fails the same way every time. Tag it (BOX_GONE) so the
     // composer drops Retry and points at a new session instead of offering one.
