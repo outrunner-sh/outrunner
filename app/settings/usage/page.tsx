@@ -21,6 +21,7 @@ import {
 } from "@/components/usage-settings";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { getProviderKey, getProviderKeyStatuses, outrunnerModelAllowance } from "@/lib/db/credentials";
+import { getOrgContext } from "@/lib/orgs/server";
 import { allowanceView } from "@/lib/openrouter/allowance";
 import { keySource } from "@/lib/openrouter/keys";
 import type { KeyProviderId } from "@/lib/providers/registry";
@@ -105,14 +106,23 @@ function UsageCardFor({ card, userId }: { card: Card; userId: string }) {
 }
 
 async function OutrunnerFigures({ userId }: { userId: string }) {
-  const allowance = await outrunnerModelAllowance(userId).catch((error: unknown) => {
+  // The org's in a team org they're looking at (billing is the org's).
+  const org = (await getOrgContext().catch(() => undefined))?.active;
+  const allowance = await outrunnerModelAllowance(userId, org?.id).catch((error: unknown) => {
     console.error("Could not read a user's Outrunner allowance", error);
     return undefined;
   });
   if (allowance === undefined) return <OutrunnerUsageFailed />;
   // Null only with no per-user allowance, which the card already said.
   if (allowance === null) return <OutrunnerUnmetered />;
-  return <OutrunnerAllowanceUsage view={allowanceView(allowance)} />;
+  return (
+    <>
+      <OutrunnerAllowanceUsage view={allowanceView(allowance)} />
+      {org && !org.personal ? (
+        <p className="text-xs text-muted-foreground">{`This is ${org.name}'s allowance, shared by its members' cloud sessions.`}</p>
+      ) : null}
+    </>
+  );
 }
 
 async function KeyFigures({ userId, provider }: { userId: string; provider: KeyProviderId }) {

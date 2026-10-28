@@ -1776,3 +1776,19 @@ begin
 end $$;
 reset role;
 delete from runtime_computers where daytona_sandbox_id = 'box-conn';
+
+-- 46. A team org's allowance on Outrunner's models is the server's alone, and
+-- goes with the org.
+do $$
+begin
+  if has_table_privilege('authenticated', 'org_model_allowance', 'select') then
+    raise exception 'FAIL: members can read the org''s model key';
+  end if;
+  insert into organizations (id, name, created_by) values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'Gone', null);
+  insert into org_model_allowance (org_id, key_hash) values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'h');
+  delete from organizations where id = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  if exists (select 1 from org_model_allowance where org_id = 'dddddddd-dddd-dddd-dddd-dddddddddddd') then
+    raise exception 'FAIL: an org''s model key outlived it';
+  end if;
+  raise notice 'ok: an org''s model allowance is the server''s, gone with the org';
+end $$;
