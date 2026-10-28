@@ -1,64 +1,72 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { handleMcpBody, handleMcpMessage, type McpServer } from "@/lib/missions/mcp";
-import { hashMissionToken, mintMissionToken, missionForToken, type MissionTokenStore } from "@/lib/missions/token";
+import { carriesMissionToken, missionMcpServerWith } from "@/lib/missions/server";
+import { MISSION_TOOLS, type MissionToolDeps } from "@/lib/missions/tools";
+import { hashMissionToken, isMissionToken, mintMissionToken, missionForToken, type MissionTokenStore } from "@/lib/missions/token";
 import { readBearer } from "@/lib/http/bearer";
+import type { Workspace } from "@/lib/runtime/types";
 
-const server: McpServer = {
-  name: "outrunner-mission",
-  version: "1",
-  instructions: "Runner tools.",
-  tools: [{ name: "echo", description: "Echo.", inputSchema: { type: "object" } }],
-  call: async (name, args) => (args.fail ? Promise.reject(new Error("boom")) : { text: `${name}:${JSON.stringify(args)}` }),
-};
-
-test("initialize names the server and agrees a protocol version", async () => {
-  const answer = await handleMcpMessage(
-    { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {} } },
-    server,
-  );
-  assert.deepEqual(answer, {
-    jsonrpc: "2.0",
-    id: 1,
-    result: {
-      protocolVersion: "2025-03-26",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "outrunner-mission", version: "1" },
-      instructions: "Runner tools.",
+const session = (id: string, patch: Partial<Workspace>) => ({ id, ownerId: "alice", status: "ready", kind: "session", parentMissionId: null, ...patch }) as Workspace;
+const sessions = [session("m1", { kind: "mission" }), session("m2", { kind: "mission" }), session("r1", { parentMissionId: "m1" }), session("r2", { parentMissionId: "m2" })];
+const sent: string[] = [];
+const deps = (): MissionToolDeps =>
+  ({
+    access: async () => null,
+    environmentReady: async () => null,
+    session: async (id: string) => sessions.find((s) => s.id === id) ?? null,
+    runners: async (m: string) => sessions.filter((s) => s.parentMissionId === m),
+    working: async () => false,
+    send: async (r: Workspace, c: string) => {
+      sent.push(`${r.id}: ${c}`);
+      return true;
     },
-  });
-  const newer = await handleMcpMessage({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2099-01-01" } }, server);
-  assert.equal((newer?.result as { protocolVersion: string }).protocolVersion, "2025-06-18");
-});
+    queued: async () => new Map(),
+    pullRequests: async () => [],
+    readNotes: async () => {
+      throw new Error("database down");
+    },
+  }) as unknown as MissionToolDeps;
 
-test("tools are listed and called; a failure is the tool's error, not the transport's", async () => {
-  const list = await handleMcpMessage({ jsonrpc: "2.0", id: "a", method: "tools/list" }, server);
-  assert.equal((list?.result as { tools: unknown[] }).tools.length, 1);
-  const call = await handleMcpMessage({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: { x: 1 } } }, server);
-  assert.deepEqual(call?.result, { content: [{ type: "text", text: 'echo:{"x":1}' }] });
-  const failed = await handleMcpMessage({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "echo", arguments: { fail: true } } }, server);
-  assert.equal((failed?.result as { isError: boolean }).isError, true);
-  const unknown = await handleMcpMessage({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "nope" } }, server);
-  assert.equal(unknown?.error?.code, -32602);
-});
+const server = missionMcpServerWith(deps);
+const rpc = (method: string, params?: unknown, missionId = "m1") => server.handle({ jsonrpc: "2.0", id: 1, method, params }, { missionId });
 
-test("notifications get no answer; a batch gets one per request", async () => {
-  assert.equal(await handleMcpMessage({ jsonrpc: "2.0", method: "notifications/initialized" }, server), null);
-  assert.equal(await handleMcpBody({ jsonrpc: "2.0", method: "notifications/initialized" }, server), null);
-  const batch = await handleMcpBody(
-    [
-      { jsonrpc: "2.0", method: "notifications/initialized" },
-      { jsonrpc: "2.0", id: 1, method: "ping" },
-      { jsonrpc: "2.0", id: 2, method: "resources/list" },
-    ],
-    server,
+test("the Mission's tools are served on the app's MCP server code", async () => {
+  const listed = (await rpc("tools/list")) as { result: { tools: { name: string }[] } };
+  assert.deepEqual(
+    listed.result.tools.map((t) => t.name),
+    MISSION_TOOLS.map((t) => t.name),
   );
-  assert.deepEqual(batch, [
-    { jsonrpc: "2.0", id: 1, result: {} },
-    { jsonrpc: "2.0", id: 2, error: { code: -32601, message: "Method not found: resources/list" } },
-  ]);
-  assert.equal((await handleMcpMessage("junk", server))?.error?.code, -32600);
+  const init = (await rpc("initialize", { protocolVersion: "2025-03-26" })) as { result: { serverInfo: { name: string }; instructions: string } };
+  assert.equal(init.result.serverInfo.name, "outrunner-mission");
+  assert.match(init.result.instructions, /spawn_runner/);
+});
+
+test("a call reaches only its token's Mission's Runners", async () => {
+  sent.length = 0;
+  const other = (await rpc("tools/call", { name: "message_runner", arguments: { runner_id: "r2", message: "hi" } })) as {
+    result: { isError?: boolean; content: { text: string }[] };
+  };
+  assert.equal(other.result.isError, true);
+  assert.match(other.result.content[0].text, /no Runner with that id/);
+  const own = (await rpc("tools/call", { name: "message_runner", arguments: { runner_id: "r2", message: "hi" } }, "m2")) as {
+    result: { isError?: boolean };
+  };
+  assert.equal(own.result.isError, undefined);
+  assert.deepEqual(sent, ["r2: hi"]);
+});
+
+test("a tool that fails answers as the tool's error, not the protocol's", async () => {
+  const failed = (await rpc("tools/call", { name: "read_notes", arguments: {} })) as { result: { isError?: boolean } };
+  assert.equal(failed.result.isError, true);
+});
+
+test("/api/mcp tells a Mission's token from an API key", () => {
+  assert.equal(carriesMissionToken("Bearer orm_abc123"), true);
+  assert.equal(carriesMissionToken("Bearer or_key_abc123"), false);
+  assert.equal(carriesMissionToken("Bearer orm_"), false);
+  assert.equal(carriesMissionToken(null), false);
+  assert.equal(isMissionToken("orm_x"), true);
 });
 
 function memoryTokens(): MissionTokenStore & { rows: Map<string, string> } {

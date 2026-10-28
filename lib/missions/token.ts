@@ -29,8 +29,13 @@ export async function mintMissionToken(missionId: string, store: MissionTokenSto
   return token;
 }
 
+/** Whether a token is shaped as a Mission's (not whether it names one). */
+export function isMissionToken(token: string | null | undefined): token is string {
+  return Boolean(token && token.startsWith(PREFIX) && token.length > PREFIX.length && token.length <= 200);
+}
+
 /** The Mission a presented token is for, or null for one that isn't any's. */
 export async function missionForToken(token: string | null | undefined, store: MissionTokenStore): Promise<string | null> {
-  if (!token || !token.startsWith(PREFIX) || token.length > 200) return null;
+  if (!isMissionToken(token)) return null;
   return store.find(hashMissionToken(token));
 }

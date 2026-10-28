@@ -3,6 +3,7 @@ import { apiRoute, takeLimit } from "@/lib/api/handler";
 import { DEFAULT_LIMIT, rateHeaders } from "@/lib/api/rate-limit";
 import { apiMcpServer } from "@/lib/mcp/api-tools";
 import { MAX_BATCH, rpcResponse, toolCallCount } from "@/lib/mcp/server";
+import { answerMissionMcp, carriesMissionToken } from "@/lib/missions/server";
 
 // A wait_for_workspace call holds the request until the session's turn is
 // over, up to ten minutes.
@@ -11,9 +12,13 @@ export const maxDuration = 660;
 /**
  * Outrunner's MCP server (streamable HTTP, JSON answers): the API's
  * operations as tools (lib/mcp/api-tools.ts), signed in with an API key as
- * the REST API is (`Authorization: Bearer or_key_…`).
+ * the REST API is (`Authorization: Bearer or_key_…`). A call that carries a
+ * Mission's token instead (`orm_…`) gets the Mission's tools, for that
+ * Mission's Runners alone (lib/missions/server.ts), as /api/missions/mcp
+ * answers it.
  */
 export async function POST(request: Request) {
+  if (carriesMissionToken(request.headers.get("authorization"))) return answerMissionMcp(request);
   return apiRoute(request, async (context) => {
     const text = await request.text();
     // The call itself took one of the key's calls; each tool call past the
