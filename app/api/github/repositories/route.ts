@@ -2,15 +2,17 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { listProjects } from "@/lib/db/repositories";
-import { listGitHubRepositories } from "@/lib/github/client";
 import { githubErrorResponse } from "@/lib/github/http";
 import { toListing } from "@/lib/github/listing";
 import { cachedRepositoryList } from "@/lib/github/repository-cache";
-import { requireGithubToken } from "@/lib/github/token";
+import { repositorySource } from "@/lib/github/repository-source";
 import { activeOrgId } from "@/lib/orgs/server";
 
 /**
- * The repositories this user could connect, read live from GitHub.
+ * The repositories this user could connect to the active org, read live from
+ * GitHub: the ones the org's GitHub App installations reach, or, in an org
+ * without the App, the user's own (lib/github/repository-source.ts). `source`
+ * says which, and for the App, on which accounts.
  *
  * Deliberately does NOT persist anything — it is the picker's data source, so a
  * user with hundreds of repositories browses them without every one becoming a
@@ -32,16 +34,15 @@ export async function GET(request: Request) {
   const fresh = new URL(request.url).searchParams.get("fresh") === "1";
 
   try {
-    const token = await requireGithubToken(owner.id);
+    const orgId = await activeOrgId().catch((error: unknown) => {
+      console.error("Repository picker: could not load orgs", error);
+      return undefined;
+    });
+    const access = await repositorySource(owner.id, orgId);
     const [list, projects] = await Promise.all([
-      cachedRepositoryList(owner.id, () => listGitHubRepositories(token), { fresh }),
+      cachedRepositoryList(access.source.key, access.list, { fresh }),
       // Only marks what's connected: without the orgs, every org's projects.
-      activeOrgId()
-        .catch((error: unknown) => {
-          console.error("Repository picker: could not load orgs", error);
-          return undefined;
-        })
-        .then((orgId) => listProjects(orgId)),
+      listProjects(orgId),
     ]);
 
     return NextResponse.json(
@@ -50,6 +51,7 @@ export async function GET(request: Request) {
         connected: projects.map((p) => p.githubRepoId),
         complete: list.complete,
         ssoPartialOrgIds: list.ssoPartialOrgIds,
+        source: access.source.kind === "app" ? { kind: "app", accounts: access.source.accounts } : { kind: "user" },
       },
       { headers: { "cache-control": "no-store" } },
     );

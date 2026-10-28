@@ -69,3 +69,28 @@ export function projectToListing(project: Project): RepositoryListing {
     pushedAt: project.pushedAt,
   };
 }
+
+/** An installation of the Outrunner GitHub App an org keeps, as the pickers
+ *  name it. */
+export type SourceAccount = {
+  installationId: number;
+  login: string;
+  type: "User" | "Organization";
+  suspended: boolean;
+};
+
+/** Where an org's repositories are listed from: its GitHub App's
+ *  installations, or the member's own GitHub (lib/github/repository-source.ts). */
+export type ListingSource = { kind: "app"; accounts: SourceAccount[] } | { kind: "user" };
+
+/** Where an installation of the Outrunner GitHub App picks its repositories,
+ *  on GitHub. */
+export function installationSettingsUrl(account: {
+  installationId: number;
+  login: string;
+  type: "User" | "Organization";
+}): string {
+  return account.type === "Organization"
+    ? `https://github.com/organizations/${encodeURIComponent(account.login)}/settings/installations/${account.installationId}`
+    : `https://github.com/settings/installations/${account.installationId}`;
+}

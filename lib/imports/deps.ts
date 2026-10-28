@@ -7,8 +7,7 @@
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
 import { createWorkspaceSnapshot, getProject, getWorkspace, listProjects, upsertProjects } from "@/lib/db/repositories";
-import { getGitHubRepository } from "@/lib/github/client";
-import { connectRepositories } from "@/lib/github/connect";
+import { connectRepositories, type ConnectDeps } from "@/lib/github/connect";
 import { ImportError, type CommitDeps } from "@/lib/imports/commit";
 import type { PlanDeps } from "@/lib/imports/plan";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
@@ -53,12 +52,12 @@ export async function importProvider(ownerId: string): Promise<string> {
 }
 
 /** `orgId`: the org the user is looking at, where its projects go. */
-export function planDeps(ownerId: string, githubToken: string, orgId?: string): PlanDeps {
+export function planDeps(ownerId: string, lookup: ConnectDeps["lookup"], orgId?: string): PlanDeps {
   const bucket = createSupabaseAdminClient().storage.from(SNAPSHOT_BUCKET);
   return {
     async connect(fullNames) {
-      const { repositories } = await connectRepositories(ownerId, githubToken, fullNames, {
-        lookup: getGitHubRepository,
+      const { repositories } = await connectRepositories(ownerId, fullNames, {
+        lookup,
         upsert: (owner, repos) => upsertProjects(owner, repos, orgId),
       });
       const byRepoId = new Map((await listProjects(orgId)).map((p) => [p.githubRepoId, p.id]));

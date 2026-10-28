@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { githubErrorResponse } from "@/lib/github/http";
-import { requireGithubToken } from "@/lib/github/token";
+import { repositorySource } from "@/lib/github/repository-source";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { ImportError } from "@/lib/imports/commit";
 import { importProvider, planDeps } from "@/lib/imports/deps";
@@ -33,11 +33,11 @@ export async function POST(request: Request) {
   try {
     // Before anything is minted: the sessions will need a cloud computer.
     await importProvider(owner.id);
-    const token = await requireGithubToken(owner.id);
     const orgId = await activeOrgId();
     const refused = await connectRefusal(owner.id, orgId);
     if (refused) return refused;
-    const items = await planImports(owner.id, parsed.data, planDeps(owner.id, token, orgId));
+    const { lookup } = await repositorySource(owner.id, orgId);
+    const items = await planImports(owner.id, parsed.data, planDeps(owner.id, lookup, orgId));
     return NextResponse.json({ items });
   } catch (error) {
     if (error instanceof ImportError) {
