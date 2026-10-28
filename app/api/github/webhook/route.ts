@@ -30,6 +30,7 @@ import {
 } from "@/lib/github/app";
 import { LOOP_EVENTS, runGitHubLoop } from "@/lib/github/loop.deps";
 import { pullRequestEventOf } from "@/lib/session/pull-request-event";
+import { notifyPullRequests } from "@/lib/notifications/record";
 import { recordPullRequestEvent } from "@/lib/session/pull-request-state";
 import { announcePullRequest } from "@/lib/slack/agent-run";
 
@@ -159,11 +160,14 @@ export async function POST(request: Request) {
         );
       }
       // Its session's pull request opened, closed or merged: recorded, for
-      // the sidebar's In review and Done (lib/session/standing.ts).
+      // the sidebar's In review and Done (lib/session/standing.ts), and its
+      // owner told of one opened or merged.
       const tracked = pullRequestEventOf(payload);
       if (tracked) {
         after(() =>
-          recordPullRequestEvent(tracked).catch((error: unknown) => console.error("Couldn't record a session's pull request", error)),
+          recordPullRequestEvent(tracked)
+            .then(notifyPullRequests)
+            .catch((error: unknown) => console.error("Couldn't record a session's pull request", error)),
         );
       }
       return NextResponse.json({ received: true, runs: runs.length });

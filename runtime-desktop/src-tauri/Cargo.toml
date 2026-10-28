@@ -33,6 +33,10 @@ regex = "1"
 # Local sessions (src/local_runtime.rs): pick the clone, mint the agent's
 # HS256 tokens, and relay its HTTP calls and WebSockets for the webview.
 tauri-plugin-dialog = "2"
+# Notifications from the page (a session's turn finished, it needs you): the
+# webview has no web Notification API of its own (lib/notifications/show.ts).
+# 2.3: the release for this Tauri; later ones need a newer Tauri.
+tauri-plugin-notification = "~2.3"
 tokio = { version = "1", features = ["sync", "macros", "time"] }
 tokio-tungstenite = "0.28"
 futures-util = "0.3"

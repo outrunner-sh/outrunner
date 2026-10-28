@@ -2260,3 +2260,72 @@ begin
   delete from session_activity;
   raise notice 'ok: where a session stands is the server''s to read, and marks are each person''s own';
 end $$;
+
+-- 49. Notifications: each event once per person and session, theirs alone to
+-- read; preferences each person's own, of known channels and kinds.
+do $$
+declare
+  ws uuid;
+  n int;
+begin
+  select id into ws from workspaces where owner_id = '11111111-1111-1111-1111-111111111111' limit 1;
+  insert into session_notifications (user_id, workspace_id, kind, event_key, title, body)
+  values ('11111111-1111-1111-1111-111111111111', ws, 'turn_done', 't1', 'Session', 'Done')
+  on conflict on constraint session_notifications_once do nothing;
+  insert into session_notifications (user_id, workspace_id, kind, event_key, title, body)
+  values ('11111111-1111-1111-1111-111111111111', ws, 'turn_done', 't1', 'Session', 'Done')
+  on conflict on constraint session_notifications_once do nothing;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: one event was recorded twice'; end if;
+  begin
+    insert into session_notifications (user_id, workspace_id, kind, event_key, title, body)
+    values ('11111111-1111-1111-1111-111111111111', ws, 'gossip', 'x', 'Session', 'Hm');
+    raise exception 'FAIL: a notification of an unknown kind was kept';
+  exception when check_violation then null;
+  end;
+  insert into notification_preferences (user_id) values ('11111111-1111-1111-1111-111111111111');
+  if (select browser and email = 'off' and not slack and cardinality(kinds) = 5
+      from notification_preferences where user_id = '11111111-1111-1111-1111-111111111111') is not true then
+    raise exception 'FAIL: notification preferences don''t default to the browser alone, for every kind';
+  end if;
+  begin
+    update notification_preferences set kinds = '{turn_done,gossip}' where user_id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'FAIL: a preference for an unknown kind was kept';
+  exception when check_violation then null;
+  end;
+  begin
+    update notification_preferences set email = 'pigeon' where user_id = '11111111-1111-1111-1111-111111111111';
+    raise exception 'FAIL: an unknown email choice was kept';
+  exception when check_violation then null;
+  end;
+end $$;
+
+set role authed;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$
+begin
+  if exists (select 1 from session_notifications where user_id = '11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: another user read someone''s notifications';
+  end if;
+  if exists (select 1 from notification_preferences where user_id = '11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: another user read someone''s notification preferences';
+  end if;
+end $$;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+begin
+  if not exists (select 1 from session_notifications where user_id = '11111111-1111-1111-1111-111111111111') then
+    raise exception 'FAIL: a user can''t read their own notifications';
+  end if;
+  update session_notifications set body = 'changed' where user_id = '11111111-1111-1111-1111-111111111111';
+  if found then raise exception 'FAIL: a user rewrote a notification'; end if;
+  update notification_preferences set email = 'digest' where user_id = '11111111-1111-1111-1111-111111111111';
+  if not found then raise exception 'FAIL: a user couldn''t change their own preferences'; end if;
+end $$;
+reset role;
+do $$
+begin
+  delete from session_notifications;
+  delete from notification_preferences;
+  raise notice 'ok: notifications are recorded once each and read by their person alone';
+end $$;

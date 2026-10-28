@@ -7,8 +7,9 @@ import { runSessionsTick } from "@/lib/session/tick";
 /**
  * The sessions' clock: the Cloudflare cron calls it with the reconciler's
  * (every 2 minutes, BILLING_CRON_SECRET as a bearer token), and it reads what
- * each live session's agent is doing and where its pull request stands
- * (lib/session/tick.ts). Answered at once; the work runs after.
+ * each live session's agent is doing and where its pull request stands, and
+ * sends the notifications due by email and Slack (lib/session/tick.ts).
+ * Answered at once; the work runs after.
  */
 export async function POST(request: Request) {
   const secret = optionalEnv("BILLING_CRON_SECRET");
@@ -21,7 +22,8 @@ export async function POST(request: Request) {
       console.error("Sessions tick failed", error);
       return null;
     });
-    if (done && (done.changed || done.pullRequests || done.skipped)) console.log("Sessions tick", done);
+    const delivered = done?.delivered;
+    if (done && (done.changed || done.pullRequests || done.skipped || done.failures || delivered?.emailed || delivered?.slacked || delivered?.digests)) console.log("Sessions tick", done);
   });
   return NextResponse.json({ ticking: true });
 }

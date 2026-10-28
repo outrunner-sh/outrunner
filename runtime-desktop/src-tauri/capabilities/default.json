@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: shell basics, the native Claude connect commands, the local agent CLI logins, the local-session relay, the import of this Mac's sessions, and the sidebar's Update button.",
+  "description": "Main window: shell basics, the native Claude connect commands, the local agent CLI logins, the local-session relay, the import of this Mac's sessions, the sidebar's Update button, and notifications of sessions.",
   "windows": [
     "main"
   ],
@@ -15,6 +15,7 @@
     "core:default",
     "opener:default",
     "deep-link:default",
+    "notification:default",
     "allow-connect-claude-start",
     "allow-connect-claude-poll",
     "allow-connect-claude-submit",
