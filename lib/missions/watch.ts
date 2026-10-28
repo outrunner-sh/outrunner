@@ -125,6 +125,7 @@ export async function checkRunnerWatch(row: WatchRow, deps: WatchDeps): Promise<
         quietActivity: null,
         lastMessage: s.lastMessage,
         unreachableSince: null,
+        exitedSince: iso(s.exitedSince ?? null),
         upSince: iso(s.upSince ?? null),
       });
       return "needs_attention";

@@ -115,9 +115,10 @@ async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
   if (error) throw error;
   if (!projects?.length) return [];
   const projectIds = new Set(projects.map((p) => p.id));
+  // What it takes to match, read narrow: whole rows only for the few that do.
   const { data, error: runnersError } = await db()
     .from("workspaces")
-    .select("*")
+    .select("id, project_id, checkouts, branch")
     .not("parent_mission_id", "is", null)
     .in("org_id", [...new Set(projects.map((p) => p.org_id))])
     .not("status", "in", "(destroyed,destroying)");
@@ -139,7 +140,11 @@ async function runnersFor(activity: PullRequestActivity): Promise<Workspace[]> {
     if (rowsError) throw rowsError;
     for (const row of rows ?? []) known.add(row.runner_id);
   }
-  return inRepo.filter((row) => known.has(row.id) || refs.some((ref) => isRunnerBranch(row.branch, ref))).map(toWorkspace);
+  const matched = inRepo.filter((row) => known.has(row.id) || refs.some((ref) => isRunnerBranch(row.branch, ref))).map((row) => row.id);
+  if (matched.length === 0) return [];
+  const { data: rows, error: rowsError } = await db().from("workspaces").select("*").in("id", matched);
+  if (rowsError) throw rowsError;
+  return (rows ?? []).map(toWorkspace);
 }
 
 /** Note what a webhook said: a new pull request of a Runner's recorded (or
@@ -209,7 +214,7 @@ async function tokenFor(runner: Workspace, repo: string): Promise<string | null>
   return (await optionalGitToken(runner.ownerId, { orgId, fullName: repo })) ?? (await repoToken(orgId, repo).catch(() => null));
 }
 
-/** Each Runner's repositories' full names. */
+/** The Runners by org and repository (`<org>\0<owner/name>`). */
 async function reposOf(runners: Workspace[]): Promise<Map<string, Workspace[]>> {
   const ids = [...new Set(runners.flatMap((r) => r.checkouts?.map((c) => c.projectId) ?? [r.projectId]))];
   const byRepo = new Map<string, Workspace[]>();
@@ -219,8 +224,10 @@ async function reposOf(runners: Workspace[]): Promise<Map<string, Workspace[]>> 
   const name = new Map((data ?? []).map((p) => [p.id, p.full_name]));
   for (const runner of runners) {
     for (const id of runner.checkouts?.map((c) => c.projectId) ?? [runner.projectId]) {
+      // By org too: another org that connected the same repository reads it
+      // with a token of its own.
       const repo = name.get(id);
-      if (repo) byRepo.set(repo, [...(byRepo.get(repo) ?? []), runner]);
+      if (repo) byRepo.set(`${runner.orgId ?? ""}\u0000${repo}`, [...(byRepo.get(`${runner.orgId ?? ""}\u0000${repo}`) ?? []), runner]);
     }
   }
   return byRepo;
@@ -234,8 +241,12 @@ async function reposOf(runners: Workspace[]): Promise<Map<string, Workspace[]>> 
  */
 export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<Set<string>> {
   const found = new Set<string>();
-  for (const [repo, here] of await reposOf(runners)) {
-    const token = await tokenFor(here[0], repo);
+  for (const [key, here] of await reposOf(runners)) {
+    const repo = key.slice(key.indexOf("\u0000") + 1);
+    // The first of them whose owner can read it: one who can't leaves the
+    // others still looked for.
+    let token: string | null = null;
+    for (const runner of here) if ((token = await tokenFor(runner, repo))) break;
     if (!token) continue;
     const pulls = await githubGet<GitHubPull[]>(token, `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`);
     for (const pull of pulls ?? []) {
@@ -259,6 +270,21 @@ export async function discoverRunnerPullRequests(runners: Workspace[]): Promise<
           .select("number");
         if (error) throw error;
         if (made?.length) found.add(runner.id);
+        // A closed one GitHub shows open again is followed again here too:
+        // no webhook tells this path, and DO NOTHING can't reopen a row.
+        if (pull.state === "open") {
+          const at = new Date().toISOString();
+          const { data: reopened, error: reopenError } = await db()
+            .from("runner_pull_requests")
+            .update({ state: "open", last_activity_at: at, first_activity_at: at, verdict: null, verdict_reason: null })
+            .eq("runner_id", runner.id)
+            .eq("repo", repo)
+            .eq("number", pull.number)
+            .eq("state", "closed")
+            .select("number");
+          if (reopenError) throw reopenError;
+          if (reopened?.length) found.add(runner.id);
+        }
       }
     }
   }

@@ -314,6 +314,16 @@ export async function reportFailedRunners(limit = 50): Promise<number> {
   let told = 0;
   for (const row of data ?? []) {
     if (await readWatch(row.id)) continue;
+    // Told already, by the watch that saw it fail (whose row has closed
+    // since): the Mission hears a failure once.
+    const { count, error: toldError } = await db()
+      .from("mission_events")
+      .select("id", { count: "exact", head: true })
+      .eq("runner_id", row.id)
+      .eq("kind", "needs_attention")
+      .gte("created_at", row.failed_at ?? row.updated_at);
+    if (toldError) throw toldError;
+    if ((count ?? 0) > 0) continue;
     const runner = toWorkspace(row);
     const fresh = await recordMissionEvent({
       missionId: runner.parentMissionId as string,
