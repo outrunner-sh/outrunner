@@ -516,7 +516,12 @@ async function provisionWorkspace({
   // the box's details, still finds the session setting up.
   // The step a failure stopped at, for the session page.
   let phase: ProvisionPhase | null = null;
+  // Each step in the log, timed: a setup that stops partway is found by the
+  // last one it reached.
+  const began = Date.now();
+  const elapsed = () => `${Math.round((Date.now() - began) / 1000)}s into setup`;
   const setPhase = async (next: ProvisionPhase) => {
+    console.log(`Workspace ${workspace.id}: ${next} (${elapsed()})`);
     phase = next;
     await settle({ status: "provisioning", phase: next });
   };
@@ -669,6 +674,7 @@ async function provisionWorkspace({
       await recordWorkspaceModel(workspace.id, startsOn);
       await setPhase("health_check");
       await agent.startWorkspace(identity);
+      console.log(`Workspace ${workspace.id}: ready (${elapsed()})`);
 
       const ready = await settle({
         status: "ready",

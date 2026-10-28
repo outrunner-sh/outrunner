@@ -14,6 +14,17 @@ import {
 const CREATE_TIMEOUT_SECONDS = 180;
 /** Signed WS preview lifetime; refreshed on reconnect (Spike 1 finding). */
 const SIGNED_URL_TTL_SECONDS = 300;
+/**
+ * How long one command on a box may run. The SDK puts no deadline on a
+ * command given none, so a call Daytona never answers held a session's setup
+ * on "Starting Claude" for good, the box idle. Generous: a large repository's
+ * first clone and Claude Code's install are the longest, a few minutes each.
+ * Past it the command is ended and its step fails, naming it.
+ */
+export const EXEC_TIMEOUT_SECONDS = 10 * 60;
+/** The SDK's deadline for its other calls (get, start, uploads), 24 hours
+ *  unless set: none of them takes minutes. */
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
@@ -34,8 +45,9 @@ export class DaytonaBackend implements SandboxBackend {
   /** Lazy so constructing the backend (e.g. in a test) needs no credentials. */
   private daytona(): Promise<Daytona> {
     this.client ??= (async () => {
-      if (this.apiKey) return new Daytona({ apiKey: await this.apiKey() });
+      if (this.apiKey) return new Daytona({ apiKey: await this.apiKey(), requestTimeoutMs: REQUEST_TIMEOUT_MS });
       return new Daytona({
+        requestTimeoutMs: REQUEST_TIMEOUT_MS,
         apiKey: requireEnv("DAYTONA_API_KEY"),
         apiUrl: optionalEnv("DAYTONA_API_URL"),
         target: optionalEnv("DAYTONA_TARGET"),
@@ -118,10 +130,11 @@ export class DaytonaBackend implements SandboxBackend {
 const STOPPED_STATES = new Set(["stopped", "archived"]);
 const STARTING_STATES = new Set(["starting", "restoring", "creating"]);
 
-function box(sandbox: Sandbox): SandboxBox {
+/** A box's commands and files, from its sandbox. Exported for tests. */
+export function box(sandbox: Sandbox): SandboxBox {
   const io: BoxIO = {
     exec: async (command) => {
-      const res = await sandbox.process.executeCommand(command);
+      const res = await sandbox.process.executeCommand(command, undefined, undefined, EXEC_TIMEOUT_SECONDS);
       return { stdout: res.result ?? "", exitCode: res.exitCode ?? 0 };
     },
     // Through a background session with runAsync: a synchronous
@@ -146,6 +159,7 @@ function box(sandbox: Sandbox): SandboxBox {
       `bash -lc ${shellQuote(inner)}`,
       undefined,
       options?.env,
+      EXEC_TIMEOUT_SECONDS,
     );
     return { stdout: res.result ?? "", stderr: "", exitCode: res.exitCode ?? 0 };
   };

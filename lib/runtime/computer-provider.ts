@@ -417,7 +417,14 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     const box = await this.backend.get(sandboxId);
     const home = await box.home();
     await box.gitExec(["mkdir", "-p", `${home}/repos`]);
-    await syncMirrors(box.gitExec, { root: `${home}/repos`, repos, token: githubToken });
+    // One at a time, each in the log as it's done, so a session stopped among
+    // them shows which repository it was at.
+    for (const repo of repos) {
+      const began = Date.now();
+      console.log(`Box ${sandboxId}: syncing ${repo.fullName}'s mirror`);
+      await syncMirrors(box.gitExec, { root: `${home}/repos`, repos: [repo], token: githubToken });
+      console.log(`Box ${sandboxId}: ${repo.fullName}'s mirror synced (${Math.round((Date.now() - began) / 1000)}s)`);
+    }
   }
 
   /** Git projection for one interactive worktree on the shared computer: its
