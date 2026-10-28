@@ -91,7 +91,9 @@ export class OutrunnerControlPlane extends Container<Env> {
   // cold on every hit after idle. Trade cost vs first-hit latency here.
   sleepAfter = "20m";
 
-  /** The deploy whose image this instance's container runs (runCurrentImage). */
+  /** This instance's one check that its container runs the latest deploy's
+   *  image (runCurrentImage); null until the first request, or after a
+   *  failed check. */
   private current: Promise<void> | null = null;
 
   /**
