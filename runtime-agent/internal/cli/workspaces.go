@@ -390,13 +390,14 @@ func sendCommand(ctx context.Context, base string, config Config, args []string,
 	}
 	// Where the log stands before the send: the fence to wait from, should
 	// the API not give one (its box hadn't logged the message yet). Only
-	// with --wait, since it costs a read of the conversation; and only from
-	// an idle turn: one showing a question still shows it until this answer
-	// is logged, and a wait from there would hand the question back.
+	// with --wait, since it costs a read of the conversation. Whatever the
+	// turn was doing: the API's wait, fenced, waits for this message to be
+	// logged past it, so neither a question this answers nor a turn it was
+	// queued behind is handed back.
 	before := ""
 	if *wait {
 		var w Workspace
-		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil && w.Turn.State == "idle" {
+		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil {
 			before = "0"
 			if w.Turn.LastEventID != nil {
 				before = *w.Turn.LastEventID
@@ -519,7 +520,18 @@ func waitAndPrint(ctx context.Context, api API, id, after string, timeout time.D
 			query.Set("after_event", after)
 		}
 		var w Workspace
-		raw, err := waitCall(ctx, api, id, query, hold, &w)
+		raw, err := waitCall(ctx, api, id, query, hold, deadline, &w)
+		if errors.Is(err, errWaitDeadline) {
+			// The deadline came while a failed call waited to be tried
+			// again: a timeout, as one the API answered.
+			w = Workspace{ID: id, TimedOut: true}
+			if asJSON {
+				printJSON(stdout, json.RawMessage(fmt.Sprintf(`{"id":%q,"timed_out":true}`, id)))
+			} else {
+				printWaited(stdout, w, waitHint(api, id, after))
+			}
+			return 4
+		}
 		if err != nil {
 			if !retryable(err) {
 				return failed(stderr, err)
@@ -549,8 +561,14 @@ func waitAndPrint(ctx context.Context, api API, id, after string, timeout time.D
 // on the same turn.
 var waitRetries = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
 
-// waitCall makes one wait call, tried again on a failure on the way.
-func waitCall(ctx context.Context, api API, id string, query url.Values, hold time.Duration, out *Workspace) (json.RawMessage, error) {
+// errWaitDeadline is a wait whose --timeout came while a failed call was
+// waiting to be tried again.
+var errWaitDeadline = errors.New("the wait's time ran out")
+
+// waitCall makes one wait call, tried again on a failure on the way, within
+// `deadline` (zero: none): a try again never runs past it, and asks only for
+// the time left.
+func waitCall(ctx context.Context, api API, id string, query url.Values, hold time.Duration, deadline time.Time, out *Workspace) (json.RawMessage, error) {
 	for attempt := 0; ; attempt++ {
 		call, cancel := context.WithTimeout(ctx, hold+60*time.Second)
 		raw, err := api.Call(call, "GET", "/workspaces/"+url.PathEscape(id)+"/wait", query, nil, out)
@@ -558,10 +576,21 @@ func waitCall(ctx context.Context, api API, id string, query url.Values, hold ti
 		if err == nil || !retryable(err) || attempt >= len(waitRetries) || ctx.Err() != nil {
 			return raw, err
 		}
+		pause := waitRetries[attempt]
+		if !deadline.IsZero() {
+			if time.Until(deadline) <= pause {
+				return nil, errWaitDeadline
+			}
+			hold = time.Until(deadline) - pause
+			if hold > maxWait {
+				hold = maxWait
+			}
+			query.Set("timeout", strconv.Itoa(int(hold.Seconds())))
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(waitRetries[attempt]):
+		case <-time.After(pause):
 		}
 	}
 }
@@ -582,8 +611,10 @@ func orgArg(api API) string {
 	if api.Org == "" {
 		return ""
 	}
-	if strings.ContainsAny(api.Org, " \t'\"") {
-		return " --org " + strconv.Quote(api.Org)
+	// Quoted for the shell (single quotes, nothing inside expands), when
+	// it holds anything a shell would read.
+	if strings.ContainsAny(api.Org, " \t'\"$`\\&;|<>()*?[]{}!#~") {
+		return " --org '" + strings.ReplaceAll(api.Org, "'", `'\''`) + "'"
 	}
 	return " --org " + api.Org
 }
@@ -746,7 +777,9 @@ func printEvent(out io.Writer, event Event) {
 			if text == "" {
 				continue
 			}
-			who := "Claude"
+			// The session's agent may be Claude Code or Codex: named for
+			// neither, rather than fetch which.
+			who := "Agent"
 			if event.Role == "user" {
 				who = "You"
 			}

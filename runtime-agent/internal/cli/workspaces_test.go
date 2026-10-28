@@ -212,7 +212,7 @@ func TestReadPrintsTheConversation(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errs.String())
 	}
 	text := out.String()
-	for _, want := range []string{"You: fix it", "→ Bash", "Claude: Fixed.", "--before 100"} {
+	for _, want := range []string{"You: fix it", "→ Bash", "Agent: Fixed.", "--before 100"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("printed %q, missing %q", text, want)
 		}
@@ -362,7 +362,7 @@ func TestDeleteTakesOnlyAYes(t *testing.T) {
 func TestAWaitThatTimesOutSaysToKeepItsFenceAndOrg(t *testing.T) {
 	var out bytes.Buffer
 	printWaited(&out, Workspace{ID: "w1", Status: "ready", TimedOut: true}, waitHint(API{Org: "Acme Inc"}, "w1", "480"))
-	if !strings.Contains(out.String(), `outrunner wait w1 --after 480 --org "Acme Inc"`) {
+	if !strings.Contains(out.String(), `outrunner wait w1 --after 480 --org 'Acme Inc'`) {
 		t.Fatalf("printed %q", out.String())
 	}
 }
@@ -438,18 +438,49 @@ func TestARefusedWaitEndsAtOnce(t *testing.T) {
 	}
 }
 
-func TestAnAnswerWithNoFenceWaitsPastTheQuestion(t *testing.T) {
-	awaitWorkingEvery = time.Millisecond
-	defer func() { awaitWorkingEvery = 2 * time.Second }()
-	var waited string
-	// Before the send it was asking: that's no place to wait from.
-	server := noFenceAPI(t, `{"state":"needs_input","last_event_id":"480"}`, &waited)
+func TestAnAnswerOrAQueuedMessageWaitsFromWhereTheLogStood(t *testing.T) {
+	// Asking a question, or mid-turn: the API's fenced wait waits for this
+	// message past the fence, so the snapshot is the fence either way.
+	for _, before := range []string{`{"state":"needs_input","last_event_id":"480"}`, `{"state":"working","last_event_id":"480"}`} {
+		var waited string
+		server := noFenceAPI(t, before, &waited)
+		var out, errs bytes.Buffer
+		if code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--wait", "Postgres"}, terminal{interactive: true}, &out, &errs); code != 0 {
+			t.Fatalf("exit %d: %s", code, errs.String())
+		}
+		if !strings.Contains(waited, "after_event=480") {
+			t.Fatalf("from %s, waited with %q", before, waited)
+		}
+	}
+}
+
+func TestOrgNamesAreQuotedForTheShell(t *testing.T) {
+	for org, want := range map[string]string{
+		"acme":     " --org acme",
+		"Acme Inc": " --org 'Acme Inc'",
+		"a&b":      " --org 'a&b'",
+		"$x":       " --org '$x'",
+		"o'neil":   ` --org 'o'\''neil'`,
+	} {
+		if got := orgArg(API{Org: org}); got != want {
+			t.Fatalf("%q: %q, want %q", org, got, want)
+		}
+	}
+}
+
+func TestRetriesKeepToTheTimeout(t *testing.T) {
+	server, calls := flakyWait(t, 100, 502)
+	waitRetries = []time.Duration{time.Second, time.Second}
 	var out, errs bytes.Buffer
-	if code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--wait", "Postgres"}, terminal{interactive: true}, &out, &errs); code != 0 {
+	started := time.Now()
+	if code := waitCommand(context.Background(), server.URL, signedIn, []string{"w1", "--after", "480", "--timeout", "50ms"}, &out, &errs); code != 4 {
 		t.Fatalf("exit %d: %s", code, errs.String())
 	}
-	if strings.Contains(waited, "after_event=480") {
-		t.Fatalf("waited from the question: %q", waited)
+	if *calls != 1 || time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("%d calls in %s", *calls, time.Since(started))
+	}
+	if !strings.Contains(out.String(), "--after 480") {
+		t.Fatalf("printed %q", out.String())
 	}
 }
 
