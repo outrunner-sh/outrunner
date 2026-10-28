@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getOwner, type Owner } from "@/lib/auth/owner";
-import { planFor } from "@/lib/billing/entitlements";
+import { sessionPlan } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, CloudLimitError, isPlanLimitError, UPGRADE_HREF } from "@/lib/billing/limits";
 import { getSandboxSettings } from "@/lib/db/credentials";
 import { orgDefaultsFor } from "@/lib/db/org-defaults";
@@ -235,7 +235,7 @@ async function bringBack(
   // A box is about to start: the plan's hours and box count get their say,
   // and the claim in the database enforces the cap.
   const scope = scopeOf(workspace, computer);
-  const gate = await cloudBoxStartGate(owner, provider.name, scope);
+  const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, scope);
   if ("denial" in gate) throw new CloudLimitError(gate.denial);
   const ensured = await ensureComputer(provider, {
     scope,
@@ -248,7 +248,7 @@ async function bringBack(
     size: boxSizeOn(
       sandboxOf(provider.name),
       newBoxSize(await getSandboxSettings(owner.id), (await orgDefaultsFor(project.orgId)).boxSize),
-      await planFor(owner.id),
+      await sessionPlan(owner.id, project.orgId),
     ),
     previousSandboxId: ended,
     maxLiveComputers: gate.cap,

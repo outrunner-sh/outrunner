@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
+import { activeOrgId } from "@/lib/orgs/server";
 import { allowsBoxSize } from "@/lib/billing/plans";
 import {
   clearDaytonaKey,
@@ -69,7 +70,9 @@ export async function PUT(request: Request) {
   const size = isBoxSizeId(body.boxSize) ? boxSize(body.boxSize) : null;
   // A size beyond the user's plan isn't for Outrunner's sandboxes; their own
   // Modal is on their bill.
-  if (size && sandbox !== "modal" && !allowsBoxSize(await planFor(owner.id), size.id)) {
+  // Within the plan of the org they're looking at (billing is the org's);
+  // a box is still sized within its own org's at start (boxSizeOn).
+  if (size && sandbox !== "modal" && !allowsBoxSize(await planFor(await activeOrgId().catch(() => undefined)), size.id)) {
     return NextResponse.json({ error: `${size.label} needs a higher plan.` }, { status: 403 });
   }
 

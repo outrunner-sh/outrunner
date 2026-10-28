@@ -1,5 +1,5 @@
 /**
- * Plans from subscriptions: a user's copy of their Stripe subscriptions
+ * Plans from subscriptions: an org's copy of its Stripe subscriptions
  * (the subscriptions table), what each says they are entitled to, and how a
  * Stripe subscription becomes a row. Pure, so the rules are tested alone.
  */
@@ -10,7 +10,10 @@ import { betterPlan, type BillingInterval, type PaidPlanId, planForLookupKey, PL
 
 export type SubscriptionRecord = {
   stripeSubscriptionId: string;
-  userId: string;
+  /** The org whose plan it is (billing is the org's). */
+  orgId: string;
+  /** Who bought it, where known. */
+  userId: string | null;
   stripeCustomerId: string;
   status: string;
   plan: PaidPlanId;
@@ -87,7 +90,7 @@ export function currentSubscription(
  */
 export function recordFromStripe(
   subscription: Stripe.Subscription,
-  userId: string,
+  owner: { orgId: string; userId: string | null },
   previous: SubscriptionRecord | null,
   now: Date,
 ): SubscriptionRecord | null {
@@ -102,7 +105,8 @@ export function recordFromStripe(
   const interval: string | undefined = price.recurring?.interval;
   return {
     stripeSubscriptionId: subscription.id,
-    userId,
+    orgId: owner.orgId,
+    userId: owner.userId,
     stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id,
     status: subscription.status,
     plan,

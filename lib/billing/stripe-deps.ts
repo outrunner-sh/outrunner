@@ -7,19 +7,21 @@ import {
   deleteSubscription,
   eventHandled,
   recordEvent,
+  orgForCustomer,
   saveSubscription,
   subscriptionById,
-  userForCustomer,
 } from "@/lib/billing/billing-store";
 import type { CheckoutDeps } from "@/lib/billing/checkout";
 import { refreshModelAllowance } from "@/lib/db/credentials";
+import { getOrg, personalOrgId, personalOwners } from "@/lib/db/orgs";
 import { LOOKUP_KEYS } from "@/lib/billing/plans";
 import { stripe } from "@/lib/billing/stripe";
 import type { SyncDeps } from "@/lib/billing/sync";
 
 export const syncDeps: SyncDeps = {
   retrieveSubscription: (id) => stripe().subscriptions.retrieve(id),
-  userForCustomer,
+  orgForCustomer,
+  personalOrgOf: personalOrgId,
   subscriptionById,
   saveSubscription,
   deleteSubscription,
@@ -27,20 +29,26 @@ export const syncDeps: SyncDeps = {
   recordEvent,
   now: () => new Date(),
   log: (message) => console.warn(message),
-  // An upgrade's allowance applies at once, not at the next session.
-  changed: async (userId) => void (await refreshModelAllowance(userId)),
+  // An upgrade's allowance applies at once, not at the next session: a
+  // personal org's plan sets its owner's model key, until keys are orgs'.
+  changed: async (orgId) => {
+    const owner = (await personalOwners([orgId])).get(orgId);
+    if (owner) await refreshModelAllowance(owner);
+  },
 };
 
 export const checkoutDeps: CheckoutDeps = {
   customerIdFor,
   claimCustomer,
-  createCustomer: async (user, idempotencyKey) => {
+  createCustomer: async (buyer, idempotencyKey) => {
+    const personal = (await getOrg(buyer.orgId))?.personal ?? true;
     const customer = await stripe().customers.create(
       {
-        // The GitHub login is how support finds a user in Stripe's dashboard.
-        name: user.githubLogin || undefined,
-        email: user.email ?? undefined,
-        metadata: { user_id: user.id, github_login: user.githubLogin },
+        // The GitHub login is how support finds a solo user in Stripe's
+        // dashboard; a team org by its name.
+        name: (personal ? buyer.githubLogin : buyer.orgName) || undefined,
+        email: buyer.email ?? undefined,
+        metadata: { org_id: buyer.orgId, user_id: buyer.userId, github_login: buyer.githubLogin },
       },
       { idempotencyKey },
     );
@@ -59,15 +67,15 @@ export const checkoutDeps: CheckoutDeps = {
     if (!price) throw new Error(`No active Stripe price has the lookup key ${lookupKey}.`);
     return price.id;
   },
-  createCheckoutSession: async ({ customerId, priceId, userId, successUrl, cancelUrl }) => {
+  createCheckoutSession: async ({ customerId, priceId, orgId, userId, successUrl, cancelUrl }) => {
     const session = await stripe().checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
       line_items: [{ price: priceId, quantity: 1 }],
-      client_reference_id: userId,
+      client_reference_id: orgId,
       // So the webhook can tell whose it is even before the customer is
-      // stored (lib/billing/sync.ts).
-      subscription_data: { metadata: { user_id: userId } },
+      // stored (lib/billing/sync.ts); and who bought it.
+      subscription_data: { metadata: { org_id: orgId, user_id: userId } },
       allow_promotion_codes: true,
       success_url: successUrl,
       cancel_url: cancelUrl,

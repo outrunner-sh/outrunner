@@ -13,10 +13,12 @@ import {
 } from "@/lib/billing/subscriptions";
 
 const NOW = new Date("2026-10-17T12:00:00Z");
+const OWNER = { orgId: "o-1", userId: "u-1" };
 
 function record(overrides: Partial<SubscriptionRecord> = {}): SubscriptionRecord {
   return {
     stripeSubscriptionId: "sub_1",
+    orgId: "o-1",
     userId: "u-1",
     stripeCustomerId: "cus_1",
     status: "active",
@@ -102,8 +104,9 @@ test("of two subscriptions on the same plan, the same one is picked in any order
 });
 
 test("a Stripe subscription becomes a row: plan by lookup key, period from its item", () => {
-  assert.deepEqual(recordFromStripe(stripeSubscription(), "u-1", null, NOW), {
+  assert.deepEqual(recordFromStripe(stripeSubscription(), OWNER, null, NOW), {
     stripeSubscriptionId: "sub_1",
+    orgId: "o-1",
     userId: "u-1",
     stripeCustomerId: "cus_1",
     status: "active",
@@ -118,20 +121,20 @@ test("a Stripe subscription becomes a row: plan by lookup key, period from its i
 });
 
 test("a price Outrunner doesn't sell is no plan, unless it's marked enterprise", () => {
-  assert.equal(recordFromStripe(stripeSubscription({ lookupKey: "other" }), "u-1", null, NOW), null);
-  assert.equal(recordFromStripe(stripeSubscription({ lookupKey: null }), "u-1", null, NOW), null);
-  const contract = recordFromStripe(stripeSubscription({ lookupKey: null, metadata: { plan: "enterprise" } }), "u-1", null, NOW);
+  assert.equal(recordFromStripe(stripeSubscription({ lookupKey: "other" }), OWNER, null, NOW), null);
+  assert.equal(recordFromStripe(stripeSubscription({ lookupKey: null }), OWNER, null, NOW), null);
+  const contract = recordFromStripe(stripeSubscription({ lookupKey: null, metadata: { plan: "enterprise" } }), OWNER, null, NOW);
   assert.equal(contract?.plan, "enterprise");
-  const byPrice = recordFromStripe(stripeSubscription({ lookupKey: null, priceMetadata: { plan: "enterprise" } }), "u-1", null, NOW);
+  const byPrice = recordFromStripe(stripeSubscription({ lookupKey: null, priceMetadata: { plan: "enterprise" } }), OWNER, null, NOW);
   assert.equal(byPrice?.plan, "enterprise");
 });
 
 test("going past due starts the grace once; Stripe's retries don't restart it, and paying clears it", () => {
-  const first = recordFromStripe(stripeSubscription({ status: "past_due" }), "u-1", null, NOW);
+  const first = recordFromStripe(stripeSubscription({ status: "past_due" }), OWNER, null, NOW);
   assert.deepEqual(first?.pastDueSince, NOW);
   const later = new Date(NOW.getTime() + 86_400_000);
-  const retry = recordFromStripe(stripeSubscription({ status: "past_due" }), "u-1", first, later);
+  const retry = recordFromStripe(stripeSubscription({ status: "past_due" }), OWNER, first, later);
   assert.deepEqual(retry?.pastDueSince, NOW);
-  const paid = recordFromStripe(stripeSubscription({ status: "active" }), "u-1", retry, later);
+  const paid = recordFromStripe(stripeSubscription({ status: "active" }), OWNER, retry, later);
   assert.equal(paid?.pastDueSince, null);
 });

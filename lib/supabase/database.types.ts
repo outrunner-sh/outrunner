@@ -166,6 +166,8 @@ type RuntimeComputerRow = {
 type ComputeIntervalRow = {
   id: string;
   owner_id: string;
+  /** The org the box ran for, whose hours they are (20261031150000_org_billing.sql). */
+  org_id: string | null;
   computer_id: string | null;
   sandbox_id: string;
   cpu: number;
@@ -175,7 +177,9 @@ type ComputeIntervalRow = {
 };
 
 type BillingCustomerRow = {
-  user_id: string;
+  /** The org it bills (20261031150000_org_billing.sql); the user who made it. */
+  org_id: string;
+  user_id: string | null;
   stripe_customer_id: string;
   created_at: string;
 };
@@ -183,7 +187,9 @@ type BillingCustomerRow = {
 /** A copy of a Stripe subscription (supabase/migrations/20261017150000_stripe_billing.sql). */
 type SubscriptionRow = {
   stripe_subscription_id: string;
-  user_id: string;
+  /** The org whose plan it is (20261031150000_org_billing.sql); who bought it. */
+  org_id: string;
+  user_id: string | null;
   stripe_customer_id: string;
   status: string;
   plan: string;
@@ -1064,7 +1070,7 @@ export type Database = {
       };
       billing_customers: {
         Row: BillingCustomerRow;
-        Insert: Insert<BillingCustomerRow, "user_id" | "stripe_customer_id">;
+        Insert: Insert<BillingCustomerRow, "org_id" | "stripe_customer_id">;
         Update: Partial<BillingCustomerRow>;
         Relationships: [];
       };
@@ -1073,7 +1079,7 @@ export type Database = {
         Insert: Insert<
           SubscriptionRow,
           | "stripe_subscription_id"
-          | "user_id"
+          | "org_id"
           | "stripe_customer_id"
           | "status"
           | "plan"

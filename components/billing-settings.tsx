@@ -34,7 +34,10 @@ export function BillingSettings({
   prices,
   hasCustomer,
   checkout,
+  org = null,
 }: {
+  /** The org whose plan it is (billing is the org's); none before orgs. */
+  org?: { name: string; personal: boolean; admin: boolean } | null;
   plan: Plan;
   subscription: ShownSubscription | null;
   prices: Record<string, number> | null;
@@ -100,8 +103,15 @@ export function BillingSettings({
     <section className="space-y-8">
       <div className="space-y-1">
         <h1 className="text-lg font-semibold text-foreground">Billing</h1>
-        <p className="text-sm text-muted-foreground">Your plan, and what it includes.</p>
+        <p className="text-sm text-muted-foreground">
+          {!org || org.personal
+            ? "Your plan, and what it includes."
+            : `${org.name}'s plan, and what it includes: shared by all its members, whoever starts a session.`}
+        </p>
       </div>
+      {org && !org.admin ? (
+        <p className="text-sm text-muted-foreground">{`Only ${org.name}'s admins change its plan.`}</p>
+      ) : null}
 
       {checkout === "canceled" ? <Notice tone="info" title="Checkout canceled" detail="Nothing was charged." /> : null}
       {checkout === "error" ? (
@@ -132,7 +142,7 @@ export function BillingSettings({
           {subscription ? <p className="text-xs text-muted-foreground">{subscriptionLine(subscription)}</p> : null}
         </div>
         <PlanIncludes plan={plan} />
-        {hasCustomer ? (
+        {hasCustomer && (!org || org.admin) ? (
           <LoadingButton
             variant="outline"
             status={status("portal")}
@@ -143,7 +153,7 @@ export function BillingSettings({
         {failed === "portal" && error ? <InlineMessage>{error}</InlineMessage> : null}
       </div>
 
-      {prices ? (
+      {org && !org.admin ? null : prices ? (
         <div className="space-y-4">
           <BillingIntervalToggle interval={interval} onChange={setBillingInterval} />
           <div className="grid gap-3 sm:grid-cols-2">

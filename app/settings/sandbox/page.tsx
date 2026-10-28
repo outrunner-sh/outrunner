@@ -5,6 +5,7 @@ import { SandboxSettingsForm } from "@/components/sandbox-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { planFor } from "@/lib/billing/entitlements";
+import { activeOrgId } from "@/lib/orgs/server";
 import { getSandboxSettings } from "@/lib/db/credentials";
 import { providerName } from "@/lib/env";
 
@@ -29,7 +30,7 @@ async function SandboxSection() {
       initial={await getSandboxSettings(owner.id)}
       // Only Neev sizes a box (lib/runtime/sandbox/backend.ts).
       sizes={providerName() === "neev"}
-      plan={await planFor(owner.id)}
+      plan={await planFor(await activeOrgId().catch(() => undefined))}
     />
   );
 }

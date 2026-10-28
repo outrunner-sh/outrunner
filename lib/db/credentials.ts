@@ -19,7 +19,7 @@ import { AGENT_IDS, AGENTS, type AgentId, type AuthCredential, type AuthMethodId
 import type { AgentAuthStore } from "@/lib/agents/resolve";
 import { dueForRenewal } from "@/lib/billing/allowance-renewal";
 import { entitlingSubscriptions } from "@/lib/billing/billing-store";
-import { connectorPeriod, entitlementsFor, planFor } from "@/lib/billing/entitlements";
+import { connectorPeriod, personalEntitlements } from "@/lib/billing/entitlements";
 import {
   type AllowanceState,
   type AllowanceStore,
@@ -31,6 +31,7 @@ import {
 import type { PlanId } from "@/lib/billing/plans";
 import { open, sameSecret, seal } from "@/lib/crypto/secret-box";
 import { openOrgKey, orgProviderKey, sealedOrgKeys, usableOrgProviders } from "@/lib/db/org-credentials";
+import { personalOwners } from "@/lib/db/orgs";
 import type { Allowance } from "@/lib/openrouter/allowance";
 import {
   createUserKey,
@@ -787,7 +788,7 @@ export async function modelKey(userId: string, holder: KeyHolder, orgId?: string
  */
 export async function outrunnerModelAllowance(userId: string): Promise<Allowance | null> {
   if (keySource() !== "per-user") return null;
-  return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await planFor(userId)).models.usd };
+  return (await refreshModelAllowance(userId)) ?? { usedUsd: 0, limitUsd: (await personalEntitlements(userId)).plan.models.usd };
 }
 
 /**
@@ -841,7 +842,8 @@ export async function refreshModelAllowance(userId: string): Promise<RefreshedAl
   return refreshAllowance(store, {
     usage: keyUsage,
     setLimit: setKeyLimit,
-    entitlements: () => entitlementsFor(userId),
+    // Their personal org's plan sets it, until the allowance is the org's.
+    entitlements: () => personalEntitlements(userId),
   });
 }
 
@@ -853,7 +855,10 @@ export async function refreshModelAllowance(userId: string): Promise<RefreshedAl
 export async function renewDueModelAllowances(now = new Date()): Promise<number> {
   if (keySource() !== "per-user") return 0;
   const subscriptions = await entitlingSubscriptions();
-  const userIds = [...new Set(subscriptions.map((s) => s.userId))];
+  // A personal org's plan sets its owner's key, until allowances are orgs'.
+  const owners = await personalOwners([...new Set(subscriptions.map((s) => s.orgId))]);
+  const holderOf = (subscription: { orgId: string }) => owners.get(subscription.orgId) ?? null;
+  const userIds = [...new Set(owners.values())];
   const stored = new Map<string, string | null>();
   for (let i = 0; i < userIds.length; i += 200) {
     const { data, error } = await createSupabaseAdminClient()
@@ -883,7 +888,7 @@ export async function renewDueModelAllowances(now = new Date()): Promise<number>
     for (const row of data) if (row.neev_allowance_period !== month) connectorDue.push(row.user_id);
   }
   let renewed = 0;
-  for (const userId of [...dueForRenewal(subscriptions, stored, now), ...connectorDue]) {
+  for (const userId of [...dueForRenewal(subscriptions, holderOf, stored, now), ...connectorDue]) {
     try {
       await refreshModelAllowance(userId);
       renewed += 1;
@@ -953,7 +958,7 @@ export async function outrunnerModelKey(userId: string): Promise<string> {
       create: async () =>
         createUserKey(
           `outrunner user ${userId}`,
-          (nextAllowance(await entitlementsFor(userId), null, 0) as AllowanceState).limitUsd,
+          (nextAllowance(await personalEntitlements(userId), null, 0) as AllowanceState).limitUsd,
         ),
       disable: disableUserKey,
       log: (message, error) => console.error(`${message} (user ${userId})`, error),

@@ -10,18 +10,22 @@ import { allowancePeriod } from "@/lib/billing/periods";
 import { currentSubscription, type SubscriptionRecord } from "@/lib/billing/subscriptions";
 
 /**
- * The users whose stored allowance period isn't the one their plan is in
- * now. `storedPeriods` has an entry for each user with a key of Outrunner's
- * (null: no period stored yet); one without a key has nothing to renew.
+ * The holders of a model key whose stored allowance period isn't the one
+ * their plan is in now. `holderOf` says whose key a subscription's plan sets
+ * (null: none's). `storedPeriods` has an entry for each holder with a key of
+ * Outrunner's (null: no period stored yet); one without a key has nothing to
+ * renew.
  */
 export function dueForRenewal(
   subscriptions: readonly SubscriptionRecord[],
+  holderOf: (subscription: SubscriptionRecord) => string | null,
   storedPeriods: ReadonlyMap<string, string | null>,
   now: Date,
 ): string[] {
   const byUser = new Map<string, SubscriptionRecord[]>();
   for (const subscription of subscriptions) {
-    byUser.set(subscription.userId, [...(byUser.get(subscription.userId) ?? []), subscription]);
+    const holder = holderOf(subscription);
+    if (holder) byUser.set(holder, [...(byUser.get(holder) ?? []), subscription]);
   }
   const due: string[] = [];
   for (const [userId, theirs] of byUser) {

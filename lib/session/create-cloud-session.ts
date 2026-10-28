@@ -11,7 +11,7 @@ import { after, NextResponse } from "next/server";
 import type { AgentId } from "@/lib/agents/registry";
 import { AgentAuthError, resolveAgentAuth, type ResolvedAuth } from "@/lib/agents/resolve";
 import type { Owner } from "@/lib/auth/owner";
-import { planFor } from "@/lib/billing/entitlements";
+import { sessionPlan } from "@/lib/billing/entitlements";
 import { cloudBoxStartGate, isPlanLimitError } from "@/lib/billing/limits";
 import {
   agentAuthStore,
@@ -310,7 +310,7 @@ export async function createCloudSession(
 
   // A box is about to start, the new session's own: the plan's hours and box
   // count get their say before anything is created.
-  const gate = await cloudBoxStartGate(owner, provider.name, null);
+  const gate = await cloudBoxStartGate(owner, project.orgId, provider.name, null);
   if ("denial" in gate) return NextResponse.json(gate.denial, { status: 403 });
 
   // The project the session starts from: the repository's own, made on its
@@ -582,7 +582,7 @@ async function provisionWorkspace({
         size: boxSizeOn(
           sandboxSettings.sandbox,
           newBoxSize(sandboxSettings, (await orgDefaultsFor(project.orgId)).boxSize),
-          await planFor(owner.id),
+          await sessionPlan(owner.id, project.orgId),
         ),
         maxLiveComputers,
         ...(provider.restoresBoxes && endedBox && { previousSandboxId: endedBox }),
