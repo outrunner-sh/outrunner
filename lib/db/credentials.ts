@@ -157,6 +157,31 @@ export async function clearGithubToken(userId: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Who a user's sessions clone, push and open pull requests as
+ *  (20261030100000_github_identity.sql): their own GitHub sign-in, or the
+ *  Outrunner GitHub App of the session's org (lib/github/identity.ts). */
+export type GitHubIdentity = "personal" | "app";
+
+/** The user's GitHub identity; their own sign-in until they choose, and
+ *  until the migration is applied. */
+export async function getGithubIdentity(userId: string): Promise<GitHubIdentity> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .select("github_identity")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error && probeStatus(error) === "outdated") return "personal";
+  if (error) throw error;
+  return data?.github_identity === "app" ? "app" : "personal";
+}
+
+export async function setGithubIdentity(userId: string, identity: GitHubIdentity): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("user_credentials")
+    .upsert({ user_id: userId, github_identity: identity }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
 /** The user's Anthropic API key, or null when unset or unreadable. */
 export async function getAnthropicKey(userId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();

@@ -17,6 +17,7 @@ import (
 
 	"runtime-agent/internal/ask"
 	"runtime-agent/internal/claude"
+	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/localimport"
 	"runtime-agent/internal/server"
@@ -37,6 +38,17 @@ func main() {
 		os.Exit(askRelay(os.Args[2:]))
 	}
 
+	// `runtime-agent git-credential …` is git's credential helper for
+	// github.com in a session, and `runtime-agent github-token …` the gh
+	// wrapper's (package gitcred): each asks the agent it finds under the
+	// root for a fresh GitHub token.
+	if len(os.Args) > 1 && os.Args[1] == "git-credential" {
+		os.Exit(gitCredentialHelper(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "github-token" {
+		os.Exit(githubToken(os.Args[2:]))
+	}
+
 	secret := os.Getenv("RUNTIME_AGENT_SECRET")
 	if secret == "" {
 		log.Fatal("RUNTIME_AGENT_SECRET is required")
@@ -53,6 +65,14 @@ func main() {
 		svc.RelayExecutable = exe
 	} else {
 		log.Printf("runtime-agent: sessions launch without ask_user: %v", err)
+	}
+	// A box the control plane launched with the means to ask it for GitHub
+	// tokens has its sessions' git and gh get fresh ones; any other (the
+	// desktop app, an older control plane) keeps the token it was given.
+	if cfg, ok := gitcred.ConfigFromEnv(os.Getenv); ok {
+		if err := svc.UseGitCredential(&gitcred.Client{Config: cfg}); err != nil {
+			log.Printf("runtime-agent: sessions keep the GitHub token they were launched with: %v", err)
+		}
 	}
 	if raw := os.Getenv("RUNTIME_DEFAULT_PERMISSION_MODE"); raw != "" {
 		mode, err := claude.ParsePermissionMode(raw)
@@ -152,4 +172,40 @@ func askRelay(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// gitCredentialHelper answers git's credential request on stdin
+// (`git-credential --root R <op>`).
+func gitCredentialHelper(args []string) int {
+	flags := flag.NewFlagSet("git-credential", flag.ContinueOnError)
+	root := flags.String("root", "", "the runtime-agent's root")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *root == "" {
+		fmt.Fprintln(os.Stderr, "git-credential: --root is required")
+		return 2
+	}
+	return gitcred.Helper(context.Background(), flags.Arg(0), os.Stdin, os.Stdout, os.Stderr, localAgent(*root), os.Getenv("GH_TOKEN"))
+}
+
+// githubToken prints a GitHub token for the gh command after "--"
+// (`github-token --root R -- <gh args>`).
+func githubToken(args []string) int {
+	flags := flag.NewFlagSet("github-token", flag.ContinueOnError)
+	root := flags.String("root", "", "the runtime-agent's root")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *root == "" {
+		fmt.Fprintln(os.Stderr, "github-token: --root is required")
+		return 2
+	}
+	return gitcred.GitHubToken(context.Background(), flags.Args(), os.Stdout, os.Stderr, localAgent(*root), os.Getenv, gitcred.OriginURL)
+}
+
+// localAgent is the agent under root, as the helpers reach it.
+func localAgent(root string) gitcred.Local {
+	addrFile, tokenFile := workspace.GitCredentialPaths(root)
+	return gitcred.Local{AddrFile: addrFile, TokenFile: tokenFile}
 }

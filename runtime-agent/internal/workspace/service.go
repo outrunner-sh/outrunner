@@ -21,6 +21,7 @@ import (
 	"runtime-agent/internal/cast"
 	"runtime-agent/internal/claude"
 	"runtime-agent/internal/codex"
+	"runtime-agent/internal/gitcred"
 	"runtime-agent/internal/jcode"
 	"runtime-agent/internal/protocol"
 	"runtime-agent/internal/redact"
@@ -120,6 +121,14 @@ type Service struct {
 	// liveSecrets are values provided while sessions run: terminals and
 	// recordings already open mask them from then on (LiveSecrets).
 	liveSecrets *redact.Tokens
+	// liveMu makes reading the live secrets' sources and setting them one
+	// step (refreshLiveSecrets).
+	liveMu sync.Mutex
+	// gitTokens are the GitHub tokens the control plane gives the sessions,
+	// and gitToken the helpers' proof they ask from this box (gitcred.go);
+	// nil and empty when it gives none.
+	gitTokens *gitcred.Cache
+	gitToken  string
 	// RelayExecutable is this binary, which a session's agent launches as
 	// its ask_user relay; empty launches sessions without the tool.
 	RelayExecutable string
@@ -256,6 +265,8 @@ func NewService(root string) *Service {
 //
 // The user's GitHub token (GH_TOKEN) stays, for `gh`, and git is pointed at it
 // for github.com only (githubCredentialEnv), so the agent can push its branch.
+// A box whose control plane gives it fresh tokens points git at this agent
+// instead (UseGitCredential), and keeps GH_TOKEN as the fallback.
 func sessionEnvironment(base []string) ([]string, []string) {
 	env := make([]string, 0, len(base))
 	secrets := make([]string, 0, 2)
@@ -266,7 +277,7 @@ func sessionEnvironment(base []string) ([]string, []string) {
 			continue
 		}
 		switch key {
-		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT":
+		case "RUNTIME_AGENT_SECRET", "RUNTIME_AGENT_ROOT", "PORT", "RUNTIME_SANDBOX_ID", "OUTRUNNER_APP_URL":
 			continue
 		case "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN":
 			if value != "" {
@@ -297,8 +308,17 @@ var githubCredentialEnv = []string{
 func (s *Service) RedactionSecrets() []string {
 	secrets := append(append([]string(nil), s.secrets...), s.gatewayFiles().tokens()...)
 	secrets = append(append(secrets, s.authFiles().tokens()...), s.envTokens()...)
-	secrets = append(secrets, s.providedTokens()...)
+	secrets = append(append(secrets, s.providedTokens()...), s.credentialTokens()...)
 	return append(secrets, agentConfigTokens()...)
+}
+
+// refreshLiveSecrets sets the live secrets from their sources: the values
+// provided to sessions, and the GitHub tokens handed out. Each source calls
+// it after it changes, so whichever runs last sets them all.
+func (s *Service) refreshLiveSecrets() {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	s.liveSecrets.Set(append(s.providedTokens(), s.credentialTokens()...))
 }
 
 // LiveSecrets are secrets that arrive after a redactor is made: an open

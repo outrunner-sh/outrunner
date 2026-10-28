@@ -29,6 +29,7 @@ function toProviderName(value: string): ProviderName {
 export function toProject(row: Tables["projects"]["Row"]): Project {
   return {
     id: row.id,
+    orgId: row.org_id,
     githubRepoId: row.github_repo_id,
     fullName: row.full_name,
     owner: row.owner,

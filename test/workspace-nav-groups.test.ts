@@ -21,6 +21,7 @@ function project(id: string, name = id): Project {
     htmlUrl: `https://github.com/acme/${name}`,
     pushedAt: null,
     linearIssueIds: [],
+    orgId: "org-1",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
   };

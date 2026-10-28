@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { optionalEnv } from "@/lib/env";
+import { gitCredentialEnvironment } from "@/lib/runtime/git-credential";
 import type { AgentTarget } from "@/lib/runtime/agent-client";
 import { AgentEndpointCache } from "@/lib/runtime/agent-endpoint-cache";
 import { ATTACHMENT_DIR } from "@/lib/runtime/attachments";
@@ -26,6 +27,7 @@ import {
   commitAll,
   fetchMirror,
   syncMirrors,
+  type GitTokenFor,
   listChangedFiles,
   pushBranch,
   readFileDiff,
@@ -263,7 +265,7 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
       await timer.stage("agent_boot", () =>
         deployClaude(box.io, binary, input.secret, {
           root: home,
-          sessionEnv: input.sessionEnv,
+          sessionEnv: boxEnvironment(box.id, input.sessionEnv),
         }),
       );
 
@@ -405,8 +407,13 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
 
   /** A mirror of each repository of a multi-repository session, at
    *  $HOME/repos/<checkout>.git where the agent finds them (its
-   *  RepoMirrorPath): fetched where the box has one, cloned where not. */
-  async syncRepoMirrors(sandboxId: string, repos: { fullName: string; checkout: string }[], githubToken?: string): Promise<void> {
+   *  RepoMirrorPath): fetched where the box has one, cloned where not. Each
+   *  with its own token where they differ (the App's are per repository). */
+  async syncRepoMirrors(
+    sandboxId: string,
+    repos: { fullName: string; checkout: string }[],
+    githubToken?: string | GitTokenFor,
+  ): Promise<void> {
     const box = await this.backend.get(sandboxId);
     const home = await box.home();
     await box.gitExec(["mkdir", "-p", `${home}/repos`]);
@@ -597,7 +604,10 @@ export class ComputerRuntimeProvider implements RuntimeProvider {
     if (running) return running;
     const upgrade = (async () => {
       const box = await this.backend.get(sandboxId);
-      await deployClaude(box.io, await this.binary(), secret, { root: await box.home(), sessionEnv });
+      await deployClaude(box.io, await this.binary(), secret, {
+        root: await box.home(),
+        sessionEnv: boxEnvironment(sandboxId, sessionEnv),
+      });
     })().finally(() => UPGRADING.delete(key));
     UPGRADING.set(key, upgrade);
     return upgrade;
@@ -702,4 +712,10 @@ export function boxGone(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const { name, status, statusCode } = error as { name?: unknown; status?: unknown; statusCode?: unknown };
   return (typeof name === "string" && name.endsWith("NotFoundError")) || status === 404 || statusCode === 404;
+}
+
+/** A box's agent boots with its user's environment, and with what it asks
+ *  Outrunner for GitHub tokens with (lib/runtime/git-credential.ts). */
+function boxEnvironment(sandboxId: string, sessionEnv: Record<string, string> | undefined): Record<string, string> {
+  return { ...sessionEnv, ...gitCredentialEnvironment(sandboxId, optionalEnv("RUNTIME_BASE_URL")) };
 }

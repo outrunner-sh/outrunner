@@ -91,6 +91,7 @@ function project(r: RepositoryListing): Project {
     htmlUrl: `https://github.com/${r.fullName}`,
     pushedAt: r.pushedAt,
     linearIssueIds: [],
+    orgId: "",
     createdAt: "2026-10-25T00:00:00Z",
     updatedAt: "2026-10-25T00:00:00Z",
   };

@@ -1578,3 +1578,23 @@ begin
   end if;
   raise notice 'ok: an installation goes with the org that removed it';
 end $$;
+
+-- 40. A user's GitHub identity is their own sign-in until they choose the App,
+-- and nothing else.
+do $$
+declare someone constant uuid := '11111111-1111-1111-1111-111111111111';
+begin
+  insert into user_credentials (user_id) values (someone) on conflict (user_id) do nothing;
+  if (select github_identity from user_credentials where user_id = someone) <> 'personal' then
+    raise exception 'FAIL: a user is not on their own GitHub sign-in at first';
+  end if;
+  update user_credentials set github_identity = 'app' where user_id = someone;
+  begin
+    update user_credentials set github_identity = 'bot' where user_id = someone;
+    raise exception 'FAIL: an unknown GitHub identity was kept';
+  exception when check_violation then
+    null;
+  end;
+  update user_credentials set github_identity = 'personal' where user_id = someone;
+  raise notice 'ok: a GitHub identity is personal or app, personal at first';
+end $$;

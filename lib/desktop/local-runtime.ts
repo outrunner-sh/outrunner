@@ -486,12 +486,17 @@ export function folderGone(error: unknown): boolean {
 
 /**
  * Clone a repository picked from GitHub (`owner/name`) into ~/outrunner/repos,
- * or use the clone made before, as the folder a local session works in. The
- * user's GitHub token goes to the app for this clone only, so private
- * repositories clone too.
+ * or use the clone made before, as the folder a local session works in. A
+ * GitHub token goes to the app for this clone only (their own, or the org's
+ * App's for that repository, as they chose), so private repositories clone
+ * too.
  */
 export async function cloneLocalRepository(fullName: string): Promise<LocalFolder> {
-  const res = await fetch("/api/github/clone-token", { method: "POST" });
+  const res = await fetch("/api/github/clone-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fullName }),
+  });
   const data = (await res.json().catch(() => null)) as { token?: string; error?: string } | null;
   if (!res.ok || !data?.token) throw new Error(data?.error ?? "Couldn't reach GitHub for that repository.");
   return call<LocalFolder>("local_clone_repo", { fullName, token: data.token });

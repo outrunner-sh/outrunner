@@ -134,6 +134,11 @@ export const AGENT_FEATURE_MULTI_REPO_SNAPSHOTS = "multi-repo-snapshots";
  *  and start hooks. */
 export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
 
+/** The agent's git and `gh` ask Outrunner for GitHub tokens as they need them
+ *  (app/api/runtime/git-credential), rather than keep the one it booted with:
+ *  the Outrunner App's last an hour. */
+export const AGENT_FEATURE_GIT_CREDENTIAL = "git-credential";
+
 /** POST /warm (the listing token): warm a ready box, a checkout of the base
  *  branch with the project's files in it and its warm hook run there. */
 export const WarmRequest = z

@@ -15,6 +15,8 @@ import type { RecordedModel } from "@/lib/runtime/session-models";
 
 export type Project = {
   id: string;
+  /** The org it's a project of. */
+  orgId: string;
   githubRepoId: number;
   /** `owner/name`, e.g. `immadsahin/runtime`. */
   fullName: string;

@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { isMetered } from "@/lib/billing/metering-store";
 import { getSandboxSettings, ownSandboxKeys } from "@/lib/db/credentials";
 import { environmentSetup, getEnvironment, recordWarmRun } from "@/lib/db/environments";
-import { optionalGithubToken } from "@/lib/github/token";
+import { optionalGitToken } from "@/lib/github/identity.deps";
 import {
   claimPooledComputer,
   createPooledComputer,
@@ -294,7 +294,7 @@ export async function refillAfterChange(ownerId: string, environmentId: string):
       ownerId,
       project: { id: repo.projectId, fullName: repo.fullName, defaultBranch: repo.defaultBranch },
       environmentId,
-      githubToken: await optionalGithubToken(ownerId),
+      githubToken: await optionalGitToken(ownerId, { orgId: environment.orgId, fullName: repo.fullName }),
       sessionEnv: await runtimeSessionEnvironment(ownerId),
     });
   } catch (error) {

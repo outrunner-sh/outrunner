@@ -360,6 +360,8 @@ type UserCredentialsRow = {
   modal_token_updated_at: string | null;
   // supabase/migrations/20261013130000_user_box_size.sql.
   box_size: "x-small" | "small" | "medium" | "large";
+  // Settings → Account (supabase/migrations/20261030100000_github_identity.sql).
+  github_identity: "personal" | "app";
   // Settings → Providers (supabase/migrations/20261016140000_user_openrouter_key.sql).
   // Replaced by user_provider_keys; dropped in a later release.
   openrouter_key_ciphertext: string | null;

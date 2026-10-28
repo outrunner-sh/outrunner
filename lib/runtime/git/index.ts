@@ -257,14 +257,19 @@ export async function cloneMirror(
   );
 }
 
+/** A repository's token, asked as each is reached: the App's differ per
+ *  repository (lib/github/identity.ts). */
+export type GitTokenFor = (fullName: string) => Promise<string | undefined>;
+
 /** A mirror of each repository at `${root}/<checkout>.git`: fetched where one
  *  is, cloned where none is. One at a time: a box's network is the limit. */
 export async function syncMirrors(
   exec: GitExec,
-  input: { root: string; repos: { fullName: string; checkout: string }[]; token?: string },
+  input: { root: string; repos: { fullName: string; checkout: string }[]; token?: string | GitTokenFor },
 ): Promise<void> {
   for (const repo of input.repos) {
     const dir = `${input.root}/${repo.checkout}.git`;
+    const token = typeof input.token === "function" ? await input.token(repo.fullName) : input.token;
     // A mirror the folder already holds is fetched. One of another
     // repository (removed from the project and another of the same name
     // added, or renamed on GitHub) is cloned again, but only while no
@@ -272,7 +277,7 @@ export async function syncMirrors(
     // None there, or half made, is cloned.
     const origin = await exec(["git", "-C", dir, "remote", "get-url", "origin"]);
     if (origin.exitCode === 0 && origin.stdout.trim() === remoteUrl(repo.fullName)) {
-      await fetchMirror(exec, { repoDir: dir, token: input.token });
+      await fetchMirror(exec, { repoDir: dir, token });
       continue;
     }
     if (origin.exitCode === 0) {
@@ -287,7 +292,7 @@ export async function syncMirrors(
       }
     }
     await exec(["rm", "-rf", dir]);
-    await cloneMirror(exec, { repoFullName: repo.fullName, dir, token: input.token });
+    await cloneMirror(exec, { repoFullName: repo.fullName, dir, token });
   }
 }
 

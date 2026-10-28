@@ -3,15 +3,21 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { signOut } from "@/app/auth/actions";
+import { GitHubIdentitySettings, type IdentityOrgView } from "@/components/github-identity-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { SignOutButton } from "@/components/sign-out-button";
 import { getOwnerSafe } from "@/lib/auth/owner";
+import { getGithubIdentity } from "@/lib/db/credentials";
+import { listOrgInstallations } from "@/lib/db/github-installations";
+import { githubAppConfig } from "@/lib/github/app";
+import { getOrgContext } from "@/lib/orgs/server";
 
 /** Opens at once, its data streaming in behind: the build checks it. */
 export const unstable_instant = { prefetch: "static" };
 
-/** Account: the signed-in GitHub identity, and sign-out — which is also how a
- *  revoked GitHub token is replaced (see components/github-reconnect-link). */
+/** Account: the signed-in GitHub identity, who sessions work on GitHub as
+ *  (lib/github/identity.ts), and sign-out — which is also how a revoked
+ *  GitHub token is replaced (see components/github-reconnect-link). */
 export default function AccountSettings() {
   return (
     <Suspense fallback={<SettingsLoading title="Account" />}>
@@ -23,6 +29,11 @@ export default function AccountSettings() {
 async function AccountSection() {
   const owner = await getOwnerSafe();
   if (!owner) redirect("/signin");
+  const appConfigured = githubAppConfig() !== null;
+  const [identity, org] = await Promise.all([
+    getGithubIdentity(owner.id).catch(() => "personal" as const),
+    appOrg(appConfigured),
+  ]);
 
   return (
     <section className="space-y-6">
@@ -48,6 +59,13 @@ async function AccountSection() {
         </div>
       </div>
 
+      <GitHubIdentitySettings
+        initial={identity}
+        login={owner.githubLogin}
+        appConfigured={appConfigured}
+        org={org}
+      />
+
       <div className="space-y-2">
         <p className="text-muted-foreground text-sm">
           If GitHub stops working (repositories won’t load, or publishing fails),
@@ -59,4 +77,17 @@ async function AccountSection() {
       </div>
     </section>
   );
+}
+
+/** The org being looked at, and the accounts its App is installed on. */
+async function appOrg(appConfigured: boolean): Promise<IdentityOrgView | null> {
+  if (!appConfigured) return null;
+  const org = (await getOrgContext().catch(() => undefined))?.active;
+  if (!org) return null;
+  const installations = await listOrgInstallations(org.id).catch(() => []);
+  return {
+    name: org.name,
+    installedOn: installations.filter((i) => !i.suspended).map((i) => i.accountLogin),
+    admin: org.role === "admin",
+  };
 }

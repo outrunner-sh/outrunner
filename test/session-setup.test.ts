@@ -102,3 +102,28 @@ test("a project's hooks go only to a box that runs them", async () => {
   await deliverSessionSetup(old.client, { environment: withHooks, agentConfig: null, downloadUrl });
   assert.equal((old.sent[0][1] as { warmHook?: string }).warmHook, undefined);
 });
+
+test("a box of a user who works as the App is upgraded first when its agent can't ask for tokens", async () => {
+  let features = ["session-environment", "agent-config"];
+  const order: string[] = [];
+  const b = box([]);
+  const client = {
+    ...b.client,
+    features: async () => features,
+    upgrade: async () => {
+      order.push("upgrade");
+      features = [...features, "git-credential"];
+    },
+    setEnvironment: async () => void order.push("environment"),
+  };
+  await deliverSessionSetup(client, { environment, agentConfig: null, appIdentity: true, downloadUrl });
+  assert.deepEqual(order, ["upgrade", "environment"]);
+
+  // Working as themselves, nothing is upgraded for it.
+  let upgraded = false;
+  await deliverSessionSetup(
+    { ...box(all).client, upgrade: async () => void (upgraded = true) },
+    { environment, agentConfig: null, appIdentity: false, downloadUrl },
+  );
+  assert.equal(upgraded, false);
+});

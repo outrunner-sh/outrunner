@@ -373,6 +373,13 @@ const FeatureRestoreModel = "restore-model"
 // refuses the gateway.
 const FeatureCodexGateway = "codex-gateway"
 
+// FeatureGitCredential is fresh GitHub tokens for the sessions: launched
+// with RUNTIME_SANDBOX_ID and OUTRUNNER_APP_URL, the agent has git and gh ask
+// it for a token whenever they need one, and asks the control plane's
+// /api/runtime/git-credential for it, signed with its secret (package
+// gitcred). An older agent ignores the variables and keeps GH_TOKEN.
+const FeatureGitCredential = "git-credential"
+
 // ErrorResponse is the stable error envelope for control-plane failures.
 type ErrorResponse struct {
 	Error struct {

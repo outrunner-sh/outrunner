@@ -60,6 +60,7 @@ function project(id: string, fullName: string): Project {
     htmlUrl: `https://github.com/${fullName}`,
     pushedAt: null,
     linearIssueIds: [],
+    orgId: "org-1",
     createdAt: "2026-10-01T00:00:00Z",
     updatedAt: "2026-10-01T00:00:00Z",
   };

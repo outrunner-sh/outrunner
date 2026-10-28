@@ -232,17 +232,42 @@ export function dropInstallationToken(installationId: number): void {
   tokens.delete(installationId);
 }
 
+/** What a token may do, narrower than the App's own permissions; all of
+ *  them when absent. */
+export type TokenPermissions = Partial<
+  Record<"contents" | "pull_requests" | "metadata" | "checks" | "statuses" | "workflows", "read" | "write">
+>;
+
+/** What an installation was granted, by permission ("read", "write"); its
+ *  owner may have accepted fewer than the App asks for. */
+export async function installationPermissions(
+  config: GitHubAppConfig,
+  installationId: number,
+  doFetch: Fetch = fetch,
+): Promise<Record<string, string>> {
+  const installation = await call<{ permissions?: Record<string, string> }>(
+    doFetch,
+    `${API}/app/installations/${installationId}`,
+    appJwt(config.clientId, config.privateKey),
+  );
+  return installation.permissions ?? {};
+}
+
 export async function mintInstallationToken(
   config: GitHubAppConfig,
   installationId: number,
   repositories?: string[],
   doFetch: Fetch = fetch,
+  permissions?: TokenPermissions,
 ): Promise<InstallationToken> {
   const minted = await call<{ token: string; expires_at: string }>(
     doFetch,
     `${API}/app/installations/${installationId}/access_tokens`,
     appJwt(config.clientId, config.privateKey),
-    { method: "POST", body: repositories?.length ? { repositories } : {} },
+    {
+      method: "POST",
+      body: { ...(repositories?.length && { repositories }), ...(permissions && { permissions }) },
+    },
   );
   return { token: minted.token, expiresAt: new Date(minted.expires_at) };
 }
