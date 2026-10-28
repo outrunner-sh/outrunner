@@ -244,3 +244,21 @@ test("no key, or nothing to send, puts no key in the URL", () => {
   storage.setItem("outrunner:first-prompt:w1", JSON.stringify({ prompt: "hi", attachmentIds: [], key: 7 }));
   assert.deepEqual(rememberedFirstPrompt(storage, "w1"), { prompt: "hi", attachmentIds: [] });
 });
+
+test("a cut-off first prompt is still offered after a second reload, until it's settled", () => {
+  const storage = memoryStorage();
+  rememberFirstPrompt(storage, "ws-cut", { prompt: "fix the login bug", attachmentIds: [], key: "k-1" });
+  // The send left, the page reloaded, and the server's send then failed,
+  // letting go of its claim: the prompt never reached Claude.
+  markFirstPromptGoing(storage, "ws-cut", true);
+  // Reload #1 offers it (Send it again) and, as the session page now does,
+  // keeps it; reload #2, before the user acts, still finds it.
+  for (const reload of [1, 2]) {
+    assert.equal(firstPromptCutOff(storage, "ws-cut"), true, `reload #${reload}`);
+    assert.equal(rememberedFirstPrompt(storage, "ws-cut")?.prompt, "fix the login bug", `reload #${reload}`);
+  }
+  // Settled (sent again and landed, dismissed, or shown by the conversation):
+  // forgotten, and not offered again.
+  forgetFirstPrompt(storage, "ws-cut");
+  assert.equal(firstPromptCutOff(storage, "ws-cut"), false);
+});

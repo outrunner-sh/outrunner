@@ -15,7 +15,8 @@ import { randomBytes } from "node:crypto";
 
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
-import { getWorkspace } from "@/lib/db/repositories";
+import { POST as sessionPOST } from "@/app/api/workspaces/[id]/session/route";
+import { getWorkspace, getWorkspaceComputer } from "@/lib/db/repositories";
 import {
   getInstallation,
   sessionSummary,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { startServerSession } from "@/lib/session/server-session";
+import { wakeSteps } from "@/lib/session/wake-session";
 import { FROM_HEADER, type MessageSource } from "@/lib/slack/from";
 import { hashToken, markdownToSlack, researchPrompt, slackChunks } from "@/lib/slack/research-text";
 import { postMessage } from "@/lib/slack/web";
@@ -56,11 +58,10 @@ export function asBrowser(path: string, body: unknown, from?: MessageSource): Re
 
 
 /**
- * Send a prompt to one of `userId`'s sessions, waking it first if its box was
- * paused, or restoring it if it was archived: the same lifecycle and message
- * routes the session page uses. False
- * when it can't be (gone, or not answering): the caller starts a
- * new one.
+ * Send a prompt to one of `userId`'s sessions, waking it first (wakeSteps):
+ * the same session, lifecycle and message routes the session page uses.
+ * False when it can't be (gone, or not answering): the caller starts a new
+ * one.
  */
 export async function wakeAndSend(userId: string, workspaceId: string, prompt: string, from?: MessageSource): Promise<boolean> {
   return actAsUser(userId, async () => {
@@ -90,16 +91,19 @@ export async function suspendSession(userId: string, workspaceId: string): Promi
   });
 }
 
-/** Inside actAsUser: paused, resumed; archived, restored, as opening it in
- *  the app does. */
+/** Inside actAsUser: woken as opening it in the app does (wakeSteps): its
+ *  box brought back if it was paused, resumed if suspended, restored if
+ *  archived. */
 async function wakeAsOwner(userId: string, workspaceId: string): Promise<boolean> {
   const workspace = await getWorkspace(workspaceId);
   if (!workspace || workspace.ownerId !== userId || !RESUMABLE.has(workspace.status)) return false;
-  if (workspace.status === "suspended" || workspace.status === "archived") {
-    const action = workspace.status === "suspended" ? "resume" : "restore";
-    const woken = await lifecyclePOST(asBrowser(`/api/workspaces/${workspaceId}/lifecycle`, { action }), {
-      params: Promise.resolve({ id: workspaceId }),
-    });
+  const params = { params: Promise.resolve({ id: workspaceId }) };
+  const computer = await getWorkspaceComputer(workspace);
+  for (const step of wakeSteps(workspace.status, computer?.status ?? null)) {
+    const woken =
+      step === "attach"
+        ? await sessionPOST(asBrowser(`/api/workspaces/${workspaceId}/session`, {}), params)
+        : await lifecyclePOST(asBrowser(`/api/workspaces/${workspaceId}/lifecycle`, { action: step }), params);
     if (!woken.ok) return false;
   }
   return true;

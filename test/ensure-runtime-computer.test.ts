@@ -6,7 +6,9 @@ import {
   type EnsureRuntimeComputerDependencies,
   type RuntimeComputerProvisioner,
 } from "@/lib/runtime/ensure-runtime-computer";
+import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
 import type { RuntimeComputer } from "@/lib/runtime/types";
+import { abandonedBoxClaim } from "@/lib/session/provisioning";
 
 function computer(overrides: Partial<RuntimeComputer> = {}): RuntimeComputer {
   return {
@@ -410,4 +412,45 @@ test("a box recorded as ready is never let go of, whatever fails after", async (
   // And the row still names it, ready, for the reconciler to meter and stop.
   assert.equal(harness.row()?.status, "ready");
   assert.equal(harness.row()?.daytonaSandboxId, "sb-new");
+});
+
+test("a box claim a restart cut off holds every later open until the sweep lets it go", async () => {
+  const harness = concurrencyHarness();
+  // A paused box being brought back when the server stops: its provision
+  // never ends, and the row says provisioning, naming the box.
+  const cutOff: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: () => new Promise(() => undefined),
+  };
+  void ensureRuntimeComputer(cutOff, { ...input, previousSandboxId: "box-paused" }, harness.deps);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  // Made by Daytona when it first ran: the claim leaves that as it was.
+  await harness.deps.update("computer-1", { provider: "daytona" });
+  assert.equal(harness.row()?.status, "provisioning");
+  assert.equal(harness.row()?.daytonaSandboxId, "box-paused");
+
+  // Every later open waits on that claim, then fails.
+  let clock = 0;
+  const waiting = { ...harness.deps, now: () => clock, sleep: async () => void (clock += 60_000) };
+  const resumed: (string | undefined)[] = [];
+  const provider: RuntimeComputerProvisioner = {
+    name: "daytona",
+    provisionComputer: async (request) => {
+      resumed.push(request.previousSandboxId);
+      return { sandboxId: request.previousSandboxId ?? "box-new", agentBaseUrl: "https://agent.example.test", timings: { stages: [], totalMs: 0 } };
+    },
+  };
+  await assert.rejects(ensureRuntimeComputer(provider, input, waiting), /Timed out waiting/);
+
+  // The sweep leaves it as its provision's own failure would: stopped, still
+  // naming the box, which the next open brings back with its sessions.
+  const swept = abandonedBoxClaim(harness.row()?.daytonaSandboxId ?? null);
+  await harness.deps.update("computer-1", { status: swept.status, errorMessage: swept.errorMessage });
+  const row = harness.row();
+  const ended = endedBoxOf(row, "daytona");
+  assert.equal(ended, "box-paused");
+  const ensured = await ensureRuntimeComputer(provider, { ...input, previousSandboxId: ended }, waiting);
+  assert.equal(ensured.provisioned, true);
+  assert.deepEqual(resumed, ["box-paused"]);
+  assert.equal(harness.row()?.status, "ready");
 });

@@ -15,14 +15,15 @@ import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
 import { sweepOpenChecks } from "@/lib/automations/checks.deps";
 import { sweepStalledRuns } from "@/lib/db/automation-runs";
-import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
+import { sweepAbandonedBoxClaims, sweepInterruptedSetups, sweepInterruptedTransitions } from "@/lib/session/provisioning.deps";
 
 /**
  * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
  * renew for sessions already running, and the warm pool's boxes nothing else
  * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
- * restart cut off (lib/session/provisioning.deps.ts), and the GitHub loop's
- * follow-ups due (lib/github/followups.deps.ts), and the deployment's
+ * restart cut off, the lifecycle steps and box claims one did too
+ * (lib/session/provisioning.deps.ts), and the GitHub loop's follow-ups due
+ * (lib/github/followups.deps.ts), and the deployment's
  * Daytona boxes no row names any more (lib/runtime/orphan-boxes.deps.ts), and
  * the Slack agent's old keys of its own (lib/db/slack-agent.ts), and each
  * busy team org's hours against its admins' controls
@@ -81,6 +82,30 @@ export async function POST(request: Request) {
       console.error("Failing interrupted session setups failed", error);
       return null;
     });
+    // And sessions a lifecycle step (archive, restore, resume, suspend,
+    // delete) was cut off in, back where it started, saying so.
+    const transitionsEnded = await sweepInterruptedTransitions().catch((error: unknown) => {
+      console.error("Ending interrupted lifecycle steps failed", error);
+      return null;
+    });
+    // And boxes claimed by a provision a restart cut off, let go of so the
+    // next open starts them again; one brought back part way is paused, as
+    // its row now says.
+    const boxClaimsReleased = isComputerProvider(provider)
+      ? await sweepAbandonedBoxClaims()
+          .then(async ({ released, stopped }) => {
+            for (const sandboxId of stopped) {
+              await provider.pauseComputer(sandboxId).catch((error: unknown) =>
+                console.error(`Could not pause box ${sandboxId}, let go of mid-provision`, error),
+              );
+            }
+            return released;
+          })
+          .catch((error: unknown) => {
+            console.error("Letting go of abandoned box claims failed", error);
+            return null;
+          })
+      : 0;
     // And the deployment's boxes something dropped without deleting: no row
     // names them, so nothing above would ever stop them.
     const orphans = await sweepOrphanedBoxes().catch((error: unknown) => {
@@ -118,6 +143,8 @@ export async function POST(request: Request) {
       runsSwept,
       checksClosed,
       setupsFailed,
+      transitionsEnded,
+      boxClaimsReleased,
       orphansDeleted: orphans?.deleted ?? null,
       orphansHeld: orphans?.held ?? null,
     });

@@ -34,6 +34,7 @@ import {
 import {
   echoUuid,
   livePrompts,
+  pendingAfterStop,
   pendingShows,
   settlePending,
   type PendingPrompt,
@@ -501,8 +502,10 @@ export function WorkspaceSession({
       .then(() => {
         setStoppedAt(userPromptCount(eventsRef.current));
         // A queued prompt Claude hadn't taken up yet is handed back to its
-        // input by a stop, never recorded: the queue mustn't wait on it.
+        // input by a stop, never recorded: the queue mustn't wait on it, nor
+        // its bubble keep the page working.
         setQueuedAt(null);
+        setPending(pendingAfterStop);
       })
       .catch((error: unknown) =>
         setStopError(
@@ -610,6 +613,21 @@ export function WorkspaceSession({
   const [cutOff, setCutOff] = useState<FirstPrompt | null>(null);
   const cutOffShown =
     cutOff && conversation.status === "connected" && userPromptCount(conversation.events) === 0 ? cutOff : null;
+  // The cut-off prompt is kept (marked going, and in the URL) until it's
+  // settled: sent again and landed, dismissed, or shown by the conversation
+  // (the cut-off send got there). Forgotten as soon as it was offered, a
+  // second reload before any of those, after a send the server had let go,
+  // left it nowhere: never sent, and never offered again.
+  const settleCutOff = () => {
+    if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
+    dropFirstPromptFromAddressBar();
+  };
+  const cutOffLanded = cutOff !== null && conversation.status === "connected" && userPromptCount(conversation.events) > 0;
+  useEffect(() => {
+    if (cutOffLanded) settleCutOff();
+    // settleCutOff reads only props that don't change for this session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cutOffLanded]);
   useEffect(() => {
     if (sentInitial.current || !attached) return;
     const fromUrl: FirstPrompt = {
@@ -640,13 +658,12 @@ export function WorkspaceSession({
     // before it could forget it: it most likely reached Claude, so it isn't
     // sent again (firstPromptCutOff). It is said, with a way to send it, until
     // the conversation shows a prompt, so a send that never got there costs
-    // a click rather than the prompt.
+    // a click rather than the prompt; and kept until then (settleCutOff).
     if (!local && firstPromptCutOff(tabStorage(), workspaceId)) {
       // Once, on ready, behind the same guard as the send: storage is read
       // here and nowhere a render could.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setCutOff(first);
-      itWent();
       return;
     }
     // Send it, cleaning up only once it lands. A failed send keeps its Retry.
@@ -800,11 +817,20 @@ export function WorkspaceSession({
                 // Under the prompt's own key: if the cut-off send got there
                 // after all, the server answers as sent and sends nothing.
                 const { prompt, attachmentIds, key } = cutOffShown;
-                const again = (): void => void send(prompt, attachmentIds, again, undefined, key);
+                const again = (): void =>
+                  void send(prompt, attachmentIds, again, undefined, key).then((landed) => {
+                    if (landed) settleCutOff();
+                  });
                 again();
               },
             },
-            { label: "Dismiss", onClick: () => setCutOff(null) },
+            {
+              label: "Dismiss",
+              onClick: () => {
+                setCutOff(null);
+                settleCutOff();
+              },
+            },
           ]}
         >
           Your first message was on its way when the page reloaded. If it doesn&apos;t show up, send it again.
