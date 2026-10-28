@@ -136,7 +136,7 @@ export function runTitle(automationName: string, event: Pick<PullRequestEvent, "
 export function runPrompt(automationPrompt: string, event: PullRequestEvent, appSlug?: string): string {
   // What it posts is the App's bot's: only that account's comments are its
   // own earlier passes, not another reviewer's (a person's, another app's).
-  const self = appSlug ? `@${appSlug.toLowerCase()}[bot]` : null;
+  const self = appSlug ? `${appSlug.toLowerCase()}[bot]` : null;
   return [
     `Pull request: ${event.repoFullName}#${event.number}${event.title ? ` "${event.title}"` : ""}`,
     `URL: ${event.url}`,
