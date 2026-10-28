@@ -7,6 +7,7 @@ import { SecretForm } from "@/components/ui/secret-form";
 import { watchClaudeToken } from "@/lib/claude-connect";
 import { CLI_DEFAULT_URL, connectClaudeCommand } from "@/lib/onboarding/rules";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 /** How often the page looks for a subscription connected from the terminal. */
@@ -64,7 +65,27 @@ export function ClaudeFromTerminal({
   const [manager, setManager] = useState(0);
   const [pasting, setPasting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const command = connectClaudeCommand(RUNNERS[manager][1], useOrigin());
+  // The account this page is signed in to, so a terminal signed in to
+  // another one signs in again rather than save the token there. Undefined
+  // while it's read: the command isn't shown or copied until it's known, or
+  // null when it can't be, and then goes without --account.
+  const [account, setAccount] = useState<string | null>();
+  useEffect(() => {
+    void createSupabaseBrowserClient()
+      .auth.getSession()
+      .then(
+        ({ data }) => {
+          if (!data.session) console.warn("Connect Claude: no session, so the command doesn't name the account");
+          setAccount(data.session?.user.id ?? null);
+        },
+        (error: unknown) => {
+          console.warn("Connect Claude: couldn't read the session, so the command doesn't name the account", error);
+          setAccount(null);
+        },
+      );
+  }, []);
+  const origin = useOrigin();
+  const command = account === undefined ? null : connectClaudeCommand(RUNNERS[manager][1], origin, account ?? undefined);
 
   // What was in place as this opened, kept: the page's own copy moves on.
   const [baseline] = useState(before);
@@ -123,16 +144,18 @@ export function ClaudeFromTerminal({
       </div>
       <div className="bg-muted/40 border-border/60 flex items-center gap-2 rounded-md border px-3 py-2.5">
         <Terminal className="text-amber-500 size-3.5 shrink-0" />
-        <code className="flex-1 font-mono text-xs">{command}</code>
+        <code className={cn("flex-1 font-mono text-xs", !command && "text-muted-foreground")}>{command ?? "…"}</code>
         <button
           type="button"
           aria-label="Copy"
+          disabled={!command}
           onClick={() => {
+            if (!command) return;
             void navigator.clipboard?.writeText(command);
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
           }}
-          className="text-muted-foreground hover:text-foreground"
+          className="text-muted-foreground hover:text-foreground disabled:opacity-40"
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>

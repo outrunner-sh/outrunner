@@ -33,6 +33,8 @@ const loginTimeout = 5 * time.Minute
 
 // User is who a token signs in, as the server says.
 type User struct {
+	// ID is the account's id; older apps don't send it.
+	ID    string  `json:"id"`
 	Login string  `json:"login"`
 	Name  string  `json:"name"`
 	Email *string `json:"email"`

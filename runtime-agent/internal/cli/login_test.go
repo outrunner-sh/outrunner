@@ -23,7 +23,9 @@ type fakeApp struct {
 	mu     sync.Mutex
 	codes  map[string]string // code -> challenge
 	tokens map[string]bool
-	server *httptest.Server
+	// claudeWith is the CLI token the Claude slot was last saved with.
+	claudeWith string
+	server     *httptest.Server
 }
 
 func (app *fakeApp) setCode(code, challenge string) {
@@ -62,14 +64,19 @@ func newFakeApp(t *testing.T) *fakeApp {
 			return
 		}
 		app.tokens["or_cli_token"] = true
-		_, _ = w.Write([]byte(`{"token":"or_cli_token","user":{"login":"immad","name":"Immad","email":"immad@example.com"}}`))
+		_, _ = w.Write([]byte(`{"token":"or_cli_token","user":{"id":"u-immad","login":"immad","name":"Immad","email":"immad@example.com"}}`))
 	})
 	mux.HandleFunc("GET /api/cli/whoami", func(w http.ResponseWriter, r *http.Request) {
 		if !app.tokenWorks(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"login":"immad","name":"Immad","email":null}`))
+		// or_old_token is a sign-in to another account.
+		if r.Header.Get("Authorization") == "Bearer or_old_token" {
+			_, _ = w.Write([]byte(`{"id":"u-old","login":"old","name":"Old","email":"old@example.com"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"u-immad","login":"immad","name":"Immad","email":null}`))
 	})
 	mux.HandleFunc("DELETE /api/cli/token", func(w http.ResponseWriter, r *http.Request) {
 		app.mu.Lock()
@@ -231,5 +238,26 @@ func TestATokenIsOnlyForTheAppItCameFrom(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Main(context.Background(), []string{"--url", app.server.URL, "whoami"}, nil, &out, &errOut); code != 1 {
 		t.Fatalf("a token for another app was sent: %d", code)
+	}
+}
+
+// login with --account checks it, as claude does: the wrong account's
+// sign-in is signed out again and not saved.
+func TestLoginForAnotherAccountKeepsNoSignIn(t *testing.T) {
+	app := newFakeApp(t)
+	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	path, _ := ConfigPath()
+	openBrowser = app.approve(t, "")
+	t.Cleanup(func() { openBrowser = OpenBrowser })
+
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "--account", "u-someone-else", "login"}, nil, &out, &errOut); code != 1 {
+		t.Fatalf("login: %d %s", code, out.String())
+	}
+	if !strings.Contains(errOut.String(), "this command is for another account") || app.tokenWorks("or_cli_token") {
+		t.Errorf("printed %q; token still works: %v", errOut.String(), app.tokenWorks("or_cli_token"))
+	}
+	if config, _ := LoadConfig(path); config.Token != "" {
+		t.Errorf("saved %q", config.Token)
 	}
 }

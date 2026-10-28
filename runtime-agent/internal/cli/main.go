@@ -16,7 +16,7 @@ const DefaultURL = "https://app.outrunner.sh"
 // Version is the release, set by scripts/build-cli.sh.
 var Version = "dev"
 
-const usage = `Usage: outrunner [--url <app>] [--version] [command]
+const usage = `Usage: outrunner [--url <app>] [--account <id>] [--version] [command]
 
 Commands:
   (none)   Sign in if needed, then continue setting up in your browser
@@ -35,6 +35,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	flags.SetOutput(stderr)
 	flags.Usage = func() { fmt.Fprint(stderr, usage) }
 	base := flags.String("url", "", "the Outrunner app to sign in to")
+	// The account the browser that gave the command is signed in to: a
+	// terminal signed in to another one signs in again, rather than connect
+	// Claude to an account the page isn't watching.
+	account := flags.String("account", "", "the Outrunner account id to sign in as")
 	version := flags.Bool("version", false, "print the version")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -67,9 +71,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	command := flags.Arg(0)
 	switch command {
 	case "":
-		return start(ctx, url, path, config, in, stdout, stderr)
+		return start(ctx, url, path, config, *account, in, stdout, stderr)
 	case "login":
-		_, code := signIn(ctx, url, path, "/cli-login/done", stdout, stderr)
+		_, _, code := signIn(ctx, url, path, "/cli-login/done", *account, stdout, stderr)
 		return code
 	case "logout":
 		return logout(ctx, url, path, config, stdout, stderr)
@@ -78,7 +82,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	case "claude":
 		// The command onboarding's subscription page shows: that page is
 		// open already and moves on by itself, so no browser opens after.
-		config, code := ensureSignedIn(ctx, url, path, config, stdout, stderr)
+		config, code := ensureSignedIn(ctx, url, path, config, *account, stdout, stderr)
 		if code != 0 {
 			return code
 		}
@@ -101,8 +105,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 // start is the command a new user pastes: sign in, offer to connect Claude
 // when it's on this computer, then the web app takes over onboarding from
 // its first step the user hasn't done.
-func start(ctx context.Context, url, path string, config Config, in terminal, stdout, stderr io.Writer) int {
-	config, code := ensureSignedIn(ctx, url, path, config, stdout, stderr)
+func start(ctx context.Context, url, path string, config Config, account string, in terminal, stdout, stderr io.Writer) int {
+	config, code := ensureSignedIn(ctx, url, path, config, account, stdout, stderr)
 	if code != 0 {
 		return code
 	}
@@ -118,22 +122,37 @@ func start(ctx context.Context, url, path string, config Config, in terminal, st
 }
 
 // ensureSignedIn returns config as is when its token still works, and signs
-// in through the browser when there's none or the app has dropped it.
-func ensureSignedIn(ctx context.Context, url, path string, config Config, stdout, stderr io.Writer) (Config, int) {
+// in through the browser when there's none, the app has dropped it, or it's
+// for another account than `account` (when one is asked for).
+func ensureSignedIn(ctx context.Context, url, path string, config Config, account string, stdout, stderr io.Writer) (Config, int) {
+	// The other account's token, signed out once this one is in.
+	replaced := ""
 	if config.Token != "" {
 		user, err := WhoAmI(ctx, nil, url, config.Token)
 		switch {
-		case err == nil:
+		// An app that doesn't send the id can't be told apart: carry on, as
+		// after signing in.
+		case err == nil && (account == "" || user.ID == "" || user.ID == account):
 			printSignedIn(stdout, user, url)
 			return config, 0
+		case err == nil:
+			fmt.Fprintf(stdout, "This terminal is signed in as %s, not the account in your browser. Signing in again.\n", accountName(user))
+			replaced = config.Token
 		case !errors.Is(err, ErrSignedOut):
 			fmt.Fprintln(stderr, "outrunner:", err)
 			return config, 1
 		}
 	}
-	token, code := signIn(ctx, url, path, "/cli-login/done", stdout, stderr)
+	token, _, code := signIn(ctx, url, path, "/cli-login/done", account, stdout, stderr)
 	if code != 0 {
 		return config, code
+	}
+	if replaced != "" {
+		// Best effort: nothing here points to it anymore, so `outrunner
+		// logout` never could.
+		if err := Logout(ctx, nil, url, replaced); err != nil && !errors.Is(err, ErrSignedOut) {
+			fmt.Fprintln(stderr, "outrunner: couldn't sign out the other account's terminal sign-in:", err)
+		}
 	}
 	if saved, err := LoadConfig(path); err == nil && saved.Token == token {
 		return saved, 0
@@ -200,7 +219,10 @@ func connectClaude(ctx context.Context, url string, config Config, in terminal, 
 	return 0
 }
 
-func signIn(ctx context.Context, url, path, after string, stdout, stderr io.Writer) (string, int) {
+// signIn signs in through the browser and saves the token, unless it's for
+// another account than `account` (when one is asked for): that one is
+// signed out again and nothing is saved.
+func signIn(ctx context.Context, url, path, after, account string, stdout, stderr io.Writer) (string, User, int) {
 	token, user, err := Login(ctx, LoginOptions{
 		BaseURL:     url,
 		DeviceName:  DeviceName(),
@@ -210,14 +232,19 @@ func signIn(ctx context.Context, url, path, after string, stdout, stderr io.Writ
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "outrunner: sign-in failed:", err)
-		return "", 1
+		return "", User{}, 1
+	}
+	if account != "" && user.ID != "" && user.ID != account {
+		_ = Logout(ctx, nil, url, token)
+		fmt.Fprintf(stderr, "outrunner: signed in as %s, but this command is for another account. Sign in to Outrunner in your browser as that account, then run it again.\n", accountName(user))
+		return "", User{}, 1
 	}
 	if err := SaveConfig(path, Config{URL: url, Token: token, Login: user.Login}); err != nil {
 		fmt.Fprintf(stderr, "outrunner: signed in, but couldn't save to %s: %v\n", path, err)
-		return "", 1
+		return "", User{}, 1
 	}
 	printSignedIn(stdout, user, url)
-	return token, 0
+	return token, user, 0
 }
 
 func logout(ctx context.Context, url, path string, config Config, stdout, stderr io.Writer) int {
@@ -273,4 +300,16 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// accountName is how an account is told apart in what the CLI prints.
+func accountName(user User) string {
+	email := ""
+	if user.Email != nil {
+		email = *user.Email
+	}
+	if user.Login != "" && email != "" && email != user.Login {
+		return user.Login + " (" + email + ")"
+	}
+	return firstNonEmpty(user.Login, email, user.Name, "another account")
 }

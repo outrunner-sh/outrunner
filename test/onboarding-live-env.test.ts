@@ -118,6 +118,10 @@ test("the terminal command connects Claude to this app, without opening onboardi
   // The app is always named, even the default: OUTRUNNER_URL in the user's shell would win otherwise.
   assert.equal(connectClaudeCommand("npx", CLI_DEFAULT_URL), "npx outrunner@latest --url https://app.outrunner.sh claude");
   assert.equal(connectClaudeCommand("pnpm dlx", "http://localhost:3000"), "pnpm dlx outrunner@latest --url http://localhost:3000 claude");
+  assert.equal(
+    connectClaudeCommand("npx", CLI_DEFAULT_URL, "u-1"),
+    "npx outrunner@latest --url https://app.outrunner.sh --account u-1 claude",
+  );
 });
 
 test("repositories show most recently pushed first, and filter by name or description", () => {
