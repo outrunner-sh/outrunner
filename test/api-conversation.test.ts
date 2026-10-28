@@ -9,6 +9,7 @@ import {
   lastAssistantText,
   parseFrame,
   pendingInput,
+  promptSince,
   readUntilQuiet,
   turnState,
 } from "@/lib/api/conversation";
@@ -120,4 +121,20 @@ test("events are snake_case, tool results with their call's id", () => {
     timestamp: "2026-11-01T00:00:00Z",
     content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
   });
+});
+
+test("a turn can be over only once its prompt is in the log", () => {
+  const entries = [
+    { id: 100, event: message("u1", "user", [text("first")]) as AgentEvent },
+    { id: 200, event: message("a1", "assistant", [text("done")]) as AgentEvent },
+    { id: 300, event: message("r1", "user", [{ type: "tool_result", toolUseId: "t", content: "x" }]) as AgentEvent },
+    { id: 400, event: message("s1", "user", [text("[Request interrupted by user]")]) as AgentEvent },
+  ];
+  // A session's first prompt not logged yet: nothing to call over.
+  assert.equal(promptSince([], null), false);
+  assert.equal(promptSince(entries, null), true);
+  // After a send: only a prompt past where the log stood counts, not a tool
+  // result or the record of a stop.
+  assert.equal(promptSince(entries, 200), false);
+  assert.equal(promptSince([...entries, { id: 500, event: message("u2", "user", [text("again")]) as AgentEvent }], 200), true);
 });

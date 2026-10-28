@@ -16,6 +16,7 @@ import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
 import {
   conversationPage,
+  promptSince,
   eventJson,
   lastAssistantText,
   pendingInput,
@@ -205,7 +206,8 @@ export function turnJson(entries: readonly ConversationEntry[], state: string | 
   };
 }
 
-async function liveTurn(workspace: Workspace): Promise<Record<string, unknown> | null> {
+/** The session's turn as its box says now; null while its box isn't up. */
+export async function turnJsonOf(workspace: Workspace): Promise<Record<string, unknown> | null> {
   const live = await readLiveConversation(workspace);
   return live ? turnJson(live.entries, live.state) : null;
 }
@@ -214,7 +216,7 @@ async function liveTurn(workspace: Workspace): Promise<Record<string, unknown> |
 export async function getWorkspaceApi(context: ApiContext, id: string): Promise<Response> {
   const found = await visible(context, id);
   if (!found) return apiError(404, "No session by that id that you can see.");
-  const turn = found.own ? await liveTurn(found.workspace) : null;
+  const turn = found.own ? await turnJsonOf(found.workspace) : null;
   return Response.json({ ...workspaceJson(found.workspace, context.base), turn });
 }
 
@@ -269,13 +271,17 @@ export async function sendMessageApi(
   if (workspace instanceof Response) return workspace;
   const refused = await wake(context, workspace);
   if (refused) return refused;
+  // Where the log stands before the send, for `wait?after_event=`: its turn
+  // is over only once this message is in the log after it.
+  const before = await readLiveConversation((await getWorkspace(id)) ?? workspace).catch(() => null);
+  const afterEvent = before?.entries.length ? String(before.entries[before.entries.length - 1].id) : before ? "0" : null;
   const sent = await messagePOST(
     appRequest(context.base, `/api/workspaces/${id}/message`, { body: { content } }),
     routeParams({ id }),
   );
   if (!sent.ok) return errorFromRoute(sent, context.base);
   await onSent?.(workspace);
-  return Response.json({ result: "sent", workspace_id: id }, { status: 202 });
+  return Response.json({ result: "sent", workspace_id: id, after_event: afterEvent }, { status: 202 });
 }
 
 /** POST /workspaces/{id}/interrupt: stop the turn it's running. */
@@ -338,24 +344,35 @@ export async function waitApi(context: ApiContext, id: string): Promise<Response
   if (seconds < 0 || seconds > MAX_WAIT_SECONDS) {
     return apiError(400, `\`timeout\` is a number of seconds from 0 to ${MAX_WAIT_SECONDS}.`);
   }
+  const after = params.get("after_event");
+  if (after !== null && !/^\d{1,15}$/.test(after)) return apiError(400, "`after_event` is an event's id.");
+  const afterEvent = after === null ? null : Number(after);
   const first = await ownSession(context, id);
   if (first instanceof Response) return first;
 
   const until = Date.now() + seconds * 1000;
   let workspace = first;
   for (;;) {
-    const settled = await waitOutcome(workspace);
+    const settled = await waitOutcome(workspace, afterEvent);
     if (settled) return Response.json({ ...workspaceJson(workspace, context.base), turn: settled.turn, timed_out: false });
     if (Date.now() + WAIT_EVERY_MS > until || context.request.signal.aborted) {
-      return Response.json({ ...workspaceJson(workspace, context.base), turn: await liveTurn(workspace), timed_out: true });
+      return Response.json({ ...workspaceJson(workspace, context.base), turn: await turnJsonOf(workspace), timed_out: true });
     }
     await new Promise((resolve) => setTimeout(resolve, WAIT_EVERY_MS));
     workspace = (await getWorkspace(id)) ?? workspace;
   }
 }
 
-/** Whether there's nothing more to wait for, and the turn as it is then. */
-async function waitOutcome(workspace: Workspace): Promise<{ turn: Record<string, unknown> | null } | null> {
+/**
+ * Whether there's nothing more to wait for, and the turn as it is then. A
+ * turn that's idle counts only once its prompt is in the log: one after
+ * `afterEvent` when it's given (what a send answered with), else any, for a
+ * session the API started (whose first prompt follows its ready).
+ */
+async function waitOutcome(
+  workspace: Workspace,
+  afterEvent: number | null,
+): Promise<{ turn: Record<string, unknown> | null } | null> {
   switch (workspace.status) {
     case "creating":
     case "provisioning":
@@ -367,9 +384,13 @@ async function waitOutcome(workspace: Workspace): Promise<{ turn: Record<string,
       return null;
     case "ready":
     case "idle": {
-      const turn = await liveTurn(workspace);
+      const live = await readLiveConversation(workspace);
       // A box that didn't answer this time may on the next.
-      if (!turn || turn.state === "working") return null;
+      if (!live) return null;
+      const turn = turnJson(live.entries, live.state);
+      if (turn.state === "working") return null;
+      const prompted = afterEvent !== null || workspace.source === "api";
+      if (prompted && turn.state === "idle" && !promptSince(live.entries, afterEvent)) return null;
       return { turn };
     }
     default:

@@ -16,7 +16,7 @@ import { apiError } from "@/lib/api/errors";
 import { apiCredential } from "@/lib/api/keys";
 import { DEFAULT_LIMIT, RateLimiter, rateHeaders, type RateLimitRule } from "@/lib/api/rate-limit";
 import { getOwner, type Owner } from "@/lib/auth/owner";
-import { recordApiRequest, touchApiKey } from "@/lib/db/api-keys";
+import { recordApiRequest, touchApiKey, touchCliToken } from "@/lib/db/api-keys";
 import { optionalEnv } from "@/lib/env";
 import { ActAsUserError, actAsUserKept } from "@/lib/supabase/acting-user";
 
@@ -30,7 +30,8 @@ export type ApiContext = {
 
 const limiter = new RateLimiter();
 
-/** Keys marked used at most once a minute: last-used is a day's detail. */
+/** Keys and CLI tokens marked used at most once a minute each: last-used
+ *  is a day's detail, and a polling script shouldn't make every call a write. */
 const touched = new Map<string, number>();
 
 function appBase(request: Request): string {
@@ -79,9 +80,12 @@ export async function apiRoute(
       path,
       status,
     }).catch((error: unknown) => console.error("API: couldn't record a call", error));
-    if (caller.keyId && Date.now() - (touched.get(caller.keyId) ?? 0) > 60_000) {
-      touched.set(caller.keyId, Date.now());
-      await touchApiKey(caller.keyId).catch((error: unknown) => console.error("API: couldn't mark a key used", error));
+    const credential = caller.keyId ? `key:${caller.keyId}` : `cli:${caller.cliTokenId}`;
+    if (Date.now() - (touched.get(credential) ?? 0) > 60_000) {
+      if (touched.size > 10_000) touched.clear();
+      touched.set(credential, Date.now());
+      const touch = caller.keyId ? touchApiKey(caller.keyId) : touchCliToken(caller.cliTokenId as string);
+      await touch.catch((error: unknown) => console.error("API: couldn't mark a key used", error));
     }
   });
   return response;

@@ -83,7 +83,7 @@ counted apart. The budget refills continuously: every answer carries
 | POST | `/api/v1/workspaces/{id}/messages` | Send it a message (waking it first if it was paused or archived) |
 | POST | `/api/v1/workspaces/{id}/interrupt` | Stop the turn it's running |
 | GET | `/api/v1/workspaces/{id}/conversation` | Its conversation, a page at a time going back: `before_event` |
-| GET | `/api/v1/workspaces/{id}/wait` | Hold the call until its turn is over or it needs input, up to 10 minutes |
+| GET | `/api/v1/workspaces/{id}/wait` | Hold the call until its turn is over or it needs input, up to 10 minutes: `after_event`, `timeout` |
 | POST | `/api/v1/workspaces/{id}/suspend` | Pause its box |
 | POST | `/api/v1/workspaces/{id}/resume` | Wake it (or restore it, if archived) |
 | POST | `/api/v1/workspaces/{id}/archive` | Snapshot it and let its box go |
@@ -168,10 +168,21 @@ curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: app
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/wait?timeout=600"
 ```
 
+A send answers `{ "result": "sent", "after_event": "48213" }`: where the
+conversation stood before it. Pass that to `wait` as `after_event`:
+
+```sh
+curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/wait?after_event=48213&timeout=600"
+```
+
 `wait` holds the call until the turn is `idle` or `needs_input`, the session
 fails or stops, or `timeout` seconds (600 at most) pass, and answers with the
 session and its turn either way: `"timed_out": true` says it gave up. Call it
-again to keep waiting.
+again to keep waiting. A turn counts as over only once its prompt is in the
+conversation: one after `after_event` when it's given, and for a session the
+API started, its first prompt (sent just after it's ready). So `POST
+/workspaces` then `wait`, or a send then `wait?after_event=`, never reads the
+quiet before the turn began as its end.
 
 ```sh
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/conversation?per_page=50"

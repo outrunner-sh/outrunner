@@ -12,7 +12,7 @@
  */
 
 import { AgentEvent, type ContentBlock } from "@/lib/runtime/agent-protocol";
-import { claudeIsWorking } from "@/lib/runtime/conversation-events";
+import { claudeIsWorking, isInterruption, messageText } from "@/lib/runtime/conversation-events";
 import { pendingQuestion } from "@/lib/runtime/pending-question";
 import { pendingSecretRequest } from "@/lib/runtime/pending-secrets";
 
@@ -223,6 +223,24 @@ export function turnState(events: readonly AgentEvent[], state: string | null = 
   const all = state ? [...events, { t: "state", workspaceId: "", state } as AgentEvent] : [...events];
   if (pendingQuestion(all) || pendingSecretRequest(all)) return "needs_input";
   return claudeIsWorking(all) ? "working" : "idle";
+}
+
+/**
+ * Whether a prompt was logged after `afterEvent` (at all, for null): a turn
+ * can only be over once its prompt is in the log. A session's first prompt
+ * is sent just after it's marked ready, and a message is logged a moment
+ * after its send returns, so a log without it reads as idle when the turn
+ * hasn't begun.
+ */
+export function promptSince(entries: readonly ConversationEntry[], afterEvent: number | null): boolean {
+  return entries.some(
+    ({ id, event }) =>
+      (afterEvent === null || id > afterEvent) &&
+      event.t === "message" &&
+      event.role === "user" &&
+      messageText(event) !== "" &&
+      !isInterruption(event),
+  );
 }
 
 /** What the agent is waiting on, for a turn that needs input. */

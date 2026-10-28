@@ -57,6 +57,22 @@ create index if not exists api_requests_org_idx on api_requests (org_id, created
 alter table api_requests enable row level security;
 revoke all on table api_requests from anon, authenticated;
 
+-- Each key's calls since a time, in one query: the settings page's count.
+create or replace function api_key_call_counts(key_ids uuid[], since timestamptz)
+returns table (key_id uuid, calls bigint)
+language sql
+stable
+security invoker
+set search_path = public, pg_temp
+as $$
+  select r.key_id, count(*) from api_requests r
+  where r.key_id = any(key_ids) and r.created_at >= since
+  group by r.key_id;
+$$;
+
+revoke all on function api_key_call_counts(uuid[], timestamptz) from public, anon, authenticated;
+grant execute on function api_key_call_counts(uuid[], timestamptz) to service_role;
+
 -- ---------------------------------------------------------------------------
 -- Where a session came from, for the API's `source` filter: the app, a Slack
 -- thread, an automation, or the API. Sessions from before are read from what

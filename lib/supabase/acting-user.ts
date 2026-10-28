@@ -117,6 +117,8 @@ let sweeper: ReturnType<typeof setInterval> | null = null;
 function keptFor(userId: string): Kept {
   let entry = kept.get(userId);
   if (!entry) {
+    // Room made before it's kept, so the new sign-in is never the one let go.
+    trimKept(KEPT_MAX - 1);
     const client = signInAs(userId);
     entry = { client, lastUsed: Date.now(), holds: 0 };
     kept.set(userId, entry);
@@ -124,7 +126,6 @@ function keptFor(userId: string): Kept {
     client.catch(() => {
       if (kept.get(userId) === entry) kept.delete(userId);
     });
-    trimKept();
     if (!sweeper) {
       sweeper = setInterval(sweepKept, 60_000);
       sweeper.unref?.();
@@ -146,10 +147,11 @@ function sweepKept(now = Date.now()): void {
   }
 }
 
-function trimKept(): void {
-  if (kept.size <= KEPT_MAX) return;
+/** Let go of the longest unused (and unheld) sign-ins, down to `max`. */
+function trimKept(max: number): void {
+  if (kept.size <= max) return;
   const idle = [...kept].filter(([, e]) => e.holds === 0).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-  for (const [userId, entry] of idle.slice(0, kept.size - KEPT_MAX)) release(userId, entry);
+  for (const [userId, entry] of idle.slice(0, kept.size - max)) release(userId, entry);
 }
 
 /**
@@ -159,9 +161,12 @@ function trimKept(): void {
  */
 export async function actAsUserKept<T>(userId: string, work: () => Promise<T>): Promise<T> {
   const entry = keptFor(userId);
-  const client = await entry.client;
+  // Held before the sign-in is awaited: while it's in flight, a trim made
+  // room for another user would otherwise take this one, and sign it out
+  // under the work about to run on it.
   entry.holds++;
   try {
+    const client = await entry.client;
     return await acting.run({ userId, client }, work);
   } finally {
     entry.holds--;

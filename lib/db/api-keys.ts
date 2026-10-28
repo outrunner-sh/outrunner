@@ -52,22 +52,19 @@ type ListedRow = {
 
 async function records(rows: ListedRow[]): Promise<ApiKeyRecord[]> {
   if (rows.length === 0) return [];
-  const db = createSupabaseAdminClient();
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [makers, counts] = await Promise.all([
+  // A revoked key makes no more calls worth counting: only the working
+  // ones are counted, in one grouped query (api_key_call_counts).
+  const working = rows.filter((r) => !r.revoked_at).map((r) => r.id);
+  const [makers, counted] = await Promise.all([
     people(rows.map((r) => r.user_id)),
-    Promise.all(
-      rows.map(async (r) => {
-        const { count, error } = await db
-          .from("api_requests")
-          .select("id", { count: "exact", head: true })
-          .eq("key_id", r.id)
-          .gte("created_at", since);
-        if (error) throw error;
-        return count ?? 0;
-      }),
-    ),
+    working.length
+      ? createSupabaseAdminClient().rpc("api_key_call_counts", { key_ids: working, since })
+      : Promise.resolve({ data: [], error: null }),
   ]);
+  if (counted.error) throw counted.error;
+  const calls = new Map((counted.data ?? []).map((c: { key_id: string; calls: number }) => [c.key_id, Number(c.calls)]));
+  const counts = rows.map((r) => calls.get(r.id) ?? 0);
   return rows.map((r, i) => {
     const maker = makers.get(r.user_id);
     return {
@@ -156,7 +153,7 @@ export async function revokeApiKey(
   return (data ?? []).length > 0;
 }
 
-/** The key with this hash, revoked or not, or null. Marks it used. */
+/** The key with this hash, revoked or not, or null. */
 export async function findApiKey(keyHash: string): Promise<StoredApiKey | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("api_keys")
@@ -177,18 +174,25 @@ export async function touchApiKey(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** The CLI token with this hash still working: its id and whose it is.
- *  Marks it used. */
+/** The CLI token with this hash still working: its id and whose it is. */
 export async function findCliToken(tokenHash: string): Promise<{ id: string; userId: string } | null> {
   const { data, error } = await createSupabaseAdminClient()
     .from("cli_tokens")
-    .update({ last_used_at: new Date().toISOString() })
+    .select("id, user_id")
     .eq("token_hash", tokenHash)
     .is("revoked_at", null)
-    .select("id, user_id")
     .maybeSingle();
   if (error) throw error;
   return data ? { id: data.id, userId: data.user_id } : null;
+}
+
+/** Mark a CLI token used now. */
+export async function touchCliToken(id: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("cli_tokens")
+    .update({ last_used_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
 }
 
 /** One call's record: who made it, with what, and how it was answered. */

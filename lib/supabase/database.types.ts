@@ -1322,6 +1322,11 @@ export type Database = {
         Args: { org_name: string; creator: string; claimed_domain: string | null };
         Returns: string;
       };
+      // supabase/migrations/20261102100000_api_keys.sql
+      api_key_call_counts: {
+        Args: { key_ids: string[]; since: string };
+        Returns: { key_id: string; calls: number }[];
+      };
       // supabase/migrations/20261028145000_org_access.sql
       project_level: {
         Args: { member: string; target_project: string };
