@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { claimFirstPrompt, markFirstPromptSent, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
@@ -11,6 +11,7 @@ import { abandonedBefore, firstPromptKey, gateFirstPrompt } from "@/lib/session/
 import { nameSessionFromPrompt } from "@/lib/session/name-session";
 import { sendFailureMessage } from "@/lib/session/send-failure";
 import { BOX_GONE } from "@/lib/session/session-codes";
+import { FROM_HEADER } from "@/lib/slack/from";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -138,5 +139,16 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
   await gate.sent();
+  // A session started from Slack, in step with its thread: what's typed here
+  // goes there too, and the reply with it. Not what came from the thread.
+  if (workspace.slackThreadUrl && workspace.slackSync !== false && content && request.headers.get(FROM_HEADER) !== "slack") {
+    const author = owner.name || owner.githubLogin;
+    after(async () => {
+      const { echoToThread } = await import("@/lib/slack/relay");
+      await echoToThread(workspace.id, author, content).catch((error: unknown) =>
+        console.error(`Message: couldn't post to ${workspace.id}'s Slack thread`, error),
+      );
+    });
+  }
   return NextResponse.json({ result: "sent", titled: await nameSessionFromPrompt(workspace, content) });
 }

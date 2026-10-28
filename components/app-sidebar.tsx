@@ -9,6 +9,7 @@ import {
   GitBranchPlus,
   Folder,
   Inbox,
+  Slack,
   Laptop,
   PanelLeft,
   Plus,
@@ -430,6 +431,11 @@ function WorkspaceGroup({
                 )}
               >
                 <span className="min-w-0 flex-1 truncate">{session.title}</span>
+                {session.slackThreadUrl && (
+                  <span title="Started from Slack: it and its thread stay in step" className="shrink-0">
+                    <Slack aria-label="From Slack" className="size-3 text-muted-foreground" />
+                  </span>
+                )}
                 {session.archived && (
                   <span title="Archived. Opening it restores it." className="shrink-0">
                     <Archive aria-label="Archived" className="size-3 text-muted-foreground" />

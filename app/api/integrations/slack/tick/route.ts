@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   if (!optionalEnv("SLACK_SIGNING_SECRET")) return NextResponse.json({ skipped: "Slack isn't set up." });
   after(async () => {
     const done = await runTick();
-    if (done.digests || done.nudges || done.followUps) console.log("Slack agent tick", done);
+    if (done.digests || done.nudges || done.followUps || done.replies) console.log("Slack agent tick", done);
   });
   return NextResponse.json({ ticking: true });
 }

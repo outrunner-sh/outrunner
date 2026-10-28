@@ -103,6 +103,10 @@ export type SessionCheckout = {
 export type Workspace = {
   id: string;
   projectId: string;
+  /** The Slack thread it was started from, if it was (a badge, a link back). */
+  slackThreadUrl?: string | null;
+  /** Whether its thread and it stay in step (lib/slack/relay.ts). */
+  slackSync?: boolean;
   /** Its project's org; absent on one made in code rather than read. */
   orgId?: string;
   /** Who made it: on `user-daytona` or `user-modal`, whose key reaches it. */

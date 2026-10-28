@@ -88,11 +88,14 @@ test("the worker's prompt always carries the item, its criteria, and the PR it m
   assert.match(specMarkdown(spec), /\*\*Acceptance criteria\*\*\n- \[ \] Tapping Checkout/);
 });
 
-test("the card offers start only with a repository, and loses its buttons once filed", () => {
+test("the card starts a session in the repository picked in its dropdown, and loses its buttons once filed", () => {
   const actions = (blocks: Record<string, unknown>[]) =>
     (blocks.find((b) => b.type === "actions")?.elements as { action_id: string; value: string }[] | undefined)?.map((e) => e.action_id);
-  assert.deepEqual(actions(specCard(spec, "c1")), [SPEC_ACTIONS.file, SPEC_ACTIONS.fileStart, SPEC_ACTIONS.refine]);
-  assert.deepEqual(actions(specCard({ ...spec, repo: null }, "c1")), [SPEC_ACTIONS.file, SPEC_ACTIONS.refine]);
+  assert.deepEqual(actions(specCard(spec, "c1", ["acme/web", "acme/api"])), [SPEC_ACTIONS.fileStart, SPEC_ACTIONS.repo]);
+  assert.deepEqual(actions(specCard({ ...spec, repo: null }, "c1")), [SPEC_ACTIONS.fileStart]);
+  const picker = (specCard(spec, "c1", ["acme/api"]).find((b) => b.type === "actions")?.elements as { action_id: string; initial_option?: { value: string }; options?: unknown[] }[])[1];
+  assert.equal(picker.initial_option?.value, "acme/web");
+  assert.equal(picker.options?.length, 2);
   const filed = filedCard(spec, { key: "OR-42", url: "https://app/x", by: "@ana", started: true });
   assert.equal(actions(filed), undefined);
   assert.match(JSON.stringify(filed), /Filed as <https:\/\/app\/x\|OR-42> by @ana · starting a session/);

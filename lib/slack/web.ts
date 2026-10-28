@@ -125,3 +125,21 @@ export async function userNames(token: string, ids: readonly string[]): Promise<
 export async function deleteMessage(token: string, message: { channel: string; ts: string }): Promise<void> {
   await call(token, "chat.delete", { channel: message.channel, ts: message.ts });
 }
+
+/** Mark a message with an emoji (👀 working, ✅ done…); one already there is
+ *  fine. Needs reactions:write. */
+export async function addReaction(token: string, message: { channel: string; ts: string; name: string }): Promise<void> {
+  try {
+    await call(token, "reactions.add", { channel: message.channel, timestamp: message.ts, name: message.name });
+  } catch (error) {
+    if (!(error instanceof SlackApiError && error.code === "already_reacted")) throw error;
+  }
+}
+
+export async function removeReaction(token: string, message: { channel: string; ts: string; name: string }): Promise<void> {
+  try {
+    await call(token, "reactions.remove", { channel: message.channel, timestamp: message.ts, name: message.name });
+  } catch (error) {
+    if (!(error instanceof SlackApiError && error.code === "no_reaction")) throw error;
+  }
+}
