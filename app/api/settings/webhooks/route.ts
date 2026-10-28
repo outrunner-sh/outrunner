@@ -19,5 +19,5 @@ export async function PUT(request: Request) {
   if (!isSameOriginRequest(request)) return NextResponse.json({ error: "Invalid request origin." }, { status: 403 });
   const owner = await getOwner();
   if (!owner) return signInFirst();
-  return changeWebhooks(request, { scope: "user", scopeId: owner.id }, owner.id);
+  return changeWebhooks(request, { scope: "user", scopeId: owner.id }, owner);
 }

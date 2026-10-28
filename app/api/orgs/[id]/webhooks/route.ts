@@ -21,5 +21,5 @@ export async function PUT(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const caller = await orgCaller(request, id, { admin: true });
   if (caller instanceof Response) return caller;
-  return changeWebhooks(request, { scope: "org", scopeId: id }, caller.owner.id);
+  return changeWebhooks(request, { scope: "org", scopeId: id }, caller.owner);
 }
