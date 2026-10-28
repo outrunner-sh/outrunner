@@ -55,7 +55,7 @@ test("a setup cut off fails with why, and what to do", () => {
   const { patch } = interruptedSetups(new Date(made));
   assert.equal(patch.status, "failed");
   assert.equal(patch.errorMessage, SETUP_INTERRUPTED_MESSAGE);
-  assert.match(patch.errorMessage, /interrupted/);
+  assert.match(patch.errorMessage, /stopped before it finished/);
   assert.match(patch.errorMessage, /restarted/);
   assert.match(patch.errorMessage, /Try again/);
 });
