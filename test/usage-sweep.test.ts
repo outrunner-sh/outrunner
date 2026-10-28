@@ -22,7 +22,13 @@ function world(used: number, controls: UsageControls, sent = new Set<number>()) 
       claimed.add(threshold);
       return true;
     },
-    emailAdmins: async (_o, threshold) => void emailed.push(threshold),
+    releaseAlert: async (_o, _p, threshold) => void claimed.delete(threshold),
+    canEmail: true,
+    emailAdmins: async (_o, threshold) => {
+      emailed.push(threshold);
+      return "sent";
+    },
+    canPause: true,
     runningBoxes: async () => [
       { id: "c-1", sandboxId: "sb-1" },
       { id: "c-2", sandboxId: "sb-2" },
@@ -73,4 +79,31 @@ test("a box that won't pause doesn't stop the others", async () => {
   const report = await sweepOrgUsage(w.deps);
   assert.deepEqual(w.paused, ["sb-2"]);
   assert.equal(report.failed, 1);
+});
+
+test("an alert whose email didn't go is taken back, to be tried again; none is claimed without email", async () => {
+  const w = world(85, { limitPercent: null, alertThresholds: [80] });
+  w.deps.emailAdmins = async () => "failed";
+  let released = 0;
+  w.deps.releaseAlert = async () => void (released += 1);
+  const report = await sweepOrgUsage(w.deps);
+  assert.equal(report.alerts, 0);
+  assert.equal(released, 1);
+
+  const off = world(85, { limitPercent: null, alertThresholds: [80] });
+  off.deps.canEmail = false;
+  let claims = 0;
+  off.deps.claimAlert = async () => {
+    claims += 1;
+    return true;
+  };
+  await sweepOrgUsage(off.deps);
+  assert.equal(claims, 0);
+});
+
+test("where boxes can't be paused, running ones run on at the limit", async () => {
+  const w = world(90, { limitPercent: 50, alertThresholds: [] });
+  w.deps.canPause = false;
+  await sweepOrgUsage(w.deps);
+  assert.deepEqual(w.paused, []);
 });

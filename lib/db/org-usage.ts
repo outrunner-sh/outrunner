@@ -69,6 +69,17 @@ export async function sentAlerts(orgId: string, periodStart: Date): Promise<Set<
   return new Set((data ?? []).map((row) => row.threshold));
 }
 
+/** Take back an alert's record: its email didn't go. */
+export async function releaseAlert(orgId: string, periodStart: Date, threshold: number): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("org_usage_alerts")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("period_start", periodStart.toISOString())
+    .eq("threshold", threshold);
+  if (error) throw error;
+}
+
 /** Record an alert as sent; false when it was already (another run sent it). */
 export async function claimAlert(orgId: string, periodStart: Date, threshold: number): Promise<boolean> {
   const { data, error } = await createSupabaseAdminClient()

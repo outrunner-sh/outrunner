@@ -23,7 +23,23 @@ export type UsageSweepDeps = {
   sentAlerts(orgId: string, period: Period): Promise<Set<number>>;
   /** Record the alert; false when another run did first. */
   claimAlert(orgId: string, period: Period, threshold: number): Promise<boolean>;
-  emailAdmins(orgId: string, threshold: number, used: number, plan: Plan, controls: UsageControls): Promise<void>;
+  /** Take the record back: the email didn't go, so a later run tries again. */
+  releaseAlert(orgId: string, period: Period, threshold: number): Promise<void>;
+  /** Whether the deployment can send email at all: without it, no alert is
+   *  claimed, so none is lost. */
+  canEmail: boolean;
+  /** "sent"; "failed" (tried again later); or "nobody" (no admin has an
+   *  email: nothing to try again). */
+  emailAdmins(
+    orgId: string,
+    threshold: number,
+    used: number,
+    plan: Plan,
+    controls: UsageControls,
+  ): Promise<"sent" | "failed" | "nobody">;
+  /** Whether running boxes can be paused here: where they can't, the start
+   *  gate's refusal is the limit, and running ones run on. */
+  canPause: boolean;
   runningBoxes(orgId: string): Promise<RunningBox[]>;
   pause(box: RunningBox): Promise<void>;
   log(message: string, error?: unknown): void;
@@ -40,14 +56,15 @@ export async function sweepOrgUsage(deps: UsageSweepDeps): Promise<UsageSweepRep
       report.orgs += 1;
       const { plan, period } = await deps.entitlements(orgId);
       const used = await deps.hoursUsed(orgId, period);
-      for (const threshold of alertsDue(plan, controls, used, await deps.sentAlerts(orgId, period))) {
+      const due = deps.canEmail ? alertsDue(plan, controls, used, await deps.sentAlerts(orgId, period)) : [];
+      for (const threshold of due) {
         // Claimed first: of two runs at once, one emails.
-        if (await deps.claimAlert(orgId, period, threshold)) {
-          await deps.emailAdmins(orgId, threshold, used, plan, controls);
-          report.alerts += 1;
-        }
+        if (!(await deps.claimAlert(orgId, period, threshold))) continue;
+        const outcome = await deps.emailAdmins(orgId, threshold, used, plan, controls);
+        if (outcome === "sent") report.alerts += 1;
+        if (outcome === "failed") await deps.releaseAlert(orgId, period, threshold);
       }
-      if (overLimit(plan, controls, used)) {
+      if (deps.canPause && overLimit(plan, controls, used)) {
         for (const box of await deps.runningBoxes(orgId)) {
           try {
             await deps.pause(box);

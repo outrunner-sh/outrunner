@@ -37,7 +37,7 @@ const PAGE_ROWS = 1000;
 
 /** Every row a query matches, a page at a time, in a stable order (`page`
  *  orders by id and takes the range). */
-async function allRows<Row>(
+export async function allRows<Row>(
   page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: unknown }>,
 ): Promise<Row[]> {
   const rows: Row[] = [];
