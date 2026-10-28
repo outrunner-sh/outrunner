@@ -28,6 +28,9 @@ create table if not exists audit_events (
   created_at timestamptz not null default now()
 );
 
+-- Where an earlier draft of this file ran, with actor_id referencing the user.
+alter table audit_events drop constraint if exists audit_events_actor_id_fkey;
+
 create index if not exists audit_events_org_created_idx on audit_events (org_id, id desc);
 
 -- Recorded once: an update is refused whoever asks. (A delete is only ever
