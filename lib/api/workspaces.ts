@@ -409,8 +409,10 @@ async function waitOutcome(
       if (!live) return null;
       const turn = turnJson(live.entries, live.state);
       if (turn.state === "working") return null;
+      // A question too: one asked before the fence still shows until the
+      // answer sent after it is logged.
       const prompted = afterEvent !== null || workspace.source === "api";
-      if (prompted && turn.state === "idle" && !promptSince(live.entries, afterEvent)) return null;
+      if (prompted && !promptSince(live.entries, afterEvent)) return null;
       return { turn };
     }
     default:

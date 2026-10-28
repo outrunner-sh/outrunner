@@ -390,11 +390,13 @@ func sendCommand(ctx context.Context, base string, config Config, args []string,
 	}
 	// Where the log stands before the send: the fence to wait from, should
 	// the API not give one (its box hadn't logged the message yet). Only
-	// with --wait, since it costs a read of the conversation.
+	// with --wait, since it costs a read of the conversation; and only from
+	// an idle turn: one showing a question still shows it until this answer
+	// is logged, and a wait from there would hand the question back.
 	before := ""
 	if *wait {
 		var w Workspace
-		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil {
+		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil && w.Turn.State == "idle" {
 			before = "0"
 			if w.Turn.LastEventID != nil {
 				before = *w.Turn.LastEventID
@@ -521,7 +523,10 @@ func waitAndPrint(ctx context.Context, api API, id, after string, timeout time.D
 		if err != nil {
 			return failed(stderr, err)
 		}
-		if w.TimedOut && (deadline.IsZero() || time.Now().Before(deadline)) {
+		// Again only after a full hold with time left to cover: the API
+		// answers a few seconds before its hold is up, and a short call
+		// would come straight back, again and again, as the deadline nears.
+		if w.TimedOut && hold == maxWait && (deadline.IsZero() || time.Until(deadline) > 3*time.Second) {
 			continue
 		}
 		if asJSON {

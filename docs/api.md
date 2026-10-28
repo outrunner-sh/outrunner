@@ -180,8 +180,8 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 `wait` holds the call until the turn is `idle` or `needs_input`, the session
 fails or stops, or `timeout` seconds (600 at most) pass, and answers with the
 session and its turn either way: `"timed_out": true` says it gave up. Call it
-again to keep waiting. A turn counts as over only once its prompt is in the
-conversation: one after `after_event` when it's given, and for a session the
+again to keep waiting. A turn counts as over, or as needing input, only once
+its prompt is in the conversation: one after `after_event` when it's given, and for a session the
 API started, its first prompt (sent just after it's ready). So `POST
 /workspaces` then `wait`, or a send then `wait?after_event=`, never reads the
 quiet before the turn began as its end.

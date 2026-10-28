@@ -366,3 +366,34 @@ func TestAWaitThatTimesOutSaysToKeepItsFence(t *testing.T) {
 		t.Fatalf("printed %q", out.String())
 	}
 }
+
+func TestAnAnswerWithNoFenceWaitsPastTheQuestion(t *testing.T) {
+	awaitWorkingEvery = time.Millisecond
+	defer func() { awaitWorkingEvery = 2 * time.Second }()
+	var waited string
+	// Before the send it was asking: that's no place to wait from.
+	server := noFenceAPI(t, `{"state":"needs_input","last_event_id":"480"}`, &waited)
+	var out, errs bytes.Buffer
+	if code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--wait", "Postgres"}, terminal{interactive: true}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if strings.Contains(waited, "after_event=480") {
+		t.Fatalf("waited from the question: %q", waited)
+	}
+}
+
+func TestAShortTimeoutDoesntCallAgainAndAgain(t *testing.T) {
+	api := &fakeAPI{waits: []string{
+		`{"id":"w1","status":"ready","turn":{"state":"working"},"timed_out":true}`,
+		`{"id":"w1","status":"ready","turn":{"state":"working"},"timed_out":true}`,
+		`{"id":"w1","status":"ready","turn":{"state":"working"},"timed_out":true}`,
+	}}
+	server := api.server(t)
+	var out, errs bytes.Buffer
+	if code := waitCommand(context.Background(), server.URL, signedIn, []string{"w1", "--timeout", "2s"}, &out, &errs); code != 4 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if len(api.requests) != 1 {
+		t.Fatalf("%d calls for a 2s timeout", len(api.requests))
+	}
+}
