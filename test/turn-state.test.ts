@@ -99,3 +99,23 @@ test("a preview is one line, cut short", () => {
   assert.equal(long.length, 280);
   assert.ok(long.endsWith("…"));
 });
+
+test("a /compact at the prompt box leaves the session idle, as a real Claude Code 2.1.304 records it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { parseConversation } = await import("@/lib/runtime/replay/conversation");
+  const events = parseConversation(
+    readFileSync(new URL("../runtime-agent/internal/conversation/testdata/claude-2.1.304.jsonl", import.meta.url), "utf8"),
+  );
+  // The session ends on /compact: its typed record, the compaction, then the
+  // command's own records (caveat, <command-name>, <local-command-stdout>).
+  assert.equal(foldEvents(IDLE, events).turn, "idle");
+  const compacting = events.findIndex((e) => e.t === "message" && e.compact);
+  assert.equal(foldEvents(IDLE, events.slice(0, compacting)).turn, "working", "the typed /compact starts it");
+});
+
+test("a compaction mid-turn doesn't end the turn", () => {
+  const at = "2026-10-28T10:00:00Z";
+  const prompt: AgentEvent = { t: "message", uuid: "p", parentUuid: null, role: "user", timestamp: at, content: [{ type: "text", text: "fix it" }] };
+  const compacted = { t: "message", uuid: "c", parentUuid: null, role: "assistant", timestamp: at, content: [], compact: { trigger: "auto" } } as AgentEvent;
+  assert.equal(foldEvents(IDLE, [prompt, compacted]).turn, "working");
+});

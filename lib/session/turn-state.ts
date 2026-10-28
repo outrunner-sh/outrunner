@@ -12,7 +12,7 @@
  */
 
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
-import { isInterruption, messageText } from "@/lib/runtime/conversation-events";
+import { isInterruption, isLocalCommand, messageText } from "@/lib/runtime/conversation-events";
 import { ASK_TOOL } from "@/lib/runtime/pending-question";
 import { SECRETS_TOOL } from "@/lib/runtime/pending-secrets";
 
@@ -82,6 +82,10 @@ function foldEvent(state: TurnState, event: AgentEvent): TurnState {
   if (event.role === "user") {
     // The record of a stop ends the turn, and any call it was waiting on.
     if (isInterruption(event)) return { ...state, turn: "idle", eventAt: at, ...NOT_WAITING };
+    // A slash command Claude ran itself (/compact, /model): it records the
+    // command and what it printed as user messages, and no reply follows, so
+    // the turn is over (claudeIsWorking's rule).
+    if (isLocalCommand(event)) return { ...state, turn: "idle", eventAt: at, ...NOT_WAITING };
     // A prompt starts a turn; any call still waiting is over (pendingToolCall).
     if (messageText(event) !== "") {
       return { ...state, turn: "working", turnStartedAt: at, eventAt: at, ...NOT_WAITING };
@@ -99,6 +103,10 @@ function foldEvent(state: TurnState, event: AgentEvent): TurnState {
     };
   }
 
+  // A compaction (an assistant record with nothing in it, so a page from
+  // before it skips it) doesn't move the turn: one mid-turn goes on, and
+  // /compact's own records say when one asked for is done.
+  if (event.compact) return { ...state, eventAt: at };
   let next: TurnState = { ...state, eventAt: at };
   for (const block of event.content) {
     if (block.type !== "tool_use") continue;

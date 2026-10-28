@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { recordWorkspaceMode } from "@/lib/db/repositories";
@@ -9,6 +9,7 @@ import { requireFeature } from "@/lib/runtime/box-features";
 import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { reachWorkspaceAgent } from "@/lib/runtime/workspace-agent";
+import { watchSent } from "@/lib/session/watch";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -57,6 +58,12 @@ export async function POST(request: Request, context: RouteContext) {
     // off its screen. The row follows, so the session opens in it again.
     const mode = approved.result === "answered" ? (approved.mode ?? "build") : "build";
     if (workspace.mode !== mode) await recordWorkspaceMode(workspace.id, mode);
+    // An approval puts the session to work (Claude builds in the same turn;
+    // Codex takes it as a prompt): working for every client at once, and
+    // watched until the turn ends (lib/session/watch.ts), as a sent prompt
+    // is. "answered" put nothing to work, so a session idle at its box isn't
+    // marked working.
+    if (approved.result === "approved") after(() => watchSent(workspace.id, workspace.ownerId));
     return NextResponse.json(approved);
   } catch (error) {
     if (error instanceof OutdatedComputerError) {
