@@ -43,12 +43,15 @@ export type ReplayPayload = {
 /** Fetches raw bytes from a signed URL. Injected so tests avoid the network. */
 export type BytesFetcher = (url: string) => Promise<Uint8Array>;
 
-export async function assembleReplay(input: {
+type ReplayInput = {
   snapshot: WorkspaceSnapshot;
   ownerId: string;
   storage: SnapshotStorage;
   fetchBytes: BytesFetcher;
-}): Promise<ReplayPayload> {
+};
+
+/** A Snapshot's manifest, and a reader of the artifacts it points at. */
+async function openSnapshot(input: ReplayInput) {
   const { snapshot, ownerId, storage, fetchBytes } = input;
   const { storagePath } = snapshot;
 
@@ -67,6 +70,18 @@ export async function assembleReplay(input: {
     verifyIntegrity(filename, bytes, manifest);
     return manifest.encodings?.[filename] === "gzip" ? gunzipSync(bytes) : bytes;
   };
+  return { manifest, readVerified };
+}
+
+/** Only a Snapshot's conversation: none of its other artifacts (the cast,
+ *  the patch) are read. */
+export async function assembleConversation(input: ReplayInput): Promise<AgentEvent[]> {
+  const { manifest, readVerified } = await openSnapshot(input);
+  return parseConversation(decode(await readVerified(manifest.conversation)));
+}
+
+export async function assembleReplay(input: ReplayInput): Promise<ReplayPayload> {
+  const { manifest, readVerified } = await openSnapshot(input);
   const [castBytes, conversationBytes, patchBytes, summaryBytes] = await Promise.all([
     manifest.cast ? readVerified(manifest.cast) : null,
     readVerified(manifest.conversation),

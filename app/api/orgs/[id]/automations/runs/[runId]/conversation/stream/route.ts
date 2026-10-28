@@ -51,6 +51,9 @@ export async function GET(request: Request, { params }: Params) {
     })
     .finally(() => clearTimeout(timeout));
   if (!upstream?.ok || !upstream.body) {
+    // Said, and let go of: each reconnect would otherwise leave one open.
+    if (upstream) console.error(`Run ${runId}'s box answered ${upstream.status}`);
+    await upstream?.body?.cancel().catch(() => {});
     return NextResponse.json({ error: "Couldn't reach the review session's box." }, { status: 502 });
   }
   return new Response(upstream.body, {

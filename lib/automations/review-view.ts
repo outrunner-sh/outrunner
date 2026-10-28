@@ -19,6 +19,9 @@ export type ReviewViewDeps = {
   connectorRunSession(orgId: string, runId: string): Promise<{ workspaceId: string; connectorId: string } | null>;
   /** Reads as the connector, whose session it is (RLS keeps it theirs). */
   asConnector<T>(connectorId: string, work: () => Promise<T>): Promise<T>;
+  /** Whether its box is up (nothing read from it, no token made). Inside
+   *  asConnector. */
+  boxUp(workspaceId: string): Promise<boolean>;
   /** The box's conversation stream (SSE), from `lastEventId` on, while its
    *  box is up; null when it isn't. Inside asConnector. */
   liveEventsUrl(workspaceId: string, lastEventId: string | null): Promise<string | null>;
@@ -33,7 +36,8 @@ export async function reviewView(orgId: string, runId: string, deps: ReviewViewD
   const session = await deps.connectorRunSession(orgId, runId);
   if (!session) return null;
   return deps.asConnector(session.connectorId, async () => {
-    if (await deps.liveEventsUrl(session.workspaceId, null)) return { mode: "live" } as const;
+    // Up is enough to say: the stream's own route mints its URL.
+    if (await deps.boxUp(session.workspaceId)) return { mode: "live" } as const;
     const archive = await deps.latestArchive(session.workspaceId, session.connectorId);
     return archive ? ({ mode: "archived", ...archive } as const) : ({ mode: "none" } as const);
   });

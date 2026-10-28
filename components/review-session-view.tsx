@@ -91,7 +91,10 @@ export function ReviewSessionView({ orgId, run }: { orgId: string; run: Automati
           if (active) again();
         };
       } catch (cause) {
-        if (active) setError(cause instanceof Error ? cause.message : "Couldn't read the review session.");
+        if (!active) return;
+        // Mid-reconnect, a failed look is one more attempt, not the end.
+        if (attempt.current > 0) again();
+        else setError(cause instanceof Error ? cause.message : "Couldn't read the review session.");
       }
     })();
     return () => {
