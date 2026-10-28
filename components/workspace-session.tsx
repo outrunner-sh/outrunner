@@ -32,6 +32,7 @@ import {
   type PendingQuestion,
 } from "@/lib/runtime/pending-question";
 import {
+  echoUuid,
   livePrompts,
   pendingShows,
   settlePending,
@@ -553,7 +554,7 @@ export function WorkspaceSession({
       .filter((p) => pendingShows(p, delivered))
       .map<AgentEvent>((p) => ({
         t: "message",
-        uuid: `optimistic-${p.id}`,
+        uuid: echoUuid(p.id),
         parentUuid: null,
         role: "user",
         timestamp: new Date().toISOString(),

@@ -9,6 +9,7 @@ import {
   plainText,
   thoughtSeconds,
 } from "@/lib/runtime/conversation-nodes";
+import { echoUuid } from "@/lib/session/optimistic-echo";
 
 function message(role: "user" | "assistant", timestamp: string, content: ContentBlock[]): AgentEvent {
   return { t: "message", uuid: `${role}-${timestamp}`, parentUuid: null, role, timestamp, content };
@@ -60,6 +61,43 @@ test("a stopped turn shows as one row, not as the user's prompt", () => {
   assert.deepEqual(
     nodes.map((n) => n.kind),
     ["prompt", "tool", "interrupted"],
+  );
+});
+
+test("a session's start shows until its first message, not after", () => {
+  const starting = { t: "state", workspaceId: "w", state: "starting" } as AgentEvent;
+  assert.deepEqual(
+    conversationNodes([starting]).map((n) => n.kind),
+    ["state"],
+  );
+  // The prompt went in and Claude answered: the session is running, though
+  // the agent sent no state to say so.
+  const nodes = conversationNodes([
+    starting,
+    message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "fix it" }]),
+    message("assistant", "2026-10-21T10:00:05Z", [{ type: "text", text: "Done." }]),
+  ]);
+  assert.deepEqual(
+    nodes.map((n) => n.kind),
+    ["prompt", "prose"],
+  );
+  // The echo of a prompt just sent is not the session taking it: still starting.
+  const sent = conversationNodes([
+    starting,
+    { ...message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "fix it" }]), uuid: echoUuid("p1") } as AgentEvent,
+  ]);
+  assert.deepEqual(
+    sent.map((n) => n.kind),
+    ["state", "prompt"],
+  );
+  // Any other state still shows where it is.
+  const exited = conversationNodes([
+    message("user", "2026-10-21T10:00:00Z", [{ type: "text", text: "fix it" }]),
+    { t: "state", workspaceId: "w", state: "exited" },
+  ]);
+  assert.deepEqual(
+    exited.map((n) => n.kind),
+    ["prompt", "state"],
   );
 });
 

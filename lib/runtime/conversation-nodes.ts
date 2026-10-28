@@ -1,5 +1,6 @@
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
 import { isInterruption } from "@/lib/runtime/conversation-events";
+import { isEcho } from "@/lib/session/optimistic-echo";
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 
@@ -42,7 +43,7 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
   let previousAt: string | null = null;
   events.forEach((event, ei) => {
     if (event.t === "state") {
-      nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
+      if (!staleStart(events, ei)) nodes.push({ kind: "state", key: `st-${ei}`, state: event.state });
       return;
     }
     if (event.t === "usage") {
@@ -77,6 +78,21 @@ export function conversationNodes(events: AgentEvent[]): ConversationNode[] {
     previousAt = event.timestamp;
   });
   return nodes;
+}
+
+/**
+ * Whether the state event at `index` is a "starting" that the stream has
+ * since outgrown. The agent sends a session's state once, as the stream is
+ * connected, and "starting" only means Claude's log didn't exist yet; it sends
+ * no "running" when the log appears. So once a message from the log follows
+ * it, the session is running, and the row would only misstate it. The echo of
+ * a prompt just sent is not from the log: the session may not have taken it
+ * yet (a box still booting), so it is still starting.
+ */
+function staleStart(events: AgentEvent[], index: number): boolean {
+  const event = events[index];
+  if (event.t !== "state" || event.state !== "starting") return false;
+  return events.slice(index + 1).some((later) => later.t === "message" && !isEcho(later.uuid));
 }
 
 function toolNode(key: string, block: ToolUse, results: Map<string, unknown>): ConversationNode {
