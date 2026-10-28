@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
 import { defaultEnvironmentId, getEnvironment } from "@/lib/db/environments";
+import { missionName } from "@/lib/missions/rules";
 import { missionsFor } from "@/lib/missions/view.deps";
 import { activeOrgId } from "@/lib/orgs/server";
 import { isSameOriginRequest } from "@/lib/http/guards";
@@ -41,7 +42,12 @@ export async function POST(request: Request) {
   const { environmentId: _, projectId: __, ...session } = body;
   void _;
   void __;
-  return createCloudSession(owner, projectId, session, { kind: "mission", environmentId: environment.id });
+  const prompt = typeof session.prompt === "string" ? session.prompt : "";
+  return createCloudSession(owner, projectId, session, {
+    kind: "mission",
+    environmentId: environment.id,
+    ...(prompt.trim() && { title: missionName(prompt) }),
+  });
 }
 
 /** The owner's Missions in the org the sidebar shows, with their Runners

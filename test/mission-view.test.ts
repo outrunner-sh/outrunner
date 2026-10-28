@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { missionIcon } from "@/lib/missions/icons";
+import { missionName } from "@/lib/missions/rules";
 import {
   asksUser,
   briefSummary,
@@ -128,4 +129,14 @@ test("a Mission's icon: the one picked, else one from its id, the same each time
   assert.equal(missionIcon("m1", "rocket").key, "rocket");
   assert.equal(missionIcon("m1", null).key, missionIcon("m1", null).key);
   assert.equal(missionIcon("m1", "nonsense").key, missionIcon("m1", null).key);
+});
+
+test("a Mission is named from its first sentence, short", () => {
+  assert.equal(missionName("Own billing. Keep invoices right."), "Own billing");
+  assert.equal(
+    missionName("Own the end-to-end test docs under e2e/missions/ in neevai-labs/outrunner. Start two Runners now."),
+    "Own the end-to-end test docs under…",
+  );
+  assert.equal(missionName("**Onboarding**: first session under a minute"), "Onboarding");
+  assert.equal(missionName("   "), "New Mission");
 });
