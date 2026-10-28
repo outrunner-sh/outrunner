@@ -1914,6 +1914,7 @@ begin
     raise exception 'FAIL: an actor going took their events';
   end if;
   raise notice 'ok: the audit log is append-only, the server''s, and goes with its org';
+end $$;
 
 -- 49. The GitHub loop's follow-ups: a burst of CI events is one turn per
 -- commit, reviews join one open batch, a turn is taken once, and CI's turns
