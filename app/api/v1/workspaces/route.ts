@@ -1,5 +1,6 @@
 import { apiRoute } from "@/lib/api/handler";
 import { CREATE_LIMIT } from "@/lib/api/rate-limit";
+import { checkWebhookUrl, webhookHooks } from "@/lib/api/webhooks.deps";
 import { createWorkspace, listWorkspaces } from "@/lib/api/workspaces";
 
 // The create answers once the session's row is made; its box is set up in
@@ -11,7 +12,12 @@ export function GET(request: Request) {
   return apiRoute(request, listWorkspaces);
 }
 
-/** Start a session: `preparing` at once, its prompt sent once it's ready. */
+/** Start a session: `preparing` at once, its prompt sent once it's ready.
+ *  It's watched for its webhooks from the start (lib/api/webhooks.deps.ts). */
 export function POST(request: Request) {
-  return apiRoute(request, (context) => createWorkspace(context), { limit: CREATE_LIMIT, bucket: "create" });
+  return apiRoute(
+    request,
+    (context) => createWorkspace(context, webhookHooks(context), async (input) => checkWebhookUrl(input.webhookUrl)),
+    { limit: CREATE_LIMIT, bucket: "create" },
+  );
 }

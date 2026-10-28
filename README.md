@@ -78,7 +78,10 @@ end, read its conversation, and pause, archive or delete it, from a script,
 CI or another agent. Calls carry an API key (`Authorization: Bearer
 or_key_…`): an org's, made by its admins under Settings → Org → API keys,
 or your own, under Settings → API keys. A key acts as whoever made it, with
-their Roles & access, and every call is recorded with it.
+their Roles & access, and every call is recorded with it. Sessions it
+starts send signed webhooks (`workspace.ready`, `turn.completed`,
+`needs_input`, `pr.opened`, `error`), and the same operations are an MCP
+server at `/api/mcp`.
 
 ## Docs
 

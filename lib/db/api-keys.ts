@@ -218,3 +218,16 @@ export async function recordApiRequest(call: {
     });
   if (error) throw error;
 }
+
+/** How long a call's record is kept: what the settings page and an audit
+ *  read is a few weeks; the table would otherwise only grow. */
+export const API_REQUEST_DAYS = 90;
+
+/** Forget calls older than API_REQUEST_DAYS (the webhooks tick's). */
+export async function pruneApiRequests(now = Date.now()): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("api_requests")
+    .delete()
+    .lt("created_at", new Date(now - API_REQUEST_DAYS * 24 * 60 * 60 * 1000).toISOString());
+  if (error) throw error;
+}
