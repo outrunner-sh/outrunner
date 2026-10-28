@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { AutomationEditor } from "@/components/automation-editor";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgAppCoverage } from "@/lib/automations/coverage";
+import type { AppCoverage } from "@/lib/automations/rules";
 import { automationTemplate } from "@/lib/automations/templates";
 import { listOrgRepos } from "@/lib/db/automations";
 import { getOrgContext } from "@/lib/orgs/server";
@@ -29,7 +30,7 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
   const template = automationTemplate((await searchParams).template);
   const repos = await listOrgRepos(active.id);
   // Coverage only flags repositories: without it, the editor still works.
-  const coverage = await orgAppCoverage(active.id, repos).catch((error: unknown) => {
+  const coverage: Record<string, AppCoverage> = await orgAppCoverage(active.id, repos).catch((error: unknown) => {
     console.error("Automation: could not read the GitHub App's coverage", error);
     return {};
   });
@@ -42,7 +43,9 @@ async function NewAutomation({ searchParams }: { searchParams: SearchParams }) {
         template: template?.id ?? null,
         prompt: template?.prompt ?? "",
         triggers: template?.triggers ?? ["pull_request.opened"],
-        projectIds: [],
+        // From a template: every repository the GitHub App can post on, ticked
+        // already, so turning it on is one Save.
+        projectIds: template ? repos.filter((r) => coverage[r.fullName] === "installed").map((r) => r.projectId) : [],
         enabled: true,
         runsAs: null,
       }}

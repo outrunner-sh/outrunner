@@ -70,6 +70,23 @@ export function AutomationEditor({
   const [triggers, setTriggers] = useState<AutomationTrigger[]>(draft.triggers);
   const [projectIds, setProjectIds] = useState<string[]>(draft.projectIds);
   const [enabled, setEnabled] = useState(draft.enabled);
+  const [filter, setFilter] = useState("");
+  const canPost = (repo: AutomationRepo) => !COVERAGE_NOTES[coverage[repo.fullName] ?? "installed"];
+  const shown = repos.filter((r) => r.fullName.toLowerCase().includes(filter.trim().toLowerCase()));
+  // Only those the app can post on, and any already picked that it can't any
+  // more (so it can be unticked).
+  const reviewable = shown.filter((r) => canPost(r) || projectIds.includes(r.projectId));
+  const repoCheck = (repo: AutomationRepo, note: string | null) => (
+    <Check
+      key={repo.projectId}
+      checked={projectIds.includes(repo.projectId)}
+      disabled={!editable}
+      onChange={() => setProjectIds(toggle(projectIds, repo.projectId))}
+    >
+      <span className="font-mono text-[12px]">{repo.fullName}</span>
+      {note ? <span className="ml-2 text-xs text-warning">{note}</span> : null}
+    </Check>
+  );
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -187,21 +204,27 @@ export function AutomationEditor({
               This org has no repositories yet. Connect one from New Session first.
             </p>
           ) : (
-            <div className="max-h-64 space-y-1.5 overflow-y-auto">
-              {repos.map((repo) => {
-                const note = COVERAGE_NOTES[coverage[repo.fullName] ?? "installed"];
-                return (
-                  <Check
-                    key={repo.projectId}
-                    checked={projectIds.includes(repo.projectId)}
-                    disabled={!editable}
-                    onChange={() => setProjectIds(toggle(projectIds, repo.projectId))}
-                  >
-                    <span className="font-mono text-[12px]">{repo.fullName}</span>
-                    {note ? <span className="ml-2 text-xs text-warning">{note}</span> : null}
-                  </Check>
-                );
-              })}
+            <div className="space-y-2">
+              {repos.filter(canPost).length > 10 ? (
+                <Input
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                  placeholder="Filter repositories"
+                  aria-label="Filter repositories"
+                  className="max-w-sm"
+                />
+              ) : null}
+              {/* Only the ones the GitHub App can post on: an automation runs
+                  on nothing else. */}
+              {reviewable.length === 0 ? (
+                <p className="text-[13px] text-muted-foreground">
+                  {filter ? "No repositories the GitHub App can post on match." : "The GitHub App can't post on any of this org's repositories yet. Install it in Settings → Org → GitHub."}
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {reviewable.map((repo) => repoCheck(repo, canPost(repo) ? null : COVERAGE_NOTES[coverage[repo.fullName] ?? "installed"]))}
+                </div>
+              )}
             </div>
           )}
         </Field>
