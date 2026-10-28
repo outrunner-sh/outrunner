@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     const owner = ownerFromUser(data.user);
     return NextResponse.json({
       token: result.token,
-      user: { login: owner.githubLogin, name: owner.name, email: owner.email },
+      user: { id: owner.id, login: owner.githubLogin, name: owner.name, email: owner.email },
     });
   } catch (error) {
     console.error("Could not sign the CLI in", error);

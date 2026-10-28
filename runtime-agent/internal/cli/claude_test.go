@@ -96,6 +96,7 @@ func claudeApp(t *testing.T) (app *fakeApp, saved *string) {
 		var body struct{ Token string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		*saved = body.Token
+		app.claudeWith = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		_, _ = w.Write([]byte(`{"connected":true,"last4":"6789"}`))
 	})
 	return app, saved
@@ -145,6 +146,39 @@ func TestClaudeCommandSignsInFirstAndOpensNoOtherTab(t *testing.T) {
 	}
 	if len(opened) != 1 || !strings.HasPrefix(opened[0], app.server.URL+"/cli-login?") {
 		t.Errorf("opened %q, want only the sign-in page", opened)
+	}
+}
+
+// A terminal still signed in to another account than the browser's (the
+// --account onboarding names) signs in again, and the token goes to the
+// browser's account, the one the page is watching.
+func TestClaudeCommandSignsInAgainForAnotherAccount(t *testing.T) {
+	app, saved := claudeApp(t)
+	app.tokens["or_old_token"] = true
+	fakeClaude(t, printLink+"\necho "+fakeToken)
+	t.Setenv("OUTRUNNER_CONFIG", filepath.Join(t.TempDir(), "cli.json"))
+	path, _ := ConfigPath()
+	_ = SaveConfig(path, Config{URL: app.server.URL, Token: "or_old_token", Login: "old"})
+	approve := app.approve(t, "")
+	signedIn := 0
+	openBrowser = func(u string) error {
+		signedIn++
+		return approve(u)
+	}
+	t.Cleanup(func() { openBrowser = OpenBrowser })
+
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"--url", app.server.URL, "--account", "u-immad", "claude"}, nil, &out, &errOut); code != 0 {
+		t.Fatalf("claude: %d %s", code, errOut.String())
+	}
+	if signedIn != 1 || !strings.Contains(out.String(), "signed in as old (old@example.com), not the account in your browser") {
+		t.Errorf("signed in %d times, printed %q", signedIn, out.String())
+	}
+	if *saved != fakeToken || app.claudeWith != "or_cli_token" {
+		t.Fatalf("saved %q with %q", *saved, app.claudeWith)
+	}
+	if config, _ := LoadConfig(path); config.Token != "or_cli_token" {
+		t.Errorf("kept %q", config.Token)
 	}
 }
 

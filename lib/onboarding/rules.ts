@@ -43,7 +43,9 @@ export const CLI_DEFAULT_URL = "https://app.outrunner.sh";
  *  moves on by itself, so the CLI mustn't open onboarding in another tab. The
  *  app is always named with --url, even the default: OUTRUNNER_URL in the
  *  user's shell would otherwise win, the token would be saved to that app, and
- *  this page would never see it. */
-export function connectClaudeCommand(runner: string, origin: string): string {
-  return `${runner} outrunner@latest --url ${origin} claude`;
+ *  this page would never see it. So is the account, with --account, when it's
+ *  known: a terminal still signed in to another account signs in again,
+ *  rather than save the token where this page isn't looking. */
+export function connectClaudeCommand(runner: string, origin: string, account?: string): string {
+  return `${runner} outrunner@latest --url ${origin}${account ? ` --account ${account}` : ""} claude`;
 }

@@ -8,5 +8,5 @@ export async function GET(request: Request) {
   if (!owner) {
     return NextResponse.json({ error: "Not signed in. Run `outrunner login`." }, { status: 401 });
   }
-  return NextResponse.json({ login: owner.githubLogin, name: owner.name, email: owner.email });
+  return NextResponse.json({ id: owner.id, login: owner.githubLogin, name: owner.name, email: owner.email });
 }

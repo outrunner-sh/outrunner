@@ -23,7 +23,9 @@ type fakeApp struct {
 	mu     sync.Mutex
 	codes  map[string]string // code -> challenge
 	tokens map[string]bool
-	server *httptest.Server
+	// claudeWith is the CLI token the Claude slot was last saved with.
+	claudeWith string
+	server     *httptest.Server
 }
 
 func (app *fakeApp) setCode(code, challenge string) {
@@ -62,14 +64,19 @@ func newFakeApp(t *testing.T) *fakeApp {
 			return
 		}
 		app.tokens["or_cli_token"] = true
-		_, _ = w.Write([]byte(`{"token":"or_cli_token","user":{"login":"immad","name":"Immad","email":"immad@example.com"}}`))
+		_, _ = w.Write([]byte(`{"token":"or_cli_token","user":{"id":"u-immad","login":"immad","name":"Immad","email":"immad@example.com"}}`))
 	})
 	mux.HandleFunc("GET /api/cli/whoami", func(w http.ResponseWriter, r *http.Request) {
 		if !app.tokenWorks(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"login":"immad","name":"Immad","email":null}`))
+		// or_old_token is a sign-in to another account.
+		if r.Header.Get("Authorization") == "Bearer or_old_token" {
+			_, _ = w.Write([]byte(`{"id":"u-old","login":"old","name":"Old","email":"old@example.com"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"u-immad","login":"immad","name":"Immad","email":null}`))
 	})
 	mux.HandleFunc("DELETE /api/cli/token", func(w http.ResponseWriter, r *http.Request) {
 		app.mu.Lock()

@@ -7,6 +7,7 @@ import { SecretForm } from "@/components/ui/secret-form";
 import { watchClaudeToken } from "@/lib/claude-connect";
 import { CLI_DEFAULT_URL, connectClaudeCommand } from "@/lib/onboarding/rules";
 import type { ClaudeTokenMeta } from "@/lib/runtime/credentials/claude-credentials";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 /** How often the page looks for a subscription connected from the terminal. */
@@ -64,7 +65,15 @@ export function ClaudeFromTerminal({
   const [manager, setManager] = useState(0);
   const [pasting, setPasting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const command = connectClaudeCommand(RUNNERS[manager][1], useOrigin());
+  // The account this page is signed in to, so a terminal signed in to
+  // another one signs in again rather than save the token there.
+  const [account, setAccount] = useState<string>();
+  useEffect(() => {
+    void createSupabaseBrowserClient()
+      .auth.getSession()
+      .then(({ data }) => setAccount(data.session?.user.id), () => {});
+  }, []);
+  const command = connectClaudeCommand(RUNNERS[manager][1], useOrigin(), account);
 
   // What was in place as this opened, kept: the page's own copy moves on.
   const [baseline] = useState(before);
