@@ -187,10 +187,10 @@ quiet before the turn began as its end.
 
 `after_event` is `null` when the session's box hadn't logged the message yet
 when the send answered (rare: a box just woken that's slow to serve its
-conversation, or the same words sent again before the last copy's turn had
-moved on, which can't be told apart from it). Then poll `GET /workspaces/{id}` until `turn.state` is
-`working` before you `wait`: without a fence, `wait` on a session the API
-didn't start can answer with the quiet before the turn began.
+conversation, or the same words as an earlier prompt, which can't be told
+apart from it until this copy is logged). Then poll `GET /workspaces/{id}`
+until `turn.state` is `working` before you `wait`: without a fence, `wait` on
+a session the API didn't start can answer with the quiet before the turn began.
 
 ```sh
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/conversation?per_page=50"
