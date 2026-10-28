@@ -18,3 +18,24 @@ create table if not exists org_connectors (
 
 alter table org_connectors enable row level security;
 revoke all on table org_connectors from anon, authenticated;
+
+-- An org's connector is an admin, for write on its projects, but no admin
+-- in the sense of keeping it run: the last of its people can't leave, or be
+-- made a member, leaving only the connector.
+create or replace function would_orphan_org(target_org uuid, member uuid)
+returns boolean
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+begin
+  perform 1 from organizations where id = target_org for update;
+  return exists (
+    select 1 from organization_members where org_id = target_org and user_id = member and role = 'admin'
+  ) and not exists (
+    select 1 from organization_members m
+    where m.org_id = target_org and m.user_id <> member and m.role = 'admin'
+      and not exists (select 1 from org_connectors c where c.user_id = m.user_id)
+  );
+end;
+$$;

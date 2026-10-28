@@ -90,13 +90,15 @@ export async function orgsForDomains(domains: readonly string[]): Promise<Domain
   if (error) throw error;
   const found: DomainOrg[] = [];
   for (const claim of claims ?? []) {
-    const [{ data: org, error: orgError }, { count, error: countError }] = await Promise.all([
+    const [{ data: org, error: orgError }, { count, error: countError }, { count: connectors }] = await Promise.all([
       supabase.from("organizations").select("id, name").eq("id", claim.org_id).maybeSingle(),
       supabase.from("organization_members").select("user_id", { count: "exact", head: true }).eq("org_id", claim.org_id),
+      // Its outrunner-connector isn't one of its people.
+      supabase.from("org_connectors").select("org_id", { count: "exact", head: true }).eq("org_id", claim.org_id),
     ]);
     if (orgError) throw orgError;
     if (countError) throw countError;
-    if (org) found.push({ id: org.id, name: org.name, domain: claim.domain, memberCount: count ?? 0 });
+    if (org) found.push({ id: org.id, name: org.name, domain: claim.domain, memberCount: Math.max(0, (count ?? 0) - (connectors ?? 0)) });
   }
   return found;
 }

@@ -6,10 +6,11 @@
  * A personal org has none: its automations run as its owner, whose org it is.
  */
 
+import { connectorUserId } from "@/lib/automations/connector-id";
 import { CONNECTOR_NAME } from "@/lib/automations/connector-name";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-export { CONNECTOR_NAME };
+export { CONNECTOR_NAME, connectorUserId };
 
 /** Its sign-in address: never mailed (the server signs in as it with a
  *  one-time token, lib/supabase/acting-user.ts). */
@@ -17,20 +18,20 @@ function connectorEmail(orgId: string): string {
   return `connector+${orgId}@noreply.outrunner.sh`;
 }
 
-const known = new Map<string, boolean>();
+/** The connectors seen: one per org, so bounded. Anyone else is asked again
+ *  (one indexed lookup), and a user doesn't become one later. */
+const known = new Map<string, true>();
 
-/** Whether a user is an org's connector; kept once known, as it never
- *  changes for a user. */
+/** Whether a user is an org's connector. */
 export async function isConnector(userId: string): Promise<boolean> {
-  const kept = known.get(userId);
-  if (kept !== undefined) return kept;
+  if (known.has(userId)) return true;
   const { data, error } = await createSupabaseAdminClient()
     .from("org_connectors")
     .select("org_id")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw error;
-  known.set(userId, data !== null);
+  if (data) known.set(userId, true);
   return data !== null;
 }
 
@@ -47,8 +48,10 @@ export async function connectorsAmong(userIds: readonly string[]): Promise<Set<s
 
 /**
  * The org's connector, made (a user, an admin of the org) the first time it's
- * asked for; null for a personal org, which takes no other member. Two at once
- * make one: the loser's user is deleted.
+ * asked for; null for a personal org, which takes no other member. Each step
+ * is idempotent, by the connector's derived id: the user (made, or found
+ * made), its membership, its record. So calls at once agree, and one that
+ * died partway is finished by the next.
  */
 export async function orgConnector(orgId: string): Promise<string | null> {
   const supabase = createSupabaseAdminClient();
@@ -64,35 +67,28 @@ export async function orgConnector(orgId: string): Promise<string | null> {
   if (orgError) throw orgError;
   if (!org || org.personal_owner_id) return null;
 
-  const { data: made, error: makeError } = await supabase.auth.admin.createUser({
+  const userId = connectorUserId(orgId);
+  const { error: makeError } = await supabase.auth.admin.createUser({
+    id: userId,
     email: connectorEmail(orgId),
     email_confirm: true,
     user_metadata: { full_name: CONNECTOR_NAME, user_name: CONNECTOR_NAME },
     // Let in where sign-up is restricted (lib/auth/allowlist.ts isAdmitted).
     app_metadata: { outrunner_admitted: true, outrunner_connector: true },
   });
-  if (makeError || !made.user) {
-    // Made already by a call that lost its insert below, say: find it.
-    const raced = await supabase.from("org_connectors").select("user_id").eq("org_id", orgId).maybeSingle();
-    if (raced.data) return raced.data.user_id;
-    throw makeError ?? new Error("Couldn't make the org's connector.");
+  if (makeError) {
+    // Made already (by a call at once, or one that died partway): it's ours.
+    const { data: found } = await supabase.auth.admin.getUserById(userId);
+    if (!found.user) throw makeError;
   }
-  const userId = made.user.id;
   const { error: memberError } = await supabase
     .from("organization_members")
-    .insert({ org_id: orgId, user_id: userId, role: "admin" });
-  if (memberError) {
-    await supabase.auth.admin.deleteUser(userId).catch(() => undefined);
-    throw memberError;
-  }
-  const { error: linkError } = await supabase.from("org_connectors").insert({ org_id: orgId, user_id: userId });
-  if (linkError) {
-    // Another call made the org's connector first: use it, drop this one.
-    await supabase.auth.admin.deleteUser(userId).catch(() => undefined);
-    const winner = await supabase.from("org_connectors").select("user_id").eq("org_id", orgId).maybeSingle();
-    if (winner.data) return winner.data.user_id;
-    throw linkError;
-  }
+    .upsert({ org_id: orgId, user_id: userId, role: "admin" }, { onConflict: "org_id,user_id", ignoreDuplicates: true });
+  if (memberError) throw memberError;
+  const { error: linkError } = await supabase
+    .from("org_connectors")
+    .upsert({ org_id: orgId, user_id: userId }, { onConflict: "org_id", ignoreDuplicates: true });
+  if (linkError) throw linkError;
   known.set(userId, true);
   return userId;
 }
