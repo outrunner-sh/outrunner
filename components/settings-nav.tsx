@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Github, Info, KeyRound, Layers, Plug, ShieldCheck, Terminal, User, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Box, Building2, CreditCard, Github, Info, KeyRound, Layers, Plug, ShieldCheck, SlidersHorizontal, Terminal, User, Users } from "lucide-react";
 
 import { SIDEBAR_ROW } from "@/components/ui/sidebar-row";
 import { PROVIDERS_SETTINGS_HREF, USAGE_SETTINGS_HREF } from "@/lib/settings-links";
@@ -36,6 +36,8 @@ const groups = [
       { href: "/settings/org/github", label: "GitHub", icon: Github },
       // Keys the org's members' cloud sessions run on; admins save them.
       { href: "/settings/org/keys", label: "Keys", icon: KeyRound },
+      // Model and box size for members who haven't chosen; admins set them.
+      { href: "/settings/org/defaults", label: "Defaults", icon: SlidersHorizontal },
     ],
   },
   {

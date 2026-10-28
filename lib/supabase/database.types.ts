@@ -364,6 +364,8 @@ type UserCredentialsRow = {
   modal_token_updated_at: string | null;
   // supabase/migrations/20261013130000_user_box_size.sql.
   box_size: "x-small" | "small" | "medium" | "large";
+  // supabase/migrations/20261030150000_org_defaults.sql.
+  box_size_chosen: boolean;
   // Settings → Account (supabase/migrations/20261030100000_github_identity.sql).
   github_identity: "personal" | "app";
   // Settings → Providers (supabase/migrations/20261016140000_user_openrouter_key.sql).
@@ -380,6 +382,16 @@ type UserCredentialsRow = {
 // supabase/migrations/20261019120000_user_provider_keys.sql.
 // An org's keys for model providers (Settings → Org → Keys). Service-role-only;
 // see supabase/migrations/20261030110000_org_provider_keys.sql.
+// An org's defaults for its members' new sessions (Settings → Org →
+// Defaults); see supabase/migrations/20261030150000_org_defaults.sql.
+type OrganizationSettingsRow = {
+  org_id: string;
+  default_model: Json | null;
+  box_size: "x-small" | "small" | "medium" | "large" | null;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 type OrgProviderKeyRow = {
   org_id: string;
   provider: string;
@@ -984,6 +996,12 @@ export type Database = {
         Row: UserCredentialsRow;
         Insert: Insert<UserCredentialsRow, "user_id">;
         Update: Partial<UserCredentialsRow>;
+        Relationships: [];
+      };
+      organization_settings: {
+        Row: OrganizationSettingsRow;
+        Insert: Insert<OrganizationSettingsRow, "org_id">;
+        Update: Partial<OrganizationSettingsRow>;
         Relationships: [];
       };
       org_provider_keys: {
