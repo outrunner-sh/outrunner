@@ -8,6 +8,7 @@ import { useState } from "react";
 import { CollapsedSidebarButtons } from "@/components/app-frame";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
 import { OpenEditorButton } from "@/components/open-editor-button";
+import { SlackThreadLink } from "@/components/slack-thread-link";
 import { SessionComposer } from "@/components/session-composer";
 import { SessionDidntStart } from "@/components/session-didnt-start";
 import { SetupStalled } from "@/components/setup-stalled";
@@ -88,6 +89,9 @@ export function WorkspaceStudio({
         </div>
         <div className="studio-header-actions">
           {/* VS Code on the session's own box: cloud sessions only. */}
+          {!isLocal && workspace.slackThreadUrl && (
+            <SlackThreadLink workspaceId={workspace.id} url={workspace.slackThreadUrl} sync={workspace.slackSync !== false} />
+          )}
           {hasLiveSession && !isLocal && opensInBrowser(workspace.provider) && <OpenEditorButton workspaceId={workspace.id} />}
           {archive && (
             <button

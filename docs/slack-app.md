@@ -1,19 +1,27 @@
 # Slack app: the Outrunner agent, and capture to triage
 
 **Talk to Outrunner.** Mention `@Outrunner` in a channel (or DM it) with what you need. It replies in the
-thread, where everyone can see it:
+thread, where everyone can see it, and the thread becomes the work's session (Replicas' way):
 
-1. It asks what it must to make the work clear (which repository, how to reproduce, what "done" means), a few
-   questions at a time, at most three rounds. Anyone in the thread can answer.
-2. It proposes a spec card: title, repository, the problem, **acceptance criteria**, what's out of scope.
-   - **File to triage** files it as a work item, with a ready session prompt.
-   - **File & start session** also starts a cloud session on that prompt, as the person who clicked.
-   - **Keep refining** goes back to the conversation.
-3. Once it's filed, replies in the thread become notes on the item. The thread hears when the session is up and
-   when its pull request opens.
-4. The session's PR starts with `Closes OR-N` and lists the criteria. The **Validate against acceptance
+1. If the request is vague, it asks a question or two. Then it posts a short card: what it will do, **done when**,
+   the repository (a dropdown to pick or change it; `[repo:owner/name]` in your message picks it too), and
+   **Start session**. Nothing runs until someone clicks Start: someone connected, who may read the repository.
+2. Start files the work in triage (OR-N, in progress) and starts a cloud session as the person who clicked. It's
+   in their sidebar with a **Slack badge**, and its header links back to the thread.
+3. From then on, **the thread and the session are in step**:
+   - what people say in the thread goes to the session, with who said it (`!aside` keeps a message out;
+     `@Outrunner stop` stops its turn);
+   - the session's reply at the end of each turn is posted in the thread, with a link to the whole session;
+   - what you type in the session in Outrunner is posted in the thread too.
+   The session header's **Synced** toggle turns this off and on (Devin's sync toggle).
+4. 👀 marks work under way, ✅ a reply with a pull request, ❌ a session that couldn't start. When the PR merges,
+   the item is done and the session is archived (🗃️); a reply in the thread restores it.
+5. The session's PR starts with `Closes OR-N` and lists the criteria. The **Validate against acceptance
    criteria** automation (Automations → templates), if it's on for the repository, checks the PR against them in
    a fresh session and posts PASS, FAIL or PARTIAL on the PR. A person decides what happens next.
+
+Sessions started from Slack are paid like the org's other sessions: a team org's run Outrunner's models on the
+org's key, within its plan.
 
 **Ask it things, too.** The agent tells a question from work to do:
 
@@ -98,6 +106,7 @@ app's signing secret.
          - groups:history
          - im:history
          - users:read
+         - reactions:write
        user:
          - openid
    settings:

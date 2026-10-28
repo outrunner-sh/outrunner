@@ -98,6 +98,8 @@ export type SidebarSession = {
   archive: ArchiveOffer | null;
   /** Archived: opening it restores it. */
   archived: boolean;
+  /** Started from a Slack thread: its link, for the badge. */
+  slackThreadUrl?: string | null;
 };
 
 /** What the delete confirmation says will happen. */
@@ -166,6 +168,7 @@ export function buildSidebarGroups(
       deletion: canDestroy(w, now) ? { kind: "cloud" } : null,
       archive: archiveOffer(w),
       archived: w.status === "archived",
+      ...(w.slackThreadUrl && { slackThreadUrl: w.slackThreadUrl }),
     })),
   }));
   const local: SidebarGroup[] = groupLocalSessions(localSessions).map((group) => ({

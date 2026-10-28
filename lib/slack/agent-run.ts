@@ -56,6 +56,7 @@ import {
 import { agentTurn, type Lookups, oneShot } from "@/lib/slack/agent-model";
 import { findItems, itemStatus, recentWork } from "@/lib/slack/lookups";
 import { askResearch, wakeAndSend } from "@/lib/slack/research";
+import { awaitReply, fromThread, sendToSession, stopSession, watchForReply } from "@/lib/slack/relay";
 import { channelSettings, setChannelSettings } from "@/lib/db/slack-channels";
 import { githubGet, repoToken } from "@/lib/slack/github";
 import { threadSession } from "@/lib/slack/proactive";
@@ -69,7 +70,7 @@ import {
 } from "@/lib/slack/proactive-text";
 import { canTriage } from "@/lib/triage/access";
 import { signLinkToken, slackPermalink, slackToMarkdown } from "@/lib/slack/slack";
-import { deleteMessage, postEphemeral, postMessage, threadReplies, updateMessage, userNames } from "@/lib/slack/web";
+import { addReaction, deleteMessage, postEphemeral, postMessage, threadReplies, updateMessage, userNames } from "@/lib/slack/web";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import type { TriageActor } from "@/lib/triage/access";
 import { itemUrl } from "@/lib/triage/urls";
@@ -165,7 +166,14 @@ export async function handleAgentMessage(message: AgentMessage): Promise<void> {
       });
     }
 
-    if (conversation.state === "filed" || conversation.state === "started") {
+    // A thread with a session is the session's (Replicas' way): what's said
+    // goes to it, and its reply comes back. `!aside` is for the people
+    // there; `stop` interrupts the turn.
+    if (conversation.state === "started" && conversation.workspaceId) {
+      await toSession(install, conversation, message);
+      return;
+    }
+    if (conversation.state === "filed") {
       // Said in the thread: a note on its item. Said to the agent: answered
       // too (a question about it, or about anything else).
       await noteOnItem(conversation, message);
@@ -278,6 +286,10 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
     return;
   }
   const filed = conversation.state === "filed" || conversation.state === "started";
+  // `[repo:owner/name]` in the message picks the repository, as Replicas' tag does.
+  const tagged = /\[repo:\s*([^\]\s]+)\s*\]/i.exec(message.text)?.[1]?.toLowerCase();
+  const taggedRepo = tagged ? repoNames.find((r) => r.toLowerCase() === tagged) : undefined;
+  if (answer.action === "propose" && taggedRepo) answer = { ...answer, spec: { ...answer.spec, repo: taggedRepo } };
 
   switch (answer.action) {
     case "answer":
@@ -308,7 +320,7 @@ async function runTurn(install: SlackInstallation, conversation: SlackConversati
         channel,
         threadTs,
         text: specSummary(answer.spec),
-        blocks: [{ type: "section", text: { type: "mrkdwn", text: answer.message } }, ...specCard(answer.spec, conversation.id)],
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: answer.message } }, ...specCard(answer.spec, conversation.id, repoNames)],
       });
       await updateConversation(conversation.id, { state: "proposed", proposal: answer.spec, proposalTs: ts });
     }
@@ -323,6 +335,8 @@ export type CardAction = {
   teamDomain?: string | null;
   user: string;
   userName?: string | null;
+  /** The repository picked in the card's dropdown. */
+  selected?: string | null;
 };
 
 export async function handleCardAction(action: CardAction): Promise<void> {
@@ -341,7 +355,15 @@ export async function handleCardAction(action: CardAction): Promise<void> {
       await reply("Sure. What should change? Mention me with it.");
       return;
     }
+    if (action.actionId === SPEC_ACTIONS.repo) {
+      await pickRepo(install, conversation, action);
+      return;
+    }
     const start = action.actionId === SPEC_ACTIONS.fileStart;
+    if (start && !conversation.proposal?.repo && conversation.state === "proposed") {
+      await tellClicker("Pick a repository in the card first.");
+      return;
+    }
     if (action.actionId !== SPEC_ACTIONS.file && !start) return;
     if (conversation.state !== "proposed" || !conversation.proposal) {
       await tellClicker("That proposal is filed already, or was replaced by a newer one.");
@@ -378,7 +400,7 @@ export async function handleCardAction(action: CardAction): Promise<void> {
       );
       return;
     }
-    await startWorker(actor, conversation, filed, reply);
+    await startWorker(actor, conversation, filed, reply, { teamDomain: action.teamDomain });
   } catch (error) {
     console.error("Slack agent: the card action failed", error);
     await reply("Sorry, that didn't go through. Try the button again.").catch(() => undefined);
@@ -415,23 +437,84 @@ async function startWorker(
   conversation: SlackConversation,
   filed: Filed,
   reply: (text: string) => Promise<string>,
+  thread: { teamDomain?: string | null },
 ) {
   if (!filed.projectId) return;
+  const install = await getInstallation(conversation.teamId);
+  const react = (name: string) =>
+    install ? addReaction(install.botToken, { channel: conversation.channelId, ts: conversation.threadTs, name }).catch(() => undefined) : undefined;
+  await react("eyes");
+  const threadUrl = slackPermalink({ teamDomain: thread.teamDomain ?? null, channelId: conversation.channelId, ts: conversation.threadTs });
+  let started: SlackConversation | null = null;
   const result = await startServerSession({
     userId: actor.userId,
     projectId: filed.projectId,
     title: filed.title,
     prompt: filed.prompt,
     onCreated: async (workspaceId) => {
+      // The session knows its thread: the sidebar's Slack badge, and a link back.
+      await createSupabaseAdminClient().from("workspaces").update({ slack_thread_url: threadUrl, slack_sync: true }).eq("id", workspaceId);
       await linkWorkItemToSession(actor, filed.id, { workspaceId, projectId: filed.projectId as string });
       await updateConversation(conversation.id, { state: "started", workspaceId });
-      await reply(`Filed as <${filed.url}|${filed.key}> and starting a session: <${appUrl(`/workspaces/${workspaceId}`)}|open it>.`);
+      started = { ...conversation, state: "started", workspaceId };
+      await reply(
+        `Started: <${appUrl(`/workspaces/${workspaceId}`)}|open the session> · <${filed.url}|${filed.key}>. Replies here go to it, and it answers here.`,
+      );
     },
   });
-  if (result.status === "ready") {
-    await reply(`The session for ${filed.key} is working on it. I'll post the pull request here when it opens.`);
-  } else {
+  if (result.status === "ready" && started) {
+    // Its first turn's reply comes back to the thread like any other.
+    await awaitReply(conversation.id);
+    await watchForReply(started);
+  } else if (result.status !== "ready") {
+    await react("x");
     await reply(`The session for ${filed.key} couldn't start: ${result.errorMessage ?? "unknown error"}. It's still in triage.`);
+  }
+}
+
+/** Something said in a thread whose session is running: to the session. */
+async function toSession(install: SlackInstallation, conversation: SlackConversation, message: AgentMessage) {
+  const reply = (text: string) => postMessage(install.botToken, { channel: message.channel, threadTs: conversation.threadTs, text });
+  const text = slackToMarkdown(message.text.replace(new RegExp(`<@${install.botUserId}(\\|[^>]*)?>`, "g"), "")).trim();
+  if (!text || /^!aside\b/i.test(text) || /^\(aside\)/i.test(text)) return;
+  if (message.mention && /^stop\b/i.test(text)) {
+    await reply((await stopSession(conversation)) ? "Stopped the session's turn." : "I couldn't reach the session to stop it.");
+    return;
+  }
+  const names = await userNames(install.botToken, [message.user]);
+  const sent = await sendToSession(conversation, fromThread(names.get(message.user) ?? "Someone", text));
+  if (sent) {
+    await addReaction(install.botToken, { channel: message.channel, ts: message.ts, name: "eyes" }).catch(() => undefined);
+    await watchForReply(conversation);
+  } else {
+    // Sync off, or the session's gone: kept as a note on the item instead.
+    await noteOnItem(conversation, message);
+  }
+}
+
+/** The card's dropdown: the repository it starts in, if the picker may read it. */
+async function pickRepo(install: SlackInstallation, conversation: SlackConversation, action: CardAction) {
+  if (conversation.state !== "proposed" || !conversation.proposal || !action.selected) return;
+  const actor = await actorFor(action.teamId, action.user);
+  if (!actor || actor.orgId !== conversation.orgId || !(await resolveProject(actor, action.selected))) {
+    await postEphemeral(install.botToken, {
+      channel: conversation.channelId,
+      threadTs: conversation.threadTs,
+      user: action.user,
+      text: "You can't start sessions in that repository.",
+    });
+    return;
+  }
+  const proposal = { ...conversation.proposal, repo: action.selected };
+  await updateConversation(conversation.id, { proposal });
+  if (conversation.proposalTs) {
+    const repos = (await listOrgProjects(conversation.orgId)).filter((p) => actor.levels.has(p.id)).map((p) => p.fullName);
+    await updateMessage(install.botToken, {
+      channel: conversation.channelId,
+      ts: conversation.proposalTs,
+      text: specSummary(proposal),
+      blocks: specCard(proposal, conversation.id, repos),
+    });
   }
 }
 
@@ -649,7 +732,7 @@ export async function handleProactiveAction(action: ProactiveAction): Promise<vo
     }
     const key = itemKey(item);
     await settle(`Sent back to the session by ${by}.`);
-    const sent = await wakeAndSend(session.ownerId, session.id, sendBackPrompt(key, comment.body)).catch(() => false);
+    const sent = await wakeAndSend(session.ownerId, session.id, sendBackPrompt(key, comment.body), "slack").catch(() => false);
     await postMessage(install.botToken, {
       ...where,
       text: sent

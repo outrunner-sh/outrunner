@@ -50,6 +50,8 @@ export function toWorkspace(row: Tables["workspaces"]["Row"]): Workspace {
   return {
     id: row.id,
     projectId: row.project_id,
+    slackThreadUrl: row.slack_thread_url ?? null,
+    slackSync: row.slack_sync ?? true,
     orgId: row.org_id,
     ownerId: row.owner_id,
     provider: toProviderName(row.provider),
