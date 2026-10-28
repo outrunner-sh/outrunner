@@ -26,7 +26,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { id } = await context.params;
   if (!(await ownsMission(owner.id, id))) return NextResponse.json({ error: "Mission not found." }, { status: 404 });
   const body = (await request.json().catch(() => null)) as { title?: unknown; icon?: unknown } | null;
-  // Both checked before either is written: a change lands whole or not at all.
+  // Both checked before either is written: a bad field writes nothing.
   const icon = typeof body?.icon === "string" ? body.icon : null;
   const title = typeof body?.title === "string" ? body.title.trim().replace(/\s+/g, " ") : null;
   if (icon !== null && !MISSION_ICONS.some((i) => i.key === icon)) return NextResponse.json({ error: "Choose one of the icons." }, { status: 400 });

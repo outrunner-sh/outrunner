@@ -45,8 +45,6 @@ function checksOf(value: unknown): RunnerCheck[] {
 
 /** The owner's Missions in an org (or all of theirs), in their order. */
 export async function missionsFor(ownerId: string, orgId: string | null, only?: string): Promise<MissionView[]> {
-  // Read under the user's own client (their sessions, their marks), from the
-  // routes that call this.
   let query = db().from("workspaces").select("*").eq("owner_id", ownerId).eq("kind", "mission").not("status", "in", "(destroyed,destroying)");
   if (orgId) query = query.eq("org_id", orgId);
   if (only) query = query.eq("id", only);
@@ -90,9 +88,18 @@ export async function missionsFor(ownerId: string, orgId: string | null, only?: 
   // Where each stands, as the sidebar has every session: the pull request of
   // each that GitHub last told of (pull_requests), its agent as the server's
   // watch read it, and the user's own marks.
-  const { data: sharedPulls } = await db().from("pull_requests").select("*").in("workspace_id", [...ids, ...runnerIds]);
+  // Oldest first: a session of several repositories has a row each, and its
+  // first is the one that counts, every time.
+  const { data: sharedPulls } = await db()
+    .from("pull_requests")
+    .select("*")
+    .in("workspace_id", [...ids, ...runnerIds])
+    .order("created_at", { ascending: true });
   const pullOf: Record<string, ReturnType<typeof toWorkspacePullRequest>> = {};
   for (const row of sharedPulls ?? []) pullOf[row.workspace_id] ??= toWorkspacePullRequest(row);
+  // Under the user's own client, unlike the reads above (the service role's):
+  // their activity and marks, as the sidebar reads them, from the routes that
+  // call this.
   const standings = await readStandings(ownerId, [...missions, ...runners], pullOf, now).catch((error: unknown) => {
     console.error("Missions: couldn't read where sessions stand", error);
     return {} as Awaited<ReturnType<typeof readStandings>>;

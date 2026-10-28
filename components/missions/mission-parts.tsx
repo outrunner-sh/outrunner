@@ -116,7 +116,7 @@ export function RunnerGlyph({
 /** A reply the user hasn't seen, as the sidebar marks it. */
 export function UnreadDot({ standing }: { standing?: SessionStanding | null }) {
   if (!standing?.unread) return null;
-  return <span aria-label="New reply" title="A reply you haven't seen" className="size-1.5 shrink-0 rounded-full bg-sky-400" />;
+  return <span role="img" aria-label="New reply" title="A reply you haven't seen" className="size-1.5 shrink-0 rounded-full bg-sky-400" />;
 }
 
 /** A pull request's checks in a word: all passed, some failed, or running. */

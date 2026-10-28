@@ -111,10 +111,12 @@ export function useNotificationsFeed({
           if (!body.kinds?.includes(notification.kind)) continue;
           const looking = document.visibilityState === "visible" && document.hasFocus();
           if (!shouldShow(notification, { browserOn: body.browser ?? true, onScreen: here.current.onScreen, looking })) continue;
+          // Claimed first, in this browser's every tab: shown once, as a toast
+          // here or a system notification, never both.
+          if (!claim(notification.id)) continue;
           let inPage = false;
           for (const listener of listeners) inPage = listener(notification, looking) || inPage;
-          if (inPage && looking) continue;
-          if (!claim(notification.id)) continue;
+          if (inPage) continue;
           await showNotification(notification, (id) => here.current.open(id));
         }
         if (next.size > 0) handled = next;

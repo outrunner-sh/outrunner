@@ -143,7 +143,7 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
       {mission && (
         <span
           className="hidden shrink-0 items-center gap-1 rounded-md border border-white/[0.08] px-1.5 py-0.5 text-[12px] tabular-nums text-[#a3a3a3] md:inline-flex"
-          title={`${mission.liveRunners} of ${MAX_RUNNERS} places taken by Runners that aren't archived`}
+          title={`Runners with work open (archived ones with an open pull request too) · ${mission.liveRunners} of ${MAX_RUNNERS} places taken`}
         >
           <Users className="size-3" />
           {active} Runner{active === 1 ? "" : "s"}

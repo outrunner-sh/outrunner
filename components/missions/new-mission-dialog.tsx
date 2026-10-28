@@ -47,6 +47,10 @@ export function NewMissionDialog({
 
   const start = async () => {
     if (!chosen || !prompt.trim() || busy) return;
+    // So a ready pull request, or a Mission needing them, can reach them
+    // while they're elsewhere (lib/notifications): asked while this click is
+    // still the gesture browsers want, before anything is awaited.
+    if (typeof Notification !== "undefined" && Notification.permission === "default") void askPermission();
     setBusy(true);
     setError(null);
     try {
@@ -57,10 +61,6 @@ export function NewMissionDialog({
       });
       const body = (await response.json().catch(() => null)) as { workspace?: { id: string }; error?: string } | null;
       if (!response.ok || !body?.workspace) throw new Error(body?.error ?? "The Mission didn't start. Try again.");
-      // So a ready pull request, or a Mission needing them, can reach them
-      // while they're elsewhere (lib/notifications): asked from this click,
-      // as browsers want.
-      if (typeof Notification !== "undefined" && Notification.permission === "default") void askPermission();
       void refreshMissions();
       onOpenChange(false);
       setPrompt("");

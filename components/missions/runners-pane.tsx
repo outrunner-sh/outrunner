@@ -188,11 +188,19 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  // The message being written, for Escape to leave alone wherever focus is.
+  const draft = useRef("");
   const back = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/missions/${missionId}/runners/${runner.id}`, { cache: "no-store" }).catch(() => null);
-    if (response?.ok) setDetail((await response.json()) as Detail);
+    if (response?.ok) {
+      setDetail((await response.json()) as Detail);
+      setReadError(null);
+    } else {
+      setReadError("Its latest response couldn't be read. Trying again.");
+    }
   }, [missionId, runner.id]);
 
   // Focus goes to Back once, as it opens; never again while it's open.
@@ -205,10 +213,10 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
     void load();
     const timer = setInterval(() => void load(), 10_000);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // Not while a message is being written: Escape mustn't throw it away.
-      const target = e.target as HTMLElement | null;
-      if (target instanceof HTMLTextAreaElement && target.value.trim()) return;
+      // Not an Escape a menu or dialog took (Radix prevents its default), and
+      // not while a message is being written: it mustn't throw that away.
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (draft.current.trim()) return;
       onBack();
     };
     window.addEventListener("keydown", onKey);
@@ -233,6 +241,7 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? "It didn't send. Try again.");
       setMessage("");
+      draft.current = "";
       setSent(true);
       void refreshMissions();
       setTimeout(() => setSent(false), 2500);
@@ -286,7 +295,11 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
           </ul>
         )}
         <h4 className="mb-2 text-[11.5px] font-medium tracking-wide text-[#8a8a8a] uppercase">Latest response</h4>
-        {detail === null ? (
+        {detail === null && readError ? (
+          <p role="alert" className="text-[12.5px] text-[#ffa198]">
+            {readError}
+          </p>
+        ) : detail === null ? (
           <SkeletonRows rows={5} rowHeight={20} barHeight={7} />
         ) : detail.latestResponse ? (
           <div className="text-[13px] leading-relaxed text-[#d6d6d6]">
@@ -312,7 +325,10 @@ function RunnerDetail({ missionId, runner, onBack }: { missionId: string; runner
         <div className="rounded-md border border-white/10 bg-black/20 focus-within:border-white/25">
           <textarea
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              draft.current = e.target.value;
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

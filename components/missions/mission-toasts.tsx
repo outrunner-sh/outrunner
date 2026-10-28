@@ -10,11 +10,11 @@
  */
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { AlertTriangle, GitPullRequest, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useMissions } from "@/hooks/use-missions";
+import { parseReadyBody } from "@/lib/missions/events";
 import { type FeedNotification, useNotificationListener } from "@/hooks/use-notifications";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +24,6 @@ type Toast = { id: string; kind: "ready" | "needs_you"; missionId: string; title
 
 export function MissionToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const pathname = usePathname();
   const { missions } = useMissions();
   const missionIds = useRef(new Set<string>());
   useEffect(() => {
@@ -52,8 +51,7 @@ export function MissionToasts() {
   return (
     <div aria-live="polite" className="pointer-events-none fixed right-4 bottom-4 z-[60] flex w-[340px] max-w-[calc(100vw-2rem)] flex-col gap-2">
       {toasts.map((t) => {
-        const here = pathname === `/workspaces/${t.missionId}`;
-        const pr = /^#(\d+) ready to review: (.*)$/.exec(t.body);
+        const pr = t.kind === "ready" ? parseReadyBody(t.body) : null;
         return (
           <div
             key={t.id}
@@ -70,17 +68,17 @@ export function MissionToasts() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-medium text-[#ededed]">
-                {t.kind === "ready" ? `#${pr?.[1] ?? ""} is ready to review` : `${t.title} needs you`}
+                {pr ? `#${pr.number} is ready to review` : t.kind === "ready" ? "A pull request is ready to review" : `${t.title} needs you`}
               </p>
-              <p className="mt-0.5 truncate text-[12px] text-[#8f8f8f]">{t.kind === "ready" ? `${pr?.[2] ?? t.body} · ${t.title}` : t.body}</p>
-              {!here && (
-                <Link
-                  href={`/workspaces/${t.missionId}`}
-                  className="mt-2 inline-block text-[12px] text-[#a3a3a3] underline-offset-4 hover:text-[#ededed] hover:underline"
-                >
-                  Open {t.title}
-                </Link>
-              )}
+              <p className="mt-0.5 truncate text-[12px] text-[#8f8f8f]">{pr ? `${pr.title} · ${t.title}` : t.body}</p>
+              {/* Never the Mission on screen: the feed leaves out what the user
+                  is looking at. */}
+              <Link
+                href={`/workspaces/${t.missionId}`}
+                className="mt-2 inline-block text-[12px] text-[#a3a3a3] underline-offset-4 hover:text-[#ededed] hover:underline"
+              >
+                Open {t.title}
+              </Link>
             </div>
             <button
               type="button"
