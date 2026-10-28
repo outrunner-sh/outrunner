@@ -9,6 +9,7 @@
 
 import type { Automation, AutomationInput, AutomationRepo, AutomationTrigger } from "@/lib/automations/rules";
 import { nextRun, type Schedule, scheduleFromRow, scheduleSpec } from "@/lib/automations/schedule";
+import { webhookTokenSettings } from "@/lib/db/automation-webhooks";
 import { people } from "@/lib/db/org-members";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -176,7 +177,10 @@ export async function createAutomation(orgId: string, runsAs: string, input: Aut
     automation_triggers: input.triggers,
     is_enabled: input.enabled,
     project_ids: input.projectIds,
-    settings: { schedules: scheduleRows(input.schedules) },
+    settings: {
+      schedules: scheduleRows(input.schedules),
+      ...(input.triggers.includes("webhook") ? { webhook: webhookTokenSettings() } : {}),
+    },
   });
   if (error) throw refusal(error);
   return data;
@@ -206,7 +210,11 @@ export async function updateAutomation(
     automation_triggers: change.triggers ?? null,
     is_enabled: change.enabled ?? null,
     project_ids: change.projectIds ?? null,
-    settings: schedules ? { schedules: scheduleRows(schedules) } : {},
+    settings: {
+      ...(schedules ? { schedules: scheduleRows(schedules) } : {}),
+      // Its first URL, should it have none yet (the database keeps one it has).
+      ...(change.triggers?.includes("webhook") ? { webhook: webhookTokenSettings() } : {}),
+    },
   });
   if (error) throw refusal(error);
   return data === true;

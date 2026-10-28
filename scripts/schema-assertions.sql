@@ -2068,3 +2068,45 @@ begin
   delete from organization_members where org_id = p.org_id and user_id = '22222222-2222-2222-2222-222222222222';
   raise notice 'ok: automations'' schedules save with them, and each time runs once';
 end $$;
+
+-- 49. An automation's webhook token: made with the trigger, in the same
+-- step; kept when it's saved with one again (rotating is its own step); one
+-- per automation, hashed and sealed together.
+do $$
+declare
+  p projects%rowtype;
+  a uuid;
+  h text := repeat('a', 64);
+begin
+  select * into p from projects where full_name = 'immadsahin/runtime' and owner_id = '11111111-1111-1111-1111-111111111111';
+  a := create_automation(p.org_id, '11111111-1111-1111-1111-111111111111', 'Alerts', null, 'Triage.', '{webhook}', true,
+    array[p.id], jsonb_build_object('schedules', '[]'::jsonb, 'webhook', jsonb_build_object('hash', h, 'sealed', 'v1.x')));
+  if (select webhook_token_hash from automations where id = a) is distinct from h then
+    raise exception 'FAIL: a webhook automation was made without its token';
+  end if;
+  perform update_automation(p.org_id, a, '11111111-1111-1111-1111-111111111111', null, null, '{webhook}', null, null,
+    jsonb_build_object('webhook', jsonb_build_object('hash', repeat('b', 64), 'sealed', 'v1.y')));
+  if (select webhook_token_hash from automations where id = a) is distinct from h then
+    raise exception 'FAIL: saving a webhook automation again replaced its token';
+  end if;
+  begin
+    update automations set webhook_token_hash = 'not-a-hash' where id = a;
+    raise exception 'FAIL: a webhook token that isn''t a hash was kept';
+  exception when check_violation then null;
+  end;
+  begin
+    update automations set webhook_token_sealed = null where id = a;
+    raise exception 'FAIL: a webhook token''s hash was kept without its sealed copy';
+  exception when check_violation then null;
+  end;
+  begin
+    perform create_automation(p.org_id, '11111111-1111-1111-1111-111111111111', 'Copy', null, 'Triage.', '{webhook}', true,
+      array[p.id], jsonb_build_object('webhook', jsonb_build_object('hash', h, 'sealed', 'v1.z')));
+    raise exception 'FAIL: two automations shared a webhook token';
+  exception when unique_violation then null;
+  end;
+  insert into automation_runs (automation_id, project_id, trigger, dedupe_key, context)
+  values (a, p.id, 'webhook', 'webhook:key:deploy-1', '{"trigger": "webhook"}');
+  delete from automations where id = a;
+  raise notice 'ok: a webhook''s token is made with it, kept, and its own';
+end $$;

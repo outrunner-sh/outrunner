@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { AutomationWebhook } from "@/components/automation-webhook";
 import { AutomationSchedules, type ScheduleForm, scheduleForm, scheduleOf, useLocalZone } from "@/components/automation-schedules";
 import { HoldToConfirm } from "@/components/ui/hold-to-confirm";
 import { Input } from "@/components/ui/input";
@@ -61,6 +62,7 @@ export function AutomationEditor({
   coverage,
   editable,
   byConnector,
+  webhookPath,
 }: {
   orgId: string;
   draft: AutomationDraft;
@@ -70,6 +72,8 @@ export function AutomationEditor({
   editable: boolean;
   /** A team org's: it runs as the org's connector, not whoever saves it. */
   byConnector: boolean;
+  /** Its webhook URL's path, for an admin; null when it has none yet. */
+  webhookPath: string | null;
 }) {
   const router = useRouter();
   const [name, setName] = useState(draft.name);
@@ -137,12 +141,16 @@ export function AutomationEditor({
             ...(same(projectIds, draft.projectIds) && draft.runsAs !== null ? {} : { projectIds }),
             ...(enabled !== draft.enabled ? { enabled } : {}),
           };
-      await requestJson(creating ? `/api/orgs/${orgId}/automations` : `/api/orgs/${orgId}/automations/${draft.id}`, {
-        method: creating ? "POST" : "PATCH",
-        body,
-        fallback: "Couldn't save the automation. Try again.",
-      });
-      router.push("/automations");
+      const { id } = await requestJson<{ id: string }>(
+        creating ? `/api/orgs/${orgId}/automations` : `/api/orgs/${orgId}/automations/${draft.id}`,
+        {
+          method: creating ? "POST" : "PATCH",
+          body,
+          fallback: "Couldn't save the automation. Try again.",
+        },
+      );
+      // Given a webhook it had none of: back to it, where its URL is now.
+      router.push(triggers.includes("webhook") && !webhookPath ? `/automations/${id}` : "/automations");
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't save the automation. Try again.");
@@ -229,6 +237,16 @@ export function AutomationEditor({
               <AutomationSchedules schedules={schedules} onChange={setSchedules} editable={editable} />
             </div>
           ) : null}
+          <div className="pt-1.5">
+            <Check checked={triggers.includes("webhook")} disabled={!editable} onChange={() => setTriggers(toggle(triggers, "webhook"))}>
+              On a webhook
+            </Check>
+          </div>
+          {triggers.includes("webhook") ? (
+            <div className="pt-1">
+              <AutomationWebhook orgId={orgId} automationId={draft.id} path={webhookPath} editable={editable} />
+            </div>
+          ) : null}
         </Field>
 
         <Field label="Repositories">
@@ -273,7 +291,9 @@ export function AutomationEditor({
           />
           <p className="text-xs text-muted-foreground">
             The session is also told what started it: the pull request (its repository, number, and base and head
-            branches), or the schedule and the time it was due.
+            branches), the schedule and the time it was due, or the webhook&apos;s payload. Put the payload where it
+            belongs with <span className="font-mono">{"{{payload}}"}</span>, or one value of it with{" "}
+            <span className="font-mono">{"{{payload.some.field}}"}</span>; with neither, it comes after the prompt.
           </p>
         </Field>
 

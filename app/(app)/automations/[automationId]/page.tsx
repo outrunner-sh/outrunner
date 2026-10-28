@@ -5,6 +5,7 @@ import { AutomationEditor } from "@/components/automation-editor";
 import { getOwnerSafe } from "@/lib/auth/owner";
 import { orgAppCoverage } from "@/lib/automations/coverage";
 import type { AppCoverage } from "@/lib/automations/rules";
+import { webhookPathOf } from "@/lib/db/automation-webhooks";
 import { getAutomation, listOrgRepos } from "@/lib/db/automations";
 import { isUuid } from "@/lib/ids";
 import { getOrgContext } from "@/lib/orgs/server";
@@ -29,7 +30,18 @@ async function AutomationSection({ params }: { params: Params }) {
   const context = await getOrgContext().catch(() => undefined);
   if (!context) redirect("/automations");
   const { active } = context;
-  const [automation, repos] = await Promise.all([getAutomation(active.id, automationId), listOrgRepos(active.id)]);
+  const admin = active.role === "admin";
+  const [automation, repos, webhookPath] = await Promise.all([
+    getAutomation(active.id, automationId),
+    listOrgRepos(active.id),
+    // Its URL is a secret: its admins' alone.
+    admin
+      ? webhookPathOf(active.id, automationId).catch((error: unknown) => {
+          console.error("Automation: could not read its webhook", error);
+          return null;
+        })
+      : null,
+  ]);
   if (!automation) notFound();
   // Coverage only flags repositories: without it, the editor still works.
   const coverage: Record<string, AppCoverage> = await orgAppCoverage(active.id, repos).catch((error: unknown) => {
@@ -56,7 +68,8 @@ async function AutomationSection({ params }: { params: Params }) {
       repos={repos}
       coverage={coverage}
       byConnector={!active.personal}
-      editable={active.role === "admin"}
+      editable={admin}
+      webhookPath={webhookPath}
     />
   );
 }
