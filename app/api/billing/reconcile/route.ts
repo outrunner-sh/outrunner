@@ -11,11 +11,13 @@ import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
 import { sweepRemovals } from "@/lib/orgs/removal.deps";
 import { sweepStalledRuns } from "@/lib/db/automation-runs";
+import { sweepInterruptedSetups } from "@/lib/session/provisioning.deps";
 
 /**
  * One reconciler run (lib/billing/reconcile.ts), the model allowances due to
  * renew for sessions already running, and the warm pool's boxes nothing else
- * will delete (lib/runtime/warm-pool.deps.ts), for the Cloudflare cron
+ * will delete (lib/runtime/warm-pool.deps.ts), and the sessions whose setup a
+ * restart cut off (lib/session/provisioning.deps.ts), for the Cloudflare cron
  * (cloudflare/worker.ts, every 2 minutes). Not a user's route: it takes only
  * BILLING_CRON_SECRET, as a bearer token. Answers what the run did.
  */
@@ -59,7 +61,12 @@ export async function POST(request: Request) {
       console.error("Sweeping stalled automation runs failed", error);
       return null;
     });
-    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept, removalsSettled, runsSwept });
+    // And sessions whose setup a restart cut off, failed with why.
+    const setupsFailed = await sweepInterruptedSetups().catch((error: unknown) => {
+      console.error("Failing interrupted session setups failed", error);
+      return null;
+    });
+    return NextResponse.json({ ...report, allowancesRenewed, poolsSwept, removalsSettled, runsSwept, setupsFailed });
   } catch (error) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });

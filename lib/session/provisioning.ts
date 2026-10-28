@@ -12,6 +12,41 @@ export const SETTING_UP: WorkspaceStatus[] = ["creating", "provisioning"];
  */
 export const SETUP_STALLS_AFTER_MS = 10 * 60_000;
 
+/**
+ * Past this since its row last changed, a session still setting up was cut
+ * off (its setup ran in after() on a server a deploy has since replaced), and
+ * the reconciler's cron fails it (lib/session/provisioning.deps.ts). From the
+ * row's last change, not its start: each step writes its phase, so only the
+ * longest single step need fit. That is the box's own making, in "allocate":
+ * up to 3 minutes waiting on another request's provisioning, then Daytona's
+ * 3-minute create or Neev's 10-minute prepare, then the clone of a large
+ * repository. Well past SETUP_STALLS_AFTER_MS, so the page offers to keep
+ * waiting first, and a slow setup that is still going is left alone.
+ */
+export const SETUP_INTERRUPTED_AFTER_MS = 20 * 60_000;
+
+/** What the session page says of a setup cut off. */
+export const SETUP_INTERRUPTED_MESSAGE =
+  "Setup was interrupted before it finished (Outrunner restarted while it ran). Try again to start a fresh session.";
+
+/**
+ * The sessions whose setup was cut off at `now`, and what they become:
+ * setting up, their row unchanged since SETUP_INTERRUPTED_AFTER_MS ago,
+ * failed with SETUP_INTERRUPTED_MESSAGE. One whose setup writes again in the
+ * meantime no longer matches, so a setup still going is never failed.
+ */
+export function interruptedSetups(now: Date): {
+  from: WorkspaceStatus[];
+  unchangedSince: string;
+  patch: { status: "failed"; errorMessage: string };
+} {
+  return {
+    from: SETTING_UP,
+    unchangedSince: new Date(now.getTime() - SETUP_INTERRUPTED_AFTER_MS).toISOString(),
+    patch: { status: "failed", errorMessage: SETUP_INTERRUPTED_MESSAGE },
+  };
+}
+
 /** Whether `status` is a session's box still being set up. */
 export function isSettingUp(status: WorkspaceStatus): boolean {
   return SETTING_UP.includes(status);

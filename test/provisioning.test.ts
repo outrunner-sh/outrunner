@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { canDestroy, SETUP_STALLS_AFTER_MS, setupState } from "@/lib/session/provisioning";
+import {
+  canDestroy,
+  interruptedSetups,
+  SETUP_INTERRUPTED_AFTER_MS,
+  SETUP_INTERRUPTED_MESSAGE,
+  SETUP_STALLS_AFTER_MS,
+  setupState,
+} from "@/lib/session/provisioning";
 
 const createdAt = "2026-10-01T00:00:00Z";
 const made = Date.parse(createdAt);
@@ -30,4 +37,25 @@ test("a session setting up can be deleted only once its setup has stalled", () =
   // Other changes under way are never deletable, however long they take.
   assert.equal(canDestroy({ status: "destroying", createdAt }, made + SETUP_STALLS_AFTER_MS), false);
   assert.equal(canDestroy({ status: "ready", createdAt }, made), true);
+});
+
+test("a setup is taken as cut off only once its row has gone unchanged for the bound", () => {
+  const now = new Date(made + 60 * 60_000);
+  const { from, unchangedSince } = interruptedSetups(now);
+  // Only sessions setting up: one ready, failed or deleted is never touched.
+  assert.deepEqual(from, ["creating", "provisioning"]);
+  assert.equal(Date.parse(unchangedSince), now.getTime() - SETUP_INTERRUPTED_AFTER_MS);
+});
+
+test("the page offers to keep waiting before a setup is failed as cut off", () => {
+  assert.ok(SETUP_INTERRUPTED_AFTER_MS > SETUP_STALLS_AFTER_MS);
+});
+
+test("a setup cut off fails with why, and what to do", () => {
+  const { patch } = interruptedSetups(new Date(made));
+  assert.equal(patch.status, "failed");
+  assert.equal(patch.errorMessage, SETUP_INTERRUPTED_MESSAGE);
+  assert.match(patch.errorMessage, /interrupted/);
+  assert.match(patch.errorMessage, /restarted/);
+  assert.match(patch.errorMessage, /Try again/);
 });

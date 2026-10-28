@@ -11,7 +11,9 @@ import { createCloudSession, type SessionRequest } from "@/lib/session/create-cl
 // included, on serverless hosts: 60s does not cover both there. Outrunner runs
 // as a long-running server (server.ts on Cloudflare Containers), where it is a
 // no-op; a refill a restart cuts off is replaced by the next one
-// (lib/runtime/warm-pool.ts) and its box swept by the reconciler.
+// (lib/runtime/warm-pool.ts) and its box swept by the reconciler, and a
+// session's setup it cuts off is failed by the reconciler too
+// (lib/session/provisioning.deps.ts), for the user to try again.
 export const maxDuration = 60;
 
 type RouteContext = { params: Promise<{ id: string }> };
