@@ -243,6 +243,22 @@ export function promptSince(entries: readonly ConversationEntry[], afterEvent: n
   );
 }
 
+/**
+ * The fence for waiting on the turn a message starts, read after its send:
+ * the id of the last event before the newest prompt that reads as
+ * `content` (0 when it's the first), or null when the log doesn't have it
+ * yet. promptSince(entries, fence) is then true for this message alone.
+ */
+export function fenceBefore(entries: readonly ConversationEntry[], content: string): number | null {
+  const wanted = content.trim();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const { event } = entries[i];
+    if (event.t !== "message" || event.role !== "user" || isInterruption(event)) continue;
+    if (messageText(event) === wanted) return i > 0 ? entries[i - 1].id : 0;
+  }
+  return null;
+}
+
 /** What the agent is waiting on, for a turn that needs input. */
 export function pendingInput(events: readonly AgentEvent[]): Record<string, unknown> | null {
   const all = [...events];

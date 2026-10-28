@@ -169,7 +169,8 @@ curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces
 ```
 
 A send answers `{ "result": "sent", "after_event": "48213" }`: where the
-conversation stood before it. Pass that to `wait` as `after_event`:
+conversation stood before this message, read once the send has gone. Pass
+that to `wait` as `after_event`:
 
 ```sh
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/wait?after_event=48213&timeout=600"
@@ -183,6 +184,12 @@ conversation: one after `after_event` when it's given, and for a session the
 API started, its first prompt (sent just after it's ready). So `POST
 /workspaces` then `wait`, or a send then `wait?after_event=`, never reads the
 quiet before the turn began as its end.
+
+`after_event` is `null` when the session's box hadn't logged the message yet
+when the send answered (rare: a box just woken that's slow to serve its
+conversation). Then poll `GET /workspaces/{id}` until `turn.state` is
+`working` before you `wait`: without a fence, `wait` on a session the API
+didn't start can answer with the quiet before the turn began.
 
 ```sh
 curl -H "Authorization: Bearer $OUTRUNNER_API_KEY" "$OUTRUNNER/api/v1/workspaces/$ID/conversation?per_page=50"

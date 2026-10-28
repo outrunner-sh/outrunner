@@ -6,6 +6,7 @@ import {
   conversationPage,
   entriesFromEvents,
   eventJson,
+  fenceBefore,
   lastAssistantText,
   parseFrame,
   pendingInput,
@@ -137,4 +138,19 @@ test("a turn can be over only once its prompt is in the log", () => {
   // result or the record of a stop.
   assert.equal(promptSince(entries, 200), false);
   assert.equal(promptSince([...entries, { id: 500, event: message("u2", "user", [text("again")]) as AgentEvent }], 200), true);
+});
+
+test("a send's fence is where the log stood before its message", () => {
+  const entries = [
+    { id: 100, event: message("u1", "user", [text("fix it")]) as AgentEvent },
+    { id: 200, event: message("a1", "assistant", [text("done")]) as AgentEvent },
+    { id: 300, event: message("u2", "user", [text("fix it")]) as AgentEvent },
+  ];
+  // The newest prompt that reads as the message: the same words sent again.
+  assert.equal(fenceBefore(entries, " fix it "), 200);
+  assert.equal(promptSince(entries, fenceBefore(entries, "fix it")), true);
+  assert.equal(promptSince(entries.slice(0, 2), 200), false);
+  assert.equal(fenceBefore(entries.slice(0, 1), "fix it"), 0);
+  // Not in the log yet: no fence to give.
+  assert.equal(fenceBefore(entries, "something else"), null);
 });

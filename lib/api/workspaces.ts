@@ -16,6 +16,7 @@ import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
 import {
   conversationPage,
+  fenceBefore,
   promptSince,
   eventJson,
   lastAssistantText,
@@ -271,17 +272,35 @@ export async function sendMessageApi(
   if (workspace instanceof Response) return workspace;
   const refused = await wake(context, workspace);
   if (refused) return refused;
-  // Where the log stands before the send, for `wait?after_event=`: its turn
-  // is over only once this message is in the log after it.
-  const before = await readLiveConversation((await getWorkspace(id)) ?? workspace).catch(() => null);
-  const afterEvent = before?.entries.length ? String(before.entries[before.entries.length - 1].id) : before ? "0" : null;
   const sent = await messagePOST(
     appRequest(context.base, `/api/workspaces/${id}/message`, { body: { content } }),
     routeParams({ id }),
   );
   if (!sent.ok) return errorFromRoute(sent, context.base);
   await onSent?.(workspace);
-  return Response.json({ result: "sent", workspace_id: id, after_event: afterEvent }, { status: 202 });
+  const fence = await fenceAfterSend((await getWorkspace(id)) ?? workspace, content);
+  return Response.json({ result: "sent", workspace_id: id, after_event: fence === null ? null : String(fence) }, { status: 202 });
+}
+
+/** How long a send's message is looked for in the log, once more, when the
+ *  first read after the send doesn't have it yet. */
+const FENCE_RETRY_MS = 1_500;
+
+/**
+ * The fence for `wait?after_event=`, read once the send has returned (the
+ * box has the message then; a read before it could be of a box just woken
+ * that isn't serving its stream yet): where the log stood before this
+ * message. Null when the log still doesn't show it: docs/api.md says what a
+ * caller does then.
+ */
+async function fenceAfterSend(workspace: Workspace, content: string): Promise<number | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, FENCE_RETRY_MS));
+    const live = await readLiveConversation(workspace).catch(() => null);
+    const fence = live ? fenceBefore(live.entries, content) : null;
+    if (fence !== null) return fence;
+  }
+  return null;
 }
 
 /** POST /workspaces/{id}/interrupt: stop the turn it's running. */
