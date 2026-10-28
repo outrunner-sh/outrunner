@@ -99,7 +99,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
             </span>
             <span className="min-w-0">
               <span className="block text-foreground/90">Start a Mission</span>
-              <span className="block truncate text-[11.5px] text-muted-foreground">It plans, and hands each task to a Runner</span>
+              <span className="block truncate text-[11.5px] text-muted-foreground">It plans; Runners do the work</span>
             </span>
           </button>
         ) : (
@@ -175,7 +175,7 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                             >
                               <RunnerGlyph group={runner.group} state={runner.state} className="size-3" />
                               <span className="min-w-0 flex-1 truncate">{runner.name}</span>
-                              {pr && <PullRequestChip pr={pr} />}
+                              {pr && <PullRequestChip pr={pr} link={false} />}
                             </Link>
                           </li>
                         );

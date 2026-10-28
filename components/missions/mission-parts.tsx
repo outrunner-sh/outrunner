@@ -111,17 +111,24 @@ function CheckIcon({ tone, className }: { tone: ReturnType<typeof checksTone>; c
  * A pull request as a chip: its number and how its checks went, linking to it.
  * Hovered or focused, it lists each check.
  */
-export function PullRequestChip({ pr, showTitle = false }: { pr: RunnerPullView; showTitle?: boolean }) {
+export function PullRequestChip({
+  pr,
+  showTitle = false,
+  link = true,
+}: {
+  pr: RunnerPullView;
+  showTitle?: boolean;
+  /** A link to it; off inside a row that's a link itself (a link can't hold
+   *  another), where it's only a chip. */
+  link?: boolean;
+}) {
   const tone = checksTone(pr);
   const merged = pr.state === "merged";
   const closed = pr.state === "closed";
   return (
     <span className="group/pr relative inline-flex min-w-0 items-center">
-      <a
-        href={pr.url}
-        target="_blank"
-        rel="noreferrer"
-        onClick={(e) => e.stopPropagation()}
+      <Chip
+        {...(link ? { href: pr.url, target: "_blank", rel: "noreferrer", onClick: (e: React.MouseEvent) => e.stopPropagation() } : {})}
         className={cn(
           "inline-flex h-[18px] min-w-0 items-center gap-1 rounded-[4px] border px-1.5 text-[11px] tabular-nums transition-colors",
           merged
@@ -136,7 +143,7 @@ export function PullRequestChip({ pr, showTitle = false }: { pr: RunnerPullView;
         <span>#{pr.number}</span>
         {showTitle && pr.title && <span className="min-w-0 truncate text-[#9a9a9a]">{pr.title}</span>}
         {!merged && !closed && <CheckIcon tone={tone} />}
-      </a>
+      </Chip>
       {pr.checks.length > 0 && (
         <span
           role="tooltip"
@@ -166,6 +173,11 @@ export function PullRequestChip({ pr, showTitle = false }: { pr: RunnerPullView;
       )}
     </span>
   );
+}
+
+/** A link when given an href, else a plain span. */
+function Chip({ href, ...props }: React.ComponentProps<"a">) {
+  return href ? <a href={href} {...props} /> : <span {...(props as React.ComponentProps<"span">)} />;
 }
 
 /** +12 −3, as a diff's size. */

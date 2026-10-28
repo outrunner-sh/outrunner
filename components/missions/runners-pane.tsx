@@ -140,11 +140,22 @@ export function RunnersPane({ missionId, onClose }: { missionId: string; onClose
 function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void }) {
   const pr = runner.pulls.find((p) => p.state === "open") ?? runner.pulls[runner.pulls.length - 1];
   return (
-    <button
-      type="button"
+    // A row that opens the Runner, holding its pull request's link: a link
+    // can't sit inside a button, so the row is a focusable div that answers
+    // Enter and Space as one would.
+    <div
+      role="button"
+      tabIndex={0}
       data-runner-row=""
       onClick={onOpen}
-      className="group/row flex w-full flex-col gap-1 rounded-md px-2 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:bg-white/[0.05] focus-visible:outline-none"
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="group/row flex w-full cursor-pointer flex-col gap-1 rounded-md px-2 py-2 text-left transition-colors hover:bg-white/[0.04] focus-visible:bg-white/[0.05] focus-visible:outline-none"
     >
       <span className="flex w-full items-center gap-2">
         <RunnerGlyph group={runner.group} state={runner.state} />
@@ -159,7 +170,7 @@ function RunnerRow({ runner, onOpen }: { runner: RunnerView; onOpen: () => void 
           {runner.pulls.length > 1 && <span className="shrink-0 text-[11px] text-[#6f6f6f]">+{runner.pulls.length - 1}</span>}
         </span>
       )}
-    </button>
+    </div>
   );
 }
 
