@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 
 import { useAppData } from "@/components/app-data";
 import { RouteLoading, RouteMessage } from "@/components/route-states";
@@ -9,6 +9,7 @@ import { useServerAnswer } from "@/components/server-answer";
 import { SessionDeleted } from "@/components/session-deleted";
 import { WorkspaceStudio } from "@/components/workspace-studio";
 import { useDeletedSession } from "@/lib/session/delete-session";
+import { keepFirstPromptFromUrl, tabStorage } from "@/lib/session/first-prompt";
 import { newerSessionView, resolveSessionView, type SessionAnswer } from "@/lib/session/session-view";
 
 /**
@@ -37,6 +38,14 @@ export function SessionRoute({ server }: { server: React.ReactNode }) {
   const initialPrompt = search.get("prompt") ?? undefined;
   const attachments = search.getAll("attachment").join("\n");
   const initialAttachmentIds = useMemo(() => (attachments ? attachments.split("\n") : []), [attachments]);
+  // Out of the URL as soon as this tab keeps a copy, before it is sent: a
+  // reload then sends it from the copy if it hasn't gone yet, and never again
+  // once it has. The page reads it from the copy from here on. (State null:
+  // see dropFirstPromptFromAddressBar.)
+  useEffect(() => {
+    const next = keepFirstPromptFromUrl(tabStorage(), id, new URL(window.location.href));
+    if (next) window.history.replaceState(null, "", next);
+  }, [id, initialPrompt, attachments]);
 
   return (
     <>

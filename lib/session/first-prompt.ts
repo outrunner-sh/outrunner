@@ -3,8 +3,9 @@
  * session before its box is ready, so the prompt waits for it twice over: in
  * the URL (?prompt=, ?attachment=), and in this tab's sessionStorage, so it
  * still goes if the user leaves the session while it sets up and comes back to
- * it from the sidebar. The session page sends whichever it finds, then forgets
- * both.
+ * it from the sidebar. The session page moves the URL's copy into the kept one
+ * as it opens, where storage allows, so the URL never carries it into a
+ * reload; it sends whichever it finds, then forgets both.
  */
 export type FirstPrompt = { prompt: string; attachmentIds: string[] };
 
@@ -88,6 +89,32 @@ export function withoutFirstPrompt(url: URL): string {
   next.searchParams.delete("prompt");
   next.searchParams.delete("attachment");
   return `${next.pathname}${next.search}${next.hash}`;
+}
+
+/**
+ * Take the first prompt out of the address bar, in place. Through Next's own
+ * history handling (no state of ours, so it copies in its own), not around
+ * it: a replaceState carrying Next's state is one Next leaves alone, so its
+ * router keeps the old URL and writes ?prompt= back on its next render (the
+ * router.refresh after the first prompt names the session, say), and a reload
+ * then sends the prompt again.
+ */
+export function dropFirstPromptFromAddressBar(): void {
+  window.history.replaceState(null, "", withoutFirstPrompt(new URL(window.location.href)));
+}
+
+/**
+ * Move the first prompt `url` carries into the session's kept copy, and say
+ * where the page should be instead: `url` without it, so a reload can't send it
+ * again, while the kept copy still sends it after a reload during setup. Null
+ * when there is nothing to move, or storage won't keep it: the URL then stays
+ * its only carrier until it goes.
+ */
+export function keepFirstPromptFromUrl(storage: PromptStorage | null, workspaceId: string, url: URL): string | null {
+  const first = firstPromptFromUrl(url);
+  if (!first) return null;
+  rememberFirstPrompt(storage, workspaceId, first);
+  return rememberedFirstPrompt(storage, workspaceId) ? withoutFirstPrompt(url) : null;
 }
 
 /** Keep `first` for the session until it is sent. Storage refusing (private

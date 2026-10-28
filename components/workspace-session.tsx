@@ -40,12 +40,12 @@ import {
 import { conversationPlaceholder } from "@/lib/session/conversation-placeholder";
 import { reachOutrunner } from "@/lib/http/request-json";
 import {
+  dropFirstPromptFromAddressBar,
   forgetFirstPrompt,
   hasFirstPrompt,
   rememberedFirstPrompt,
   sendFirstPromptOnce,
   tabStorage,
-  withoutFirstPrompt,
   type FirstPrompt,
 } from "@/lib/session/first-prompt";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
@@ -598,14 +598,20 @@ export function WorkspaceSession({
     // sending it still: sendFirstPromptOnce waits on that one instead.
     const sessionPath = window.location.pathname;
     // The prompt went: forget the kept copy, and the URL's params (only while
-    // this session is still the page, preserving any history state), so a
-    // reload can't send it again. Nothing is forgotten until the POST is
-    // accepted, so a failed delivery leaves it in place for a retry or a reload.
+    // this session is still the page), so a reload can't send it again.
+    // Nothing is forgotten until the POST is accepted, so a failed delivery
+    // leaves it in place for a retry or a reload.
     const itWent = () => {
       if (!local) forgetFirstPrompt(tabStorage(), workspaceId);
-      const url = new URL(window.location.href);
-      if (url.pathname === sessionPath) window.history.replaceState(window.history.state, "", withoutFirstPrompt(url));
+      if (window.location.pathname === sessionPath) dropFirstPromptFromAddressBar();
     };
+    // The conversation already has a prompt of the user's: this one went,
+    // from a page a reload cut off before it could forget it. Sending it again
+    // would have Claude do it twice.
+    if (userPromptCount(conversation.events) > 0) {
+      itWent();
+      return;
+    }
     // Send it, cleaning up only once it lands. A failed send keeps its Retry.
     const attempt = (): Promise<boolean> =>
       send(first.prompt, first.attachmentIds, retry).then((landed) => {
