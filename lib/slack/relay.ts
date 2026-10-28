@@ -115,8 +115,16 @@ export async function relayReply(conversation: SlackConversation): Promise<boole
   if (!conversation.workspaceId) return true;
   const target = await session(conversation.workspaceId);
   if (!target || !target.sync) return true;
+  const { data: row, error: rowError } = await db()
+    .from("slack_conversations")
+    .select("relayed_hash, relay_until")
+    .eq("id", conversation.id)
+    .maybeSingle();
+  if (rowError) throw rowError;
+  // When the awaited message was sent: replies from before it aren't its.
+  const since = row?.relay_until ? Date.parse(row.relay_until) - AWAIT_MS : 0;
   const summary = await readSummary(target.ownerId, conversation.workspaceId);
-  if (!summary || !turnOver(summary)) return false;
+  if (!summary || !turnOver(summary, since)) return false;
   const message = summary.lastAssistantMessage as string;
   const digest = hash(message);
   // Claimed: an overlapping watch or tick posts nothing.
@@ -127,13 +135,25 @@ export async function relayReply(conversation: SlackConversation): Promise<boole
     .or(`relayed_hash.is.null,relayed_hash.neq.${digest}`)
     .select("id");
   if (error) throw error;
-  // Already posted: the session hasn't replied to the newest message yet (or
-  // another watch posted it). Keep waiting; relay_until ends the wait.
-  if (!claimed?.length) return false;
+  if (!claimed?.length) {
+    // This turn's reply reads the same as the last one posted: nothing new to
+    // say, and nothing left to wait for.
+    await db().from("slack_conversations").update({ relay_until: null }).eq("id", conversation.id);
+    return true;
+  }
   const install = await getInstallation(conversation.teamId);
   if (!install) return true;
-  for (const text of replyChunks(message, sessionUrl(conversation.workspaceId))) {
-    await postMessage(install.botToken, { channel: conversation.channelId, threadTs: conversation.threadTs, text });
+  try {
+    for (const text of replyChunks(message, sessionUrl(conversation.workspaceId))) {
+      await postMessage(install.botToken, { channel: conversation.channelId, threadTs: conversation.threadTs, text });
+    }
+  } catch (postError) {
+    // Not posted: the claim is given back, so the next watch or tick tries again.
+    await db()
+      .from("slack_conversations")
+      .update({ relayed_hash: row?.relayed_hash ?? null, relay_until: row?.relay_until ?? null })
+      .eq("id", conversation.id);
+    throw postError;
   }
   if (/\/pull\/\d+/.test(message)) {
     await addReaction(install.botToken, { channel: conversation.channelId, ts: conversation.threadTs, name: "white_check_mark" }).catch(

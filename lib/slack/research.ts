@@ -58,7 +58,7 @@ export function asBrowser(path: string, body: unknown, from?: "slack"): Request 
  * Send a prompt to one of `userId`'s sessions, waking it first if its box was
  * paused, or restoring it if it was archived: the same lifecycle and message
  * routes the session page uses. False
- * when it can't be (gone, archived, or not answering): the caller starts a
+ * when it can't be (gone, or not answering): the caller starts a
  * new one.
  */
 export async function wakeAndSend(userId: string, workspaceId: string, prompt: string, from?: "slack"): Promise<boolean> {
