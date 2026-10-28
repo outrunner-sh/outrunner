@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { memberRole } from "@/lib/db/orgs";
 import { saveInstallation } from "@/lib/db/slack-agent";
+import { optionalEnv } from "@/lib/env";
 import { saveSlackLink } from "@/lib/db/slack-links";
 import { slackSignInMatches, verifyLinkToken, verifySignInState } from "@/lib/slack/slack";
 import { SLACK_SIGNIN_COOKIE, SLACK_SIGNIN_PATH, slackSignInConfig } from "@/lib/slack/sign-in";
@@ -18,8 +19,12 @@ import { SLACK_SIGNIN_COOKIE, SLACK_SIGNIN_PATH, slackSignInConfig } from "@/lib
  * someone else links no one.
  */
 export async function GET(request: Request) {
+  // The app's own address: behind Cloudflare, the request's is the
+  // container's (localhost), which the browser can't reach.
   const done = (result: string) =>
-    NextResponse.redirect(new URL(`/settings/integrations?slack=${result}`, request.url), { status: 303 });
+    NextResponse.redirect(new URL(`/settings/integrations?slack=${result}`, optionalEnv("RUNTIME_BASE_URL") || request.url), {
+      status: 303,
+    });
   const config = slackSignInConfig();
   if (!config) return done("unavailable");
 
@@ -29,11 +34,11 @@ export async function GET(request: Request) {
   // Used once, whatever happens next.
   jar.set(SLACK_SIGNIN_COOKIE, "", { path: SLACK_SIGNIN_PATH, maxAge: 0 });
   if (url.searchParams.get("error")) return done("cancelled");
-  // The app's install link comes back here too, with a code and no state
-  // (Slack sends installs to the first redirect URL). The install only takes
-  // once the code is traded, and the bot token it gives is what the Slack
-  // agent posts with.
-  if (!url.searchParams.has("state") && url.searchParams.get("code")) {
+  // The app's install link comes back here too, with a code and an empty
+  // state (Slack sends installs to the first redirect URL); a sign-in always
+  // carries ours. The install only takes once the code is traded, and the bot
+  // token it gives is what the Slack agent posts with.
+  if (!url.searchParams.get("state") && url.searchParams.get("code")) {
     return done((await finishInstall(config, url.searchParams.get("code") ?? "")) ? "installed" : "failed");
   }
   const state = verifySignInState(url.searchParams.get("state"), config.secret);
