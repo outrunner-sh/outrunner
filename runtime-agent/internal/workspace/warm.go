@@ -229,20 +229,24 @@ func (s *Service) writeWarmState(state WarmState) error {
 	return writeJSONFile(s.warmStatePath(), state, 0o600)
 }
 
-// discardWarm removes a warmed checkout (or folder of them) nobody took.
+// discardWarm removes a warmed checkout (or folder of them) nobody took. On
+// a context of its own (cleanupContext): it often follows a step the
+// request's end cut off.
 func (s *Service) discardWarm(ctx context.Context) {
+	ctx, cancel := cleanupContext(ctx)
+	defer cancel()
 	dir := s.warmDir()
 	if fileExists(dir) {
 		_ = exec.CommandContext(ctx, "git", "-C", s.mirrorPath(), "worktree", "remove", "--force", dir).Run()
 		_ = os.RemoveAll(dir)
-		_ = exec.CommandContext(ctx, "git", "-C", s.mirrorPath(), "worktree", "prune").Run()
-		// Every repository's mirror, not only those the state names: a warm
-		// cut off before its state was written leaves checkouts too, and a
-		// mirror still listing one refuses the next warm's.
-		mirrors, _ := filepath.Glob(filepath.Join(s.Root, "repos", "*.git"))
-		for _, mirror := range mirrors {
-			_ = exec.CommandContext(ctx, "git", "-C", mirror, "worktree", "prune").Run()
-		}
+	}
+	// Every mirror, the folder there or not, and not only those the state
+	// names: a warm cut off before its state was written leaves checkouts
+	// too, and a mirror still listing one whose folder went refuses the next
+	// warm's.
+	mirrors, _ := filepath.Glob(filepath.Join(s.Root, "repos", "*.git"))
+	for _, mirror := range append([]string{s.mirrorPath()}, mirrors...) {
+		_ = exec.CommandContext(ctx, "git", "-C", mirror, "worktree", "prune").Run()
 	}
 	_ = os.Remove(s.warmStatePath())
 }
@@ -268,13 +272,13 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 	for i, args := range steps {
 		if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "adopting the warm checkout: git %s: %v: %s\n", strings.Join(args, " "), err, out)
-			cleanup, cancel := cleanupContext(ctx)
-			defer cancel()
 			if i > 0 {
+				cleanup, cancel := cleanupContext(ctx)
 				_ = exec.CommandContext(cleanup, "git", "-C", s.mirrorPath(), "worktree", "remove", "--force", worktree).Run()
+				cancel()
 				_ = os.RemoveAll(worktree)
 			}
-			s.discardWarm(cleanup)
+			s.discardWarm(ctx)
 			return false
 		}
 	}
@@ -312,9 +316,7 @@ func (s *Service) adoptWarmCheckouts(ctx context.Context, folder, branch string,
 	}
 	if err := os.Rename(s.warmDir(), folder); err != nil {
 		fmt.Fprintf(os.Stderr, "adopting the warm checkouts: %v\n", err)
-		cleanup, cancel := cleanupContext(ctx)
-		defer cancel()
-		s.discardWarm(cleanup)
+		s.discardWarm(ctx)
 		return false
 	}
 	for _, c := range checkouts {
@@ -329,9 +331,7 @@ func (s *Service) adoptWarmCheckouts(ctx context.Context, folder, branch string,
 				// Every checkout and branch, whichever it reached: none of
 				// the branches was there before (above).
 				s.undoCheckouts(ctx, folder, branch, checkouts)
-				cleanup, cancel := cleanupContext(ctx)
-				defer cancel()
-				s.discardWarm(cleanup)
+				s.discardWarm(ctx)
 				return false
 			}
 		}

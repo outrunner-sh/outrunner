@@ -450,6 +450,38 @@ func TestAWarmFolderThatCantBeMadeLeavesNothing(t *testing.T) {
 	}
 }
 
+// A warm cut off half way (its request ended) leaves no checkout its mirror
+// still lists, and one left listed anyway, its folder gone, heals at the
+// next warm: either would refuse it.
+func TestAWarmCutOffHalfWayCanBeWarmedAgain(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	checkouts := twoRepoBox(t, s)
+	marker := slowCheckouts(t, RepoMirrorPath(s.Root, "api"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.Warm(ctx, WarmRequest{Hook: "true", Checkouts: checkouts}); err == nil || fileExists(s.warmDir()) {
+		t.Fatalf("warm = %v, folder left: %v", err, fileExists(s.warmDir()))
+	}
+	_ = os.Remove(marker)
+	if err := s.Warm(context.Background(), WarmRequest{Hook: "true", Checkouts: checkouts}); err != nil {
+		t.Fatalf("the next warm: %v", err)
+	}
+	waitWarm(t, s)
+
+	// A registration whose folder went before anything pruned it.
+	_ = os.RemoveAll(s.warmDir())
+	_ = os.Remove(s.warmStatePath())
+	if err := s.Warm(context.Background(), WarmRequest{Hook: "true", Checkouts: checkouts}); err != nil {
+		t.Fatalf("a warm after a folder went unpruned: %v", err)
+	}
+	if st := waitWarm(t, s); st.State != "succeeded" {
+		t.Fatalf("warm = %+v", st)
+	}
+}
+
 func TestSameCheckouts(t *testing.T) {
 	web, api := Checkout{Name: "web", FullName: "acme/web", BaseBranch: "main"}, Checkout{Name: "api", FullName: "acme/api", BaseBranch: "main"}
 	if !sameCheckouts([]Checkout{web, api}, []Checkout{api, web}) {
