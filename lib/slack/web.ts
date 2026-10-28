@@ -120,3 +120,8 @@ export async function userNames(token: string, ids: readonly string[]): Promise<
   );
   return names;
 }
+
+/** Take down a message the bot posted (an offer someone answered). */
+export async function deleteMessage(token: string, message: { channel: string; ts: string }): Promise<void> {
+  await call(token, "chat.delete", { channel: message.channel, ts: message.ts });
+}

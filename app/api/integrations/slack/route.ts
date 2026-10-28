@@ -5,7 +5,8 @@ import { slackLinkTarget } from "@/lib/db/slack-links";
 import { captureWorkItem, triageActor, WorkItemChangeError } from "@/lib/db/work-items";
 import { optionalEnv } from "@/lib/env";
 import { isUuid } from "@/lib/ids";
-import { type CardAction, handleCardAction } from "@/lib/slack/agent-run";
+import { type CardAction, handleCardAction, handleProactiveAction, type ProactiveAction } from "@/lib/slack/agent-run";
+import { PROACTIVE_ACTIONS } from "@/lib/slack/proactive-text";
 import {
   captureFromCommand,
   captureFromMessage,
@@ -98,9 +99,27 @@ function cardAction(payload: string): NextResponse {
     team?: { id?: string; domain?: string };
     user?: { id?: string; username?: string; name?: string };
     actions?: { action_id?: string; value?: string }[];
+    channel?: { id?: string };
+    container?: { message_ts?: string };
+    message?: { ts?: string; blocks?: Record<string, unknown>[] };
   };
   const clicked = action.actions?.[0];
   if (!action.team?.id || !action.user?.id || !clicked?.action_id || !clicked.value) {
+    return new NextResponse(null, { status: 200 });
+  }
+  // Buttons the agent posted on its own: the watch offer, the verdict.
+  if ((Object.values(PROACTIVE_ACTIONS) as string[]).includes(clicked.action_id)) {
+    const proactive: ProactiveAction = {
+      actionId: clicked.action_id,
+      value: clicked.value,
+      teamId: action.team.id,
+      user: action.user.id,
+      userName: action.user.username ?? action.user.name ?? null,
+      channel: action.channel?.id ?? null,
+      messageTs: action.container?.message_ts ?? action.message?.ts ?? null,
+      messageBlocks: action.message?.blocks ?? null,
+    };
+    after(() => handleProactiveAction(proactive));
     return new NextResponse(null, { status: 200 });
   }
   const card: CardAction = {

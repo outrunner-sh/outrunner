@@ -1,11 +1,10 @@
-import { timingSafeEqual } from "node:crypto";
-
 import { NextResponse } from "next/server";
 
 import { billingMode } from "@/lib/billing/mode";
 import { runReconcile } from "@/lib/billing/reconcile-run";
 import { renewDueModelAllowances } from "@/lib/db/credentials";
 import { optionalEnv } from "@/lib/env";
+import { bearerMatches } from "@/lib/http/bearer";
 import { isComputerProvider } from "@/lib/runtime/computer-provider";
 import { getRuntimeProvider } from "@/lib/runtime/provider";
 import { sweepAbandonedPools } from "@/lib/runtime/warm-pool.deps";
@@ -71,11 +70,4 @@ export async function POST(request: Request) {
     console.error("Reconcile failed", error);
     return NextResponse.json({ error: "Reconcile failed." }, { status: 500 });
   }
-}
-
-/** Whether `header` is `Bearer <secret>`, compared in constant time. */
-function bearerMatches(header: string | null, secret: string): boolean {
-  const given = Buffer.from(header?.replace(/^Bearer /, "") ?? "");
-  const expected = Buffer.from(secret);
-  return given.length === expected.length && timingSafeEqual(given, expected);
 }

@@ -29,6 +29,17 @@ thread, where everyone can see it:
 
 Lookups and research need the person asking to have connected their Slack account.
 
+**It speaks first, too:**
+
+- **Follow-ups in the item's thread.** It posts the validator's verdict on the session's pull request. On FAIL or PARTIAL it offers **Send back to the session**, which wakes the session with the findings; the validator checks again when the PR updates. A merge closes the item (done) and says so; a PR closed without merging is reported, and the item stays open.
+- **Digests.** In a channel: `@Outrunner post a daily digest here at 9am Asia/Kolkata` (or weekly, which goes out on Mondays, or `stop the digest`). It lists what shipped, what's in progress, what's stuck (in progress for 3 days with no PR), and what waits in triage, as the person who set it up may see it.
+- **Triage nudges.** Whoever filed an item that has waited in triage for a day gets one DM about it.
+- **Watching a channel.** `@Outrunner watch this channel`: new messages that look like a bug report or a request get an offer in their thread (**Yes, write it up** / **No thanks**). Nothing is filed until someone says yes. `stop watching` turns it off.
+
+Changing a channel's settings needs write on all of the org's workspaces (admins have it). The cron that
+reconciles billing every 2 minutes also calls `POST /api/integrations/slack/tick` with `BILLING_CRON_SECRET`.
+Digests, nudges and follow-ups go out from there.
+
 The agent thinks with `SLACK_AGENT_MODEL` (default `anthropic/claude-sonnet-5.5`, through OpenRouter) on the
 **org's** own key for Outrunner's models, capped at `SLACK_AGENT_ORG_LIMIT_USD` (default 25). The org pays,
 not whoever is in the thread. Starting a session always needs a click.

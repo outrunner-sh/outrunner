@@ -83,3 +83,28 @@ export async function agentTurn(key: string, conversation: ChatMessage[], lookup
   }
   throw new Error("The model kept looking things up without replying.");
 }
+
+/**
+ * A short one-shot call with JSON back (the watch mode's check of whether a
+ * message is work to file), on the org's key. The raw answer; the caller
+ * parses it.
+ */
+export async function oneShot(key: string, system: string, user: string): Promise<string> {
+  const response = await fetch(COMPLETIONS_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Outrunner Slack agent" },
+    body: JSON.stringify({
+      model: agentModel(),
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 200,
+      temperature: 0,
+    }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  const body = (await response.json().catch(() => null)) as { choices?: { message?: { content?: string | null } }[] } | null;
+  if (!response.ok) throw new Error(`The model call failed (${response.status}).`);
+  return body?.choices?.[0]?.message?.content ?? "";
+}

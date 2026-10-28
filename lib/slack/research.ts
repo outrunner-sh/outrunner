@@ -16,7 +16,13 @@ import { randomBytes } from "node:crypto";
 import { POST as lifecyclePOST } from "@/app/api/workspaces/[id]/lifecycle/route";
 import { POST as messagePOST } from "@/app/api/workspaces/[id]/message/route";
 import { getWorkspace } from "@/lib/db/repositories";
-import { getInstallation, type SlackConversation, type SlackInstallation, updateConversation } from "@/lib/db/slack-agent";
+import {
+  getInstallation,
+  sessionSummary,
+  type SlackConversation,
+  type SlackInstallation,
+  updateConversation,
+} from "@/lib/db/slack-agent";
 import { optionalEnv } from "@/lib/env";
 import { startServerSession } from "@/lib/session/server-session";
 import { hashToken, markdownToSlack, researchPrompt, slackChunks } from "@/lib/slack/research-text";
@@ -89,7 +95,7 @@ export async function askResearch(input: {
   const prompt = researchPrompt({ question, url, token });
 
   // The thread's session, if it's this asker's and on this repository.
-  const existing = conversation.researchWorkspaceId ? await getWorkspace(conversation.researchWorkspaceId).catch(() => null) : null;
+  const existing = conversation.researchWorkspaceId ? await sessionSummary(conversation.researchWorkspaceId).catch(() => null) : null;
   if (existing && existing.ownerId === asker.userId && existing.projectId === projectId) {
     if (await wakeAndSend(asker.userId, existing.id, prompt).catch(() => false)) {
       await db.from("slack_research").update({ workspace_id: existing.id }).eq("id", research.id);

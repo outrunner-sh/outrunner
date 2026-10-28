@@ -646,6 +646,7 @@ type WorkItemRow = {
   workspace_id: string | null;
   triaged_at: string | null;
   prompt: string | null;
+  slack_nudged_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -696,6 +697,27 @@ type SlackConversationRow = {
   item_id: string | null;
   workspace_id: string | null;
   research_workspace_id: string | null;
+  pr_repo: string | null;
+  pr_number: number | null;
+  pr_url: string | null;
+  verdict_comment_id: number | null;
+  merged_announced: boolean;
+  pr_checked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+// supabase/migrations/20261031170000_slack_proactive.sql
+type SlackChannelRow = {
+  team_id: string;
+  channel_id: string;
+  org_id: string;
+  set_by: string | null;
+  watch: boolean;
+  digest: "daily" | "weekly" | null;
+  digest_hour: number;
+  digest_tz: string;
+  last_digest_on: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -994,6 +1016,12 @@ export type Database = {
         Row: SlackConversationRow;
         Insert: Insert<SlackConversationRow, "team_id" | "channel_id" | "thread_ts" | "org_id">;
         Update: Partial<SlackConversationRow>;
+        Relationships: [];
+      };
+      slack_channels: {
+        Row: SlackChannelRow;
+        Insert: Insert<SlackChannelRow, "team_id" | "channel_id" | "org_id">;
+        Update: Partial<SlackChannelRow>;
         Relationships: [];
       };
       slack_research: {

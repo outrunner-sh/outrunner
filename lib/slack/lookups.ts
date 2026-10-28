@@ -5,10 +5,9 @@
  * item stands. Each answers in short JSON for the model to read.
  */
 
-import { listOrgInstallations } from "@/lib/db/github-installations";
 import { listOrgProjects } from "@/lib/db/org-access";
-import { getWorkspace } from "@/lib/db/repositories";
-import { githubAppConfig, installationToken } from "@/lib/github/app";
+import { sessionSummary } from "@/lib/db/slack-agent";
+import { githubGet, repoToken } from "@/lib/slack/github";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { canSee, type TriageActor } from "@/lib/triage/access";
 import { itemUrl } from "@/lib/triage/urls";
@@ -18,76 +17,60 @@ async function readableRepos(actor: TriageActor): Promise<{ id: string; fullName
   return (await listOrgProjects(actor.orgId)).filter((p) => actor.levels.has(p.id));
 }
 
-type MergedPull = { repo: string; number: number; title: string; author: string | null; mergedAt: string; url: string };
+export type MergedPull = { repo: string; number: number; title: string; author: string | null; mergedAt: string; url: string };
 
 /**
- * Pull requests merged in the last `days` (at most 30), newest first: in one
+ * Pull requests merged in the last `days` (1 to 30), newest first: in one
  * repository the actor may read, or in all of them (the first 10). Read
- * through the GitHub App installed on each repository's owner.
+ * through the GitHub App installed on each repository's owner; `unreachable`
+ * names the repositories it can't read.
  */
-export async function recentWork(actor: TriageActor, input: { days?: unknown; repo?: unknown }): Promise<string> {
+export async function mergedPulls(
+  actor: TriageActor,
+  input: { days?: unknown; repo?: unknown },
+): Promise<{ days: number; merged: MergedPull[]; unreachable: string[]; error?: string }> {
   const days = Math.min(30, Math.max(1, Number(input.days) || 7));
   const since = Date.now() - days * 24 * 60 * 60 * 1000;
   const repos = await readableRepos(actor);
   const wanted = typeof input.repo === "string" && input.repo.trim() ? input.repo.trim().toLowerCase() : null;
   const targets = (wanted ? repos.filter((r) => r.fullName.toLowerCase() === wanted) : repos).slice(0, 10);
-  if (targets.length === 0) return JSON.stringify({ error: wanted ? `No repository ${input.repo} you can read.` : "No repositories." });
-
-  const config = githubAppConfig();
-  if (!config) return JSON.stringify({ error: "The Outrunner GitHub App isn't set up on this deployment." });
-  const installations = await listOrgInstallations(actor.orgId);
+  if (targets.length === 0) {
+    return { days, merged: [], unreachable: [], error: wanted ? `No repository ${String(input.repo)} you can read.` : "No repositories." };
+  }
   const merged: MergedPull[] = [];
   const unreachable: string[] = [];
   await Promise.all(
     targets.map(async (repo) => {
-      const owner = repo.fullName.split("/")[0]?.toLowerCase();
-      const installation = installations.find((i) => i.accountLogin.toLowerCase() === owner && !i.suspended);
-      if (!installation) {
+      const token = await repoToken(actor.orgId, repo.fullName).catch(() => null);
+      const pulls = token
+        ? await githubGet<{ number: number; title: string; html_url: string; merged_at: string | null; user?: { login?: string } | null }[]>(
+            token,
+            `/repos/${repo.fullName}/pulls?state=closed&sort=updated&direction=desc&per_page=50`,
+          )
+        : null;
+      if (!pulls) {
         unreachable.push(repo.fullName);
         return;
       }
-      try {
-        const token = await installationToken(config, installation.id);
-        const response = await fetch(
-          `https://api.github.com/repos/${repo.fullName}/pulls?state=closed&sort=updated&direction=desc&per_page=50`,
-          {
-            headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
-            signal: AbortSignal.timeout(10_000),
-          },
-        );
-        if (!response.ok) {
-          unreachable.push(repo.fullName);
-          return;
+      for (const p of pulls) {
+        if (p.merged_at && Date.parse(p.merged_at) >= since) {
+          merged.push({ repo: repo.fullName, number: p.number, title: p.title, author: p.user?.login ?? null, mergedAt: p.merged_at, url: p.html_url });
         }
-        const pulls = (await response.json()) as {
-          number: number;
-          title: string;
-          html_url: string;
-          merged_at: string | null;
-          user?: { login?: string } | null;
-        }[];
-        for (const p of pulls) {
-          if (p.merged_at && Date.parse(p.merged_at) >= since) {
-            merged.push({
-              repo: repo.fullName,
-              number: p.number,
-              title: p.title,
-              author: p.user?.login ?? null,
-              mergedAt: p.merged_at,
-              url: p.html_url,
-            });
-          }
-        }
-      } catch {
-        unreachable.push(repo.fullName);
       }
     }),
   );
   merged.sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
+  return { days, merged: merged.slice(0, 60), unreachable };
+}
+
+/** The recent_work tool: mergedPulls, for the model. */
+export async function recentWork(actor: TriageActor, input: { days?: unknown; repo?: unknown }): Promise<string> {
+  const result = await mergedPulls(actor, input);
+  if (result.error) return JSON.stringify({ error: result.error });
   return JSON.stringify({
-    days,
-    merged: merged.slice(0, 60),
-    ...(unreachable.length && { unreachable, note: "The Outrunner GitHub App can't read these repositories." }),
+    days: result.days,
+    merged: result.merged,
+    ...(result.unreachable.length && { unreachable: result.unreachable, note: "The Outrunner GitHub App can't read these repositories." }),
   });
 }
 
@@ -135,7 +118,7 @@ export async function itemStatus(actor: TriageActor, input: { key?: unknown }): 
     .maybeSingle();
   if (error) throw error;
   if (!item || !canSee(actor, { projectId: item.project_id })) return JSON.stringify({ error: `No OR-${number} you can see.` });
-  const session = item.workspace_id ? await getWorkspace(item.workspace_id).catch(() => null) : null;
+  const session = item.workspace_id ? await sessionSummary(item.workspace_id).catch(() => null) : null;
   const { data: pr } = item.workspace_id
     ? await db.from("pull_requests").select("github_number, url, title").eq("workspace_id", item.workspace_id).limit(1).maybeSingle()
     : { data: null };

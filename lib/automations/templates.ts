@@ -110,7 +110,8 @@ export const AUTOMATION_TEMPLATES: readonly AutomationTemplate[] = [
     name: "Validate against acceptance criteria",
     description: "Checks a PR that closes an OR item against that item's acceptance criteria: PASS, FAIL or PARTIAL.",
     category: "Validation",
-    triggers: ["pull_request.opened"],
+    // Again on each push: work sent back after a FAIL is checked again.
+    triggers: ["pull_request.opened", "pull_request.synchronize"],
     prompt: VALIDATE_PROMPT,
   },
 ];
