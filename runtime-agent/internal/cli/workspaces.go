@@ -64,7 +64,24 @@ func newCommandFlags(name, usage string, stderr io.Writer) commandFlags {
 
 // parse reads the flags, wherever they are among the arguments: `outrunner
 // send <id> "do it" --json` and `outrunner send --json <id> "do it"` alike.
+// A literal `--` ends them: everything after it is taken as it is, for a
+// message that reads like a flag (`send <id> -- use --json output`).
 func (f commandFlags) parse(args []string) ([]string, int) {
+	var verbatim []string
+	for i, arg := range args {
+		if arg == "--" {
+			args, verbatim = args[:i], args[i+1:]
+			break
+		}
+	}
+	positional, code := f.parseFlags(args)
+	if code >= 0 {
+		return nil, code
+	}
+	return append(positional, verbatim...), -1
+}
+
+func (f commandFlags) parseFlags(args []string) ([]string, int) {
 	var positional []string
 	for {
 		if err := f.set.Parse(args); err != nil {
@@ -76,9 +93,6 @@ func (f commandFlags) parse(args []string) ([]string, int) {
 		rest := f.set.Args()
 		if len(rest) == 0 {
 			return positional, -1
-		}
-		if rest[0] == "--" {
-			return append(positional, rest[1:]...), -1
 		}
 		positional = append(positional, rest[0])
 		args = rest[1:]
@@ -115,7 +129,7 @@ func label(w Workspace) string {
 	return w.Branch
 }
 
-const listUsage = `Usage: outrunner list [--status <status>] [--source app|slack|automation|api]
+const listUsage = `Usage: outrunner list [--status <status>] [--source app|slack|automation|github|api]
                       [--user me|<id>] [--project <id>] [--page <n>] [--per-page <n>] [--org <name>] [--json]
 
 Lists your sessions in the org, newest first (an org's admins see the org's).
@@ -374,6 +388,19 @@ func sendCommand(ctx context.Context, base string, config Config, args []string,
 	if code >= 0 {
 		return code
 	}
+	// Where the log stands before the send: the fence to wait from, should
+	// the API not give one (its box hadn't logged the message yet). Only
+	// with --wait, since it costs a read of the conversation.
+	before := ""
+	if *wait {
+		var w Workspace
+		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil {
+			before = "0"
+			if w.Turn.LastEventID != nil {
+				before = *w.Turn.LastEventID
+			}
+		}
+	}
 	var sent struct {
 		AfterEvent *string `json:"after_event"`
 	}
@@ -393,13 +420,19 @@ func sendCommand(ctx context.Context, base string, config Config, args []string,
 		fmt.Fprintln(stdout, "✓ Sent")
 		if after != "" {
 			fmt.Fprintf(stdout, "  outrunner wait %s --after %s\n", id, after)
+		} else {
+			fmt.Fprintf(stdout, "  Its turn hasn't shown yet: once `outrunner get %s` says working, run `outrunner wait %s`.\n", id, id)
 		}
 		return 0
 	}
 	if after == "" {
-		// The box hadn't logged the message when the send answered: as
-		// docs/api.md says, its turn is seen to start before it's waited on.
-		awaitWorking(ctx, api, id, 30*time.Second)
+		after = before
+	}
+	if after == "" && !awaitWorking(ctx, api, id, 30*time.Second) {
+		// The box hadn't logged the message when the send answered, nor was
+		// it up before it (a session just woken): as docs/api.md says, its
+		// turn is seen to start before it's waited on. Not seen: said.
+		fmt.Fprintln(stderr, "outrunner: couldn't see the turn start; the reply below may be the previous turn's.")
 	}
 	return waitAndPrint(ctx, api, id, after, 0, *f.json, stdout, stderr)
 }
@@ -408,21 +441,23 @@ func sendCommand(ctx context.Context, base string, config Config, args []string,
 var awaitWorkingEvery = 2 * time.Second
 
 // awaitWorking looks at the session until its turn is working, for at most
-// `limit`: a wait without a fence then can't take the quiet before the
-// turn for its end. Past the limit it lets the wait go on regardless.
-func awaitWorking(ctx context.Context, api API, id string, limit time.Duration) {
+// `limit`: a wait without a fence then can't take the quiet before the turn
+// (or a question it was still showing) for its end. False when it never
+// saw it working.
+func awaitWorking(ctx context.Context, api API, id string, limit time.Duration) bool {
 	deadline := time.Now().Add(limit)
 	for time.Now().Before(deadline) {
 		var w Workspace
-		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil && w.Turn.State != "idle" {
-			return
+		if _, err := api.Call(ctx, "GET", "/workspaces/"+url.PathEscape(id), nil, nil, &w); err == nil && w.Turn != nil && w.Turn.State == "working" {
+			return true
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-time.After(awaitWorkingEvery):
 		}
 	}
+	return false
 }
 
 const waitUsage = `Usage: outrunner wait <id> [--after <event>] [--timeout <duration>] [--org <name>] [--json]
@@ -492,7 +527,7 @@ func waitAndPrint(ctx context.Context, api API, id, after string, timeout time.D
 		if asJSON {
 			printJSON(stdout, raw)
 		} else {
-			printWaited(stdout, w)
+			printWaited(stdout, w, after)
 		}
 		return waitStatus(w)
 	}
@@ -513,10 +548,16 @@ func waitStatus(w Workspace) int {
 	}
 }
 
-func printWaited(out io.Writer, w Workspace) {
+func printWaited(out io.Writer, w Workspace, after string) {
 	switch {
 	case w.TimedOut:
-		fmt.Fprintf(out, "Still working (%s). Run `outrunner wait %s` to keep waiting.\n", w.Status, w.ID)
+		// With the same fence: without it, the next wait could take an
+		// earlier turn's end for this one's.
+		hint := "outrunner wait " + w.ID
+		if after != "" {
+			hint += " --after " + after
+		}
+		fmt.Fprintf(out, "Still working (%s). Run `%s` to keep waiting.\n", w.Status, hint)
 	case w.Turn == nil:
 		fmt.Fprintf(out, "The session is %s.\n", w.Status)
 		if w.ErrorMessage != nil && *w.ErrorMessage != "" {
@@ -677,7 +718,7 @@ func deleteCommand(ctx context.Context, base string, config Config, args []strin
 			fmt.Fprintln(stderr, "outrunner: deleting can't be undone; pass --yes to delete without asking.")
 			return 2
 		}
-		if !in.confirm(fmt.Sprintf("Delete session %s for good?", rest[0])) {
+		if !in.confirmNo(fmt.Sprintf("Delete session %s for good?", rest[0])) {
 			fmt.Fprintln(stdout, "Left as it is.")
 			return 1
 		}

@@ -268,20 +268,23 @@ func TestAnAPIKeyInTheEnvironmentWins(t *testing.T) {
 	}
 }
 
-func TestSendWithNoFenceWaitsForTheTurnToStart(t *testing.T) {
-	awaitWorkingEvery = time.Millisecond
-	defer func() { awaitWorkingEvery = 2 * time.Second }()
-	gets := 0
+// noFenceAPI answers a send with no after_event; `before` is what a look at
+// the session says before it (null: its box wasn't up), and later looks say
+// working from the second on.
+func noFenceAPI(t *testing.T, before string, waited *string) *httptest.Server {
+	t.Helper()
+	sent, gets := false, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/messages"):
+			sent = true
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"result":"sent","workspace_id":"w1","after_event":null}`))
 		case strings.HasSuffix(r.URL.Path, "/wait"):
-			if gets < 2 || r.URL.Query().Get("after_event") != "" {
-				t.Errorf("waited after %d looks, with %q", gets, r.URL.RawQuery)
-			}
+			*waited = r.URL.RawQuery
 			_, _ = w.Write([]byte(`{"id":"w1","status":"ready","turn":{"state":"idle","last_message":"Fixed."}}`))
+		case !sent:
+			_, _ = w.Write([]byte(`{"id":"w1","status":"suspended","turn":` + before + `}`))
 		default:
 			gets++
 			state := "idle"
@@ -291,13 +294,75 @@ func TestSendWithNoFenceWaitsForTheTurnToStart(t *testing.T) {
 			_, _ = w.Write([]byte(`{"id":"w1","status":"ready","turn":{"state":"` + state + `"}}`))
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	t.Setenv("OUTRUNNER_API_KEY", "")
+	return server
+}
+
+func TestSendWithNoFenceWaitsFromWhereTheLogStoodBefore(t *testing.T) {
+	var waited string
+	server := noFenceAPI(t, `{"state":"idle","last_event_id":"480"}`, &waited)
 	var out, errs bytes.Buffer
 	if code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--wait", "go"}, terminal{interactive: true}, &out, &errs); code != 0 {
 		t.Fatalf("exit %d: %s", code, errs.String())
 	}
-	if !strings.Contains(out.String(), "Fixed.") {
+	if !strings.Contains(waited, "after_event=480") || !strings.Contains(out.String(), "Fixed.") {
+		t.Fatalf("waited with %q, printed %q", waited, out.String())
+	}
+}
+
+func TestSendWithNoFenceAtAllWaitsForTheTurnToStart(t *testing.T) {
+	awaitWorkingEvery = time.Millisecond
+	defer func() { awaitWorkingEvery = 2 * time.Second }()
+	var waited string
+	server := noFenceAPI(t, "null", &waited)
+	var out, errs bytes.Buffer
+	if code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--wait", "go"}, terminal{interactive: true}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if strings.Contains(waited, "after_event") || errs.Len() != 0 || !strings.Contains(out.String(), "Fixed.") {
+		t.Fatalf("waited with %q, said %q, printed %q", waited, errs.String(), out.String())
+	}
+}
+
+func TestADoubleDashEndsTheFlags(t *testing.T) {
+	api := &fakeAPI{}
+	server := api.server(t)
+	var out, errs bytes.Buffer
+	code := sendCommand(context.Background(), server.URL, signedIn, []string{"w1", "--", "use", "--json", "output", "-rf"}, terminal{interactive: true}, &out, &errs)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	if _, body := api.last(); body["content"] != "use --json output -rf" {
+		t.Fatalf("sent %v", body)
+	}
+	if strings.HasPrefix(strings.TrimSpace(out.String()), "{") {
+		t.Fatalf("--json after -- was taken as the flag: %q", out.String())
+	}
+}
+
+func TestDeleteTakesOnlyAYes(t *testing.T) {
+	api := &fakeAPI{}
+	server := api.server(t)
+	var out, errs bytes.Buffer
+	// A bare Enter: no.
+	asked := terminal{interactive: true, out: &out, lines: lines("").lines}
+	if code := deleteCommand(context.Background(), server.URL, signedIn, []string{"w1"}, asked, &out, &errs); code != 1 || len(api.requests) != 0 {
+		t.Fatalf("Enter deleted it: exit %d", code)
+	}
+	if !strings.Contains(out.String(), "(y/N)") {
+		t.Fatalf("asked %q", out.String())
+	}
+	yes := terminal{interactive: true, out: &out, lines: lines("yes").lines}
+	if code := deleteCommand(context.Background(), server.URL, signedIn, []string{"w1"}, yes, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+}
+
+func TestAWaitThatTimesOutSaysToKeepItsFence(t *testing.T) {
+	var out bytes.Buffer
+	printWaited(&out, Workspace{ID: "w1", Status: "ready", TimedOut: true}, "480")
+	if !strings.Contains(out.String(), "outrunner wait w1 --after 480") {
 		t.Fatalf("printed %q", out.String())
 	}
 }

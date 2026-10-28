@@ -65,3 +65,16 @@ func (t terminal) confirm(question string) bool {
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "" || answer == "y" || answer == "yes"
 }
+
+// confirmNo asks a yes-or-no question whose answer is no unless it's said:
+// for what can't be undone, where a stray Enter mustn't count as yes.
+func (t terminal) confirmNo(question string) bool {
+	fmt.Fprintf(t.out, "%s (y/N) ", question)
+	line, ok := <-t.lines
+	if !ok {
+		fmt.Fprintln(t.out)
+		return false
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
+}
