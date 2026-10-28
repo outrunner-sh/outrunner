@@ -283,12 +283,7 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 			// The checkout, then its branch, whichever step got that far (a
 			// move cut off half way leaves the folder moved): neither was
 			// there before (above).
-			cleanup, cancel := cleanupContext(ctx)
-			_, _ = s.git(cleanup, s.mirrorPath(), "worktree", "remove", "--force", worktree)
-			_ = os.RemoveAll(worktree)
-			_, _ = s.git(cleanup, s.mirrorPath(), "worktree", "prune")
-			_, _ = s.git(cleanup, s.mirrorPath(), "branch", "-D", branch)
-			cancel()
+			s.undoWorktree(ctx, worktree, branch, true)
 			s.discardWarm(ctx)
 			return false
 		}
