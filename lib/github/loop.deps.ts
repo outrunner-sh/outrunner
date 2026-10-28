@@ -5,6 +5,7 @@ import { isOwner } from "@/lib/auth/allowlist";
 import {
   archiveOnClose,
   claimLoopAct,
+  resetCiTurns,
   githubMember,
   installationProject,
   linkedSessions,
@@ -15,6 +16,7 @@ import { projectLevel } from "@/lib/db/org-access";
 import { optionalEnv } from "@/lib/env";
 import { githubAppConfig, installationToken } from "@/lib/github/app";
 import { reactToComment, readPull, replyToComment } from "@/lib/github/conversation";
+import { queueCiFailure, queueReview } from "@/lib/github/followups";
 import { archiveClosed, handleMention, type LoopDeps } from "@/lib/github/loop";
 import { readPullBranches } from "@/lib/github/mentions";
 import { archiveServerSessions, startServerSession } from "@/lib/session/server-session";
@@ -67,11 +69,21 @@ export function loopDeps(): LoopDeps {
     wake: wakeSession,
     suspend: suspendSession,
     archiveServerSessions,
+    humanSpoke: resetCiTurns,
   };
 }
 
 /** The events the loop hears (docs/github-app.md lists them for the App). */
-export const LOOP_EVENTS: ReadonlySet<string> = new Set(["issue_comment", "pull_request_review_comment", "issues", "pull_request"]);
+export const LOOP_EVENTS: ReadonlySet<string> = new Set([
+  "issue_comment",
+  "pull_request_review_comment",
+  "issues",
+  "pull_request",
+  "pull_request_review",
+  "check_suite",
+  "check_run",
+  "workflow_run",
+]);
 
 /** The loop's part of a webhook event, run after GitHub has its answer.
  *  Never throws: what failed is logged. */
@@ -82,6 +94,15 @@ export async function runGitHubLoop(event: string, payload: unknown, appSlug: st
       await handleMention(event, payload, deps, appSlug);
     } else if (event === "issues" || event === "pull_request") {
       await archiveClosed(event, payload, deps);
+    } else if (event === "pull_request_review") {
+      // A review joins its pull request's batch, sent once reviews stop
+      // coming (lib/github/followups.ts).
+      const { followUpDeps, flushAfter, REVIEW_SETTLE_SECONDS } = await import("@/lib/github/followups.deps");
+      if (await queueReview(event, payload, followUpDeps())) await flushAfter(REVIEW_SETTLE_SECONDS);
+    } else if (event === "check_suite" || event === "check_run" || event === "workflow_run") {
+      // CI failing: one turn per commit, once its burst of events is over.
+      const { followUpDeps, flushAfter, CI_SETTLE_SECONDS } = await import("@/lib/github/followups.deps");
+      if ((await queueCiFailure(event, payload, followUpDeps(), appSlug)) > 0) await flushAfter(CI_SETTLE_SECONDS);
     }
   } catch (error) {
     console.error(`GitHub loop: ${event} failed`, error);

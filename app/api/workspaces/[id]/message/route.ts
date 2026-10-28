@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 
 import { getOwner } from "@/lib/auth/owner";
+import { resetCiTurnsOfSession } from "@/lib/db/github-loop";
 import { claimFirstPrompt, markFirstPromptSent, releaseFirstPrompt, renewFirstPrompt } from "@/lib/db/repositories";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { AgentRequestError } from "@/lib/runtime/agent-client";
@@ -139,6 +140,16 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
   await gate.sent();
+  // A person's word (typed here, or said in Slack or on GitHub), not CI
+  // failing: the CI follow-ups of its pull requests count their turns from
+  // none again (lib/github/followups.ts).
+  if (request.headers.get(FROM_HEADER) !== "github-ci") {
+    after(() =>
+      resetCiTurnsOfSession(workspace.id).catch((error: unknown) =>
+        console.error(`Message: couldn't reset ${workspace.id}'s CI turns`, error),
+      ),
+    );
+  }
   // A session started from Slack, in step with its thread: what's typed here
   // goes there too, and the reply with it. Not what came from the thread, or
   // from GitHub, which no one typed here.

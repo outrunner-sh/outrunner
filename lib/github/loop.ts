@@ -78,6 +78,9 @@ export type LoopDeps = {
   /** Put a session woken for archiving back to sleep, as its owner. */
   suspend(ownerId: string, workspaceId: string): Promise<boolean>;
   archiveServerSessions(userId: string, workspaceIds: readonly string[]): Promise<number>;
+  /** A person spoke on a pull request: its CI follow-ups count their turns
+   *  from none (lib/github/followups.ts). */
+  humanSpoke(projectId: string, prNumber: number): Promise<void>;
 };
 
 /** What became of a mention, for the logs and the tests. */
@@ -143,9 +146,14 @@ export async function handleMention(event: string | null, payload: unknown, deps
     const steerable = (await deps.linkedSessions(link, scope.orgId)).filter(
       (s) => s.ownerId === userId || allows(level, "write"),
     );
+    const spoke = () =>
+      mention.target === "pull"
+        ? deps.humanSpoke(scope.projectId, mention.number).catch((error: unknown) => console.error(`GitHub: couldn't reset CI's turns for ${key}`, error))
+        : Promise.resolve();
     for (const session of steerable.slice(0, 3)) {
       if (await deps.wakeAndSend(session.ownerId, session.id, prompt).catch(() => false)) {
         acted = true;
+        await spoke();
         await say({ kind: "sent", url: deps.sessionUrl(session.id) });
         return "sent";
       }
@@ -166,6 +174,7 @@ export async function handleMention(event: string | null, payload: unknown, deps
     // repository's default branch for an issue. It's linked, and the link
     // replied, as soon as it's made; its setup takes minutes.
     acted = true;
+    await spoke();
     const mentionWithPull: Mention = { ...mention, pull };
     const result = await deps.startServerSession({
       userId,

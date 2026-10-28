@@ -40,10 +40,23 @@ type Calls = {
   archived: { userId: string; ids: readonly string[] }[];
   woken: string[];
   suspended: string[];
+  spoke: string[];
 };
 
 function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendable?: string[] } = {}): { deps: LoopDeps; calls: Calls } {
-  const calls: Calls = { claims: [], released: [], replies: [], reactions: [], sent: [], started: [], links: [], archived: [], woken: [], suspended: [] };
+  const calls: Calls = {
+    claims: [],
+    released: [],
+    replies: [],
+    reactions: [],
+    sent: [],
+    started: [],
+    links: [],
+    archived: [],
+    woken: [],
+    suspended: [],
+    spoke: [],
+  };
   const claimed = new Set<string>();
   const deps: LoopDeps = {
     scope: async () => ({ orgId: "o1", projectId: "p1" }),
@@ -94,6 +107,9 @@ function fakeDeps(over: Partial<LoopDeps> & { sessions?: LinkedSession[]; sendab
       calls.archived.push({ userId, ids });
       return ids.length;
     },
+    humanSpoke: async (projectId, prNumber) => {
+      calls.spoke.push(`${projectId}#${prNumber}`);
+    },
     ...over,
   };
   return { deps, calls };
@@ -109,6 +125,8 @@ test("a mention on a pull request with a session goes to that session, with 👀
   assert.match(calls.sent[0].prompt, /> please fix/);
   assert.deepEqual(calls.replies, ["Sent to the session working on this: [open it in Outrunner](https://app.test/workspaces/w1)."]);
   assert.equal(calls.started.length, 0);
+  // A person spoke on the pull request: CI's fixes count from none again.
+  assert.deepEqual(calls.spoke, ["p1#12"]);
 });
 
 test("a session that can't take it is passed over for the next, then a new one", async () => {
@@ -152,6 +170,8 @@ test("a mention on an issue starts a session on the default branch", async () =>
   assert.equal(await handleMention("issue_comment", comment(), deps, SLUG), "started");
   assert.equal(calls.started[0].baseBranch, undefined);
   assert.match(calls.started[0].prompt, /Closes #12/);
+  // An issue has no CI of its own.
+  assert.deepEqual(calls.spoke, []);
 });
 
 test("a redelivery acts once", async () => {

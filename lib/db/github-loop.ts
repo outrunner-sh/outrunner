@@ -1,10 +1,13 @@
 /**
  * The GitHub agent loop's records (20261102100000_github_agent_loop.sql):
  * which sessions work on which issue or pull request, the acts already
- * claimed, and the org member a GitHub account is. The server's alone
+ * claimed, and the org member a GitHub account is. And its follow-ups
+ * waiting to go, and CI's turns on each pull request
+ * (20261102110000_github_followups.sql). The server's alone
  * (service role); lib/github/loop.ts decides what's asked.
  */
 
+import type { DueFollowUp } from "@/lib/github/followups";
 import type { LinkedSession, LinkTarget } from "@/lib/github/loop";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
@@ -192,4 +195,129 @@ export async function archiveOnClose(orgId: string): Promise<boolean> {
   const { data, error } = await db().from("organization_settings").select("archive_on_close").eq("org_id", orgId).maybeSingle();
   if (error) throw error;
   return data?.archive_on_close ?? true;
+}
+
+// ---------------------------------------------------------------------------
+// Follow-ups (20261102110000_github_followups.sql; lib/github/followups.ts).
+// ---------------------------------------------------------------------------
+
+/** Queue a follow-up, or add to the one waiting (queue_github_followup). */
+export async function queueFollowUp(followUp: {
+  kind: "ci" | "review";
+  installationId: number;
+  projectId: string;
+  repoFullName: string;
+  prNumber: number;
+  headSha?: string;
+  reviewId?: number;
+  delaySeconds: number;
+}): Promise<void> {
+  const { error } = await db().rpc("queue_github_followup", {
+    followup_kind: followUp.kind,
+    target_installation: followUp.installationId,
+    target_project: followUp.projectId,
+    target_repo: followUp.repoFullName,
+    target_pr: followUp.prNumber,
+    commit_sha: followUp.headSha ?? "",
+    review_id: followUp.reviewId ?? 0,
+    delay_seconds: followUp.delaySeconds,
+  });
+  if (error) throw error;
+}
+
+/** Follow-ups due and not yet taken, oldest first. */
+export async function dueFollowUps(limit: number): Promise<DueFollowUp[]> {
+  const { data, error } = await db()
+    .from("github_followups")
+    .select("id, kind, installation_id, project_id, repo_full_name, pr_number, head_sha, review_ids, first_at")
+    .is("sent_at", null)
+    .lte("due_at", new Date().toISOString())
+    .order("due_at")
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map((f) => ({
+    id: f.id,
+    kind: f.kind,
+    installationId: f.installation_id,
+    projectId: f.project_id,
+    repoFullName: f.repo_full_name,
+    prNumber: f.pr_number,
+    headSha: f.head_sha,
+    reviewIds: f.review_ids.filter((id) => id > 0),
+    firstAt: f.first_at,
+  }));
+}
+
+/** Put a follow-up off: its checks are still running. */
+export async function postponeFollowUp(id: string, seconds: number): Promise<void> {
+  const { error } = await db()
+    .from("github_followups")
+    .update({ due_at: new Date(Date.now() + seconds * 1000).toISOString() })
+    .eq("id", id)
+    .is("sent_at", null);
+  if (error) throw error;
+}
+
+/** Take a due follow-up to send, once (claim_github_followup). */
+export async function takeFollowUp(id: string, maxTurns: number): Promise<{ outcome: "send" | "capped" | "quiet"; turns: number } | null> {
+  const { data, error } = await db().rpc("claim_github_followup", { target: id, max_turns: maxTurns });
+  if (error) throw error;
+  const row = (data ?? [])[0];
+  return row ? { outcome: row.outcome, turns: row.turns } : null;
+}
+
+/** How a follow-up went; one not taken yet is taken by it. */
+export async function settleFollowUp(id: string, outcome: string): Promise<void> {
+  const supabase = db();
+  const { data, error } = await supabase.from("github_followups").select("sent_at").eq("id", id).maybeSingle();
+  if (error) throw error;
+  const { error: updateError } = await supabase
+    .from("github_followups")
+    .update({ outcome, sent_at: data?.sent_at ?? new Date().toISOString() })
+    .eq("id", id);
+  if (updateError) throw updateError;
+}
+
+/** The pull request a session recorded for a branch, the newest. */
+export async function pullForBranch(projectId: string, headBranch: string): Promise<number | null> {
+  const { data, error } = await db()
+    .from("pull_requests")
+    .select("github_number")
+    .eq("project_id", projectId)
+    .eq("head_branch", headBranch)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.github_number ?? null;
+}
+
+/** A person spoke on a pull request: CI's turns on it count from none. */
+export async function resetCiTurns(projectId: string, prNumber: number): Promise<void> {
+  const { error } = await db()
+    .from("github_pr_loops")
+    .update({ ci_turns: 0, updated_at: new Date().toISOString() })
+    .eq("project_id", projectId)
+    .eq("pr_number", prNumber)
+    .gt("ci_turns", 0);
+  if (error) throw error;
+}
+
+/** A person sent a session something in Outrunner: CI's turns on the pull
+ *  requests it works on count from none (reset_github_ci_turns). */
+export async function resetCiTurnsOfSession(workspaceId: string): Promise<void> {
+  const { error } = await db().rpc("reset_github_ci_turns", { target_workspace: workspaceId });
+  if (error) throw error;
+}
+
+/** Old claims and settled follow-ups, past what a redelivery could need. */
+export async function pruneLoopRecords(olderThanDays = 30): Promise<void> {
+  const before = new Date(Date.now() - olderThanDays * 24 * 60 * 60_000).toISOString();
+  const supabase = db();
+  const [claims, followUps] = await Promise.all([
+    supabase.from("github_loop_claims").delete().lt("created_at", before),
+    supabase.from("github_followups").delete().not("sent_at", "is", null).lt("sent_at", before),
+  ]);
+  if (claims.error) throw claims.error;
+  if (followUps.error) throw followUps.error;
 }

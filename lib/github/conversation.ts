@@ -99,3 +99,42 @@ export async function readPull(
 ): Promise<Record<string, unknown>> {
   return call(doFetch, `/repos/${repoFullName}/pulls/${number}`, token);
 }
+
+/** A review as GitHub's API gives it. */
+export type ApiReview = {
+  id: number;
+  state?: string;
+  body?: string | null;
+  html_url?: string;
+  user?: { id?: number; login?: string; type?: string } | null;
+};
+
+/** A review comment as GitHub's API gives it. */
+export type ApiReviewComment = {
+  id: number;
+  body?: string;
+  html_url?: string;
+  path?: string;
+  line?: number | null;
+  original_line?: number | null;
+  start_line?: number | null;
+  side?: string | null;
+  diff_hunk?: string | null;
+  user?: { id?: number; login?: string; type?: string } | null;
+};
+
+/** A submitted review of a pull request, and its comments on lines. */
+export async function readReview(
+  token: string,
+  repoFullName: string,
+  number: number,
+  reviewId: number,
+  doFetch: Fetch = fetch,
+): Promise<{ review: ApiReview; comments: ApiReviewComment[] }> {
+  const base = `/repos/${repoFullName}/pulls/${number}/reviews/${reviewId}`;
+  const [review, comments] = await Promise.all([
+    call<ApiReview>(doFetch, base, token),
+    call<ApiReviewComment[]>(doFetch, `${base}/comments?per_page=100`, token),
+  ]);
+  return { review, comments };
+}

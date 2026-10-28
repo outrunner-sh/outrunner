@@ -594,6 +594,22 @@ type GithubSessionLinkRow = {
   created_at: string;
 };
 
+type GithubFollowUpRow = {
+  id: string;
+  kind: "ci" | "review";
+  installation_id: number;
+  project_id: string;
+  repo_full_name: string;
+  pr_number: number;
+  head_sha: string;
+  review_ids: number[];
+  first_at: string;
+  due_at: string;
+  sent_at: string | null;
+  outcome: string | null;
+  created_at: string;
+};
+
 type AutomationRepoRow = {
   automation_id: string;
   project_id: string;
@@ -860,6 +876,19 @@ export type Database = {
         Row: GithubSessionLinkRow;
         Insert: Insert<GithubSessionLinkRow, "project_id" | "kind" | "number" | "workspace_id">;
         Update: Partial<GithubSessionLinkRow>;
+        Relationships: [];
+      };
+      // supabase/migrations/20261102110000_github_followups.sql
+      github_followups: {
+        Row: GithubFollowUpRow;
+        Insert: Insert<GithubFollowUpRow, "kind" | "installation_id" | "project_id" | "repo_full_name" | "pr_number" | "due_at">;
+        Update: Partial<GithubFollowUpRow>;
+        Relationships: [];
+      };
+      github_pr_loops: {
+        Row: { project_id: string; pr_number: number; ci_turns: number; updated_at: string };
+        Insert: { project_id: string; pr_number: number; ci_turns?: number };
+        Update: Partial<{ ci_turns: number; updated_at: string }>;
         Relationships: [];
       };
       automation_runs: {
@@ -1256,6 +1285,28 @@ export type Database = {
       github_member: {
         Args: { github_user_id: number; target_org: string };
         Returns: string | null;
+      };
+      // supabase/migrations/20261102110000_github_followups.sql
+      queue_github_followup: {
+        Args: {
+          followup_kind: "ci" | "review";
+          target_installation: number;
+          target_project: string;
+          target_repo: string;
+          target_pr: number;
+          commit_sha: string;
+          review_id: number;
+          delay_seconds: number;
+        };
+        Returns: undefined;
+      };
+      claim_github_followup: {
+        Args: { target: string; max_turns: number };
+        Returns: { outcome: "send" | "capped" | "quiet"; turns: number }[];
+      };
+      reset_github_ci_turns: {
+        Args: { target_workspace: string };
+        Returns: undefined;
       };
       // supabase/migrations/20261030120000_work_items.sql
       triage_project_levels: {
