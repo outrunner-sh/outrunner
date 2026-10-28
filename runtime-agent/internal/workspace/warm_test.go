@@ -342,6 +342,50 @@ func TestAWarmFolderThatFailsHalfWayFallsBack(t *testing.T) {
 	}
 }
 
+// A Create cut off while it takes the warm folder (its request ended) still
+// takes back every branch the adoption made, so its retry can make the
+// session's checkouts.
+func TestAWarmFolderCutOffHalfWayLeavesNoBranches(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	s.tmux = newFakeSessions()
+	checkouts := twoRepoBox(t, s)
+	if err := s.Warm(context.Background(), WarmRequest{Hook: "true", Checkouts: checkouts}); err != nil {
+		t.Fatal(err)
+	}
+	waitWarm(t, s)
+	// web switches to the session's branch; api's switch outlasts the request.
+	marker := filepath.Join(t.TempDir(), "slow")
+	_ = os.WriteFile(marker, nil, 0o644)
+	hook := filepath.Join(RepoMirrorPath(s.Root, "api"), "hooks", "post-checkout")
+	_ = os.MkdirAll(filepath.Dir(hook), 0o755)
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n[ -f '"+marker+"' ] && exec sleep 3 >/dev/null 2>&1 </dev/null\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := s.Create(ctx, CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", Checkouts: checkouts}); err == nil {
+		t.Fatal("a Create whose request ended made its checkouts")
+	}
+	for _, c := range checkouts {
+		if _, err := s.git(context.Background(), RepoMirrorPath(s.Root, c.Name), "rev-parse", "--verify", "--quiet", "refs/heads/runtime/x"); err == nil {
+			t.Errorf("%s's mirror kept the session's branch", c.Name)
+		}
+	}
+
+	_ = os.Remove(marker)
+	folder, err := s.Create(context.Background(), CreateInput{WorkspaceID: "ws1", Branch: "runtime/x", Checkouts: checkouts})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	for _, c := range checkouts {
+		if branch, _ := s.git(context.Background(), filepath.Join(folder, c.Name), "symbolic-ref", "--short", "HEAD"); branch != "runtime/x" {
+			t.Errorf("%s branch = %q", c.Name, branch)
+		}
+	}
+}
+
 // A warm folder whose checkout can't be made leaves nothing behind: the next
 // warm makes it again.
 func TestAWarmFolderThatCantBeMadeLeavesNothing(t *testing.T) {

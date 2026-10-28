@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // A session of a project with several repositories works in a folder of
@@ -62,6 +63,32 @@ func RepoMirrorPath(root, checkout string) string {
 	return filepath.Join(root, "repos", checkout+".git")
 }
 
+// cleanupTimeout bounds taking back what a step cut off half way made.
+const cleanupTimeout = 30 * time.Second
+
+// cleanupContext is the context to take back a half-made step on: ctx's
+// values without its end. The request's context may be done already (often
+// why the step failed), and git won't start on one that is, so a cleanup on
+// it would leave branches a retry trips over.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+}
+
+// undoCheckouts takes back checkouts made in folder on branch: each leaves
+// its mirror, then its branch goes (a retry makes them again with -b), then
+// the folder.
+func (s *Service) undoCheckouts(ctx context.Context, folder, branch string, checkouts []Checkout) {
+	ctx, cancel := cleanupContext(ctx)
+	defer cancel()
+	for _, c := range checkouts {
+		s.removeCheckout(ctx, folder, c)
+	}
+	for _, c := range checkouts {
+		_, _ = s.git(ctx, RepoMirrorPath(s.Root, c.Name), "branch", "-D", branch)
+	}
+	_ = os.RemoveAll(folder)
+}
+
 // createCheckouts makes the session's folder of worktrees, all on branch.
 // One that fails takes the others it made with it.
 func (s *Service) createCheckouts(ctx context.Context, folder, branch string, checkouts []Checkout, user *GitUser) error {
@@ -74,12 +101,7 @@ func (s *Service) createCheckouts(ctx context.Context, folder, branch string, ch
 		out, err := exec.CommandContext(ctx, "git", "-C", RepoMirrorPath(s.Root, c.Name),
 			"worktree", "add", "-b", branch, dir, "origin/"+c.BaseBranch).CombinedOutput()
 		if err != nil {
-			// Their branches too: a retry makes them again with -b.
-			for _, m := range made {
-				s.removeCheckout(ctx, folder, m)
-				_, _ = s.git(ctx, RepoMirrorPath(s.Root, m.Name), "branch", "-D", branch)
-			}
-			_ = os.RemoveAll(folder)
+			s.undoCheckouts(ctx, folder, branch, made)
 			return fmt.Errorf("worktree add %s: %v: %s", c.Name, err, strings.TrimSpace(string(out)))
 		}
 		made = append(made, c)

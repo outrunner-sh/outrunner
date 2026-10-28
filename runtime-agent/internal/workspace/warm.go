@@ -268,11 +268,13 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 	for i, args := range steps {
 		if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "adopting the warm checkout: git %s: %v: %s\n", strings.Join(args, " "), err, out)
+			cleanup, cancel := cleanupContext(ctx)
+			defer cancel()
 			if i > 0 {
-				_ = exec.CommandContext(ctx, "git", "-C", s.mirrorPath(), "worktree", "remove", "--force", worktree).Run()
+				_ = exec.CommandContext(cleanup, "git", "-C", s.mirrorPath(), "worktree", "remove", "--force", worktree).Run()
 				_ = os.RemoveAll(worktree)
 			}
-			s.discardWarm(ctx)
+			s.discardWarm(cleanup)
 			return false
 		}
 	}
@@ -287,7 +289,10 @@ func (s *Service) adoptWarm(ctx context.Context, worktree, branch, base string) 
 // too), each checkout's mirror told where it went, and each switched to a new
 // branch at its origin/base and cleaned of what git tracks or would. Whether
 // it did; one that fails half way is discarded, every checkout and branch it
-// made going with it, and the session's checkouts are made as usual.
+// made going with it, and the session's checkouts are made as usual. A
+// session's branch already in one of the mirrors isn't adopted over: its
+// checkouts can't be made on it either (createCheckouts says why), and the
+// branches a failed adoption takes back are only ever its own.
 func (s *Service) adoptWarmCheckouts(ctx context.Context, folder, branch string, checkouts []Checkout) bool {
 	warmMu.Lock()
 	defer warmMu.Unlock()
@@ -295,39 +300,35 @@ func (s *Service) adoptWarmCheckouts(ctx context.Context, folder, branch string,
 	if state.State != "succeeded" || !sameCheckouts(state.Checkouts, checkouts) || !fileExists(s.warmDir()) {
 		return false
 	}
+	for _, c := range checkouts {
+		if _, err := s.git(ctx, RepoMirrorPath(s.Root, c.Name), "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+			return false
+		}
+	}
 	if err := os.Rename(s.warmDir(), folder); err != nil {
 		fmt.Fprintf(os.Stderr, "adopting the warm checkouts: %v\n", err)
-		s.discardWarm(ctx)
+		cleanup, cancel := cleanupContext(ctx)
+		defer cancel()
+		s.discardWarm(cleanup)
 		return false
 	}
-	var branched []Checkout
 	for _, c := range checkouts {
 		dir, mirror := filepath.Join(folder, c.Name), RepoMirrorPath(s.Root, c.Name)
-		steps := [][]string{
+		for _, args := range [][]string{
 			{"-C", mirror, "worktree", "repair", dir},
 			{"-C", dir, "checkout", "--force", "-B", branch, "origin/" + c.BaseBranch},
 			{"-C", dir, "clean", "-fd"},
-		}
-		for i, args := range steps {
-			out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput()
-			if err == nil {
-				if i == 1 {
-					branched = append(branched, c)
-				}
-				continue
+		} {
+			if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+				fmt.Fprintf(os.Stderr, "adopting the warm checkouts: git %s: %v: %s\n", strings.Join(args, " "), err, out)
+				// Every checkout and branch, whichever it reached: none of
+				// the branches was there before (above).
+				s.undoCheckouts(ctx, folder, branch, checkouts)
+				cleanup, cancel := cleanupContext(ctx)
+				defer cancel()
+				s.discardWarm(cleanup)
+				return false
 			}
-			fmt.Fprintf(os.Stderr, "adopting the warm checkouts: git %s: %v: %s\n", strings.Join(args, " "), err, out)
-			// The checkouts first, then their branches: createCheckouts
-			// makes them again with -b.
-			for _, m := range checkouts {
-				s.removeCheckout(ctx, folder, m)
-			}
-			for _, m := range branched {
-				_, _ = s.git(ctx, RepoMirrorPath(s.Root, m.Name), "branch", "-D", branch)
-			}
-			_ = os.RemoveAll(folder)
-			s.discardWarm(ctx)
-			return false
 		}
 	}
 	_ = os.Remove(s.warmStatePath())

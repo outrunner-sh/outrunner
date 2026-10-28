@@ -117,8 +117,9 @@ export async function refillProjectPool(input: {
           files: setup.files,
           hook,
           generation,
-          repos,
-          syncMirrors: () => provider.syncRepoMirrors(sandboxId, repos ?? [], gitTokensFor(ownerId, project.orgId)),
+          ...(repos && {
+            severalRepos: { repos, sync: () => provider.syncRepoMirrors(sandboxId, repos, gitTokensFor(ownerId, project.orgId)) },
+          }),
         });
       },
       recordBox: (computerId, sandboxId) => updateRuntimeComputer(computerId, { daytonaSandboxId: sandboxId }),
@@ -168,8 +169,8 @@ function stillBooting(error: unknown): boolean {
 export class WarmHookError extends Error {}
 
 /** Warm a ready box and wait for it, the run recorded on the project as it
- *  goes. A project of several repositories (`repos`) has their mirrors
- *  synced onto the box first (`syncMirrors`). Throws when the hook fails or
+ *  goes. A project of several repositories (`severalRepos`) has their mirrors
+ *  synced onto the box first (its `sync`). Throws when the hook fails or
  *  outlasts its time. */
 async function warmBox(
   agent: AgentClient,
@@ -181,8 +182,7 @@ async function warmBox(
     files: Record<string, string>;
     hook: string;
     generation: number | null;
-    repos: WarmRequest["repos"];
-    syncMirrors: () => Promise<void>;
+    severalRepos?: { repos: NonNullable<WarmRequest["repos"]>; sync: () => Promise<void> };
   },
 ): Promise<void> {
   // Box-wide, as the warm itself is: a box no session has yet answers for
@@ -201,7 +201,7 @@ async function warmBox(
       if (!stillBooting(error)) break;
     }
   }
-  const refusal = health ? warmRefusal(health.features, req.repos !== undefined) : null;
+  const refusal = health ? warmRefusal(health.features, req.severalRepos !== undefined) : null;
   if (!health || refusal) {
     // An older agent (or one that didn't answer): pooled unwarmed, and the
     // session that takes it runs the warm hook itself as it starts. Recorded,
@@ -223,9 +223,9 @@ async function warmBox(
   const failed = (log: string) =>
     recordWarmRun(environmentId, box.userId, { status: "failed", log, startedAt, finishedAt: new Date().toISOString(), generation: req.generation });
   await recordWarmRun(environmentId, box.userId, { status: "running", log: null, startedAt, finishedAt: null, generation: req.generation });
-  if (req.repos) {
+  if (req.severalRepos) {
     try {
-      await req.syncMirrors();
+      await req.severalRepos.sync();
     } catch (error) {
       await failed(`The project's repositories couldn't be cloned onto the box: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
       throw error;
@@ -237,7 +237,7 @@ async function warmBox(
       env: req.env,
       files: req.files,
       hook: req.hook,
-      ...(req.repos && { repos: req.repos }),
+      ...(req.severalRepos && { repos: req.severalRepos.repos }),
     });
   } catch (error) {
     await failed(`The warm hook couldn't be started: ${error instanceof Error ? error.message : String(error)}`).catch(() => {});
