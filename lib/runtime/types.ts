@@ -100,6 +100,8 @@ export type SessionCheckout = {
   private?: boolean;
 };
 
+export type WorkspaceSource = "app" | "slack" | "automation" | "github" | "api";
+
 export type Workspace = {
   id: string;
   projectId: string;
@@ -107,6 +109,9 @@ export type Workspace = {
   slackThreadUrl?: string | null;
   /** Whether its thread and it stay in step (lib/slack/relay.ts). */
   slackSync?: boolean;
+  /** Where it was started: the app, a Slack thread, an automation, a
+   *  GitHub mention, or the API (20261102120000_api_keys.sql). */
+  source?: WorkspaceSource;
   /** Its project's org; absent on one made in code rather than read. */
   orgId?: string;
   /** Who made it: on `user-daytona` or `user-modal`, whose key reaches it. */

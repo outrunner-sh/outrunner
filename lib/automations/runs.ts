@@ -124,6 +124,7 @@ export async function startRun(run: PendingRun, deps: StartDeps): Promise<void> 
     // As the App, reading code and commenting, with tokens its box asks for
     // as it goes (#187's git-credential), so none expires on it mid-review.
     reviewAsApp: true,
+    source: "automation",
     // Linked to the run as soon as it's made: its box's token requests are
     // answered as the App's from the first.
     onCreated: async (workspaceId) => {

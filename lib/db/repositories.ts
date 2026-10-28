@@ -31,6 +31,7 @@ import type {
   SessionCheckout,
   Workspace,
   WorkspacePullRequest,
+  WorkspaceSource,
   WorkspaceStatus,
 } from "@/lib/runtime/types";
 
@@ -194,6 +195,8 @@ export async function createWorkspaceRow(input: {
   environmentId?: string | null;
   /** A multi-repository session's repositories. */
   checkouts?: SessionCheckout[] | null;
+  /** Where it was started; the app when not named. */
+  source?: WorkspaceSource;
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -210,6 +213,7 @@ export async function createWorkspaceRow(input: {
       // Named only when there is one, for the same reason.
       ...(input.environmentId && { environment_id: input.environmentId }),
       ...(input.checkouts && { checkouts: input.checkouts }),
+      ...(input.source && input.source !== "app" && { source: input.source }),
       status: "creating",
     })
     .select("*")

@@ -182,6 +182,7 @@ export async function handleMention(event: string | null, payload: unknown, deps
       baseBranch: pull?.headRef,
       title: mentionTitle(mention),
       prompt: startPrompt(mentionWithPull, appSlug),
+      source: "github",
       onCreated: async (workspaceId) => {
         await deps.link(
           { ...link, url: mention.url, title: mention.title, baseRef: pull?.baseRef },

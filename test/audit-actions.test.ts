@@ -23,6 +23,11 @@ test("each kind of event reads as what happened", () => {
   );
   assert.equal(describeAudit(event("key.saved", "OpenRouter", { hint: "ab12" })), "saved the org's OpenRouter key (…ab12)");
   assert.equal(
+    describeAudit(event("api_key.created", "CI", { hint: "x9Zq", expiresAt: "2027-02-01T00:00:00.000Z" })),
+    "made the API key CI (…x9Zq), until 2027-02-01",
+  );
+  assert.equal(describeAudit(event("api_key.revoked", "CI", { hint: "x9Zq" })), "revoked the API key CI (…x9Zq)");
+  assert.equal(
     describeAudit(event("usage.changed", null, { limitPercent: 80, alertThresholds: [50, 100] })),
     "set the usage limit to 80%, alerts at 50%, 100%",
   );
@@ -36,6 +41,7 @@ test("events group by what they're about", () => {
   assert.equal(auditGroup("access.changed"), "access");
   assert.equal(auditGroup("usage.changed"), "settings");
   assert.equal(auditGroup("github.uninstalled"), "github");
+  assert.equal(auditGroup("api_key.created"), "keys");
 });
 
 test("the actor is named by login, else name or email; Outrunner for its own", () => {

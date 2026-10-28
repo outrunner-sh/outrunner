@@ -462,6 +462,7 @@ async function startWorker(
     projectId: filed.projectId,
     title: filed.title,
     prompt: filed.prompt,
+    source: "slack",
     onCreated: async (workspaceId) => {
       // The session knows its thread: the sidebar's Slack badge, and a link back.
       await createSupabaseAdminClient().from("workspaces").update({ slack_thread_url: threadUrl, slack_sync: true }).eq("id", workspaceId);
