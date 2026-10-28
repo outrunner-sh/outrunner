@@ -30,3 +30,14 @@ create table workspaces (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- The notifications tables (20261102163000_session_notifications.sql), as
+-- much of them as the Missions migrations change: their kinds.
+create table session_notifications (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null
+);
+create table notification_preferences (
+  user_id uuid primary key,
+  kinds text[] not null default '{}'
+);
