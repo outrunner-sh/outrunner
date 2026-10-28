@@ -189,8 +189,8 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
     .or(`digest_sent_at.is.null,digest_sent_at.lt.${cutoff}`)
     // Not one waiting to try again after a failure.
     .or(`digest_retry_at.is.null,digest_retry_at.lt.${new Date(now).toISOString()}`)
-    // Longest waiting first, so people whose digests go through are never
-    // crowded out by one that keeps failing.
+    // Longest waiting first. One that keeps failing stays oldest, but the
+    // retry filter above keeps it out between tries, so it can't crowd others.
     .order("digest_sent_at", { ascending: true, nullsFirst: true })
     .limit(50);
   if (error) throw error;
@@ -205,10 +205,10 @@ export async function deliverDigests(now: number = Date.now()): Promise<number> 
     if (!claimed?.length) continue;
 
     // Since the last digest, so a retry covers what the failed one would
-    // have; at most two days back (a first digest, or one long refused).
-    const floor = new Date(now - 2 * DIGEST_EVERY_MS).toISOString();
-    const from =
-      user.digest_sent_at && Date.parse(user.digest_sent_at) > Date.parse(floor) ? user.digest_sent_at : user.digest_sent_at ? floor : cutoff;
+    // have; at most two days back, which is also where a first digest (and
+    // its retry) starts.
+    const last = user.digest_sent_at ? Date.parse(user.digest_sent_at) : 0;
+    const from = new Date(Math.max(last, now - 2 * DIGEST_EVERY_MS)).toISOString();
     const { data: rows, error: rowsError } = await db()
       .from("session_notifications")
       .select("id, user_id, workspace_id, kind, title, body, created_at, emailed_at, slacked_at")
