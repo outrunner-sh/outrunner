@@ -254,6 +254,38 @@ func TestAWorktreeCutOffHalfWayLeavesNoBranch(t *testing.T) {
 	}
 }
 
+// A worktree add killed during its checkout leaves the worktree locked
+// ("initializing"); taking it back overrides the lock, so its branch goes
+// too, as does a checkout's of several repositories.
+func TestALockedHalfMadeWorktreeIsTakenBack(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := NewService(t.TempDir())
+	ctx := context.Background()
+	mirrorBox(t, s)
+	repoMirror(t, RepoMirrorPath(s.Root, "web"), "main")
+	wt, folder := s.worktreePath("ws1"), s.worktreePath("ws2")
+	web := Checkout{Name: "web", BaseBranch: "main"}
+	for mirror, dir := range map[string]string{s.mirrorPath(): wt, RepoMirrorPath(s.Root, "web"): filepath.Join(folder, "web")} {
+		if _, err := s.git(ctx, mirror, "worktree", "add", "-b", "b", dir, "origin/main"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.git(ctx, mirror, "worktree", "lock", "--reason", "initializing", dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s.undoWorktree(ctx, wt, "b", true)
+	s.undoCheckouts(ctx, folder, "b", []Checkout{web})
+	for _, mirror := range []string{s.mirrorPath(), RepoMirrorPath(s.Root, "web")} {
+		if !s.branchMissing(ctx, mirror, "b") {
+			t.Errorf("%s kept the branch", mirror)
+		}
+		if out, _ := s.git(ctx, mirror, "worktree", "list"); strings.Contains(out, "workspaces") {
+			t.Errorf("%s still lists the worktree: %s", mirror, out)
+		}
+	}
+}
+
 // A session's scripts run in order: the warm hook once (not on a warmed
 // worktree), the setup script once, the start hook at every launch.
 func TestSessionScriptsRunInOrder(t *testing.T) {

@@ -90,13 +90,15 @@ func (s *Service) undoCheckouts(ctx context.Context, folder, branch string, chec
 }
 
 // undoWorktree takes back a session's worktree of the box's one repository,
-// as undoCheckouts does a folder of them: it leaves the mirror, then the
-// folder goes, then its branch, when it is the session's own (ours) to take
-// back.
+// as undoCheckouts does a folder of them: it leaves the mirror (lock or not:
+// an add killed during its checkout leaves its worktree locked
+// "initializing", which one --force won't remove, prune skips and whose
+// branch -D refuses), then the folder goes, then its branch, when it is the
+// session's own (ours) to take back.
 func (s *Service) undoWorktree(ctx context.Context, worktree, branch string, ours bool) {
 	ctx, cancel := cleanupContext(ctx)
 	defer cancel()
-	_, _ = s.git(ctx, s.mirrorPath(), "worktree", "remove", "--force", worktree)
+	_, _ = s.git(ctx, s.mirrorPath(), "worktree", "remove", "--force", "--force", worktree)
 	_ = os.RemoveAll(worktree)
 	_, _ = s.git(ctx, s.mirrorPath(), "worktree", "prune")
 	if ours {
@@ -144,10 +146,11 @@ func (s *Service) createCheckouts(ctx context.Context, folder, branch string, ch
 }
 
 // removeCheckout removes one checkout from its mirror, known from its name:
-// even when its folder (or its .git) has gone already, the mirror forgets it.
+// even when its folder (or its .git) has gone already, or it is locked
+// (undoWorktree says why), the mirror forgets it.
 func (s *Service) removeCheckout(ctx context.Context, folder string, c Checkout) {
 	dir, mirror := filepath.Join(folder, c.Name), RepoMirrorPath(s.Root, c.Name)
-	_, _ = s.git(ctx, mirror, "worktree", "remove", "--force", dir)
+	_, _ = s.git(ctx, mirror, "worktree", "remove", "--force", "--force", dir)
 	_ = os.RemoveAll(dir)
 	_, _ = s.git(ctx, mirror, "worktree", "prune")
 }
