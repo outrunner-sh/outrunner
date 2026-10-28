@@ -35,8 +35,8 @@ concurrency:
 
 jobs:
   deploy:
-    # Production is main's: a manual run from another ref would share the
-    # queue above, replace main's waiting deploy, and ship that ref instead.
+    # Production is main's: without this, a manual run from another ref
+    # would ship that ref (in a queue of its own, beside main's deploys).
     if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
