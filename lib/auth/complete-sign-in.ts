@@ -1,12 +1,13 @@
 import type { User } from "@supabase/supabase-js";
 
 import { githubUserId } from "@/lib/auth/allowlist";
+import { signInTokenDecision } from "@/lib/auth/identity";
 import { githubLogin, isOwner } from "@/lib/auth/owner";
-import { setGithubToken } from "@/lib/db/credentials";
+import { getGithubToken, setGithubToken } from "@/lib/db/credentials";
 import { hasOpenInviteFor, requestToJoin, setAdmitted, teamOrgIds } from "@/lib/db/org-members";
 import { orgsForDomains } from "@/lib/db/orgs";
 import { optionalEnv } from "@/lib/env";
-import { tokenUserId } from "@/lib/github/client";
+import { tokenOwner } from "@/lib/github/client";
 import { admitOnSignIn, type Admission, isInvitePath } from "@/lib/orgs/admission";
 import { emailJoinRequest } from "@/lib/orgs/notify";
 import { verifiedEmailsFor } from "@/lib/orgs/verified-emails";
@@ -93,9 +94,10 @@ function joinRequested(base: string, admission: Extract<Admission, { kind: "requ
  * it — `getSession()` later in the app returns nothing for it. Miss it here and
  * the user has to re-authenticate to get another one.
  *
- * Stored only once GitHub says the token is this user's GitHub account's: the
+ * Stored only as GitHub vouches for it ({@link signInTokenDecision}): the
  * callback picks the token by which identity signed in last, and a wrong pick
- * (a Google token, say) must never replace a working GitHub token.
+ * (a Google token, say) must never replace a working GitHub token. When GitHub
+ * can't be asked (an outage), it's stored only if none is yet.
  *
  * Best-effort by design: a storage failure must not strand a user who has
  * otherwise signed in successfully. They land in the app with no GitHub
@@ -106,9 +108,21 @@ async function captureGithubToken(user: User, token: string | undefined): Promis
   const login = githubLogin(user);
   const githubId = githubUserId(user);
   if (!token || !login || githubId === null) return;
-  if ((await tokenUserId(token)) !== githubId) {
-    console.warn(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
+  const owner = await tokenOwner(token);
+  // Whether one is stored matters only when GitHub couldn't be asked.
+  const hasStored = owner.kind === "unreachable" && (await getGithubToken(user.id).catch(() => null)) !== null;
+  const decision = signInTokenDecision(owner, githubId, hasStored);
+  // Each of these is worth an alert: a wrong pick, or GitHub out of reach.
+  if (decision === "disowned") {
+    console.error(`Not storing a sign-in token for ${user.id}: GitHub doesn't vouch for it as their account's.`);
     return;
+  }
+  if (decision === "keep_stored") {
+    console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; keeping the stored one.`);
+    return;
+  }
+  if (owner.kind === "unreachable") {
+    console.error(`GitHub couldn't be asked whose ${user.id}'s sign-in token is; none is stored, so storing it.`);
   }
 
   try {

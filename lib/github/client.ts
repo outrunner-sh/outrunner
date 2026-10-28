@@ -422,19 +422,31 @@ export async function listVerifiedEmails(token: string): Promise<VerifiedEmail[]
     .sort((a, b) => Number(b.primary) - Number(a.primary));
 }
 
+/** Whose a token is, as GitHub answers: a user's (by numeric id), not one
+ *  GitHub takes at all, or no answer (down, timed out, rate limited). */
+export type TokenOwner = { kind: "user"; id: number } | { kind: "refused" } | { kind: "unreachable" };
+
 /**
- * The numeric id of the GitHub user a token belongs to, or null when GitHub
- * won't say (refused, failed, unreadable). Never throws: it vouches for a
- * token before it is stored, and no answer just means not storing it.
+ * The GitHub user a token belongs to. Never throws: it vouches for a token
+ * before it is stored. "refused" is GitHub's own no (401, or a 403 that isn't
+ * a rate limit: not a GitHub token, or a revoked one); "unreachable" is no
+ * answer, which says nothing about the token.
  */
-export async function tokenUserId(token: string): Promise<number | null> {
+export async function tokenOwner(token: string): Promise<TokenOwner> {
   try {
     const response = await fetchGitHub(new URL("/user", GITHUB_API_URL), token);
-    if (!response.ok) return null;
-    const body = (await readJson(response)) as { id?: unknown } | null;
-    return typeof body?.id === "number" && Number.isSafeInteger(body.id) ? body.id : null;
+    if (response.ok) {
+      const body = (await readJson(response)) as { id?: unknown } | null;
+      return typeof body?.id === "number" && Number.isSafeInteger(body.id)
+        ? { kind: "user", id: body.id }
+        : { kind: "unreachable" };
+    }
+    const rateLimited =
+      response.headers.get("x-ratelimit-remaining") === "0" || response.headers.has("retry-after");
+    if (response.status === 401 || (response.status === 403 && !rateLimited)) return { kind: "refused" };
+    return { kind: "unreachable" };
   } catch {
-    return null;
+    return { kind: "unreachable" };
   }
 }
 

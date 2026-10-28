@@ -1,5 +1,6 @@
 import type { User } from "@supabase/supabase-js";
 
+import type { TokenOwner } from "@/lib/github/client";
 import type { VerifiedEmail } from "@/lib/orgs/domains";
 
 /** The OAuth providers someone can sign in to Outrunner with. */
@@ -69,4 +70,26 @@ export function mergeVerifiedEmails(github: readonly VerifiedEmail[], others: re
       .filter((e) => !seen.has(e.email.toLowerCase()))
       .map((e) => ({ email: e.email, primary: e.primary && !hasPrimary })),
   ];
+}
+
+/**
+ * What becomes of the token a sign-in the callback took for GitHub's, by
+ * GitHub's word on it (`tokenOwner`) and whether one is stored already:
+ *
+ * - "disowned": GitHub refuses it, or says it's another account's. The pick
+ *   was wrong (a Google token, say); it must never replace a working token.
+ * - "store": GitHub says it's this account's; or GitHub can't be asked and
+ *   nothing is stored, so this sign-in is the token's only chance to be kept.
+ * - "keep_stored": GitHub can't be asked and a token is stored. An outage
+ *   makes the pick no surer, and keeping the stored one costs little (stale
+ *   at worst, mended by the next sign-in).
+ */
+export function signInTokenDecision(
+  owner: TokenOwner,
+  githubId: number,
+  hasStored: boolean,
+): "store" | "disowned" | "keep_stored" {
+  if (owner.kind === "user") return owner.id === githubId ? "store" : "disowned";
+  if (owner.kind === "refused") return "disowned";
+  return hasStored ? "keep_stored" : "store";
 }
