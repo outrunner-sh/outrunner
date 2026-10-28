@@ -90,7 +90,7 @@ import { SETTING_UP } from "@/lib/session/provisioning";
 import { getGitHubRepository, GitHubReconnectError, MissingGithubTokenError } from "@/lib/github/client";
 import { GITHUB_RECONNECT_HREF } from "@/lib/github/http";
 import { GitIdentityError } from "@/lib/github/identity";
-import { gitTokensFor, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
+import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from "@/lib/github/identity.deps";
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
@@ -355,9 +355,6 @@ export async function createCloudSession(
       baseBranch,
       provider: provider.name,
       agent: agentId,
-      // Marked on the session itself: its box's token requests are the App's
-      // however its run goes (app/api/runtime/git-credential).
-      ...(options.reviewAsApp && { githubAs: "app_review" as const }),
     });
   } catch (error) {
     // A requested branch can be one a live session already works on: name that
@@ -380,11 +377,13 @@ export async function createCloudSession(
   // Named now, from its first prompt, as the message route would once that is
   // delivered: until then the sidebar showed its branch. That later naming
   // then leaves it be (a title is never replaced).
-  // Its caller must hear it (a review's run links its box to the App by it):
-  // one that can't, the session goes no further than its row, failed.
-  if (options.onCreated) {
+  // A review is recorded as one (by the server: review_sessions), and its
+  // caller told of it, before its box exists to ask for a token; one that
+  // can't be goes no further than its row, failed, rather than run as its user.
+  if (options.reviewAsApp || options.onCreated) {
     try {
-      await options.onCreated(workspace.id);
+      if (options.reviewAsApp) await markReviewSession(workspace.id);
+      await options.onCreated?.(workspace.id);
     } catch (error) {
       console.error(`Workspace ${workspace.id}: its caller couldn't hear it was made`, error);
       const errorMessage = "Outrunner couldn't record what this session is for, so it didn't start.";

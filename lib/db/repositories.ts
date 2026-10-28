@@ -191,8 +191,6 @@ export async function createWorkspaceRow(input: {
   environmentId?: string | null;
   /** A multi-repository session's repositories. */
   checkouts?: SessionCheckout[] | null;
-  /** It works on GitHub as the App, to review (an automation's run). */
-  githubAs?: "app_review";
 }): Promise<Workspace> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -209,7 +207,6 @@ export async function createWorkspaceRow(input: {
       // Named only when there is one, for the same reason.
       ...(input.environmentId && { environment_id: input.environmentId }),
       ...(input.checkouts && { checkouts: input.checkouts }),
-      ...(input.githubAs && { github_as: input.githubAs }),
       status: "creating",
     })
     .select("*")

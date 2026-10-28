@@ -5,6 +5,7 @@
  */
 
 import { getGithubIdentity, getGithubToken } from "@/lib/db/credentials";
+import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { listOrgInstallations } from "@/lib/db/github-installations";
 import { listOrgProjects, projectLevel } from "@/lib/db/org-access";
 import {
@@ -71,6 +72,26 @@ export function gitCredentialFor(input: {
 /** How an automation's review session works on GitHub, whatever its runner
  *  chose for their own: as the App, reading code and commenting. */
 export const REVIEW_AS_APP = { identity: "app", level: "review" } as const;
+
+/** Record a session as an automation's review, as the App (review_sessions:
+ *  the server's alone, so its owner can't mark or unmark one). */
+export async function markReviewSession(workspaceId: string): Promise<void> {
+  const { error } = await createSupabaseAdminClient()
+    .from("review_sessions")
+    .upsert({ workspace_id: workspaceId }, { onConflict: "workspace_id", ignoreDuplicates: true });
+  if (error) throw error;
+}
+
+/** Whether a session reviews as the App (markReviewSession). */
+export async function isReviewSession(workspaceId: string): Promise<boolean> {
+  const { data, error } = await createSupabaseAdminClient()
+    .from("review_sessions")
+    .select("workspace_id")
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}
 
 /** The token alone, for a server call that must have one; as the user chose,
  *  or as `as` says (REVIEW_AS_APP). */

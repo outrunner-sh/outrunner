@@ -93,8 +93,6 @@ type ProjectRow = {
 
 type WorkspaceRow = {
   id: string;
-  /** 'app_review': it works on GitHub as the App, to review (20261030120000). */
-  github_as?: "app_review" | null;
   /** Its project's org, set from the project. */
   org_id: string;
   owner_id: string;
@@ -663,6 +661,12 @@ export type Database = {
         Row: AutomationRow;
         Insert: Insert<AutomationRow, "org_id" | "name" | "prompt" | "triggers">;
         Update: Partial<AutomationRow>;
+        Relationships: [];
+      };
+      review_sessions: {
+        Row: { workspace_id: string; created_at: string };
+        Insert: { workspace_id: string };
+        Update: Partial<{ workspace_id: string }>;
         Relationships: [];
       };
       automation_runs: {
