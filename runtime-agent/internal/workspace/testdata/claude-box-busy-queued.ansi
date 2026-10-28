@@ -1,0 +1,50 @@
+
+[38;5;174m ▐[48;5;16m▛███▛█[39m[49m   [1mClaude Code[0m [38;5;246mv2.1.310[39m
+[38;5;174m▝▜[48;5;16m█████[49m█▀[39m  [38;5;246mOpus 5.5 · API Usage Billing[39m
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m~/proj[39m
+
+
+[38;5;246m[48;5;237m❯ [38;5;231mSLEEPY[39m
+
+[49m  [38;5;246mRan [1m1[0m[38;5;246m shell command [39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mQUEUED while busy[39m
+
+[49m  [38;5;246mRan [1m1[0m[38;5;246m shell command [39m
+
+[38;5;231m●[39m Reply to: [tool_result]
+
+[38;5;246m✻[39m [38;5;246mBrewed for 12s · done 9:13 PM[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mSLOWREPLY[39m
+[38;5;246m[49m  ⎿  Interrupted · What should Claude do instead?[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mQUEUED while busy[39m
+
+[38;5;231m[49m●[39m Reply to: SLOWREPLY
+   [Request interrupted by user]
+   QUEUED while busy
+
+[38;5;246m✻[39m [38;5;246mCrunched for 0s · done 9:16 PM[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mSLEEPY[39m
+[38;5;246m[49m  ⎿  Interrupted · What should Claude do instead?[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mSLEEPY[39m
+
+[38;5;246m❯ QUEUED while busy[39m
+[49m  [38;5;246mctrl+x ctrl+s to send now[39m
+
+
+
+
+
+
+
+[38;5;174m✢[39m [38;5;174mManifes[38;5;216mtin[38;5;174mg… [39m
+[38;5;246m  ⎿  Tip: Double-tap esc to rewind the code and/or conversation to a previous point in time[39m
+
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;5;246m❯ [2m[39mPress up to edit queued messages[0m
+[38;5;244m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m  [38;5;211m⏵⏵ bypass permissions on[38;5;246m (shift+tab to cycle) · esc to interrupt[39m

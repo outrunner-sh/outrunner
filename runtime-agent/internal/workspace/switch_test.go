@@ -103,6 +103,17 @@ func (f *fakeSessions) SendKey(_ context.Context, _ string, key string) error {
 	return nil
 }
 
+func (f *fakeSessions) SendKeys(ctx context.Context, name string, keys ...string) error {
+	for _, key := range keys {
+		_ = f.SendKey(ctx, name, key)
+	}
+	return nil
+}
+
+func (f *fakeSessions) CapturePaneStyled(ctx context.Context, name string) (string, error) {
+	return f.CapturePane(ctx, name)
+}
+
 func (f *fakeSessions) CapturePane(context.Context, string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

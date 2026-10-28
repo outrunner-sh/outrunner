@@ -36,6 +36,10 @@ type agent interface {
 	// box (a question, a permission prompt), where a typed prompt would be
 	// read as a choice.
 	awaitsAnswer(pane string) bool
+	// typedLines is how many lines of text sit in the prompt box of a pane
+	// captured with its styling (CapturePaneStyled), typed there and not sent:
+	// 0 for an empty box, whatever placeholder it shows, or none read.
+	typedLines(styledPane string) int
 	// sessionLog is the session's conversation in Claude's JSONL record shape
 	// (what conversation.Watcher reads), or "" until there is one.
 	sessionLog(workspaceID string) string

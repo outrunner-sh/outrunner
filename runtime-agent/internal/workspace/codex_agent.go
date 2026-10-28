@@ -54,6 +54,11 @@ func (a codexAgent) env(string) []string {
 func (codexAgent) isComposer(pane string) bool   { return isCodexComposer(pane) }
 func (codexAgent) awaitsAnswer(pane string) bool { return codexAwaitsAnswer(pane) }
 
+// typedLines reads nothing: how Codex hands a stopped turn's queued prompts
+// back, and how its box draws them, isn't checked yet, and a misread box
+// would have keys pressed into it.
+func (codexAgent) typedLines(string) int { return 0 }
+
 // isBusy reads Codex's status line, which offers "esc to interrupt" while a
 // turn runs. Codex hides that line while it streams a reply into the screen
 // (busy-streaming.txt), so a switch then isn't refused: it ends the reply.
