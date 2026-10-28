@@ -1,7 +1,7 @@
 -- Notifications when a session's turn finishes, it needs your input or
 -- errors, and when its pull request opens or merges (lib/notifications).
 -- Each is recorded once, by what it is about (event_key), so a watch and a
--- tick seeing the same thing tell you once; the browser, the Mac app, email
+-- tick seeing the same thing tell you once; the browser, email
 -- and Slack deliver from these rows.
 -- ---------------------------------------------------------------------------
 
@@ -35,7 +35,7 @@ drop policy if exists session_notifications_own_read on session_notifications;
 create policy session_notifications_own_read on session_notifications
   for select using (auth.uid() = user_id);
 
--- How each person wants to hear: in the browser and the Mac app (on unless
+-- How each person wants to hear: in the browser (on unless
 -- turned off), by email (off, each one, or a daily digest), by Slack DM
 -- (off unless turned on, and only with their Slack linked), and which events.
 create table if not exists notification_preferences (

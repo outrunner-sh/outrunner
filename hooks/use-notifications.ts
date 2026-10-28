@@ -34,9 +34,9 @@ function claim(id: string): boolean {
 
 /**
  * The frame's part, mounted once: ask the server for the user's notifications
- * as they come (lib/notifications) and show each one in the browser or the
- * Mac app, unless it's about the session on screen in a window in front, or
- * the user turned them off. Starts from now: what happened while the page was
+ * as they come (lib/notifications) and show each one in the browser, unless
+ * it's about the session on screen in a window in front, or the user turned
+ * them off. Starts from now: what happened while the page was
  * closed is in the sidebar, not a burst of notifications.
  */
 export function useNotificationsFeed({

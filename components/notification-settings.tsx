@@ -22,7 +22,7 @@ const EMAIL_CHOICES: Array<{ value: NotificationPreferences["email"]; label: str
 /**
  * Settings → Account → Notifications: where to hear that a session's turn
  * finished, it needs you or errored, or its pull request opened or merged.
- * In the browser and the Mac app (on by default; the browser asks once), by
+ * In the browser (on by default; it asks once), by
  * email (off by default), by Slack DM (once Slack is linked), and which of
  * those events. Each change saves as it's made.
  */
@@ -82,9 +82,9 @@ export function NotificationSettings() {
 
       <div className="divide-y divide-border/60 rounded-lg border border-border/60 text-[13px]">
         <Row
-          title="Browser and Mac app"
+          title="Browser"
           detail="As it happens, except for the session you're looking at."
-          control={<Switch on={preferences.browser} label="Browser and Mac app notifications" onChange={(on) => void save({ browser: on })} />}
+          control={<Switch on={preferences.browser} label="Browser notifications" onChange={(on) => void save({ browser: on })} />}
         >
           {preferences.browser && permission !== null && permission !== "granted" && (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
@@ -97,7 +97,7 @@ export function NotificationSettings() {
                 </>
               )}
               {permission === "denied" && <span>This browser blocks them for Outrunner: allow them in its site settings.</span>}
-              {permission === "unsupported" && <span>This browser can&apos;t show them; update the Mac app for its own.</span>}
+              {permission === "unsupported" && <span>This browser can&apos;t show them.</span>}
             </div>
           )}
         </Row>

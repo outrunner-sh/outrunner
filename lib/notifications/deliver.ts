@@ -2,7 +2,7 @@
  * Notifications by email and Slack, from the sessions tick: each one on its
  * own (instant email, a Slack DM), past a minute's grace and only if the user
  * hasn't looked at the session since, and once a day a digest for those who
- * chose it. The browser and the Mac app show them as they come
+ * chose it. The browser shows them as they come
  * (hooks/use-notifications.ts); this is for when the user isn't there.
  */
 

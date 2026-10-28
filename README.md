@@ -106,7 +106,7 @@ filter and archive or delete several at once.
 
 When a session's turn finishes, it needs your input or errors, or its pull
 request opens or merges, the server records it once (`lib/notifications`) and
-tells you: in the browser and the Mac app as it happens (not for the session
+tells you: in the browser as it happens (not for the session
 you're looking at), by email (each one, or a daily digest, through
 `lib/email`) and by Slack DM if your Slack is linked. Email and Slack wait a
 minute and skip what you've seen by then. Choose in Settings → Account:

@@ -10,7 +10,7 @@ const RECENT_MS = 10 * 60_000;
 
 /**
  * The user's notifications since `?after=` (an ISO time; the last few minutes
- * at most), oldest first, for the browser and the Mac app to show
+ * at most), oldest first, for the browser to show
  * (hooks/use-notifications.ts), with whether they want them shown there and
  * which kinds.
  */
