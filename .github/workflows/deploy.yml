@@ -22,6 +22,15 @@ on:
   push:
     branches: [main]
 
+# One deploy at a time, in the order merged. Without this, merges minutes
+# apart deploy side by side, and whichever finishes last wins: an older
+# commit's could land over a newer one. A run waiting behind a deploy is
+# replaced by any newer one (GitHub keeps one pending per group), so a burst
+# of merges deploys its latest; one under way is never cut off mid-deploy.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: blacksmith-4vcpu-ubuntu-2404
