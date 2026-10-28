@@ -75,11 +75,12 @@ function appSource(config: GitHubAppConfig, orgId: string, installations: OrgIns
     try {
       return await installationToken(config, installation.id);
     } catch (error) {
-      if (!(error instanceof GitHubAppError)) throw error;
+      // GitHub refusing, or not reached at all (a timeout, the network):
+      // either way this installation's, for the others to be tried.
       console.error(`GitHub App: no token for installation ${installation.id}`, error);
       throw new GitHubSyncError(
         `Outrunner's GitHub App couldn't reach ${installation.accountLogin} on GitHub. Try again, or check Settings → Org → GitHub.`,
-        error.status,
+        error instanceof GitHubAppError ? error.status : undefined,
       );
     }
   };
