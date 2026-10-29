@@ -193,16 +193,23 @@ function cleanCanvasPath(path: string): string | null {
  * a script that tells the reply its height as it changes, so the frame fits
  * it, and again whenever the reply asks (it may load before the reply is
  * listening). The reply takes the message only from that frame, and only a
- * number. The root's laid-out height, not its scrollHeight: that is never
- * less than the frame's own, so a frame could grow but never fit a shorter
- * page.
+ * number.
+ *
+ * The height is where the page's content ends (a range over the body's
+ * contents, plus the body's bottom margin and padding), not the root's: a
+ * root or body sized to the viewport (`min-height: 100vh`, common) grows
+ * with the frame, so measuring it would grow the frame on every report.
+ * Content itself sized in `vh` can still do that, up to visualHeight's bound.
  */
 export const VISUAL_HEIGHT_MESSAGE = "outrunnerVisualHeight";
 export const VISUAL_EMBED_SCRIPT =
-  "<script>(()=>{const root=document.documentElement;const post=()=>parent.postMessage({" +
+  "<script>(()=>{const measure=()=>{const b=document.body;if(!b)return 0;const r=document.createRange();r.selectNodeContents(b);" +
+  "const s=getComputedStyle(b);return Math.ceil(r.getBoundingClientRect().bottom+scrollY+parseFloat(s.marginBottom)+parseFloat(s.paddingBottom))};" +
+  "let last=-1;const post=(force)=>{const h=measure();if(force!==true&&Math.abs(h-last)<2)return;last=h;parent.postMessage({" +
   VISUAL_HEIGHT_MESSAGE +
-  ':Math.ceil(root.getBoundingClientRect().height)},"*");new ResizeObserver(post).observe(root);' +
-  'addEventListener("message",(e)=>{if(e.source===parent)post()});addEventListener("load",post);post()})()</script>';
+  ":h},\"*\")};const ro=new ResizeObserver(()=>post());ro.observe(document.documentElement);" +
+  "new MutationObserver(()=>post()).observe(document.documentElement,{childList:true,subtree:true,attributes:true,characterData:true});" +
+  "addEventListener(\"message\",(e)=>{if(e.source===parent)post(true)});addEventListener(\"load\",()=>post(true));post(true)})()</script>";
 
 /** The height a visual's frame takes for what its page said: within bounds,
  *  so a page can't push the conversation away. */
