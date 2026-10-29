@@ -12,7 +12,7 @@
  */
 
 import { type Hunk, type PullFile, splitHunks } from "@/lib/review/hunks";
-import { KIND_ORDER } from "@/lib/review/line-kinds";
+import { byKindThenPath } from "@/lib/review/line-kinds";
 import { agentModel } from "@/lib/slack/agent-model";
 
 const COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -32,12 +32,15 @@ export type Tour = {
   steps: TourStep[];
   /** Files not in the tour: generated ones, and ones without a diff. */
   skipped: string[];
+  /** False when GitHub listed only some of the PR's files, so the tour
+   *  covers only those. */
+  complete: boolean;
 };
 
 /** The hunks a tour walks through, in the files' plain order (code, then
  *  tests, by path), and the files it leaves out. */
 export function tourHunks(files: readonly PullFile[]): { hunks: Hunk[]; skipped: string[] } {
-  const ordered = [...files].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.path.localeCompare(b.path));
+  const ordered = [...files].sort(byKindThenPath);
   const hunks: Hunk[] = [];
   const skipped: string[] = [];
   for (const file of ordered) {
@@ -54,6 +57,9 @@ export function tourHunks(files: readonly PullFile[]): { hunks: Hunk[]; skipped:
 const HUNK_CHARS = 4_000;
 const DIFF_BUDGET = 90_000;
 const DESCRIPTION_MAX = 4_000;
+/** Past this many hunks, each note is asked to be one sentence, so the
+ *  answer fits its tokens (tourTokens). */
+const LONG_TOUR = 60;
 
 function hunkText(hunk: Hunk): string {
   const body = hunk.lines.map((l) => `${l.type === "add" ? "+" : l.type === "del" ? "-" : " "}${l.text}`).join("\n");
@@ -61,7 +67,7 @@ function hunkText(hunk: Hunk): string {
 }
 
 /** What the model is asked, with the PR and its hunks. */
-export function tourPrompt(pr: { title: string; body: string }, hunks: readonly Hunk[]): string {
+export function tourPrompt(pr: { title: string; body: string }, hunks: readonly Hunk[], complete = true): string {
   let budget = DIFF_BUDGET;
   const parts = hunks.map((hunk) => {
     const text = hunkText(hunk);
@@ -74,11 +80,11 @@ export function tourPrompt(pr: { title: string; body: string }, hunks: readonly 
 Its description:
 ${pr.body.trim().slice(0, DESCRIPTION_MAX) || "(none)"}
 
-Its diff, one hunk per section, each headed by its id (\`path#index\`):
+Its diff, one hunk per section, each headed by its id (\`path#index\`)${complete ? "" : " (only some of its files: GitHub listed no more, so don't present the summary as covering all of it)"}:
 
 ${parts.join("\n\n")}
 
-Order every hunk above for reading: start where the change's purpose is clearest (the core logic, a new type or API), then what builds on it, then call sites and wiring, then tests. Keep each file's hunks together. For each hunk, write a title of a few words and an explanation of one to three plain sentences: what it changes and why it matters to the rest, naming functions and values. Don't restate the diff line by line. Point out anything a reviewer should look at closely.
+Order every hunk above for reading: start where the change's purpose is clearest (the core logic, a new type or API), then what builds on it, then call sites and wiring, then tests. Keep each file's hunks together. For each hunk, write a title of a few words and an explanation of one to three plain sentences: what it changes and why it matters to the rest, naming functions and values. Don't restate the diff line by line. Point out anything a reviewer should look at closely.${hunks.length > LONG_TOUR ? " There are many hunks: keep each explanation to one sentence." : ""}
 
 Answer with JSON only, no prose around it:
 {"summary": "<two or three sentences: what the PR does and how it goes about it>", "steps": [{"hunk": "<id>", "title": "<few words>", "explanation": "<1-3 sentences>"}]}`;
@@ -97,6 +103,31 @@ export function readJsonAnswer(text: string): unknown {
     }
   }
   return null;
+}
+
+/**
+ * What can be saved of an answer cut off before its end (it ran out of
+ * tokens): its summary, and every step object that was finished. Null when
+ * not even one step was.
+ */
+export function salvageAnswer(text: string): { summary: string; steps: unknown[] } | null {
+  const steps: unknown[] = [];
+  for (const match of text.matchAll(/\{[^{}]*"hunk"\s*:[^{}]*\}/g)) {
+    try {
+      steps.push(JSON.parse(match[0]));
+    } catch {
+      // Cut off inside this one.
+    }
+  }
+  if (steps.length === 0) return null;
+  const summary = /"summary"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(text)?.[1];
+  let read = "";
+  try {
+    read = summary ? (JSON.parse(summary) as string) : "";
+  } catch {
+    read = "";
+  }
+  return { summary: read, steps };
 }
 
 const clip = (value: unknown, max: number) => (typeof value === "string" ? value.trim().slice(0, max) : "");
@@ -134,7 +165,7 @@ export function normalizeTour(answer: unknown, hunks: readonly Hunk[], skipped: 
   const steps: TourStep[] = fileOrder.flatMap((path) =>
     hunkOrder.get(path)!.map((id) => ({ hunkId: id, path, ...notes.get(id)! })),
   );
-  return { summary: clip(given.summary, 1_500), steps, skipped };
+  return { summary: clip(given.summary, 1_500), steps, skipped, complete: true };
 }
 
 /**
@@ -142,21 +173,46 @@ export function normalizeTour(answer: unknown, hunks: readonly Hunk[], skipped: 
  * "Ask about this PR" uses). A PR with nothing to walk through gets an empty
  * tour without asking; a model that can't be reached throws.
  */
-export async function writeTour(key: string, pr: { title: string; body: string }, files: readonly PullFile[]): Promise<Tour> {
+export async function writeTour(
+  key: string,
+  pr: { title: string; body: string },
+  files: readonly PullFile[],
+  complete = true,
+): Promise<Tour> {
   const { hunks, skipped } = tourHunks(files);
-  if (hunks.length === 0) return { summary: "", steps: [], skipped };
+  if (hunks.length === 0) return { summary: "", steps: [], skipped, complete };
   const response = await fetch(COMPLETIONS_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Title": "Outrunner Review" },
     body: JSON.stringify({
       model: agentModel(),
-      messages: [{ role: "user", content: tourPrompt(pr, hunks) }],
-      max_tokens: 6_000,
+      messages: [{ role: "user", content: tourPrompt(pr, hunks, complete) }],
+      max_tokens: tourTokens(hunks.length),
       temperature: 0.2,
     }),
     signal: AbortSignal.timeout(120_000),
   });
-  const body = (await response.json().catch(() => null)) as { choices?: { message?: { content?: string | null } }[]; error?: { message?: string } } | null;
+  const body = (await response.json().catch(() => null)) as {
+    choices?: { message?: { content?: string | null }; finish_reason?: string }[];
+    error?: { message?: string };
+  } | null;
   if (!response.ok) throw new Error(`The model call failed (${response.status}): ${body?.error?.message ?? "no detail"}`);
-  return normalizeTour(readJsonAnswer(body?.choices?.[0]?.message?.content ?? ""), hunks, skipped);
+  const choice = body?.choices?.[0];
+  const text = choice?.message?.content ?? "";
+  let answer = readJsonAnswer(text);
+  if (answer === null) {
+    // Most likely cut off: the steps it finished still have their notes.
+    answer = salvageAnswer(text);
+    console.warn(
+      `Review: the tour's answer wasn't whole JSON (finish_reason ${choice?.finish_reason ?? "unknown"}, ${text.length} characters, ${hunks.length} hunks); ${answer ? "kept the steps it finished" : "walking the plain order"}`,
+    );
+  }
+  return { ...normalizeTour(answer, hunks, skipped), complete };
+}
+
+/** Tokens the answer may take: about 120 a step (its id, title and a few
+ *  sentences) and some for the summary, up to a ceiling a long PR stays
+ *  under by shortening its notes. */
+export function tourTokens(hunks: number): number {
+  return Math.min(16_000, 1_500 + 150 * hunks);
 }

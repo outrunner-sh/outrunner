@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
 import { toPullFiles } from "@/lib/review/hunks";
-import { normalizeTour, readJsonAnswer, tourHunks, tourPrompt, writeTour } from "@/lib/review/tour";
+import { normalizeTour, readJsonAnswer, salvageAnswer, tourHunks, tourPrompt, tourTokens, writeTour } from "@/lib/review/tour";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -118,5 +118,41 @@ test("writeTour asks the model once and normalizes its answer", async () => {
   // Nothing to walk through: no call at all.
   const none = await writeTour("key", { title: "t", body: "" }, toPullFiles([{ filename: "yarn.lock", patch: ONE_HUNK }]));
   assert.equal(asked, 1);
-  assert.deepEqual(none, { summary: "", steps: [], skipped: ["yarn.lock"] });
+  assert.deepEqual(none, { summary: "", steps: [], skipped: ["yarn.lock"], complete: true });
+});
+
+test("an answer cut off mid-step keeps the steps it finished", async () => {
+  const cut = '{"summary": "Adds \\"a\\".", "steps": [{"hunk": "lib/types.ts#0", "title": "T", "explanation": "E"}, {"hunk": "lib/api.ts#0", "title": "Hand';
+  const saved = salvageAnswer(cut);
+  assert.deepEqual(saved, { summary: 'Adds "a".', steps: [{ hunk: "lib/types.ts#0", title: "T", explanation: "E" }] });
+  assert.equal(salvageAnswer("no steps at all"), null);
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: cut }, finish_reason: "length" }] }))) as typeof fetch;
+  const warn = console.warn;
+  const warned: string[] = [];
+  console.warn = (message: string) => warned.push(message);
+  try {
+    const tour = await writeTour("key", { title: "t", body: "" }, files);
+    assert.equal(tour.summary, 'Adds "a".');
+    assert.deepEqual([tour.steps[0].hunkId, tour.steps[0].explanation], ["lib/types.ts#0", "E"]);
+    assert.equal(tour.steps.length, 4);
+  } finally {
+    console.warn = warn;
+  }
+  assert.match(warned[0], /finish_reason length/);
+});
+
+test("the answer's tokens grow with the hunks, to a ceiling; a long tour asks for short notes", () => {
+  assert.equal(tourTokens(10), 3_000);
+  assert.equal(tourTokens(500), 16_000);
+  const many = toPullFiles(Array.from({ length: 61 }, (_, i) => ({ filename: `lib/m${i}.ts`, patch: ONE_HUNK })));
+  assert.match(tourPrompt({ title: "t", body: "" }, tourHunks(many).hunks), /keep each explanation to one sentence/);
+  assert.doesNotMatch(tourPrompt({ title: "t", body: "" }, tourHunks(files).hunks), /one sentence\./);
+});
+
+test("a tour of only some of the PR's files says so, to the model and on the card", async () => {
+  const { hunks } = tourHunks(files);
+  assert.match(tourPrompt({ title: "t", body: "" }, hunks, false), /only some of its files/);
+  globalThis.fetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] }))) as typeof fetch;
+  assert.equal((await writeTour("key", { title: "t", body: "" }, files, false)).complete, false);
 });

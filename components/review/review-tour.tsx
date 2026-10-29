@@ -116,7 +116,7 @@ export function TourCard({ tour }: { tour: TourControls }) {
     );
   }
   if (state.status !== "on") return null;
-  const { steps, summary, skipped } = state.tour;
+  const { steps, summary, skipped, complete } = state.tour;
   const step = state.step >= 0 ? steps[state.step] : null;
   const last = state.step >= steps.length - 1;
   // Pinned at the very top of the PR page's column, over its top padding
@@ -147,6 +147,7 @@ export function TourCard({ tour }: { tour: TourControls }) {
             <p className="mt-1 text-[12px] text-muted-foreground">
               {steps.length} {steps.length === 1 ? "step" : "steps"} through {new Set(steps.map((s) => s.path)).size} files.
               {skipped.length > 0 && ` Left out: ${skipped.length} generated or binary ${skipped.length === 1 ? "file" : "files"}.`}
+              {!complete && " It covers only the files GitHub listed, not the whole PR."}
             </p>
           </>
         )}

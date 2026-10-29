@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     throw error;
   }
   try {
-    const tour = await writeTour(key, { title: pr.title, body: pr.body }, files);
+    const tour = await writeTour(key, { title: pr.title, body: pr.body }, files, pr.filesComplete);
     return NextResponse.json({ tour, headSha: pr.headSha });
   } catch (error) {
     console.error("Review: the tour failed", error);
