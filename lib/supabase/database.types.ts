@@ -612,6 +612,36 @@ type OrganizationSettingsRow = {
   updated_at: string;
 };
 
+// An org's Doppler and Infisical connections, and the projects linked to
+// them; see supabase/migrations/20261103140000_secret_sync.sql.
+type OrgSecretIntegrationRow = {
+  id: string;
+  org_id: string;
+  provider: "doppler" | "infisical";
+  credentials_ciphertext: string;
+  settings: Json;
+  label: string;
+  connected_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type EnvironmentSecretLinkRow = {
+  environment_id: string;
+  integration_id: string;
+  org_id: string;
+  provider: "doppler" | "infisical";
+  settings: Json;
+  linked_by: string | null;
+  created_at: string;
+  updated_at: string;
+  last_synced_at: string | null;
+  last_error: string | null;
+  last_warning: string | null;
+  last_names: string[];
+  last_skipped: string[];
+};
+
 type OrgProviderKeyRow = {
   org_id: string;
   provider: string;
@@ -1594,6 +1624,18 @@ export type Database = {
         Row: OrganizationSettingsRow;
         Insert: Insert<OrganizationSettingsRow, "org_id">;
         Update: Partial<OrganizationSettingsRow>;
+        Relationships: [];
+      };
+      org_secret_integrations: {
+        Row: OrgSecretIntegrationRow;
+        Insert: Insert<OrgSecretIntegrationRow, "org_id" | "provider" | "credentials_ciphertext" | "label">;
+        Update: Partial<OrgSecretIntegrationRow>;
+        Relationships: [];
+      };
+      environment_secret_links: {
+        Row: EnvironmentSecretLinkRow;
+        Insert: Insert<EnvironmentSecretLinkRow, "environment_id" | "integration_id" | "org_id" | "provider">;
+        Update: Partial<EnvironmentSecretLinkRow>;
         Relationships: [];
       };
       org_provider_keys: {
