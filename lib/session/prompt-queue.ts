@@ -1,11 +1,15 @@
 /**
  * Prompts sent while the session's agent is at work: held here, above the
  * composer, rather than handed to it mid-turn, and sent one at a time, in
- * order, as each turn ends. Kept for the tab (sessionStorage), so a reload
+ * order, as each turn ends. Each can be edited or moved while it waits, or
+ * sent early: steered into the running turn, or sent now, the turn stopped
+ * first. (With "Steer with follow-up messages" on, lib/session/
+ * chat-preferences.ts, a prompt sent mid-turn steers instead of queuing.) Kept for the tab (sessionStorage), so a reload
  * doesn't lose them; a tab closed before they go does.
  */
 
 import type { SessionMode } from "@/lib/runtime/agent-protocol";
+import { parseCommentQuotes, withComments } from "@/lib/session/diff-comments";
 
 /** `mode` is the one it was queued in (lib/session/session-mode.ts), and goes
  *  in; absent from a queue kept before modes, which goes in the session's. */
@@ -74,4 +78,29 @@ export function queueDrains(state: {
     !state.held &&
     !state.awaitingLast
   );
+}
+
+/** The queue with one prompt's words changed to `words`, the comments on the
+ *  diff it carries kept as they were. Unchanged where that would leave it
+ *  with nothing to send. */
+export function editQueued(queue: QueuedPrompt[], id: string, words: string): QueuedPrompt[] {
+  return queue.map((prompt) => {
+    if (prompt.id !== id) return prompt;
+    const { quotes } = parseCommentQuotes(prompt.text);
+    const text = withComments(words.trim(), quotes);
+    return text.trim() || prompt.attachmentIds.length > 0 ? { ...prompt, text } : prompt;
+  });
+}
+
+/** The queue with one prompt moved `by` places (-1 sooner, 1 later), kept
+ *  within it. */
+export function moveQueued(queue: QueuedPrompt[], id: string, by: number): QueuedPrompt[] {
+  const from = queue.findIndex((prompt) => prompt.id === id);
+  if (from < 0) return queue;
+  const to = Math.max(0, Math.min(queue.length - 1, from + by));
+  if (to === from) return queue;
+  const next = [...queue];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
 }

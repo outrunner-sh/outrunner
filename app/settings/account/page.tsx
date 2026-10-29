@@ -4,6 +4,7 @@ import { Suspense } from "react";
 
 import { signOut } from "@/app/auth/actions";
 import { GitHubIdentitySettings, type IdentityOrgView } from "@/components/github-identity-settings";
+import { ChatSettings } from "@/components/chat-settings";
 import { NotificationSettings } from "@/components/notification-settings";
 import { SettingsLoading } from "@/components/settings-loading";
 import { SignInButton } from "@/components/signin-button";
@@ -92,6 +93,8 @@ async function AccountSection({ searchParams }: { searchParams: Promise<{ link_e
       </div>
 
       <NotificationSettings />
+
+      <ChatSettings />
 
       {githubLinked ? (
         <>

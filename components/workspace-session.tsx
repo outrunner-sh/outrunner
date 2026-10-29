@@ -73,7 +73,8 @@ import {
 import { sessionTitle } from "@/lib/nav/session-title";
 import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { chatRoute, chatStateKey, MAIN_CHAT } from "@/lib/session/chats";
-import { type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
+import { followUpRoute } from "@/lib/session/chat-preferences";
+import { editQueued, moveQueued, type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
 import { patchRowAhead } from "@/lib/session/rows-ahead";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
 import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
@@ -83,6 +84,7 @@ import { useConversationStream } from "@/hooks/use-conversation-stream";
 import { useDiffComments } from "@/hooks/use-diff-comments";
 import { withComments } from "@/lib/session/diff-comments";
 import { useSessionAttachment } from "@/hooks/use-session-attachment";
+import { useChatPreferences } from "@/hooks/use-chat-preferences";
 import { attachmentFilenames, promptWithAttachments } from "@/lib/runtime/attachments";
 import { previewOf } from "@/lib/session/attachment-previews";
 
@@ -171,6 +173,8 @@ export function WorkspaceSession({
   // What this page keeps of the chat (its conversation, queue, picks): the
   // session's own keys for its main chat, as before there were others.
   const stateKey = chatStateKey(workspaceId, chatId);
+  // Whether a follow-up sent mid-turn steers it or queues (Settings → Account).
+  const chatPreferences = useChatPreferences();
   const attachment = useSessionAttachment(workspaceId, local, agent, chatId);
   const conversation = useConversationStream(attachment, stateKey);
 
@@ -527,6 +531,25 @@ export function WorkspaceSession({
       return landed;
     });
   };
+  /** Send a queued prompt in place of the rest of the turn: the turn is
+   *  stopped first, and the rest of the queue goes after this one. A stop
+   *  that fails leaves it queued, said under the composer. */
+  const sendQueuedNow = async (prompt: QueuedPrompt) => {
+    setQueuePaused(false);
+    if (working) {
+      setStopError(null);
+      try {
+        await (local
+          ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
+          : stopCloudTurn(workspaceId, chatId));
+      } catch (error) {
+        setStopError(local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't stop the turn.");
+        return;
+      }
+      setStoppedAt(userPromptCount(eventsRef.current));
+    }
+    void sendQueued(prompt);
+  };
   const queueRef = useRef(queue);
   useEffect(() => {
     queueRef.current = queue;
@@ -584,7 +607,10 @@ export function WorkspaceSession({
       setQueueHeld(false);
     }
     if (waitingOnPlan && plan) return answerPlan(plan.id, text, attachmentIds, { mode: sentMode, dismiss: plan.dismiss });
-    return working || queue.length > 0
+    // Mid-turn, a follow-up steers the turn (straight in, taken at its next
+    // step) where the user has it so and the agent can; else it queues.
+    const route = followUpRoute({ working, queued: queue.length, steerFollowUps: chatPreferences.steerFollowUps, agent });
+    return route === "queue"
       ? enqueue(text, attachmentIds, sentMode)
       : send(text, attachmentIds, undefined, undefined, undefined, sentMode ? { mode: sentMode } : {});
   };
@@ -1172,12 +1198,16 @@ export function WorkspaceSession({
       {!waitingOnUser && (
         <QueuedPrompts
           queue={queue}
+          working={working}
           canSendNow={attached}
           paused={queuePaused && queue.length > 0}
-          onSendNow={(prompt) => {
+          onSteer={(prompt) => {
             setQueuePaused(false);
             void sendQueued(prompt);
           }}
+          onSendNow={(prompt) => void sendQueuedNow(prompt)}
+          onEdit={(prompt, words) => setQueue((q) => editQueued(q, prompt.id, words))}
+          onMove={(prompt, by) => setQueue((q) => moveQueued(q, prompt.id, by))}
           onRemove={removeQueued}
         />
       )}
@@ -1197,7 +1227,9 @@ export function WorkspaceSession({
             waitingOnPlan
               ? `Tell ${AGENTS[agent].label} what to change in the plan…`
               : working
-                ? "Queue a message for when this turn ends…"
+                ? followUpRoute({ working, queued: queue.length, steerFollowUps: chatPreferences.steerFollowUps, agent }) === "steer"
+                  ? `Steer ${AGENTS[agent].label}: it takes your message at its next step…`
+                  : "Queue a message for when this turn ends…"
                 : mode === "plan"
                   ? `Ask ${AGENTS[agent].label} to plan something…`
                   : undefined
