@@ -570,3 +570,100 @@ func TestAChatsMediaUploadNamesItsOwningSession(t *testing.T) {
 		t.Fatalf("mint/complete got runtime chat keys: %v", seen)
 	}
 }
+
+func TestDeletingAChatRetiresStagedPromptsAfterActiveSendsFinish(t *testing.T) {
+	s, id, key := chatSession(t, ChatInput{})
+	state := s.lockSend(key)
+	state.staged = &stagedPrompt{content: "private prompt and handoff"}
+	acquired, finish, done := make(chan *sendState, 1), make(chan struct{}), make(chan struct{})
+	go func() { defer close(done); next := s.lockSend(key); acquired <- next; <-finish; next.Unlock() }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.sendMu.Lock()
+		users := state.users
+		s.sendMu.Unlock()
+		if users == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			state.Unlock()
+			close(finish)
+			<-done
+			t.Fatal("send waiter did not register")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := s.DeleteChat(context.Background(), id, "c1"); err != nil {
+		state.Unlock()
+		close(finish)
+		<-done
+		t.Fatal(err)
+	}
+	s.sendMu.Lock()
+	retained := s.sendLocks[key] == state && state.retired && state.users == 2
+	s.sendMu.Unlock()
+	state.Unlock()
+	next := <-acquired
+	s.sendMu.Lock()
+	same := s.sendLocks[key] == state
+	s.sendMu.Unlock()
+	close(finish)
+	<-done
+	if !retained || next != state || !same {
+		t.Fatal("retirement replaced a mutex still held or queued")
+	}
+	s.sendMu.Lock()
+	_, kept := s.sendLocks[key]
+	s.sendMu.Unlock()
+	if kept || state.staged != nil {
+		t.Fatal("deleted chat retained its mutex or staged prompt")
+	}
+	s.lifeMu.Lock()
+	remaining := len(s.lifeLocks)
+	s.lifeMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("inactive lifecycle locks remain: %d", remaining)
+	}
+}
+
+func TestLifecycleLockWaitersKeepTheSameMutexUntilAllFinish(t *testing.T) {
+	s, _, key := chatSession(t, ChatInput{})
+	release := s.lockLifecycle(key)
+	s.lifeMu.Lock()
+	original := s.lifeLocks[key]
+	s.lifeMu.Unlock()
+	acquired, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() { defer close(done); unlock := s.lockLifecycle(key); close(acquired); <-finish; unlock() }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.lifeMu.Lock()
+		users := original.users
+		s.lifeMu.Unlock()
+		if users == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			release()
+			close(finish)
+			<-done
+			t.Fatal("waiter did not register")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	release()
+	<-acquired
+	s.lifeMu.Lock()
+	same := s.lifeLocks[key] == original
+	s.lifeMu.Unlock()
+	close(finish)
+	<-done
+	if !same {
+		t.Fatal("queued lifecycle user lost its mutex")
+	}
+	s.lifeMu.Lock()
+	_, kept := s.lifeLocks[key]
+	s.lifeMu.Unlock()
+	if kept {
+		t.Fatal("finished lifecycle key remained in map")
+	}
+}

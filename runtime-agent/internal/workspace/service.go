@@ -92,7 +92,7 @@ type Service struct {
 	// each other to `git worktree add` or `tmux new-session` (lifeMu guards the
 	// map). Taken before a send lock, never after.
 	lifeMu    sync.Mutex
-	lifeLocks map[string]*sync.Mutex
+	lifeLocks map[string]*lifecycleState
 
 	// rolloutClaimMu makes finding a Codex session's rollout and claiming it
 	// (codexRollout) one step across sessions.
@@ -318,7 +318,7 @@ func NewServiceWithSessions(root string, manager Sessions) *Service {
 		secrets:     secrets,
 		facts:       map[string]workspaceFacts{},
 		sendLocks:   map[string]*sendState{},
-		lifeLocks:   map[string]*sync.Mutex{},
+		lifeLocks:   map[string]*lifecycleState{},
 		summaries:   map[string]*Summary{},
 		recorders:   map[string]*cast.Recorder{},
 		lookPath:    exec.LookPath,
@@ -853,8 +853,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 	}
 	// Held from the busy check through the relaunch, so no prompt can be sent
 	// after Claude looked idle and then be cut off by the kill.
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err // the request gave up while a prompt was sent: nothing recorded
@@ -933,8 +932,7 @@ func (s *Service) SetModel(ctx context.Context, workspaceID string, choice Model
 func (s *Service) relaunch(ctx context.Context, workspaceID, anthropicToken string, resume bool) (string, error) {
 	// Hold the send lock across the kill+recreate so an in-flight SendMessage
 	// retry loop can't press Enter into the freshly recreated session.
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	return s.relaunchHeld(ctx, workspaceID, anthropicToken, resume, lock)
 }
@@ -1218,8 +1216,7 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 		if p.Mode == ModePlan {
 			return ErrModeUnsupported
 		}
-		lock := s.sendLock(workspaceID)
-		lock.Lock()
+		lock := s.lockSend(workspaceID)
 		defer lock.Unlock()
 		return s.jcode.SendMessage(workspaceID, p.Content)
 	}
@@ -1238,8 +1235,7 @@ func (s *Service) SendPrompt(workspaceID string, p Prompt) error {
 		unlockLifecycle = s.lockLifecycle(workspaceID)
 	}
 	defer func() { unlockLifecycle() }()
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	if p.RequirePlan {
 		f, ok := s.getFacts(workspaceID)
@@ -1401,8 +1397,7 @@ func (s *Service) Interrupt(ctx context.Context, workspaceID string) error {
 	if _, ok := s.getFacts(workspaceID); !ok {
 		return ErrUnknownWorkspace
 	}
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	defer lock.Unlock()
 	return s.interruptHeld(ctx, workspaceID)
 }
@@ -1478,8 +1473,34 @@ const (
 // sendState is one workspace's prompt delivery: the lock that serializes it,
 // and the prompt the last send typed but never saw Claude record.
 type sendState struct {
+	mu      sync.Mutex
+	staged  *stagedPrompt
+	owner   *Service
+	key     string
+	users   int // holders and queued acquisitions, guarded by sendMu
+	retired bool
+}
+
+func (st *sendState) Unlock() {
+	st.mu.Unlock()
+	if st.owner == nil {
+		return
+	}
+	s := st.owner
+	s.sendMu.Lock()
+	st.users--
+	if st.retired && st.users == 0 {
+		st.staged = nil
+		if s.sendLocks[st.key] == st {
+			delete(s.sendLocks, st.key)
+		}
+	}
+	s.sendMu.Unlock()
+}
+
+type lifecycleState struct {
 	sync.Mutex
-	staged *stagedPrompt
+	users int // holders and queued acquisitions, guarded by lifeMu
 }
 
 // stagedPrompt is text SendMessage pasted and submitted without seeing Claude
@@ -1505,8 +1526,7 @@ func (st *sendState) takeStaged(content string, now time.Time) (baseline int, re
 // forgetStagedPrompt drops a staged prompt once its session is replaced: the
 // new Claude's composer is empty, so a retry has to paste again.
 func (s *Service) forgetStagedPrompt(workspaceID string) {
-	lock := s.sendLock(workspaceID)
-	lock.Lock()
+	lock := s.lockSend(workspaceID)
 	lock.staged = nil
 	lock.Unlock()
 }
@@ -1515,27 +1535,58 @@ func (s *Service) forgetStagedPrompt(workspaceID string) {
 // for `defer s.lockLifecycle(id)()`.
 func (s *Service) lockLifecycle(workspaceID string) (unlock func()) {
 	s.lifeMu.Lock()
-	lock, ok := s.lifeLocks[workspaceID]
-	if !ok {
-		lock = &sync.Mutex{}
+	lock := s.lifeLocks[workspaceID]
+	if lock == nil {
+		lock = &lifecycleState{}
 		s.lifeLocks[workspaceID] = lock
 	}
+	lock.users++
 	s.lifeMu.Unlock()
 	lock.Lock()
-	return lock.Unlock
+	return func() {
+		lock.Unlock()
+		s.lifeMu.Lock()
+		lock.users--
+		if lock.users == 0 {
+			delete(s.lifeLocks, workspaceID)
+		}
+		s.lifeMu.Unlock()
+	}
 }
 
-// sendLock returns the per-workspace send state, whose mutex serializes
-// SendMessage, creating it on first use.
-func (s *Service) sendLock(workspaceID string) *sendState {
+// lockSend registers holders and waiters before releasing the map lock, so
+// retiring a chat cannot give concurrent users different send mutexes.
+// The returned state is locked; callers release it with Unlock.
+func (s *Service) lockSend(workspaceID string) *sendState {
 	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
-	lock, ok := s.sendLocks[workspaceID]
-	if !ok {
-		lock = &sendState{}
+	lock := s.sendStateHeld(workspaceID)
+	lock.users++
+	s.sendMu.Unlock()
+	lock.mu.Lock()
+	return lock
+}
+
+func (s *Service) sendStateHeld(workspaceID string) *sendState {
+	lock := s.sendLocks[workspaceID]
+	if lock == nil {
+		lock = &sendState{owner: s, key: workspaceID}
 		s.sendLocks[workspaceID] = lock
 	}
 	return lock
+}
+
+// retireSendState drops staged prompt text after all holders and queued
+// acquisitions finish. Lifecycle entries similarly retain only active users.
+func (s *Service) retireSendState(workspaceID string) {
+	s.sendMu.Lock()
+	if lock := s.sendLocks[workspaceID]; lock != nil {
+		lock.retired = true
+		if lock.users == 0 {
+			lock.staged = nil
+			delete(s.sendLocks, workspaceID)
+		}
+	}
+	s.sendMu.Unlock()
 }
 
 // SessionName exposes the tmux session name the PTY handler attaches to.
@@ -1856,6 +1907,7 @@ func (s *Service) forgetWorkspace(workspaceID string) {
 	_ = os.Remove(s.factsPath(workspaceID))
 	s.mu.Unlock()
 	s.factsWriteMu.Unlock()
+	s.retireSendState(workspaceID)
 	s.gatewayFiles().remove(workspaceID)
 	s.authFiles().remove(workspaceID)
 	if !chat {

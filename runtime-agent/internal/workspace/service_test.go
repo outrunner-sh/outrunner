@@ -633,3 +633,19 @@ func TestASwitchCancelledWhileWaitingRecordsNothing(t *testing.T) {
 		t.Errorf("a cancelled switch recorded %q", f.Model)
 	}
 }
+
+// sendLock exposes unacquired state for fixtures; production uses lockSend.
+func (s *Service) sendLock(workspaceID string) *sendState {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	return s.sendStateHeld(workspaceID)
+}
+
+func (st *sendState) Lock() {
+	if st.owner != nil {
+		st.owner.sendMu.Lock()
+		st.users++
+		st.owner.sendMu.Unlock()
+	}
+	st.mu.Lock()
+}
