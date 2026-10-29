@@ -1,12 +1,16 @@
 package preview
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,5 +77,32 @@ func TestCreatePassesTheRefusalOn(t *testing.T) {
 		if !errors.As(err, &refusal) || refusal.Status != tc.status || refusal.Message != tc.want {
 			t.Fatalf("%d: err = %v, want %q", tc.status, err, tc.want)
 		}
+	}
+}
+
+// The workspace id goes into the agent's path escaped: an id with a slash
+// in it names its own session's route, not another one.
+func TestTheCLIEscapesTheWorkspaceIDInThePath(t *testing.T) {
+	var rawPath string
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rawPath = r.URL.RawPath
+		_, _ = io.WriteString(w, `{"preview":{"id":"p1","port":3000,"mode":"login","url":"https://abc.outrunner-preview.com/"}}`)
+	}))
+	defer agent.Close()
+	dir := t.TempDir()
+	addrFile, tokenFile := filepath.Join(dir, "agent.addr"), filepath.Join(dir, "session.token")
+	if err := os.WriteFile(addrFile, []byte(strings.TrimPrefix(agent.URL, "http://")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenFile, []byte("session-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := func(string, string) (string, string) { return addrFile, tokenFile }
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"--root", dir, "--workspace", "a/b", "3000"}, &out, &errOut, paths, nil); code != 0 {
+		t.Fatalf("preview = %d: %s", code, errOut.String())
+	}
+	if rawPath != "/workspaces/a%2Fb/preview" {
+		t.Fatalf("the agent was asked at %q, want /workspaces/a%%2Fb/preview", rawPath)
 	}
 }
