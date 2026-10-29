@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Archive, Check, ChevronDown, GitMerge, GitPullRequest, LayoutList, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useAppData } from "@/components/app-data";
 import { ConfirmSessionDialog } from "@/components/confirm-session-dialog";
 import { StandingMark } from "@/components/sidebar-status";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ import { canDestroy } from "@/lib/session/provisioning";
 import {
   filterSessions,
   NO_FILTER,
+  ownSessionEntries,
   ownerChoices,
   SOURCE_LABEL,
   standingOf,
@@ -37,12 +39,19 @@ import {
   type SessionSource,
 } from "@/lib/session/session-list";
 import { STANDING_LABEL, STANDINGS, type Standing } from "@/lib/session/standing";
+import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
 import { cn } from "@/lib/utils";
 
 /**
  * Every session in the org the user may see: searched, filtered by owner,
  * source and where it stands, newest first. The user's own can be picked
  * several at a time to archive or delete, each after a confirmation.
+ *
+ * The page opens on the list the layout already holds — the user's own cloud
+ * sessions, and this Mac's — so it shows rows rather than a spinner, and only
+ * what the frame can't describe waits on this page's own read of the org's
+ * sessions (lib/session/session-list.ts). Rows warm their session as the
+ * pointer rests, as the sidebar's do: a click lands on one already attaching.
  */
 export function SessionsList() {
   const router = useRouter();
@@ -50,6 +59,11 @@ export function SessionsList() {
   const local = useLocalSessions();
   const live = useStandings();
   const [cloud, setCloud] = useState<SessionListEntry[] | null>(null);
+  const data = useAppData();
+  const seed = useMemo(() => ownSessionEntries(data), [data]);
+  // The server's read of the whole org once it answers; the layout's own data
+  // until then. Null only before either, with nothing to list at all.
+  const known = cloud ?? seed;
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ListFilter>(NO_FILTER);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -75,7 +89,7 @@ export function SessionsList() {
   // The user's own cloud sessions as the frame keeps them live, and this
   // Mac's, which only the browser can read.
   const entries = useMemo<SessionListEntry[]>(() => {
-    const ours = (cloud ?? []).map((e) => (e.mine && live[e.id] ? { ...e, standing: live[e.id] } : e));
+    const ours = (known ?? []).map((e) => (e.mine && live[e.id] ? { ...e, standing: live[e.id] } : e));
     const mac = local.sessions.map(
       (s): SessionListEntry => ({
         id: s.workspaceId,
@@ -95,7 +109,7 @@ export function SessionsList() {
       }),
     );
     return [...ours, ...mac];
-  }, [cloud, live, local.sessions]);
+  }, [known, live, local.sessions]);
   const shown = filterSessions(entries, filter, now);
   const owners = ownerChoices(entries);
 
@@ -103,11 +117,11 @@ export function SessionsList() {
   const deletions = useMemo(() => {
     const byId = new Map<string, SessionDeletion>();
     for (const s of local.sessions) byId.set(s.workspaceId, s.inPlace ? { kind: "local-in-place" } : { kind: "local-worktree" });
-    for (const e of cloud ?? []) {
+    for (const e of known ?? []) {
       if (e.mine && canDestroy({ status: e.status, createdAt: e.createdAt }, now)) byId.set(e.id, { kind: "cloud" });
     }
     return byId;
-  }, [cloud, local.sessions, now]);
+  }, [known, local.sessions, now]);
   const archivable = (e: SessionListEntry) =>
     !e.local && e.provider !== null && archiveOffer({ status: e.status, provider: e.provider })?.can === true;
   const pickable = (e: SessionListEntry) => e.mine && (deletions.has(e.id) || archivable(e));
@@ -228,7 +242,11 @@ export function SessionsList() {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         {error && <p className="py-4 text-xs text-destructive">{error}</p>}
-        {!cloud && !error && (
+        {/* Only with nothing to show: the seed's rows, and this Mac's, stand
+            in until the org's own read lands. Whether the list is empty is
+            still the server's to say — of the user's own sessions only the
+            layout knows, and another member may have sessions in it. */}
+        {!cloud && !error && shown.length === 0 && (
           <div className="flex justify-center py-8">
             <Spinner label="Loading sessions" />
           </div>
@@ -238,7 +256,7 @@ export function SessionsList() {
             {entries.length === 0 ? "No sessions yet." : "No sessions match."}
           </p>
         )}
-        {cloud && shown.length > 0 && (
+        {shown.length > 0 && (
           <table className="w-full table-fixed border-separate border-spacing-0 text-[13px]">
             <thead>
               <tr className="text-left text-[12px] text-muted-foreground">
@@ -257,6 +275,9 @@ export function SessionsList() {
               {shown.map((e) => {
                 const standing = standingOf(e, now);
                 const href = e.local ? `/local/${e.id}` : `/workspaces/${e.id}`;
+                // As the sidebar's rows: a cloud session rests into a warm-up
+                // on the way to opening it. Only one's own can be opened.
+                const warm = e.mine && !e.local;
                 return (
                   <tr key={e.id} className={cn("group", picked.has(e.id) && "bg-accent/40")}>
                     <td className="border-t border-border/40 py-1.5 align-middle">
@@ -266,7 +287,14 @@ export function SessionsList() {
                       <div className="flex min-w-0 items-center gap-2">
                         <StandingMark standing={standing} />
                         {e.mine ? (
-                          <Link href={href} className={cn("min-w-0 truncate hover:underline", standing.unread && "font-medium")} title={e.title}>
+                          <Link
+                            href={href}
+                            onPointerEnter={warm ? () => warmOnRest(e.id) : undefined}
+                            onPointerLeave={warm ? cancelWarmOnRest : undefined}
+                            onFocus={warm ? () => warmSession(e.id) : undefined}
+                            className={cn("min-w-0 truncate hover:underline", standing.unread && "font-medium")}
+                            title={e.title}
+                          >
                             {e.title}
                           </Link>
                         ) : (
