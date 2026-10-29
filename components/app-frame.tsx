@@ -18,6 +18,7 @@ import { nextNeedingYou } from "@/lib/session/standing";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import type { Org } from "@/lib/orgs/active";
 import type { AppData } from "@/lib/session/session-view";
+import { warmSession } from "@/lib/session/warm-session";
 import { captureHref } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
 
@@ -185,7 +186,13 @@ export function AppFrame({
           Object.entries(standings).map(([id, standing]) => ({ id, ...standing })),
           here.current,
         );
-        if (next) router.push(`/workspaces/${next}`);
+        if (next) {
+          // Warmed like a sidebar row the pointer rests on
+          // (lib/session/warm-session.ts): the jump lands on a session already
+          // attaching. No row was hovered — the shortcut went straight there.
+          warmSession(next);
+          router.push(`/workspaces/${next}`);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
