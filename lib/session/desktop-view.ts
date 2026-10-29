@@ -18,8 +18,10 @@ export type DesktopView =
   /** The socket closed, or never opened: `reason` says which. */
   | { status: "disconnected"; attempt: number; reason: string }
   /** Outrunner said no: `message` is its words, `httpStatus` its answer's
-   *  status (0 where it couldn't be reached). */
-  | { status: "error"; attempt: number; message: string; httpStatus: number };
+   *  status (0 where it couldn't be reached or didn't answer in time). With
+   *  `reload`, the page itself must be loaded again (the viewer's code
+   *  didn't load, and the browser keeps that failure for the page's life). */
+  | { status: "error"; attempt: number; message: string; httpStatus: number; reload?: boolean };
 
 export type DesktopEvent =
   /** The tab opens, or Reconnect: ask for a fresh link. */
@@ -27,10 +29,31 @@ export type DesktopEvent =
   | { type: "opened" }
   | { type: "refused"; httpStatus: number; error?: string }
   | { type: "connect" }
+  /** The socket opened, but the desktop never finished connecting. */
+  | { type: "stalled" }
+  /** noVNC's code didn't load. */
+  | { type: "viewerfailed" }
   | { type: "disconnect"; clean: boolean }
   | { type: "securityfailure"; reason?: string };
 
 export const FIRST_VIEW: DesktopView = { status: "starting", attempt: 0 };
+
+/**
+ * How long the route may take to answer: past its own bound on starting the
+ * desktop (30 s), so its error, not this, is what's normally shown. Without
+ * one, a hung request kept the tab on "Starting the desktop…" for good.
+ */
+export const OPEN_TIMEOUT_MS = 45_000;
+
+/** How long a link in hand may take to become a picture of the desktop: the
+ *  VNC handshake takes well under a second. */
+export const CONNECT_TIMEOUT_MS = 20_000;
+
+/** What the tab says when the route didn't answer in time. */
+export const DESKTOP_TIMED_OUT = "The desktop took too long to start. Please try again.";
+
+/** What the tab says when noVNC's code didn't load. */
+export const VIEWER_FAILED = "The desktop viewer couldn't load. Reload the page to try again.";
 
 /** What Outrunner's refusal says when it gave no words of its own. */
 export const DESKTOP_UNREACHABLE = "Couldn't reach Outrunner to start the desktop. Please try again.";
@@ -57,6 +80,12 @@ export function desktopView(view: DesktopView, event: DesktopEvent): DesktopView
       };
     case "connect":
       return view.status === "connecting" ? { status: "connected", attempt } : view;
+    case "stalled":
+      return view.status === "connecting"
+        ? { status: "disconnected", attempt, reason: "The desktop didn't answer. Try reconnecting." }
+        : view;
+    case "viewerfailed":
+      return { status: "error", attempt, message: VIEWER_FAILED, httpStatus: 0, reload: true };
     case "securityfailure":
       return {
         status: "disconnected",
@@ -83,17 +112,24 @@ function disconnectReason(status: DesktopView["status"], clean: boolean): string
 /**
  * Ask Outrunner for the desktop of session `workspaceId` (POST
  * /api/workspaces/[id]/desktop), starting it if it isn't running: the link
- * its VNC client connects to, or the refusal to show.
+ * its VNC client connects to, or the refusal to show. Given up after
+ * `timeoutMs`, as a refusal saying so.
  */
 export async function openDesktop(
   workspaceId: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = OPEN_TIMEOUT_MS,
 ): Promise<{ url: string } | Extract<DesktopEvent, { type: "refused" }>> {
   let res: Response;
   try {
-    res = await fetchImpl(`/api/workspaces/${workspaceId}/desktop`, { method: "POST", cache: "no-store" });
-  } catch {
-    return { type: "refused", httpStatus: 0 };
+    res = await fetchImpl(`/api/workspaces/${workspaceId}/desktop`, {
+      method: "POST",
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    const timedOut = error instanceof DOMException && error.name === "TimeoutError";
+    return { type: "refused", httpStatus: 0, ...(timedOut && { error: DESKTOP_TIMED_OUT }) };
   }
   const body = (await res.json().catch(() => ({}))) as { url?: unknown; error?: unknown };
   if (res.ok && typeof body.url === "string" && body.url) return { url: body.url };

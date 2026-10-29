@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  DESKTOP_TIMED_OUT,
   DESKTOP_UNREACHABLE,
   type DesktopEvent,
   type DesktopView,
   desktopView,
   FIRST_VIEW,
   openDesktop,
+  VIEWER_FAILED,
 } from "@/lib/session/desktop-view";
 
 const run = (...events: DesktopEvent[]): DesktopView => events.reduce(desktopView, FIRST_VIEW);
@@ -107,4 +109,36 @@ test("openDesktop hands back the route's refusal, or that it couldn't reach it",
     throw new TypeError("Failed to fetch");
   }) as unknown as typeof fetch;
   assert.deepEqual(await openDesktop("ws-1", offline), { type: "refused", httpStatus: 0 });
+});
+
+test("a request that hangs is given up, as a refusal that says so", async () => {
+  // Answers only when its request is aborted, as a hung route would.
+  const hung = ((_: string, init?: RequestInit) =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    })) as unknown as typeof fetch;
+  assert.deepEqual(await openDesktop("ws-1", hung, 20), { type: "refused", httpStatus: 0, error: DESKTOP_TIMED_OUT });
+  assert.deepEqual(run({ type: "refused", httpStatus: 0, error: DESKTOP_TIMED_OUT }), {
+    status: "error",
+    attempt: 0,
+    message: DESKTOP_TIMED_OUT,
+    httpStatus: 0,
+  });
+});
+
+test("a socket that never finishes connecting offers Reconnect, whatever closes after", () => {
+  const stalled = run({ type: "opened" }, { type: "stalled" }, { type: "disconnect", clean: false });
+  assert.deepEqual(stalled, { status: "disconnected", attempt: 0, reason: "The desktop didn't answer. Try reconnecting." });
+  // Too late once connected: the view stays live.
+  assert.equal(run({ type: "opened" }, { type: "connect" }, { type: "stalled" }).status, "connected");
+});
+
+test("a viewer that didn't load asks for the page to be reloaded, not tried again", () => {
+  assert.deepEqual(run({ type: "opened" }, { type: "viewerfailed" }), {
+    status: "error",
+    attempt: 0,
+    message: VIEWER_FAILED,
+    httpStatus: 0,
+    reload: true,
+  });
 });

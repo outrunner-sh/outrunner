@@ -5,8 +5,21 @@ import { Maximize2, Minimize2, MousePointer2, PanelRightClose, RotateCw } from "
 import { useEffect, useReducer, useRef, useState } from "react";
 
 import { Spinner } from "@/components/ui/loaders";
-import { desktopView, FIRST_VIEW, openDesktop } from "@/lib/session/desktop-view";
+import { CONNECT_TIMEOUT_MS, desktopView, FIRST_VIEW, openDesktop } from "@/lib/session/desktop-view";
 import { cn } from "@/lib/utils";
+
+/** noVNC's client, loaded once for the page. It touches `window` as it
+ *  loads (and waits on the browser's video decoders at its top level), so it
+ *  is loaded in the browser only, when a Desktop tab first opens. A failed
+ *  load is kept: the browser would give the same failure again until the
+ *  page is reloaded. */
+let noVnc: Promise<typeof import("@novnc/novnc")> | null = null;
+function loadNoVnc(): Promise<typeof import("@novnc/novnc")> {
+  noVnc ??= import("@novnc/novnc");
+  // Awaited only once there is a link: a failure before then is not unhandled.
+  noVnc.catch(() => {});
+  return noVnc;
+}
 
 /**
  * The session's desktop, live: the box's display, where the agent's browser
@@ -63,12 +76,9 @@ export function WorkspaceDesktop({
     const send: typeof dispatch = (event) => {
       if (live) dispatch(event);
     };
-    // noVNC touches `window` as it loads (and waits on the browser's video
-    // decoders at its top level), so it is fetched here, in the browser only,
-    // and alongside the link rather than after it.
-    const loading = import("@novnc/novnc");
-    // Awaited only once there is a link: a failure before then is not unhandled.
-    loading.catch(() => {});
+    // Fetched alongside the link rather than after it.
+    const loading = loadNoVnc();
+    let stall: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
       const opened = await openDesktop(workspaceId);
       if (!live) return;
@@ -80,7 +90,7 @@ export function WorkspaceDesktop({
         rfb = new Client(screen.current, opened.url, { wsProtocols: ["binary"] });
       } catch (error) {
         console.error("Desktop: the viewer didn't start", error);
-        return send({ type: "refused", httpStatus: 0, error: "The desktop viewer couldn't load. Please reload the page." });
+        return send({ type: "viewerfailed" });
       }
       // Scaled down to fit the pane, never the desktop resized to it: the
       // agent's screenshots and clicks are in the desktop's own pixels.
@@ -88,9 +98,19 @@ export function WorkspaceDesktop({
       rfb.resizeSession = false;
       rfb.viewOnly = !interacting.current;
       rfb.background = "transparent";
-      rfb.addEventListener("connect", () => send({ type: "connect" }));
+      // A socket that opens but never finishes the handshake would keep the
+      // spinner up for good: given up on, it offers Reconnect.
+      stall = setTimeout(() => {
+        send({ type: "stalled" });
+        if (!closed) rfb?.disconnect();
+      }, CONNECT_TIMEOUT_MS);
+      rfb.addEventListener("connect", () => {
+        clearTimeout(stall);
+        send({ type: "connect" });
+      });
       rfb.addEventListener("disconnect", (event) => {
         closed = true;
+        clearTimeout(stall);
         send({ type: "disconnect", clean: event.detail.clean });
       });
       rfb.addEventListener("securityfailure", (event) => send({ type: "securityfailure", reason: event.detail.reason }));
@@ -98,6 +118,7 @@ export function WorkspaceDesktop({
     })();
     return () => {
       live = false;
+      clearTimeout(stall);
       client.current = null;
       if (!closed) rfb?.disconnect();
     };
@@ -170,10 +191,19 @@ export function WorkspaceDesktop({
         ) : view.status === "disconnected" || view.status === "error" ? (
           <div className="studio-desktop-overlay" role="alert">
             <p>{view.status === "error" ? view.message : view.reason}</p>
-            <button type="button" onClick={reconnect} className="studio-desktop-toggle">
-              <RotateCw />
-              {view.status === "error" ? "Try again" : "Reconnect"}
-            </button>
+            {/* A viewer that didn't load stays failed until the page loads
+                again: the browser keeps a failed import for the page's life. */}
+            {view.status === "error" && view.reload ? (
+              <button type="button" onClick={() => window.location.reload()} className="studio-desktop-toggle">
+                <RotateCw />
+                Reload
+              </button>
+            ) : (
+              <button type="button" onClick={reconnect} className="studio-desktop-toggle">
+                <RotateCw />
+                {view.status === "error" ? "Try again" : "Reconnect"}
+              </button>
+            )}
           </div>
         ) : null}
       </div>
