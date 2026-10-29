@@ -89,6 +89,10 @@ type CreateWorkspaceRequest struct {
 	// its mirror at $ROOT/repos/<checkout>.git, all on Branch. RepoFullName
 	// and BaseBranch are then the first's.
 	Repos []RepoCheckout `json:"repos,omitempty"`
+	// Guide is Outrunner's standing instructions for the session beyond the
+	// orientation (how it writes a pull request), given at every launch after
+	// it. Empty keeps any it has. An older agent ignores it.
+	Guide string `json:"guide,omitempty"`
 }
 
 // RepoCheckout is one repository of a multi-repository session.

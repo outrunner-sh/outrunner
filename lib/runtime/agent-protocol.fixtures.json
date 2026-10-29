@@ -72,6 +72,13 @@
       "branch": "feat/z",
       "baseBranch": "main",
       "agent": "codex"
+    },
+    {
+      "workspaceId": "ws-4",
+      "repoFullName": "acme/app",
+      "branch": "feat/w",
+      "baseBranch": "main",
+      "guide": "# Pull requests\n\nWhenever you open or update a pull request, write it this way."
     }
   ],
   "WorkspaceActionRequest": [

@@ -4,7 +4,20 @@
  * Conductor's Create PR does the same; the agent does the work, with the
  * user's GitHub token on the box (GH_TOKEN), so its own PR skills and the
  * repository's conventions apply.
+ *
+ * The body's structure, the evidence rules and the footer are
+ * lib/session/pr-template.ts's, shared with every session's standing
+ * instructions: a change a person can see is run, checked in the browser,
+ * captured and uploaded before the PR is opened, on a box with a desktop.
  */
+
+import {
+  type EvidenceTools,
+  evidenceSection,
+  type PrFooterInput,
+  templateSection,
+  UPDATE_RULE,
+} from "@/lib/session/pr-template";
 
 export const PR_PROMPT = "Create a PR";
 
@@ -19,8 +32,12 @@ export function prInstructions(input: {
   /** One repository of a session of several: its folder and `owner/name`.
    *  The PR is that repository's alone. */
   repo?: { checkout: string; fullName: string };
+  /** What the box has to show the change (pr-template.ts evidenceToolsFor). */
+  tools: EvidenceTools;
+  /** Who the footer credits, and the session's page. */
+  footer: PrFooterInput;
 }): string {
-  const { branch, baseBranch, uncommitted, repo } = input;
+  const { branch, baseBranch, uncommitted, repo, tools, footer } = input;
   const state = [
     repo
       ? `This PR is for ${repo.fullName} only, the repository in the \`${repo.checkout}/\` folder. Run every step below in that folder (\`cd ${repo.checkout}\`), and leave the other repositories' folders alone.`
@@ -45,11 +62,20 @@ Follow these steps to create a PR:
 - If you have any skills related to creating PRs, invoke them now. Instructions there should take precedence over these instructions.
 - Run \`git diff\` to review uncommitted changes
 - Commit them. Follow any instructions the user gave you about writing commit messages.
+- Run \`git diff origin/${baseBranch}...\` to review the whole PR diff, and decide whether it changes UI or behaviour a person can see.
+- If it does, produce the evidence now, before pushing (below). Backend-only and docs changes skip this.
 - Push to origin (\`git push -u origin ${branch}\`).
-- Run \`git diff origin/${baseBranch}...\` to review the PR diff
-- If this branch already has a pull request, the push updates it: stop there and share its link.
-- Use \`gh pr create --base ${baseBranch}\` to create a PR onto the target branch. Keep the title under 80 characters. Keep the description under five sentences, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the workspace diff.
+- If this branch already has a pull request, the push updates it. ${UPDATE_RULE} Then stop and share its link.
+- Otherwise write the body from the template below to a file and run \`gh pr create --base ${baseBranch} --title "…" --body-file <file>\` to create a PR onto the target branch, unless the user instructed you otherwise. Describe not just changes made in this session but ALL changes in the workspace diff.
 
 If any of these steps fail, ask the user for help.
+
+## Evidence
+
+${evidenceSection(tools, baseBranch)}
+
+## The pull request
+
+${templateSection(footer)}
 `;
 }

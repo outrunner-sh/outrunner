@@ -26,9 +26,10 @@ import { useWorkspaceChanges, type WorkspaceChangesState } from "@/hooks/use-wor
 import { openPendingTab, TAB_BLOCKED } from "@/lib/client/pending-tab";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import type { PullRequestStatus } from "@/lib/github/client";
-import { opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
+import { opensInBrowser, type ProviderName, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { changeTotals, environmentSummary } from "@/lib/session/environment";
 import { PR_INSTRUCTIONS_FILENAME, PR_PROMPT, prInstructions } from "@/lib/session/pr-instructions";
+import { evidenceToolsFor } from "@/lib/session/pr-template";
 import { pullRequestVerdict, type PullRequestVerdict } from "@/lib/session/pull-request-status";
 import {
   REVIEW_INSTRUCTIONS_FILENAME,
@@ -152,6 +153,7 @@ export function WorkspaceEnvironment({
         {!local && summary.branch && !workspace.checkouts && (
           <PullRequestRow
             workspaceId={workspace.id}
+            provider={workspace.provider}
             branch={summary.branch}
             baseBranch={summary.baseBranch ?? workspace.baseBranch}
             uncommitted={isReady && changes.files ? changes.files.length : null}
@@ -167,6 +169,7 @@ export function WorkspaceEnvironment({
             <PullRequestRow
               key={c.projectId}
               workspaceId={workspace.id}
+              provider={workspace.provider}
               branch={summary.branch!}
               baseBranch={c.baseBranch}
               uncommitted={isReady && changes.files ? changes.files.filter((f) => f.path.startsWith(`${c.checkout}/`)).length : null}
@@ -404,7 +407,10 @@ function PullRequestRow({
   pullRequest,
   sender,
   repo,
+  provider,
 }: {
+  /** Where the session runs: whether Create PR asks for browser evidence. */
+  provider: ProviderName | null;
   workspaceId: string;
   branch: string;
   baseBranch: string;
@@ -522,7 +528,14 @@ function PullRequestRow({
       sender,
       PR_PROMPT,
       PR_INSTRUCTIONS_FILENAME,
-      prInstructions({ branch, baseBranch, uncommitted, ...(repo && { repo }) }),
+      prInstructions({
+        branch,
+        baseBranch,
+        uncommitted,
+        ...(repo && { repo }),
+        tools: evidenceToolsFor(provider),
+        footer: { sessionUrl: `${window.location.origin}/workspaces/${workspaceId}` },
+      }),
     );
     if (result.error) setError({ message: result.error, reconnect: false });
     setPhase(result.sent ? "waiting" : "idle");

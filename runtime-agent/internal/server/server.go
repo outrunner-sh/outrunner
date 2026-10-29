@@ -205,6 +205,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
+	if err := workspace.ValidGuide(req.Guide); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		return
+	}
 	var gitUser *workspace.GitUser
 	if req.GitUser != nil {
 		gitUser = &workspace.GitUser{Name: req.GitUser.Name, Email: req.GitUser.Email}
@@ -227,6 +231,10 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+	if err := s.ws.SetGuide(req.WorkspaceID, req.Guide); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"worktree": worktree})

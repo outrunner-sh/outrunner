@@ -971,6 +971,9 @@ func (s *Service) orientation(workspaceID, worktree string) string {
 	if note := s.previewsNote(workspaceID); note != "" {
 		o += "\n\n" + note
 	}
+	if guide := s.guide(workspaceID); guide != "" {
+		o += "\n\n" + guide
+	}
 	if instructions := s.instructions(workspaceID); instructions != "" {
 		o += "\n\n# Project instructions\n\nThe user gave these for every session in this project:\n\n" + instructions
 	}
