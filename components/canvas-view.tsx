@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 
-import { Markdown } from "@/components/markdown";
+import { CanvasDocContext, Markdown } from "@/components/markdown";
 import { type CanvasKind, canvasFileUrl, MAX_CSV_COLUMNS, parseCsv } from "@/lib/session/canvas";
 
 /**
@@ -58,7 +58,12 @@ export function CanvasView({
   }
   // Keyed by the file and how it's shown: another file starts afresh, while
   // a rewrite of this one keeps showing what it had until the new loads.
-  return <CanvasText key={`${path}:${raw}`} url={url} kind={raw ? "text" : kind} />;
+  // Images a plan names from its own folder load from the Canvas.
+  return (
+    <CanvasDocContext value={{ workspaceId, path }}>
+      <CanvasText key={`${path}:${raw}`} url={url} kind={raw ? "text" : kind} />
+    </CanvasDocContext>
+  );
 }
 
 /** An image off the box, or why it can't be shown (the route's reason: a

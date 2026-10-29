@@ -154,3 +154,59 @@ export function formatSize(bytes: number): string {
 
 /** The largest file the panel is given: the agent's own bound. */
 export const MAX_CANVAS_FILE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The path in `workspaceId`'s Canvas that a reply's image names, or null for
+ * one outside it: the agent embeds a visual by its full path,
+ * `![Latency](/home/runtime/.outrunner/canvas/<id>/latency.html)` (or with
+ * `~` for the home). Only the session's own Canvas counts, and nothing that
+ * steps out of it.
+ */
+export function canvasPathIn(path: string, workspaceId: string): string | null {
+  if (!path.startsWith("/") && !path.startsWith("~/")) return null;
+  const marker = `/.outrunner/canvas/${workspaceId}/`;
+  const at = path.indexOf(marker);
+  if (at < 0) return null;
+  return cleanCanvasPath(path.slice(at + marker.length));
+}
+
+/** `ref` as a Canvas file names it (a Markdown plan's `![chart](chart.png)`),
+ *  from the file `from`'s folder; null for one that leaves the Canvas. */
+export function canvasPathFrom(from: string, ref: string): string | null {
+  if (ref.startsWith("/") || ref.startsWith("~")) return null;
+  const folder = from.includes("/") ? from.slice(0, from.lastIndexOf("/") + 1) : "";
+  return cleanCanvasPath(folder + ref);
+}
+
+function cleanCanvasPath(path: string): string | null {
+  const parts: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === ".." || part.includes("\0")) return null;
+    parts.push(part);
+  }
+  return parts.length > 0 ? parts.join("/") : null;
+}
+
+/**
+ * What a page shown inline in a reply (`?embed=1`) gets after its own HTML:
+ * a script that tells the reply its height as it changes, so the frame fits
+ * it, and again whenever the reply asks (it may load before the reply is
+ * listening). The reply takes the message only from that frame, and only a
+ * number. The root's laid-out height, not its scrollHeight: that is never
+ * less than the frame's own, so a frame could grow but never fit a shorter
+ * page.
+ */
+export const VISUAL_HEIGHT_MESSAGE = "outrunnerVisualHeight";
+export const VISUAL_EMBED_SCRIPT =
+  "<script>(()=>{const root=document.documentElement;const post=()=>parent.postMessage({" +
+  VISUAL_HEIGHT_MESSAGE +
+  ':Math.ceil(root.getBoundingClientRect().height)},"*");new ResizeObserver(post).observe(root);' +
+  'addEventListener("message",(e)=>{if(e.source===parent)post()});addEventListener("load",post);post()})()</script>';
+
+/** The height a visual's frame takes for what its page said: within bounds,
+ *  so a page can't push the conversation away. */
+export function visualHeight(said: unknown, fallback = 360): number {
+  if (typeof said !== "number" || !Number.isFinite(said)) return fallback;
+  return Math.min(900, Math.max(80, Math.round(said)));
+}
