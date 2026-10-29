@@ -87,6 +87,8 @@
   /* The landing page's accents (neevai-labs/outrunner-landing). */
   --color-brand: #ff8800;
   --color-positive: #49a147;
+  /* GitHub's merged purple, for a pull request once it's in. */
+  --color-merged: #a371f7;
 }
 
 @layer base {
@@ -276,6 +278,10 @@
 .studio-env-pr-link { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--studio-text); font-variant-numeric: tabular-nums; }
 .studio-env-pr-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .studio-env-pr-link svg { width: 14px; height: 14px; color: rgba(255,255,255,.45); }
+/* A merged PR: its icon and number carry the merged colour, not the dull grey. */
+.studio-env-row.is-merged .studio-env-icon,
+.studio-env-row.is-merged .studio-env-pr-link,
+.studio-env-row.is-merged .studio-env-pr-link svg { color: var(--color-merged); }
 .studio-env-merge { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid color-mix(in oklab, var(--color-positive) 40%, transparent); border-radius: 4px; color: var(--color-positive); background: color-mix(in oklab, var(--color-positive) 8%, transparent); font-size: 12px; cursor: pointer; transition: background-color .15s, border-color .15s; }
 .studio-env-merge:hover { border-color: color-mix(in oklab, var(--color-positive) 65%, transparent); background: color-mix(in oklab, var(--color-positive) 16%, transparent); }
 .studio-env-merge svg { width: 13px; height: 13px; }

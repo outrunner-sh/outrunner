@@ -4,7 +4,7 @@ import type { PullRequestStatus, WorkspacePullRequestRef } from "@/lib/github/cl
  *  `why` says in a sentence why not, null when it does. */
 export type PullRequestVerdict = {
   label: string;
-  tone: "ready" | "pending" | "problem" | "done";
+  tone: "ready" | "pending" | "problem" | "done" | "merged";
   canMerge: boolean;
   why: string | null;
 };
@@ -17,7 +17,7 @@ export type PullRequestVerdict = {
  */
 export function pullRequestVerdict(status: PullRequestStatus): PullRequestVerdict {
   const verdict = (label: string, tone: PullRequestVerdict["tone"], why: string) => ({ label, tone, canMerge: false, why });
-  if (status.state === "merged") return verdict("Merged", "done", "This PR is merged.");
+  if (status.state === "merged") return verdict("Merged", "merged", "This PR is merged.");
   if (status.state === "closed") return verdict("Closed", "done", "This PR is closed.");
   if (status.draft) return verdict("Draft", "pending", "It's a draft.");
   if (status.checks.failing > 0) return verdict("Checks failing", "problem", "Checks are failing.");
