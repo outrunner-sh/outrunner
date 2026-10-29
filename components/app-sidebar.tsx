@@ -196,7 +196,7 @@ export function AppSidebar({
             <Terminal className="size-4" />
           </Link>
         )}
-        <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="Workspace navigation">
+        <div className="flex shrink-0 items-center gap-1.5" role="group" aria-label="Workspace navigation">
           <HeaderActionLink
             href="/triage"
             label="Triage"
