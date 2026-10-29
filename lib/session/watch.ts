@@ -146,7 +146,8 @@ async function settle(
   const { error } = await db()
     .from("session_activity")
     .update({ ...turnToRow(after), updated_at: new Date().toISOString() })
-    .eq("workspace_id", workspace.id);
+    .eq("workspace_id", workspace.id)
+    .eq("updated_at", activity.updated_at);
   if (error) throw error;
   return { workspaceId: workspace.id, ownerId: workspace.ownerId, before, after };
 }
