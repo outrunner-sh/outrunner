@@ -140,6 +140,11 @@ export const AGENT_FEATURE_WARM_HOOKS = "warm-hooks";
  *  one checkout no session of the project takes. */
 export const AGENT_FEATURE_MULTI_REPO_WARM = "multi-repo-warm";
 
+/** The agent sends a message once per key (POST /message's `key`), kept on
+ *  the box's disk: a Mission's events, sent again after a restart on our
+ *  side, reach Claude once (lib/missions/outbox.ts). */
+export const AGENT_FEATURE_MESSAGE_KEYS = "message-keys";
+
 /** The agent's git and `gh` ask Outrunner for GitHub tokens as they need them
  *  (app/api/runtime/git-credential), rather than keep the one it booted with:
  *  the Outrunner App's last an hour. */
@@ -252,6 +257,8 @@ export const SendMessageRequest = z
     content: z.string().min(1),
     mode: SessionMode.optional(),
     dismiss: z.boolean().optional(),
+    // Sent once per key (AGENT_FEATURE_MESSAGE_KEYS); an older agent ignores it.
+    key: z.string().min(1).max(200).optional(),
   })
   .strict();
 export type SendMessageRequest = z.infer<typeof SendMessageRequest>;

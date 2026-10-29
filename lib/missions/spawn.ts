@@ -16,6 +16,7 @@ import { getOwner } from "@/lib/auth/owner";
 import { saveBrief } from "@/lib/missions/store";
 import type { RunnerStart } from "@/lib/missions/tools";
 import { firstPrompt } from "@/lib/api/create-request";
+import { openRunnerWatch, watchSoon } from "@/lib/missions/watch.deps";
 import { CLAUDE_MODELS } from "@/lib/runtime/session-models";
 import type { Workspace } from "@/lib/runtime/types";
 import { createCloudSession, type SessionRequest } from "@/lib/session/create-cloud-session";
@@ -75,9 +76,15 @@ export async function startRunner(mission: Workspace, start: RunnerStart): Promi
             await saveBrief(mission.id, id, start.brief).catch((error: unknown) =>
               console.error(`Runner ${id}: its brief wasn't kept`, error),
             );
+            // Its first turn is watched from now: through its setup, so a
+            // setup that fails reaches the Mission as needing attention.
+            await openRunnerWatch(id, new Date(), null).catch((error: unknown) =>
+              console.error(`Runner ${id}: its turn can't be watched`, error),
+            );
             made(id);
           },
         });
+        if (runnerId) watchSoon(runnerId);
         if (response.status === 202 && runnerId) return { runnerId };
         const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
         return { error: typeof body?.error === "string" ? body.error : `it was refused (${response.status})` };

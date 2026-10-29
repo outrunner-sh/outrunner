@@ -33,6 +33,7 @@ import { pullRequestEventOf } from "@/lib/session/pull-request-event";
 import { notifyPullRequests } from "@/lib/notifications/record";
 import { recordPullRequestEvent } from "@/lib/session/pull-request-state";
 import { announcePullRequest } from "@/lib/slack/agent-run";
+import { followPullRequestActivity } from "@/lib/missions/webhook";
 
 /** A body GitHub sends is far below this; anything bigger isn't GitHub's. */
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -122,6 +123,9 @@ export async function POST(request: Request) {
       // wait for this answer shouldn't include.
       after(async () => runGitHubLoop(event, payload, await appSlug(config)));
     }
+    // A Mission's Runners' pull requests: opened, pushed to, checked,
+    // reviewed, merged (lib/missions/pull-requests.ts).
+    after(() => followPullRequestActivity(event, payload as Record<string, unknown>));
     if (event === "pull_request") {
       // Each run's session is set up after the answer, in after(): minutes on
       // a cold box, on Outrunner's long-running server (server.ts). One a

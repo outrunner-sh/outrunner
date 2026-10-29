@@ -81,3 +81,20 @@ export async function writeBoxFile(
   if (!data?.daytona_sandbox_id || data.status !== "ready") return false;
   return resolution.provider.writeWorkspaceFile(data.daytona_sandbox_id, workspace.worktreePath, relPath, Buffer.from(content), options);
 }
+
+
+/**
+ * Whether the session's agent is mid-turn, as the server's watch has it for
+ * every session (session_activity, lib/session/watch.ts: what the sidebar
+ * and notifications read too). Its box is asked only for a session nothing
+ * has read yet.
+ */
+export async function sessionWorking(workspace: Workspace): Promise<boolean> {
+  if (workspace.status !== "ready" && workspace.status !== "idle") return false;
+  const { data } = await createSupabaseAdminClient()
+    .from("session_activity")
+    .select("turn")
+    .eq("workspace_id", workspace.id)
+    .maybeSingle();
+  return data ? data.turn === "working" : boxWorking(workspace);
+}
