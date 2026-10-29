@@ -66,6 +66,11 @@ test("a note is short text, and never a secret", () => {
   }
   // Talking about where a key lives is fine.
   assert.equal(parseMemoryBody("The Stripe key is STRIPE_SECRET_KEY in Doppler."), "The Stripe key is STRIPE_SECRET_KEY in Doppler.");
+  assert.equal(parseMemoryBody("pk_organizationmembers and sk_userpreferencescache are schema identifiers."), "pk_organizationmembers and sk_userpreferencescache are schema identifiers.");
+  for (const marker of ["<!-- outrunner:begin -->", "<!-- outrunner:end -->"]) {
+    const parsed = parseMemoryBody(`The file contains ${marker}`);
+    assert.ok(typeof parsed !== "string" && /markers/.test(parsed.error), marker);
+  }
 });
 
 test("a person's notes are theirs; the org's are everyone's to read and their writer's or an admin's to delete", async () => {
@@ -95,6 +100,18 @@ test("the same note twice is kept once, and a full memory says so", async () => 
   await assert.rejects(addMemory(ada, s, { scope: "personal", body: "one more" }), (e) => e instanceof MemoryError && e.status === 409);
 });
 
+test("a duplicate won by a concurrent insert is returned as the existing note", async () => {
+  const s = store();
+  const insert = s.insert;
+  s.insert = async (row) => {
+    await insert(row);
+    throw Object.assign(new Error("duplicate key"), { code: "23505" });
+  };
+  const added = await addMemory(ada, s, { scope: "personal", body: "Use pnpm." });
+  assert.equal(added.body, "Use pnpm.");
+  assert.equal(s.rows.length, 1);
+});
+
 test("a session loads the newest of its user's own notes that fit, after its learnings, whole", async () => {
   const s = store();
   await addMemory(ada, s, { scope: "personal", body: "Old note." });
@@ -108,7 +125,8 @@ test("a session loads the newest of its user's own notes that fit, after its lea
   const many = Array.from({ length: 400 }, (_, i) => ({ ...memory[0], id: `x${i}`, body: `note ${i} ${"x".repeat(60)}` }));
   const cut = renderAgentContext({ orgName: null, learnings: { org: [], personal: [] }, memory: many });
   assert.ok(utf8Bytes(cut) <= MAX_MEMORY_SECTION_BYTES, `${utf8Bytes(cut)} bytes`);
-  assert.match(cut, /older notes not shown here/);
+  const visibleCut = cut.split("\n").filter((line) => line.startsWith("- 2026-11-01:")).length;
+  assert.equal(Number(cut.match(/and (\d+) older notes not shown here/)?.[1]), many.length - visibleCut);
   for (const line of cut.split("\n").filter((l) => l.startsWith("- 2026"))) assert.match(line, /x{60}$/);
 
   // Learnings near the bound leave memory its reserve, and the whole stays in bounds.
@@ -120,14 +138,26 @@ test("a session loads the newest of its user's own notes that fit, after its lea
   const both = renderAgentContext({ orgName: "Acme", learnings: { org: learnings, personal: [] }, memory: many });
   assert.ok(utf8Bytes(both) <= MAX_AGENT_CONTEXT_BYTES, `${utf8Bytes(both)} bytes`);
   assert.match(both, /# Outrunner memory\n\n[\s\S]*- 2026-11-01: note 0 /);
+  const visibleBoth = both.split("\n").filter((line) => line.startsWith("- 2026-11-01:")).length;
+  assert.equal(Number(both.match(/and (\d+) older notes not shown here/)?.[1]), many.length - visibleBoth);
 });
 
-test("the same note at the bound is still the one kept, and more secrets are caught", async () => {
+test("the same note at the bound is still the one kept, and secrets are caught without matching schema identifiers", async () => {
   const s = store();
   for (let i = 0; i < MAX_MEMORIES; i++) await addMemory(ada, s, { scope: "personal", body: `note ${i}` });
   assert.equal((await addMemory(ada, s, { scope: "personal", body: "note 3" })).body, "note 3");
-  for (const secret of ["sk_live_abcdefghijklmnop1234", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig", "https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXXXXXX"]) {
+  for (const secret of [
+    "sk_live_abcdefghijklmnop1234",
+    "rk_test_abcdefghijklmnop1234",
+    "pk_live_abcdefghijklmnop1234",
+    "whsec_abcdefghijklmnop1234",
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig",
+    "https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXXXXXX",
+  ]) {
     assert.ok(typeof parseMemoryBody(`the token: ${secret}`) !== "string", secret);
+  }
+  for (const identifier of ["pk_organizationmembers", "sk_userpreferencescache"]) {
+    assert.equal(parseMemoryBody(identifier), identifier);
   }
 });
 
@@ -155,5 +185,5 @@ test("an agent reads and adds to its user's memory through its session's command
   // In a personal org, --org is the user's own.
   const personal = { ...deps, learnings: { ...deps.learnings, personalOrg: async () => true } };
   await callSessionTool(scope, "remember", { scope: "org", body: "Mine after all." }, personal);
-  assert.equal(s.rows.at(-1)?.orgId, null);
+  assert.deepEqual([s.rows.at(-1)?.scope, s.rows.at(-1)?.userId, s.rows.at(-1)?.orgId], ["personal", "u-ada", null]);
 });

@@ -24,5 +24,7 @@ create table if not exists public.memories (
 
 create index if not exists memories_user on public.memories (user_id, created_at desc) where org_id is null;
 create index if not exists memories_org on public.memories (org_id, created_at desc) where org_id is not null;
+create unique index if not exists memories_user_body on public.memories (user_id, md5(body)) where org_id is null;
+create unique index if not exists memories_org_body on public.memories (org_id, md5(body)) where org_id is not null;
 
 alter table public.memories enable row level security;

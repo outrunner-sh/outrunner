@@ -72,7 +72,8 @@ export function memoryRights(actor: MemoryActor, memory: Memory): { read: boolea
 const SECRET = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
   /\b(?:sk|rk|pk)-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/,
-  /\b(?:sk|rk|pk|whsec)_(?:live_|test_)?[A-Za-z0-9]{16,}/,
+  /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}/,
+  /\bwhsec_[A-Za-z0-9]{16,}/,
   /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\./,
   /hooks\.slack\.com\/services\/[A-Za-z0-9/]{20,}/,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}/,
@@ -90,6 +91,9 @@ export function parseMemoryBody(value: unknown): string | { error: string } {
   if (body.length > MAX_MEMORY_CHARS) return { error: `A note is at most ${MAX_MEMORY_CHARS} characters: keep it to what matters.` };
   if (SECRET.some((pattern) => pattern.test(body))) {
     return { error: "That looks like it holds a secret (a key or token). Memory never keeps one: note where it's kept instead." };
+  }
+  if (/outrunner:(?:begin|end)/.test(body)) {
+    return { error: "A note can't hold the context block's markers: the box would refuse the whole block in every later session." };
   }
   return body;
 }
@@ -129,12 +133,24 @@ export async function addMemory(
   if (existing.length >= MAX_MEMORIES) {
     throw new MemoryError(409, `Memory holds ${MAX_MEMORIES} notes, the most it keeps. Ask the user to delete some in Settings → Memory.`);
   }
-  return store.insert({
-    userId: actor.userId,
-    orgId: input.scope === "org" ? actor.orgId : null,
-    body,
-    workspaceId: input.workspaceId ?? null,
-  });
+  try {
+    return await store.insert({
+      userId: actor.userId,
+      orgId: input.scope === "org" ? actor.orgId : null,
+      body,
+      workspaceId: input.workspaceId ?? null,
+    });
+  } catch (error) {
+    // A concurrent remember may have inserted the same note after the first
+    // read. The database's unique index makes that race a duplicate too.
+    try {
+      const raced = (await store.list(where(actor, input.scope))).find((m) => m.body === body);
+      if (raced) return raced;
+    } catch {
+      // Keep the insert error when the follow-up read cannot resolve it.
+    }
+    throw error;
+  }
 }
 
 /** Delete a note: one's own, or as an admin, any the org shares. */

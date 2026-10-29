@@ -108,15 +108,21 @@ function memorySection(memory: Memory[], bytes: number): string {
   const lines: string[] = [];
   for (const [i, note] of memory.entries()) {
     const line = `- ${note.createdAt.slice(0, 10)}: ${note.body.replace(/\s*\n\s*/g, " ")}`;
-    const rest = memory.length - i - 1;
-    const reserve = rest > 0 ? utf8Bytes(more(rest)) + 1 : 0;
-    if (size + utf8Bytes(line) + 1 + reserve > bytes) {
-      if (lines.length === 0 && utf8Bytes(more(memory.length)) + size > bytes) return "";
-      lines.push(more(memory.length - i));
+    const separator = lines.length > 0 ? 1 : 0;
+    const lineBytes = separator + utf8Bytes(line);
+    const remaining = memory.length - i - 1;
+    // Reserve the exact marker for the notes after this one before including
+    // it, so a late truncation cannot push the section over its byte budget.
+    const markerBytes = remaining > 0 ? 1 + utf8Bytes(more(remaining)) : 0;
+    if (size + lineBytes + markerBytes > bytes) {
+      const omitted = more(memory.length - i);
+      const omittedBytes = (lines.length > 0 ? 1 : 0) + utf8Bytes(omitted);
+      if (size + omittedBytes > bytes) return "";
+      lines.push(omitted);
       break;
     }
     lines.push(line);
-    size += utf8Bytes(line) + 1;
+    size += lineBytes;
   }
   return `${MEMORY_HEAD}\n\n${lines.join("\n")}`;
 }
