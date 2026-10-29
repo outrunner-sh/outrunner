@@ -5,7 +5,6 @@ import { getOwner } from "@/lib/auth/owner";
 import { getChatPreferences, saveChatPreferences } from "@/lib/db/chat-preferences";
 import { isSameOriginRequest } from "@/lib/http/guards";
 import { savingSettings, signInFirst } from "@/lib/http/settings-save";
-import { DEFAULT_CHAT_PREFERENCES } from "@/lib/session/chat-preferences";
 
 const Change = z.object({ steerFollowUps: z.boolean() }).strict();
 
@@ -14,7 +13,7 @@ const Change = z.object({ steerFollowUps: z.boolean() }).strict();
 export async function GET() {
   const owner = await getOwner();
   if (!owner) return signInFirst();
-  const preferences = await getChatPreferences(owner.id).catch(() => DEFAULT_CHAT_PREFERENCES);
+  const preferences = await getChatPreferences(owner.id);
   return NextResponse.json({ preferences });
 }
 

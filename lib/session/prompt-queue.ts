@@ -68,6 +68,7 @@ export function queueDrains(state: {
   working: boolean;
   waitingOnUser: boolean;
   held: boolean;
+  editing?: boolean;
   awaitingLast: boolean;
 }): boolean {
   return (
@@ -76,6 +77,7 @@ export function queueDrains(state: {
     !state.working &&
     !state.waitingOnUser &&
     !state.held &&
+    !state.editing &&
     !state.awaitingLast
   );
 }

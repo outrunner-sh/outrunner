@@ -75,6 +75,7 @@ import { rememberedEffort, rememberEffort } from "@/lib/session/picked-effort";
 import { chatRoute, chatStateKey, MAIN_CHAT } from "@/lib/session/chats";
 import { followUpRoute } from "@/lib/session/chat-preferences";
 import { editQueued, moveQueued, type QueuedPrompt, queueDrains, readQueue, writeQueue } from "@/lib/session/prompt-queue";
+import { runQueuedAction } from "@/lib/session/queue-actions";
 import { patchRowAhead } from "@/lib/session/rows-ahead";
 import { sendIsDeadEnd } from "@/lib/session/send-failure";
 import { BOX_GONE, BOX_RESTORE_FAILED, SESSION_NOT_STARTED } from "@/lib/session/session-codes";
@@ -497,6 +498,8 @@ export function WorkspaceSession({
   // prompt (which goes after it) or send one of them now.
   const [queuePaused, setQueuePaused] = useState(false);
   const sendingQueued = useRef(false);
+  const interrupting = useRef(false);
+  const [queuedEditing, setQueuedEditing] = useState<{ id: string; words: string } | null>(null);
   // Bumped as each queued send settles, so the queue looks again: the turn it
   // started may have ended while the send was still being answered.
   const [queueSettled, setQueueSettled] = useState(0);
@@ -522,7 +525,7 @@ export function WorkspaceSession({
     setQueueHeld(false);
     const recorded = userPromptCount(eventsRef.current);
     const how = prompt.mode ? { mode: prompt.mode } : {};
-    return send(prompt.text, prompt.attachmentIds, () => void sendQueued(prompt), undefined, undefined, how).then((landed) => {
+    return send(prompt.text, prompt.attachmentIds, () => void sendQueuedNow(prompt, false), undefined, undefined, how).then((landed) => {
       if (landed) setQueuedAt(recorded);
       else {
         setQueue((q) => [prompt, ...q.filter((p) => p.id !== prompt.id)]);
@@ -534,21 +537,38 @@ export function WorkspaceSession({
   /** Send a queued prompt in place of the rest of the turn: the turn is
    *  stopped first, and the rest of the queue goes after this one. A stop
    *  that fails leaves it queued, said under the composer. */
-  const sendQueuedNow = async (prompt: QueuedPrompt) => {
-    setQueuePaused(false);
-    if (working) {
-      setStopError(null);
-      try {
-        await (local
-          ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
-          : stopCloudTurn(workspaceId, chatId));
-      } catch (error) {
-        setStopError(local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't stop the turn.");
-        return;
-      }
-      setStoppedAt(userPromptCount(eventsRef.current));
+  const sendQueuedNow = async (prompt: QueuedPrompt, interrupt = true) => {
+    if (queuedEditing || interrupting.current) return;
+    const wasHeld = queueHeld;
+    const wasPaused = queuePaused;
+    const position = queueRef.current.findIndex((item) => item.id === prompt.id);
+    setStopError(null);
+    try {
+      await runQueuedAction(sendingQueued, {
+        take: () => {
+          if (position < 0) return null;
+          queueRef.current = queueRef.current.filter((item) => item.id !== prompt.id);
+          setQueue((q) => q.filter((item) => item.id !== prompt.id));
+          setQueueHeld(true);
+          setQueuePaused(false);
+          return prompt;
+        },
+        interrupt: async () => { if (interrupt && working) await interruptTurn(); },
+        send: sendQueued,
+        restore: (item) => {
+          setQueue((q) => {
+            const next = q.filter((entry) => entry.id !== item.id);
+            next.splice(Math.min(position, next.length), 0, item);
+            return next;
+          });
+          setQueueHeld(wasHeld);
+          setQueuePaused(wasPaused);
+        },
+        settled: () => setQueueSettled((n) => n + 1),
+      });
+    } catch (error) {
+      setStopError(local ? messageForLocalError(error, agent) : error instanceof Error ? error.message : "Couldn't stop the turn.");
     }
-    void sendQueued(prompt);
   };
   const queueRef = useRef(queue);
   useEffect(() => {
@@ -559,6 +579,7 @@ export function WorkspaceSession({
     // The one that failed sits at the head; with it gone, the rest go on.
     // Not when a stop held them: that holds the rest as well.
     if (queue[0]?.id === prompt.id && !queuePaused) setQueueHeld(false);
+    if (queuedEditing?.id === prompt.id) setQueuedEditing(null);
     // Its files were uploaded for it alone.
     for (const id of prompt.attachmentIds) void fetch(`/api/attachments/${id}`, { method: "DELETE" }).catch(() => {});
   };
@@ -578,6 +599,7 @@ export function WorkspaceSession({
     // A plan waiting on approval is answered by the user, not by what's queued.
     waitingOnUser: waitingOnUser || waitingOnPlan,
     held: queueHeld,
+    editing: queuedEditing !== null,
     awaitingLast,
   });
   useEffect(() => {
@@ -595,12 +617,14 @@ export function WorkspaceSession({
     // what decide a send.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drains, queue, queueSettled]);
-  // While the agent works, or others wait ahead, a prompt joins the queue.
+  // With Claude steering enabled, a mid-turn follow-up goes straight into
+  // that turn, ahead of queued messages. Otherwise it waits with the queue.
   // One typed while a plan waits on approval answers it: it closes the plan's
   // menu first, and goes in the mode the composer is in (Plan revises it,
   // Build approves it with changes).
   const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
     if (editing) return sendEdit(editing.uuid, text, attachmentIds, sentMode);
+    if (sendingQueued.current || interrupting.current || queuedEditing) return enqueue(text, attachmentIds, sentMode);
     if (queuePaused) {
       // Sending again is going on: the queue first, then this.
       setQueuePaused(false);
@@ -756,8 +780,24 @@ export function WorkspaceSession({
     });
   };
 
-  const stop = () => {
+  const interruptTurn = async () => {
+    if (interrupting.current) throw new Error("This turn is already being stopped.");
+    interrupting.current = true;
     setStopping(true);
+    try {
+      await (local
+        ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
+        : stopCloudTurn(workspaceId, chatId));
+      setStoppedAt(userPromptCount(eventsRef.current));
+      setQueuedAt(null);
+      setPending(pendingAfterStop);
+    } finally {
+      interrupting.current = false;
+      setStopping(false);
+    }
+  };
+  const stop = () => {
+    if (interrupting.current || sendingQueued.current) return;
     setSendError(null);
     setStopError(null);
     // What's queued stays queued: the stop was for the agent's work, not for
@@ -773,18 +813,7 @@ export function WorkspaceSession({
       setQueueHeld(true);
       setQueuePaused(true);
     }
-    (local
-      ? localAgentRequest(localTarget(workspaceId), "POST", `/workspaces/${workspaceId}/interrupt`)
-      : stopCloudTurn(workspaceId, chatId)
-    )
-      .then(() => {
-        setStoppedAt(userPromptCount(eventsRef.current));
-        // A queued prompt Claude hadn't taken up yet is handed back to its
-        // input by a stop, never recorded: the queue mustn't wait on it, nor
-        // its bubble keep the page working.
-        setQueuedAt(null);
-        setPending(pendingAfterStop);
-      })
+    void interruptTurn()
       .catch((error: unknown) => {
         // The turn goes on, and the queue with it, as it was.
         if (hadQueue) {
@@ -794,8 +823,7 @@ export function WorkspaceSession({
         setStopError(
           local ? messageForLocalError(error) : error instanceof Error ? error.message : "Couldn't stop the turn.",
         );
-      })
-      .finally(() => setStopping(false));
+      });
   };
   // Escape stops the turn from anywhere in the session, not only the
   // composer's box: a click in the conversation takes the focus out of it.
@@ -1199,12 +1227,14 @@ export function WorkspaceSession({
         <QueuedPrompts
           queue={queue}
           working={working}
-          canSendNow={attached}
-          paused={queuePaused && queue.length > 0}
-          onSteer={(prompt) => {
-            setQueuePaused(false);
-            void sendQueued(prompt);
+          canSendNow={attached && !stopping}
+          editing={queuedEditing}
+          onEditingChange={(next) => {
+            if (next && sendingQueued.current) return;
+            setQueuedEditing(next);
           }}
+          paused={queuePaused && queue.length > 0}
+          onSteer={(prompt) => void sendQueuedNow(prompt, false)}
           onSendNow={(prompt) => void sendQueuedNow(prompt)}
           onEdit={(prompt, words) => setQueue((q) => editQueued(q, prompt.id, words))}
           onMove={(prompt, by) => setQueue((q) => moveQueued(q, prompt.id, by))}

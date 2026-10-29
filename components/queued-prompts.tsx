@@ -1,7 +1,6 @@
 "use client";
 
 import { ArrowDown, ArrowUp, CornerDownRight, ListChecks, MessageSquareText, Paperclip, Pencil, Send, X } from "lucide-react";
-import { useState } from "react";
 
 import { attachmentFiles } from "@/components/attachment-thumbnails";
 import { parseCommentQuotes } from "@/lib/session/diff-comments";
@@ -24,8 +23,12 @@ export function QueuedPrompts({
   onMove,
   canSendNow,
   paused = false,
+  editing,
+  onEditingChange,
 }: {
   queue: QueuedPrompt[];
+  editing: { id: string; words: string } | null;
+  onEditingChange: (editing: { id: string; words: string } | null) => void;
   /** The agent is at its turn: a prompt can be steered into it, or sent in
    *  place of the rest of it. Between turns (a stop held the queue) there is
    *  nothing to steer, and sending now is just sending. */
@@ -44,11 +47,10 @@ export function QueuedPrompts({
   paused?: boolean;
 }) {
   // The prompt whose words are being edited, and the words so far.
-  const [editing, setEditing] = useState<{ id: string; words: string } | null>(null);
   if (queue.length === 0) return null;
   const save = (prompt: QueuedPrompt) => {
     if (editing && editing.id === prompt.id) onEdit(prompt, editing.words);
-    setEditing(null);
+    onEditingChange(null);
   };
   return (
     <section className="studio-queue" aria-label="Queued messages">
@@ -75,14 +77,14 @@ export function QueuedPrompts({
                   rows={Math.min(6, Math.max(1, editing.words.split("\n").length))}
                   value={editing.words}
                   aria-label="Edit queued message"
-                  onChange={(event) => setEditing({ id: prompt.id, words: event.target.value })}
+                  onChange={(event) => onEditingChange({ id: prompt.id, words: event.target.value })}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                       event.preventDefault();
                       save(prompt);
                     } else if (event.key === "Escape") {
                       event.preventDefault();
-                      setEditing(null);
+                      onEditingChange(null);
                     }
                   }}
                   onBlur={() => save(prompt)}
@@ -121,7 +123,7 @@ export function QueuedPrompts({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setEditing({ id: prompt.id, words: text })}
+                    onClick={() => onEditingChange({ id: prompt.id, words: text })}
                     title="Edit before it sends"
                     aria-label="Edit"
                   >
