@@ -238,11 +238,15 @@ export async function sendToRunner(runner: Workspace, content: string): Promise<
 
 /** Look at the Runner's watch every few seconds for a while, from now. */
 export function watchSoon(runnerId: string): void {
+  // The watch this loop first saw: a later send's has a loop of its own.
+  let watching: string | null = null;
   later(() =>
     watchUntil(
       async () => {
         const row = await readWatch(runnerId);
         if (!row) return true;
+        watching ??= row.sentAt;
+        if (row.sentAt !== watching) return true;
         await checkRunnerWatch(row, watchDeps());
         // Every end closes the row, and a Runner waiting on a person isn't
         // one: only the row gone ends this, so their answer reaches the
