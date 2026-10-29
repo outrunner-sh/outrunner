@@ -132,10 +132,9 @@ func (s *Service) findRollout(workspaceID string, f workspaceFacts, sessions str
 		// Another chat's Codex may have begun a rollout here since this one
 		// launched: this one's begins no sooner than its own first prompt.
 		prompted, err := time.Parse(time.RFC3339Nano, f.CodexPromptedAt)
-		if err != nil {
-			return "", transcript.RolloutMeta{}
-		}
-		if prompted.After(since) {
+		// Terminal-typed prompts bypass codexPrompted. Retain the launch bound
+		// then; claimedRollouts still excludes other sessions.
+		if err == nil && prompted.After(since) {
 			since = prompted
 		}
 	}

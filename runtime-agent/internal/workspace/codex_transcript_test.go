@@ -531,3 +531,23 @@ func TestAStoppedCodexTurnIsRecordedAsStopped(t *testing.T) {
 		t.Error("the stop was recorded after the turn that came next")
 	}
 }
+
+func TestSharedCodexDiscoveryFallsBackToLaunchForTerminalPrompts(t *testing.T) {
+	s, id, link, sessions := localCodexSession(t)
+	s.setFacts(ChatKey(id, "c1"), workspaceFacts{Parent: id, Agent: AgentClaude})
+	resolved, _ := filepath.EvalSymlinks(link)
+	now := time.Now()
+	claimed := writeRollout(t, sessions, now, "rollout-claimed.jsonl", beganAt(fixtureRollout(t, resolved), now.Add(-19*time.Second)), now)
+	s.setFacts("claimed", workspaceFacts{Agent: AgentCodex, CodexRollout: claimed})
+	terminal := writeRollout(t, sessions, now, "rollout-terminal.jsonl", beganAt(fixtureRollout(t, resolved), now.Add(-15*time.Second)), now)
+	prompted := writeRollout(t, sessions, now, "rollout-prompted.jsonl", beganAt(fixtureRollout(t, resolved), now.Add(-time.Second)), now)
+	f, _ := s.getFacts(id)
+	f.CodexLaunchedAt = now.Add(-20 * time.Second).UTC().Format(time.RFC3339Nano)
+	if got, _ := s.findRollout(id, f, sessions); got != terminal {
+		t.Fatalf("terminal-typed rollout = %q, want %q", got, terminal)
+	}
+	f.CodexPromptedAt = now.Add(-5 * time.Second).UTC().Format(time.RFC3339Nano)
+	if got, _ := s.findRollout(id, f, sessions); got != prompted {
+		t.Fatalf("API-prompted rollout = %q, want %q", got, prompted)
+	}
+}
