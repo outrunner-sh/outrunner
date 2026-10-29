@@ -109,6 +109,9 @@ func TestHealthSaysWhichAgentsTheComputerRuns(t *testing.T) {
 	if !slices.Contains(body.Features, protocol.FeatureCodexAccessToken) {
 		t.Error("health omits Codex access-token capability")
 	}
+	if !slices.Contains(body.Features, protocol.FeatureCodexAccount) {
+		t.Error("health omits the host-managed Codex account capability required by controller delivery")
+	}
 	_, err = exec.LookPath("codex")
 	if hasCodex := slices.Contains(body.Agents, "codex"); hasCodex != (err == nil) {
 		t.Errorf("health lists codex = %v, but codex is installed = %v", hasCodex, err == nil)
