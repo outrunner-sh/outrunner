@@ -11,7 +11,6 @@
 import { after } from "next/server";
 
 import type { Owner } from "@/lib/auth/owner";
-import { CloudLimitError, isPlanLimitError } from "@/lib/billing/limits";
 import { releaseWorkspaceBox } from "@/lib/billing/release-box.deps";
 import { listChatsOf } from "@/lib/db/chats";
 import {
@@ -20,19 +19,18 @@ import {
   readRuntimeComputerSecret,
   transitionWorkspace,
 } from "@/lib/db/repositories";
-import { AgentClient, AgentRequestError, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
+import { AgentClient, type WorkspaceIdentity } from "@/lib/runtime/agent-client";
 import { AGENT_FEATURE_CHAT_SNAPSHOTS, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS } from "@/lib/runtime/agent-protocol";
 import { withRuntimeAgentRecovery } from "@/lib/runtime/agent-recovery";
 import { requireFeature } from "@/lib/runtime/box-features";
 import type { ComputerRuntimeProvider } from "@/lib/runtime/computer-provider";
-import { OutdatedComputerError } from "@/lib/runtime/session-auth";
 import { boxUpgrade } from "@/lib/runtime/session-environment";
 import { mintSnapshotUpload } from "@/lib/runtime/storage";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { ARCHIVED_UNSAVED, type ArchiveSave, saveForArchive } from "@/lib/session/archive-save";
+import { archiveFailure, ArchivePreparationError, type ArchiveStage } from "@/lib/session/archive-failure";
 import { bringBack } from "@/lib/session/bring-back-box";
-import { bringBackFailure, MissingBoxProjectError } from "@/lib/session/box-failure";
 import { archiveChat, chatUploadPaths } from "@/lib/session/chat-snapshots";
 
 /** The agent on a session's box, to ask it things as its owner. */
@@ -68,10 +66,6 @@ export async function daytonaAgent(
   };
 }
 
-function archiveError(): string {
-  return "Could not archive this session. Try again in a moment.";
-}
-
 /** How an archive went: done (`unsaved`: without the session's work, its box
  *  out of reach, which `note` says), or why not (`conflict`: it's mid
  *  another lifecycle step; `reconcile`: archived, but its final state wasn't
@@ -84,7 +78,7 @@ export type ArchiveResult =
 
 /** The statuses a session is archived from: running, or asleep (the agent
  *  stops a session before capturing it, so nothing need relaunch it). */
-const ARCHIVABLE: WorkspaceStatus[] = ["ready", "idle", "suspended"];
+const ARCHIVABLE: WorkspaceStatus[] = ["ready", "idle", "suspended", "failed"];
 
 /**
  * Archive a cloud session: its box brought back if it isn't up, Next mints
@@ -106,7 +100,7 @@ export async function archiveCloudSession(
   options: { requireSnapshot?: boolean } = {},
 ): Promise<ArchiveResult> {
   if (!ARCHIVABLE.includes(workspace.status)) {
-    return { ok: false, reason: "failed", status: 409, error: "Only an active or paused session can be archived." };
+    return { ok: false, reason: "failed", status: 409, error: "Only an active, paused or failed session can be archived." };
   }
   const transitioned = await transitionWorkspace({
     id: workspace.id,
@@ -119,25 +113,19 @@ export async function archiveCloudSession(
   // place (empty: the old one was deleted).
   let boxBefore: string | null = null;
   let save: ArchiveSave;
+  let stage: ArchiveStage = "prepare";
   try {
     // A failed read must fail the archive: an unknown original id must
     // never make cleanup mistake the original disk for an empty replacement.
     boxBefore = (await getWorkspaceComputer(workspace))?.daytonaSandboxId ?? null;
     const archivedAt = new Date().toISOString();
-    const { prefix, urls } = await mintSnapshotUpload(
-      supabaseSnapshotStorage(),
-      owner.id,
-      workspace.id,
-      archivedAt,
-      // A Codex session's raw rollout too, so a restore resumes Codex itself
-      // (only an agent that runs Codex is asked: an older one refuses it).
-      workspace.agent === "codex" ? ["rollout"] : [],
-    );
-    const uploads = urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
-    // Its other chats, each captured beside the main conversation: a
-    // Snapshot that lost them would lose their history.
+    // Its other chats are captured beside the main conversation. Reading
+    // their records must succeed before any archive can complete.
     const chats = await listChatsOf(workspace.id);
+    let upload: Awaited<ReturnType<typeof mintSnapshotUpload>> | undefined;
+    let chatUploads: ReturnType<typeof archiveChat>[] = [];
 
+    stage = "capture";
     save = await saveForArchive({
       bringBack: async () => {
         const computer = await getWorkspaceComputer(workspace);
@@ -151,9 +139,12 @@ export async function archiveCloudSession(
           await withRuntimeAgentRecovery(
             { provider, sandboxId, secret, agent, identity, upgrade, workspaceId: workspace.id },
             async (current) => {
-              // A session of several repositories, or chats, is archived by
-              // an agent that can (its box upgraded in place first where it
-              // can): after the transition, so two clicks don't both upgrade it.
+              // An unreachable computer needs no storage upload URLs. First
+              // prove the agent answers; recovery can then safely distinguish
+              // a dead box from a real Snapshot preparation/save failure.
+              await current.health(identity);
+              // Require support for every repository and chat before saving
+              // anything. Two archive clicks cannot both upgrade the box.
               const features = { features: async () => (await current.health(identity)).features ?? [], upgrade };
               if (workspace.checkouts) {
                 await requireFeature(features, AGENT_FEATURE_MULTI_REPO_SNAPSHOTS, "archive a session of several repositories");
@@ -161,15 +152,31 @@ export async function archiveCloudSession(
               if (chats.length > 0) {
                 await requireFeature(features, AGENT_FEATURE_CHAT_SNAPSHOTS, "archive a session with several chats");
               }
-              const storage = supabaseSnapshotStorage();
-              const chatUploads = await Promise.all(
-                chats.map(async (chat) => {
-                  const paths = chatUploadPaths(prefix, chat);
-                  const conversation = (await storage.createSignedUploadUrl(paths.conversation)).signedUrl;
-                  const rollout = paths.rollout ? (await storage.createSignedUploadUrl(paths.rollout)).signedUrl : undefined;
-                  return archiveChat(chat, { conversation, ...(rollout && { rollout }) });
-                }),
-              );
+              if (!upload) {
+                stage = "prepare";
+                try {
+                  const storage = supabaseSnapshotStorage();
+                  const prepared = await mintSnapshotUpload(
+                    storage, owner.id, workspace.id, archivedAt,
+                    workspace.agent === "codex" ? ["rollout"] : [],
+                  );
+                  chatUploads = await Promise.all(
+                    chats.map(async (chat) => {
+                      const paths = chatUploadPaths(prepared.prefix, chat);
+                      const conversation = (await storage.createSignedUploadUrl(paths.conversation)).signedUrl;
+                      const rollout = paths.rollout ? (await storage.createSignedUploadUrl(paths.rollout)).signedUrl : undefined;
+                      return archiveChat(chat, { conversation, ...(rollout && { rollout }) });
+                    }),
+                  );
+                  upload = prepared;
+                } catch (error) {
+                  // A chat's storage URL failure is a save preparation failure,
+                  // just like the main conversation's, never a dead computer.
+                  throw new ArchivePreparationError(error);
+                }
+              }
+              stage = "capture";
+              const uploads = upload.urls.map((u) => ({ artifact: u.artifact, url: u.signedUrl }));
               return current.archiveWorkspace(identity, {
                 archivedAt,
                 uploads,
@@ -180,21 +187,23 @@ export async function archiveCloudSession(
         ).result,
     }, options);
     if (save.saved) {
+      if (!upload) throw new Error("Snapshot capture completed without prepared uploads");
+      stage = "record";
       await createWorkspaceSnapshot({
         ownerId: owner.id,
         workspaceId: workspace.id,
         archivedAt,
-        storagePath: prefix,
+        storagePath: upload.prefix,
         manifest: save.manifest,
       });
     } else {
       console.warn(`Workspace ${workspace.id}: its box couldn't be reached, so it's archived without its files`, save.cause);
     }
   } catch (error) {
-    console.error(`Workspace ${workspace.id} archive failed`, error);
+    console.error(`Workspace ${workspace.id} archive failed during ${stage}`, error);
     // A box that can't archive it, or a plan that won't start its box, says
     // so; the session stays as it was.
-    const said = archiveFailure(error);
+    const said = archiveFailure(error, stage);
     await transitionWorkspace({
       id: workspace.id,
       from: ["archiving"],
@@ -221,20 +230,4 @@ export async function archiveCloudSession(
     await releaseWorkspaceBox(provider, workspace, boxBefore !== null && boxNow !== null && boxNow !== boxBefore);
   });
   return { ok: true, unsaved: true, note: ARCHIVED_UNSAVED };
-}
-
-/** What a failed archive answers: the plan's refusal, a box too old to
- *  archive it, or a failure of Outrunner's own (its storage, say), to try
- *  again. */
-function archiveFailure(error: unknown): { status: number; error: string } {
-  if (error instanceof MissingBoxProjectError) {
-    const failure = bringBackFailure(error);
-    return { status: failure.status, error: failure.body.error };
-  }
-  if (error instanceof CloudLimitError) return { status: 403, error: error.denial.error };
-  const refused = isPlanLimitError(error);
-  if (refused) return { status: 403, error: refused.message };
-  if (error instanceof OutdatedComputerError) return { status: 409, error: error.message };
-  if (error instanceof AgentRequestError && error.error?.message) return { status: 502, error: error.error.message };
-  return { status: 502, error: archiveError() };
 }

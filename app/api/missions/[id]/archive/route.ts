@@ -26,9 +26,9 @@ export async function POST(request: Request, context: RouteContext) {
   if (!result.archived) {
     // Ships archived without their files on an ask that ran out of time
     // (`more`) are said once the last ask ends: the browser keeps the note.
-    const note = result.more && result.unsaved ? { note: unsavedNote(result.unsaved) } : {};
+    const note = result.more && result.unsaved ? { note: unsavedNote(result.unsaved), cumulativeNote: true } : {};
     return NextResponse.json({ error: result.why, ships: result.ships, left: result.left, more: result.more, ...note }, { status: 409 });
   }
   // `note`: Ships archived without their files, their boxes out of reach.
-  return NextResponse.json({ ok: true, ships: result.ships, ...(result.note && { note: result.note }) });
+  return NextResponse.json({ ok: true, ships: result.ships, ...(result.note && { note: result.note, cumulativeNote: true }) });
 }

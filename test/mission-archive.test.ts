@@ -6,10 +6,12 @@ import {
   archiveMission,
   missionArchiveConsequence,
   missionArchiveOffer,
+  unarchivedShipCount,
   type MissionArchiveDeps,
   requestMissionArchive,
 } from "@/lib/missions/archive";
 import type { Workspace, WorkspaceStatus } from "@/lib/runtime/types";
+import { ARCHIVED_UNSAVED } from "@/lib/session/archive-notice";
 
 function session(id: string, status: WorkspaceStatus, patch: Partial<Workspace> = {}): Workspace {
   return {
@@ -78,8 +80,8 @@ test("its Ships are archived, at work or asleep, then the Runner, last", async (
     session("failed", "failed"),
   ]);
   const result = await archiveMission(w.mission, w.deps);
-  assert.deepEqual(result, { archived: true, ships: 3 });
-  assert.deepEqual(w.archived.sort(), ["asleep", "idle", "m1", "working"]);
+  assert.deepEqual(result, { archived: true, ships: 4 });
+  assert.deepEqual(w.archived.sort(), ["asleep", "failed", "idle", "m1", "working"]);
   assert.equal(w.order.at(-1), "m1");
 });
 
@@ -213,7 +215,7 @@ test("not reached and refused together: only the refused are named as failing", 
   assert.equal(result.archived, false);
   if (result.archived) return;
   assert.equal(result.more, false);
-  assert.match(result.why, /couldn't be yet: “s0” \(its box didn't answer\), and 1 Ship still to archive\. Try again shortly\./);
+  assert.match(result.why, /couldn't be yet: “s0” \(its box didn't answer\), and 1 Ship still to archive\./);
   assert.doesNotMatch(result.why, /not reached/);
 });
 
@@ -251,9 +253,58 @@ test("offered while up or asleep, on a Runtime Computer; disabled saying why bet
 });
 
 test("the confirmation counts its Ships", () => {
-  assert.match(missionArchiveConsequence(0), /^Their work is saved/);
-  assert.match(missionArchiveConsequence(1), /^Its Ship is archived with it/);
-  assert.match(missionArchiveConsequence(3), /^Its 3 Ships are archived with it/);
+  assert.match(missionArchiveConsequence(0), /^Reachable work is saved/);
+  assert.match(missionArchiveConsequence(1), /^Its remaining Ship is archived with it/);
+  assert.match(missionArchiveConsequence(3), /^Its 3 remaining Ships are archived with it/);
+  assert.match(missionArchiveConsequence(3), /original disk is kept/);
+  assert.equal(unarchivedShipCount([{ state: "idle" }, { state: "failed" }, { state: "archived" }, { state: "archived" }]), 2,
+    "failed Ships count, while archived Shipping rows do not");
+});
+
+test("manual Runner archive includes failed Ships and does not forget their work", async () => {
+  const w = world([session("failed-with-work", "failed"), session("dead", "ready"), session("already-archived", "archived")]);
+  const saved = w.deps.archive;
+  w.deps.archive = async (ship) => {
+    const result = await saved(ship);
+    return ship.id === "dead" ? { note: "Archived without files" } : result;
+  };
+  const result = await archiveMission(w.mission, w.deps);
+  assert.equal(result.archived, true);
+  assert.deepEqual(w.archived.sort(), ["dead", "failed-with-work", "m1"]);
+  if (result.archived) assert.match(result.note ?? "", /“dead”/);
+});
+
+test("a real save failure keeps its Ship and reports successful partial progress without promising a retry fixes it", async () => {
+  const w = world([session("saved", "ready"), session("save-failed", "ready")]);
+  w.refuse.set("save-failed", "Its files couldn't be saved. The session was kept so its work can be recovered");
+  const result = await archiveMission(w.mission, w.deps);
+  assert.equal(result.archived, false);
+  assert.deepEqual(w.archived, ["saved"]);
+  if (!result.archived) {
+    assert.match(result.why, /^1 Ship archived\./);
+    assert.match(result.why, /files couldn't be saved/);
+    assert.doesNotMatch(result.why, /Try again shortly/);
+    assert.deepEqual(result.left.map((ship) => ship.id), ["save-failed"]);
+  }
+});
+
+test("an earlier attempt's unsaved warning survives a manual retry after a genuine upload failure", async () => {
+  const w = world([
+    session("unreachable", "archived", { errorMessage: ARCHIVED_UNSAVED }),
+    session("upload-failed", "ready"),
+  ]);
+  const result = await archiveMission(w.mission, w.deps);
+  assert.equal(result.archived, true);
+  assert.deepEqual(w.archived, ["upload-failed", "m1"]);
+  if (result.archived) assert.match(result.note ?? "", /without its files.*“unreachable”/);
+});
+
+test("persisted cumulative loss notes are not duplicated across budget-limited asks", async () => {
+  const answers = [
+    new Response(JSON.stringify({ more: true, note: "Ship a was unsaved.", cumulativeNote: true }), { status: 409 }),
+    new Response(JSON.stringify({ note: "Ships a and b were unsaved.", cumulativeNote: true })),
+  ];
+  assert.equal(await requestMissionArchive("m1", (async () => answers.shift()!) as typeof fetch), "Ships a and b were unsaved.");
 });
 
 test("the browser's ask: again while there's more, else the route's error, said", async () => {
