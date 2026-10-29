@@ -23,6 +23,30 @@ export function RouteLoading({ label }: { label: string }) {
 }
 
 /**
+ * A session's page before it has the session: its frame — the header, the
+ * chat column with its composer's box, the environment column — and nothing
+ * in it. No loader: what fills it lands where this already stands, on a page
+ * load before the app has started, and on the rare open of a session the
+ * sidebar doesn't have yet, so the page never flashes a spinner first.
+ */
+export function SessionLoading() {
+  return (
+    <div role="status" aria-busy aria-label="Opening session" className="studio-shell">
+      <header className="studio-header">
+        <RaillessSidebarButtons />
+      </header>
+      <section className="studio-chat">
+        <div className="flex min-h-0 flex-col justify-end">
+          {/* The composer's box, as tall as an empty one. */}
+          <div aria-hidden className="studio-composer h-[105px]" />
+        </div>
+      </section>
+      <aside aria-hidden className="studio-inspector studio-env" />
+    </div>
+  );
+}
+
+/**
  * A state that takes the whole page or panel: a route that failed or is
  * missing, a session that didn't start. `actions` are the ways on (defaults to
  * a way home); `footer` sits under them, for a fact shown from the start.

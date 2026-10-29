@@ -182,6 +182,30 @@ export function claudeIsWorking(events: AgentEvent[]): boolean {
   return false;
 }
 
+/** What Claude is at, mid-turn, for the working indicator: the step it's on
+ *  and since when. */
+export type WorkingStep = { label: string; since: string | null };
+
+/**
+ * What Claude is at, from the last thing the stream wrote while it works.
+ * Claude writes a thought only once it ends, so a long stretch of reasoning
+ * shows nothing new until then: after a prompt, or a tool's result, it is
+ * thinking; after a tool call, that tool is running. `since` is when that
+ * step began. "Working" when the stream doesn't say.
+ */
+export function workingStep(events: AgentEvent[]): WorkingStep {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i];
+    if (event.t !== "message") continue;
+    if (event.role === "user") return { label: "Thinking", since: event.timestamp };
+    const last = event.content[event.content.length - 1];
+    if (last?.type === "tool_use") return { label: `Running ${last.name}`, since: event.timestamp };
+    if (last?.type === "thinking") return { label: "Thinking", since: event.timestamp };
+    return { label: "Working", since: null };
+  }
+  return { label: "Working", since: null };
+}
+
 function messageIsWorking(event: Extract<AgentEvent, { t: "message" }>): boolean {
   // A prompt or a tool result awaiting Claude; not a stop or the output of
   // a command Claude ran itself. Words finish a reply unless a tool follows.

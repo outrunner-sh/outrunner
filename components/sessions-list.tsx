@@ -23,6 +23,12 @@ import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
 import { useStandings } from "@/hooks/use-standings";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
+import {
+  listedIsFresh,
+  listedSessions,
+  rememberListedSessions,
+  useListedSessions,
+} from "@/lib/session/listed-sessions";
 import { relativeTime, type SessionDeletion } from "@/lib/nav/sidebar";
 import { archiveOffer, archiveSession } from "@/lib/session/archive-control";
 import { deleteSession } from "@/lib/session/delete-session";
@@ -58,7 +64,11 @@ export function SessionsList() {
   const now = useNow(60_000);
   const local = useLocalSessions();
   const live = useStandings();
-  const [cloud, setCloud] = useState<SessionListEntry[] | null>(null);
+  // The last answer this page had, shown at once on a revisit and kept in
+  // step with what this tab does elsewhere (lib/session/listed-sessions.ts):
+  // read again only once it is a while old, or may be wrong.
+  const listed = useListedSessions();
+  const cloud = listed?.sessions ?? null;
   const data = useAppData();
   const seed = useMemo(() => ownSessionEntries(data), [data]);
   // The server's read of the whole org once it answers; the layout's own data
@@ -74,17 +84,21 @@ export function SessionsList() {
       const response = await fetch("/api/sessions", { cache: "no-store" });
       const body = (await response.json().catch(() => ({}))) as { sessions?: SessionListEntry[]; error?: string };
       if (!response.ok || !body.sessions) throw new Error(body.error ?? "Couldn't load the sessions.");
-      setCloud(body.sessions);
+      rememberListedSessions(body.sessions);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Couldn't load the sessions.");
     }
   }, []);
 
+  // On each visit, and whenever what this tab did elsewhere left the kept
+  // answer unsure (staleListedSessions).
+  const stale = listed !== null && listed.at === 0;
   useEffect(() => {
+    if (listedIsFresh(listedSessions())) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, [load]);
+  }, [load, stale]);
 
   // The user's own cloud sessions as the frame keeps them live, and this
   // Mac's, which only the browser can read.

@@ -9,7 +9,7 @@
 import { listOrgProjects } from "@/lib/db/org-access";
 import { getPullRequestStatus } from "@/lib/github/client";
 import { appSlug, githubAppConfig } from "@/lib/github/app";
-import { pullFiles } from "@/lib/review/files";
+import { type FileCounts, filesReadComplete, inboxFileCounts, pullFiles } from "@/lib/review/files";
 import type { PullFile } from "@/lib/review/hunks";
 import { countLines, type LineCounts } from "@/lib/review/line-kinds";
 import { githubGetResult } from "@/lib/github/rest";
@@ -68,21 +68,27 @@ async function readableRepos(actor: TriageActor): Promise<{ id: string; fullName
 // The inbox's line counts, by PR and head commit: a commit's files never
 // change, so a PR is read again only once something is pushed to it. Kept
 // for this server process, the most recent few hundred.
-const countsByHead = new Map<string, { lines: LineCounts; complete: boolean }>();
+const countsByHead = new Map<string, FileCounts>();
 const COUNTS_KEPT = 500;
 
-/** A PR's lines by kind for the inbox: from its first page of files only,
- *  so a PR of over 100 files says its counts are partial. */
-async function inboxCounts(token: string, repo: string, number: number, headSha: string): Promise<{ lines: LineCounts; complete: boolean } | null> {
-  const key = `${repo}#${number}@${headSha}`;
-  const kept = countsByHead.get(key);
-  if (kept) return kept;
-  const read = await pullFiles(token, repo, number, 1);
-  if (!read) return null;
-  const counts = { lines: countLines(read.files), complete: read.complete };
-  countsByHead.set(key, counts);
-  if (countsByHead.size > COUNTS_KEPT) countsByHead.delete(countsByHead.keys().next().value as string);
-  return counts;
+/** Some PRs' lines by kind for the inbox, by their place in the list: from
+ *  what was kept for their head, else read for each repository at once. */
+async function inboxCounts(pulls: readonly { token: string; repo: string; number: number; headSha: string }[]): Promise<(FileCounts | null)[]> {
+  const key = (p: (typeof pulls)[number]) => `${p.repo}#${p.number}@${p.headSha}`;
+  const unread = new Map<string, (typeof pulls)[number][]>();
+  for (const p of pulls) if (!countsByHead.has(key(p))) unread.set(p.repo, [...(unread.get(p.repo) ?? []), p]);
+  await Promise.all(
+    [...unread.values()].map(async (list) => {
+      const read = await inboxFileCounts(list[0].token, list[0].repo, list.map((p) => p.number));
+      for (const p of list) {
+        const counts = read.get(p.number);
+        if (!counts) continue;
+        countsByHead.set(key(p), counts);
+        if (countsByHead.size > COUNTS_KEPT) countsByHead.delete(countsByHead.keys().next().value as string);
+      }
+    }),
+  );
+  return pulls.map((p) => countsByHead.get(key(p)) ?? null);
 }
 
 /** What Outrunner knows of some pull requests: their sessions and items. */
@@ -156,9 +162,9 @@ export async function listOpenPulls(actor: TriageActor): Promise<{ pulls: PullSu
           : Promise.resolve(null),
       ),
     ),
-    // And their lines by kind, from their files: a call each, unless their
-    // head was read before.
-    Promise.all(shown.map((p, i) => (i < 30 ? inboxCounts(p.token, p.repo, p.number, p.headSha) : Promise.resolve(null)))),
+    // And their lines by kind: one call a repository, for those whose head
+    // wasn't read before.
+    inboxCounts(shown.slice(0, 30)),
   ]);
   return {
     pulls: shown.map((p, i) => {
@@ -351,7 +357,9 @@ export async function pullDetail(actor: TriageActor, fullName: string, number: n
     deletions: pull.deletions ?? 0,
     changedFiles: pull.changed_files ?? 0,
     files: files?.files ?? null,
-    filesComplete: files?.complete ?? false,
+    // Every file read: the pages ran out, or as many came as GitHub counts
+    // (a PR of exactly the cap's number of files).
+    filesComplete: filesReadComplete(files, pull.changed_files ?? Number.POSITIVE_INFINITY),
     lines: files ? countLines(files.files) : null,
     checks: mergeStatus?.checks ?? { passing: 0, failing: 0, pending: 0 },
     mergeableState: mergeStatus?.mergeableState ?? "unknown",

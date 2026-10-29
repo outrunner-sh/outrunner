@@ -51,7 +51,6 @@ import { buildStatusSections, type Grouping, groupingCookie } from "@/lib/nav/st
 import type { SessionStanding } from "@/lib/session/standing";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import type { Workspace } from "@/lib/runtime/types";
-import { forgetCachedSession } from "@/lib/session/app-data-cache";
 import { LOCAL_SESSIONS } from "@/lib/session/local-sessions";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import { cancelWarmOnRest, warmOnRest, warmSession } from "@/lib/session/warm-session";
@@ -165,15 +164,12 @@ export function AppSidebar({
     refreshLocal();
   };
 
-  // The session whose archive confirmation is open. Once it is archived, leave
-  // it if it is the one on screen (left open, its page would restore it at
-  // once), and re-read the list, which then marks it archived.
+  // The session whose archive confirmation is open. Once confirmed, leave it
+  // if it is the one on screen (left open, its page would restore it at
+  // once); the list marks it archived at once (lib/session/optimistic-archive.ts).
   const [archiving, setArchiving] = useState<ArchivingSession | null>(null);
   const onArchived = (id: string) => {
     if (id === active) router.push("/");
-    // Until the list comes back, a reload must not show it as it was.
-    forgetCachedSession(id);
-    router.refresh();
   };
 
   // ⌘K (AppFrame): open search, which focuses its field as it mounts.

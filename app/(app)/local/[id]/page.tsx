@@ -2,7 +2,7 @@ import { Suspense } from "react";
 
 import { LocalWorkspaceView } from "@/components/local-workspace-view";
 import { RequireOwner } from "@/components/require-owner";
-import { RouteLoading } from "@/components/route-states";
+import { SessionLoading } from "@/components/route-states";
 
 /** A click on a session never waits on the server: the build checks it, on a
  *  sample session opened from the sidebar (no first prompt). */
@@ -31,7 +31,7 @@ export const unstable_instant = {
 export default function LocalWorkspacePage() {
   return (
     <>
-      <Suspense fallback={<RouteLoading label="Opening session" />}>
+      <Suspense fallback={<SessionLoading />}>
         <LocalWorkspaceView />
       </Suspense>
       <Suspense fallback={null}>
