@@ -106,6 +106,9 @@ function decodeLine(line: string): AgentEvent | null {
     // unexpected role as "assistant".
     role: (typeof message.role === "string" ? message.role : "") as "user" | "assistant",
     ...(model ? { model } : {}),
+    // Claude's injected record (a skill's instructions, a reminder); mirrors the
+    // Go `omitempty`, so it's set only when true and replay stays byte-equivalent.
+    ...(rec.isMeta === true ? { meta: true } : {}),
     timestamp: typeof rec.timestamp === "string" ? rec.timestamp : "",
     content,
     ...(usage ? { usage } : {}),

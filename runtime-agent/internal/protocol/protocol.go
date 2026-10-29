@@ -495,6 +495,10 @@ type ConversationMessage struct {
 	// Compact marks the conversation compacted here: an assistant record with
 	// no content, which a page from before it shows as nothing at all.
 	Compact *Compaction `json:"compact,omitempty"`
+	// Meta marks Claude's own injected record (a skill's instructions, a system
+	// reminder, …; `isMeta` in the JSONL), which the timeline tucks behind a
+	// disclosure rather than showing inline. Omitted when false.
+	Meta bool `json:"meta,omitempty"`
 }
 
 // Compaction is a conversation summarized to free its context: asked for

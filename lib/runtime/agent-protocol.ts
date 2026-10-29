@@ -694,6 +694,10 @@ export const ConversationMessage = z.object({
   // The Claude model that produced the turn (assistant only; omitted on user
   // turns). Lets the composer show the model actually in use.
   model: z.string().optional(),
+  // Claude's own injected record, not a turn either party typed: a skill's
+  // instructions, a system reminder, and the like (`isMeta` in the JSONL). The
+  // timeline tucks these behind a disclosure instead of showing them inline.
+  meta: z.boolean().optional(),
   // Why the assistant reply stopped, as Claude logs it: "tool_use" while the
   // turn goes on (its words before a tool call are a record of their own),
   // "end_turn" and the like once it's over. Absent from an agent from before

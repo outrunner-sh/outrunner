@@ -101,6 +101,32 @@ test("a session's start shows until its first message, not after", () => {
   );
 });
 
+test("Claude's injected records fold away; the user's prompts stay inline", () => {
+  const meta = (text: string, isMeta = false): AgentEvent => ({
+    ...message("user", "2026-10-21T10:00:00Z", [{ type: "text", text }]),
+    ...(isMeta ? { meta: true } : {}),
+  });
+  const kindFor = (event: AgentEvent) => {
+    const [node] = conversationNodes([event]);
+    return node.kind === "meta" ? `meta:${node.label}` : node.kind;
+  };
+  // Marked meta (a skill's instructions), and the wrappers injected whole.
+  assert.equal(kindFor(meta("Base directory for this skill: /x\n\n# hunt", true)), "meta:Skill");
+  assert.equal(kindFor(meta("anything at all", true)), "meta:Internal");
+  assert.equal(kindFor(meta("<task-notification>\n<task-id>b1</task-id>")), "meta:Background task");
+  assert.equal(kindFor(meta("<system-reminder>\nRemember to…")), "meta:System reminder");
+  assert.equal(kindFor(meta("<command-name>/loop</command-name>")), "meta:Command");
+  // The user's own words stay a prompt — including an attached-file prompt,
+  // whose <system_instruction> wrapper leads but whose words follow.
+  assert.equal(kindFor(meta("fix the bug")), "prompt");
+  assert.equal(kindFor(meta("<system_instruction>\nAttached files.\n</system_instruction>\nfix it")), "prompt");
+  // A meta record starts no turn.
+  assert.equal(
+    conversationTurns(conversationNodes([meta("skill text", true)])).length,
+    0,
+  );
+});
+
 test("a turn is a prompt and Claude's last words in it, as plain text", () => {
   const turns = conversationTurns(
     conversationNodes([
