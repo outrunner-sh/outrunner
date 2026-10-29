@@ -99,15 +99,15 @@ export async function POST(request: Request, context: RouteContext) {
   let chat: Awaited<ReturnType<typeof insertChat>>;
   try {
     chat = await insertChat({
-    id: crypto.randomUUID(),
-    workspaceId: workspace.id,
-    ownerId: owner.id,
-    name,
-    agent: chatAgent,
-    kind: side ? "side" : "chat",
-    forkedFrom: from?.id ?? null,
-    model: source.agent === chatAgent ? source.model : null,
-  });
+      id: crypto.randomUUID(),
+      workspaceId: workspace.id,
+      ownerId: owner.id,
+      name,
+      agent: chatAgent,
+      kind: side ? "side" : "chat",
+      forkedFrom: from?.id ?? null,
+      model: source.agent === chatAgent ? source.model : null,
+    });
   } catch (error) {
     console.error(`Chat: couldn't record a chat in ${workspace.id}`, error);
     const missing = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && probeStatus({ code: error.code }) === "missing";
