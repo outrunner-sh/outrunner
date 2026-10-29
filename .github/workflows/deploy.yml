@@ -98,21 +98,6 @@ jobs:
           wranglerVersion: "4"
           command: deploy --var OUTRUNNER_BUILD:${{ github.sha }}
 
-      - name: Verify the deployment is actually usable
-        # A deploy that returns 200 can still be broken: without
-        # CREDENTIALS_ENCRYPTION_KEY the site loads, sign-in works, and every
-        # credential write fails. Fail the job rather than report success.
-        shell: bash
-        run: |
-          set -euo pipefail
-          for i in $(seq 1 30); do
-            if body=$(curl -fsS https://app.outrunner.sh/api/health); then break; fi
-            sleep 10
-          done
-          : "${body:?/api/health never responded}"
-          echo "$body"
-          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else None; sys.exit('::error::Codex rollout incomplete: apply 20261103190000_codex_connections.sql and configure the verified CLI build version; '+str(h.get('codex'))) if not h.get('codex',{}).get('ready') else print('health OK:',c,h['codex'])" <<< "$body"
-
       - name: Wait until users get this deploy
         # A deploy can succeed while the container keeps the image before it
         # (cloudflare/worker.ts): only /api/health reporting this commit says
@@ -139,3 +124,18 @@ jobs:
           done
           echo "::error::app.outrunner.sh still isn't serving $GITHUB_SHA after 10 minutes"
           exit 1
+
+      - name: Verify the deployment is actually usable
+        # A deploy that returns 200 can still be broken: without
+        # CREDENTIALS_ENCRYPTION_KEY the site loads, sign-in works, and every
+        # credential write fails. Fail the job rather than report success.
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS https://app.outrunner.sh/api/health); then break; fi
+            sleep 10
+          done
+          : "${body:?/api/health never responded}"
+          echo "$body"
+          python3 -c "import json,sys; h=json.load(sys.stdin); c=h.get('configured',{}); bad=[k for k in ('supabase','supabaseServiceRole','credentialEncryption','daytona') if not c.get(k)]; sys.exit('::error::deployed but not usable; false: '+', '.join(bad)) if bad else None; sys.exit('::error::health reports ok=false') if not h.get('ok') else None; sys.exit('::error::Codex rollout incomplete: apply 20261103190000_codex_connections.sql and configure the verified CLI build version; '+str(h.get('codex'))) if not h.get('codex',{}).get('ready') else print('health OK:',c,h['codex'])" <<< "$body"

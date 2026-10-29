@@ -102,7 +102,7 @@ starts provider login. It correctly refuses the real published 0.1.3 launcher.
 
 4. Merge the rollout follow-up and let the normal main deployment run. The
    Docker build passes the verified pin to `next build`; no nonexistent or
-   unsupported version is offered to users. Deployment verification requires
+   unsupported version is offered to users. After confirming the new build is serving, deployment verification requires
    `health.codex.ready=true`, `schema=ok`, and the expected `cliVersion`.
 
 5. Existing/new computers must run the merged runtime-agent that advertises
