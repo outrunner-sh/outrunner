@@ -22,6 +22,7 @@ import {
 import { Spinner } from "@/components/ui/loaders";
 import { useNow } from "@/hooks/use-now";
 import { relativeTime } from "@/lib/nav/sidebar";
+import { rememberTriageDetail, useKeptDetail } from "@/lib/triage/kept-triage";
 import {
   isOpen,
   itemHref,
@@ -56,11 +57,18 @@ export function WorkItemDetail({
   moveTargets: { id: string; fullName: string }[];
   /** Whether they may move items to Unsorted (write on all projects). */
   canUnsort: boolean;
-  /** The list, to pick what this one duplicates from. */
-  items: WorkItem[];
+  /** The list, to pick what this one duplicates from — and to paint from
+   *  before this item's own read answers. */
+  items: TriageItem[];
   onChanged: () => void;
 }) {
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  // The item as it was last read here, or the list's own copy of it, so a pane
+  // re-entered — or one opened from the list — paints at once rather than
+  // saying it is loading; this look's answer replaces either as it lands
+  // (lib/triage/kept-triage.ts).
+  const kept = useKeptDetail(id);
+  const listed = items.find((other) => other.id === id) ?? null;
+  const shown: Loaded | null = kept ?? (listed ? { item: listed, notes: [] } : null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +85,8 @@ export function WorkItemDetail({
       setError(body.error ?? "Couldn't load the item.");
       return;
     }
-    setLoaded({ item: body.item, notes: body.notes ?? [] });
+    // The server's answer always wins, and is kept for the pane's next entry.
+    rememberTriageDetail({ item: body.item, notes: body.notes ?? [] });
   }, [id]);
 
   useEffect(() => {
@@ -98,9 +107,9 @@ export function WorkItemDetail({
       const body = (await response.json().catch(() => ({}))) as { item?: TriageItem; error?: string };
       if (!response.ok || !body.item) throw new Error(body.error ?? "Couldn't change the item.");
       const item = body.item;
-      setLoaded((current) =>
-        current ? { ...current, item: { ...item, ownSession: current.item.ownSession } } : current,
-      );
+      // Its own session is the detail's to say, not the change's: keep what was
+      // shown of it.
+      rememberTriageDetail({ item: { ...item, ownSession: shown?.item.ownSession }, notes: shown?.notes ?? [] });
       onChanged();
       return true;
     } catch (updateError) {
@@ -112,7 +121,7 @@ export function WorkItemDetail({
   };
 
   if (missing) return <p className="px-6 py-10 text-sm text-muted-foreground">This item doesn&apos;t exist anymore.</p>;
-  if (!loaded) {
+  if (!shown) {
     return error ? (
       <p className="px-6 py-10 text-sm text-destructive">{error}</p>
     ) : (
@@ -122,7 +131,7 @@ export function WorkItemDetail({
     );
   }
 
-  const { item, notes } = loaded;
+  const { item, notes } = shown;
   const duplicateOf = item.duplicateOf ? items.find((other) => other.id === item.duplicateOf) : null;
   const duplicateCandidates = items.filter((other) => other.id !== item.id && isOpen(other.status));
   const workspaceSelect = (
@@ -204,7 +213,7 @@ export function WorkItemDetail({
           notes={notes}
           now={now}
           onAdded={(note) => {
-            setLoaded((current) => (current ? { ...current, notes: [...current.notes, note] } : current));
+            rememberTriageDetail({ item, notes: [...notes, note] });
             onChanged();
           }}
         />

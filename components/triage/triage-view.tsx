@@ -13,8 +13,9 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/loaders";
 import { useNow } from "@/hooks/use-now";
 import { relativeTime } from "@/lib/nav/sidebar";
-import { groupWorkItems, tabCounts, tabOf, TRIAGE_TABS, type TriageTab } from "@/lib/triage/groups";
 import type { AccessLevel } from "@/lib/orgs/access";
+import { rememberTriage, useTriage } from "@/lib/triage/kept-triage";
+import { groupWorkItems, tabCounts, tabOf, TRIAGE_TABS, type TriageTab } from "@/lib/triage/groups";
 import { captureHref, itemKey, STATUS_LABELS, type TriageItem } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
 
@@ -32,11 +33,10 @@ export function TriageView() {
   const captureProject = search.get("project");
   const data = useAppData();
   const projects = data?.projects ?? [];
-  const [items, setItems] = useState<TriageItem[] | null>(null);
-  // The caller's level on each project, and on all of them: where they may
-  // move an item to.
-  const [levels, setLevels] = useState<Record<string, AccessLevel>>({});
-  const [orgLevel, setOrgLevel] = useState<AccessLevel | null>(null);
+  // The list, where items may be moved and the caller's level on all of them:
+  // the last answer, or what triage kept from the last visit, so a re-entry
+  // paints at once and this look reconciles behind it (lib/triage/kept-triage.ts).
+  const { items, levels, orgLevel } = useTriage();
   const [error, setError] = useState<string | null>(null);
   const [tabChoice, setTab] = useState<TriageTab | null>(null);
   // Groups folded shut, by key ("" is Unsorted).
@@ -53,9 +53,8 @@ export function TriageView() {
         error?: string;
       };
       if (!response.ok || !body.items) throw new Error(body.error ?? "Couldn't load triage.");
-      setItems(body.items);
-      setLevels(body.projects ?? {});
-      setOrgLevel(body.orgLevel ?? null);
+      // The server's list always wins over what was kept.
+      rememberTriage({ items: body.items, levels: body.projects ?? {}, orgLevel: body.orgLevel ?? null });
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Couldn't load triage.");

@@ -15,9 +15,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
-import { type Org, orgSummary } from "@/lib/orgs/active";
+import { refreshMissions } from "@/hooks/use-missions";
 import { requestJson } from "@/lib/http/request-json";
+import { clearMissions } from "@/lib/missions/kept-missions";
+import { type Org, orgSummary } from "@/lib/orgs/active";
 import { clearAppDataCache } from "@/lib/session/app-data-cache";
+import { clearKeptTriage } from "@/lib/triage/kept-triage";
 
 /**
  * The org the sidebar lists, as its header: Outrunner's mark and the org's
@@ -50,8 +53,13 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
         body: { orgId: org.id },
         fallback: "Couldn't switch orgs. Try again.",
       });
-      // The list kept is the org left behind: none of it shows in the new one.
+      // The lists kept are the org left behind: none of it shows in the new one
+      // (the Runners and Triage panes seed from them). The Runners are looked
+      // at again here, since the sidebar stays put across the switch.
       clearAppDataCache();
+      clearMissions();
+      clearKeptTriage();
+      void refreshMissions();
       router.push("/");
       router.refresh();
     } catch (cause) {
