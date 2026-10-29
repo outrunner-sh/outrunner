@@ -556,6 +556,7 @@ const VERDICT_TONE: Record<PullRequestVerdict["tone"], string> = {
   pending: "text-white/45",
   problem: "text-destructive",
   done: "text-white/45",
+  merged: "text-merged",
 };
 
 /**
@@ -580,6 +581,7 @@ function OpenedPullRequestRow({
   const [confirming, setConfirming] = useState(false);
   const [merging, setMerging] = useState(false);
   const verdict = status ? pullRequestVerdict(status) : null;
+  const merged = verdict?.tone === "merged";
 
   useEffect(() => {
     if (!confirming) return;
@@ -621,7 +623,10 @@ function OpenedPullRequestRow({
 
   return (
     <EnvRow
-      icon={<GitPullRequest />}
+      // A merged PR carries GitHub's merge glyph, in its colour: the row reads
+      // as done at a glance, not as one still open.
+      icon={merged ? <GitMerge /> : <GitPullRequest />}
+      merged={merged}
       right={
         verdict?.canMerge && (
           <button
@@ -704,6 +709,7 @@ function EnvRow({
   expanded,
   disabled,
   busy,
+  merged,
   children,
 }: {
   ref?: React.Ref<HTMLButtonElement>;
@@ -714,6 +720,8 @@ function EnvRow({
   expanded?: boolean;
   disabled?: boolean;
   busy?: boolean;
+  /** Tint the icon and PR link in the merged colour (an opened PR once merged). */
+  merged?: boolean;
   children: React.ReactNode;
 }) {
   const content = (
@@ -725,7 +733,7 @@ function EnvRow({
   );
   if (!onClick) {
     return (
-      <div title={title} className="studio-env-row">
+      <div title={title} className={cn("studio-env-row", merged && "is-merged")}>
         {content}
       </div>
     );

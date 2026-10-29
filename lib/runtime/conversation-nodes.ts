@@ -19,6 +19,9 @@ export type ConversationNode =
    *  echo of one still on its way. `continuation`: Runner news absorbed into
    *  the running turn, so it starts neither a clock nor a turn-rail tick. */
   | { kind: "prompt"; key: string; text: string; mode?: "plan"; at?: string; continuation?: true }
+  /** Claude's own injected record (a skill's instructions, a reminder): folded
+   *  behind a disclosure rather than shown inline. `label` names it in a word. */
+  | { kind: "meta"; key: string; label: string; text: string }
   /** A slash command Claude ran itself ("/model opus"), as typed. */
   | { kind: "command"; key: string; text: string }
   /** The conversation compacted here. */
@@ -100,7 +103,14 @@ export function conversationNodes(
     // A record of a slash command Claude ran itself is a step of the turn
     // too (/compact's), not one of its own.
     const continuation = turn !== null && continuations.has(ei);
-    if (event.role === "user" && event.content.some((b) => b.type === "text") && !isInterruption(event) && !isLocalCommand(event) && !continuation) {
+    const internalRecord = event.role === "user" && event.content.some(
+      (block) => block.type === "text" && metaLabel(event.meta === true, block.text) !== null,
+    );
+    const visiblePrompt = event.role === "user" && event.content.some(
+      (block) => block.type === "text" && metaLabel(event.meta === true, block.text) === null,
+    );
+    const hiddenMeta = event.role === "user" && event.content.some((block) => block.type === "text") && !visiblePrompt;
+    if (visiblePrompt && !isInterruption(event) && !isLocalCommand(event) && !continuation) {
       endTurn();
       // A typed /compact starts no turn of its own: it has no prompt row
       // (its compaction's row says it), so a "worked" row under it would
@@ -108,7 +118,7 @@ export function conversationNodes(
       // would run on to the compaction, however long after it was.
       const compactTyped = event.content.some((b) => b.type === "text" && TYPED_COMPACT.test(b.text));
       if (!isEcho(event.uuid) && !compactTyped) turn = { from: event.timestamp, last: null, key: `${event.uuid}-${ei}` };
-    } else if (turn) {
+    } else if (turn && !hiddenMeta) {
       turn.last = event.timestamp;
     }
     if (isInterruption(event)) {
@@ -122,7 +132,7 @@ export function conversationNodes(
       previousAt = event.timestamp;
       return;
     }
-    if (isLocalCommand(event)) {
+    if (isLocalCommand(event) && !internalRecord) {
       // What a command printed stays out, and /compact is its compaction's row.
       const line = localCommandLine(messageText(event));
       if (line && !/^\/compact\b/.test(line)) nodes.push({ kind: "command", key: `${event.uuid}-${ei}`, text: line });
@@ -137,6 +147,11 @@ export function conversationNodes(
             // Claude Code 2.1.304 records a typed /compact first as a prompt of
             // its own: the compaction's row says it.
             if (TYPED_COMPACT.test(block.text)) return;
+            const label = metaLabel(event.meta === true, block.text);
+            if (label !== null) {
+              nodes.push({ kind: "meta", key, label, text: block.text });
+              return;
+            }
             if (!continuation) planTurn = event.mode === "plan";
             nodes.push({
               kind: "prompt",
@@ -167,6 +182,25 @@ export function conversationNodes(
   });
   if (!working) endTurn();
   return nodes;
+}
+
+/**
+ * A short label for an internal user record, or null when it's the user's own
+ * prompt and belongs inline. A record is internal when Claude marked it so
+ * (`meta`: a skill's instructions, a reminder it folds away), or when its text
+ * is one of the wrappers that are always injected whole and never carry the
+ * user's words. `<system_instruction>` is deliberately not among them: an
+ * attached-file prompt leads with that wrapper and the user's words follow, so
+ * hiding it would hide the prompt.
+ */
+export function metaLabel(meta: boolean, text: string): string | null {
+  const t = text.trimStart();
+  if (t.startsWith("Base directory for this skill")) return "Skill";
+  if (t.startsWith("<command-name>") || t.startsWith("<command-message>")) return "Command";
+  if (t.startsWith("<local-command-stdout>") || t.startsWith("<local-command-stderr>")) return "Command output";
+  if (t.startsWith("<task-notification>")) return "Background task";
+  if (t.startsWith("<system-reminder>")) return "System reminder";
+  return meta ? "Internal" : null;
 }
 
 /**

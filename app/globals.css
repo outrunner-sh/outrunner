@@ -87,6 +87,8 @@
   /* The landing page's accents (neevai-labs/outrunner-landing). */
   --color-brand: #ff8800;
   --color-positive: #49a147;
+  /* GitHub's merged purple, for a pull request once it's in. */
+  --color-merged: #a371f7;
 }
 
 @layer base {
@@ -276,6 +278,10 @@
 .studio-env-pr-link { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--studio-text); font-variant-numeric: tabular-nums; }
 .studio-env-pr-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .studio-env-pr-link svg { width: 14px; height: 14px; color: rgba(255,255,255,.45); }
+/* A merged PR: its icon and number carry the merged colour, not the dull grey. */
+.studio-env-row.is-merged .studio-env-icon,
+.studio-env-row.is-merged .studio-env-pr-link,
+.studio-env-row.is-merged .studio-env-pr-link svg { color: var(--color-merged); }
 .studio-env-merge { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border: 1px solid color-mix(in oklab, var(--color-positive) 40%, transparent); border-radius: 4px; color: var(--color-positive); background: color-mix(in oklab, var(--color-positive) 8%, transparent); font-size: 12px; cursor: pointer; transition: background-color .15s, border-color .15s; }
 .studio-env-merge:hover { border-color: color-mix(in oklab, var(--color-positive) 65%, transparent); background: color-mix(in oklab, var(--color-positive) 16%, transparent); }
 .studio-env-merge svg { width: 13px; height: 13px; }
@@ -554,6 +560,10 @@
 .studio-env-close:focus-visible,
 .studio-icon-button:focus-visible,
 .studio-composer-footer button:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; }
+/* The conversation scrolls, but without a visible scrollbar on the right: it's
+   driven by wheel, trackpad and keys, and the turn rail is the way around. */
+.timeline-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+.timeline-scroll::-webkit-scrollbar { width: 0; height: 0; }
 /* Conversation rows off screen skip layout and paint; each remembers its last
    rendered height, so the scrollbar and auto-follow stay true. */
 .timeline-row { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 60px; }
@@ -584,6 +594,16 @@
 .turn-rail-card-reply { display: -webkit-box; overflow: hidden; color: var(--muted-foreground); font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 /* Claude's steps: a thought as a quiet line, a tool call as a bordered row. */
 .timeline-thought { padding: 2px 8px; color: #a69996; font-size: 14px; }
+/* An internal record Claude injected (skill instructions, a reminder), folded
+   away: a quiet one-line disclosure that opens onto the raw text. */
+.timeline-meta { min-width: 0; }
+.timeline-meta > summary { display: flex; align-items: center; gap: 5px; padding: 2px 8px; color: #8a8a8a; font-size: 12.5px; list-style: none; cursor: pointer; transition: color .15s; }
+.timeline-meta > summary::-webkit-details-marker { display: none; }
+.timeline-meta > summary:hover, .timeline-meta[open] > summary { color: var(--studio-text); }
+.timeline-meta > summary:focus-visible { outline: 2px solid rgba(255,255,255,.4); outline-offset: -2px; border-radius: 3px; }
+.timeline-meta > summary > svg { width: 13px; height: 13px; flex-shrink: 0; transition: transform .15s; }
+.timeline-meta[open] > summary > svg { transform: rotate(90deg); }
+.timeline-meta > pre { margin: 4px 8px 2px; padding: 8px 10px; max-height: 20rem; overflow: auto; border-radius: 3px; color: #b4b4b4; background: #0d0d0d; font: 11.5px/1.6 var(--font-geist-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .timeline-tool { min-width: 0; border: 1px solid var(--studio-border); border-radius: 3px; }
 .timeline-tool > summary { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 3px 9px; color: #a69996; font-size: 13.5px; line-height: 20px; list-style: none; cursor: pointer; transition: color .15s; }
 .timeline-tool > summary::-webkit-details-marker { display: none; }

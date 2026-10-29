@@ -5,6 +5,7 @@ import { parseRunnerEvents } from "@/lib/missions/events";
 import {
   Bot,
   Clock,
+  ChevronRight,
   FilePlus,
   FoldVertical,
   FileText,
@@ -235,7 +236,7 @@ export function ConversationTimeline({
           });
         }}
         // Positioned, so each prompt's offsetTop is from the conversation's top.
-        className="relative min-h-0 flex-1 overflow-auto bg-background outline-none text-[0.8125rem] leading-relaxed text-foreground"
+        className="timeline-scroll relative min-h-0 flex-1 overflow-auto bg-background outline-none text-[0.8125rem] leading-relaxed text-foreground"
       >
         <div ref={contentRef} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-10 pb-16">
           {placeholder === "connecting" && (
@@ -392,6 +393,8 @@ function NodeRow({ node, plan }: { node: ConversationNode; plan?: PlanActions })
           <MessageTime at={node.at} />
         </div>
       );
+    case "meta":
+      return <Meta label={node.label} text={node.text} />;
     case "interrupted":
       return <div className="timeline-thought">Interrupted</div>;
     case "prose":
@@ -442,6 +445,21 @@ function Prompt({ text, mode, at }: { text: string; mode?: "plan"; at?: string }
         ))}
       </div>
     </div>
+  );
+}
+
+/** An internal record Claude injected (a skill's instructions, a reminder):
+ *  folded behind a quiet one-line disclosure, so the conversation keeps its
+ *  flow but the text is a click away, like Conductor. */
+function Meta({ label, text }: { label: string; text: string }) {
+  return (
+    <details className="timeline-meta">
+      <summary>
+        <ChevronRight aria-hidden />
+        <span className="font-medium">{label}</span>
+      </summary>
+      <pre>{text}</pre>
+    </details>
   );
 }
 

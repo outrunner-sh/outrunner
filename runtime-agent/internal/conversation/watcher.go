@@ -41,6 +41,10 @@ type rawRecord struct {
 		PreTokens  int    `json:"preTokens"`
 		PostTokens int    `json:"postTokens"`
 	} `json:"compactMetadata"`
+	// Claude's own injected record (a skill's instructions, a system reminder,
+	// …): shown tucked behind a disclosure, not inline, so it stays out of the
+	// conversation's flow.
+	IsMeta  bool `json:"isMeta"`
 	Message *struct {
 		Role       string                      `json:"role"`
 		Model      string                      `json:"model"`
@@ -236,6 +240,9 @@ func decode(line []byte) (Event, bool) {
 		StopReason: rec.Message.StopReason,
 		Timestamp:  rec.Timestamp,
 		Content:    content,
+		// Claude's injected record (a skill's instructions, a reminder): the
+		// timeline folds it away rather than running it inline.
+		Meta: rec.IsMeta,
 	}
 	if rec.Message.Role == "assistant" && rec.Message.Usage != nil {
 		// How full the context is: what this call read, cached or not, and

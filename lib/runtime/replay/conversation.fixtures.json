@@ -2,6 +2,7 @@
   "comment": "Shared Go/TS parity fixture for the conversation JSONL parser. `lines` are raw Claude session records; `events` is the exact AgentEvent output both runtime-agent/internal/conversation (Go decode) and lib/runtime/replay (TS parseConversation) must produce. Keep them in lockstep. The codex-* records are a Codex rollout as runtime-agent/internal/codex translates it (Claude's shape, with usage on the model call's last record). Claude names a tool result's call `tool_use_id`; Runtime's own translations write `toolUseId`; both decode to `toolUseId`. The compact_boundary and ExitPlanMode lines u14/u15 are shaped as Claude Code 2.1.304 writes them, read from its bundle; runtime-agent/internal/conversation/testdata/claude-2.1.304.jsonl is a whole session of it, captured.",
   "lines": [
     "{\"type\":\"assistant\",\"uuid\":\"u1\",\"parentUuid\":null,\"timestamp\":\"t1\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}",
+    "{\"type\":\"user\",\"uuid\":\"u-meta\",\"parentUuid\":\"u1\",\"timestamp\":\"t-meta\",\"isMeta\":true,\"message\":{\"role\":\"user\",\"content\":\"Base directory for this skill: /work/skill\"}}",
     "{\"type\":\"user\",\"uuid\":\"u2\",\"parentUuid\":\"u1\",\"timestamp\":\"t2\",\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"tr1\",\"type\":\"tool_result\",\"content\":\"done\",\"is_error\":false}]}}",
     "{\"type\":\"assistant\",\"uuid\":\"u3\",\"parentUuid\":\"u2\",\"timestamp\":\"t3\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\"},{\"type\":\"tool_use\",\"id\":\"tu1\",\"name\":\"Bash\",\"input\":{\"cmd\":\"ls\"}}]}}",
     "{\"type\":\"queue-operation\",\"uuid\":\"x\",\"message\":{\"role\":\"user\",\"content\":[]}}",
@@ -40,6 +41,20 @@
         {
           "type": "text",
           "text": "hi"
+        }
+      ]
+    },
+    {
+      "t": "message",
+      "uuid": "u-meta",
+      "parentUuid": "u1",
+      "role": "user",
+      "meta": true,
+      "timestamp": "t-meta",
+      "content": [
+        {
+          "type": "text",
+          "text": "Base directory for this skill: /work/skill"
         }
       ]
     },
