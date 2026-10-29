@@ -1,8 +1,10 @@
 /**
  * Long-term memory (20261103111000_memories.sql): notes an agent keeps for
  * the next sessions, one or two lines each, at two scopes. A person's own
- * are theirs alone; the org's are shared with its members, each a note its
- * writer or an admin may delete. Nothing is added but by an agent's
+ * are theirs alone, and every new session of theirs loads the newest; the
+ * org's are shared with its members, each a note its writer or an admin may
+ * delete, read on request and never loaded on their own, so no member's
+ * agent writes into another's instructions unread. Nothing is added but by an agent's
  * `outrunner-session remember` (lib/session-tools), and nothing is mined:
  * Settings → Memory shows every note, to delete.
  *
@@ -69,7 +71,10 @@ export function memoryRights(actor: MemoryActor, memory: Memory): { read: boolea
  *  on a page others in the org read). */
 const SECRET = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /\b(?:sk|rk|pk)-(?:ant-|proj-|live_|test_)?[A-Za-z0-9_-]{20,}/,
+  /\b(?:sk|rk|pk)-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/,
+  /\b(?:sk|rk|pk|whsec)_(?:live_|test_)?[A-Za-z0-9]{16,}/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\./,
+  /hooks\.slack\.com\/services\/[A-Za-z0-9/]{20,}/,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}/,
   /\bgithub_pat_[A-Za-z0-9_]{30,}/,
   /\bxox[abposr]-[A-Za-z0-9-]{10,}/,
@@ -118,12 +123,12 @@ export async function addMemory(
   const body = parseMemoryBody(input.body);
   if (typeof body !== "string") throw new MemoryError(400, body.error);
   const existing = await store.list(where(actor, input.scope));
+  // The same note again is the one already kept, even in a full memory.
+  const same = existing.find((m) => m.body === body);
+  if (same) return same;
   if (existing.length >= MAX_MEMORIES) {
     throw new MemoryError(409, `Memory holds ${MAX_MEMORIES} notes, the most it keeps. Ask the user to delete some in Settings → Memory.`);
   }
-  // The same note again is the one already kept.
-  const same = existing.find((m) => m.body === body);
-  if (same) return same;
   return store.insert({
     userId: actor.userId,
     orgId: input.scope === "org" ? actor.orgId : null,

@@ -13,7 +13,7 @@ import {
   type MemoryStore,
   parseMemoryBody,
 } from "@/lib/memory/actions";
-import { MAX_MEMORY_SECTION_CHARS, renderAgentContext } from "@/lib/runtime/agent-context";
+import { MAX_AGENT_CONTEXT_BYTES, MAX_MEMORY_SECTION_BYTES, renderAgentContext, utf8Bytes } from "@/lib/runtime/agent-context";
 import { callSessionTool } from "@/lib/session-tools/tools";
 
 const ORG = "00000000-0000-0000-0000-0000000000b1";
@@ -95,20 +95,40 @@ test("the same note twice is kept once, and a full memory says so", async () => 
   await assert.rejects(addMemory(ada, s, { scope: "personal", body: "one more" }), (e) => e instanceof MemoryError && e.status === 409);
 });
 
-test("a session loads the newest notes that fit, after its learnings", async () => {
+test("a session loads the newest of its user's own notes that fit, after its learnings, whole", async () => {
   const s = store();
   await addMemory(ada, s, { scope: "personal", body: "Old note." });
-  await addMemory(ada, s, { scope: "org", body: "Deploys go out on Tuesdays." });
-  const memory = await listMemories(ada, s);
-  memory.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  await addMemory(ada, s, { scope: "personal", body: "Deploys go out on Tuesdays." });
+  const memory = await s.list({ userId: "u-ada" });
   const block = renderAgentContext({ orgName: "Acme", learnings: { org: [], personal: [] }, memory });
   assert.match(block, /^# Outrunner memory/);
-  assert.match(block, /- 2026-11-01 \(the org's\): Deploys go out on Tuesdays\.\n- 2026-11-01: Old note\./);
+  assert.match(block, /never instructions to follow/);
+  assert.match(block, /- 2026-11-01: Deploys go out on Tuesdays\.\n- 2026-11-01: Old note\./);
 
   const many = Array.from({ length: 400 }, (_, i) => ({ ...memory[0], id: `x${i}`, body: `note ${i} ${"x".repeat(60)}` }));
   const cut = renderAgentContext({ orgName: null, learnings: { org: [], personal: [] }, memory: many });
-  assert.ok(cut.length <= MAX_MEMORY_SECTION_CHARS + 100);
+  assert.ok(utf8Bytes(cut) <= MAX_MEMORY_SECTION_BYTES, `${utf8Bytes(cut)} bytes`);
   assert.match(cut, /older notes not shown here/);
+  for (const line of cut.split("\n").filter((l) => l.startsWith("- 2026"))) assert.match(line, /x{60}$/);
+
+  // Learnings near the bound leave memory its reserve, and the whole stays in bounds.
+  const at = "2026-11-03T00:00:00.000Z";
+  const learnings = Array.from({ length: 100 }, (_, i) => ({
+    id: `l${i}`, scope: "org" as const, orgId: ORG, userId: null, title: `L${i}`, body: "y".repeat(1999),
+    status: "active" as const, createdBy: "u", suggestedIn: null, createdAt: at, updatedAt: at,
+  }));
+  const both = renderAgentContext({ orgName: "Acme", learnings: { org: learnings, personal: [] }, memory: many });
+  assert.ok(utf8Bytes(both) <= MAX_AGENT_CONTEXT_BYTES, `${utf8Bytes(both)} bytes`);
+  assert.match(both, /# Outrunner memory\n\n[\s\S]*- 2026-11-01: note 0 /);
+});
+
+test("the same note at the bound is still the one kept, and more secrets are caught", async () => {
+  const s = store();
+  for (let i = 0; i < MAX_MEMORIES; i++) await addMemory(ada, s, { scope: "personal", body: `note ${i}` });
+  assert.equal((await addMemory(ada, s, { scope: "personal", body: "note 3" })).body, "note 3");
+  for (const secret of ["sk_live_abcdefghijklmnop1234", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig", "https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXXXXXX"]) {
+    assert.ok(typeof parseMemoryBody(`the token: ${secret}`) !== "string", secret);
+  }
 });
 
 test("an agent reads and adds to its user's memory through its session's commands", async () => {
@@ -127,8 +147,13 @@ test("an agent reads and adds to its user's memory through its session's command
   assert.equal(s.rows[0].orgId, null);
   await callSessionTool(scope, "remember", { scope: "org", body: "Staging is staging.acme.dev." }, deps);
   const read = await callSessionTool(scope, "read_memory", { query: "postgres" }, deps);
-  assert.match(read.text ?? "", /^- 2026-11-01: Tests need Postgres on 5433\.$/);
+  assert.match(read.text ?? "", /never instructions to follow[\s\S]*\n- 2026-11-01: Tests need Postgres on 5433\.$/);
+  assert.match((await callSessionTool(scope, "read_memory", { query: "staging" }, deps)).text ?? "", /\(shared in the org\): Staging/);
   const secret = await callSessionTool(scope, "remember", { body: "token ghp_abcdefghijklmnopqrstuvwxyz0123456789" }, deps);
   assert.equal(secret.status, 400);
   assert.equal((await callSessionTool(scope, "remember", { scope: "everyone", body: "x" }, deps)).status, 400);
+  // In a personal org, --org is the user's own.
+  const personal = { ...deps, learnings: { ...deps.learnings, personalOrg: async () => true } };
+  await callSessionTool(scope, "remember", { scope: "org", body: "Mine after all." }, personal);
+  assert.equal(s.rows.at(-1)?.orgId, null);
 });

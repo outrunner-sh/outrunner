@@ -50,11 +50,11 @@ export function MemorySettings({ org, initial }: { org: { id: string; name: stri
     <div className="space-y-8">
       {error && <InlineMessage>{error}</InlineMessage>}
       {memories.length > 10 && <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter notes" />}
-      <NoteList title="Your memory" intro="Only your sessions load these." notes={own} busy={busy} onDelete={remove} />
-      {!org.personal && (
+      <NoteList title="Your memory" intro="Only your sessions see these, and every new one loads the newest." notes={own} busy={busy} onDelete={remove} />
+      {(!org.personal || memories.some((m) => m.scope === "org")) && (
         <NoteList
           title={`${org.name}'s memory`}
-          intro="Shared with everyone in the org. Its writer or an admin can delete a note."
+          intro="Shared with everyone in the org: agents read these when they look, and no session loads them on its own. Its writer or an admin can delete a note."
           notes={shared}
           busy={busy}
           onDelete={remove}
