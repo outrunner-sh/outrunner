@@ -161,7 +161,10 @@ test("a running box's agent is upgraded in place, once however many ask at once"
   // stopped and launched again.
   assert.deepEqual(log, ["sb-live: agent launched"]);
   assert.ok(commands.some((c) => c.includes("@openai/codex@")), "Codex installed");
-  assert.ok(commands.some((c) => c.includes("pkill -TERM -x runtime-agent")), "the old agent stopped first");
+  assert.ok(
+    commands.some((c) => /pkill (?:-TERM )?-x runtime-agent/.test(c)),
+    "the old agent stopped first",
+  );
   // Done, a later ask upgrades again.
   await provider.upgradeAgent("sb-live", "s3cret", {});
   assert.equal(log.length, 2);
