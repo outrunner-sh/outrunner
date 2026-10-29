@@ -624,12 +624,12 @@ export function WorkspaceSession({
   // Build approves it with changes).
   const sendOrQueue = (text: string, attachmentIds: string[], sentMode?: SessionMode) => {
     if (editing) return sendEdit(editing.uuid, text, attachmentIds, sentMode);
-    if (sendingQueued.current || interrupting.current || queuedEditing) return enqueue(text, attachmentIds, sentMode);
     if (queuePaused) {
       // Sending again is going on: the queue first, then this.
       setQueuePaused(false);
       setQueueHeld(false);
     }
+    if (sendingQueued.current || interrupting.current || queuedEditing) return enqueue(text, attachmentIds, sentMode);
     if (waitingOnPlan && plan) return answerPlan(plan.id, text, attachmentIds, { mode: sentMode, dismiss: plan.dismiss });
     // Mid-turn, a follow-up steers the turn (straight in, taken at its next
     // step) where the user has it so and the agent can; else it queues.
@@ -797,7 +797,7 @@ export function WorkspaceSession({
     }
   };
   const stop = () => {
-    if (interrupting.current || sendingQueued.current) return;
+    if (interrupting.current) return;
     setSendError(null);
     setStopError(null);
     // What's queued stays queued: the stop was for the agent's work, not for
