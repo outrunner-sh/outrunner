@@ -63,6 +63,7 @@ for (const retry of [false, true]) test(`startup keeps input ordered through rel
   expect(attachCalls).toBe(0);
   await composer.fill("Check this image first");
   await page.locator('input[type="file"]').setInputFiles({ name: "image.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64") });
+  await expect(page.getByText("image.png attached", { exact: true })).toBeAttached();
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
   await composer.press("Enter");
   const queue = page.getByRole("region", { name: "Queued messages" });
