@@ -141,6 +141,7 @@ export async function addMemory(
       workspaceId: input.workspaceId ?? null,
     });
   } catch (error) {
+    if ((error as { code?: string } | null)?.code !== "23505") throw error;
     // A concurrent remember may have inserted the same note after the first
     // read. The database's unique index makes that race a duplicate too.
     try {

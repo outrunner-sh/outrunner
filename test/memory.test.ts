@@ -112,6 +112,20 @@ test("a duplicate won by a concurrent insert is returned as the existing note", 
   assert.equal(s.rows.length, 1);
 });
 
+test("an insert failure other than a duplicate is returned without another scope read", async () => {
+  const s = store();
+  const list = s.list;
+  let reads = 0;
+  s.list = async (where) => {
+    reads++;
+    return list(where);
+  };
+  const failure = Object.assign(new Error("connection timed out"), { code: "ETIMEDOUT" });
+  s.insert = async () => { throw failure; };
+  await assert.rejects(addMemory(ada, s, { scope: "personal", body: "Use pnpm." }), (error) => error === failure);
+  assert.equal(reads, 1);
+});
+
 test("a session loads the newest of its user's own notes that fit, after its learnings, whole", async () => {
   const s = store();
   await addMemory(ada, s, { scope: "personal", body: "Old note." });
@@ -165,7 +179,7 @@ test("an agent reads and adds to its user's memory through its session's command
   const s = store();
   const deps = {
     actor: async (userId: string) => (userId === "u-ada" ? ada : null),
-    learnings: { store: { list: async () => [], get: async () => null, insert: async () => assert.fail(), update: async () => null, remove: async () => false } },
+    learnings: { store: { list: async () => [], count: async () => 0, get: async () => null, insert: async () => assert.fail(), update: async () => null, remove: async () => false } },
     memory: s,
     base: "https://app.outrunner.sh",
   };
