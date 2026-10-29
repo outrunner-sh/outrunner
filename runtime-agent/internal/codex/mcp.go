@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"log"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,10 +19,11 @@ import (
 // Claude Code expands ${VAR} and ${VAR:-default} in those fields from its
 // environment, and imported .mcp.json files lean on it ("Authorization":
 // "Bearer ${GITHUB_TOKEN}"). Codex takes the text as it is, so the servers
-// are expanded here, from the environment the Codex process gets: a server
-// would otherwise start with the literal ${GITHUB_TOKEN} and fail its auth
-// with no word why. One naming a variable that isn't set, with no default,
-// is left out, as Claude refuses a config that does.
+// are expanded here, from the environment the Codex process gets. Claude
+// warns and starts a server with an unset reference still literal; Codex
+// leaves that server out and logs which variable was missing. Claude also
+// keeps a few credential variables literal in remote URLs and headers; Codex
+// does the same so they cannot be written into config.toml and sent remotely.
 
 // mcpStartupTimeoutSec is how long Codex waits for a server to start: a
 // first `npx -y` downloads its package, past Codex's own 10 seconds.
@@ -52,7 +54,11 @@ func MCPServersConfig(servers map[string]json.RawMessage, lookup func(name strin
 	var b strings.Builder
 	for _, name := range names {
 		var server claudeMCPServer
-		if json.Unmarshal(servers[name], &server) != nil || name == "" || !expandServer(&server, lookup) {
+		if json.Unmarshal(servers[name], &server) != nil || name == "" {
+			continue
+		}
+		if variable, protected := expandServer(&server, lookup); variable != "" {
+			logMCPServerOmitted(name, variable, protected)
 			continue
 		}
 		var body string
@@ -103,32 +109,62 @@ func tomlTable(values map[string]string) string {
 // envReference is ${NAME} or ${NAME:-default}, as Claude Code expands them.
 var envReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}`)
 
+// Claude Code avoids expanding these credentials into a remote MCP server's
+// URL or headers, even when a default is present.
+var protectedRemoteMCPVariables = map[string]bool{
+	"ANTHROPIC_API_KEY":        true,
+	"ANTHROPIC_AUTH_TOKEN":     true,
+	"AWS_BEARER_TOKEN_BEDROCK": true,
+	"HTTPS_PROXY":              true,
+	"NPM_TOKEN":                true,
+}
+
 // expandServer expands the references in every field Claude Code does
-// (command, args, env, url, headers); false when one names a variable not
-// set, with no default.
-func expandServer(server *claudeMCPServer, lookup func(string) (string, bool)) bool {
-	ok := true
-	expand := func(text string) string {
+// (command, args, env, url, headers); it returns the first variable that
+// makes this server unsafe or impossible to expand, and whether it is a
+// protected remote credential.
+func expandServer(server *claudeMCPServer, lookup func(string) (string, bool)) (string, bool) {
+	problem := ""
+	protected := false
+	expand := func(text string, remote bool) string {
 		return envReference.ReplaceAllStringFunc(text, func(ref string) string {
 			m := envReference.FindStringSubmatch(ref)
+			if remote && protectedRemoteMCPVariables[m[1]] {
+				if problem == "" {
+					problem, protected = m[1], true
+				}
+				return ref
+			}
 			if value, set := lookup(m[1]); set {
 				return value
 			}
 			if strings.Contains(ref, ":-") {
 				return m[2]
 			}
-			ok = false
+			if problem == "" {
+				problem = m[1]
+			}
 			return ref
 		})
 	}
-	server.Command, server.URL = expand(server.Command), expand(server.URL)
+	server.Command = expand(server.Command, false)
 	for i, arg := range server.Args {
-		server.Args[i] = expand(arg)
+		server.Args[i] = expand(arg, false)
 	}
-	for _, values := range []map[string]string{server.Env, server.Headers} {
-		for k, v := range values {
-			values[k] = expand(v)
-		}
+	for k, v := range server.Env {
+		server.Env[k] = expand(v, false)
 	}
-	return ok
+	server.URL = expand(server.URL, server.Type == "http")
+	for k, v := range server.Headers {
+		server.Headers[k] = expand(v, server.Type == "http")
+	}
+	return problem, protected
+}
+
+func logMCPServerOmitted(name, variable string, protected bool) {
+	if protected {
+		log.Printf("Codex MCP server %q omitted: remote URL or headers reference protected variable ${%s}", name, variable)
+	} else {
+		log.Printf("Codex MCP server %q omitted: variable ${%s} is unset and has no default", name, variable)
+	}
 }

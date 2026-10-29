@@ -54,6 +54,8 @@ begin
   -- Two added at once would each count nineteen.
   perform pg_advisory_xact_lock(hashtext('environment_mcp_servers:' || new.environment_id::text));
   if (select count(*) from environment_mcp_servers where environment_id = new.environment_id) >= 20 then
+    -- lib/db/environment-mcp.ts matches "at most" in this message to turn
+    -- it into its own 400 response; keep the two in step.
     raise exception 'a project holds at most 20 MCP servers' using errcode = 'check_violation';
   end if;
   return new;

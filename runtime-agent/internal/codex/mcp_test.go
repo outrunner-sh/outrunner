@@ -2,6 +2,8 @@ package codex
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"strings"
 	"testing"
 )
@@ -68,5 +70,61 @@ func TestMCPServersConfigExpandsVariablesAsClaudeDoes(t *testing.T) {
 	}
 	if strings.Contains(got, "broken") || strings.Contains(got, "MISSING_TOKEN") {
 		t.Errorf("a server naming an unset variable was given to Codex:\n%s", got)
+	}
+}
+
+func TestMCPServersConfigProtectsCredentialVariablesInRemoteServers(t *testing.T) {
+	protected := []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN",
+		"AWS_BEARER_TOKEN_BEDROCK",
+		"HTTPS_PROXY",
+		"NPM_TOKEN",
+	}
+	env := map[string]string{"CUSTOM_MCP_TOKEN": "custom-secret"}
+	servers := map[string]json.RawMessage{
+		"custom": json.RawMessage(`{"type":"http","url":"https://mcp.example/${CUSTOM_MCP_TOKEN}"}`),
+		"local":  json.RawMessage(`{"command":"mcp","env":{"TOKEN":"${ANTHROPIC_API_KEY}"}}`),
+	}
+	for i, variable := range protected {
+		env[variable] = "secret-" + variable
+		urlName := fmt.Sprintf("remote-url-%d", i)
+		headerName := fmt.Sprintf("remote-header-%d", i)
+		servers[urlName] = json.RawMessage(fmt.Sprintf(
+			`{"type":"http","url":"https://mcp.example/${%s:-fallback}"}`,
+			variable,
+		))
+		servers[headerName] = json.RawMessage(fmt.Sprintf(
+			`{"type":"http","url":"https://mcp.example","headers":{"Authorization":"Bearer ${%s:-fallback}"}}`,
+			variable,
+		))
+	}
+	lookup := func(name string) (string, bool) { value, ok := env[name]; return value, ok }
+
+	previousLog := log.Writer()
+	var logs strings.Builder
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousLog)
+
+	got := MCPServersConfig(servers, lookup)
+	for i, variable := range protected {
+		urlName := fmt.Sprintf("remote-url-%d", i)
+		headerName := fmt.Sprintf("remote-header-%d", i)
+		if strings.Contains(got, `[mcp_servers."`+urlName+`"]`) ||
+			strings.Contains(got, `[mcp_servers."`+headerName+`"]`) ||
+			strings.Contains(got, "https://mcp.example/secret-"+variable) ||
+			strings.Contains(got, "Bearer secret-"+variable) {
+			t.Errorf("remote server URL/header exposed %s or was configured:\n%s", variable, got)
+		}
+		for _, name := range []string{urlName, headerName} {
+			if !strings.Contains(logs.String(), `Codex MCP server "`+name+`" omitted: remote URL or headers reference protected variable ${`+variable+"}") {
+				t.Errorf("omission of %q/%s wasn't logged:\n%s", name, variable, logs.String())
+			}
+		}
+	}
+	for _, want := range []string{"https://mcp.example/custom-secret", `"TOKEN" = "secret-ANTHROPIC_API_KEY"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("non-remote expansion lacks %q:\n%s", want, got)
+		}
 	}
 }
