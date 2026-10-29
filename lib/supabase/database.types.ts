@@ -524,6 +524,26 @@ type EnvironmentSkillRegistryRow = {
   updated_at: string;
 };
 
+/** An MCP server of a project's (20261103131000_environment_mcp_servers.sql):
+ *  its environment's and headers' values sealed together. */
+type EnvironmentMcpServerRow = {
+  id: string;
+  /** Its project's org, set from the project. */
+  org_id: string;
+  environment_id: string;
+  name: string;
+  transport: "stdio" | "http";
+  command: string | null;
+  args: string[];
+  url: string | null;
+  env_names: string[];
+  header_names: string[];
+  secrets_ciphertext: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type UserAgentConfigRow = {
   user_id: string;
   archive_path: string | null;
@@ -1318,7 +1338,15 @@ export type Database = {
         Row: OrganizationMemberRow;
         Insert: Insert<OrganizationMemberRow, "org_id" | "user_id" | "role">;
         Update: Partial<OrganizationMemberRow>;
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "organization_members_org_id_fkey";
+            columns: ["org_id"];
+            isOneToOne: false;
+            referencedRelation: "organizations";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       projects: {
         Row: ProjectRow;
@@ -1449,6 +1477,12 @@ export type Database = {
         Row: EnvironmentSkillRegistryRow;
         Insert: Insert<EnvironmentSkillRegistryRow, "environment_id" | "full_name" | "default_branch">;
         Update: Partial<EnvironmentSkillRegistryRow>;
+        Relationships: [];
+      };
+      environment_mcp_servers: {
+        Row: EnvironmentMcpServerRow;
+        Insert: Insert<EnvironmentMcpServerRow, "environment_id" | "name" | "transport">;
+        Update: Partial<EnvironmentMcpServerRow>;
         Relationships: [];
       };
       project_environment: {

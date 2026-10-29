@@ -46,11 +46,14 @@ import { providerErrorResponse, resolveProvider } from "@/lib/runtime/resolve";
 import { ensureComputer } from "@/lib/runtime/runtime-computer-service";
 import { endedBoxOf } from "@/lib/runtime/sandbox-choice";
 import { mintSnapshotDownloadUrl } from "@/lib/runtime/storage";
+import { ARCHIVED_UNSAVED } from "@/lib/session/archive-save";
 import { supabaseSnapshotStorage } from "@/lib/runtime/storage/supabase-adapter";
 import type { SnapshotManifest } from "@/lib/runtime/snapshot/manifest";
 import type { RuntimeProvider, Workspace, WorkspaceStatus } from "@/lib/runtime/types";
 import { archiveCloudSession, daytonaAgent } from "@/lib/session/archive-session";
+import { bringBack } from "@/lib/session/bring-back-box";
 import { canDestroy } from "@/lib/session/provisioning";
+import { resumeFailure, type ResumeStage } from "@/lib/session/resume-failure";
 
 // resume/restore ensure a Runtime Computer (provision + agent boot, ~15s+), and
 // archive/restore move snapshot artifacts; keep the same 60s cap as provisioning
@@ -129,8 +132,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   let action: LifecycleAction | null = null;
+  let requireSnapshot = false;
   try {
-    action = actionFor(await request.json());
+    const body: unknown = await request.json();
+    action = actionFor(body);
+    requireSnapshot = typeof body === "object" && body !== null && "requireSnapshot" in body && body.requireSnapshot === true;
   } catch {
     // Handled below as a deliberately generic bad request.
   }
@@ -159,7 +165,7 @@ export async function POST(request: Request, context: RouteContext) {
   const provider = resolution.provider;
 
   if (isComputerProvider(provider)) {
-    return daytonaLifecycle(action, workspace, provider, owner);
+    return daytonaLifecycle(action, workspace, provider, owner, { requireSnapshot });
   }
 
   // Archive/restore operate on the runtime-agent's Session + Snapshot; only the
@@ -180,10 +186,11 @@ async function daytonaLifecycle(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
+  archiveOptions: { requireSnapshot?: boolean } = {},
 ) {
   if (action === "resume") return resumeDaytonaWorkspace(workspace, provider, owner);
   if (action === "suspend") return suspendDaytonaWorkspace(workspace, provider, owner);
-  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, owner);
+  if (action === "archive") return archiveDaytonaWorkspace(workspace, provider, owner, archiveOptions);
   if (action === "restore") return restoreDaytonaWorkspace(workspace, provider, owner);
   return destroyDaytonaWorkspace(workspace, provider, owner);
 }
@@ -193,9 +200,13 @@ async function archiveDaytonaWorkspace(
   workspace: Workspace,
   provider: ComputerRuntimeProvider,
   owner: Owner,
+  options: { requireSnapshot?: boolean } = {},
 ) {
-  const archived = await archiveCloudSession(workspace, provider, owner);
-  if (archived.ok) return NextResponse.json({ workspace: { id: workspace.id, status: "archived" } });
+  const archived = await archiveCloudSession(workspace, provider, owner, options);
+  if (archived.ok) {
+    // `note`: archived without its files, which the user is told.
+    return NextResponse.json({ workspace: { id: workspace.id, status: "archived" }, ...(archived.unsaved && { note: archived.note }) });
+  }
   if (archived.reason === "failed") return NextResponse.json({ error: archived.error }, { status: archived.status });
   return archived.reason === "reconcile" ? lifecycleReconciliationRequired("archive") : lifecycleConflict();
 }
@@ -221,8 +232,14 @@ async function restoreDaytonaWorkspace(
   }
   const snapshot = (await listWorkspaceSnapshots(workspace.id))[0];
   if (!snapshot) {
+    // Archived while its box was out of reach (lib/session/archive-save.ts):
+    // nothing of its work was kept to restore.
     return NextResponse.json(
-      { error: "This workspace has no Snapshot to restore." },
+      {
+        error: workspace.errorMessage === ARCHIVED_UNSAVED
+          ? "This session was archived without its files (its box couldn't be reached), so it can't be reopened. Anything pushed to GitHub is kept: continue in a new session."
+          : "This workspace has no Snapshot to restore.",
+      },
       { status: 409 },
     );
   }
@@ -364,7 +381,7 @@ async function restoreDaytonaWorkspace(
       );
     }
     // Before the restore, which launches the session at once.
-    await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId);
+    await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId, { agent: workspace.agent });
     const bundleRef = tree.kind === "git-bundle+patch" && tree.ref && tree.ref !== workspace.branch ? tree.ref : undefined;
     let restoredWorktree: string | undefined;
     await restoreSignedIn(sessionAuthClient(agent, identity, upgrade), workspace.agent, auth, async (credential) => {
@@ -457,7 +474,16 @@ async function resumeDaytonaWorkspace(
   }
   const transitioned = await startTransition(workspace, ["suspended"], "resuming");
   if (!transitioned) return lifecycleConflict();
+  let stage: ResumeStage = "box";
   try {
+    // Nothing runs on a suspended session's box, so it is paused once idle
+    // (lib/billing/reconcile.ts), or the provider may have stopped, archived
+    // or deleted it: brought back first, as opening the session does.
+    const computer = await getWorkspaceComputer(workspace);
+    if (computer && provider.restoresBoxes) await bringBack(provider, workspace, computer, owner);
+    stage = "relaunch";
+    // ensureComputer updates the row in place; daytonaAgent reads it again
+    // so a replacement box is used rather than this earlier computer value.
     const { agent, identity, upgrade, sandboxId, secret } = await daytonaAgent(workspace, provider, owner);
     // Signed in as the user picks now, and on its model's key as it is now,
     // before it relaunches.
@@ -469,13 +495,14 @@ async function resumeDaytonaWorkspace(
       },
     );
   } catch (error) {
-    const failure = signInFailure(error);
-    if (!failure) console.error(`Workspace ${workspace.id} resume failed`, error);
-    const message = failure?.error ?? lifecycleError("resume");
-    await restoreAfterFailure(workspace, "resuming", message).catch(
+    const failure = resumeFailure(error, stage);
+    if (failure.status !== 403 && (stage === "box" || failure.status !== 409)) {
+      console.error(`Workspace ${workspace.id} resume failed during ${stage}`, error);
+    }
+    await restoreAfterFailure(workspace, "resuming", failure.body.error).catch(
       (updateError: unknown) => console.error("Could not persist resume failure", updateError),
     );
-    return NextResponse.json(failure ?? { error: message }, { status: failure ? 409 : 502 });
+    return NextResponse.json(failure.body, { status: failure.status });
   }
   const completed = await completeTransition({
     id: workspace.id,

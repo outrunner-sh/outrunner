@@ -9,7 +9,7 @@ import {
 } from "@/lib/session/pending-sessions";
 
 /** What is held for `id`, as the hook reads it. */
-const held = (id: string) => PENDING_SESSIONS.get()[id];
+const held = (id: string) => PENDING_SESSIONS.get()[id]?.workspace;
 
 function workspace(id: string): Workspace {
   return {

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/loaders";
 import { refreshMissions } from "@/hooks/use-missions";
+import { clearKeptPages } from "@/lib/client/kept-page";
 import { requestJson } from "@/lib/http/request-json";
 import { clearMissions } from "@/lib/missions/kept-missions";
 import { type Org, orgSummary } from "@/lib/orgs/active";
@@ -59,6 +60,7 @@ export function OrgSwitcher({ orgs, activeOrgId }: { orgs: Org[]; activeOrgId: s
       clearAppDataCache();
       clearMissions();
       clearKeptTriage();
+      clearKeptPages();
       void refreshMissions();
       router.push("/");
       router.refresh();

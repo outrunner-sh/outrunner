@@ -595,7 +595,8 @@
         "plan-mode",
         "compact",
         "files",
-        "environment-skills"
+        "environment-skills",
+        "codex-mcp"
       ]
     }
   ],
@@ -790,6 +791,14 @@
       22220,
       22222,
       33333
+    ]
+  ],
+  "DesktopPorts": [
+    [
+      5900,
+      5901,
+      6080,
+      19222
     ]
   ]
 }

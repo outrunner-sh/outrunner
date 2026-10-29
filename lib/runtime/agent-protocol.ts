@@ -145,6 +145,11 @@ export type SetSkillsResponse = z.infer<typeof SetSkillsResponse>;
 /** The agent installs a project's skills (POST /skills). */
 export const AGENT_FEATURE_SKILLS = "environment-skills";
 
+/** A Codex session loads the computer's MCP servers (SetAgentConfigRequest's
+ *  `mcpServers`), as a Claude one always has; an older agent gives them to
+ *  Claude alone. */
+export const AGENT_FEATURE_CODEX_MCP = "codex-mcp";
+
 /** The agent takes a session's environment (POST /workspaces/{id}/environment). */
 export const AGENT_FEATURE_ENVIRONMENT = "session-environment";
 
@@ -848,6 +853,9 @@ export const PROTOCOL_SCHEMAS = {
   /** The provider's own ports on every box (lib/runtime/box-ports.ts and the
    *  agent's ports package each hold the list, checked against this). */
   ProviderPorts: z.array(z.number().int()),
+  /** The desktop's ports on a box, likewise never listed nor linked
+   *  (lib/runtime/box-ports.ts and the agent's ports package). */
+  DesktopPorts: z.array(z.number().int()),
   /** The variables a session's environment may not set; lib/imports/
    *  environment.ts and the agent each hold the list, checked against this. */
   ReservedEnv: z.array(z.string()),

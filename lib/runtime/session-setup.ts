@@ -13,11 +13,13 @@ import type { AgentConfig } from "@/lib/db/agent-config";
 import type { EnvironmentSetup } from "@/lib/db/environments";
 import {
   AGENT_FEATURE_AGENT_CONFIG,
+  AGENT_FEATURE_CODEX_MCP,
   AGENT_FEATURE_ENVIRONMENT,
   AGENT_FEATURE_GIT_CREDENTIAL,
   AGENT_FEATURE_INSTRUCTIONS,
   AGENT_FEATURE_SKILLS,
   AGENT_FEATURE_WARM_HOOKS,
+  type AgentName,
   type SetAgentConfigRequest,
   type SetEnvironmentRequest,
   type SetSkillsRequest,
@@ -43,6 +45,8 @@ export type SessionSetup = {
   /** Its user works on GitHub as the Outrunner App, whose tokens the box
    *  must ask for as it goes (lib/github/identity.ts). */
   appIdentity?: boolean;
+  /** The coding agent the session runs; Claude where not said. */
+  agent?: AgentName;
   /** A signed download URL for the setup's archive. */
   downloadUrl(path: string): Promise<string>;
 };
@@ -54,6 +58,12 @@ export async function deliverSessionSetup(client: SetupClient, setup: SessionSet
 
   const config = setup.agentConfig;
   if (config && (config.archive || Object.keys(config.mcpServers).length > 0 || Object.keys(config.settings).length > 0)) {
+    // A Codex session's box must give Codex the servers too: upgraded to an
+    // agent that does where it can be. A Claude session's has always given
+    // them to Claude, so its agent isn't rebooted for it.
+    if (setup.agent === "codex" && Object.keys(config.mcpServers).length > 0) {
+      await supports(client, AGENT_FEATURE_CODEX_MCP, "give Codex your MCP servers");
+    }
     if (await supports(client, AGENT_FEATURE_AGENT_CONFIG, "take your agent setup")) {
       await client.setAgentConfig({
         ...(config.archive && {

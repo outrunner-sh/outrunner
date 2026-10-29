@@ -5,7 +5,9 @@ import { Suspense } from "react";
 
 import { Markdown } from "@/components/markdown";
 import { ChecksDot } from "@/components/review/checks-dot";
+import { Delta, LineCountsSummary } from "@/components/review/line-counts";
 import { MergeButton } from "@/components/review/merge-button";
+import { PullFiles } from "@/components/review/pull-files";
 import { ReviewChat } from "@/components/review/review-chat";
 import { RouteLoading } from "@/components/route-states";
 import { pullDetail } from "@/lib/review/pulls";
@@ -38,7 +40,8 @@ export const unstable_instant = {
 /**
  * One pull request: what it is and how it stands (checks, reviews, the review
  * bot's score and the validator's verdict), where it came from in Outrunner,
- * merge; and beside it, a conversation about its code.
+ * merge; its files and their diffs, with their lines by kind; and beside it,
+ * a conversation about its code.
  */
 export default function ReviewPullPage({ params }: { params: Params }) {
   return (
@@ -69,7 +72,7 @@ async function Pull({ params }: { params: Params }) {
   return (
     <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px]">
       <div className="min-h-0 overflow-y-auto px-8 py-6">
-        <div className="mx-auto max-w-3xl space-y-6">
+        <div className="mx-auto max-w-4xl space-y-6">
           <div className="flex items-center justify-between gap-3 text-[13px] text-muted-foreground">
             <span className="flex items-center gap-2">
               <Link href="/review" className="inline-flex items-center gap-1 hover:text-foreground">
@@ -103,9 +106,10 @@ async function Pull({ params }: { params: Params }) {
               <span className="font-mono">
                 {pr.baseRef} ← {pr.headRef}
               </span>
-              <span>
-                {pr.changedFiles} files <span className="text-emerald-500">+{pr.additions}</span>{" "}
-                <span className="text-red-400">−{pr.deletions}</span>
+              <span className="inline-flex items-center gap-2">
+                {pr.changedFiles} files
+                {/* By kind only when every file was read: else GitHub's own totals. */}
+                {pr.lines && pr.filesComplete ? <LineCountsSummary counts={pr.lines} /> : <Delta delta={pr} />}
               </span>
             </div>
           </div>
@@ -167,10 +171,20 @@ async function Pull({ params }: { params: Params }) {
           <div className="text-sm">
             {pr.body.trim() ? <Markdown>{pr.body}</Markdown> : <p className="text-muted-foreground">No description.</p>}
           </div>
+
+          <PullFiles
+            repo={pr.repo}
+            number={pr.number}
+            headSha={pr.headSha}
+            files={pr.files}
+            complete={pr.filesComplete}
+            lines={pr.lines}
+            changedFiles={pr.changedFiles}
+          />
         </div>
       </div>
       <div className="hidden min-h-0 lg:block">
-        <ReviewChat repo={pr.repo} number={pr.number} canSend={pr.ownSession && pr.state === "open"} />
+        <ReviewChat repo={pr.repo} number={pr.number} canChange={pr.state === "open" && !pr.fromFork} />
       </div>
     </div>
   );

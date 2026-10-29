@@ -31,7 +31,27 @@ export async function readStandings(
   client?: SupabaseClient<Database>,
 ): Promise<Record<string, SessionStanding>> {
   if (workspaces.length === 0) return {};
-  const ids = workspaces.map((w) => w.id);
+  const rows = await readStandingRows(userId, workspaces.map((w) => w.id), client);
+  return standingsFrom(userId, workspaces, pullRequests, rows, now);
+}
+
+/** What the server's watch recorded of each session, and the user's marks on
+ *  them: what standings are read from besides the sessions themselves and
+ *  their pull requests. */
+export type StandingRows = { activity: Map<string, SessionActivity>; marks: Map<string, SessionMark> };
+
+/**
+ * The rows {@link readStandings} reads, alone: they need only the sessions'
+ * ids, so a caller that is still reading the pull requests reads these beside
+ * them rather than after, and places the sessions with
+ * {@link standingsFrom} once both are in.
+ */
+export async function readStandingRows(
+  userId: string | null,
+  ids: string[],
+  client?: SupabaseClient<Database>,
+): Promise<StandingRows> {
+  if (ids.length === 0) return { activity: new Map(), marks: new Map() };
   const supabase = client ?? (await createSupabaseServerClient());
   const [activity, marks] = await Promise.all([
     supabase.from("session_activity").select("*").in("workspace_id", ids),
@@ -43,40 +63,52 @@ export async function readStandings(
   // placed from its own row and pull request alone.
   if (activity.error) console.error("Standings: couldn't read session activity", activity.error);
   if (marks.error) console.error("Standings: couldn't read session marks", marks.error);
-  const activityBy = new Map<string, SessionActivity>(
-    (activity.data ?? []).map((row) => [
-      row.workspace_id,
-      {
-        turn: row.turn,
-        turnStartedAt: row.turn_started_at,
-        waiting: row.waiting,
-        waitingSince: row.waiting_since,
-        repliedAt: row.replied_at,
-        replyPreview: row.reply_preview,
-        eventAt: row.event_at,
-        createdAt: row.created_at,
-      },
-    ]),
-  );
-  const markBy = new Map<string, SessionMark>(
-    (marks.data ?? []).map((row) => [
-      row.workspace_id,
-      {
-        pinnedAt: row.pinned_at,
-        movedTo: isStanding(row.moved_to) ? row.moved_to : null,
-        movedAt: row.moved_at,
-        seenAt: row.seen_at,
-      },
-    ]),
-  );
+  return {
+    activity: new Map<string, SessionActivity>(
+      (activity.data ?? []).map((row) => [
+        row.workspace_id,
+        {
+          turn: row.turn,
+          turnStartedAt: row.turn_started_at,
+          waiting: row.waiting,
+          waitingSince: row.waiting_since,
+          repliedAt: row.replied_at,
+          replyPreview: row.reply_preview,
+          eventAt: row.event_at,
+          createdAt: row.created_at,
+        },
+      ]),
+    ),
+    marks: new Map<string, SessionMark>(
+      (marks.data ?? []).map((row) => [
+        row.workspace_id,
+        {
+          pinnedAt: row.pinned_at,
+          movedTo: isStanding(row.moved_to) ? row.moved_to : null,
+          movedAt: row.moved_at,
+          seenAt: row.seen_at,
+        },
+      ]),
+    ),
+  };
+}
+
+/** Where each of `workspaces` stands, from the rows read for them. */
+export function standingsFrom(
+  userId: string | null,
+  workspaces: Workspace[],
+  pullRequests: Record<string, WorkspacePullRequest>,
+  rows: StandingRows,
+  now: number = Date.now(),
+): Record<string, SessionStanding> {
   const standings: Record<string, SessionStanding> = {};
   for (const workspace of workspaces) {
     const pr = pullRequests[workspace.id];
     standings[workspace.id] = sessionStanding({
       workspace,
-      activity: activityBy.get(workspace.id) ?? null,
+      activity: rows.activity.get(workspace.id) ?? null,
       pullRequest: pr ? { state: pr.state ?? "open", stateAt: pr.stateAt ?? null } : null,
-      mark: markBy.get(workspace.id) ?? null,
+      mark: rows.marks.get(workspace.id) ?? null,
       owner: userId !== null,
       now,
     });

@@ -1,6 +1,7 @@
 import { Daytona, DaytonaNotFoundError, type Sandbox } from "@daytonaio/sdk";
 
 import { optionalEnv, requireEnv } from "@/lib/env";
+import { NOVNC_PORT } from "@/lib/runtime/box-ports";
 import { type BoxIO, shellQuote } from "@/lib/runtime/daytona/deploy";
 import type { GitExec } from "@/lib/runtime/git";
 import type { ListedBox } from "@/lib/runtime/orphan-boxes";
@@ -27,6 +28,39 @@ export const EXEC_TIMEOUT_SECONDS = 10 * 60;
 /** The SDK's deadline for its other calls (get, start, uploads), 24 hours
  *  unless set: none of them takes minutes. */
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * The desktop's screen size. Daytona's computer use starts its display at the
+ * VNC_RESOLUTION in the box's environment, 1024×768 without one, and reads it
+ * only from the environment the box was made with: a box made before this
+ * keeps 1024×768. Wider is more of a web page per screenshot; no wider than
+ * this so a screenshot reaches the model at full size, its pixels the ones
+ * the agent clicks.
+ */
+export const DESKTOP_RESOLUTION = "1280x800";
+
+/**
+ * How long starting the desktop may take before it's given up: a cold start
+ * takes a second or two, so one that hasn't answered in this is stuck, and
+ * the Desktop tab should say so and offer a retry, not wait out the SDK's
+ * five minutes.
+ */
+const DESKTOP_START_TIMEOUT_MS = 30_000;
+
+/** `promise`, or a rejection saying `message` once `ms` have gone by. */
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${message} (${ms / 1000} s)`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Monotonic suffix so each detached launch gets its own Daytona session. */
 let launchSeq = 0;
@@ -71,7 +105,13 @@ export class DaytonaBackend implements SandboxBackend {
       // Never auto-stopped or auto-deleted by Daytona: Outrunner stops an
       // idle box itself (lib/billing/reconcile.ts), by what its sessions are
       // doing.
-      { autoStopInterval: 0, autoDeleteInterval: -1, labels, ...(snapshot && { snapshot }) },
+      {
+        autoStopInterval: 0,
+        autoDeleteInterval: -1,
+        labels,
+        envVars: { VNC_RESOLUTION: DESKTOP_RESOLUTION },
+        ...(snapshot && { snapshot }),
+      },
       { timeout: CREATE_TIMEOUT_SECONDS },
     );
     return box(sandbox);
@@ -124,7 +164,11 @@ export class DaytonaBackend implements SandboxBackend {
       if (error instanceof DaytonaNotFoundError) return null;
       throw error;
     }
-    const state = sandbox.state ?? "unknown";
+    // Still going down: stopping, or archiving, which Daytona does to a box
+    // stopped a week. Its disk is kept, so it's waited out and started, not
+    // taken for gone (that started a new box, and the session's files were
+    // left on this one).
+    const state = await settled(sandbox);
     if (STOPPED_STATES.has(state)) {
       try {
         await sandbox.start(CREATE_TIMEOUT_SECONDS);
@@ -174,9 +218,35 @@ export function daytonaSnapshotFor(size: BoxResources): string | undefined {
   return DAYTONA_SNAPSHOTS.find((s) => s.cpu <= size.cpu)?.name;
 }
 
-/** States a box is started again from, and ones it's on its way up in. */
+/** States a box is started again from, ones it's on its way up in, and
+ *  ones it's on its way down in, keeping its disk. */
 const STOPPED_STATES = new Set(["stopped", "archived"]);
 const STARTING_STATES = new Set(["starting", "restoring", "creating"]);
+const SETTLING_STATES = new Set(["stopping", "archiving"]);
+/** How often a box going down is looked at again. */
+const SETTLE_POLL_MS = 2_000;
+/** Leave room in the 60s lifecycle/attach routes to return a retryable error. */
+export const SETTLE_TIMEOUT_SECONDS = 30;
+
+/**
+ * The box's state once it's no longer on its way down (SETTLING_STATES),
+ * looked at again every `pollMs`. Throws when it still is after
+ * `timeoutSeconds`: the box is there, so trying again later is the way on,
+ * never a new box. Exported for tests.
+ */
+export async function settled(
+  sandbox: Pick<Sandbox, "id" | "state" | "refreshData">,
+  timeoutSeconds = SETTLE_TIMEOUT_SECONDS,
+  pollMs = SETTLE_POLL_MS,
+): Promise<string> {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (SETTLING_STATES.has(sandbox.state ?? "unknown")) {
+    if (Date.now() >= deadline) throw new Error(`Daytona box ${sandbox.id} is still ${sandbox.state}`);
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    await sandbox.refreshData();
+  }
+  return sandbox.state ?? "unknown";
+}
 
 /** A box's commands and files, from its sandbox. Exported for tests. */
 export function box(sandbox: Sandbox): SandboxBox {
@@ -234,6 +304,24 @@ export function box(sandbox: Sandbox): SandboxBox {
     // The token is in the host, so every page, asset and socket under it is
     // let through: what the editor needs.
     browserUrl: async (port, ttlSeconds) => (await sandbox.getSignedPreviewUrl(port, ttlSeconds)).url,
+    desktop: {
+      // Starts what isn't running (the display, its window manager, the VNC
+      // server and noVNC) and leaves what is: a second start is a no-op.
+      start: async () => {
+        await withTimeout(sandbox.computerUse.start(), DESKTOP_START_TIMEOUT_MS, "Daytona's desktop didn't start in time");
+      },
+      // A signed preview link is good for its one port alone (checked on a
+      // real box: the token in it is refused on any other), and noVNC's
+      // proxy there forwards to the VNC server alone, a target fixed at its
+      // launch that no client can change. So the link reaches the desktop,
+      // and not the agent or Daytona's toolbox.
+      viewerUrl: async (ttlSeconds) => {
+        const url = new URL((await sandbox.getSignedPreviewUrl(NOVNC_PORT, ttlSeconds)).url);
+        url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
+        url.pathname = "/websockify";
+        return url.toString();
+      },
+    },
   };
 }
 

@@ -1,12 +1,13 @@
 "use client";
 
-import { FileText, KeyRound, Plus, Settings2, Sparkles, SquareTerminal, X } from "lucide-react";
+import { FileText, KeyRound, Plug, Plus, Settings2, Sparkles, SquareTerminal, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { GitHubIcon } from "@/components/brand-icons";
 import { failedLinks, SecretSyncPanel } from "@/components/secret-sync-panel";
+import { McpServersSection } from "@/components/project-mcp-servers";
 import { DeleteButton, Panel, SectionTitle, useSave } from "@/components/project-section";
 import { SkillsSection } from "@/components/project-skills";
 import { SectionHeader } from "@/components/settings-details";
@@ -30,6 +31,7 @@ const SECTIONS = [
   { id: "setup", label: "Setup scripts", icon: SquareTerminal },
   { id: "files", label: "Files", icon: FileText },
   { id: "skills", label: "Skills", icon: Sparkles },
+  { id: "mcp", label: "MCP servers", icon: Plug },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -143,6 +145,7 @@ export function ProjectSettings({
                 <FilesSection environment={environment} onSaved={(kept) => setEnvironment((e) => ({ ...e, ...kept }))} />
               )}
               {section === "skills" && <SkillsSection environment={environment} />}
+              {section === "mcp" && <McpServersSection environment={environment} />}
             </fieldset>
           </main>
         </div>

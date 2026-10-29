@@ -23,6 +23,12 @@ import { useLocalSessions } from "@/hooks/use-local-sessions";
 import { useNow } from "@/hooks/use-now";
 import { useStandings } from "@/hooks/use-standings";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
+import {
+  listedIsFresh,
+  listedSessions,
+  rememberListedSessions,
+  useListedSessions,
+} from "@/lib/session/listed-sessions";
 import { relativeTime, type SessionDeletion } from "@/lib/nav/sidebar";
 import { archiveOffer, archiveSession } from "@/lib/session/archive-control";
 import { deleteSession } from "@/lib/session/delete-session";
@@ -58,7 +64,11 @@ export function SessionsList() {
   const now = useNow(60_000);
   const local = useLocalSessions();
   const live = useStandings();
-  const [cloud, setCloud] = useState<SessionListEntry[] | null>(null);
+  // The last answer this page had, shown at once on a revisit and kept in
+  // step with what this tab does elsewhere (lib/session/listed-sessions.ts):
+  // read again only once it is a while old, or may be wrong.
+  const listed = useListedSessions();
+  const cloud = listed?.sessions ?? null;
   const data = useAppData();
   const seed = useMemo(() => ownSessionEntries(data), [data]);
   // The server's read of the whole org once it answers; the layout's own data
@@ -74,17 +84,21 @@ export function SessionsList() {
       const response = await fetch("/api/sessions", { cache: "no-store" });
       const body = (await response.json().catch(() => ({}))) as { sessions?: SessionListEntry[]; error?: string };
       if (!response.ok || !body.sessions) throw new Error(body.error ?? "Couldn't load the sessions.");
-      setCloud(body.sessions);
+      rememberListedSessions(body.sessions);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Couldn't load the sessions.");
     }
   }, []);
 
+  // On each visit, and whenever what this tab did elsewhere left the kept
+  // answer unsure (staleListedSessions).
+  const stale = listed !== null && listed.at === 0;
   useEffect(() => {
+    if (listedIsFresh(listedSessions())) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, [load]);
+  }, [load, stale]);
 
   // The user's own cloud sessions as the frame keeps them live, and this
   // Mac's, which only the browser can read.
@@ -141,14 +155,23 @@ export function SessionsList() {
   const toggleAll = () => setPicked(allPicked ? new Set() : new Set(shown.filter(pickable).map((e) => e.id)));
 
   /** Each in turn; every failure is said, the rest still go. */
-  const runEach = async (rows: SessionListEntry[], act: (e: SessionListEntry) => Promise<void>, verb: string) => {
+  const runEach = async (
+    rows: SessionListEntry[],
+    act: (e: SessionListEntry) => Promise<string | null | void>,
+    verb: string,
+  ): Promise<string | null> => {
     const failed: string[] = [];
+    // Done, with something to say: an archive without its files.
+    const noted: string[] = [];
     for (const row of rows) {
-      await act(row).catch(() => failed.push(row.title));
+      const note = await act(row).catch(() => void failed.push(row.title));
+      if (note) noted.push(row.title);
     }
     if (failed.length > 0) {
       throw new Error(`Couldn't ${verb} ${failed.length === 1 ? `“${failed[0]}”` : `${failed.length} sessions`}. The others were.`);
     }
+    if (noted.length === 0) return null;
+    return `${noted.length === 1 ? `“${noted[0]}” was` : `${noted.length} sessions were`} ${verb}d without ${noted.length === 1 ? "its" : "their"} files: ${noted.length === 1 ? "its box" : "their boxes"} couldn't be reached, so uncommitted changes couldn't be saved. Anything pushed to GitHub is kept.`;
   };
 
   const done = () => {

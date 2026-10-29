@@ -10,7 +10,9 @@ import { Spinner } from "@/components/ui/loaders";
  * then the control that does it. While it runs the dialog says so and can't
  * be closed, so the outcome is seen; a failure is said in it, for another try.
  * `run` throws with a sentence to show when it could not; `onDone` runs once
- * it did.
+ * it did. A `run` that answers a sentence (it was done, but the user should
+ * know something: a session archived without its files) shows it, with Done,
+ * rather than closing at once.
  */
 export function ConfirmSessionDialog({
   open,
@@ -32,21 +34,30 @@ export function ConfirmSessionDialog({
   failure: string;
   /** The control that confirms, given what to call. */
   confirm: (go: () => void) => React.ReactNode;
-  run: () => Promise<void>;
+  run: () => Promise<string | null | void>;
   onOpenChange: (open: boolean) => void;
   onDone: () => void;
 }) {
-  const [state, setState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  const [state, setState] = useState<{ busy: boolean; error: string | null; note: string | null }>({
+    busy: false,
+    error: null,
+    note: null,
+  });
+
+  const finish = () => {
+    setState({ busy: false, error: null, note: null });
+    onDone();
+    onOpenChange(false);
+  };
 
   const go = async () => {
-    setState({ busy: true, error: null });
+    setState({ busy: true, error: null, note: null });
     try {
-      await run();
-      setState({ busy: false, error: null });
-      onDone();
-      onOpenChange(false);
+      const note = await run();
+      if (note) setState({ busy: false, error: null, note });
+      else finish();
     } catch (error) {
-      setState({ busy: false, error: error instanceof Error ? error.message : failure });
+      setState({ busy: false, error: error instanceof Error ? error.message : failure, note: null });
     }
   };
 
@@ -56,7 +67,9 @@ export function ConfirmSessionDialog({
       onOpenChange={(next) => {
         // Not while it runs: the outcome has to be seen.
         if (state.busy) return;
-        if (!next) setState({ busy: false, error: null });
+        // Done, with something said: closing it is Done.
+        if (!next && state.note) return finish();
+        if (!next) setState({ busy: false, error: null, note: null });
         onOpenChange(next);
       }}
     >
@@ -70,8 +83,17 @@ export function ConfirmSessionDialog({
             {state.error}
           </p>
         )}
+        {state.note && (
+          <p role="status" className="text-[13px] text-amber-400">
+            {state.note}
+          </p>
+        )}
         <div className="flex items-center justify-end gap-2">
-          {state.busy ? (
+          {state.note ? (
+            <button type="button" onClick={finish} className="route-state-button is-primary">
+              Done
+            </button>
+          ) : state.busy ? (
             <span role="status" className="inline-flex h-8 items-center gap-2 text-[13px] text-muted-foreground">
               <Spinner /> {busyLabel}
             </span>

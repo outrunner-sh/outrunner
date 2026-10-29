@@ -36,10 +36,13 @@ import {
 } from "@/lib/db/repositories";
 import { defaultEnvironmentId, sessionCheckouts, setupGeneration } from "@/lib/db/environments";
 import { linkWorkItemToSession, projectOrgId, triageActor } from "@/lib/db/work-items";
+import { isUuid } from "@/lib/ids";
 import { modelKeyErrorResponse } from "@/lib/http/model-key-errors";
 import {
   branchTakenByTeammateResponse,
   branchTakenResponse,
+  idTakenResponse,
+  isIdTaken,
   isUniqueViolation,
   workspaceCreateErrorResponse,
 } from "@/lib/http/workspace-create-errors";
@@ -102,6 +105,13 @@ import { gitTokensFor, markReviewSession, REVIEW_AS_APP, requireGitToken } from 
 import { workspaceCloneEnvironment } from "@/lib/runtime/workspace-environment";
 import { PROVIDERS_SETTINGS_HREF, providerSettingsHref } from "@/lib/settings-links";
 
+/** The session `id`, when an earlier send of the same create made it: the
+ *  user's own, in this repository. Null for none, or one that isn't that. */
+async function madeBefore(id: string, ownerId: string, projectId: string): Promise<Workspace | null> {
+  const made = await getWorkspace(id).catch(() => null);
+  return made && made.ownerId === ownerId && made.projectId === projectId ? made : null;
+}
+
 function generatedBranch(): string {
   return `runtime/${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 }
@@ -128,6 +138,10 @@ export type SessionRequest = {
   prompt?: unknown;
   /** The triage item the session was started from (Start session). */
   workItemId?: unknown;
+  /** The id the screen made for it (a UUID), so its page opens at once, on
+   *  the session as the screen holds it, while this request is answered
+   *  (hooks/use-create-session.ts). The database's own when not given. */
+  id?: unknown;
 };
 
 /** How it ended: ready (and its first message sent, if it had one), or failed. */
@@ -181,6 +195,15 @@ export type ServerSessionOptions = {
  * own, inside actAsUser (lib/supabase/acting-user.ts), which reads and writes
  * as the user just as their browser would. Answers as the route does: 202 with
  * the session's id once its row is made, or why it can't be.
+ *
+ * A send of the same create again (the screen's own id, its answer lost) can
+ * overlap the first: it passes the check for a session already made while
+ * the first is still in GitHub's checks, and then the first's row — and its
+ * box, against the plan's limit — makes this one refused. So any refusal of
+ * a create carrying its id, made before its own insert, asks once more
+ * whether that session was made, and answers with it if so. A refusal after
+ * its own insert (a caller told of it that failed) is its own answer: that row
+ * is this call's, and it says why it didn't start.
  */
 export async function createCloudSession(
   owner: Owner,
@@ -188,9 +211,35 @@ export async function createCloudSession(
   body: SessionRequest,
   options: ServerSessionOptions = {},
 ): Promise<Response> {
+  const progress = { inserted: false };
+  const answer = await createOnce(owner, projectId, body, options, progress);
+  const askedId = typeof body.id === "string" && isUuid(body.id) ? body.id : undefined;
+  if (!askedId || answer.status < 400 || progress.inserted) return answer;
+  const made = await madeBefore(askedId, owner.id, projectId);
+  return made ? NextResponse.json({ workspace: made }, { status: 202 }) : answer;
+}
+
+async function createOnce(
+  owner: Owner,
+  projectId: string,
+  body: SessionRequest,
+  options: ServerSessionOptions,
+  /** Set once this call has made the session's row. */
+  progress: { inserted: boolean },
+): Promise<Response> {
   const project = await getProject(projectId);
   if (!project) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
+  }
+  // The id the new-session screen made, when it sent a well-formed one. A
+  // send whose answer was lost is sent again with it (hooks/use-create-session.ts):
+  // when an earlier send made the session, it is the answer, ahead of every
+  // check below — the box gate among them, which that session now counts
+  // against.
+  const askedId = typeof body.id === "string" && isUuid(body.id) ? body.id : undefined;
+  if (askedId) {
+    const made = await madeBefore(askedId, owner.id, project.id);
+    if (made) return NextResponse.json({ workspace: made }, { status: 202 });
   }
   // The model chosen on the new-session screen; none, the menu's default.
   const chosenModel = requestedModel(body);
@@ -365,6 +414,7 @@ export async function createCloudSession(
   let workspace;
   try {
     workspace = await createWorkspaceRow({
+      ...(askedId && { id: askedId }),
       ownerId: owner.id,
       projectId: project.id,
       environmentId,
@@ -377,7 +427,16 @@ export async function createCloudSession(
       kind: options.kind,
       parentMissionId: options.parentMissionId,
     });
+    progress.inserted = true;
   } catch (error) {
+    // The id is taken, not the branch: the same create sent again after its
+    // answer was lost. The user's own session of this repository is the one
+    // the first send made, so it is the answer again (its setup is already
+    // under way); any other is a plain conflict, never a branch's.
+    if (askedId && isIdTaken(error)) {
+      const made = await madeBefore(askedId, owner.id, project.id);
+      return made ? NextResponse.json({ workspace: made }, { status: 202 }) : idTakenResponse();
+    }
     // A requested branch can be one a live session already works on: name that
     // session and offer its page, rather than only saying one is there.
     // (Generated branches can't collide.) Not the user's own, in a team org's
@@ -708,6 +767,7 @@ async function provisionWorkspace({
       await deliverSessionAuth(signIn, agentId, auth);
       // And with the user's own setup and its project's environment.
       await setUpSession(agent, identity, upgrade, owner.id, project.id, workspace.environmentId, {
+        agent: agentId,
         appIdentity: as !== undefined,
       });
       // Before the first launch, so Claude starts on it rather than switching.

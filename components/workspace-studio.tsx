@@ -17,6 +17,7 @@ import { SessionDidntStart } from "@/components/session-didnt-start";
 import { SetupStalled } from "@/components/setup-stalled";
 import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
+import { WorkspaceDesktop } from "@/components/workspace-desktop";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
 import { useMission } from "@/hooks/use-missions";
@@ -29,10 +30,12 @@ import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
 import { archiveOffer } from "@/lib/session/archive-control";
+import { type InspectorTabId, inspectorTabs, shownTab } from "@/lib/session/inspector-tabs";
 import { cn } from "@/lib/utils";
 
 /** The session itself: a header across the top, then the chat, with its
- *  Environment (changes, branch, pull request) on the right. The app
+ *  Environment (changes, branch, pull request) on the right, and beside it in
+ *  a tab, on a cloud session that has one, its box's Desktop. The app
  *  sidebar to its left belongs to the layout (app/(app)/layout.tsx); collapsed,
  *  its buttons sit at the start of this header. */
 export function WorkspaceStudio({
@@ -87,9 +90,21 @@ export function WorkspaceStudio({
     router.push("/");
     router.refresh();
   };
+  // The right pane's tabs, its strip shown where there are two or more. The
+  // pane remembers the one chosen while it's closed, not across pages.
+  const tabs = inspectorTabs(workspace, isLocal);
+  const [chosenTab, setChosenTab] = useState<InspectorTabId>("environment");
+  const tab = shownTab(tabs, chosenTab);
 
   return (
-    <div className={cn("studio-shell", !rightOpen && "no-inspector", isMission && "is-mission")}>
+    <div
+      className={cn(
+        "studio-shell",
+        !rightOpen && "no-inspector",
+        isMission && "is-mission",
+        rightOpen && tab === "desktop" && "desktop-open",
+      )}
+    >
       <header className="studio-header">
         <div className="studio-title">
           <CollapsedSidebarButtons className="mr-1 flex shrink-0 items-center gap-0.5" />
@@ -148,7 +163,8 @@ export function WorkspaceStudio({
         <ArchiveSessionDialog
           session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
           onOpenChange={setArchiving}
-          onArchived={leave}
+          // The sidebar marks it archived at once (lib/session/optimistic-archive.ts).
+          onArchived={() => router.push("/")}
         />
       )}
 
@@ -249,22 +265,51 @@ export function WorkspaceStudio({
         )}
       </section>
 
-      {/* The rows poll for changes, so they mount only while it is open. */}
+      {/* Each tab's panel mounts only while it is open: the rows poll for
+          changes, and the desktop is started, and its socket held, only
+          while someone looks at it. */}
       <aside
         className={cn("studio-inspector", isMission ? "studio-runners" : "studio-env")}
         hidden={!rightOpen}
-        aria-label={isMission ? "Ships" : "Environment"}
+        aria-label={isMission ? "Ships" : (tabs.find((t) => t.id === tab)?.label ?? "Environment")}
       >
         {rightOpen && isMission && <RunnersPane missionId={workspace.id} onClose={() => setRightOpen(false)} />}
+        {rightOpen && tabs.length > 1 && (
+          <div className="studio-tabs" role="tablist" aria-label="Session panels">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                id={`studio-tab-${t.id}`}
+                aria-selected={t.id === tab}
+                aria-controls="studio-tabpanel"
+                onClick={() => setChosenTab(t.id)}
+                className="studio-tab"
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
         {rightOpen && !isMission && (
-          <WorkspaceEnvironment
-            workspace={workspace}
-            local={local}
-            pullRequest={pullRequest}
-            isReady={isReady}
-            sender={sender}
-            onClose={() => setRightOpen(false)}
-          />
+          <div
+            className="studio-tabpanel"
+            {...(tabs.length > 1 && { id: "studio-tabpanel", role: "tabpanel", "aria-labelledby": `studio-tab-${tab}` })}
+          >
+            {tab === "desktop" ? (
+              <WorkspaceDesktop workspaceId={workspace.id} isReady={isReady} onClose={() => setRightOpen(false)} />
+            ) : (
+              <WorkspaceEnvironment
+                workspace={workspace}
+                local={local}
+                pullRequest={pullRequest}
+                isReady={isReady}
+                sender={sender}
+                onClose={() => setRightOpen(false)}
+              />
+            )}
+          </div>
         )}
       </aside>
     </div>

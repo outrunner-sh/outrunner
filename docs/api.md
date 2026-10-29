@@ -96,6 +96,10 @@ counted apart. The budget refills continuously: every answer carries
 | DELETE | `/api/v1/environments/{id}/skill-registries/{registry_id}` | Remove one |
 | GET | `/api/v1/environments/{id}/repo-skills` | The skills, subagents and commands its repositories commit |
 | GET | `/api/v1/skills/search` | Search the skills.sh catalog: `q` |
+| GET | `/api/v1/environments/{id}/mcp-servers` | A project's MCP servers, with their variables' and headers' names |
+| POST | `/api/v1/environments/{id}/mcp-servers` | Add one: stdio `command`, `args`, `env`, or http `url`, `headers` |
+| PATCH | `/api/v1/environments/{id}/mcp-servers/{server_id}` | Change one: `set_env`, `remove_env`, `set_headers`, `remove_headers`, … |
+| DELETE | `/api/v1/environments/{id}/mcp-servers/{server_id}` | Remove one |
 | GET | `/api/v1/triage/items` | The org's work items: `status`, `project_id` (`none` for Unsorted) |
 | POST | `/api/v1/triage/items` | File a work item |
 | GET | `/api/v1/triage/items/{id}` | One work item |
@@ -278,6 +282,30 @@ App installed with access to it: a session's box downloads the registry with
 a token of the App's that reads it alone, never a member's own.
 `repo-skills` lists what the project's repositories commit under `.claude`
 and `.agents`: sessions get those with the checkout.
+
+### Project MCP servers
+
+Every session of a project loads its MCP servers, in Claude Code and in
+Codex, beside the user's own; the user's win on a name both have. A server
+is `stdio` (a command the session's box runs) or `http` (a URL):
+
+```sh
+curl -X POST -H "Authorization: Bearer $OUTRUNNER_API_KEY" -H "Content-Type: application/json" \
+  "$OUTRUNNER/api/v1/environments/$ID/mcp-servers" \
+  -d '{ "name": "linear", "transport": "http", "url": "https://mcp.linear.app/mcp", "headers": { "Authorization": "Bearer lin_…" } }'
+```
+
+```json
+{ "id": "…", "name": "linear", "transport": "http", "command": null, "args": [], "url": "https://mcp.linear.app/mcp", "env_names": [], "header_names": ["Authorization"], "created_at": "…", "updated_at": "…" }
+```
+
+Variables' and headers' values are encrypted and never answered back. A
+change sets values by name (`set_env`, `set_headers`) and removes them
+(`remove_env`, `remove_headers`); `name`, `command`, `args` and `url` replace
+what's there, and a new `transport` takes its own fields. Names are up to 64
+letters, digits, `-` and `_`; those starting with `outrunner` are kept for
+Outrunner's own servers. Changing them needs write access to the project,
+and remakes its ready boxes.
 
 ## CLI
 

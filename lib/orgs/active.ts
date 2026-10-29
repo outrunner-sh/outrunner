@@ -12,6 +12,13 @@ export const ACTIVE_ORG_COOKIE = "outrunner_org";
 
 export type OrgRole = "admin" | "member";
 
+/** Whose view a page showed: the signed-in user in the org the app shows.
+ *  What a page keeps for its next visit is kept under it
+ *  (lib/client/kept-page.ts), and shown only to the same view again. */
+export function viewerScope(userId: string, orgId: string): string {
+  return `${userId}:${orgId}`;
+}
+
 export type Org = {
   id: string;
   name: string;
