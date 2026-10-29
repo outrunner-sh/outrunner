@@ -180,10 +180,14 @@ export function WorkItemDetail({
           />
         </div>
 
-        {/* Narrower than lg the properties sit here, as chips. */}
-        <div className="flex flex-wrap items-center gap-1.5 lg:hidden">
-          {statusMenu}
-          {workspaceSelect}
+        {/* Narrower than lg the properties sit here, as chips, with the one
+            this duplicates named under them (the column has it). */}
+        <div className="flex flex-col gap-2 lg:hidden">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {statusMenu}
+            {workspaceSelect}
+          </div>
+          {duplicateOf && <DuplicateLink item={duplicateOf} label />}
         </div>
 
         {error && <p className="text-xs text-destructive">{error}</p>}
@@ -219,10 +223,8 @@ export function WorkItemDetail({
             {duplicateOf && (
               <>
                 <dt className="text-muted-foreground">Duplicate of</dt>
-                <dd className="min-w-0 truncate">
-                  <Link href={itemHref(duplicateOf)} className="hover:underline">
-                    <span className="font-mono text-muted-foreground">{itemKey(duplicateOf)}</span> {duplicateOf.title}
-                  </Link>
+                <dd className="min-w-0">
+                  <DuplicateLink item={duplicateOf} />
                 </dd>
               </>
             )}
@@ -238,6 +240,17 @@ export function WorkItemDetail({
         </div>
       </aside>
     </div>
+  );
+}
+
+/** The item this one duplicates, as a link to it. `label` says so itself:
+ *  the properties column has it as the row's name. */
+function DuplicateLink({ item, label = false }: { item: WorkItem; label?: boolean }) {
+  return (
+    <Link href={itemHref(item)} className="block truncate text-xs text-muted-foreground hover:underline">
+      {label && "Duplicate of "}
+      <span className="font-mono">{itemKey(item)}</span> {item.title}
+    </Link>
   );
 }
 

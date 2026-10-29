@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { groupWorkItems, tabCounts } from "@/lib/triage/groups";
 import {
+  captureHref,
   itemKey,
   parseNewWorkItem,
   parseNoteBody,
@@ -104,6 +105,15 @@ test("a session's prompt carries the key, body and notes, with who wrote them", 
     ].join("\n\n"),
   );
   assert.equal(itemKey(item()), "OR-42");
+});
+
+test("a capture's page keeps the item behind it open, and the workspace it starts in", () => {
+  assert.equal(captureHref(), "/triage?new=1");
+  assert.equal(captureHref({ item: "abc" }), "/triage?item=abc&new=1");
+  assert.equal(captureHref({ project: "p1" }), "/triage?new=1&project=p1");
+  assert.equal(captureHref({ item: "abc", project: "p1" }), "/triage?item=abc&new=1&project=p1");
+  // Nothing to name means nothing in the query.
+  assert.equal(captureHref({ item: null, project: "" }), "/triage?new=1");
 });
 
 test("a tab's items group by workspace, Unsorted first, the rest by name", () => {

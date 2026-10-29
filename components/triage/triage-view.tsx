@@ -15,7 +15,7 @@ import { useNow } from "@/hooks/use-now";
 import { relativeTime } from "@/lib/nav/sidebar";
 import { groupWorkItems, tabCounts, tabOf, TRIAGE_TABS, type TriageTab } from "@/lib/triage/groups";
 import type { AccessLevel } from "@/lib/orgs/access";
-import { itemKey, STATUS_LABELS, type TriageItem } from "@/lib/triage/work-items";
+import { captureHref, itemKey, STATUS_LABELS, type TriageItem } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
 
 /**
@@ -75,13 +75,8 @@ export function TriageView() {
 
   const open = (id: string | null) => router.push(id ? `/triage?item=${id}` : "/triage", { scroll: false });
   /** The capture dialog, over whatever is open, in `projectId` if given. */
-  const capture = (projectId?: string) => {
-    const params = new URLSearchParams();
-    if (selectedId) params.set("item", selectedId);
-    params.set("new", "1");
-    if (projectId) params.set("project", projectId);
-    router.push(`/triage?${params}`, { scroll: false });
-  };
+  const capture = (projectId?: string) =>
+    router.push(captureHref({ item: selectedId, project: projectId }), { scroll: false });
   const toggle = (key: string) =>
     setFolded((current) => {
       const next = new Set(current);

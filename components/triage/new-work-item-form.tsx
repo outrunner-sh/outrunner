@@ -111,14 +111,20 @@ export function NewWorkItemForm({
               placeholder="Item title"
               value={title}
               maxLength={200}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => {
+                setTitle(event.target.value);
+                setError(null);
+              }}
               className="w-full bg-transparent text-lg font-medium outline-none placeholder:text-muted-foreground/70"
             />
             <textarea
               aria-label="Description"
               placeholder="Add description… Markdown works. Leave the title empty to use its first line."
               value={body}
-              onChange={(event) => setBody(event.target.value)}
+              onChange={(event) => {
+                setBody(event.target.value);
+                setError(null);
+              }}
               className="field-sizing-content max-h-[45vh] min-h-24 w-full resize-none bg-transparent py-1 text-sm outline-none placeholder:text-muted-foreground/70"
             />
           </div>
@@ -131,16 +137,16 @@ export function NewWorkItemForm({
             <WorkspaceSelect projects={projects} value={projectId} onChange={setProjectId} disabled={saving} />
           </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-border/60 px-4 py-2.5">
-            {error ? (
-              <p className="min-w-0 truncate text-xs text-destructive">{error}</p>
-            ) : (
+          <div className="flex flex-col gap-2 border-t border-border/60 px-4 py-2.5">
+            {/* A failure sits above the row, so the switch stays reachable. */}
+            {error && <p className="text-xs text-destructive">{error}</p>}
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <CreateMoreSwitch on={more} onChange={setMore} />
-            )}
-            <Button type="submit" size="sm" disabled={!canSave}>
-              Create item
-              <kbd className="font-sans text-[11px] opacity-70">⌘↵</kbd>
-            </Button>
+              <Button type="submit" size="sm" disabled={!canSave}>
+                Create item
+                <kbd className="font-sans text-[11px] opacity-70">⌘↵</kbd>
+              </Button>
+            </div>
           </div>
         </form>
       </DialogContent>
