@@ -148,3 +148,10 @@ export function readyNotification(input: {
     body: `#${input.pr.number} ready to review: ${input.pr.title} (${input.runnerName})`,
   };
 }
+
+/** A pr_ready notification's body read back (readyNotification writes it):
+ *  its number, title and Runner, for the toast; null for any other. */
+export function parseReadyBody(body: string): { number: number; title: string; runner: string | null } | null {
+  const match = /^#(\d+) ready to review: (.*?)(?: \(([^()]*)\))?$/.exec(body);
+  return match ? { number: Number(match[1]), title: match[2], runner: match[3] ?? null } : null;
+}

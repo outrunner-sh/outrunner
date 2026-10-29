@@ -81,5 +81,5 @@ Do **not** touch `app/**`, `components/**`, `server.go` `/events`, or
 - Launcher: `runtime-agent/internal/claude/claude.go`
 - Caller: `runtime-agent/internal/workspace/service.go`
 - Agent detail: [`runtime-agent.md`](./runtime-agent.md)
-- Where the layering pays off: [`mission-engine-v0.md`](./mission-engine-v0.md) (phase prompts sit at layer 4 on top of this orientation)
+- Where the layering pays off: [`mission-engine-v0.md`](./mission-engine-v0.md) (superseded by [Missions](../missions.md)) (phase prompts sit at layer 4 on top of this orientation)
 - Progress: [`PROGRESS.md`](./PROGRESS.md)

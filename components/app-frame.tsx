@@ -7,6 +7,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 
 import { AppDataProvider } from "@/components/app-data";
 import { AppSidebar } from "@/components/app-sidebar";
+import { MissionToasts } from "@/components/missions/mission-toasts";
 import { useServerAnswer } from "@/components/server-answer";
 import { useNotificationsFeed } from "@/hooks/use-notifications";
 import { standingsNow, useStandingsFeed } from "@/hooks/use-standings";
@@ -224,6 +225,9 @@ export function AppFrame({
       </div>
       {chromeSlot}
       {slot}
+      {/* A Mission's news while the user looks, whatever the sidebar does
+          (components/missions/mission-toasts.tsx). */}
+      <MissionToasts />
     </CollapsedSidebar.Provider>
   );
 }

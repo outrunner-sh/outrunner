@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { readyNotification } from "@/lib/missions/events";
+import { parseReadyBody, readyNotification } from "@/lib/missions/events";
 import { DEFAULT_PREFERENCES, KIND_LABEL, missionsQuiet, NOTIFICATION_KINDS } from "@/lib/notifications/events";
 import { instantEmail, slackMessage } from "@/lib/notifications/messages";
 
@@ -42,4 +42,20 @@ test("a pull request ready is a kind of its own, on by default, worded for each 
   const sent = { workspaceId: "m1", kind: "pr_ready" as const, title: draft.title, body: draft.body, createdAt: "2026-11-03T10:00:00Z" };
   assert.equal(instantEmail(sent, "https://app.outrunner.sh").subject, "Ready to review: Billing");
   assert.match(slackMessage(sent, "https://app.outrunner.sh"), /^:eyes: \*<https:\/\/app\.outrunner\.sh\/workspaces\/m1\|Billing>\*/);
+});
+
+test("the toast reads back what readyNotification wrote, titles with brackets too", () => {
+  const body = (title: string) =>
+    readyNotification({
+      ownerId: "u1",
+      missionId: "m1",
+      missionTitle: "Billing",
+      runnerName: "runner-c",
+      runnerId: "r1",
+      pr: { repo: "acme/app", number: 270, url: "https://github.com/acme/app/pull/270", title },
+      seq: 1,
+    }).body;
+  assert.deepEqual(parseReadyBody(body("Fix proration")), { number: 270, title: "Fix proration", runner: "runner-c" });
+  assert.deepEqual(parseReadyBody(body("Fix (some) proration")), { number: 270, title: "Fix (some) proration", runner: "runner-c" });
+  assert.equal(parseReadyBody("Billing is waiting on you"), null);
 });

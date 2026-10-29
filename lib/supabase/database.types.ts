@@ -209,6 +209,8 @@ type RunnerPullRequestRow = {
   checked_at: string | null;
   created_at: string;
 };
+// supabase/migrations/20261102260000_mission_profiles.sql
+type MissionProfileRow = { mission_id: string; icon: string | null; position: number | null; updated_at: string };
 type MissionDeliveryRow = {
   id: string;
   mission_id: string;
@@ -1461,6 +1463,12 @@ export type Database = {
         Update: Partial<RunnerPullRequestRow>;
         Relationships: [];
       };
+      mission_profiles: {
+        Row: MissionProfileRow;
+        Insert: Insert<MissionProfileRow, "mission_id">;
+        Update: Partial<MissionProfileRow>;
+        Relationships: [];
+      };
       mission_deliveries: {
         Row: MissionDeliveryRow;
         Insert: Insert<MissionDeliveryRow, "mission_id">;
@@ -1672,6 +1680,11 @@ export type Database = {
       fail_mission_delivery: {
         Args: { target: string; failure: string };
         Returns: undefined;
+      };
+      // supabase/migrations/20261102260000_mission_profiles.sql
+      latest_mission_events: {
+        Args: { runner_ids: string[] };
+        Returns: { runner_id: string; kind: string; payload: Json; created_at: string }[];
       };
       missions_with_pending_events: {
         Args: { max_missions: number };

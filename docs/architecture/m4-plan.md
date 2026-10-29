@@ -214,7 +214,7 @@ Record it like the prior spikes (short report under `docs/architecture/`).
 ## Dependencies & downstream
 
 - **Depends on M3:** Workspace Session, conversation `/events`, Workspace Summary.
-- **Feeds:** [`mission-engine-v0.md`](./mission-engine-v0.md) consumes the `archived`
+- **Feeds:** [`mission-engine-v0.md`](./mission-engine-v0.md) (superseded by [Missions](../missions.md)) consumes the `archived`
   state event + the Snapshot's Summary (via manifest). Also the foundation for future
   analytics, sharing, and Fork. Completes the full-loop DoD in
   [`PROGRESS.md`](./PROGRESS.md).

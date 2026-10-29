@@ -65,3 +65,16 @@ export function boolArg(args: Record<string, unknown>, name: string): boolean {
   return args[name] === true;
 }
 
+/** A Mission's name from its first message: its first sentence, short, cut
+ *  at a word. A session's title can be its whole first line; a Mission sits
+ *  in the sidebar for weeks, so it gets a name. */
+export function missionName(prompt: string): string {
+  // Its first line that says something, then that line's first sentence: a
+  // heading-style first line is the name it was given.
+  const firstLine = prompt.split("\n").find((line) => line.replace(/[`*_#>\s]/g, "")) ?? "";
+  const plain = firstLine.replace(/[`*_#>]/g, "").replace(/\s+/g, " ").trim();
+  const sentence = plain.split(/(?<=[.!?:;])\s/)[0]?.replace(/[.!?:;,]+$/, "") ?? "";
+  if (sentence.length <= 48) return sentence || "New Mission";
+  const cut = sentence.slice(0, 48);
+  return `${cut.slice(0, cut.lastIndexOf(" ") > 20 ? cut.lastIndexOf(" ") : 48).trim()}…`;
+}

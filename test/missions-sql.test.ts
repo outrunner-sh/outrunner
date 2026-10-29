@@ -229,3 +229,15 @@ test("a pull request ready is a notification kind, on for whoever had pull reque
   assert.equal(psql(`select 'pr_ready' = any (kinds) from notification_preferences where user_id = '00000000-0000-0000-0000-0000000000a3'`), "t");
   fails(`insert into session_notifications (kind) values ('gossip')`, /check constraint/);
 });
+
+test("each Runner's latest event, however many another has", { skip }, () => {
+  const m = mission();
+  const chatty = runner(m);
+  const quiet = runner(m);
+  for (let i = 0; i < 30; i++) event(m, chatty, `chat${i}:${m}`, `${i + 1} seconds`);
+  psql(
+    `insert into mission_events (mission_id, runner_id, kind, payload, idempotency_key, created_at) values ('${m}', '${quiet}', 'needs_attention', '{"reason":"its agent exited"}', 'na:${m}', now() - interval '1 hour')`,
+  );
+  const rows = psql(`select runner_id || ':' || kind from latest_mission_events(array['${chatty}', '${quiet}']::uuid[]) order by kind`).split("\n");
+  assert.deepEqual(rows, [`${chatty}:finished`, `${quiet}:needs_attention`]);
+});
