@@ -16,6 +16,7 @@ import { nextNeedingYou } from "@/lib/session/standing";
 import { startNewSession } from "@/lib/session/new-session-reset";
 import type { Org } from "@/lib/orgs/active";
 import type { AppData } from "@/lib/session/session-view";
+import { captureHref } from "@/lib/triage/work-items";
 import { cn } from "@/lib/utils";
 
 /** What the layout reads for the frame, streamed in (app/(app)/layout.tsx). */
@@ -146,7 +147,11 @@ export function AppFrame({
         setSearchSignal((n) => n + 1);
       } else if (key === "i") {
         event.preventDefault();
-        router.push("/triage?new=1");
+        // On the triage page the dialog opens over the item already there,
+        // and in the workspace it was started in, as the page's own buttons
+        // do (components/triage/triage-view.tsx).
+        const params = pathname === "/triage" ? new URLSearchParams(window.location.search) : null;
+        router.push(captureHref({ item: params?.get("item"), project: params?.get("project") }), { scroll: false });
       } else if (key === "j") {
         event.preventDefault();
         const standings = standingsNow();
@@ -159,7 +164,7 @@ export function AppFrame({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router]);
+  }, [pathname, router]);
 
   // Carry a choice saved before the cookie existed over to it, once.
   useEffect(() => {
