@@ -98,6 +98,12 @@ export async function returnQueuedMessage(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Forget every message still held for the Mission's Runners. */
+export async function dropQueuedMessages(missionId: string): Promise<void> {
+  const { error } = await db().from("mission_queued_messages").delete().eq("mission_id", missionId).is("sent_at", null);
+  if (error) throw error;
+}
+
 /** How many messages wait for each of these Runners. */
 export async function queuedCounts(runnerIds: string[]): Promise<Map<string, number>> {
   const counts = new Map<string, number>();

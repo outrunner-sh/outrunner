@@ -7,6 +7,7 @@ import { useState } from "react";
 
 import { CollapsedSidebarButtons } from "@/components/app-frame";
 import { ArchiveSessionDialog } from "@/components/archive-session-dialog";
+import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { MissionHeader } from "@/components/missions/mission-header";
 import { RunnersPane } from "@/components/missions/runners-pane";
 import { OpenEditorButton } from "@/components/open-editor-button";
@@ -18,10 +19,12 @@ import { Spinner } from "@/components/ui/loaders";
 import { WorkspaceCreating } from "@/components/workspace-creating";
 import { WorkspaceEnvironment } from "@/components/workspace-environment";
 import { type SessionSender, WorkspaceSession } from "@/components/workspace-session";
+import { useMission } from "@/hooks/use-missions";
 import { useQueuedFirstPrompt } from "@/hooks/use-queued-first-prompt";
 import { useRestoreOnOpen } from "@/hooks/use-restore-on-open";
 import { useWorkspaceSetup } from "@/hooks/use-workspace-setup";
 import { localSessionLabel } from "@/lib/desktop/local-sessions";
+import { missionArchiveOffer } from "@/lib/missions/archive";
 import type { LocalSession } from "@/lib/desktop/local-runtime";
 import { workspaceLabel } from "@/lib/nav/session-title";
 import { onRuntimeComputer, opensInBrowser, type Workspace, type WorkspacePullRequest } from "@/lib/runtime/types";
@@ -69,14 +72,21 @@ export function WorkspaceStudio({
   const queued = useQueuedFirstPrompt(workspace.id, { prompt: initialPrompt ?? "", attachmentIds: initialAttachmentIds ?? [] });
   // Beside the title: the repository by its short name, or this Mac's folder.
   const place = local ? local.name : projectName?.split("/").pop();
-  // Archive, for a cloud session that has a Snapshot to restore from. Once it
-  // is archived, leave it: left open, this page would restore it at once.
-  const archive = isLocal ? null : archiveOffer(workspace);
-  const [archiving, setArchiving] = useState(false);
-  const router = useRouter();
   // A Runner's page: its header, and its Ships where a session's
   // Environment is (components/missions).
   const isMission = workspace.kind === "mission";
+  const { mission } = useMission(isMission ? workspace.id : undefined);
+  // Archive, for a cloud session that has a Snapshot to restore from; a
+  // Runner's takes its Ships with it. Once it is archived, leave it: left
+  // open, this page would restore it at once.
+  const archive = isLocal ? null : isMission ? missionArchiveOffer(workspace.status) : archiveOffer(workspace);
+  const archiveLabel = isMission ? "Archive Runner" : "Archive session";
+  const [archiving, setArchiving] = useState(false);
+  const router = useRouter();
+  const leave = () => {
+    router.push("/");
+    router.refresh();
+  };
 
   return (
     <div className={cn("studio-shell", !rightOpen && "no-inspector", isMission && "is-mission")}>
@@ -112,8 +122,8 @@ export function WorkspaceStudio({
               onClick={() => {
                 if (archive.can) setArchiving(true);
               }}
-              title={archive.can ? "Archive session" : archive.why}
-              aria-label="Archive session"
+              title={archive.can ? archiveLabel : archive.why}
+              aria-label={archiveLabel}
             >
               <Archive />
             </button>
@@ -128,14 +138,19 @@ export function WorkspaceStudio({
           </button>
         </div>
       </header>
-      <ArchiveSessionDialog
-        session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
-        onOpenChange={setArchiving}
-        onArchived={() => {
-          router.push("/");
-          router.refresh();
-        }}
-      />
+      {isMission ? (
+        <ArchiveMissionDialog
+          mission={archiving ? { id: workspace.id, title: mission?.title ?? workspaceLabel(workspace), ships: mission?.liveRunners ?? 0 } : null}
+          onOpenChange={setArchiving}
+          onArchived={leave}
+        />
+      ) : (
+        <ArchiveSessionDialog
+          session={archiving ? { id: workspace.id, title: workspaceLabel(workspace) } : null}
+          onOpenChange={setArchiving}
+          onArchived={leave}
+        />
+      )}
 
       <section className="studio-chat">
         {hasLiveSession ? (

@@ -3,20 +3,26 @@
 /**
  * The sidebar's Runners (docs/missions.md): each Runner with its icon, a
  * live status (needs you, working, ready, idle) and how many pull requests
- * are ready, its Ships with open work nested under it. Dragged to reorder;
- * arrow keys move between rows. `+` starts a Runner.
+ * are ready, its Ships with open work nested under it; its menu archives it
+ * with its Ships. Dragged to reorder; arrow keys move between rows. `+`
+ * starts a Runner.
  */
 
 import Link from "next/link";
-import { GitPullRequest, Plus, Rocket } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Archive, Ellipsis, GitPullRequest, Plus, Rocket } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { ArchiveMissionDialog } from "@/components/missions/archive-mission-dialog";
 import { MissionGlyph, PullRequestChip, RunnerGlyph, UnreadDot } from "@/components/missions/mission-parts";
 import { NewMissionDialog } from "@/components/missions/new-mission-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SkeletonRows } from "@/components/ui/skeleton-swap";
 import { refreshMissions, useMissions } from "@/hooks/use-missions";
+import { missionArchiveOffer } from "@/lib/missions/archive";
 import type { NavProject } from "@/lib/nav/workspace-nav-groups";
 import { MISSION_STATUS_LABEL, type MissionView, type RunnerView } from "@/lib/missions/view";
+import type { WorkspaceStatus } from "@/lib/runtime/types";
 import { cn } from "@/lib/utils";
 
 /** Ships shown under a Runner before "more". */
@@ -32,6 +38,8 @@ function nestedRunners(mission: MissionView): RunnerView[] {
 export function SidebarMissions({ active, projects }: { active?: string; projects: NavProject[] }) {
   const { loaded, missions } = useMissions();
   const [creating, setCreating] = useState(false);
+  const [archiving, setArchiving] = useState<MissionView | null>(null);
+  const router = useRouter();
   // Dragged into place here, before the server has it.
   const [order, setOrder] = useState<string[] | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -112,6 +120,8 @@ export function SidebarMissions({ active, projects }: { active?: string; project
             {shown.map((mission) => {
               const runners = nestedRunners(mission);
               const isActive = mission.id === active;
+              const archived = mission.sessionStatus === "archived";
+              const archive = missionArchiveOffer(mission.sessionStatus as WorkspaceStatus);
               return (
                 <li
                   key={mission.id}
@@ -128,44 +138,71 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                     setOver(null);
                   }}
                 >
-                  <Link
-                    href={`/workspaces/${mission.id}`}
-                    data-mission-row=""
-                    draggable
-                    onDragStart={(e) => {
-                      setDragging(mission.id);
-                      // Replace the link's text/URL so dropping on a text field
-                      // inserts nothing. Firefox still needs data to start a drag.
-                      e.dataTransfer.clearData();
-                      e.dataTransfer.setData("application/x-outrunner-mission", mission.id);
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDragEnd={() => {
-                      setDragging(null);
-                      setOver(null);
-                    }}
-                    aria-current={isActive ? "page" : undefined}
-                    title={`${mission.title} · ${MISSION_STATUS_LABEL[mission.status]}`}
-                    className={cn(
-                      "group/mrow flex items-center gap-2.5 rounded-md px-2 py-1 text-[13px] transition-colors",
-                      isActive ? "bg-accent text-foreground" : "text-foreground hover:bg-accent/60",
-                      dragging === mission.id && "opacity-50",
+                  <div className="group/mission relative">
+                    <Link
+                      href={`/workspaces/${mission.id}`}
+                      data-mission-row=""
+                      draggable
+                      onDragStart={(e) => {
+                        setDragging(mission.id);
+                        // Replace the link's text/URL so dropping on a text field
+                        // inserts nothing. Firefox still needs data to start a drag.
+                        e.dataTransfer.clearData();
+                        e.dataTransfer.setData("application/x-outrunner-mission", mission.id);
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragEnd={() => {
+                        setDragging(null);
+                        setOver(null);
+                      }}
+                      aria-current={isActive ? "page" : undefined}
+                      title={archived ? `${mission.title} · Archived. Opening it restores it.` : `${mission.title} · ${MISSION_STATUS_LABEL[mission.status]}`}
+                      className={cn(
+                        "group/mrow flex items-center gap-2.5 rounded-md px-2 py-1 text-[13px] transition-colors",
+                        isActive ? "bg-accent text-foreground" : "text-foreground hover:bg-accent/60",
+                        // Room for its menu as it shows.
+                        archive && "group-hover/mission:pr-8 group-focus-within/mission:pr-8 group-has-[[data-state=open]]/mission:pr-8",
+                        dragging === mission.id && "opacity-50",
+                      )}
+                    >
+                      <MissionGlyph id={mission.id} icon={mission.icon} status={mission.status} />
+                      <span className={cn("min-w-0 flex-1 truncate", archived && "text-muted-foreground")}>{mission.title}</span>
+                      {archived ? (
+                        <Archive aria-label="Archived" className="size-3 shrink-0 text-muted-foreground" />
+                      ) : mission.readyCount > 0 ? (
+                        <span
+                          className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full bg-[#3fb950]/12 px-1.5 text-[11px] font-medium tabular-nums text-[#56d364]"
+                          title={`${mission.readyCount} pull request${mission.readyCount === 1 ? "" : "s"} ready`}
+                        >
+                          <GitPullRequest className="size-3" />
+                          {mission.readyCount}
+                        </span>
+                      ) : mission.status === "needs_you" ? (
+                        <span className="shrink-0 text-[11px] font-medium text-brand">Needs you</span>
+                      ) : null}
+                    </Link>
+                    {archive && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          aria-label={`More for ${mission.title}`}
+                          title="More"
+                          className="absolute top-1/2 right-1 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 outline-none transition hover:bg-accent hover:text-foreground focus-visible:opacity-100 data-[state=open]:opacity-100 group-hover/mission:opacity-100"
+                        >
+                          <Ellipsis className="size-3.5" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-52">
+                          <DropdownMenuItem
+                            disabled={!archive.can}
+                            title={archive.can ? undefined : archive.why}
+                            onSelect={() => setArchiving(mission)}
+                          >
+                            <Archive />
+                            Archive
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
-                  >
-                    <MissionGlyph id={mission.id} icon={mission.icon} status={mission.status} />
-                    <span className="min-w-0 flex-1 truncate">{mission.title}</span>
-                    {mission.readyCount > 0 ? (
-                      <span
-                        className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full bg-[#3fb950]/12 px-1.5 text-[11px] font-medium tabular-nums text-[#56d364]"
-                        title={`${mission.readyCount} pull request${mission.readyCount === 1 ? "" : "s"} ready`}
-                      >
-                        <GitPullRequest className="size-3" />
-                        {mission.readyCount}
-                      </span>
-                    ) : mission.status === "needs_you" ? (
-                      <span className="shrink-0 text-[11px] font-medium text-brand">Needs you</span>
-                    ) : null}
-                  </Link>
+                  </div>
                   {runners.length > 0 && (
                     <ul className="relative mt-px ml-[17px] space-y-px border-l border-white/[0.07] pl-[7px]">
                       {runners.slice(0, SHOWN_RUNNERS).map((runner) => {
@@ -209,6 +246,19 @@ export function SidebarMissions({ active, projects }: { active?: string; project
         )}
       </div>
       <NewMissionDialog open={creating} onOpenChange={setCreating} projects={projects} />
+      <ArchiveMissionDialog
+        mission={archiving && { id: archiving.id, title: archiving.title, ships: archiving.liveRunners }}
+        onOpenChange={(open) => {
+          if (!open) setArchiving(null);
+        }}
+        onArchived={(id) => {
+          // On screen, it's left: its page would restore it at once.
+          if (id === active) {
+            router.push("/");
+            router.refresh();
+          }
+        }}
+      />
     </section>
   );
 }
