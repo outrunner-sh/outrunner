@@ -373,6 +373,21 @@ type ListeningPort struct {
 	Process string `json:"process,omitempty"`
 }
 
+// FeatureFiles is GET /workspaces/{id}/files: the session's files, for the
+// composer's @ mentions.
+const FeatureFiles = "files"
+
+// FilesResponse is a session's files, by path in its folder, for the composer
+// to mention: the first Changed of them are the ones changed since its base
+// branch, most recently written first; the rest are the repository's (git's
+// tracked and untracked but not ignored), in order. Truncated says more were
+// left out than MaxListedFiles.
+type FilesResponse struct {
+	Files     []string `json:"files"`
+	Changed   int      `json:"changed"`
+	Truncated bool     `json:"truncated,omitempty"`
+}
+
 // FeatureRestoreModel is a restore that puts the session back on its model
 // (RestoreWorkspaceRequest.Model). An older agent ignores the field, and
 // relaunches the session on Claude's own default.

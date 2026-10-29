@@ -1314,8 +1314,9 @@ fn git_output(dir: &Path, args: &[&str]) -> Option<String> {
 
 /// The agent routes the page may call, each bound to the workspace its token is
 /// for. Archive/restore are absent: local workspaces have no snapshots. Only the
-/// change set takes a query (`?path=` for one file's diff). `plan` approves the
-/// plan a session waits on and `compact` compacts its conversation, as the
+/// change set takes a query (`?path=` for one file's diff). `files` lists the
+/// session's files for the composer's @ mentions. `plan` approves the plan a
+/// session waits on and `compact` compacts its conversation, as the
 /// composer's Approve and /compact do. `auth` sets which
 /// credential the session's agent CLI runs on, like `model` sets its model.
 fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest::Method, String> {
@@ -1331,7 +1332,7 @@ fn allowed_route(method: &str, path: &str, workspace_id: &str) -> Result<reqwest
         {
             Ok(reqwest::Method::POST)
         }
-        ("GET", ["workspaces", id, "summary"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
+        ("GET", ["workspaces", id, "summary" | "files"], None) if *id == workspace_id => Ok(reqwest::Method::GET),
         ("GET", ["workspaces", id, "changes"], query)
             if *id == workspace_id && query.is_none_or(valid_changes_query) =>
         {
@@ -2145,6 +2146,9 @@ echo 'Logged in using ChatGPT' >&2"#,
         assert!(allowed_route("GET", "/workspaces/ws-1/model", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/summary", "ws-1").is_ok());
         assert!(allowed_route("GET", "/workspaces/ws-1/changes", "ws-1").is_ok());
+        assert!(allowed_route("GET", "/workspaces/ws-1/files", "ws-1").is_ok());
+        assert!(allowed_route("GET", "/workspaces/ws-2/files", "ws-1").is_err());
+        assert!(allowed_route("GET", "/workspaces/ws-1/files?all=1", "ws-1").is_err());
         assert!(allowed_route("GET", "/workspaces/ws-1/changes?path=src%2Fa.ts", "ws-1").is_ok());
         assert!(allowed_route("GET", "/workspaces/ws-1/changes?other=1", "ws-1").is_err());
         // A diff's path stays inside the worktree, whatever the agent does.

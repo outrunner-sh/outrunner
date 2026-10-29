@@ -14,6 +14,8 @@ import { deliverMissionEvents, type OutboxDeps } from "@/lib/missions/outbox";
 import { activityNews } from "@/lib/notifications/events";
 import type { AgentEvent } from "@/lib/runtime/agent-protocol";
 import { parseConversation } from "@/lib/runtime/replay/conversation";
+import { conversationNodes, conversationTurns, conversationTurnSince } from "@/lib/runtime/conversation-nodes";
+import { pendingPlan } from "@/lib/runtime/pending-plan";
 import type { Workspace } from "@/lib/runtime/types";
 import { foldEvents, IDLE, type TurnState } from "@/lib/session/turn-state";
 
@@ -106,6 +108,14 @@ test("a delivery while the Mission works is folded into its turn: one turn, one 
   const taken = parseConversation(jsonl([prompt, sleeping, ...absorbed])).filter((e) => e.t === "message" && e.role === "user");
   const text = taken.flatMap((e) => (e.t === "message" ? e.content.flatMap((b) => (b.type === "text" ? [b.text] : [])) : [])).join("\n");
   assert.equal(parseRunnerEvents(text).events[0].runner, "runner-c");
+  const running = conversationNodes(parseConversation(jsonl([prompt, sleeping, ...absorbed])), { working: true });
+  assert.equal(running.filter((n) => n.kind === "worked").length, 0, "the delivery doesn't finish a turn still running");
+  assert.equal(conversationTurnSince(running), at(1), "the working clock keeps the original prompt's time");
+  assert.equal(conversationTurns(running).length, 1, "the delivery adds no tick to the turn rail");
+  const news = running.find((n) => n.kind === "prompt" && n.text.includes("<runner_event"));
+  assert.equal(news?.kind === "prompt" && news.continuation, true);
+  const finished = conversationNodes(parseConversation(jsonl([prompt, sleeping, ...absorbed, answer])));
+  assert.deepEqual(finished.filter((n) => n.kind === "worked").map((n) => n.ms), [54_000]);
 });
 
 test("the same delivery to a Mission at rest starts a turn of its own", () => {
@@ -122,6 +132,34 @@ test("the same delivery to a Mission at rest starts a turn of its own", () => {
     states.map((s) => s.turn),
     ["working", "idle", "working", "idle"],
   );
+  const running = conversationNodes(parseConversation(jsonl([prompt, firstReply, delivered])), { working: true });
+  assert.equal(conversationTurnSince(running), at(20), "idle delivery starts its own clock");
+  assert.equal(conversationTurns(running).length, 2);
+  const finished = conversationNodes(parseConversation(jsonl([prompt, firstReply, delivered, { ...answer, parentUuid: "d1" }])));
+  assert.deepEqual(finished.filter((n) => n.kind === "worked").map((n) => n.ms), [9_000, 35_000]);
+});
+
+test("news absorbed into a plan turn keeps its final words a plan with approval actions", () => {
+  const parsed = parseConversation(jsonl([prompt, sleeping, ...absorbed, answer]));
+  const events = parsed.map((e): AgentEvent => e.t === "message" && e.uuid === "u1" ? { ...e, mode: "plan" } : e);
+  const nodes = conversationNodes(events, { plansInProse: true });
+  assert.equal(nodes.find((n) => n.kind === "plan")?.id, "a2");
+  assert.deepEqual(pendingPlan(events, { plansInProse: true }), {
+    id: "a2", plan: "Runner C opened #270; waiting on its checks.", dismiss: false,
+  });
+  assert.deepEqual(nodes.filter((n) => n.kind === "worked").map((n) => n.ms), [54_000]);
+});
+
+test("news after a stop starts a turn, while malformed runner markup is an ordinary prompt", () => {
+  const stop = { type: "user", uuid: "stop", timestamp: at(10), message: { role: "user", content: "[Request interrupted by user]" } };
+  const delivered = { type: "user", uuid: "d1", timestamp: at(20), message: { role: "user", content: delivery } };
+  const stopped = conversationNodes(parseConversation(jsonl([prompt, sleeping, stop, delivered])), { working: true });
+  assert.equal(conversationTurnSince(stopped), at(20));
+  assert.equal(conversationTurns(stopped).length, 2);
+  const malformed = { ...delivered, message: { ...delivered.message, content: delivery.replace('kind="finished"', 'kind="unknown"') } };
+  const nodes = conversationNodes(parseConversation(jsonl([prompt, sleeping, malformed])), { working: true });
+  assert.equal(conversationTurnSince(nodes), at(20));
+  assert.equal(conversationTurns(nodes).length, 2);
 });
 
 test("the outbox sends to a Mission mid-turn at once, not after its turn", async () => {

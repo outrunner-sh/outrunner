@@ -9,6 +9,7 @@ import {
   AGENT_FEATURE_COMPACT,
   AGENT_FEATURE_EDITOR,
   AGENT_FEATURE_ENVIRONMENT,
+  AGENT_FEATURE_FILES,
   AGENT_FEATURE_GIT_CREDENTIAL,
   AGENT_FEATURE_IMPORTS,
   AGENT_FEATURE_MULTI_REPO,
@@ -156,6 +157,7 @@ test("the newest health fixture names every feature the agent and the control pl
     AGENT_FEATURE_MULTI_REPO_WARM,
     AGENT_FEATURE_PLAN_MODE,
     AGENT_FEATURE_COMPACT,
+    AGENT_FEATURE_FILES,
   ]) {
     assert.ok(newest.includes(feature), `the newest AgentHealth fixture lacks ${feature}`);
   }

@@ -52,3 +52,12 @@ test("cut at the first plan, it waits on the user, and the turn isn't read as at
   const plan = pendingPlan(events.slice(0, at + 1));
   assert.ok(plan && plan.dismiss && plan.plan.startsWith("# Plan: add `double`"));
 });
+
+test("a /compact adds no 'worked' row of its own, under no prompt", () => {
+  const nodes = conversationNodes(events);
+  nodes.forEach((node, i) => {
+    if (node.kind !== "worked") return;
+    const before = nodes[i - 1]?.kind;
+    assert.ok(before !== "compact" && before !== "command", `a worked row right after a ${before} row`);
+  });
+});

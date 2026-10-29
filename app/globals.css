@@ -625,6 +625,36 @@
 .studio-composer-context .ring-track { stroke: var(--studio-border); }
 .studio-composer-context .ring-fill { stroke: #8a8a8a; transition: stroke-dasharray .3s; }
 .studio-composer-context.is-full .ring-fill { stroke: var(--studio-amber); }
+/* When a prompt was sent, at its top right, and how long the agent worked on
+   its turn, at the turn's end: quiet, out of the way of the words. */
+.timeline-prompt { position: relative; }
+.timeline-time { color: #7a7472; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.timeline-prompt > .timeline-time { float: right; margin: 2px 0 0 12px; }
+.timeline-worked { display: flex; align-items: center; gap: 6px; padding: 2px 8px; color: #8a8a8a; font-size: 12.5px; }
+.timeline-worked svg { width: 13px; height: 13px; }
+.timeline-worked .timeline-time::before { content: "·"; margin-right: 6px; }
+/* The composer's menus (@ mentions, Ctrl+R history), just above its box, its
+   width: rows of one height, the active one lit. */
+.studio-composer-menu { position: absolute; bottom: calc(100% + 6px); left: -1px; right: -1px; z-index: 20; display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; padding: 4px; border: 1px solid var(--studio-border); border-radius: 4px; background: var(--studio-bg); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.studio-composer-menu > p { margin: 0; padding: 6px 8px; color: #8a8a8a; font-size: 12.5px; }
+.studio-composer-menu > button { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 8px; border: 0; border-radius: 3px; color: var(--studio-text); background: transparent; font: 13px var(--font-geist-sans); text-align: left; cursor: pointer; }
+.studio-composer-menu > button.is-active { background: var(--studio-hover); }
+.studio-composer-menu > button > svg { width: 14px; height: 14px; flex-shrink: 0; color: #8a8a8a; }
+.studio-composer-menu > button.is-prompt { display: -webkit-box; overflow: hidden; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.studio-composer-menu-dir { flex: 1; min-width: 0; color: #7a7a7a; font-size: 12px; }
+.studio-composer-menu-tag { flex-shrink: 0; color: var(--studio-amber); font-size: 11px; }
+.studio-composer-menu-search { display: flex; align-items: center; gap: 8px; padding: 4px 8px 6px; border-bottom: 1px solid var(--studio-border); margin-bottom: 4px; color: #8a8a8a; }
+.studio-composer-menu-search svg { width: 14px; height: 14px; }
+.studio-composer-menu-search input { flex: 1; height: 26px; border: 0; outline: 0; color: var(--studio-text); background: transparent; font: 13px var(--font-geist-sans); }
+/* The text box over a copy of its text that draws each @ mention as a pill:
+   the same font, padding and wrapping, so the pill sits under its words. */
+.studio-composer-input { position: relative; }
+.studio-composer-input textarea, .studio-composer-backdrop { line-height: 1.5; white-space: pre-wrap; overflow-wrap: break-word; }
+.studio-composer-backdrop { position: absolute; inset: 0; overflow: hidden; scrollbar-gutter: stable; padding: 14px 16px 10px; color: transparent; font: 14px var(--font-geist-sans); line-height: 1.5; pointer-events: none; }
+.studio-composer-backdrop mark { border-radius: 3px; color: transparent; background: rgba(124, 199, 255, .16); box-shadow: 0 0 0 1px rgba(124, 199, 255, .28); }
+/* Both keep a scrollbar's gutter, so the text wraps at one width when the box
+   grows past its height and scrolls, and the pills stay under their words. */
+.studio-composer-input textarea { position: relative; scrollbar-gutter: stable; }
 /* Missions (components/missions): a status at work breathes, slowly; a
    row that changes group fades into its new place. */
 @keyframes mission-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }

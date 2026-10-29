@@ -312,6 +312,14 @@ type BillingLeaseRow = {
   held_until: string;
 };
 
+/** A prompt a user sent, for the composer to recall (20261102230000). */
+type PromptHistoryRow = {
+  id: number;
+  owner_id: string;
+  text: string;
+  created_at: string;
+};
+
 type JobRow = {
   id: string;
   owner_id: string;
@@ -1649,6 +1657,12 @@ export type Database = {
         Row: BillingLeaseRow;
         Insert: BillingLeaseRow;
         Update: Partial<BillingLeaseRow>;
+        Relationships: [];
+      };
+      prompt_history: {
+        Row: PromptHistoryRow;
+        Insert: Insert<PromptHistoryRow, "owner_id" | "text">;
+        Update: Partial<PromptHistoryRow>;
         Relationships: [];
       };
     };

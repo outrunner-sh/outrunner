@@ -586,7 +586,8 @@
         "git-credential",
         "multi-repo-warm",
         "plan-mode",
-        "compact"
+        "compact",
+        "files"
       ]
     }
   ],
@@ -742,6 +743,21 @@
     },
     {
       "ports": []
+    }
+  ],
+  "FilesResponse": [
+    {
+      "files": [
+        "src/app.ts",
+        "README.md",
+        "package.json"
+      ],
+      "changed": 2
+    },
+    {
+      "files": [],
+      "changed": 0,
+      "truncated": true
     }
   ],
   "ProviderPorts": [

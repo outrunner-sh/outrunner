@@ -28,7 +28,7 @@ test("each step is a row, a tool's result riding on its call", () => {
   ]);
   assert.deepEqual(
     nodes.map((n) => n.kind),
-    ["prompt", "thought", "tool", "tool", "prose"],
+    ["prompt", "thought", "tool", "tool", "prose", "worked"],
   );
   const [, thought, ran, read] = nodes;
   assert.equal(thought.kind === "thought" && thought.seconds, 9);
@@ -60,7 +60,7 @@ test("a stopped turn shows as one row, not as the user's prompt", () => {
   ]);
   assert.deepEqual(
     nodes.map((n) => n.kind),
-    ["prompt", "tool", "interrupted"],
+    ["prompt", "tool", "interrupted", "worked"],
   );
 });
 
@@ -79,7 +79,7 @@ test("a session's start shows until its first message, not after", () => {
   ]);
   assert.deepEqual(
     nodes.map((n) => n.kind),
-    ["prompt", "prose"],
+    ["prompt", "prose", "worked"],
   );
   // The echo of a prompt just sent is not the session taking it: still starting.
   const sent = conversationNodes([

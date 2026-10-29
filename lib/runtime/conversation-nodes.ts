@@ -1,10 +1,13 @@
 import type { AgentEvent, ContentBlock } from "@/lib/runtime/agent-protocol";
-import { isInterruption, isLocalCommand, localCommandLine, messageText } from "@/lib/runtime/conversation-events";
+import { isInterruption, isLocalCommand, localCommandLine, messageText, runnerContinuations } from "@/lib/runtime/conversation-events";
 import { EXIT_PLAN_MODE, planOf } from "@/lib/runtime/pending-plan";
+import { between } from "@/lib/runtime/turn-timing";
 import { parseCommentQuotes } from "@/lib/session/diff-comments";
 import { isEcho } from "@/lib/session/optimistic-echo";
 
 type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
+
+const TYPED_COMPACT = /^\/compact(\s|$)/;
 
 /** A row of the conversation. Each of Claude's steps is a row of its own: a
  *  thought, a tool call (carrying its result, which arrives in a later
@@ -12,8 +15,10 @@ type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
 export type ConversationNode =
   | { kind: "state"; key: string; state: string }
   | { kind: "usage"; key: string; event: Extract<AgentEvent, { t: "usage" }> }
-  /** `mode` "plan": sent in plan mode. */
-  | { kind: "prompt"; key: string; text: string; mode?: "plan" }
+  /** `mode` "plan": sent in plan mode. `at` is when it was sent; none on the
+   *  echo of one still on its way. `continuation`: Runner news absorbed into
+   *  the running turn, so it starts neither a clock nor a turn-rail tick. */
+  | { kind: "prompt"; key: string; text: string; mode?: "plan"; at?: string; continuation?: true }
   /** A slash command Claude ran itself ("/model opus"), as typed. */
   | { kind: "command"; key: string; text: string }
   /** The conversation compacted here. */
@@ -21,6 +26,9 @@ export type ConversationNode =
   /** A plan the agent proposed: Claude's ExitPlanMode call (`id` its id), or
    *  Codex's last words in a turn sent in plan mode (`id` their uuid). */
   | { kind: "plan"; key: string; id: string; text: string }
+  /** How long the agent worked on the turn above: from its prompt to its
+   *  last step, at `at`. */
+  | { kind: "worked"; key: string; ms: number; at: string }
   /** The user stopped the turn. */
   | { kind: "interrupted"; key: string }
   | { kind: "prose"; key: string; text: string; at: string }
@@ -37,7 +45,8 @@ export type ConversationNode =
 /**
  * Flatten the event stream into rows. A tool result is shown with the call it
  * answers, matched by id, not as a row of its own; one that answers no call in
- * the stream is dropped.
+ * the stream is dropped. A turn the agent worked on ends in a "worked" row
+ * once it is over: the next prompt has come, or `working` is false.
  *
  * `plansInProse` is for an agent with no plan step (Codex): the last words of
  * a turn sent in plan mode are its plan, once the turn is over (`working`
@@ -56,10 +65,13 @@ export function conversationNodes(
   }
 
   const nodes: ConversationNode[] = [];
+  const continuations = runnerContinuations(events);
   // When the message before this one was written: a thought runs from there.
   let previousAt: string | null = null;
-  // The turn under way, sent in plan mode, and its last words so far (for
-  // plansInProse): where they are in `nodes`, and whose they are.
+  // The turn under way: when its prompt was sent and its latest step (for
+  // its "worked" row); whether it was sent in plan mode, and its last words
+  // so far (for plansInProse): where they are in `nodes`, and whose.
+  let turn: { from: string; last: string | null; key: string } | null = null;
   let planTurn = false;
   let lastWords: { index: number; uuid: string } | null = null;
   const endTurn = () => {
@@ -69,6 +81,10 @@ export function conversationNodes(
     }
     planTurn = false;
     lastWords = null;
+    const ms = turn?.last ? between(turn.from, turn.last) : null;
+    // Under a second is no work to speak of (a command Claude ran itself).
+    if (turn?.last && ms !== null && ms >= 1000) nodes.push({ kind: "worked", key: `wk-${turn.key}`, ms, at: turn.last });
+    turn = null;
   };
   events.forEach((event, ei) => {
     if (event.t === "state") {
@@ -78,6 +94,22 @@ export function conversationNodes(
     if (event.t === "usage") {
       nodes.push({ kind: "usage", key: `us-${ei}`, event });
       return;
+    }
+    // A prompt starts a turn (the echo of one not yet sent starts none: it
+    // has no time of its own); anything after it is a step of it.
+    // A record of a slash command Claude ran itself is a step of the turn
+    // too (/compact's), not one of its own.
+    const continuation = turn !== null && continuations.has(ei);
+    if (event.role === "user" && event.content.some((b) => b.type === "text") && !isInterruption(event) && !isLocalCommand(event) && !continuation) {
+      endTurn();
+      // A typed /compact starts no turn of its own: it has no prompt row
+      // (its compaction's row says it), so a "worked" row under it would
+      // stand under no prompt; and folded into the turn before, that turn's
+      // would run on to the compaction, however long after it was.
+      const compactTyped = event.content.some((b) => b.type === "text" && TYPED_COMPACT.test(b.text));
+      if (!isEcho(event.uuid) && !compactTyped) turn = { from: event.timestamp, last: null, key: `${event.uuid}-${ei}` };
+    } else if (turn) {
+      turn.last = event.timestamp;
     }
     if (isInterruption(event)) {
       nodes.push({ kind: "interrupted", key: `${event.uuid}-${ei}` });
@@ -101,12 +133,19 @@ export function conversationNodes(
       switch (block.type) {
         case "text":
           if (event.role === "user") {
-            endTurn();
+            // The turn it starts was begun above (endTurn, then `turn`).
             // Claude Code 2.1.304 records a typed /compact first as a prompt of
             // its own: the compaction's row says it.
-            if (/^\/compact(\s|$)/.test(block.text)) return;
-            planTurn = event.mode === "plan";
-            nodes.push({ kind: "prompt", key, text: block.text, ...(event.mode && { mode: event.mode }) });
+            if (TYPED_COMPACT.test(block.text)) return;
+            if (!continuation) planTurn = event.mode === "plan";
+            nodes.push({
+              kind: "prompt",
+              key,
+              text: block.text,
+              ...(event.mode && { mode: event.mode }),
+              ...(!isEcho(event.uuid) && { at: event.timestamp }),
+              ...(continuation && { continuation: true }),
+            });
           } else {
             lastWords = { index: nodes.length, uuid: event.uuid };
             nodes.push({ kind: "prose", key, text: block.text, at: event.timestamp });
@@ -174,12 +213,22 @@ export function thoughtSeconds(previousAt: string | null, at: string): number | 
  *  plain text; null while it has said none. */
 export type ConversationTurn = { key: string; prompt: string; reply: string | null };
 
+/** The running clock starts at the turn's prompt, not Runner news folded
+ *  into it. An optimistic prompt still on its way has no start time. */
+export function conversationTurnSince(nodes: ConversationNode[]): string | undefined {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i];
+    if (node.kind === "prompt" && !node.continuation) return node.at;
+  }
+  return undefined;
+}
+
 /** The conversation's turns, one per prompt, in order. Rows before the first
  *  prompt (a session's state) belong to none. */
 export function conversationTurns(nodes: ConversationNode[]): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   for (const node of nodes) {
-    if (node.kind === "prompt") turns.push({ key: node.key, prompt: promptPreview(node.text), reply: null });
+    if (node.kind === "prompt" && !node.continuation) turns.push({ key: node.key, prompt: promptPreview(node.text), reply: null });
     else if (node.kind === "prose" && turns.length > 0) {
       const reply = plainText(node.text);
       if (reply) turns[turns.length - 1].reply = reply;

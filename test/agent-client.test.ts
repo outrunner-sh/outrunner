@@ -375,3 +375,14 @@ test("a prompt names its mode only where it has one, and a compaction posts to i
   ]);
   await assert.rejects(() => client.sendMessage(identity, "x", { mode: "yolo" as "plan" }));
 });
+
+test("a session's files are listed by its box's agent, changed ones counted", async () => {
+  let seenUrl = "";
+  const fakeFetch = (async (url: string) => {
+    seenUrl = url;
+    return new Response(JSON.stringify({ files: ["src/a.ts", "README.md"], changed: 1 }), { status: 200 });
+  }) as unknown as typeof fetch;
+  const listed = await new AgentClient(target, fakeFetch).listFiles(identity);
+  assert.equal(seenUrl, `${target.controlBaseUrl}/workspaces/ws-1/files`);
+  assert.deepEqual(listed, { files: ["src/a.ts", "README.md"], changed: 1 });
+});

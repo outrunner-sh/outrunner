@@ -2,7 +2,7 @@
 
 import { ArrowUp, Check, CircleAlert, FileText, Hammer, ListChecks, MessageSquareText, Plus, Search, Settings2, Square, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   DropdownMenu,
@@ -50,6 +50,11 @@ import { isImeKeydown } from "@/lib/session/composing";
 import { type DiffComment, lineRange } from "@/lib/session/diff-comments";
 import { compactTokens, type ContextUsage } from "@/lib/runtime/context-usage";
 import { composerCommand, otherMode, type SessionMode } from "@/lib/session/session-mode";
+import { HistorySearch, MentionMenu } from "@/components/composer-menus";
+import { usePromptHistory } from "@/hooks/use-prompt-history";
+import type { FilesResponse } from "@/lib/runtime/agent-protocol";
+import { insertMention, matchFiles, mentionAt, type MentionQuery, mentionSegments } from "@/lib/session/file-mentions";
+import { type Recall, recallStep } from "@/lib/session/prompt-history";
 import { AGENTS, type AgentId } from "@/lib/agents/registry";
 import { providerSettingsHref } from "@/lib/settings-links";
 import { cn } from "@/lib/utils";
@@ -113,6 +118,7 @@ export function SessionComposer({
   focusSignal = 0,
   prefill = null,
   comments,
+  listFiles,
 }: {
   /** Send a prompt, in `mode` where the session has modes. When it returns
    *  a promise of whether the send landed, a failed send gives the text and
@@ -169,6 +175,9 @@ export function SessionComposer({
    *  shown above the box, each removable. The caller adds them to what is
    *  sent (onSend gets the typed text alone). */
   comments?: { items: DiffComment[]; onRemove: (id: string) => void };
+  /** The session's files, for @ mentions (lib/session/file-mentions.ts):
+   *  asked for once, as the first @ is typed. Without it @ is just text. */
+  listFiles?: () => Promise<FilesResponse>;
 }) {
   const [value, setValue] = useState(prefill ?? "");
   // Arriving after the form mounted (fetched): put in an empty box, once.
@@ -186,6 +195,27 @@ export function SessionComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const attachments = useAttachments();
+  // Recall (↑/↓ in an empty box, Ctrl+R to search) of the user's prompts.
+  const { history, remember } = usePromptHistory(canSend);
+  const [recall, setRecall] = useState<Recall | null>(null);
+  const [searching, setSearching] = useState(false);
+  // The @ mention being typed, the session's files to offer it, and which of
+  // the matches is picked.
+  const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [files, setFiles] = useState<FilesResponse | "loading" | "error" | null>(null);
+  const [mentioned, setMentioned] = useState<ReadonlySet<string>>(() => new Set());
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const fileList = files && typeof files === "object" ? files : null;
+  // Over up to MaxListedFiles paths: worked out again only as the files or
+  // the query change, not at every render (each keystroke, each caret move).
+  const mentionQuery = mention?.query ?? null;
+  const mentionMatches = useMemo(
+    () => (mentionQuery !== null && fileList ? matchFiles(fileList.files, fileList.changed, mentionQuery) : []),
+    [fileList, mentionQuery],
+  );
+  const changedFiles = useMemo(() => new Set(fileList?.files.slice(0, fileList.changed) ?? []), [fileList]);
+  const mentionOpen = mention !== null && listFiles !== undefined;
 
   // A prefilled box is as tall as its text, as if it had been typed.
   useEffect(() => {
@@ -263,9 +293,12 @@ export function SessionComposer({
     const sentIds = attachments.readyIds;
     const result = onSend(text, sentIds, mode);
     setValue("");
+    setRecall(null);
+    closeMention();
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
     if (!result) {
+      remember(text);
       attachments.forget(sentIds);
       return;
     }
@@ -275,6 +308,8 @@ export function SessionComposer({
     void result
       .then((landed) => {
         if (landed) {
+          // Recalled once it went: one that didn't is back in the box.
+          remember(text);
           attachments.forget(sentIds);
         } else {
           setValue((current) => restoreDraft(text, current));
@@ -283,6 +318,57 @@ export function SessionComposer({
       })
       .finally(() => setSending(false));
   }
+
+  /** Close the @ menu. A listing that failed is let go, so the next @ typed
+   *  asks again: a runner restarting, or a blip, isn't the menu's answer for
+   *  the rest of the session. */
+  function closeMention() {
+    setMention(null);
+    setFiles((f) => (f === "error" ? null : f));
+  }
+
+  /** Put `next` in the box (recall's), the caret at its end. */
+  function replaceText(next: string) {
+    setValue(next);
+    closeMention();
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+      el.setSelectionRange(next.length, next.length);
+    });
+  }
+
+  /** Follow the caret: an @ mention being typed opens its menu, the files
+   *  asked for the first time one is. */
+  function followCaret(text: string, caret: number) {
+    const at = listFiles ? mentionAt(text, caret) : null;
+    setMention(at);
+    setMentionIndex(0);
+    if (at && files === null && listFiles) {
+      setFiles("loading");
+      listFiles().then(setFiles, () => setFiles("error"));
+    }
+  }
+
+  function pickMention(path: string) {
+    const el = textareaRef.current;
+    if (!mention || !el) return;
+    const next = insertMention(value, mention, el.selectionStart, path);
+    setValue(next.text);
+    setMentioned((prev) => new Set(prev).add(path));
+    closeMention();
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(next.caret, next.caret);
+    });
+  }
+
+  // Mentions drawn as pills: those picked here, and any typed in full.
+  const known = useMemo(() => new Set([...mentioned, ...(fileList?.files ?? [])]), [mentioned, fileList]);
+  const segments = value.includes("@") ? mentionSegments(value, known) : [];
+  const pills = segments.some((segment) => segment.mention);
 
   return (
     <form
@@ -418,45 +504,142 @@ export function SessionComposer({
           </InlineMessage>
         ))}
 
-      <textarea
-        ref={textareaRef}
-        value={value}
-        rows={1}
-        placeholder={canSend ? placeholder : disabledPlaceholder}
-        aria-label={messageLabel}
-        spellCheck={false}
-        disabled={!canSend}
-        onChange={(event) => {
-          setValue(event.target.value);
-          const el = event.target;
-          el.style.height = "auto";
-          el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-        }}
-        onPaste={(event) => {
-          // Pasted screenshots arrive as files on the clipboard. Only intercept
-          // when there are some, so ordinary text paste is untouched.
-          const files = Array.from(event.clipboardData.files);
-          if (files.length > 0) {
-            event.preventDefault();
-            addFiles(files);
-          }
-        }}
-        onKeyDown={(event) => {
-          // Not while an input method is composing: there, Enter confirms the
-          // characters (Japanese, Chinese…) rather than sending half a prompt.
-          if (event.key === "Enter" && !event.shiftKey && !isImeKeydown(event.nativeEvent)) {
-            event.preventDefault();
-            submit();
-          } else if (event.key === "Tab" && event.shiftKey && modeChoice && !isImeKeydown(event.nativeEvent)) {
-            // As in Claude Code's own terminal: Shift+Tab switches the mode.
-            event.preventDefault();
-            modeChoice.onChange(otherMode(modeChoice.mode));
-          } else if (event.key === "Escape" && stop && !stop.stopping && !isImeKeydown(event.nativeEvent)) {
-            event.preventDefault();
-            stop.onStop();
-          }
-        }}
-      />
+      {searching && (
+        <HistorySearch
+          history={history}
+          onPick={(prompt) => {
+            setSearching(false);
+            setRecall(null);
+            textareaRef.current?.focus();
+            replaceText(prompt);
+          }}
+          onClose={() => setSearching(false)}
+        />
+      )}
+      {!searching && mentionOpen && (
+        <MentionMenu
+          matches={mentionMatches}
+          active={Math.min(mentionIndex, Math.max(0, mentionMatches.length - 1))}
+          changed={changedFiles}
+          status={files === "error" ? "error" : fileList ? "ready" : "loading"}
+          onPick={pickMention}
+          onHover={setMentionIndex}
+        />
+      )}
+      <div className="studio-composer-input">
+        {pills && (
+          <div ref={backdropRef} className="studio-composer-backdrop" aria-hidden>
+            {segments.map((segment, i) => (segment.mention ? <mark key={i}>{segment.text}</mark> : segment.text))}
+            {/* A trailing newline needs a character after it to take a line. */}
+            {"\u200b"}
+          </div>
+        )}
+        <textarea
+          ref={textareaRef}
+          value={value}
+          rows={1}
+          placeholder={canSend ? placeholder : disabledPlaceholder}
+          aria-label={messageLabel}
+          spellCheck={false}
+          disabled={!canSend}
+          onChange={(event) => {
+            setValue(event.target.value);
+            // Typing over a recalled prompt makes it this one's.
+            setRecall(null);
+            const el = event.target;
+            el.style.height = "auto";
+            el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+            followCaret(el.value, el.selectionStart);
+          }}
+          onSelect={(event) => {
+            const el = event.currentTarget;
+            if (mention) followCaret(el.value, el.selectionStart);
+          }}
+          onBlur={closeMention}
+          onScroll={(event) => {
+            if (backdropRef.current) backdropRef.current.scrollTop = event.currentTarget.scrollTop;
+          }}
+          onPaste={(event) => {
+            // Pasted screenshots arrive as files on the clipboard. Only intercept
+            // when there are some, so ordinary text paste is untouched.
+            const files = Array.from(event.clipboardData.files);
+            if (files.length > 0) {
+              event.preventDefault();
+              addFiles(files);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (isImeKeydown(event.nativeEvent)) return;
+            const el = event.currentTarget;
+            // The @ menu, while it's open, has the keys that move in it and pick.
+            if (mentionOpen) {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeMention();
+                return;
+              }
+              if (mentionMatches.length > 0) {
+                const count = mentionMatches.length;
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setMentionIndex((i) => (Math.min(i, count - 1) + (event.key === "ArrowDown" ? 1 : count - 1)) % count);
+                  return;
+                }
+                if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey) {
+                  event.preventDefault();
+                  pickMention(mentionMatches[Math.min(mentionIndex, count - 1)]);
+                  return;
+                }
+              }
+            }
+            if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "r") {
+              // As a shell's reverse search: the browser's reload stays on ⌘R/F5.
+              event.preventDefault();
+              closeMention();
+              setSearching(true);
+              return;
+            }
+            if (event.key === "Tab" && event.shiftKey && modeChoice) {
+              // As in Claude Code's own terminal: Shift+Tab switches the mode.
+              event.preventDefault();
+              modeChoice.onChange(otherMode(modeChoice.mode));
+              return;
+            }
+            // ↑ in an empty box, or on the first line of a recalled prompt,
+            // steps back through the user's prompts; ↓ on its last line, forward.
+            const plain = !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
+            const onFirstLine = !el.value.slice(0, el.selectionStart).includes("\n");
+            const onLastLine = !el.value.slice(el.selectionEnd).includes("\n");
+            if (plain && event.key === "ArrowUp" && (value === "" || (recall && onFirstLine))) {
+              const step = recallStep(history, recall, "older", value);
+              if (step) {
+                event.preventDefault();
+                setRecall(step.recall);
+                replaceText(step.value);
+              }
+              return;
+            }
+            if (plain && event.key === "ArrowDown" && recall && onLastLine) {
+              const step = recallStep(history, recall, "newer", value);
+              if (step) {
+                event.preventDefault();
+                setRecall(step.recall);
+                replaceText(step.value);
+              }
+              return;
+            }
+            // Not while an input method is composing (checked first): there,
+            // Enter confirms the characters rather than sending half a prompt.
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              submit();
+            } else if (event.key === "Escape" && stop && !stop.stopping) {
+              event.preventDefault();
+              stop.onStop();
+            }
+          }}
+        />
+      </div>
       <div className="studio-composer-footer">
         <span>
           <input
