@@ -134,6 +134,8 @@ export function SidebarMissions({ active, projects }: { active?: string; project
                     draggable
                     onDragStart={(e) => {
                       setDragging(mission.id);
+                      // Firefox starts no drag that carries nothing.
+                      e.dataTransfer.setData("text/plain", mission.id);
                       e.dataTransfer.effectAllowed = "move";
                     }}
                     onDragEnd={() => {

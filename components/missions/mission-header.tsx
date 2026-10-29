@@ -9,7 +9,7 @@ import { FolderGit2, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { MissionGlyph, StatusDot } from "@/components/missions/mission-parts";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { refreshMissions, useMission } from "@/hooks/use-missions";
 import { MISSION_ICONS, missionIcon } from "@/lib/missions/icons";
 import { MAX_RUNNERS } from "@/lib/missions/rules";
@@ -66,15 +66,16 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[212px] p-2">
           <DropdownMenuLabel className="px-1 pt-0 pb-2 text-[11.5px] font-normal text-muted-foreground">Mission icon</DropdownMenuLabel>
-          <div role="listbox" aria-label="Icons" className="grid grid-cols-5 gap-1">
+          {/* Menu items, so a pick closes the menu and the arrow keys and
+              typeahead move between them. */}
+          <div className="grid grid-cols-5 gap-1">
             {MISSION_ICONS.map(({ key, label, Icon }) => (
-              <button
+              <DropdownMenuItem
                 key={key}
-                type="button"
-                role="option"
-                aria-selected={current.key === key}
+                aria-label={current.key === key ? `${label}, current` : label}
                 title={label}
-                onClick={() => {
+                textValue={label}
+                onSelect={() => {
                   setIcon(key);
                   // Not saved: back to the one it has, and why.
                   void patch(missionId, { icon: key }).then((why) => {
@@ -83,12 +84,12 @@ export function MissionHeader({ missionId, fallbackTitle }: { missionId: string;
                   });
                 }}
                 className={cn(
-                  "grid size-8 place-items-center rounded-md text-[#bdbdbd] transition-colors hover:bg-white/[0.07] hover:text-white",
+                  "grid size-8 place-items-center justify-center rounded-md p-0 text-[#bdbdbd] transition-colors hover:bg-white/[0.07] hover:text-white focus:bg-white/[0.07] focus:text-white [&_svg:not([class*='text-'])]:text-current",
                   current.key === key && "bg-white/[0.09] text-white ring-1 ring-white/20",
                 )}
               >
                 <Icon className="size-4" strokeWidth={1.75} />
-              </button>
+              </DropdownMenuItem>
             ))}
           </div>
         </DropdownMenuContent>

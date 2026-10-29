@@ -112,7 +112,10 @@ export function useNotificationsFeed({
           const looking = document.visibilityState === "visible" && document.hasFocus();
           if (!shouldShow(notification, { browserOn: body.browser ?? true, onScreen: here.current.onScreen, looking })) continue;
           // Claimed first, in this browser's every tab: shown once, as a toast
-          // here or a system notification, never both.
+          // here or a system notification, never both. A tab that can show it
+          // neither way (not looked at, notifications not allowed) leaves it
+          // for one that can.
+          if (!looking && !canShowNotifications()) continue;
           if (!claim(notification.id)) continue;
           let inPage = false;
           for (const listener of listeners) inPage = listener(notification, looking) || inPage;

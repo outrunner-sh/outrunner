@@ -60,8 +60,8 @@ This replaces the earlier Mission Engine design
 | Piece | Where |
 | --- | --- |
 | Schema: `workspaces.kind`, `parent_mission_id`, notes, briefs, tokens, the outbox | `supabase/migrations/20261102200000_missions.sql` |
-| Turn watches and Runners' pull requests | `supabase/migrations/20261102210000_mission_events.sql` |
-| Icons and sidebar order | `supabase/migrations/20261102220000_mission_profiles.sql` |
+| Turn watches and Runners' pull requests | `supabase/migrations/20261102250000_mission_events.sql` |
+| Icons and sidebar order | `supabase/migrations/20261102260000_mission_profiles.sql` |
 | The Mission's tools (plain functions) | `lib/missions/tools.ts` |
 | Their MCP server: the app's MCP server code, with its own registry. Served at `/api/missions/mcp` and, for a Mission's token, at `/api/mcp` | `lib/missions/server.ts`, `lib/mcp/server.ts` |
 | The Mission's box setup: token, MCP server, notes file, instructions | `lib/missions/setup.ts` |

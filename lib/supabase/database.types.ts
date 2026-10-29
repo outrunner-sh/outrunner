@@ -209,7 +209,7 @@ type RunnerPullRequestRow = {
   checked_at: string | null;
   created_at: string;
 };
-// supabase/migrations/20261102220000_mission_profiles.sql
+// supabase/migrations/20261102260000_mission_profiles.sql
 type MissionProfileRow = { mission_id: string; icon: string | null; position: number | null; updated_at: string };
 type MissionDeliveryRow = {
   id: string;
@@ -1667,7 +1667,7 @@ export type Database = {
         Args: { target: string; failure: string };
         Returns: undefined;
       };
-      // supabase/migrations/20261102220000_mission_profiles.sql
+      // supabase/migrations/20261102260000_mission_profiles.sql
       latest_mission_events: {
         Args: { runner_ids: string[] };
         Returns: { runner_id: string; kind: string; payload: Json; created_at: string }[];
